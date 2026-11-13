@@ -1,0 +1,28 @@
+//@ run
+//> 2
+//> 99
+//> 1
+
+struct Id derives (Copy, Clone, Eq) {
+    n: i32
+}
+
+struct Boxed derives (Clone) {
+    v: Heap<i32>
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let i = Id { n: 1 }
+    let j = i                     // Copy: both stay usable
+    show(i.n + j.n)
+
+    let mut a = Boxed { v: Heap.new(1) }
+    let b = a.clone()             // deep copy, including the heap value
+    *a.v = 99
+    show(*a.v)
+    show(*b.v)
+}

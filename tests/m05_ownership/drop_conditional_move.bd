@@ -1,0 +1,43 @@
+//@ run
+//> consumed 1
+//> drop 1
+//> end of maybe_consume
+//> --
+//> end of maybe_consume
+//> drop 1
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn consume(own n: Noisy) {
+    announce("consumed ", n.id)
+}
+
+// The value is moved on one path only, so the drop at the end of the
+// function must happen only on the other path (a runtime drop flag).
+fn maybe_consume(flag: bool) {
+    let n = Noisy { id: 1 }
+    if flag {
+        consume(n)
+    }
+    println("end of maybe_consume")
+}
+
+fn main() {
+    maybe_consume(true)
+    println("--")
+    maybe_consume(false)
+}

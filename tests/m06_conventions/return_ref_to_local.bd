@@ -1,0 +1,12 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn make(c: Counter): &i32 {
+    let t = c.n
+    &t //~ E0122
+}
+
+fn main() {}

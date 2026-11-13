@@ -1,0 +1,7 @@
+//@ compile-fail
+
+fn main() {
+    if 1 { //~ E0003
+        println("x")
+    }
+}

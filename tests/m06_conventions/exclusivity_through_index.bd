@@ -1,0 +1,19 @@
+//@ compile-fail
+
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn swap_vals(mut x: i32, mut y: i32) {
+    let t = x
+    x = y
+    y = t
+}
+
+// Only field paths of a local or parameter count as separate places. Two indices
+// might be equal, so elements of an array are one place.
+fn main() {
+    let mut xs = [Pair { a: 1, b: 2 }, Pair { a: 3, b: 4 }]
+    swap_vals(mut xs[0].a, mut xs[1].a) //~ E0110
+}

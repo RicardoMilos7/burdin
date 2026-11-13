@@ -1,0 +1,15 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: overflow
+//> before
+
+fn add_one(x: i32): i32 {
+    x + 1
+}
+
+fn main() {
+    println("before")
+    let big: i32 = 2147483647
+    let r = add_one(big)
+    println(r.to_string())
+}

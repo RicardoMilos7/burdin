@@ -1,0 +1,50 @@
+//@ run
+//> 1
+//> 1
+//> 5
+//> 6
+//> 3
+//> 60
+
+struct Counter {
+    n: i32
+}
+
+Counter {
+    fn get(self): i32 { self.n }
+    fn bump(mut self) { self.n = self.n + 1 }
+    fn finish(own self): i32 { self.n * 10 }
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn peek(c: Counter): i32 {
+    c.n
+}
+
+fn add_to(mut c: Counter, amount: i32) {
+    c.n = c.n + amount
+}
+
+fn inc(mut x: i32) {
+    x = x + 1
+}
+
+fn main() {
+    let mut c = Counter { n: 1 }
+    show(peek(c))                 // read-only: borrowed, not moved
+    show(peek(c))                 // so c can be used again
+    add_to(mut c, 4)              // exclusive mutable access for the call
+    show(c.get())
+    c.bump()
+    show(c.get())
+
+    let mut v = 1
+    inc(mut v)
+    inc(mut v)
+    show(v)
+
+    show(c.finish())              // own self: c is consumed
+}

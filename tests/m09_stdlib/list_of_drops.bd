@@ -1,0 +1,50 @@
+//@ run
+//> inner built
+//> drop 10
+//> drop 11
+//> inner gone
+//> built
+//> removed
+//> drop 1
+//> drop 3
+//> cleared
+//> end
+//> drop 2
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    // a list drops its elements in index order when it goes out of scope
+    {
+        let mut inner = List<Noisy>.new()
+        inner.push(Noisy { id: 10 })
+        inner.push(Noisy { id: 11 })
+        println("inner built")
+    }
+    println("inner gone")
+
+    let mut list = List<Noisy>.new()
+    list.push(Noisy { id: 1 })
+    list.push(Noisy { id: 2 })
+    list.push(Noisy { id: 3 })
+    println("built")
+    let second = list.remove(1)   // moves element 2 out of the list
+    println("removed")
+    list.clear()                  // drops the remaining elements in order
+    println("cleared")
+    println("end")
+}

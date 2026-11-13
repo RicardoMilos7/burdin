@@ -1,0 +1,9 @@
+//@ compile-fail
+
+fn main() {
+    let mut x = 1
+    let a = &mut x
+    let b = &mut x //~ E0111
+    *a = 1
+    *b = 2
+}

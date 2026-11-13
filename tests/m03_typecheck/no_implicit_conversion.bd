@@ -1,0 +1,7 @@
+//@ compile-fail
+
+fn main() {
+    let a: i32 = 1
+    let b: i64 = 2
+    let c = a + b //~ E0003
+}

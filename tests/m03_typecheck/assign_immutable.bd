@@ -1,0 +1,6 @@
+//@ compile-fail
+
+fn main() {
+    let x = 1
+    x = 2 //~ E0005
+}

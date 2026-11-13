@@ -1,0 +1,14 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn merge(mut a: Counter, b: Counter) {
+    a.n = a.n + b.n
+}
+
+fn main() {
+    let mut c = Counter { n: 1 }
+    merge(mut c, c) //~ E0110
+}

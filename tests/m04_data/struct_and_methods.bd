@@ -1,0 +1,60 @@
+//@ run
+//> 3
+//> -4
+//> 7
+//> 5
+//> 6
+//> true
+//> 9
+//> 8
+//> 6
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn abs_val(n: i32): i32 {
+    if n < 0 { -n } else { n }
+}
+
+struct Point derives (Copy, Clone, Eq) {
+    x: i32
+    y: i32
+}
+
+Point {
+    fn new(x: i32, y: i32): Point { Point { x, y } }
+    fn origin(): Point { Point { x: 0, y: 0 } }
+    fn manhattan(self): i32 { abs_val(self.x) + abs_val(self.y) }
+    fn translate(mut self, dx: i32, dy: i32) {
+        self.x = self.x + dx
+        self.y = self.y + dy
+    }
+}
+
+fn main() {
+    let p = Point.new(3, -4)
+    show(p.x)
+    show(p.y)
+    show(p.manhattan())
+
+    let mut q = Point.origin()
+    q.translate(5, 6)
+    show(q.x)
+    show(q.y)
+    let r = Point { x: 5, y: 6 }
+    show_bool(q == r)
+
+    let x = 9
+    let y = 8
+    let s = Point { x, y }          // field shorthand
+    show(s.x)
+    show(s.y)
+
+    let t = p                       // Point is Copy, so p stays usable
+    show(t.x + p.x)
+}

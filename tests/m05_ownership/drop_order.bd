@@ -1,0 +1,40 @@
+//@ run
+//> end of inner block
+//> drop 3
+//> end of main
+//> drop 4
+//> drop 5
+//> drop 2
+//> drop 1
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let _x = Noisy { id: 1 }
+    let _y = Noisy { id: 2 }
+    {
+        let _inner = Noisy { id: 3 }
+        println("end of inner block")
+    }
+    let _p = Pair { a: Noisy { id: 4 }, b: Noisy { id: 5 } }
+    println("end of main")
+}

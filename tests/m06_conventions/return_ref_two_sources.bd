@@ -1,0 +1,11 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn pick(a: Counter, b: Counter, first: bool): &i32 { //~ E0121
+    if first { &a.n } else { &b.n }
+}
+
+fn main() {}

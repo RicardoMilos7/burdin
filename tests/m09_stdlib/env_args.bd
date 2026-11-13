@@ -1,0 +1,16 @@
+//@ run
+//@ args: alpha beta
+//> 3
+//> alpha
+//> beta
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let args = env.args()         // element 0 is the program name
+    show(args.len() as i32)
+    println(args[1])
+    println(args[2])
+}

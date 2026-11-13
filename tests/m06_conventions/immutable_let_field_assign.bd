@@ -1,0 +1,10 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn main() {
+    let c = Counter { n: 1 }
+    c.n = 5 //~ E0005
+}

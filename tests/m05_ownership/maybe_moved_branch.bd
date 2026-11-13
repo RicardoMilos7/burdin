@@ -1,0 +1,19 @@
+//@ compile-fail
+
+struct Thing {
+    id: i32
+}
+
+fn take(own t: Thing) {}
+
+fn f(flag: bool) {
+    let a = Thing { id: 1 }
+    if flag {
+        take(a)
+    }
+    println(a.id.to_string()) //~ E0100
+}
+
+fn main() {
+    f(true)
+}

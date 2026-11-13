@@ -1,0 +1,6 @@
+//@ compile-fail
+
+fn main() {
+    let x = 1
+    let r = &mut x //~ E0113
+}

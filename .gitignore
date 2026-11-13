@@ -1,0 +1,25 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Build outputs
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+*.lib
+*.ll
+*.bc
+
+# Files the tests create in their working directory
+burdin_test_*.txt
+burdin_word_count.txt
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

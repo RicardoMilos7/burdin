@@ -1,0 +1,36 @@
+//@ run
+//> got it
+//> drop 1
+//> after match
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+enum Holder {
+    Full(Noisy)
+    Empty
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let h = Holder.Full(Noisy { id: 1 })
+    // h is an owned local, so the binding `n` moves the payload out of it.
+    // n is dropped at the end of the arm.
+    match h {
+        Holder.Full(n) => println("got it"),
+        Holder.Empty => println("empty"),
+    }
+    println("after match")
+}

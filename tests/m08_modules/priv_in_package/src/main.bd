@@ -1,0 +1,19 @@
+//@ run
+//> 42
+//> 5
+//> 7
+
+// priv means package-private: other files of the same package can use these items.
+use helpers.{secret, Counter, Hidden}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    show(secret() + 1)
+    let c = Counter { n: 5 }      // priv field, same package: allowed
+    show(c.n)
+    let h = Hidden { v: 7 }
+    show(h.v)
+}

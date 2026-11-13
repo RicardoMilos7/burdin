@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: boom
+//@ stderr: explicit_panic_aborts.bd
+//> before panic
+
+fn main() {
+    println("before panic")
+    panic("boom")
+}

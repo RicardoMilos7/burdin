@@ -1,0 +1,23 @@
+//@ run
+//> 3
+
+// References are allowed as parameter types, as in the design document. The call
+// site passes `&mut c`, and the borrow ends when the call returns.
+
+struct Counter {
+    n: i32
+}
+
+fn bump(c: &mut Counter) {
+    c.n = c.n + 1
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let mut c = Counter { n: 2 }
+    bump(&mut c)
+    show(c.n)
+}

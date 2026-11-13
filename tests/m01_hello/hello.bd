@@ -1,0 +1,6 @@
+//@ run
+//> Hello, Burdin!
+
+fn main() {
+    println("Hello, Burdin!")
+}

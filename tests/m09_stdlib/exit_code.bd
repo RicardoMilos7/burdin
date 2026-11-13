@@ -1,0 +1,9 @@
+//@ run
+//@ exit-code: 3
+//> exiting
+
+fn main() {
+    println("exiting")
+    process.exit(3)
+    println("unreachable")
+}

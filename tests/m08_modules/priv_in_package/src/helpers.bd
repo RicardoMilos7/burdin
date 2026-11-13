@@ -1,0 +1,11 @@
+priv fn secret(): i32 {
+    41
+}
+
+struct Counter {
+    priv n: i32
+}
+
+priv struct Hidden {
+    v: i32
+}

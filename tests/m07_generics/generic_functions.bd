@@ -1,0 +1,48 @@
+//@ run
+//> 9
+//> 8
+//> 2
+//> 0
+//> 5
+//> true
+//> 1
+
+struct Version derives (Copy, Clone, Eq, Ord) {
+    major: i32
+    minor: i32
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+// Returning a parameter by value needs `own`: a read-only parameter is only borrowed.
+fn max_of<T: Ord>(own a: T, own b: T): T {
+    if a > b { a } else { b }
+}
+
+fn first_of_two<A, B>(own a: A, own b: B): A {
+    a
+}
+
+fn swap_pair<A, B>(own p: (A, B)): (B, A) {
+    (p.1, p.0)
+}
+
+fn main() {
+    show(max_of(3, 9))
+    let a: i64 = 5
+    let b: i64 = 8
+    println(max_of(a, b).to_string())
+    let v = max_of(Version { major: 1, minor: 9 }, Version { major: 2, minor: 0 })
+    show(v.major)
+    show(v.minor)
+    show(first_of_two(5, true))
+    let s = swap_pair((1, true))
+    show_bool(s.0)
+    show(s.1)
+}

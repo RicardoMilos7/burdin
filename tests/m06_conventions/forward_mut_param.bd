@@ -1,0 +1,26 @@
+//@ run
+//> 2
+
+struct Counter {
+    n: i32
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn bump(mut c: Counter) {
+    c.n = c.n + 1
+}
+
+// A mut parameter can be passed on as mut; each call borrows it again.
+fn bump_twice(mut c: Counter) {
+    bump(mut c)
+    bump(mut c)
+}
+
+fn main() {
+    let mut c = Counter { n: 0 }
+    bump_twice(mut c)
+    show(c.n)
+}

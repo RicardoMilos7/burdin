@@ -1,0 +1,18 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn take(own c: Counter) {}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let c = Counter { n: 1 }
+    let r = &c
+    take(c) //~ E0111
+    show(r.n)
+}

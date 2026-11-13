@@ -1,0 +1,12 @@
+//@ compile-fail
+
+fn name(n: i32): str {
+    match n { //~ E0006
+        0 => "zero",
+        1 => "one",
+    }
+}
+
+fn main() {
+    println(name(0))
+}

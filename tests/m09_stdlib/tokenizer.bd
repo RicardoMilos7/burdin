@@ -1,0 +1,85 @@
+//@ run
+//> 9
+//> 12|+|(|3|*|45|)|-|6|
+//> bad char at 4
+
+enum Token derives (Clone, Eq) {
+    Num(i32)
+    Plus
+    Minus
+    Star
+    LParen
+    RParen
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+// Err carries the index of the first character that is not part of the language.
+fn tokenize(src: str): Result<List<Token>, i32> {
+    let mut tokens = List<Token>.new()
+    let mut pos = 0
+    let mut number = 0
+    let mut in_number = false
+    for c in src.chars() {
+        if c >= '0' && c <= '9' {
+            number = number * 10 + (c as i32 - '0' as i32)
+            in_number = true
+        } else {
+            if in_number {
+                tokens.push(Token.Num(number))
+                number = 0
+                in_number = false
+            }
+            match c {
+                '+' => tokens.push(Token.Plus),
+                '-' => tokens.push(Token.Minus),
+                '*' => tokens.push(Token.Star),
+                '(' => tokens.push(Token.LParen),
+                ')' => tokens.push(Token.RParen),
+                ' ' => {},
+                else => return Err(pos),
+            }
+        }
+        pos = pos + 1
+    }
+    if in_number {
+        tokens.push(Token.Num(number))
+    }
+    Ok(tokens)
+}
+
+fn token_text(t: Token): String {
+    match t {
+        Token.Num(n) => n.to_string(),
+        Token.Plus => String.from("+"),
+        Token.Minus => String.from("-"),
+        Token.Star => String.from("*"),
+        Token.LParen => String.from("("),
+        Token.RParen => String.from(")"),
+    }
+}
+
+fn main() {
+    match tokenize("12 + (3*45) - 6") {
+        Ok(tokens) => {
+            show(tokens.len() as i32)
+            let mut out = String.new()
+            for t in tokens {
+                out.push_str(token_text(t))
+                out.push_str("|")
+            }
+            println(out)
+        },
+        Err(_) => println("unexpected error"),
+    }
+    match tokenize("1 + x") {
+        Ok(_) => println("unexpected success"),
+        Err(pos) => {
+            let mut msg = String.from("bad char at ")
+            msg.push_str(pos.to_string())
+            println(msg)
+        },
+    }
+}

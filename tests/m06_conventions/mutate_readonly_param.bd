@@ -1,0 +1,14 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn bad(c: Counter) {
+    c.n = 5 //~ E0005
+}
+
+fn main() {
+    let c = Counter { n: 0 }
+    bad(c)
+}

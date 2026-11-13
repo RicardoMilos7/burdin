@@ -1,0 +1,19 @@
+//@ run
+//> hello
+//> yes
+//> no
+
+// String literals are static, so a function may return one whatever its parameters are.
+fn greeting(): str {
+    "hello"
+}
+
+fn pick(flag: bool): str {
+    if flag { "yes" } else { "no" }
+}
+
+fn main() {
+    println(greeting())
+    println(pick(true))
+    println(pick(false))
+}

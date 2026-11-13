@@ -1,0 +1,12 @@
+//@ compile-fail
+
+fn get(): Result<i32, i32> {
+    Ok(1)
+}
+
+fn f(): i32 {
+    let x = get()? //~ E0160
+    x
+}
+
+fn main() {}

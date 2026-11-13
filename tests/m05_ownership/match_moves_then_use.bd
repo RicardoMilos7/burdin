@@ -1,0 +1,21 @@
+//@ compile-fail
+
+struct Thing {
+    id: i32
+}
+
+enum Holder {
+    Full(Thing)
+    Empty
+}
+
+fn take(own t: Thing) {}
+
+fn main() {
+    let h = Holder.Full(Thing { id: 1 })
+    match h {
+        Holder.Full(t) => take(t),
+        Holder.Empty => {},
+    }
+    let again = h //~ E0100
+}

@@ -1,0 +1,35 @@
+//@ run
+//> 23
+//> 18
+//> 9
+//> 0
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn sum(xs: [i32]): i32 {
+    let mut total = 0
+    for x in xs {
+        total = total + x
+    }
+    total
+}
+
+fn largest(xs: [i32]): &i32 {
+    let mut best: usize = 0
+    for i in 1..xs.len() {
+        if xs[i] > xs[best] {
+            best = i
+        }
+    }
+    &xs[best]
+}
+
+fn main() {
+    let arr = [4, 9, 2, 7, 1]
+    show(sum(arr[0..5]))
+    show(sum(arr[1..4]))
+    show(*largest(arr[0..5]))
+    show(sum(arr[2..2]))          // empty slice
+}

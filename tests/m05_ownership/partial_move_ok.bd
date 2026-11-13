@@ -1,0 +1,33 @@
+//@ run
+//> moved a
+//> drop 1
+//> drop 2
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+// Pair has no Drop of its own, so one field can be moved out of it.
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let p = Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } }
+    let first = p.a
+    println("moved a")
+    // end of scope: `first` drops (declared last), then the remaining field p.b
+}

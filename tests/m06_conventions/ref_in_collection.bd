@@ -1,0 +1,5 @@
+//@ compile-fail
+
+fn main() {
+    let v: List<&i32> = List<&i32>.new() //~ E0120
+}

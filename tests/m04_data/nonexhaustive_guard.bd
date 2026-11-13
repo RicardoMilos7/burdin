@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// Arms with a guard do not count toward exhaustiveness.
+fn sign(n: i32): str {
+    match n { //~ E0006
+        x if x > 0 => "positive",
+        x if x <= 0 => "not positive",
+    }
+}
+
+fn main() {
+    println(sign(1))
+}

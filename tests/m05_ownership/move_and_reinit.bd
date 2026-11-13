@@ -1,0 +1,48 @@
+//@ run
+//> moved
+//> took 1
+//> drop 1
+//> after take
+//> reinit
+//> drop 4
+//> replaced
+//> drop 5
+//> drop 2
+//> drop 3
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn take(own n: Noisy) {
+    announce("took ", n.id)
+}
+
+fn main() {
+    let a = Noisy { id: 1 }
+    let b = a                     // a is moved: it is not dropped at the end
+    println("moved")
+    take(b)                       // the callee owns it and drops it
+    println("after take")
+
+    let mut c = Noisy { id: 2 }
+    let d = c                     // c is moved out
+    c = Noisy { id: 3 }           // re-initializing a moved binding drops nothing
+    println("reinit")
+
+    let mut e = Noisy { id: 4 }
+    e = Noisy { id: 5 }           // assigning over a live value drops the old one
+    println("replaced")
+}

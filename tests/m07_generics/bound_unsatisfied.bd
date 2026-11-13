@@ -1,0 +1,17 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Plain {
+    n: i32
+}
+
+fn report<T: Shape>(s: T) {
+    println(s.area().to_string())
+}
+
+fn main() {
+    report(Plain { n: 1 }) //~ E0141
+}

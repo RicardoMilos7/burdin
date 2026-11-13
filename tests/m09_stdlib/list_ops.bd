@@ -1,0 +1,67 @@
+//@ run
+//> 0
+//> 3
+//> 10
+//> 30
+//> 25
+//> 15
+//> 10
+//> 15
+//> 30
+//> 25
+//> true
+//> false
+//> 1
+//> 3
+//> 5
+//> 7
+//> 9
+//> 0
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    show(xs.len() as i32)
+    xs.push(10)
+    xs.push(20)
+    xs.push(30)
+    show(xs.len() as i32)
+    show(xs[0])
+    show(xs[2])
+    xs[1] = 25
+    show(xs[1])
+    xs.insert(1, 15)              // [10, 15, 25, 30]
+    show(xs[1])
+    let removed = xs.remove(0)    // [15, 25, 30]
+    show(removed)
+    show(xs[0])
+    match xs.pop() {              // [15, 25]
+        Some(v) => show(v),
+        None => println("empty"),
+    }
+    match xs.last() {
+        Some(v) => show(*v),
+        None => println("empty"),
+    }
+    show_bool(xs.contains(25))
+    show_bool(xs.contains(99))
+
+    let mut ys = List<i32>.new()
+    for v in [5, 3, 9, 1, 7] {
+        ys.push(v)
+    }
+    ys.sort()
+    for v in ys {
+        show(v)
+    }
+
+    xs.clear()
+    show(xs.len() as i32)
+}

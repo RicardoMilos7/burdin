@@ -1,0 +1,18 @@
+//@ compile-fail
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+fn name(c: Color): str {
+    match c { //~ E0006
+        Color.Red => "red",
+        Color.Green => "green",
+    }
+}
+
+fn main() {
+    println(name(Color.Red))
+}

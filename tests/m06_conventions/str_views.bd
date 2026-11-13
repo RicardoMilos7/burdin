@@ -1,0 +1,25 @@
+//@ run
+//> hello
+//> single
+//> x
+//> ab
+
+// Views returned from a function derive from exactly one parameter.
+fn first_word(s: str): str {
+    match s.find(' ') {
+        Some(i) => s[0..i],
+        None => s,
+    }
+}
+
+fn trim_one_space(s: str): str {
+    if s.starts_with(" ") { s[1..s.len()] } else { s }
+}
+
+fn main() {
+    let text = String.from("hello brave new world")
+    println(first_word(text))
+    println(first_word("single"))
+    println(trim_one_space(" x"))
+    println(first_word(trim_one_space(" ab cd")))
+}

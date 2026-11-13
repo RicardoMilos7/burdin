@@ -1,0 +1,13 @@
+//@ compile-fail
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let mut x = 1
+    let a = &x
+    let b = &mut x //~ E0111
+    *b = 2
+    show(*a)
+}

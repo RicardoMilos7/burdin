@@ -1,0 +1,25 @@
+//@ burdin-test passed=3 failed=1
+//@ failed-test: aborts
+
+// A real panic aborts the test process. The runner marks the running test as failed,
+// restarts the binary without it, and still runs the remaining tests.
+fn boom(): i32 {
+    panic("deliberate abort")
+}
+
+test "before" {
+    assert(true)?
+}
+
+test "aborts" {
+    let v = boom()
+    assert_eq(v, 0)?
+}
+
+test "after one" {
+    assert(true)?
+}
+
+test "after two" {
+    assert_eq(1 + 1, 2)?
+}

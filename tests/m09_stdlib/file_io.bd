@@ -1,0 +1,31 @@
+//@ run
+//> written
+//> 11
+//> alpha
+//> missing file is an error
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let path = "burdin_test_file_io.txt"
+    match write_file(path, "alpha\nbeta\n") {
+        Ok(_) => println("written"),
+        Err(_) => println("write failed"),
+    }
+    match read_to_string(path) {
+        Ok(text) => {
+            show(text.len() as i32)       // 11 bytes: no newline translation on Windows
+            match text.find('\n') {
+                Some(i) => println(text[0..i]),
+                None => println("no newline"),
+            }
+        },
+        Err(_) => println("read failed"),
+    }
+    match read_to_string("definitely_missing_file.bd") {
+        Ok(_) => println("unexpected"),
+        Err(_) => println("missing file is an error"),
+    }
+}

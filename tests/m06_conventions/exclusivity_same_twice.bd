@@ -1,0 +1,12 @@
+//@ compile-fail
+
+fn swap_vals(mut a: i32, mut b: i32) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn main() {
+    let mut x = 1
+    swap_vals(mut x, mut x) //~ E0110
+}

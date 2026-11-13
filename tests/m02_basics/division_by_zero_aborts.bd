@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: division by zero
+//> start
+
+fn zero(): i32 {
+    0
+}
+
+fn main() {
+    println("start")
+    let r = 10 / zero()
+    println(r.to_string())
+}

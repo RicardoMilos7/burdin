@@ -1,0 +1,26 @@
+//@ run
+//> 10
+//> 15
+//> 42
+
+struct Counter {
+    n: i32
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let mut x = 10
+    let r = &x
+    show(*r)
+    let m = &mut x                // r is not used again, so this is allowed
+    *m = *m + 5
+    show(x)
+
+    let mut s = Counter { n: 1 }
+    let rs = &mut s
+    rs.n = 42                     // field access goes through the reference
+    show(s.n)
+}

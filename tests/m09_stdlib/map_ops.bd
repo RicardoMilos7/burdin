@@ -1,0 +1,59 @@
+//@ run
+//> 2
+//> 111
+//> none
+//> true
+//> false
+//> 200
+//> 1
+//> 51
+//> 1336
+//> 1726
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 100)
+    m.insert(2, 200)
+    m.insert(1, 111)              // replaces the value for key 1
+    show(m.len() as i32)
+
+    match m.get(1) {
+        Some(v) => show(*v),
+        None => println("none"),
+    }
+    match m.get(5) {
+        Some(v) => show(*v),
+        None => println("none"),
+    }
+    show_bool(m.contains_key(2))
+    show_bool(m.contains_key(3))
+    match m.remove(2) {
+        Some(v) => show(v),
+        None => println("none"),
+    }
+    show(m.len() as i32)
+
+    // enough inserts to force the table to grow
+    for k in 0..50 {
+        m.insert(k + 10, k)
+    }
+    show(m.len() as i32)
+
+    // iteration order is not specified, so only order-independent results are checked
+    let mut value_sum = 0
+    let mut key_sum = 0
+    for (k, v) in m {
+        key_sum = key_sum + k
+        value_sum = value_sum + v
+    }
+    show(value_sum)
+    show(key_sum)
+}

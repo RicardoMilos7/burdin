@@ -1,0 +1,52 @@
+//@ run
+//> true
+//> true
+//> true
+//> true
+//> true
+//> 0
+//> 0
+//> true
+//> true
+//> true
+//> false
+
+struct Version derives (Copy, Clone, Eq, Ord, Hash, Default) {
+    major: i32
+    minor: i32
+}
+
+// Variants compare in declaration order.
+enum Level derives (Copy, Clone, Eq, Ord) {
+    Low
+    Mid
+    High
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn main() {
+    let a = Version { major: 1, minor: 2 }
+    let b = Version { major: 1, minor: 10 }
+    let c = a.clone()
+    show_bool(a == c)
+    show_bool(a != b)
+    show_bool(a < b)                  // fields compare in order: minor 2 < 10
+    show_bool(b > a)
+    let d = Version { major: 2, minor: 0 }
+    show_bool(d > b)                  // the first field dominates
+    let z = Version.default()
+    show(z.major)
+    show(z.minor)
+    show_bool(a.hash() == c.hash())   // equal values hash equally
+
+    show_bool(Level.Low < Level.High)
+    show_bool(Level.Mid == Level.Mid)
+    show_bool(Level.High < Level.Mid)
+}

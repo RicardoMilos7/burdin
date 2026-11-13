@@ -1,0 +1,45 @@
+//@ run
+//> 2
+//> 1
+//> 6
+//> 12
+
+struct Counter {
+    n: i32
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn swap_vals(mut a: i32, mut b: i32) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn add_to(mut c: Counter, amount: i32) {
+    c.n = c.n + amount
+}
+
+fn sum2(a: Counter, b: Counter): i32 {
+    a.n + b.n
+}
+
+fn main() {
+    // two different values can both be passed as mut
+    let mut x = 1
+    let mut y = 2
+    swap_vals(mut x, mut y)
+    show(x)
+    show(y)
+
+    // reading into a local first avoids the overlap
+    let mut c = Counter { n: 3 }
+    let before = c.n
+    add_to(mut c, before)
+    show(c.n)
+
+    // the same value may be passed to several read-only parameters
+    show(sum2(c, c))
+}

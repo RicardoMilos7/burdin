@@ -1,0 +1,9 @@
+//@ compile-fail
+
+extern "C" {
+    fn abs(x: i32): i32
+}
+
+fn main() {
+    let n = abs(-5) //~ E0161
+}

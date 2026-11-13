@@ -1,0 +1,75 @@
+//@ run
+//> brown: 1
+//> dog: 1
+//> end: 1
+//> fox: 1
+//> jumps: 1
+//> lazy: 1
+//> over: 1
+//> quick: 1
+//> the: 3
+
+fn bump(mut counts: Map<String, i32>, own word: String) {
+    let current = match counts.get(word) {
+        Some(c) => *c,
+        None => 0,
+    }
+    counts.insert(word, current + 1)
+}
+
+fn count_words(text: str): Map<String, i32> {
+    let mut counts = Map<String, i32>.new()
+    let mut word = String.new()
+    for c in text.chars() {
+        if c == ' ' || c == '\n' {
+            if word.len() > 0 {
+                bump(mut counts, word)
+                word = String.new()
+            }
+        } else {
+            word.push(c)
+        }
+    }
+    if word.len() > 0 {
+        bump(mut counts, word)
+    }
+    counts
+}
+
+fn main() {
+    let path = "burdin_word_count.txt"
+    match write_file(path, "the quick brown fox jumps over the lazy dog the end\n") {
+        Ok(_) => {},
+        Err(_) => {
+            println("write failed")
+            return
+        },
+    }
+    let content = match read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => {
+            println("read failed")
+            return
+        },
+    }
+
+    let counts = count_words(content)
+
+    // map order is unspecified, so sort the keys before printing
+    let mut keys = List<String>.new()
+    for (k, v) in counts {
+        keys.push(k.clone())
+    }
+    keys.sort()
+    for key in keys {
+        let n = match counts.get(key) {
+            Some(c) => *c,
+            None => 0,
+        }
+        let mut line = String.new()
+        line.push_str(key)
+        line.push_str(": ")
+        line.push_str(n.to_string())
+        println(line)
+    }
+}

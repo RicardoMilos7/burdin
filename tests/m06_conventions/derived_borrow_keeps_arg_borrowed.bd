@@ -1,0 +1,23 @@
+//@ compile-fail
+
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+// The returned reference derives from the argument, so the argument stays
+// borrowed for as long as the reference is used.
+fn main() {
+    let mut p = Pair { a: 1, b: 2 }
+    let r = first_of(p)
+    p.a = 5 //~ E0111
+    show(*r)
+}

@@ -1,0 +1,7 @@
+//@ compile-fail
+
+struct Holder {
+    r: &i32 //~ E0120
+}
+
+fn main() {}

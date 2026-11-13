@@ -1,0 +1,10 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+// An owned parameter is dropped when the function returns, so nothing can borrow from it.
+fn make(own c: Counter): &i32 { &c.n } //~ E0122
+
+fn main() {}

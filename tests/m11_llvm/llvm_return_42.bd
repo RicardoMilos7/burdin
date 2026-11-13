@@ -1,0 +1,67 @@
+//@ run
+//@ link-lib: LLVM-C
+//> module verified
+//> found ret
+
+// Builds `define i32 @answer() { ret i32 42 }` through the LLVM C API, verifies it,
+// and prints the IR text. This is the first step of the stage 1 compiler's backend.
+// (Emitting an object file and linking it are later steps: the target initialization
+// functions are architecture-specific and are added once the compiler can run this.)
+
+type Handle = CPtr<CVoid>
+
+extern "C" {
+    fn LLVMContextCreate(): Handle
+    fn LLVMModuleCreateWithNameInContext(name: CPtr<CChar>, ctx: Handle): Handle
+    fn LLVMInt32TypeInContext(ctx: Handle): Handle
+    fn LLVMFunctionType(ret: Handle, params: CPtr<Handle>, count: u32, vararg: i32): Handle
+    fn LLVMAddFunction(module: Handle, name: CPtr<CChar>, ty: Handle): Handle
+    fn LLVMAppendBasicBlockInContext(ctx: Handle, func: Handle, name: CPtr<CChar>): Handle
+    fn LLVMCreateBuilderInContext(ctx: Handle): Handle
+    fn LLVMPositionBuilderAtEnd(builder: Handle, block: Handle)
+    fn LLVMConstInt(ty: Handle, value: u64, signed: i32): Handle
+    fn LLVMBuildRet(builder: Handle, value: Handle): Handle
+    fn LLVMVerifyModule(module: Handle, action: i32, out_message: CPtr<CPtr<CChar>>): i32
+    fn LLVMPrintModuleToString(module: Handle): CPtr<CChar>
+    fn LLVMDisposeMessage(message: CPtr<CChar>)
+    fn LLVMDisposeBuilder(builder: Handle)
+    fn LLVMDisposeModule(module: Handle)
+    fn LLVMContextDispose(ctx: Handle)
+}
+
+fn main() {
+    let module_name = CString.from("burdin_test")
+    let func_name = CString.from("answer")
+    let block_name = CString.from("entry")
+
+    unsafe {
+        let ctx = LLVMContextCreate()
+        let module = LLVMModuleCreateWithNameInContext(module_name.as_ptr(), ctx)
+        let i32_type = LLVMInt32TypeInContext(ctx)
+        let fn_type = LLVMFunctionType(i32_type, CPtr.null(), 0, 0)
+        let func = LLVMAddFunction(module, func_name.as_ptr(), fn_type)
+        let block = LLVMAppendBasicBlockInContext(ctx, func, block_name.as_ptr())
+        let builder = LLVMCreateBuilderInContext(ctx)
+        LLVMPositionBuilderAtEnd(builder, block)
+        LLVMBuildRet(builder, LLVMConstInt(i32_type, 42, 0))
+
+        // action 2 = LLVMReturnStatusAction: returns 0 when the module is valid
+        if LLVMVerifyModule(module, 2, CPtr.null()) == 0 {
+            println("module verified")
+        } else {
+            println("module invalid")
+        }
+
+        let ir = LLVMPrintModuleToString(module)
+        let text = CStr.to_string(ir)
+        match text.find_str("ret i32 42") {
+            Some(_) => println("found ret"),
+            None => println("ret missing"),
+        }
+
+        LLVMDisposeMessage(ir)
+        LLVMDisposeBuilder(builder)
+        LLVMDisposeModule(module)
+        LLVMContextDispose(ctx)
+    }
+}

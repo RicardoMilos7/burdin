@@ -1,0 +1,72 @@
+//@ run
+//> hello, world
+//> 12
+//> true
+//> false
+//> 5
+//> world
+//> hello, world
+//> hello, world!
+//> a
+//> b
+//> c
+//> 124
+//> -1
+//> true
+//> false
+//> xy
+//> 6
+//> 5
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn main() {
+    let mut s = String.from("hello")
+    s.push_str(", ")
+    s.push_str("world")
+    println(s)
+    show(s.len() as i32)
+    show_bool(s.starts_with("hello"))
+    show_bool(s.starts_with("world"))
+    match s.find(',') {
+        Some(i) => show(i as i32),
+        None => println("none"),
+    }
+    println(s[7..12])
+
+    let t = s.clone()
+    s.push_str("!")
+    println(t)
+    println(s)
+
+    for c in "abc".chars() {
+        println(c.to_string())
+    }
+
+    let n = i32.parse("123") orelse 0
+    show(n + 1)
+    let bad = i32.parse("12x") orelse -1
+    show(bad)
+
+    show_bool("abc" == "abc")
+    show_bool(s == t)
+
+    let mut u = String.new()
+    u.push('x')
+    u.push('y')
+    println(u)
+
+    // len counts bytes, chars() counts characters: é takes two bytes
+    show("héllo".len() as i32)
+    let mut count = 0
+    for _ in "héllo".chars() {
+        count = count + 1
+    }
+    show(count)
+}

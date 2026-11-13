@@ -1,0 +1,28 @@
+//@ run
+//> 1
+//> 9
+
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+// The result derives from exactly one parameter, so no annotations are needed.
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+fn first_mut(mut p: Pair): &mut i32 {
+    &mut p.a
+}
+
+fn main() {
+    let mut p = Pair { a: 1, b: 2 }
+    show(*first_of(p))
+    *first_mut(mut p) = 9
+    show(p.a)
+}

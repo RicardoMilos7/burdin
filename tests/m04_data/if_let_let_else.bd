@@ -1,0 +1,33 @@
+//@ run
+//> 8
+//> none
+//> 8
+//> -1
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn first_even(a: i32, b: i32): Option<i32> {
+    if a % 2 == 0 { Some(a) } else if b % 2 == 0 { Some(b) } else { None }
+}
+
+fn double_even(a: i32, b: i32): i32 {
+    let Some(v) = first_even(a, b) else { return -1 }
+    v * 2
+}
+
+fn main() {
+    if let Some(v) = first_even(3, 8) {
+        show(v)
+    } else {
+        println("none")
+    }
+    if let Some(v) = first_even(3, 5) {
+        show(v)
+    } else {
+        println("none")
+    }
+    show(double_even(4, 1))
+    show(double_even(1, 3))
+}

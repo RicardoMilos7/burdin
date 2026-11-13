@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// Both the interface (From) and the type (String) come from std, so this
+// package may not implement one for the other.
+String: From<i32> { //~ E0142
+    fn from(n: i32): String { n.to_string() }
+}
+
+fn main() {}

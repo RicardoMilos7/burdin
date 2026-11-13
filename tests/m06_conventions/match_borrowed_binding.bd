@@ -1,0 +1,25 @@
+//@ run
+//> ann
+//> anonymous
+
+// `describe` only borrows its argument, so the binding `name` is a read-only view of the
+// String inside it (it cannot be moved out), and the returned str derives from `e` alone.
+
+enum Entry {
+    Named(String)
+    Anonymous(i32)
+}
+
+fn describe(e: Entry): str {
+    match e {
+        Entry.Named(name) => name.as_str(),
+        Entry.Anonymous(_) => "anonymous",
+    }
+}
+
+fn main() {
+    let a = Entry.Named(String.from("ann"))
+    let b = Entry.Anonymous(7)
+    println(describe(a))
+    println(describe(b))
+}

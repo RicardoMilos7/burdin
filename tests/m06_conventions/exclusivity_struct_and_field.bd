@@ -1,0 +1,16 @@
+//@ compile-fail
+
+struct Pair {
+    a: i32
+    b: i32
+}
+
+// The whole struct and one of its fields overlap.
+fn touch(mut whole: Pair, mut part: i32) {
+    part = 0
+}
+
+fn main() {
+    let mut p = Pair { a: 1, b: 2 }
+    touch(mut p, mut p.a) //~ E0110
+}

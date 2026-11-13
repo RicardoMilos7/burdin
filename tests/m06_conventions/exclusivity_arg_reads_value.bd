@@ -1,0 +1,14 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn add_to(mut c: Counter, amount: i32) {
+    c.n = c.n + amount
+}
+
+fn main() {
+    let mut c = Counter { n: 1 }
+    add_to(mut c, c.n) //~ E0110
+}

@@ -1,0 +1,20 @@
+//@ compile-fail
+
+interface Named {
+    fn name(self): str
+}
+
+interface Greeter requires Named {
+    fn greeting(self): str
+}
+
+struct Person {
+    id: i32
+}
+
+// Person never implements Named, which Greeter requires.
+Person: Greeter { //~ E0141
+    fn greeting(self): str { "hi" }
+}
+
+fn main() {}

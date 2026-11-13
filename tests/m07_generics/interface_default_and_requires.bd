@@ -1,0 +1,51 @@
+//@ run
+//> hello, ann
+//> ann
+//> beep
+//> r2
+
+interface Named {
+    fn name(self): str
+}
+
+// Greeter requires Named, so its default method can call name().
+interface Greeter requires Named {
+    fn greeting(self): String {
+        let mut s = String.from("hello, ")
+        s.push_str(self.name())
+        s
+    }
+}
+
+struct Person {
+    id: i32
+}
+
+struct Robot {
+    id: i32
+}
+
+Person: Named {
+    fn name(self): str { "ann" }
+}
+
+Person: Greeter {}                // uses the default method
+
+Robot: Named {
+    fn name(self): str { "r2" }
+}
+
+Robot: Greeter {
+    fn greeting(self): String { String.from("beep") }   // overrides the default
+}
+
+// A Greeter bound also provides the methods of Named.
+fn greet<T: Greeter>(t: T) {
+    println(t.greeting())
+    println(t.name())
+}
+
+fn main() {
+    greet(Person { id: 1 })
+    greet(Robot { id: 2 })
+}

@@ -1,0 +1,40 @@
+//@ run
+//> 7
+//> drop 7
+//> after statement
+//> drop 8
+//> after let
+//> 8
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn make(id: i32): Noisy {
+    Noisy { id }
+}
+
+fn main() {
+    // a temporary is dropped at the end of the statement that created it
+    show(make(7).id)
+    println("after statement")
+    let n = make(8).id
+    println("after let")
+    show(n)
+}

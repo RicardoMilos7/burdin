@@ -1,0 +1,8 @@
+//@ compile-fail
+
+fn make(): str {
+    let s = String.from("hi")
+    s.as_str() //~ E0122
+}
+
+fn main() {}

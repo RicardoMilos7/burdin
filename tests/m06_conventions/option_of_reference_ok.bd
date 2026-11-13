@@ -1,0 +1,30 @@
+//@ run
+//> 20
+//> none
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+// Option<&i32> is a second-class type: fine as a local, a parameter, or a return type.
+fn first_big(xs: [i32]): Option<&i32> {
+    for i in 0..xs.len() {
+        if xs[i] > 10 {
+            return Some(&xs[i])
+        }
+    }
+    None
+}
+
+fn main() {
+    let arr = [1, 20, 3]
+    match first_big(arr[0..3]) {
+        Some(v) => show(*v),
+        None => println("none"),
+    }
+    let small = [1, 2]
+    match first_big(small[0..2]) {
+        Some(v) => show(*v),
+        None => println("none"),
+    }
+}

@@ -1,0 +1,32 @@
+//@ run
+//> 14
+//> 20
+//> 3
+//> 1
+//> -3
+//> -1
+//> 2
+//> 7
+//> 5
+//> 16
+//> 64
+//> 7
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    show(2 + 3 * 4)
+    show((2 + 3) * 4)
+    show(10 / 3)
+    show(10 % 3)
+    show(-7 / 2)      // division truncates toward zero
+    show(-7 % 2)      // remainder takes the sign of the dividend
+    show(6 & 3)
+    show(6 | 3)
+    show(6 ^ 3)
+    show(1 << 4)
+    show(256 >> 2)
+    show(-(-7))
+}

@@ -1,0 +1,101 @@
+//@ run
+//> ok
+//> empty
+//> not a number
+//> too big
+//> 5
+//> -1
+//> drop 1
+//> failed
+//> drop 1
+//> ok
+
+enum ParseError {
+    Empty
+    NotNumber
+}
+
+enum AppError {
+    Parse(ParseError)
+    TooBig(i32)
+}
+
+// `?` converts the error type through From.
+AppError: From<ParseError> {
+    fn from(e: ParseError): AppError { AppError.Parse(e) }
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn parse_num(s: str): Result<i32, ParseError> {
+    if s.len() == 0 { return Err(ParseError.Empty) }
+    match i32.parse(s) {
+        Ok(n) => Ok(n),
+        Err(_) => Err(ParseError.NotNumber),
+    }
+}
+
+fn checked_num(s: str): Result<i32, AppError> {
+    let n = parse_num(s)?
+    if n > 100 { return Err(AppError.TooBig(n)) }
+    Ok(n)
+}
+
+fn describe(r: Result<i32, AppError>): str {
+    match r {
+        Ok(_) => "ok",
+        Err(AppError.Parse(ParseError.Empty)) => "empty",
+        Err(AppError.Parse(ParseError.NotNumber)) => "not a number",
+        Err(AppError.TooBig(_)) => "too big",
+    }
+}
+
+fn add_options(a: Option<i32>, b: Option<i32>): Option<i32> {
+    let x = a?
+    let y = b?
+    Some(x + y)
+}
+
+// An early return through `?` still drops everything that is alive.
+fn with_cleanup(fail: bool): Result<i32, ParseError> {
+    let _g = Noisy { id: 1 }
+    let n = if fail { parse_num("")? } else { 5 }
+    Ok(n)
+}
+
+fn main() {
+    println(describe(checked_num("42")))
+    println(describe(checked_num("")))
+    println(describe(checked_num("abc")))
+    println(describe(checked_num("500")))
+
+    show(add_options(Some(2), Some(3)) orelse -1)
+    show(add_options(Some(2), None) orelse -1)
+
+    match with_cleanup(true) {
+        Err(_) => println("failed"),
+        Ok(_) => println("ok"),
+    }
+    match with_cleanup(false) {
+        Err(_) => println("failed"),
+        Ok(_) => println("ok"),
+    }
+}

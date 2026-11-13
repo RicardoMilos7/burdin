@@ -1,0 +1,45 @@
+//@ run
+//> 255
+//> 44
+//> 255
+//> 3
+//> -3
+//> 35
+//> -128
+//> none
+//> 127
+//> -1294967296
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let a: u8 = 255
+    show(a as i32)
+    let b: i32 = 300
+    show((b as u8) as i32)          // keeps the low 8 bits
+    let c: i32 = -1
+    show((c as u8) as i32)
+    let d: f64 = 3.99
+    show(d as i32)                  // float to int truncates toward zero
+    let h: f64 = -3.99
+    show(h as i32)
+    let e: i32 = 7
+    let f = e as f64 / 2.0
+    show((f * 10.0) as i32)
+
+    let g: i8 = 127
+    show(g.wrapping_add(1) as i32)
+    match g.checked_add(1) {
+        Some(_) => println("some"),
+        None => println("none"),
+    }
+    match g.checked_add(0) {
+        Some(v) => show(v as i32),
+        None => println("none"),
+    }
+
+    let big: i64 = 3000000000
+    show(big as i32)
+}

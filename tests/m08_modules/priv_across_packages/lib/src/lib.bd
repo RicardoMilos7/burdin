@@ -1,0 +1,16 @@
+fn visible(): i32 {
+    1
+}
+
+priv fn hidden(): i32 {
+    2
+}
+
+struct Gadget {
+    id: i32
+    priv secret: i32
+}
+
+Gadget {
+    fn new(id: i32): Gadget { Gadget { id, secret: 0 } }
+}

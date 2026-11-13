@@ -1,0 +1,7 @@
+//@ compile-fail
+
+fn f(): i32 { "text" } //~ E0003
+
+fn main() {
+    let n = f()
+}

@@ -1,0 +1,13 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+// A read-only parameter is only borrowed, so it cannot be returned by value.
+fn take_it(c: Counter): Counter { c } //~ E0101
+
+fn main() {
+    let c = Counter { n: 0 }
+    let d = take_it(c)
+}

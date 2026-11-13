@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Generic bodies are checked against the declared bounds, not against the
+// types they are later instantiated with.
+fn bigger<T>(a: T, b: T): bool {
+    a > b //~ E0141
+}
+
+fn main() {
+    let r = bigger(1, 2)
+}

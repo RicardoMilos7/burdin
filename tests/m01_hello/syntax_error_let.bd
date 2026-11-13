@@ -1,0 +1,5 @@
+//@ compile-fail
+
+fn main() {
+    let = 5 //~ E0001
+}

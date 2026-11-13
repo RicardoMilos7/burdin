@@ -1,0 +1,57 @@
+//@ run
+//> drop 2
+//> drop 1
+//> -1
+//> --
+//> work done
+//> drop 3
+//> drop 1
+//> 0
+//> loop
+//> drop 10
+//> drop 11
+//> loop done
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn work(fail: bool): i32 {
+    let _a = Noisy { id: 1 }
+    if fail {
+        let _b = Noisy { id: 2 }
+        return -1
+    }
+    let _c = Noisy { id: 3 }
+    println("work done")
+    0
+}
+
+fn main() {
+    show(work(true))
+    println("--")
+    show(work(false))
+
+    println("loop")
+    for i in 0..3 {
+        let _n = Noisy { id: 10 + i }
+        if i == 1 { break }
+    }
+    println("loop done")
+}

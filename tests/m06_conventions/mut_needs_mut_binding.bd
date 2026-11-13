@@ -1,0 +1,14 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn bump(mut c: Counter) {
+    c.n = c.n + 1
+}
+
+fn main() {
+    let c = Counter { n: 0 }
+    bump(mut c) //~ E0113
+}

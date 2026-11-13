@@ -1,0 +1,17 @@
+//@ run
+//> one
+//> two
+//> three
+
+/// A doc comment on a function.
+fn say(text: str) {
+    println(text) // trailing comment
+}
+
+/* block comment
+   spanning several lines */
+fn main() {
+    say("one")
+    /* inline block comment */ say("two")
+    say("three")
+}

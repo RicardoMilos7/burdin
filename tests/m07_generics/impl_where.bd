@@ -1,0 +1,35 @@
+//@ run
+//> wrapper(5)
+//> wrapper(wrapper(1))
+
+interface Describe {
+    fn describe(self): String
+}
+
+struct Wrapper<T> {
+    inner: T
+}
+
+struct Num {
+    n: i32
+}
+
+Num: Describe {
+    fn describe(self): String { self.n.to_string() }
+}
+
+Wrapper<T>: Describe where T: Describe {
+    fn describe(self): String {
+        let mut s = String.from("wrapper(")
+        s.push_str(self.inner.describe())
+        s.push_str(")")
+        s
+    }
+}
+
+fn main() {
+    let w = Wrapper { inner: Num { n: 5 } }
+    println(w.describe())
+    let ww = Wrapper { inner: Wrapper { inner: Num { n: 1 } } }
+    println(ww.describe())
+}

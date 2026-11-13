@@ -1,0 +1,21 @@
+//@ run
+//> 5
+//> 11
+
+extern "C" {
+    fn abs(x: i32): i32
+    fn strlen(s: CPtr<CChar>): CSize
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let n = unsafe { abs(-5) }
+    show(n)
+
+    let text = CString.from("hello world")
+    let len = unsafe { strlen(text.as_ptr()) }
+    show(len as i32)
+}

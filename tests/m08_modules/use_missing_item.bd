@@ -1,0 +1,5 @@
+//@ compile-fail
+
+use nothing.here //~ E0002
+
+fn main() {}

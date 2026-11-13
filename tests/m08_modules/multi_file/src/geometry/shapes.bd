@@ -1,0 +1,11 @@
+struct Square {
+    side: i32
+}
+
+fn area(s: Square): i32 {
+    s.side * s.side
+}
+
+Square {
+    fn label(self): str { "square" }
+}

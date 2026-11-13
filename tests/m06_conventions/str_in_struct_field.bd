@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A str is a view, so a parser cannot hold its input; it stores offsets instead.
+struct Parser {
+    input: str //~ E0120
+    pos: usize
+}
+
+fn main() {}

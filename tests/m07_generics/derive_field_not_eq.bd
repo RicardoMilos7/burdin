@@ -1,0 +1,12 @@
+//@ compile-fail
+
+struct NoEq {
+    n: i32
+}
+
+struct Holder derives (Eq) {
+    a: i32
+    b: NoEq //~ E0130
+}
+
+fn main() {}

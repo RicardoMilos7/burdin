@@ -1,0 +1,13 @@
+//@ compile-fail
+
+struct Bad derives (Copy, Clone) { //~ E0130
+    n: i32
+}
+
+Bad: Drop {
+    fn drop(mut self) {}
+}
+
+fn main() {
+    let b = Bad { n: 1 }
+}

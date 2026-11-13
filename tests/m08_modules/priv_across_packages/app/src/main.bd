@@ -1,0 +1,10 @@
+//@ compile-fail
+
+use lib.{visible, hidden, Gadget} //~ E0150
+
+fn main() {
+    let g = Gadget.new(1)
+    let a = g.id                              // public field: allowed
+    let b = g.secret //~ E0150
+    let c = Gadget { id: 1, secret: 2 } //~ E0150
+}

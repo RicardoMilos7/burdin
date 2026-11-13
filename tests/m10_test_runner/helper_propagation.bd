@@ -1,0 +1,16 @@
+//@ burdin-test passed=1 failed=1
+//@ failed-test: helper fails
+
+// Asserts inside a helper propagate through the helper's Result with `?`.
+fn check_positive(n: i32): Result<(), AssertError> {
+    assert(n > 0)?
+    Ok(())
+}
+
+test "helper ok" {
+    check_positive(5)?
+}
+
+test "helper fails" {
+    check_positive(-5)?
+}

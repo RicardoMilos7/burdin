@@ -1,0 +1,27 @@
+//@ run
+//> shadowed
+//> drop 2
+//> drop 1
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    // shadowing does not drop the old value; both live until the end of the scope
+    let _a = Noisy { id: 1 }
+    let _a = Noisy { id: 2 }
+    println("shadowed")
+}

@@ -1,0 +1,12 @@
+//@ compile-fail
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let mut x = 1
+    let r = &x
+    x = 5 //~ E0111
+    show(*r)
+}

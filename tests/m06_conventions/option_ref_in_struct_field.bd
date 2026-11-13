@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A type that contains a reference is second-class, so it cannot be a field either.
+struct Holder {
+    o: Option<&i32> //~ E0120
+}
+
+fn main() {}

@@ -1,0 +1,18 @@
+//@ compile-fail
+
+struct Thing {
+    id: i32
+}
+
+struct Holder {
+    inner: Thing
+}
+
+Holder: Drop {
+    fn drop(mut self) {}
+}
+
+fn main() {
+    let h = Holder { inner: Thing { id: 1 } }
+    let t = h.inner //~ E0103
+}

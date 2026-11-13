@@ -1,0 +1,76 @@
+//@ run
+//> negative
+//> zero
+//> small
+//> medium
+//> ten
+//> large
+//> 30
+//> 5
+//> origin
+//> y-axis
+//> x-axis
+//> plane
+//> some zero
+//> some big
+//> some
+//> none
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn describe(n: i32): str {
+    match n {
+        0 => "zero",
+        1 | 2 | 3 => "small",
+        4..=9 => "medium",
+        x if x < 0 => "negative",
+        10 => "ten",
+        else => "large",
+    }
+}
+
+fn at_binding(n: i32): i32 {
+    match n {
+        v @ 10..=20 => v * 2,
+        else => n,
+    }
+}
+
+fn where_is(x: i32, y: i32): str {
+    match (x, y) {
+        (0, 0) => "origin",
+        (0, _) => "y-axis",
+        (_, 0) => "x-axis",
+        else => "plane",
+    }
+}
+
+fn opt_name(o: Option<i32>): str {
+    match o {
+        Some(0) => "some zero",
+        Some(n) if n > 100 => "some big",
+        Some(_) => "some",
+        None => "none",
+    }
+}
+
+fn main() {
+    println(describe(-5))
+    println(describe(0))
+    println(describe(2))
+    println(describe(7))
+    println(describe(10))
+    println(describe(99))
+    show(at_binding(15))
+    show(at_binding(5))
+    println(where_is(0, 0))
+    println(where_is(0, 3))
+    println(where_is(4, 0))
+    println(where_is(2, 2))
+    println(opt_name(Some(0)))
+    println(opt_name(Some(500)))
+    println(opt_name(Some(7)))
+    println(opt_name(None))
+}

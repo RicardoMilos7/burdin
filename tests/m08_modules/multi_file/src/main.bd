@@ -1,0 +1,21 @@
+//@ run
+//> 7
+//> 12
+//> 16
+//> square
+
+use math.{add, mul}
+use geometry.shapes as sh
+use geometry.shapes.{Square}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    show(add(3, 4))
+    show(mul(3, 4))
+    let s = Square { side: 4 }
+    show(sh.area(s))              // module-qualified call through the alias
+    println(s.label())
+}

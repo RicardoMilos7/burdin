@@ -1,0 +1,35 @@
+//@ run
+//> in callee
+//> drop 2
+//> drop 1
+//> drop 3
+//> after underscore
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+// An owned parameter is dropped at the end of the call, after the locals,
+// and the parameters go in reverse order of declaration.
+fn consume_two(own a: Noisy, own b: Noisy) {
+    println("in callee")
+}
+
+fn main() {
+    consume_two(Noisy { id: 1 }, Noisy { id: 2 })
+    // `_` does not bind, so the value is a temporary dropped at the end of the statement
+    let _ = Noisy { id: 3 }
+    println("after underscore")
+}

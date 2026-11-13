@@ -1,0 +1,12 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+// An owned parameter is an immutable binding. To change it, rebind it: `let mut c = c`.
+fn bad(own c: Counter) {
+    c.n = 5 //~ E0005
+}
+
+fn main() {}

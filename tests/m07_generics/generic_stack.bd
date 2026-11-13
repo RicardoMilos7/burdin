@@ -1,0 +1,68 @@
+//@ run
+//> 3
+//> 3
+//> 2
+//> 1
+//> true
+
+// A persistent stack: pushing consumes the old stack and returns the new one.
+enum Stack<T> {
+    Empty
+    Node(T, Heap<Stack<T>>)
+}
+
+Stack<T> {
+    fn new(): Stack<T> { Stack.Empty }
+
+    fn push(own self, value: T): Stack<T> {
+        Stack.Node(value, Heap.new(self))
+    }
+
+    fn is_empty(self): bool {
+        match self {
+            Stack.Empty => true,
+            Stack.Node(_, _) => false,
+        }
+    }
+
+    fn len(self): i32 {
+        match self {
+            Stack.Empty => 0,
+            Stack.Node(_, rest) => 1 + (*rest).len(),
+        }
+    }
+
+    fn pop(own self): Option<(T, Stack<T>)> {
+        match self {
+            Stack.Empty => None,
+            Stack.Node(v, rest) => Some((v, *rest)),
+        }
+    }
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn main() {
+    let s = Stack<i32>.new()
+    let s = s.push(1)
+    let s = s.push(2)
+    let s = s.push(3)
+    show(s.len())
+    match s.pop() {
+        Some((v, rest)) => {
+            show(v)
+            show(rest.len())
+        },
+        None => println("empty"),
+    }
+
+    let t = Stack<bool>.new().push(true)
+    show(t.len())
+    show_bool(Stack<i32>.new().is_empty())
+}

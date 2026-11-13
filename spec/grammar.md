@@ -1,0 +1,260 @@
+# Burdin grammar (stage 0)
+
+This is the grammar the stage 0 compiler must accept. It covers exactly the stage 0 subset. It is derived from the
+conformance tests in `tests/`, so every construct below is used by at least one test, and every construct those tests
+use is here. Features deferred to stage 1 (closures, string interpolation, `any`/`impl` types, `error` declarations,
+comptime, derive declarations, default and named arguments, extension methods, tasks) are reserved but not parsed.
+
+Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
+`NL` means a newline between two tokens (see Newlines).
+
+## 1. Lexical structure
+
+Source files are UTF-8. Line endings may be `\n` or `\r\n`.
+
+**Comments** are ignored: `// ...` to the end of the line (including `///` and the test directives `//@`, `//>`, `//~`),
+and `/* ... */` (block comments do not nest).
+
+**Identifiers**: `[A-Za-z_][A-Za-z0-9_]*`, ASCII only. The single underscore `_` is the wildcard token, not an identifier.
+
+**Keywords** (reserved):
+
+```
+as  break  const  continue  else  enum  extern  false  fn  for  if  in  interface  let  loop  match
+mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
+```
+
+Reserved for stage 1, rejected as identifiers now: `any  comptime  derive  impl`.
+
+Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
+by a string), `derives` (after a struct or enum name), `requires` (after an interface name).
+
+**Integer literals**: decimal `123`, hex `0xFF`, octal `0o17`, binary `0b1010`, with `_` allowed between digits. No suffixes;
+the type comes from context or defaults to `i32`. A leading `-` is the unary operator, not part of the literal.
+
+**Float literals**: digits `.` digits with an optional exponent (`2.5`, `3.99`, `1.0e3`), and digits with an exponent (`1e3`).
+A `.` must be followed by a digit to make a float, so `0..3` is `0`, `..`, `3`, and `t.0.1` is `t`, `.`, `0`, `.`, `1`:
+immediately after a `.` token, a numeric literal is lexed as plain digits.
+
+**Char literals**: `'x'`, with escapes `\n \r \t \\ \' \0`. One Unicode scalar value.
+
+**String literals**: `"..."` with escapes `\n \r \t \\ \" \0`, and raw newlines allowed inside. There is no interpolation in
+stage 0: `{` and `}` are ordinary characters.
+
+**Punctuation and operators**:
+
+```
+(  )  [  ]  {  }  ,  :  ;  .  ..  ..=  =>  @  ?  =
++  -  *  /  %  &  |  ^  <<  >>  !  &&  ||  ==  !=  <  >  <=  >=
+```
+
+When the parser is inside generic arguments or parameters and meets `>>`, `>=`, or `>>=`, it splits the token so the first
+`>` closes the list (`CPtr<CPtr<CChar>>`, `Result<List<Token>, i32>`).
+
+## 2. Newlines
+
+There are no statement terminators. Each token records whether a line break comes before it.
+
+1. **Inside `(...)` and `[...]`** newlines are ignored. A `{` that starts a block, struct body, or match turns newline
+   handling back on until its matching `}`.
+2. **A statement ends** where its expression cannot continue. After a complete expression, the next token continues it only
+   if it is on the same line, or if it starts with one of: `.`, `?`, `else`, `orelse`, `as`, `&&`, `||`.
+   So a call's `(` or an index `[` must be on the same line as the callee, and a line starting with `-`, `*`, `&`, `(` or `[`
+   starts a new statement.
+3. **After a binary operator, `=`, `,`, `.`, `:`, `=>`, or an opening bracket**, the expression necessarily continues on the next line.
+4. **Lists inside braces** (struct fields, enum variants, struct-literal fields, match arms, interface and extern items)
+   are separated by `,` or by a line break. A trailing separator is allowed. Lists inside `(...)`, `[...]` and `<...>` use commas only.
+5. `return` and `break` take a value only if one starts on the same line.
+
+```
+let total = a +
+    b                    // one statement (rule 3)
+let r = list
+    .len()               // one statement (rule 2)
+foo()
+(x, y) = pair            // two statements: `(` is not a call here
+```
+
+## 3. Items
+
+```
+File          = { Item } ;
+
+Item          = TestItem | UseItem | ImplBlock
+              | [ "priv" ] ( FnItem | StructItem | EnumItem | InterfaceItem | TypeAlias | ConstItem | ExternBlock ) ;
+
+FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
+FnItem        = FnSig Block ;
+ParamList     = Param { "," Param } [ "," ] ;
+Param         = SelfParam | [ Convention ] IDENT ":" Type ;
+SelfParam     = [ Convention ] "self" ;                 (* only as the first parameter, only inside impl/interface *)
+Convention    = "mut" | "own" ;                         (* no convention = read-only *)
+
+GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">" ;
+GenericParam  = IDENT [ ":" Bounds ] ;
+Bounds        = TypePath { "+" TypePath } ;
+WhereClause   = "where" WherePred { "," WherePred } ;
+WherePred     = Type ":" Bounds ;
+
+StructItem    = "struct" IDENT [ GenericParams ] [ Derives ] "{" [ FieldList ] "}" ;
+FieldList     = Field { Sep Field } [ Sep ] ;
+Field         = [ "priv" ] IDENT ":" Type ;
+Derives       = "derives" "(" TypePath { "," TypePath } [ "," ] ")" ;
+
+EnumItem      = "enum" IDENT [ GenericParams ] [ Derives ] "{" [ VariantList ] "}" ;
+VariantList   = Variant { Sep Variant } [ Sep ] ;
+Variant       = IDENT [ "(" Type { "," Type } [ "," ] ")" | "{" [ FieldList ] "}" ] ;
+
+InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceFn } "}" ;
+InterfaceFn   = FnSig [ Block ] ;                       (* a body makes it a default method *)
+
+ImplBlock     = Type [ ":" TypePath ] [ WhereClause ] "{" { ImplFn } "}" ;
+ImplFn        = [ "priv" ] FnItem ;
+
+TypeAlias     = "type" IDENT [ GenericParams ] "=" Type ;
+ConstItem     = "const" IDENT ":" Type "=" Expr ;
+
+UseItem       = "use" IDENT { "." IDENT } [ "." "{" IDENT { "," IDENT } [ "," ] "}" | "as" IDENT ] ;
+
+ExternBlock   = "extern" STRING "{" { [ "priv" ] FnSig } "}" ;   (* each FnSig on its own line, no body *)
+
+TestItem      = "test" STRING Block ;
+
+Sep           = "," | NL ;
+```
+
+An item that starts with an identifier (not a keyword) is an impl block. `Type: Interface { ... }` implements an interface,
+`Type { ... }` adds methods with no interface, and generics and `where` bounds go on either.
+
+## 4. Types
+
+```
+Type          = TypePath
+              | "(" ")"                                 (* unit *)
+              | "(" Type "," [ Type { "," Type } [ "," ] ] ")"   (* tuple of two or more, or one with a trailing comma *)
+              | "[" Type ";" Expr "]"                   (* array: [i32; 4] *)
+              | "[" Type "]"                            (* slice view *)
+              | "&" [ "mut" ] Type                      (* reference *)
+              | "!" ;                                   (* never; written by the standard library only *)
+
+TypePath      = IDENT [ GenericArgs ] { "." IDENT [ GenericArgs ] } ;
+GenericArgs   = "<" Type { "," Type } [ "," ] ">" ;
+```
+
+`i32`, `str`, `bool`, `String`, `Self` and the other built-in names are ordinary type paths resolved in the prelude.
+
+## 5. Statements and blocks
+
+```
+Block         = "{" { Stmt } "}" ;
+Stmt          = LetStmt | ExprStmt ;
+
+LetStmt       = "let" Pattern [ ":" Type ] "=" Expr [ "else" Block ] ;    (* else only with a refutable pattern *)
+ExprStmt      = Expr ;
+```
+
+A block's value is the value of its last statement when that is an expression statement, otherwise `()`. An expression
+statement in any position may produce a value of any type; the value is dropped at the end of the statement.
+Nested items inside blocks are not allowed in stage 0.
+
+## 6. Expressions
+
+```
+Expr          = AssignExpr ;
+AssignExpr    = OrElseExpr [ "=" AssignExpr ] ;         (* right associative; the left side must be a place *)
+OrElseExpr    = RangeExpr { "orelse" RangeExpr } ;
+RangeExpr     = OrExpr [ ( ".." | "..=" ) OrExpr ] ;
+(* then the binary levels below, loosest to tightest *)
+```
+
+Precedence from loosest to tightest:
+
+| Level | Operators | Notes |
+| --- | --- | --- |
+| 1 | `=` | right associative; statement-like, result is `()` |
+| 2 | `orelse` | left associative |
+| 3 | `..` `..=` | not associative |
+| 4 | `\|\|` | |
+| 5 | `&&` | |
+| 6 | `==` `!=` `<` `>` `<=` `>=` | not associative: `a < b < c` is an error |
+| 7 | `\|` | |
+| 8 | `^` | |
+| 9 | `&` | |
+| 10 | `<<` `>>` | |
+| 11 | `+` `-` | |
+| 12 | `*` `/` `%` | |
+| 13 | `as` | `expr as Type` |
+| 14 | unary `-` `!` `*` `&` `&mut` | prefix |
+| 15 | postfix `?`, `.field`, `.0`, `call(...)`, `index[...]` | tightest |
+
+```
+UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | PostfixExpr ;
+PostfixExpr   = Primary { "?" | "." IDENT | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
+ArgList       = Arg { "," Arg } [ "," ] ;
+Arg           = [ "mut" ] Expr ;                        (* "mut" marks an argument passed to a mut parameter *)
+
+Primary       = Literal | PathExpr | "self" | "(" ")" | "(" Expr ")" | TupleExpr
+              | ArrayExpr | StructLiteral | Block | IfExpr | MatchExpr | LoopExpr | WhileExpr | ForExpr
+              | "unsafe" Block | "return" [ Expr ] | "break" | "continue" ;
+
+Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
+PathExpr      = IDENT [ GenericArgs ] ;                 (* later segments are parsed as field accesses, see below *)
+TupleExpr     = "(" Expr "," [ Expr { "," Expr } [ "," ] ] ")" ;
+ArrayExpr     = "[" [ Expr { "," Expr } [ "," ] ] "]" | "[" Expr ";" Expr "]" ;
+StructLiteral = PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
+FieldInit     = IDENT [ ":" Expr ] ;                    (* `x` alone is shorthand for `x: x` *)
+
+IfExpr        = "if" Cond Block [ "else" ( IfExpr | Block ) ] ;
+Cond          = Expr | "let" Pattern "=" Expr ;
+MatchExpr     = "match" Expr "{" { Arm } "}" ;
+Arm           = ( "else" | Pattern [ "if" Expr ] ) "=>" ( Block | Expr ) [ Sep ] ;
+LoopExpr      = "loop" Block ;
+WhileExpr     = "while" Expr Block ;
+ForExpr       = "for" Pattern "in" Expr Block ;
+```
+
+Arms are separated by `,` or a line break, and the separator may be left out after the last arm or after an arm whose
+body is a block. `else` is the catch-all arm and must be last.
+
+## 7. Patterns
+
+```
+Pattern       = OrPattern ;
+OrPattern     = AtPattern { "|" AtPattern } ;
+AtPattern     = IDENT "@" PrimaryPat | PrimaryPat ;
+PrimaryPat    = "_"
+              | [ "-" ] Literal [ "..=" [ "-" ] Literal ]        (* literal or inclusive range: 4..=9 *)
+              | [ "mut" ] IDENT                                  (* binding, or a unit variant or constant in scope *)
+              | PatPath
+              | PatPath "(" [ Pattern { "," Pattern } [ "," ] ] ")"
+              | PatPath "{" [ FieldPat { Sep FieldPat } [ Sep ] ] "}"
+              | "(" [ Pattern { "," Pattern } [ "," ] ] ")" ;    (* tuple; `(p)` is just p *)
+PatPath       = IDENT { "." IDENT } ;                            (* Some, Shape.Circle, Token.Num *)
+FieldPat      = IDENT [ ":" Pattern ] ;                          (* `w` alone is shorthand for `w: w` *)
+```
+
+A bare identifier pattern is a binding unless a unit variant or constant with that name is in scope (`None` is, through
+the prelude). The linter requires bindings to be lowercase.
+
+## 8. Disambiguation rules
+
+1. **Struct literals are not allowed** directly in the head of `if`, `while`, `match`, `for`, or the right side of `let ... else`.
+   Wrap them in parentheses there. Inside any `(...)`, `[...]` or block the restriction is lifted.
+2. **Generic arguments in expressions.** After an identifier that starts with an uppercase letter, a `<` starts generic
+   arguments if a type list parses and its closing `>` is followed by `.`, `(`, or `{`. Otherwise it is a comparison.
+   This is why `List<i32>.new()` and `Stack<i32>.new().push(1)` parse, and `Level.Low < Level.High` is a comparison.
+3. **Paths in expressions** are parsed as an identifier followed by field accesses. Whether `a.b.c` is a module path,
+   an associated function, a variant, or a field access is decided during name resolution, not parsing.
+4. **`mut` at a call site** (`add_to(mut c, 4)`) is part of the argument. Receivers of `mut self` methods are borrowed
+   mutably implicitly (`c.bump()`) and need no marker.
+5. **Closures** (`|x| ...`) are not parsed in stage 0; a leading `|` in expression position is a syntax error (E0001).
+6. **An item that starts with an identifier** is an impl block. The parser decides between `Type: Interface {` and
+   `Type {` by the token after the type.
+7. **`else` after `let`** (`let Some(v) = e else { ... }`) is only valid when the pattern is refutable, and the block must diverge
+   (`return`, `break`, `continue`, or a call that never returns). These two checks are semantic, not syntactic.
+
+## 9. What the parser does not decide
+
+Name resolution, which paths are variants versus fields, whether a pattern identifier is a binding, mutability,
+conventions, exhaustiveness, and everything in `memory-rules.md` are later phases. The parser's only job is to produce a
+syntax tree that keeps spans and the line-break flags above, and to report E0001 for anything outside this grammar.

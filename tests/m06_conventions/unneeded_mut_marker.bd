@@ -1,0 +1,14 @@
+//@ compile-fail
+
+struct Counter {
+    n: i32
+}
+
+fn peek(c: Counter): i32 {
+    c.n
+}
+
+fn main() {
+    let mut c = Counter { n: 1 }
+    let v = peek(mut c) //~ E0115
+}

@@ -1,0 +1,11 @@
+//@ run
+//> main ran
+
+// test blocks are removed from normal builds, so this failing test never runs here.
+fn main() {
+    println("main ran")
+}
+
+test "would fail" {
+    assert(false)?
+}

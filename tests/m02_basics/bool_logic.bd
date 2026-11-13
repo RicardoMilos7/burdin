@@ -1,0 +1,47 @@
+//@ run
+//> a
+//> c
+//> e
+//> f
+//> g
+//> h
+//> false
+//> true
+//> true
+//> false
+//> true
+//> true
+//> false
+//> true
+//> false
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn yes(tag: str): bool {
+    println(tag)
+    true
+}
+
+fn no(tag: str): bool {
+    println(tag)
+    false
+}
+
+fn main() {
+    // && and || short-circuit: the right side runs only when needed
+    let a = no("a") && yes("b")
+    let b = yes("c") || no("d")
+    let c = yes("e") && yes("f")
+    let d = no("g") || no("h")
+    show_bool(a)
+    show_bool(b)
+    show_bool(c)
+    show_bool(d)
+    show_bool(!a)
+    show_bool(3 < 4)
+    show_bool(3 >= 4)
+    show_bool(3 == 3)
+    show_bool(3 != 3)
+}

@@ -1,0 +1,8 @@
+//@ compile-fail
+
+enum Maybe {
+    Nothing
+    Some(&i32) //~ E0120
+}
+
+fn main() {}

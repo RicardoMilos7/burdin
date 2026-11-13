@@ -1,0 +1,21 @@
+//@ burdin-test passed=3 failed=0
+
+fn add(a: i32, b: i32): i32 {
+    a + b
+}
+
+priv fn secret(): i32 {
+    42
+}
+
+test "add works" {
+    assert_eq(add(2, 3), 5)?
+}
+
+test "assert on a condition" {
+    assert(add(1, 1) == 2)?
+}
+
+test "tests can use priv items" {
+    assert_eq(secret(), 42)?
+}

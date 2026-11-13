@@ -1,0 +1,51 @@
+//@ run
+//> 4
+//> 9
+//> 1
+//> one
+//> true
+//> 5
+//> 6
+//> 42
+//> 3
+
+type Id = i32
+
+struct Pair {
+    first: Id
+    second: Id
+}
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn min_max(a: i32, b: i32): (i32, i32) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+fn main() {
+    let (lo, hi) = min_max(9, 4)
+    show(lo)
+    show(hi)
+
+    let t = (1, "one", true)
+    show(t.0)
+    println(t.1)
+    show_bool(t.2)
+
+    let mut m = (0, 0)
+    m.0 = 5
+    m.1 = m.0 + 1
+    show(m.0)
+    show(m.1)
+
+    let id: Id = 42
+    show(id)
+    let pr = Pair { first: 1, second: 2 }
+    show(pr.first + pr.second)
+}

@@ -1,0 +1,11 @@
+//@ run
+//> say "hi"
+//> back\slash
+//> first
+//> second
+
+fn main() {
+    println("say \"hi\"")
+    println("back\\slash")
+    println("first\nsecond")
+}

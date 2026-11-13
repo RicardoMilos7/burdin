@@ -1,0 +1,37 @@
+//@ run
+//> 2
+//> 5
+//> 7
+//> true
+//> x
+//> 1
+//> two
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn add(a: i32, b: i32): i32 {
+    a + b
+}
+
+fn main() {
+    let a = 1                    // i32
+    let b = 2.5                  // f64
+    let c = true
+    let d = 'x'
+    let f: u8 = 7                // the literal takes the annotated type
+    let k = add(a, 1)
+    show(k)
+    show((b * 2.0) as i32)
+    show(f as i32)
+    show_bool(c)
+    println(d.to_string())
+    let (p, q) = (1, "two")
+    show(p)
+    println(q)
+}
