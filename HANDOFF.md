@@ -1,19 +1,19 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second and third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, and fourth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the third session (2026-11-14). **Milestones 1 and 2 are done**: all tests in `tests/m01_hello` and
-`tests/m02_basics` pass in the debug and release profiles.
+Updated at the end of the fourth session (2026-11-14). **Milestones 1 to 4 are done**: all tests in `tests/m01_hello`
+through `tests/m04_data` pass in the debug and release profiles.
 
 | What | Where | Status |
 | --- | --- | --- |
 | Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
-| Grammar | `spec/grammar.md` | Parser follows it except generic arguments in expressions (rule 8.2) and struct literals. `const`, `match`, and every pattern form parse |
+| Grammar | `spec/grammar.md` | Parser follows it except generic arguments in expressions (rule 8.2). Items other than `interface`, `use`, `extern`, and `test` parse |
 | Memory rules | `spec/memory-rules.md` | Written, not implemented yet (milestones 5 and 6) |
-| Conformance tests | `tests/` | 131 tests. 27 pass today: m01, m02, 9 of 10 in m03, 2 in m04, 1 in m06 |
+| Conformance tests | `tests/` | 131 tests. 37 pass today: m01 to m04, and 3 in m06 |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_sema`, `burdin_codegen`, `burdin_driver` (`burdin` binary) |
 | C runtime | `runtime/rt.c` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), number/char/str to `String`. Embedded in the driver |
@@ -25,8 +25,10 @@ exact packages and how to call WSL from PowerShell.
 
 ### How the compiler is built so far
 
-- `burdin_syntax`: complete lexer; parser for functions, types, statements, and the full expression precedence table with the
-  newline rules of section 2 and statement-level and item-level error recovery. Items other than `fn` are reported as E9000
+- `burdin_syntax`: complete lexer; parser for functions, constants, structs, enums, type aliases, method blocks
+  (`Type { ... }` and `Type: Interface { ... }`), types, statements, struct literals (`P { x }`, `Shape.Rect { w: 1 }`),
+  `if let`, `let ... else`, and the full expression precedence table with the newline rules of section 2 and
+  statement-level and item-level error recovery. `interface`, `use`, `extern`, and `test` items are reported as E9000
   and skipped whole.
 - `burdin_sema`: resolves functions, constants, locals, and the built-ins (`print`, `println`, `eprint`, `eprintln`, `panic`),
   and produces a typed tree (`tir`) where every expression has a type and a span. Types: `()`, `bool`, `char`, all
@@ -36,12 +38,27 @@ exact packages and how to call WSL from PowerShell.
   is part of it. Built-in methods: `to_string` (integers, `bool`, `char`, `str`), `wrapping_*`, `checked_*` (add, sub,
   mul), `min`, `max`, `abs`. `match` works on integers, `char`, `bool`, and `Option` with literal, range, `|`, `@`, and
   guard patterns, and checks exhaustiveness (E0006). Constants are checked once and expanded at every use.
+- Milestone 4 added tuples, structs, enums (unit, tuple, and struct variants), type aliases, and method blocks.
+  Types and values are separate namespaces; `Point.new` and `Shape.Circle` resolve the left side as a type when no
+  local or global value has that name. Methods are ordinary functions named `Type.method` with `self` first; `self` is
+  read-only and passed by value, `mut self` is passed by address (the callee's `self` is the caller's place) and needs
+  a mutable receiver (E0113). `own self` and `mut`/`own` named parameters are still E9000 (milestones 5 and 6).
+  `Some(x)` and `None` build `Option` values (`None` needs an expected type). `if let` is checked as a two-arm `match`;
+  `let` takes any pattern, which must be irrefutable (E0006) unless it has an `else` block that diverges. `for` also
+  iterates over arrays (by place, binding each element through the pattern). `==` works on tuples, `Option`, and on
+  structs and enums that derive `Eq` (all their fields must support `==`). Derive names are checked, but nothing else
+  about derives yet (milestone 7). Struct patterns may leave fields out (the grammar has no `..`).
+- Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
+  `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
   `Option<T>` is `{ i1, T }`. Functions are `burdin.<name>`, and `burdin_entry` calls `main`. Stack slots live in the
   `entry` block; after a terminator, generation continues in a fresh unreachable block. Overflow of `+ - *` and unary
   `-` panics in debug (LLVM `*.with.overflow`) and wraps in release; division by zero and out-of-range shifts always
   panic; `MIN / -1` panics in debug and wraps in release; float-to-int casts saturate (`fpto*i.sat`). Panics print
-  `path:LINE:COL: panic: message` to stderr and `abort()`.
+  `path:LINE:COL: panic: message` to stderr and `abort()`. Tuples and structs are LLVM structs (a `()` field is `{}`);
+  an enum is `{ i32 tag, [N x iA] payload }` sized for its largest variant, whose fields are read through the payload
+  pointer as the variant's own struct. Pattern tests on variants use `select`, so they may load another variant's bytes
+  but never branch on them. Values are still copied freely: moves and drops come in milestone 5.
 - **`String` memory, temporary:** only `String` temporaries that are borrowed as `str` (`println(n.to_string())`) are
   freed, at the end of their statement. A `String` stored in a local is leaked. Drop elaboration in milestone 5
   replaces this.
@@ -97,14 +114,24 @@ exact packages and how to call WSL from PowerShell.
   something that is not a place is E0005; a constant that depends on itself and a non-constant expression in a `const`
   are E9000. Give them registry codes when the spec settles them.
 
+## Decided in the fourth session
+
+- Tuples were implemented with milestone 4, which closed the last milestone 3 gap (`let (p, q) = (1, "two")`). No test
+  was changed.
+- More diagnostics without a registry code: duplicate definitions (types, variants, fields, methods), a type that
+  contains itself by value, and a type alias cycle are E9000; a missing or repeated field in a struct literal, an
+  `else` block of `let ... else` that can finish normally, and an irrefutable pattern with `else` are E0003; an unknown
+  field or variant is E0002; a refutable `let` or `for` pattern without `else` is E0006; calling a `mut self` method on
+  an immutable place is E0113 (the same rule as a `mut` argument).
+
 ## What is left to do, in order
 
-1. Milestone 3 (`tests/m03_typecheck`): only `inference_ok.bd` fails, on `let (p, q) = (1, "two")` (tuples are milestone 4
-   in the plan, but this m03 test needs tuple `let` patterns). Decide whether to pull tuples into m03 or move the line.
-2. Then milestones 4 to 11 in order. After each one, add its folder to the conformance step in `.github/workflows/ci.yml`.
+1. Milestone 5 (`tests/m05_ownership`): moves, `Drop` (which needs `Type: Drop { ... }` interface blocks, today E9000),
+   drop order and drop flags, and `Heap`. This replaces the temporary `String` freeing in codegen.
+2. Then milestones 6 to 11 in order. After each one, add its folder to the conformance step in `.github/workflows/ci.yml`.
 3. Known parser gaps to close in their milestones: generic arguments in expressions (`List<i32>.new()`, grammar rule 8.2,
-   needed by m07 and m09), path struct literals (`Shape.Rect { w: 3 }`, m04), items
-   other than `fn` and `const` (m04, m07, m08, m10). Sema still rejects enum, struct, and tuple patterns (m04).
+   needed by m07 and m09) and the `interface`, `use`, `extern`, and `test` items (m07, m08, m10). `Self` is not yet
+   accepted in expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
 4. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried.
 5. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
 6. Before stage 1: the MIR interpreter question (comptime needs one), the design document's own open-questions list (derive syntax,

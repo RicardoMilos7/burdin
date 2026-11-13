@@ -2,7 +2,12 @@
 //!
 //! Representation: integers are `iN` (`isize` and `usize` are pointer-sized), `char` is `i32`, `bool` is `i1`, `str`
 //! is `{ ptr, usize }`, `String` is `{ ptr, usize len, usize cap }`, arrays are LLVM arrays, and `Option<T>` is
-//! `{ i1 is_some, T }`. `()` and `!` have no value. Functions are internal and named `burdin.<name>`. The entry point
+//! `{ i1 is_some, T }`. Tuples and structs are LLVM structs with one member per field, in declaration order (a field
+//! without a value, such as `()`, is an empty struct, so member indices are field indices). An enum is
+//! `{ i32 tag, [N x iA] payload }`, where the payload is sized and aligned for the largest variant and is read
+//! through a pointer as the variant's own struct of fields. `()` and `!` have no value.
+//!
+//! A `mut self` receiver is passed by address: the callee's `self` local uses the caller's place as its storage. Functions are internal and named `burdin.<name>`. The entry point
 //! `burdin_entry` calls the program's `main`; the C runtime (runtime/rt.c) defines the real `main`, output, string
 //! conversions, and the panic path.
 //!
@@ -18,7 +23,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::intrinsics::Intrinsic;
 use inkwell::module::{Linkage, Module};
-use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine};
+use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetData, TargetMachine};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, IntType, StructType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue, StructValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
@@ -102,6 +107,7 @@ struct Codegen<'ctx, 'a> {
     /// Positioned at the end of the current function's `entry` block, for stack slots.
     entry_builder: Builder<'ctx>,
     usize_ty: IntType<'ctx>,
+    target_data: TargetData,
     str_ty: StructType<'ctx>,
     string_ty: StructType<'ctx>,
     rt: Runtime<'ctx>,
@@ -171,6 +177,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             builder: cx.create_builder(),
             entry_builder: cx.create_builder(),
             usize_ty,
+            target_data: machine.get_target_data(),
             str_ty,
             string_ty,
             rt,
@@ -210,7 +217,62 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::String => self.string_ty.into(),
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
             Ty::Option(inner) => self.option_ty(inner).into(),
+            Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
+            Ty::Enum(a) => self.enum_ty(a.id).into(),
         })
+    }
+
+    /// The type of a member of an aggregate: like `llvm_ty`, but a value-less type is an empty struct.
+    fn storage_ty(&self, ty: &Ty) -> BasicTypeEnum<'ctx> {
+        self.llvm_ty(ty).unwrap_or_else(|| self.cx.struct_type(&[], false).into())
+    }
+
+    fn product_ty(&self, fields: &[Ty]) -> StructType<'ctx> {
+        let members: Vec<BasicTypeEnum<'ctx>> = fields.iter().map(|t| self.storage_ty(t)).collect();
+        self.cx.struct_type(&members, false)
+    }
+
+    /// The field types of a tuple or struct.
+    fn field_tys(&self, ty: &Ty) -> Vec<Ty> {
+        match ty {
+            Ty::Tuple(elems) => elems.clone(),
+            Ty::Struct(a) => self.program.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn variant_tys(&self, enum_id: usize, variant: usize) -> Vec<Ty> {
+        self.program.enums[enum_id].variants[variant].fields.iter().map(|f| f.ty.clone()).collect()
+    }
+
+    fn variant_ty(&self, enum_id: usize, variant: usize) -> StructType<'ctx> {
+        self.product_ty(&self.variant_tys(enum_id, variant))
+    }
+
+    fn enum_ty(&self, enum_id: usize) -> StructType<'ctx> {
+        let tag = self.cx.i32_type().into();
+        let mut size = 0u64;
+        let mut align = 1u32;
+        for (i, v) in self.program.enums[enum_id].variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            let vt = self.variant_ty(enum_id, i);
+            size = size.max(self.target_data.get_abi_size(&vt));
+            align = align.max(self.target_data.get_abi_alignment(&vt));
+        }
+        if size == 0 {
+            return self.cx.struct_type(&[tag], false);
+        }
+        let align = align.min(8);
+        let unit = match align {
+            1 => self.cx.i8_type(),
+            2 => self.cx.i16_type(),
+            4 => self.cx.i32_type(),
+            _ => self.cx.i64_type(),
+        };
+        let count = size.div_ceil(u64::from(align));
+        self.cx.struct_type(&[tag, unit.array_type(count as u32).into()], false)
     }
 
     fn option_ty(&self, inner: &Ty) -> StructType<'ctx> {
@@ -225,8 +287,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn program(&mut self) -> GenResult<()> {
         let program = self.program;
         for f in &program.functions {
-            let params: Vec<BasicMetadataTypeEnum> =
-                f.params.iter().filter_map(|p| self.llvm_ty(&f.locals[p.0].ty)).map(|t| t.into()).collect();
+            let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+            let params: Vec<BasicMetadataTypeEnum> = f
+                .params
+                .iter()
+                .filter_map(|p| {
+                    let local = &f.locals[p.0];
+                    if local.by_ref { Some(ptr_ty.into()) } else { self.llvm_ty(&local.ty) }
+                })
+                .map(|t| t.into())
+                .collect();
             let fn_ty = match self.llvm_ty(&f.ret) {
                 Some(t) => t.fn_type(&params, false),
                 None => self.cx.void_type().fn_type(&params, false),
@@ -259,14 +329,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.slots.clear();
         for local in &f.locals {
             let slot = match self.llvm_ty(&local.ty) {
-                Some(t) => Some(self.entry_builder.build_alloca(t, &local.name).map_err(llvm_err)?),
-                None => None,
+                Some(t) if !local.by_ref => Some(self.entry_builder.build_alloca(t, &local.name).map_err(llvm_err)?),
+                _ => None,
             };
             self.slots.push(slot);
         }
         let mut arg_index = 0;
         for p in &f.params {
-            if let Some(slot) = self.slots[p.0] {
+            if f.locals[p.0].by_ref {
+                let arg = value.get_nth_param(arg_index).expect("parameter count matches the signature");
+                self.slots[p.0] = Some(arg.into_pointer_value());
+                arg_index += 1;
+            } else if let Some(slot) = self.slots[p.0] {
                 let arg = value.get_nth_param(arg_index).expect("parameter count matches the signature");
                 self.builder.build_store(slot, arg).map_err(llvm_err)?;
                 arg_index += 1;
@@ -325,11 +399,27 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         for s in &b.stmts {
             self.temps.push(Vec::new());
             match s {
-                tir::Stmt::Let(local, init) => {
+                tir::Stmt::Let(Pat::Binding(local), init, None) => {
                     let v = self.expr(init)?;
                     if let (Some(slot), Some(v)) = (self.slots[local.0], v) {
                         self.builder.build_store(slot, v).map_err(llvm_err)?;
                     }
+                }
+                tir::Stmt::Let(pat, init, else_block) => {
+                    let v = self.expr(init)?;
+                    let place = self.spill(v, &init.ty)?;
+                    if let Some(else_block) = else_block {
+                        let ok = self.pat_test(pat, place, &init.ty)?;
+                        let bind_bb = self.new_block("let.bind");
+                        let else_bb = self.new_block("let.else");
+                        self.builder.build_conditional_branch(ok, bind_bb, else_bb).map_err(llvm_err)?;
+                        self.builder.position_at_end(else_bb);
+                        // The checker proved the block diverges.
+                        self.block(else_block)?;
+                        self.builder.build_unreachable().map_err(llvm_err)?;
+                        self.builder.position_at_end(bind_bb);
+                    }
+                    self.pat_bind(pat, place, &init.ty)?;
                 }
                 tir::Stmt::Expr(e) => {
                     self.expr(e)?;
@@ -400,6 +490,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let callee = &program.functions[f.0];
                 let mut values: Vec<BasicMetadataValueEnum> = Vec::new();
                 for (a, p) in args.iter().zip(&callee.params) {
+                    if callee.locals[p.0].by_ref {
+                        let ptr = match self.place_ptr(a)? {
+                            Some(ptr) => ptr,
+                            None => self.cx.ptr_type(AddressSpace::default()).get_undef(),
+                        };
+                        values.push(ptr.into());
+                        continue;
+                    }
                     let v = self.expr(a)?;
                     if self.llvm_ty(&callee.locals[p.0].ty).is_some() {
                         values.push(self.need(v, &callee.locals[p.0].ty).into());
@@ -414,7 +512,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Builtin(b, args) => self.builtin(*b, args, e.span)?,
             K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
             K::StringAsStr(inner) => {
-                let is_place = matches!(inner.kind, K::Local(_));
+                let is_place = is_place(inner);
                 let s = self.expr(inner)?;
                 let s = self.need(s, &Ty::String);
                 if !is_place {
@@ -454,6 +552,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::ForRange { var, lo, hi, inclusive, body } => {
                 self.for_range(*var, lo, hi, *inclusive, body)?;
+                None
+            }
+            K::ForArray { pat, array, body } => {
+                self.for_array(pat, array, body)?;
                 None
             }
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty)?,
@@ -542,7 +644,44 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     _ => None,
                 }
             }
-            K::Index(..) => {
+            K::Tuple(elems) => {
+                let fields: Vec<(usize, &'a tir::Expr)> = elems.iter().enumerate().collect();
+                self.product(&fields, &e.ty)?
+            }
+            K::Struct(fields) => {
+                let fields: Vec<(usize, &'a tir::Expr)> = fields.iter().map(|(i, v)| (*i, v)).collect();
+                self.product(&fields, &e.ty)?
+            }
+            K::Variant(index, fields) => self.variant(*index, fields, &e.ty)?,
+            K::Some(inner) => {
+                let v = self.expr(inner)?;
+                let Ty::Option(t) = &e.ty else { unreachable!("`Some` builds an Option") };
+                let opt_ty = self.option_ty(t);
+                let yes = self.cx.bool_type().const_int(1, false);
+                let agg = self
+                    .builder
+                    .build_insert_value(opt_ty.const_zero(), yes, 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                match self.llvm_ty(t) {
+                    Some(_) => {
+                        let v = self.need(v, t);
+                        Some(
+                            self.builder
+                                .build_insert_value(agg, v, 1, "")
+                                .map_err(llvm_err)?
+                                .into_struct_value()
+                                .into(),
+                        )
+                    }
+                    None => Some(agg.into()),
+                }
+            }
+            K::None => {
+                let Ty::Option(t) = &e.ty else { unreachable!("`None` is an Option") };
+                Some(self.option_ty(t).const_zero().into())
+            }
+            K::Index(..) | K::Field(..) => {
                 let ptr = self.place_ptr(e)?;
                 match (ptr, self.llvm_ty(&e.ty)) {
                     (Some(ptr), Some(t)) => Some(self.builder.build_load(t, ptr, "").map_err(llvm_err)?),
@@ -776,6 +915,48 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 Ok(acc)
             }
+            Pat::Product(subs) => {
+                let (Some(ptr), Some(t)) = (place, self.llvm_ty(ty)) else { return Ok(yes) };
+                let tys = self.field_tys(ty);
+                let mut acc = yes;
+                for (i, sub) in subs.iter().enumerate() {
+                    if matches!(sub, Pat::Wild | Pat::Binding(_)) {
+                        continue;
+                    }
+                    let p = self.builder.build_struct_gep(t.into_struct_type(), ptr, i as u32, "").map_err(llvm_err)?;
+                    let ok = self.pat_test(sub, Some(p), &tys[i])?;
+                    acc = self.builder.build_and(acc, ok, "").map_err(llvm_err)?;
+                }
+                Ok(acc)
+            }
+            Pat::Variant(index, subs) => {
+                let Ty::Enum(a) = ty else { unreachable!("checked: a variant pattern on an enum") };
+                let et = self.enum_ty(a.id);
+                let ptr = place.expect("an enum has storage");
+                let tag_ptr = self.builder.build_struct_gep(et, ptr, 0, "").map_err(llvm_err)?;
+                let i32_ty = self.cx.i32_type();
+                let tag = self.builder.build_load(i32_ty, tag_ptr, "tag").map_err(llvm_err)?.into_int_value();
+                let want = i32_ty.const_int(*index as u64, false);
+                let tag_ok = self.builder.build_int_compare(IntPredicate::EQ, tag, want, "").map_err(llvm_err)?;
+                if subs.iter().all(|s| matches!(s, Pat::Wild | Pat::Binding(_))) {
+                    return Ok(tag_ok);
+                }
+                let vt = self.variant_ty(a.id, *index);
+                let tys = self.variant_tys(a.id, *index);
+                let payload = self.builder.build_struct_gep(et, ptr, 1, "").map_err(llvm_err)?;
+                let mut acc = yes;
+                for (i, sub) in subs.iter().enumerate() {
+                    if matches!(sub, Pat::Wild | Pat::Binding(_)) {
+                        continue;
+                    }
+                    let p = self.builder.build_struct_gep(vt, payload, i as u32, "").map_err(llvm_err)?;
+                    let ok = self.pat_test(sub, Some(p), &tys[i])?;
+                    acc = self.builder.build_and(acc, ok, "").map_err(llvm_err)?;
+                }
+                // `select`, not `and`: the payload belongs to another variant when the tag differs.
+                let no = bool_ty.const_int(0, false);
+                Ok(self.builder.build_select(tag_ok, acc, no, "").map_err(llvm_err)?.into_int_value())
+            }
             Pat::None | Pat::Some(_) => {
                 let Ty::Option(inner) = ty else { unreachable!("checked: an Option pattern on an Option") };
                 let opt_ty = self.option_ty(inner);
@@ -819,6 +1000,30 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 };
                 self.pat_bind(sub, payload, inner)
             }
+            Pat::Product(subs) => {
+                let (Some(ptr), Some(t)) = (place, self.llvm_ty(ty)) else { return Ok(()) };
+                let tys = self.field_tys(ty);
+                for (i, sub) in subs.iter().enumerate() {
+                    let p = self.builder.build_struct_gep(t.into_struct_type(), ptr, i as u32, "").map_err(llvm_err)?;
+                    self.pat_bind(sub, Some(p), &tys[i])?;
+                }
+                Ok(())
+            }
+            Pat::Variant(index, subs) => {
+                let Ty::Enum(a) = ty else { unreachable!() };
+                let Some(ptr) = place else { return Ok(()) };
+                if subs.is_empty() {
+                    return Ok(());
+                }
+                let payload = self.builder.build_struct_gep(self.enum_ty(a.id), ptr, 1, "").map_err(llvm_err)?;
+                let vt = self.variant_ty(a.id, *index);
+                let tys = self.variant_tys(a.id, *index);
+                for (i, sub) in subs.iter().enumerate() {
+                    let p = self.builder.build_struct_gep(vt, payload, i as u32, "").map_err(llvm_err)?;
+                    self.pat_bind(sub, Some(p), &tys[i])?;
+                }
+                Ok(())
+            }
             // Or-patterns have no bindings (checked).
             _ => Ok(()),
         }
@@ -837,6 +1042,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn place_ptr(&mut self, e: &'a tir::Expr) -> GenResult<Option<PointerValue<'ctx>>> {
         match &e.kind {
             tir::ExprKind::Local(id) => Ok(self.slots[id.0]),
+            tir::ExprKind::Field(base, index) => {
+                let base_ptr = self.place_ptr(base)?;
+                let (Some(ptr), Some(t)) = (base_ptr, self.llvm_ty(&base.ty)) else { return Ok(None) };
+                let field =
+                    self.builder.build_struct_gep(t.into_struct_type(), ptr, *index as u32, "").map_err(llvm_err)?;
+                Ok(Some(field))
+            }
             tir::ExprKind::Index(base, index) => {
                 let Ty::Array(_, len) = &base.ty else {
                     // The base diverged; this code is unreachable.
@@ -919,6 +1131,187 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_load(array_t, slot, "").map_err(llvm_err)
     }
 
+    /// Stores a value in a fresh stack slot and returns its address (`None` for types without a value).
+    fn spill(&mut self, v: Option<BasicValueEnum<'ctx>>, ty: &Ty) -> GenResult<Option<PointerValue<'ctx>>> {
+        let Some(t) = self.llvm_ty(ty) else { return Ok(None) };
+        let slot = self.alloca(t, "tmp")?;
+        let v = self.need(v, ty);
+        self.builder.build_store(slot, v).map_err(llvm_err)?;
+        Ok(Some(slot))
+    }
+
+    /// A tuple or struct value from field indices and values (in evaluation order).
+    fn product(&mut self, fields: &[(usize, &'a tir::Expr)], ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let mut values = Vec::new();
+        for (i, e) in fields {
+            let v = self.expr(e)?;
+            values.push((*i, v, &e.ty));
+        }
+        let Some(t) = self.llvm_ty(ty) else { return Ok(None) };
+        let mut agg = undef(t).into_struct_value();
+        for (i, v, fty) in values {
+            if self.llvm_ty(fty).is_some() {
+                let v = self.need(v, fty);
+                agg = self.builder.build_insert_value(agg, v, i as u32, "").map_err(llvm_err)?.into_struct_value();
+            }
+        }
+        Ok(Some(agg.into()))
+    }
+
+    fn variant(
+        &mut self,
+        index: usize,
+        fields: &'a [(usize, tir::Expr)],
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Ty::Enum(a) = ty else { unreachable!("a variant has an enum type") };
+        let mut values = Vec::new();
+        for (i, e) in fields {
+            let v = self.expr(e)?;
+            values.push((*i, v, &e.ty));
+        }
+        let et = self.enum_ty(a.id);
+        let slot = self.alloca(et.into(), "variant")?;
+        let tag_ptr = self.builder.build_struct_gep(et, slot, 0, "").map_err(llvm_err)?;
+        self.builder.build_store(tag_ptr, self.cx.i32_type().const_int(index as u64, false)).map_err(llvm_err)?;
+        if !values.is_empty() {
+            let payload = self.builder.build_struct_gep(et, slot, 1, "").map_err(llvm_err)?;
+            let vt = self.variant_ty(a.id, index);
+            for (i, v, fty) in values {
+                if self.llvm_ty(fty).is_some() {
+                    let v = self.need(v, fty);
+                    let p = self.builder.build_struct_gep(vt, payload, i as u32, "").map_err(llvm_err)?;
+                    self.builder.build_store(p, v).map_err(llvm_err)?;
+                }
+            }
+        }
+        Ok(Some(self.builder.build_load(et, slot, "").map_err(llvm_err)?))
+    }
+
+    /// `for pattern in array`: binds each element in order.
+    fn for_array(&mut self, pat: &'a Pat, array: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+        let Ty::Array(elem, n) = &array.ty else {
+            // The array expression diverges; nothing after it runs.
+            self.expr(array)?;
+            return Ok(());
+        };
+        let base = self.place_ptr(array)?;
+        let array_t = self.llvm_ty(&array.ty);
+        let counter = self.alloca(self.usize_ty.into(), "for.index")?;
+        self.builder.build_store(counter, self.usize_ty.const_zero()).map_err(llvm_err)?;
+        let header = self.new_block("for.cond");
+        let body_bb = self.new_block("for.body");
+        let latch = self.new_block("for.next");
+        let exit = self.new_block("for.end");
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+
+        self.builder.position_at_end(header);
+        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
+        let len = self.usize_ty.const_int(*n, false);
+        let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(go, body_bb, exit).map_err(llvm_err)?;
+
+        self.builder.position_at_end(body_bb);
+        let elem_ptr = match (base, array_t) {
+            (Some(base), Some(t)) => {
+                let zero = self.usize_ty.const_zero();
+                // SAFETY (LLVM): i < n.
+                Some(unsafe { self.builder.build_in_bounds_gep(t, base, &[zero, i], "") }.map_err(llvm_err)?)
+            }
+            _ => None,
+        };
+        self.pat_bind(pat, elem_ptr, elem)?;
+        self.loop_body(body, latch, exit)?;
+        self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
+
+        self.builder.position_at_end(latch);
+        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
+        let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(counter, next).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(exit);
+        Ok(())
+    }
+
+    /// Whether the values at `l` and `r` (of type `ty`) are equal, field by field.
+    fn eq_at(&mut self, l: PointerValue<'ctx>, r: PointerValue<'ctx>, ty: &Ty) -> GenResult<IntValue<'ctx>> {
+        let bool_ty = self.cx.bool_type();
+        let yes = bool_ty.const_int(1, false);
+        let Some(t) = self.llvm_ty(ty) else { return Ok(yes) };
+        match ty {
+            Ty::Int(_) | Ty::Bool | Ty::Char => {
+                let a = self.builder.build_load(t, l, "").map_err(llvm_err)?.into_int_value();
+                let b = self.builder.build_load(t, r, "").map_err(llvm_err)?.into_int_value();
+                self.builder.build_int_compare(IntPredicate::EQ, a, b, "").map_err(llvm_err)
+            }
+            Ty::Float(_) => {
+                let a = self.builder.build_load(t, l, "").map_err(llvm_err)?.into_float_value();
+                let b = self.builder.build_load(t, r, "").map_err(llvm_err)?.into_float_value();
+                self.builder.build_float_compare(FloatPredicate::OEQ, a, b, "").map_err(llvm_err)
+            }
+            Ty::Tuple(_) | Ty::Struct(_) => {
+                let st = t.into_struct_type();
+                let mut acc = yes;
+                for (i, fty) in self.field_tys(ty).iter().enumerate() {
+                    let a = self.builder.build_struct_gep(st, l, i as u32, "").map_err(llvm_err)?;
+                    let b = self.builder.build_struct_gep(st, r, i as u32, "").map_err(llvm_err)?;
+                    let eq = self.eq_at(a, b, fty)?;
+                    acc = self.builder.build_and(acc, eq, "").map_err(llvm_err)?;
+                }
+                Ok(acc)
+            }
+            Ty::Option(inner) => {
+                let ot = t.into_struct_type();
+                let a_tag = self.builder.build_struct_gep(ot, l, 0, "").map_err(llvm_err)?;
+                let b_tag = self.builder.build_struct_gep(ot, r, 0, "").map_err(llvm_err)?;
+                let a_tag = self.builder.build_load(bool_ty, a_tag, "").map_err(llvm_err)?.into_int_value();
+                let b_tag = self.builder.build_load(bool_ty, b_tag, "").map_err(llvm_err)?.into_int_value();
+                let tags = self.builder.build_int_compare(IntPredicate::EQ, a_tag, b_tag, "").map_err(llvm_err)?;
+                if self.llvm_ty(inner).is_none() {
+                    return Ok(tags);
+                }
+                let a = self.builder.build_struct_gep(ot, l, 1, "").map_err(llvm_err)?;
+                let b = self.builder.build_struct_gep(ot, r, 1, "").map_err(llvm_err)?;
+                let payload = self.eq_at(a, b, inner)?;
+                let payload = self.builder.build_select(a_tag, payload, yes, "").map_err(llvm_err)?.into_int_value();
+                self.builder.build_and(tags, payload, "").map_err(llvm_err)
+            }
+            Ty::Enum(a) => {
+                let et = t.into_struct_type();
+                let i32_ty = self.cx.i32_type();
+                let a_tag = self.builder.build_struct_gep(et, l, 0, "").map_err(llvm_err)?;
+                let b_tag = self.builder.build_struct_gep(et, r, 0, "").map_err(llvm_err)?;
+                let a_tag = self.builder.build_load(i32_ty, a_tag, "").map_err(llvm_err)?.into_int_value();
+                let b_tag = self.builder.build_load(i32_ty, b_tag, "").map_err(llvm_err)?.into_int_value();
+                let tags = self.builder.build_int_compare(IntPredicate::EQ, a_tag, b_tag, "").map_err(llvm_err)?;
+                let mut payload = yes;
+                for vi in 0..self.program.enums[a.id].variants.len() {
+                    let tys = self.variant_tys(a.id, vi);
+                    if tys.is_empty() {
+                        continue;
+                    }
+                    let vt = self.variant_ty(a.id, vi);
+                    let lp = self.builder.build_struct_gep(et, l, 1, "").map_err(llvm_err)?;
+                    let rp = self.builder.build_struct_gep(et, r, 1, "").map_err(llvm_err)?;
+                    let mut acc = yes;
+                    for (i, fty) in tys.iter().enumerate() {
+                        let a = self.builder.build_struct_gep(vt, lp, i as u32, "").map_err(llvm_err)?;
+                        let b = self.builder.build_struct_gep(vt, rp, i as u32, "").map_err(llvm_err)?;
+                        let eq = self.eq_at(a, b, fty)?;
+                        acc = self.builder.build_and(acc, eq, "").map_err(llvm_err)?;
+                    }
+                    let is_this = self
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, a_tag, i32_ty.const_int(vi as u64, false), "")
+                        .map_err(llvm_err)?;
+                    payload = self.builder.build_select(is_this, acc, payload, "").map_err(llvm_err)?.into_int_value();
+                }
+                self.builder.build_and(tags, payload, "").map_err(llvm_err)
+            }
+            _ => Err(format!("unsupported `==` on `{ty}`")),
+        }
+    }
+
     // ----- operators -------------------------------------------------------------
 
     fn binary(
@@ -934,6 +1327,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let operand_ty = if l.ty == Ty::Never { &r.ty } else { &l.ty };
         let lv = self.expr(l)?;
         let rv = self.expr(r)?;
+        if matches!(op, BinOp::Eq | BinOp::Ne)
+            && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) | Ty::Option(_))
+        {
+            let lp = self.spill(lv, operand_ty)?;
+            let rp = self.spill(rv, operand_ty)?;
+            let eq = match (lp, rp) {
+                (Some(lp), Some(rp)) => self.eq_at(lp, rp, operand_ty)?,
+                _ => self.cx.bool_type().const_int(1, false),
+            };
+            let v = if op == BinOp::Ne { self.builder.build_not(eq, "").map_err(llvm_err)? } else { eq };
+            return Ok(Some(v.into()));
+        }
         if self.llvm_ty(operand_ty).is_none() {
             return Ok(None);
         }
@@ -1382,6 +1787,15 @@ fn wrapping_op(m: Method) -> BinOp {
         Method::WrappingAdd | Method::CheckedAdd => BinOp::Add,
         Method::WrappingSub | Method::CheckedSub => BinOp::Sub,
         _ => BinOp::Mul,
+    }
+}
+
+/// A local, possibly followed by fields and indexing: its storage outlives the current statement.
+fn is_place(e: &tir::Expr) -> bool {
+    match &e.kind {
+        tir::ExprKind::Local(_) => true,
+        tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) => is_place(base),
+        _ => false,
     }
 }
 

@@ -3,6 +3,14 @@
 
 use burdin_diag::Span;
 use std::fmt;
+use std::rc::Rc;
+
+/// A user-defined struct or enum: its index in [`Program::structs`] or [`Program::enums`], and its name for messages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdtRef {
+    pub id: usize,
+    pub name: Rc<str>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntTy {
@@ -78,6 +86,10 @@ pub enum Ty {
     Array(Box<Ty>, u64),
     /// The prelude's `Option<T>`. Only matching on it is supported so far (milestone 2 needs `checked_add`).
     Option(Box<Ty>),
+    /// A tuple of two or more elements (or one, written with a trailing comma).
+    Tuple(Vec<Ty>),
+    Struct(AdtRef),
+    Enum(AdtRef),
     Never,
     /// The type of an expression that already produced an error; it matches everything to avoid cascades.
     Error,
@@ -106,6 +118,20 @@ impl fmt::Display for Ty {
             Ty::String => f.write_str("String"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
             Ty::Option(t) => write!(f, "Option<{t}>"),
+            Ty::Tuple(elems) => {
+                f.write_str("(")?;
+                for (i, t) in elems.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{t}")?;
+                }
+                if elems.len() == 1 {
+                    f.write_str(",")?;
+                }
+                f.write_str(")")
+            }
+            Ty::Struct(a) | Ty::Enum(a) => f.write_str(&a.name),
             Ty::Never => f.write_str("!"),
             Ty::Error => f.write_str("{error}"),
         }
@@ -176,7 +202,51 @@ pub enum UnOp {
 pub struct Program {
     pub functions: Vec<Function>,
     pub consts: Vec<Const>,
+    pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
     pub main: FuncId,
+}
+
+/// The built-in interfaces a type derives.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Derives {
+    pub copy: bool,
+    pub clone: bool,
+    pub eq: bool,
+    pub ord: bool,
+    pub hash: bool,
+    pub default: bool,
+}
+
+pub struct FieldDef {
+    pub name: String,
+    pub ty: Ty,
+}
+
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<FieldDef>,
+    pub derives: Derives,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VariantShape {
+    Unit,
+    Tuple,
+    Struct,
+}
+
+pub struct VariantDef {
+    pub name: String,
+    pub shape: VariantShape,
+    /// The fields of a tuple variant are named `0`, `1`, ...
+    pub fields: Vec<FieldDef>,
+}
+
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<VariantDef>,
+    pub derives: Derives,
 }
 
 /// A constant. Its value is expanded at every use, so it costs nothing at run time beyond the expression itself.
@@ -197,6 +267,8 @@ pub struct Local {
     pub name: String,
     pub ty: Ty,
     pub mutable: bool,
+    /// A parameter passed by address (a `mut self` receiver): the local is the caller's place.
+    pub by_ref: bool,
 }
 
 pub struct Block {
@@ -205,7 +277,8 @@ pub struct Block {
 }
 
 pub enum Stmt {
-    Let(LocalId, Expr),
+    /// `let pattern = init`, with the `else` block of `let ... else` (which diverges).
+    Let(Pat, Expr, Option<Block>),
     Expr(Expr),
 }
 
@@ -242,6 +315,12 @@ pub enum ExprKind {
         inclusive: bool,
         body: Block,
     },
+    /// `for pattern in array`: the array is evaluated once and its elements are bound in order.
+    ForArray {
+        pat: Pat,
+        array: Box<Expr>,
+        body: Block,
+    },
     Match(Box<Expr>, Vec<Arm>),
     Break,
     Continue,
@@ -255,6 +334,15 @@ pub enum ExprKind {
     Array(Vec<Expr>),
     ArrayRepeat(Box<Expr>, u64),
     Index(Box<Expr>, Box<Expr>),
+    Tuple(Vec<Expr>),
+    /// A struct literal of this expression's type: field indices with their values, in source order.
+    Struct(Vec<(usize, Expr)>),
+    /// A variant of this expression's enum type, with field indices and values in source order.
+    Variant(usize, Vec<(usize, Expr)>),
+    Some(Box<Expr>),
+    None,
+    /// Field `n` of a struct or tuple.
+    Field(Box<Expr>, usize),
 }
 
 pub struct Arm {
@@ -276,4 +364,8 @@ pub enum Pat {
     Or(Vec<Pat>),
     Some(Box<Pat>),
     None,
+    /// A tuple or struct: one pattern per field, in declaration order.
+    Product(Vec<Pat>),
+    /// A variant of an enum: its index and one pattern per field, in declaration order.
+    Variant(usize, Vec<Pat>),
 }

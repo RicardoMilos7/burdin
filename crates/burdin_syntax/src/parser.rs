@@ -235,16 +235,141 @@ impl Parser<'_> {
         let is_priv = self.eat(&TokenKind::Priv);
         match self.kind() {
             TokenKind::Fn | TokenKind::Unsafe => Ok(Some(Item::Fn(self.fn_decl(is_priv, start)?))),
-            TokenKind::Struct => self.skip_unsupported_item(start, "`struct`"),
-            TokenKind::Enum => self.skip_unsupported_item(start, "`enum`"),
+            TokenKind::Struct => Ok(Some(Item::Struct(self.struct_decl(is_priv, start)?))),
+            TokenKind::Enum => Ok(Some(Item::Enum(self.enum_decl(is_priv, start)?))),
             TokenKind::Interface => self.skip_unsupported_item(start, "`interface`"),
-            TokenKind::Type => self.skip_unsupported_item(start, "`type` aliases"),
+            TokenKind::Type => Ok(Some(Item::TypeAlias(self.type_alias(is_priv, start)?))),
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
             TokenKind::Use => self.skip_unsupported_item(start, "`use`"),
             TokenKind::Extern => self.skip_unsupported_item(start, "`extern` blocks"),
-            TokenKind::Ident(_) | TokenKind::SelfType if !is_priv => self.skip_unsupported_item(start, "method blocks"),
+            TokenKind::Ident(_) | TokenKind::SelfType if !is_priv => Ok(Some(Item::Impl(self.impl_block(start)?))),
             _ => Err(self.unexpected("an item")),
         }
+    }
+
+    /// Ends one entry of a list inside braces: a `,` or a line break separates entries (grammar section 2,
+    /// rule 4). Returns `false` at the closing brace.
+    fn brace_list_sep(&mut self, what: &str) -> PResult<bool> {
+        if self.eat(&TokenKind::Comma) {
+            return Ok(!self.at(&TokenKind::RBrace));
+        }
+        if self.at(&TokenKind::RBrace) {
+            return Ok(false);
+        }
+        if self.tok().nl_before && !self.at_eof() {
+            return Ok(true);
+        }
+        Err(self.unexpected(&format!("`,`, a line break, or `}}` after the {what}")))
+    }
+
+    fn derives(&mut self) -> PResult<Vec<Type>> {
+        let mut derives = Vec::new();
+        if matches!(self.kind(), TokenKind::Ident(n) if n == "derives") {
+            self.bump();
+            self.open(&TokenKind::LParen, false)?;
+            while !self.at(&TokenKind::RParen) {
+                derives.push(self.ty()?);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.close(&TokenKind::RParen)?;
+        }
+        Ok(derives)
+    }
+
+    fn field_list(&mut self) -> PResult<Vec<FieldDecl>> {
+        self.open(&TokenKind::LBrace, true)?;
+        let mut fields = Vec::new();
+        if !self.at(&TokenKind::RBrace) {
+            loop {
+                let is_priv = self.eat(&TokenKind::Priv);
+                let name = self.ident("a field name")?;
+                self.expect(&TokenKind::Colon)?;
+                let ty = self.ty()?;
+                fields.push(FieldDecl { is_priv, name, ty });
+                if !self.brace_list_sep("field")? {
+                    break;
+                }
+            }
+        }
+        self.close(&TokenKind::RBrace)?;
+        Ok(fields)
+    }
+
+    fn struct_decl(&mut self, is_priv: bool, start: Span) -> PResult<StructDecl> {
+        self.expect(&TokenKind::Struct)?;
+        let name = self.ident("a struct name")?;
+        let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        let derives = self.derives()?;
+        let fields = self.field_list()?;
+        Ok(StructDecl { is_priv, name, generics, derives, fields, span: start.to(self.prev_span()) })
+    }
+
+    fn enum_decl(&mut self, is_priv: bool, start: Span) -> PResult<EnumDecl> {
+        self.expect(&TokenKind::Enum)?;
+        let name = self.ident("an enum name")?;
+        let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        let derives = self.derives()?;
+        self.open(&TokenKind::LBrace, true)?;
+        let mut variants = Vec::new();
+        if !self.at(&TokenKind::RBrace) {
+            loop {
+                let vname = self.ident("a variant name")?;
+                let kind = if self.at(&TokenKind::LParen) {
+                    self.open(&TokenKind::LParen, false)?;
+                    let mut tys = Vec::new();
+                    while !self.at(&TokenKind::RParen) {
+                        tys.push(self.ty()?);
+                        if !self.eat(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.close(&TokenKind::RParen)?;
+                    VariantKind::Tuple(tys)
+                } else if self.at(&TokenKind::LBrace) && !self.tok().nl_before {
+                    VariantKind::Struct(self.field_list()?)
+                } else {
+                    VariantKind::Unit
+                };
+                variants.push(Variant { name: vname, kind });
+                if !self.brace_list_sep("variant")? {
+                    break;
+                }
+            }
+        }
+        self.close(&TokenKind::RBrace)?;
+        Ok(EnumDecl { is_priv, name, generics, derives, variants, span: start.to(self.prev_span()) })
+    }
+
+    fn type_alias(&mut self, is_priv: bool, start: Span) -> PResult<TypeAliasDecl> {
+        self.expect(&TokenKind::Type)?;
+        let name = self.ident("a type name")?;
+        let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        self.expect(&TokenKind::Eq)?;
+        let ty = self.ty()?;
+        Ok(TypeAliasDecl { is_priv, name, generics, ty, span: start.to(self.prev_span()) })
+    }
+
+    fn impl_block(&mut self, start: Span) -> PResult<ImplBlock> {
+        let ty = self.ty()?;
+        let interface = if self.eat(&TokenKind::Colon) { Some(self.ty()?) } else { None };
+        let where_clause = if self.at(&TokenKind::Where) { self.where_clause()? } else { Vec::new() };
+        self.open(&TokenKind::LBrace, true)?;
+        let mut methods = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(self.unexpected("`}`"));
+            }
+            let fn_start = self.span();
+            let is_priv = self.eat(&TokenKind::Priv);
+            if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
+                return Err(self.unexpected("a method"));
+            }
+            methods.push(self.fn_decl(is_priv, fn_start)?);
+        }
+        self.close(&TokenKind::RBrace)?;
+        Ok(ImplBlock { ty, interface, where_clause, methods, span: start.to(self.prev_span()) })
     }
 
     /// Reports an item this compiler cannot compile yet and skips it whole: through its first balanced `{ ... }`,
@@ -796,6 +921,12 @@ impl Parser<'_> {
                             let t = self.bump();
                             let span = e.span.to(t.span);
                             e = Expr { kind: ExprKind::Field(Box::new(e), Ident { name, span: t.span }), span };
+                            if self.at_struct_literal(r)
+                                && let Some(path) = expr_path(&e)
+                            {
+                                let start = e.span;
+                                e = self.struct_literal(path, start)?;
+                            }
                         }
                         TokenKind::Int(n) => {
                             let t = self.bump();
@@ -899,12 +1030,8 @@ impl Parser<'_> {
             }
             TokenKind::Ident(_) => {
                 let name = self.ident("an expression")?;
-                if self.at(&TokenKind::LBrace)
-                    && !self.nl()
-                    && r == Restriction::None
-                    && looks_like_struct_literal(self)
-                {
-                    return Err(self.unsupported(start, "struct literals"));
+                if self.at_struct_literal(r) {
+                    return self.struct_literal(vec![name], start);
                 }
                 Ok(Expr { span: name.span, kind: ExprKind::Name(name) })
             }
@@ -1005,6 +1132,27 @@ impl Parser<'_> {
         }
     }
 
+    fn at_struct_literal(&self, r: Restriction) -> bool {
+        self.at(&TokenKind::LBrace) && !self.nl() && r == Restriction::None && looks_like_struct_literal(self)
+    }
+
+    fn struct_literal(&mut self, path: Vec<Ident>, start: Span) -> PResult<Expr> {
+        self.open(&TokenKind::LBrace, true)?;
+        let mut fields = Vec::new();
+        if !self.at(&TokenKind::RBrace) {
+            loop {
+                let name = self.ident("a field name")?;
+                let value = if self.eat(&TokenKind::Colon) { Some(self.expr()?) } else { None };
+                fields.push(FieldInit { name, value });
+                if !self.brace_list_sep("field")? {
+                    break;
+                }
+            }
+        }
+        let close = self.close(&TokenKind::RBrace)?;
+        Ok(Expr { kind: ExprKind::StructLit(path, fields), span: start.to(close.span) })
+    }
+
     fn match_expr(&mut self) -> PResult<Expr> {
         let start = self.expect(&TokenKind::Match)?.span;
         let scrutinee = self.expr_r(Restriction::NoStructLiteral)?;
@@ -1033,9 +1181,13 @@ impl Parser<'_> {
 
     fn if_expr(&mut self) -> PResult<Expr> {
         let start = self.expect(&TokenKind::If)?.span;
-        if self.at(&TokenKind::Let) {
-            return Err(self.unsupported(start, "`if let`"));
-        }
+        let let_pattern = if self.eat(&TokenKind::Let) {
+            let pattern = self.pattern()?;
+            self.expect(&TokenKind::Eq)?;
+            Some(pattern)
+        } else {
+            None
+        };
         let cond = self.expr_r(Restriction::NoStructLiteral)?;
         let then_block = self.block()?;
         let mut span = start.to(then_block.span);
@@ -1052,12 +1204,29 @@ impl Parser<'_> {
         } else {
             None
         };
-        Ok(Expr { kind: ExprKind::If { cond: Box::new(cond), then_block, else_expr }, span })
+        let kind = match let_pattern {
+            Some(pattern) => ExprKind::IfLet { pattern, scrutinee: Box::new(cond), then_block, else_expr },
+            None => ExprKind::If { cond: Box::new(cond), then_block, else_expr },
+        };
+        Ok(Expr { kind, span })
     }
 }
 
 const LEVEL_OR: u8 = 4;
 const LEVEL_CMP: u8 = 6;
+
+/// The identifiers of a path expression such as `Shape.Rect`, or `None` if `e` is not a plain path.
+fn expr_path(e: &Expr) -> Option<Vec<Ident>> {
+    match &e.kind {
+        ExprKind::Name(id) => Some(vec![id.clone()]),
+        ExprKind::Field(base, id) => {
+            let mut path = expr_path(base)?;
+            path.push(id.clone());
+            Some(path)
+        }
+        _ => None,
+    }
+}
 
 /// `Name {` starts a struct literal when the brace is followed by `}` or by `ident` and then `:`, `,`, `}` or a
 /// line break. A block after a name (as in `while x { ... }`) is excluded by the restriction instead.

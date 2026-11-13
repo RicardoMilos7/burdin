@@ -75,6 +75,26 @@ mod tests {
     }
 
     #[test]
+    fn data_items() {
+        let src = "type Id = i32\nstruct P derives (Copy, Eq) {\n x: i32\n priv y: (Id, bool),\n}\n\
+                   enum S {\n A(i32, i32), B { w: i32, h: i32 }\n C\n}\nP {\n fn new(): P { P { x: 1, y } }\n \
+                   priv fn get(mut self): i32 { self.x }\n}\n";
+        assert_eq!(errors(src), "");
+    }
+
+    #[test]
+    fn struct_literals_and_if_let() {
+        let src = "fn f() {\n let s = S.B { w: 1,\n h: 2 }\n if let S.A(a, _) = s { g(a) } else if x == y {}\n \
+                   while p.x < (P { x: 1 }).x {}\n let Some(v) = o else { return }\n}\n";
+        assert_eq!(errors(src), "");
+    }
+
+    #[test]
+    fn struct_literal_not_allowed_in_condition() {
+        assert!(errors("fn f() {\n if p == P { x: 1 } {}\n}\n").contains("E0001"));
+    }
+
+    #[test]
     fn reserved_words_are_rejected() {
         assert!(errors("fn main() {\n let impl = 1\n}\n").contains("E0001"));
     }
