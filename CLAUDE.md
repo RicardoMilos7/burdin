@@ -67,7 +67,7 @@ without a backend.
 
 ## Toolchain
 
-Rust 1.100 (edition 2024, pinned in `rust-toolchain.toml`), **LLVM 21** through `inkwell` 0.11 (feature `llvm21-1`), and the
+Current stable Rust (edition 2024; no toolchain pin for now), **LLVM 21** through `inkwell` 0.11 (feature `llvm21-1`), and the
 system C compiler to build `runtime/rt.c` and link (`cc` on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
 Platforms: Linux, macOS, Windows; x86-64 and arm64.
 

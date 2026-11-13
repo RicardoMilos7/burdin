@@ -19,7 +19,7 @@ Updated at the end of the second session (2026-11-13). **Milestone 1 is done**: 
 | CI | `.github/workflows/ci.yml` | Linux only: check-tests, fmt, clippy, unit tests, conformance tests of finished milestones. Never run yet (no remote) |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
-Dev environment: WSL Ubuntu 26.04, Rust 1.100 through rustup, LLVM 21. See the Toolchain section of `CLAUDE.md` for the
+Dev environment: WSL Ubuntu 26.04, stable Rust through rustup (1.100 at the time), LLVM 21. See the Toolchain section of `CLAUDE.md` for the
 exact packages and how to call WSL from PowerShell.
 
 ### How the compiler is built so far
@@ -52,7 +52,7 @@ exact packages and how to call WSL from PowerShell.
 ## Decided in the second session
 
 - LLVM route 1 (WSL Ubuntu first) and LLVM 21, through `inkwell` 0.11.0 with the `llvm21-1-prefer-dynamic` feature.
-- Rust 1.100 pinned in `rust-toolchain.toml`.
+- No Rust toolchain pin for now: build with current stable (edition 2024 needs 1.85 or later).
 - `E9000` is a temporary code for "not implemented in this compiler yet". It is not in the registry and no test uses it.
 
 ## Known problems and risks

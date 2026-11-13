@@ -19,8 +19,10 @@ jobs:
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
 
-      - name: Install Rust (version from rust-toolchain.toml)
-        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install Rust (current stable)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
 
       - name: Check test directives
         run: tests/check-tests.sh
