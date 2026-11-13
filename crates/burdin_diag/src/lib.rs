@@ -86,6 +86,7 @@ impl Code {
     pub const IMMUTABLE: Code = Code("E0005");
     pub const NON_EXHAUSTIVE: Code = Code("E0006");
     pub const LITERAL_RANGE: Code = Code("E0008");
+    pub const MUT_OF_IMMUTABLE: Code = Code("E0113");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.
     pub const UNSUPPORTED: Code = Code("E9000");

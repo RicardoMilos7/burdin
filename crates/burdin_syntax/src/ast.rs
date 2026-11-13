@@ -17,6 +17,69 @@ pub struct File {
 pub enum Item {
     Fn(FnDecl),
     Const(ConstDecl),
+    Struct(StructDecl),
+    Enum(EnumDecl),
+    TypeAlias(TypeAliasDecl),
+    Impl(ImplBlock),
+}
+
+#[derive(Debug)]
+pub struct FieldDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub ty: Type,
+}
+
+#[derive(Debug)]
+pub struct StructDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub derives: Vec<Type>,
+    pub fields: Vec<FieldDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub enum VariantKind {
+    Unit,
+    Tuple(Vec<Type>),
+    Struct(Vec<FieldDecl>),
+}
+
+#[derive(Debug)]
+pub struct Variant {
+    pub name: Ident,
+    pub kind: VariantKind,
+}
+
+#[derive(Debug)]
+pub struct EnumDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub derives: Vec<Type>,
+    pub variants: Vec<Variant>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct TypeAliasDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `Type { fn ... }` or `Type: Interface { fn ... }`.
+#[derive(Debug)]
+pub struct ImplBlock {
+    pub ty: Type,
+    pub interface: Option<Type>,
+    pub where_clause: Vec<WherePred>,
+    pub methods: Vec<FnDecl>,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -206,10 +269,21 @@ pub enum ExprKind {
     ArrayRepeat(Box<Expr>, Box<Expr>),
     Block(Block),
     UnsafeBlock(Block),
-    If { cond: Box<Expr>, then_block: Block, else_expr: Option<Box<Expr>> },
-    While { cond: Box<Expr>, body: Block },
+    If {
+        cond: Box<Expr>,
+        then_block: Block,
+        else_expr: Option<Box<Expr>>,
+    },
+    While {
+        cond: Box<Expr>,
+        body: Block,
+    },
     Loop(Block),
-    For { pattern: Pattern, iter: Box<Expr>, body: Block },
+    For {
+        pattern: Pattern,
+        iter: Box<Expr>,
+        body: Block,
+    },
     Return(Option<Box<Expr>>),
     Break,
     Continue,
@@ -217,7 +291,11 @@ pub enum ExprKind {
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
     Cast(Box<Expr>, Type),
-    Range { lo: Box<Expr>, hi: Box<Expr>, inclusive: bool },
+    Range {
+        lo: Box<Expr>,
+        hi: Box<Expr>,
+        inclusive: bool,
+    },
     OrElse(Box<Expr>, Box<Expr>),
     Try(Box<Expr>),
     Field(Box<Expr>, Ident),
@@ -225,6 +303,21 @@ pub enum ExprKind {
     Call(Box<Expr>, Vec<Arg>),
     Index(Box<Expr>, Box<Expr>),
     Match(Box<Expr>, Vec<MatchArm>),
+    /// `Path { field: value, ... }`; the path is a type name or `Enum.Variant`.
+    StructLit(Vec<Ident>, Vec<FieldInit>),
+    IfLet {
+        pattern: Pattern,
+        scrutinee: Box<Expr>,
+        then_block: Block,
+        else_expr: Option<Box<Expr>>,
+    },
+}
+
+#[derive(Debug)]
+pub struct FieldInit {
+    pub name: Ident,
+    /// `None` for the shorthand `name` (meaning `name: name`).
+    pub value: Option<Expr>,
 }
 
 #[derive(Debug)]
@@ -250,6 +343,7 @@ impl Expr {
             ExprKind::Block(_)
                 | ExprKind::UnsafeBlock(_)
                 | ExprKind::If { .. }
+                | ExprKind::IfLet { .. }
                 | ExprKind::While { .. }
                 | ExprKind::Loop(_)
                 | ExprKind::For { .. }
