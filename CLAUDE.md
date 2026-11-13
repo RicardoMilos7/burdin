@@ -67,9 +67,15 @@ without a backend.
 
 ## Toolchain
 
-Rust (edition 2024), LLVM through the `inkwell` crate with one pinned LLVM version, and the system C linker (MSVC on
-Windows). Platforms: Linux, macOS, Windows; x86-64 and arm64.
+Rust 1.100 (edition 2024, pinned in `rust-toolchain.toml`), **LLVM 21** through `inkwell` 0.11 (feature `llvm21-1`), and the
+system C compiler to build `runtime/rt.c` and link (`cc` on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
+Platforms: Linux, macOS, Windows; x86-64 and arm64.
 
-**Not decided yet:** which LLVM version, and where the compiler is built first (WSL Ubuntu, or Windows with a prebuilt or
-self-built LLVM that includes `llvm-config`). Do not choose one without asking, and do not add the `inkwell` dependency until
-that is settled.
+**Development happens in WSL Ubuntu 26.04 first** (decided). The repository stays on `F:`; build and test from WSL at
+`/mnt/f/projects/burdin-lang`. Packages: `build-essential llvm-21-dev libpolly-21-dev clang-21 libzstd-dev zlib1g-dev`, and
+Rust through rustup in `~/.cargo`. From PowerShell, run WSL commands with `wsl -d Ubuntu -e bash -lc '...'` (`-e` so the
+outer shell does not expand `$?`), and keep Windows entries out of `PATH` inside WSL. Windows builds come later; the driver
+already has an untested `cl` link path.
+
+Diagnostics that are not in the registry: `E9000` means "not implemented in this compiler yet". It marks constructs from
+later milestones and must be gone when stage 0 is complete.

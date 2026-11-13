@@ -1,0 +1,208 @@
+//! The syntax tree. It keeps spans for diagnostics and decides nothing about names or types.
+
+use burdin_diag::Span;
+
+#[derive(Clone, Debug)]
+pub struct Ident {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Default)]
+pub struct File {
+    pub items: Vec<Item>,
+}
+
+#[derive(Debug)]
+pub enum Item {
+    Fn(FnDecl),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Convention {
+    /// No marker: a read-only borrow.
+    Read,
+    Mut,
+    Own,
+}
+
+#[derive(Debug)]
+pub struct FnDecl {
+    pub is_priv: bool,
+    pub is_unsafe: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub params: Vec<Param>,
+    pub ret: Option<Type>,
+    pub where_clause: Vec<WherePred>,
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct GenericParam {
+    pub name: Ident,
+    pub bounds: Vec<Type>,
+}
+
+#[derive(Debug)]
+pub struct WherePred {
+    pub ty: Type,
+    pub bounds: Vec<Type>,
+}
+
+#[derive(Debug)]
+pub enum ParamKind {
+    SelfParam,
+    Named { name: Ident, ty: Type },
+}
+
+#[derive(Debug)]
+pub struct Param {
+    pub convention: Convention,
+    pub kind: ParamKind,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct PathSegment {
+    pub name: Ident,
+    pub args: Vec<Type>,
+}
+
+#[derive(Debug)]
+pub enum TypeKind {
+    Path(Vec<PathSegment>),
+    SelfType,
+    Unit,
+    Tuple(Vec<Type>),
+    Array(Box<Type>, Box<Expr>),
+    Slice(Box<Type>),
+    Ref { mutable: bool, ty: Box<Type> },
+    Never,
+}
+
+#[derive(Debug)]
+pub struct Type {
+    pub kind: TypeKind,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub enum Stmt {
+    Let { pattern: Pattern, ty: Option<Type>, init: Expr, else_block: Option<Block>, span: Span },
+    Expr(Expr),
+}
+
+#[derive(Debug)]
+pub enum PatternKind {
+    Wild,
+    Binding { name: Ident, mutable: bool },
+    Tuple(Vec<Pattern>),
+}
+
+#[derive(Debug)]
+pub struct Pattern {
+    pub kind: PatternKind,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinOp {
+    Or,
+    And,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    BitOr,
+    BitXor,
+    BitAnd,
+    Shl,
+    Shr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnOp {
+    Neg,
+    Not,
+    Deref,
+    Ref,
+    RefMut,
+}
+
+#[derive(Debug)]
+pub struct Arg {
+    /// The call-site `mut` marker.
+    pub mut_marker: bool,
+    pub expr: Expr,
+}
+
+#[derive(Debug)]
+pub enum ExprKind {
+    Int(u128),
+    Float(String),
+    Char(char),
+    Str(String),
+    Bool(bool),
+    Unit,
+    Name(Ident),
+    SelfValue,
+    Tuple(Vec<Expr>),
+    Array(Vec<Expr>),
+    ArrayRepeat(Box<Expr>, Box<Expr>),
+    Block(Block),
+    UnsafeBlock(Block),
+    If { cond: Box<Expr>, then_block: Block, else_expr: Option<Box<Expr>> },
+    While { cond: Box<Expr>, body: Block },
+    Loop(Block),
+    For { pattern: Pattern, iter: Box<Expr>, body: Block },
+    Return(Option<Box<Expr>>),
+    Break,
+    Continue,
+    Assign(Box<Expr>, Box<Expr>),
+    Binary(BinOp, Box<Expr>, Box<Expr>),
+    Unary(UnOp, Box<Expr>),
+    Cast(Box<Expr>, Type),
+    Range { lo: Box<Expr>, hi: Box<Expr>, inclusive: bool },
+    OrElse(Box<Expr>, Box<Expr>),
+    Try(Box<Expr>),
+    Field(Box<Expr>, Ident),
+    TupleField(Box<Expr>, u32, Span),
+    Call(Box<Expr>, Vec<Arg>),
+    Index(Box<Expr>, Box<Expr>),
+}
+
+#[derive(Debug)]
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+impl Expr {
+    /// Expressions that end with a block and can stand as a statement without a value (`if`, `while`, ...).
+    pub fn is_block_like(&self) -> bool {
+        matches!(
+            self.kind,
+            ExprKind::Block(_)
+                | ExprKind::UnsafeBlock(_)
+                | ExprKind::If { .. }
+                | ExprKind::While { .. }
+                | ExprKind::Loop(_)
+                | ExprKind::For { .. }
+        )
+    }
+}

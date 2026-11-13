@@ -1,0 +1,228 @@
+//! Tokens produced by the lexer (spec/grammar.md, section 1).
+
+use burdin_diag::Span;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TokenKind {
+    Ident(String),
+    /// Integer literal. The value is exact; whether it fits its type is checked later.
+    Int(u128),
+    /// Float literal, kept as written (without `_`).
+    Float(String),
+    Char(char),
+    Str(String),
+
+    // Keywords
+    As,
+    Break,
+    Const,
+    Continue,
+    Else,
+    Enum,
+    Extern,
+    False,
+    Fn,
+    For,
+    If,
+    In,
+    Interface,
+    Let,
+    Loop,
+    Match,
+    Mut,
+    Orelse,
+    Own,
+    Priv,
+    Return,
+    SelfValue,
+    SelfType,
+    Struct,
+    True,
+    Type,
+    Unsafe,
+    Use,
+    Where,
+    While,
+    /// A word reserved for stage 1 (`any`, `comptime`, `derive`, `impl`).
+    Reserved(String),
+    /// `_`
+    Underscore,
+
+    // Punctuation
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+    Comma,
+    Colon,
+    Semi,
+    Dot,
+    DotDot,
+    DotDotEq,
+    FatArrow,
+    At,
+    Question,
+    Eq,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Amp,
+    Pipe,
+    Caret,
+    Shl,
+    Shr,
+    Bang,
+    AndAnd,
+    OrOr,
+    EqEq,
+    NotEq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+
+    /// End of input. When the lexer stopped at an unterminated literal or comment, the end is not a real one and
+    /// the parser does not report errors at it.
+    Eof,
+}
+
+impl TokenKind {
+    pub fn keyword(word: &str) -> Option<TokenKind> {
+        use TokenKind::*;
+        Some(match word {
+            "as" => As,
+            "break" => Break,
+            "const" => Const,
+            "continue" => Continue,
+            "else" => Else,
+            "enum" => Enum,
+            "extern" => Extern,
+            "false" => False,
+            "fn" => Fn,
+            "for" => For,
+            "if" => If,
+            "in" => In,
+            "interface" => Interface,
+            "let" => Let,
+            "loop" => Loop,
+            "match" => Match,
+            "mut" => Mut,
+            "orelse" => Orelse,
+            "own" => Own,
+            "priv" => Priv,
+            "return" => Return,
+            "self" => SelfValue,
+            "Self" => SelfType,
+            "struct" => Struct,
+            "true" => True,
+            "type" => Type,
+            "unsafe" => Unsafe,
+            "use" => Use,
+            "where" => Where,
+            "while" => While,
+            "any" | "comptime" | "derive" | "impl" => Reserved(word.to_string()),
+            _ => return None,
+        })
+    }
+
+    /// How the token is shown in diagnostics.
+    pub fn describe(&self) -> String {
+        use TokenKind::*;
+        match self {
+            Ident(name) => format!("identifier `{name}`"),
+            Int(_) => "integer literal".into(),
+            Float(_) => "float literal".into(),
+            Char(_) => "character literal".into(),
+            Str(_) => "string literal".into(),
+            Reserved(word) => format!("reserved word `{word}`"),
+            Eof => "end of file".into(),
+            other => format!("`{}`", other.text()),
+        }
+    }
+
+    /// Source text of keywords and punctuation.
+    pub fn text(&self) -> &'static str {
+        use TokenKind::*;
+        match self {
+            As => "as",
+            Break => "break",
+            Const => "const",
+            Continue => "continue",
+            Else => "else",
+            Enum => "enum",
+            Extern => "extern",
+            False => "false",
+            Fn => "fn",
+            For => "for",
+            If => "if",
+            In => "in",
+            Interface => "interface",
+            Let => "let",
+            Loop => "loop",
+            Match => "match",
+            Mut => "mut",
+            Orelse => "orelse",
+            Own => "own",
+            Priv => "priv",
+            Return => "return",
+            SelfValue => "self",
+            SelfType => "Self",
+            Struct => "struct",
+            True => "true",
+            Type => "type",
+            Unsafe => "unsafe",
+            Use => "use",
+            Where => "where",
+            While => "while",
+            Underscore => "_",
+            LParen => "(",
+            RParen => ")",
+            LBracket => "[",
+            RBracket => "]",
+            LBrace => "{",
+            RBrace => "}",
+            Comma => ",",
+            Colon => ":",
+            Semi => ";",
+            Dot => ".",
+            DotDot => "..",
+            DotDotEq => "..=",
+            FatArrow => "=>",
+            At => "@",
+            Question => "?",
+            Eq => "=",
+            Plus => "+",
+            Minus => "-",
+            Star => "*",
+            Slash => "/",
+            Percent => "%",
+            Amp => "&",
+            Pipe => "|",
+            Caret => "^",
+            Shl => "<<",
+            Shr => ">>",
+            Bang => "!",
+            AndAnd => "&&",
+            OrOr => "||",
+            EqEq => "==",
+            NotEq => "!=",
+            Lt => "<",
+            Gt => ">",
+            Le => "<=",
+            Ge => ">=",
+            Ident(_) | Int(_) | Float(_) | Char(_) | Str(_) | Reserved(_) | Eof => "",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub span: Span,
+    /// A line break comes between the previous token and this one.
+    pub nl_before: bool,
+}
