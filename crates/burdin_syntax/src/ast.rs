@@ -16,6 +16,16 @@ pub struct File {
 #[derive(Debug)]
 pub enum Item {
     Fn(FnDecl),
+    Const(ConstDecl),
+}
+
+#[derive(Debug)]
+pub struct ConstDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub ty: Type,
+    pub value: Expr,
+    pub span: Span,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,8 +113,38 @@ pub enum Stmt {
 #[derive(Debug)]
 pub enum PatternKind {
     Wild,
-    Binding { name: Ident, mutable: bool },
+    /// A plain identifier: a binding, or a unit variant or constant in scope (decided by name resolution).
+    Binding {
+        name: Ident,
+        mutable: bool,
+    },
     Tuple(Vec<Pattern>),
+    Lit(LitPat),
+    /// An inclusive range `lo..=hi`.
+    Range(LitPat, LitPat),
+    /// A path with more than one segment, such as `Shape.Circle`.
+    Path(Vec<Ident>),
+    /// `Path(p, ...)`, such as `Some(v)`.
+    TupleStruct(Vec<Ident>, Vec<Pattern>),
+    /// `Path { field, field: p, ... }`.
+    Struct(Vec<Ident>, Vec<FieldPat>),
+    Or(Vec<Pattern>),
+    At(Ident, Box<Pattern>),
+}
+
+#[derive(Clone, Debug)]
+pub enum LitPat {
+    Int { value: u128, negative: bool },
+    Char(char),
+    Str(String),
+    Bool(bool),
+}
+
+#[derive(Debug)]
+pub struct FieldPat {
+    pub name: Ident,
+    /// `None` for the shorthand `name` (meaning `name: name`).
+    pub pattern: Option<Pattern>,
 }
 
 #[derive(Debug)]
@@ -184,6 +224,16 @@ pub enum ExprKind {
     TupleField(Box<Expr>, u32, Span),
     Call(Box<Expr>, Vec<Arg>),
     Index(Box<Expr>, Box<Expr>),
+    Match(Box<Expr>, Vec<MatchArm>),
+}
+
+#[derive(Debug)]
+pub struct MatchArm {
+    /// `None` for the catch-all `else` arm.
+    pub pattern: Option<Pattern>,
+    pub guard: Option<Expr>,
+    pub body: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -203,6 +253,7 @@ impl Expr {
                 | ExprKind::While { .. }
                 | ExprKind::Loop(_)
                 | ExprKind::For { .. }
+                | ExprKind::Match(..)
         )
     }
 }

@@ -83,6 +83,8 @@ impl Code {
     pub const UNKNOWN_NAME: Code = Code("E0002");
     pub const TYPE_MISMATCH: Code = Code("E0003");
     pub const ARG_COUNT: Code = Code("E0004");
+    pub const IMMUTABLE: Code = Code("E0005");
+    pub const NON_EXHAUSTIVE: Code = Code("E0006");
     pub const LITERAL_RANGE: Code = Code("E0008");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.

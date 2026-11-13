@@ -165,7 +165,7 @@ fn compile(args: &Args, output: &Path) -> Result<(), ExitCode> {
     let object = dir.path.join(if cfg!(windows) { "program.obj" } else { "program.o" });
     let module_name = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     let opts = burdin_codegen::Options { release: args.release, emit_ir: args.emit_ir.clone() };
-    burdin_codegen::emit_object(&program, &module_name, &object, &opts).map_err(fail)?;
+    burdin_codegen::emit_object(&program, &sources, &module_name, &object, &opts).map_err(fail)?;
     link(&dir.path, &object, output, &args.link_libs, args.release).map_err(fail)
 }
 

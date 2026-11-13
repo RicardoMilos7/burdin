@@ -59,6 +59,22 @@ mod tests {
     }
 
     #[test]
+    fn match_and_patterns() {
+        let src = "fn f() {\n match x {\n  Some(v) if v > 0 => g(v),\n  None => {}\n  1 | 2 => {} 3..=9 => h()\n  -1 => {}, n @ 10..=20 => {}\n  Shape.Rect { w, h: 0 } => {}\n  else => {}\n }\n}\n";
+        assert_eq!(errors(src), "");
+    }
+
+    #[test]
+    fn const_items() {
+        assert_eq!(errors("const A: i32 = 10\npriv const B: i32 = A * 2\nfn main() {}\n"), "");
+    }
+
+    #[test]
+    fn exclusive_range_pattern_is_an_error() {
+        assert!(errors("fn f() {\n match x {\n  1..5 => {}\n }\n}\n").contains("E0001"));
+    }
+
+    #[test]
     fn reserved_words_are_rejected() {
         assert!(errors("fn main() {\n let impl = 1\n}\n").contains("E0001"));
     }
