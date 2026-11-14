@@ -228,20 +228,27 @@ impl Globals {
     ) -> Option<Ty> {
         Some(match (name, args.len()) {
             ("Option", 1) => Ty::Option(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
+            ("Result", 2) => Ty::Result(
+                Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
+                Box::new(self.resolve_type_in(&args[1], self_ty, subst, module, diags)),
+            ),
             ("Heap", 1) => {
                 let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
                 check_storable(&inner, args[0].span, "a `Heap` element", diags);
                 Ty::Heap(Box::new(inner))
             }
             ("CPtr", 1) => Ty::CPtr(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
-            // The standard-library containers arrive with milestone 9. The storage rule (memory-rules.md, SC2)
-            // already applies to their type arguments.
-            ("List", 1) | ("Map", 2) => {
-                for arg in args {
-                    let t = self.resolve_type_in(arg, self_ty, subst, module, diags);
-                    check_storable(&t, arg.span, &format!("a `{name}` element"), diags);
-                }
-                Ty::Error
+            ("List", 1) => {
+                let elem = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                check_storable(&elem, args[0].span, "a `List` element", diags);
+                Ty::List(Box::new(elem))
+            }
+            ("Map", 2) => {
+                let key = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                let value = self.resolve_type_in(&args[1], self_ty, subst, module, diags);
+                check_storable(&key, args[0].span, "a `Map` key", diags);
+                check_storable(&value, args[1].span, "a `Map` value", diags);
+                Ty::Map(Box::new(key), Box::new(value))
             }
             _ => return None,
         })
@@ -251,7 +258,10 @@ impl Globals {
     pub(crate) fn has_eq(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
+            // Text compares by value; `String` and `str` compare byte for byte.
+            Ty::Str | Ty::String => true,
             Ty::Option(t) => self.has_eq(t),
+            Ty::Result(t, e) => self.has_eq(t) && self.has_eq(e),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -261,7 +271,7 @@ impl Globals {
                 let e = &self.enums[a.id];
                 e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq(&f.ty)))
             }
-            Ty::Str | Ty::String | Ty::Array(..) | Ty::Heap(_) | Ty::CPtr(_) | Ty::CString => false,
+            Ty::Array(..) | Ty::Heap(_) | Ty::CPtr(_) | Ty::CString | Ty::List(_) | Ty::Map(..) | Ty::Chars => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) => false,
         }
     }

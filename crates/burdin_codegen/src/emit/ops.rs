@@ -33,6 +33,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let v = if op == BinOp::Ne { self.builder.build_not(eq, "").map_err(llvm_err)? } else { eq };
             return Ok(Some(v.into()));
         }
+        if matches!(op, BinOp::Eq | BinOp::Ne) && matches!(operand_ty, Ty::Str | Ty::String) {
+            let lp = self.spill(lv, operand_ty)?;
+            let rp = self.spill(rv, operand_ty)?;
+            let eq = match (lp, rp) {
+                (Some(lp), Some(rp)) => self.eq_at(lp, rp, operand_ty)?,
+                _ => self.cx.bool_type().const_int(1, false),
+            };
+            let v = if op == BinOp::Ne { self.builder.build_not(eq, "").map_err(llvm_err)? } else { eq };
+            return Ok(Some(v.into()));
+        }
         if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge)
             && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_))
         {

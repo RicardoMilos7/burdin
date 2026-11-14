@@ -1,0 +1,33 @@
+// The stage 0 standard library, written in Burdin.
+//
+// The compiler provides the primitives that need to reach the operating system or raw memory (file I/O,
+// process control, the arguments, and the memory helpers); everything a Burdin program can express is here.
+
+/// The error type of the I/O functions. Stage 0 has no payload-carrying errors; `error` declarations
+/// arrive with stage 1.
+type IoError = ()
+
+/// The error type of `i32.parse` and the other integer parsers.
+type ParseIntError = ()
+
+/// The error type of `assert` and `assert_eq`.
+type AssertError = ()
+
+/// Panics with `assertion failed` when `cond` is false.
+fn assert(cond: bool) {
+    if !cond {
+        panic("assertion failed")
+    }
+}
+
+/// Panics when the two values differ.
+fn assert_eq<T: Eq>(a: T, b: T) {
+    if a != b {
+        panic("assertion failed: the two values differ")
+    }
+}
+
+/// Panics. `unreachable()` marks a branch the program promises never runs.
+fn unreachable(): ! {
+    panic("unreachable")
+}

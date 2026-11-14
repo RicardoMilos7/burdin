@@ -117,6 +117,24 @@ pub enum ExprKind {
         slice: Box<Expr>,
         body: Block,
     },
+    /// `for pattern in list`: iterate a `List<T>`, borrowing it.
+    ForList {
+        pat: Pat,
+        list: Box<Expr>,
+        body: Block,
+    },
+    /// `for pattern in map`: iterate a `Map<K, V>` as `(key, value)` pairs, borrowing it.
+    ForMap {
+        pat: Pat,
+        map: Box<Expr>,
+        body: Block,
+    },
+    /// `for pattern in string.chars()`: iterate the characters of a `str`.
+    ForChars {
+        pat: Pat,
+        string: Box<Expr>,
+        body: Block,
+    },
     Match(Box<Expr>, Vec<Arm>),
     Break,
     Continue,
@@ -152,6 +170,10 @@ pub enum ExprKind {
     Variant(usize, Vec<(usize, Expr)>),
     Some(Box<Expr>),
     None,
+    /// `Ok(value)` of a `Result<T, E>`.
+    Ok(Box<Expr>),
+    /// `Err(value)` of a `Result<T, E>`.
+    Err(Box<Expr>),
     /// Field `n` of a struct or tuple.
     Field(Box<Expr>, usize),
 }
@@ -186,6 +208,10 @@ pub enum Pat {
     Or(Vec<Pat>),
     Some(Box<Pat>),
     None,
+    /// `Ok(pattern)` of a `Result`.
+    Ok(Box<Pat>),
+    /// `Err(pattern)` of a `Result`.
+    Err(Box<Pat>),
     /// A tuple or struct: one pattern per field, in declaration order.
     Product(Vec<Pat>),
     /// A variant of an enum: its index and one pattern per field, in declaration order.

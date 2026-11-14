@@ -1,6 +1,6 @@
 //! Name resolution and type checking. Produces the typed tree in [`burdin_tir`].
 //!
-//! The checker covers the stage 0 language up to milestone 8: every file is a module, packages import each other
+//! The checker covers the stage 0 language up to milestone 9: every file is a module, packages import each other
 //! with `use`, `priv` items are package-private, and `extern "C"` declarations plus `unsafe` blocks expose the C
 //! ABI (see `modules.rs` and `unsafe.rs`). Everything else is reported with `Code::UNSUPPORTED` until its milestone.
 //!
@@ -25,6 +25,7 @@ mod globals;
 mod impls;
 mod imports;
 mod instances;
+mod prelude;
 mod resolve;
 mod session;
 mod types;
@@ -69,6 +70,7 @@ pub fn check<'a>(
     sema.declare_types(diags);
     sema.declare_values(diags);
     sema.resolve_imports(diags);
+    sema.install_prelude();
     sema.declare_bounds(diags);
     sema.register_impls(diags);
     sema.declare_identities(diags);

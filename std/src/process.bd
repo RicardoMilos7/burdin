@@ -1,0 +1,13 @@
+use std.IoError
+
+// The current process and child processes.
+
+/// Ends the process with `code`.
+fn exit(code: i32): ! {
+    __exit(code)
+}
+
+/// Runs `command` through the system shell and waits for it. The result is the shell's status.
+fn run(command: str): Result<i32, IoError> {
+    __run(command)
+}

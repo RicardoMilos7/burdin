@@ -294,8 +294,8 @@ impl<'a> FnCx<'a> {
             tir::ExprKind::Local(id) => self.locals[id.0].mutable,
             tir::ExprKind::Field(base, _) | tir::ExprKind::Deref(base) => self.place_mutable(base),
             tir::ExprKind::DerefRef(base) => matches!(base.ty, Ty::Ref { mutable: true, .. }),
-            // Elements of an array place are mutable with it; elements of a slice view are read-only.
-            tir::ExprKind::Index(base, _) => matches!(base.ty, Ty::Array(..)) && self.place_mutable(base),
+            // Elements of an array or a list place are mutable with it; elements of a slice view are read-only.
+            tir::ExprKind::Index(base, _) => matches!(base.ty, Ty::Array(..) | Ty::List(_)) && self.place_mutable(base),
             _ => false,
         }
     }

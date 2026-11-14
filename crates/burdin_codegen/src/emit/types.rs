@@ -26,7 +26,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Float(FloatTy::F32) => self.cx.f32_type().into(),
             Ty::Float(FloatTy::F64) => self.cx.f64_type().into(),
             Ty::Str => self.str_ty.into(),
-            Ty::String => self.string_ty.into(),
+            Ty::Chars => self.str_ty.into(),
+            // A list and a map have the same three-word shape as a `String`: pointer, length, capacity.
+            Ty::String | Ty::List(_) | Ty::Map(..) => self.string_ty.into(),
+            Ty::Result(ok, err) => self.result_ty(ok, err).into(),
             // A `CString` is the address of its NUL-terminated buffer; a `CPtr` is a raw address.
             Ty::CString | Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Heap(_) => self.cx.ptr_type(AddressSpace::default()).into(),
@@ -98,6 +101,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Some(t) => self.cx.struct_type(&[self.cx.bool_type().into(), t], false),
             None => self.cx.struct_type(&[self.cx.bool_type().into()], false),
         }
+    }
+
+    /// `Result<T, E>`: a tag and both payloads. The inactive payload is undefined and never dropped.
+    pub(super) fn result_ty(&self, ok: &Ty, err: &Ty) -> StructType<'ctx> {
+        self.cx.struct_type(&[self.cx.bool_type().into(), self.storage_ty(ok), self.storage_ty(err)], false)
     }
 
     fn defs(&self) -> TypeDefs<'a> {

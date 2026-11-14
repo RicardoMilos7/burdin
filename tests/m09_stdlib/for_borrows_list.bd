@@ -1,0 +1,9 @@
+//@ compile-fail
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    for v in xs {
+        xs.push(v) //~ E0111
+    }
+}

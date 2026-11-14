@@ -3,6 +3,7 @@
 
 mod aggregate;
 mod builtins;
+mod collections;
 mod control;
 mod expr;
 mod function;
@@ -12,6 +13,7 @@ mod ops;
 mod panics;
 mod pattern;
 mod place;
+mod results;
 mod scope;
 mod strings;
 mod structural;

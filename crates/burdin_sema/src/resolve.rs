@@ -91,7 +91,15 @@ impl Sema<'_> {
             }
         }
         for (i, item) in self.fn_items.iter().enumerate() {
-            let sig = fn_signature(item.decl, item.self_ty.as_ref(), &item.subst, item.module, &self.globals, diags);
+            let mut sig =
+                fn_signature(item.decl, item.self_ty.as_ref(), &item.subst, item.module, &self.globals, diags);
+            if self.globals.from_methods.contains(&tir::FuncId(i))
+                && let Some(p) = sig.params.first_mut()
+            {
+                p.by_ref = false;
+                p.own = true;
+                p.exclusive = true;
+            }
             self.globals.sigs[i] = sig;
         }
         for (i, c) in self.const_decls.iter().enumerate() {

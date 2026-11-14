@@ -1,0 +1,13 @@
+use std.IoError
+
+// Files. The bytes come from the compiler's file primitives; the signatures and the error type are Burdin.
+
+/// Reads the whole file at `path` as text.
+fn read_to_string(path: str): Result<String, IoError> {
+    __read_to_string(path)
+}
+
+/// Writes `text` to `path`, replacing what was there.
+fn write_file(path: str, text: str): Result<(), IoError> {
+    __write_file(path, text)
+}

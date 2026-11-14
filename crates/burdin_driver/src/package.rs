@@ -12,6 +12,8 @@ pub struct ModuleFile {
     /// The path inside `src/`, without the `.bd` suffix: `["geometry", "shapes"]`. Empty for a one-file target.
     pub path: Vec<String>,
     pub file: PathBuf,
+    /// The source text of an embedded module (the standard library); `None` for a file on disk.
+    pub text: Option<&'static str>,
 }
 
 /// One package of the compilation.
@@ -49,19 +51,61 @@ pub fn load(target: &Path) -> Result<Workspace, String> {
             ));
         };
         let stem = package.name.clone();
-        Ok(Workspace { packages: loader.packages, entry_package: root, entry_module, stem })
+        let mut packages = loader.packages;
+        attach_std(&mut packages);
+        Ok(Workspace { packages, entry_package: root, entry_module, stem })
     } else if target.is_file() {
         let stem = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "a".into());
         let package = PackageFiles {
             name: stem.clone(),
-            modules: vec![ModuleFile { path: Vec::new(), file: target.to_path_buf() }],
+            modules: vec![ModuleFile { path: Vec::new(), file: target.to_path_buf(), text: None }],
             deps: Vec::new(),
             root_module: Some(0),
         };
-        Ok(Workspace { packages: vec![package], entry_package: 0, entry_module: 0, stem })
+        let mut packages = vec![package];
+        attach_std(&mut packages);
+        Ok(Workspace { packages, entry_package: 0, entry_module: 0, stem })
     } else {
         Err(format!("cannot open {}: no such file or directory", target.display()))
     }
+}
+
+/// The standard library, embedded in the driver so that every program has it without a manifest entry.
+/// A project that declares its own `std` package keeps it instead.
+fn std_package() -> PackageFiles {
+    let sources: [(&str, &'static str); 5] = [
+        ("std", include_str!("../../../std/src/std.bd")),
+        ("io", include_str!("../../../std/src/io.bd")),
+        ("env", include_str!("../../../std/src/env.bd")),
+        ("process", include_str!("../../../std/src/process.bd")),
+        ("mem", include_str!("../../../std/src/mem.bd")),
+    ];
+    let modules: Vec<ModuleFile> = sources
+        .iter()
+        .map(|(name, text)| ModuleFile {
+            path: vec![name.to_string()],
+            file: PathBuf::from(format!("<std>/{name}.bd")),
+            text: Some(text),
+        })
+        .collect();
+    let root_module = modules.iter().position(|m| m.path == ["std"]);
+    PackageFiles { name: "std".to_string(), modules, deps: Vec::new(), root_module }
+}
+
+/// Adds the embedded standard library as a dependency of every package, unless a package already uses the
+/// name `std` (then that package is the standard library).
+fn attach_std(packages: &mut Vec<PackageFiles>) {
+    if packages.iter().any(|p| p.name == "std") {
+        return;
+    }
+    let std_id = packages.len();
+    for p in packages.iter_mut() {
+        // A package that already declares a `std` dependency keeps that one.
+        if !p.deps.iter().any(|(name, _)| name == "std") {
+            p.deps.push(("std".to_string(), std_id));
+        }
+    }
+    packages.push(std_package());
 }
 
 struct Loader {
@@ -320,7 +364,7 @@ fn walk(dir: &Path, prefix: &mut Vec<String>, modules: &mut Vec<ModuleFile>) -> 
                 return Err(format!("{}: a module name must be a Burdin identifier", path.display()));
             }
             prefix.push(stem.to_string());
-            modules.push(ModuleFile { path: prefix.clone(), file: path });
+            modules.push(ModuleFile { path: prefix.clone(), file: path, text: None });
             prefix.pop();
         }
     }

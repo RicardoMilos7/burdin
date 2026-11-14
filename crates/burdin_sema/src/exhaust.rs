@@ -35,6 +35,8 @@ fn lower(p: &Pat) -> P {
         Pat::Or(alts) => P::Or(alts.iter().map(lower).collect()),
         Pat::None => P::Ctor(Ctor::Variant(0), Vec::new()),
         Pat::Some(inner) => P::Ctor(Ctor::Variant(1), vec![lower(inner)]),
+        Pat::Ok(inner) => P::Ctor(Ctor::Variant(0), vec![lower(inner)]),
+        Pat::Err(inner) => P::Ctor(Ctor::Variant(1), vec![lower(inner)]),
         Pat::Product(fields) => P::Ctor(Ctor::Single, fields.iter().map(lower).collect()),
         Pat::Variant(i, fields) => P::Ctor(Ctor::Variant(*i), fields.iter().map(lower).collect()),
     }
@@ -111,6 +113,8 @@ fn specialize(rows: &[Vec<P>], c: Ctor, arity: usize) -> Vec<Vec<P>> {
 fn sub_tys(ty: &Ty, c: Ctor, adts: &TypeDefs) -> Vec<Ty> {
     match (ty, c) {
         (Ty::Option(inner), Ctor::Variant(1)) => vec![(**inner).clone()],
+        (Ty::Result(ok, _), Ctor::Variant(0)) => vec![(**ok).clone()],
+        (Ty::Result(_, err), Ctor::Variant(1)) => vec![(**err).clone()],
         (Ty::Tuple(elems), Ctor::Single) => elems.clone(),
         (Ty::Struct(a), Ctor::Single) => adts.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
         (Ty::Enum(a), Ctor::Variant(i)) => adts.enums[a.id].variants[i].fields.iter().map(|f| f.ty.clone()).collect(),
@@ -130,6 +134,9 @@ fn complete_ctors(ty: &Ty, heads: &[Ctor], adts: &TypeDefs) -> Option<Vec<Ctor>>
             (has(Ctor::Bool(false)) && has(Ctor::Bool(true))).then(|| vec![Ctor::Bool(false), Ctor::Bool(true)])
         }
         Ty::Option(_) => {
+            (has(Ctor::Variant(0)) && has(Ctor::Variant(1))).then(|| vec![Ctor::Variant(0), Ctor::Variant(1)])
+        }
+        Ty::Result(..) => {
             (has(Ctor::Variant(0)) && has(Ctor::Variant(1))).then(|| vec![Ctor::Variant(0), Ctor::Variant(1)])
         }
         Ty::Enum(a) => {

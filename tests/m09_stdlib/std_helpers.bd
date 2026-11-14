@@ -1,0 +1,32 @@
+//@ run
+//> b
+//> a
+//> 5
+//> 10
+//> 6
+//> missing
+
+fn main() {
+    assert(1 + 1 == 2)
+    assert_eq(3, 3)
+
+    let mut a = String.from("a")
+    let mut b = String.from("b")
+    mem.swap(mut a, mut b)
+    println(a)
+    println(b)
+
+    let mut n = 5
+    let old = mem.replace(mut n, 10)
+    println(old.to_string())
+    println(n.to_string())
+
+    match "hello world".find_str("world") {
+        Some(i) => println(i.to_string()),
+        None => println("none"),
+    }
+    match "hello".find_str("zzz") {
+        Some(_) => println("unexpected"),
+        None => println("missing"),
+    }
+}

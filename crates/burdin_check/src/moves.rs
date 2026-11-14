@@ -261,6 +261,10 @@ impl<'a> Checker<'a> {
                     self.check_partial_move(&inner, rest, span);
                 }
             }
+            Ty::Result(ok, err) => {
+                let payload = if *first == 0 { (**ok).clone() } else { (**err).clone() };
+                self.check_partial_move(&payload, rest, span);
+            }
             Ty::Enum(a) => {
                 let Some((field, rest)) = rest.split_first() else { return };
                 if let Some(f) = self.env.defs.enums[a.id].variants.get(*first).and_then(|v| v.fields.get(*field)) {
@@ -291,6 +295,22 @@ impl<'a> Checker<'a> {
                     let inner_ty = (**inner_ty).clone();
                     path.push(0);
                     self.check_pattern_drop_moves(inner, root_ty, &inner_ty, path, span);
+                    path.pop();
+                }
+            }
+            Pat::Ok(inner) => {
+                if let Ty::Result(ok, _) = ty {
+                    let ok = (**ok).clone();
+                    path.push(0);
+                    self.check_pattern_drop_moves(inner, root_ty, &ok, path, span);
+                    path.pop();
+                }
+            }
+            Pat::Err(inner) => {
+                if let Ty::Result(_, err) = ty {
+                    let err = (**err).clone();
+                    path.push(1);
+                    self.check_pattern_drop_moves(inner, root_ty, &err, path, span);
                     path.pop();
                 }
             }
@@ -369,15 +389,21 @@ impl<'a> Checker<'a> {
                     self.expr(a, Mode::Use);
                 }
             }
-            K::Builtin(b, args) => {
-                let m = if *b == tir::Builtin::HeapNew { Mode::Move } else { Mode::Use };
-                for a in args {
-                    self.expr(a, m);
+            K::Builtin(b, args) => match b {
+                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::Replace => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
                 }
-            }
-            K::Method(_, args) => {
-                for a in args {
-                    self.expr(a, Mode::Use);
+                _ => {
+                    for a in args {
+                        self.expr(a, Mode::Use);
+                    }
+                }
+            },
+            K::Method(m, args) => {
+                for (i, a) in args.iter().enumerate() {
+                    self.expr(a, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
                 }
             }
             K::StringAsStr(inner) => self.expr(inner, Mode::Use),
@@ -422,7 +448,14 @@ impl<'a> Checker<'a> {
                 let outer = self.outer_locals();
                 self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
                 self.scopes.push(Vec::new());
-                let Ty::Array(elem, _) = &array.ty else { unreachable!("a `for` array has an array type") };
+                let Ty::Array(elem, _) = &array.ty else {
+                    // A type error already reported; the body still gets checked.
+                    self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, array.span);
+                    let body_falls = self.block(body, Mode::Use);
+                    self.scopes.pop();
+                    self.finish_loop(entry, body_falls);
+                    return;
+                };
                 let elem = (**elem).clone();
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, array.span);
                 let body_falls = self.block(body, Mode::Use);
@@ -435,9 +468,57 @@ impl<'a> Checker<'a> {
                 let outer = self.outer_locals();
                 self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
                 self.scopes.push(Vec::new());
-                let Ty::Slice(elem) = &slice.ty else { unreachable!("a `for` slice has a slice type") };
+                let Ty::Slice(elem) = &slice.ty else {
+                    // A type error already reported; the body still gets checked.
+                    self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, slice.span);
+                    let body_falls = self.block(body, Mode::Use);
+                    self.scopes.pop();
+                    self.finish_loop(entry, body_falls);
+                    return;
+                };
                 let elem = (**elem).clone();
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, slice.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.scopes.pop();
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForList { pat, list, body } => {
+                self.expr(list, Mode::Use);
+                let entry = self.states.clone();
+                let outer = self.outer_locals();
+                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
+                self.scopes.push(Vec::new());
+                let elem = match &list.ty {
+                    Ty::List(elem) => (**elem).clone(),
+                    _ => Ty::Error,
+                };
+                self.bind_pattern(pat, &elem, &mut Vec::new(), None, list.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.scopes.pop();
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForMap { pat, map, body } => {
+                self.expr(map, Mode::Use);
+                let entry = self.states.clone();
+                let outer = self.outer_locals();
+                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
+                self.scopes.push(Vec::new());
+                let pair = match &map.ty {
+                    Ty::Map(k, v) => Ty::Tuple(vec![(**k).clone(), (**v).clone()]),
+                    _ => Ty::Error,
+                };
+                self.bind_pattern(pat, &pair, &mut Vec::new(), None, map.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.scopes.pop();
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForChars { pat, string, body } => {
+                self.expr(string, Mode::Use);
+                let entry = self.states.clone();
+                let outer = self.outer_locals();
+                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
+                self.scopes.push(Vec::new());
+                self.bind_pattern(pat, &Ty::Char, &mut Vec::new(), None, string.span);
                 let body_falls = self.block(body, Mode::Use);
                 self.scopes.pop();
                 self.finish_loop(entry, body_falls);
@@ -562,7 +643,7 @@ impl<'a> Checker<'a> {
                     self.expr(v, Mode::Move);
                 }
             }
-            K::Some(inner) => self.expr(inner, Mode::Move),
+            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.expr(inner, Mode::Move),
         }
     }
 
@@ -772,6 +853,18 @@ impl<'a> Checker<'a> {
                 self.bind_pattern(inner, inner_ty, path, root, span);
                 path.pop();
             }
+            Pat::Ok(inner) => {
+                let Ty::Result(ok, _) = ty else { return };
+                path.push(0);
+                self.bind_pattern(inner, ok, path, root, span);
+                path.pop();
+            }
+            Pat::Err(inner) => {
+                let Ty::Result(_, err) = ty else { return };
+                path.push(1);
+                self.bind_pattern(inner, err, path, root, span);
+                path.pop();
+            }
             Pat::Product(subs) => {
                 let tys: Vec<Ty> = match ty {
                     Ty::Tuple(ts) => ts.clone(),
@@ -854,6 +947,7 @@ fn pattern_moves(pat: &Pat) -> bool {
         Pat::At(_, _, inner) => pattern_moves(inner),
         Pat::Or(alts) => alts.iter().any(pattern_moves),
         Pat::Some(inner) => pattern_moves(inner),
+        Pat::Ok(inner) | Pat::Err(inner) => pattern_moves(inner),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().any(pattern_moves),
         _ => false,
     }
@@ -869,6 +963,7 @@ fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
         }
         Pat::Or(alts) => alts.iter().for_each(|a| collect_bindings(a, out)),
         Pat::Some(inner) => collect_bindings(inner, out),
+        Pat::Ok(inner) | Pat::Err(inner) => collect_bindings(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
     }
 }

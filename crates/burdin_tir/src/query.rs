@@ -56,6 +56,7 @@ impl TypeDefs<'_> {
     fn holds(&self, ty: &Ty, prop: Property, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
+            Ty::Chars => true,
             // A shared reference and a view are copied; a mutable reference is not (RF4). Cloning a view
             // yields the same view.
             Ty::Ref { mutable, .. } => prop == Property::Clone || !*mutable,
@@ -63,7 +64,11 @@ impl TypeDefs<'_> {
             // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
             Ty::CPtr(_) => true,
             Ty::String | Ty::Heap(_) => prop == Property::Clone,
+            // A list or a map owns its buffer, so it is never `Copy`; it can be deep-cloned when its elements can.
+            Ty::List(t) => prop == Property::Clone && self.holds(t, prop, seen),
+            Ty::Map(k, v) => prop == Property::Clone && self.holds(k, prop, seen) && self.holds(v, prop, seen),
             Ty::CString | Ty::Param(_) => false,
+            Ty::Result(t, e) => self.holds(t, prop, seen) && self.holds(e, prop, seen),
             Ty::Array(t, _) | Ty::Option(t) => self.holds(t, prop, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.holds(t, prop, seen)),
             Ty::Struct(a) => {
@@ -103,10 +108,11 @@ impl TypeDefs<'_> {
     fn needs_drop_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::CPtr(_) => false,
-            Ty::String | Ty::Heap(_) | Ty::CString => true,
+            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::CPtr(_) | Ty::Chars => false,
+            Ty::String | Ty::Heap(_) | Ty::CString | Ty::List(_) | Ty::Map(..) => true,
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Option(t) => self.needs_drop_seen(t, seen),
+            Ty::Result(t, e) => self.needs_drop_seen(t, seen) || self.needs_drop_seen(e, seen),
             Ty::Tuple(ts) => ts.iter().any(|t| self.needs_drop_seen(t, seen)),
             Ty::Struct(a) => {
                 if seen.contains(&(false, a.id)) {

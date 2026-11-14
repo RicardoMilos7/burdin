@@ -103,6 +103,7 @@ impl Code {
     pub const BOUND_NOT_SATISFIED: Code = Code("E0141");
     pub const ORPHAN_RULE: Code = Code("E0142");
     pub const PRIVATE_ITEM: Code = Code("E0150");
+    pub const QUESTION_OUTSIDE: Code = Code("E0160");
     pub const UNSAFE_REQUIRED: Code = Code("E0161");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.
