@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Drop cannot be derived; it is declared as `Type: Drop { ... }`.
+
+struct P derives (Drop) { //~ E0002
+    id: i32
+}
+
+fn main() {
+}

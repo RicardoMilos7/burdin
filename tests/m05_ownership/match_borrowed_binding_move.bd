@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// Moving out of a binding from a borrowed scrutinee is E0101.
+
+enum Entry {
+    Named(String)
+}
+
+fn eat(own s: String) {
+    println(s)
+}
+
+fn touch(e: Entry) {
+    match e {
+        Entry.Named(name) => eat(name) //~ E0101
+    }
+}
+
+fn main() {
+    touch(Entry.Named(String.from("y")))
+}

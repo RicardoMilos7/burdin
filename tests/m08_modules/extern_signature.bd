@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// Only integers, floats, and `CPtr` may cross the C ABI, and an extern declaration
+// takes no `mut`, `own`, or `self`.
+
+extern "C" {
+    fn takes_string(s: String): usize //~ E0162
+    fn returns_string(): String //~ E0162
+    fn mut_param(mut x: i32) //~ E0162
+    fn has_self(self) //~ E0162
+}
+
+fn main() {
+}

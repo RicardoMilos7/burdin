@@ -1,0 +1,49 @@
+//@ run
+//> 2
+//> 6
+//> 5
+//> 5
+//> 2
+
+// `mut` parameters take a marker, `own` parameters and receivers do not.
+
+struct Counter {
+    n: i32
+}
+
+Counter {
+    fn bump(mut self) {
+        self.n = self.n + 1
+    }
+    fn finish(own self): i32 {
+        self.n
+    }
+}
+
+fn add(mut x: i32, amount: i32) {
+    x = x + amount
+}
+
+fn length(s: String): usize {
+    s.len()
+}
+
+fn eat(own s: String): usize {
+    s.len()
+}
+
+fn main() {
+    let mut c = Counter { n: 0 }
+    c.bump()
+    c.bump()
+    println(c.n.to_string())
+
+    let mut v = 1
+    add(mut v, 5)
+    println(v.to_string())
+
+    let s = String.from("hello")
+    println(length(s).to_string())
+    println(eat(s).to_string())
+    println(c.finish().to_string())
+}

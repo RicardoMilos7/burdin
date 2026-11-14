@@ -1,0 +1,34 @@
+//@ run
+//> before
+//> 11
+//> 1
+//> 11
+//> after
+
+// A block's tail-expression temporaries drop when the expression finishes, before
+// the block's locals.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println(self.id.to_string())
+    }
+}
+
+fn make(id: i32): Noisy {
+    Noisy { id }
+}
+
+fn block(id: i32): i32 {
+    let local = make(id)
+    make(id + 10).id
+}
+
+fn main() {
+    println("before")
+    println(block(1).to_string())
+    println("after")
+}

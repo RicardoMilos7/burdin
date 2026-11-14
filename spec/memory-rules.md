@@ -21,9 +21,10 @@ the whole expression's base (`xs`, `h`, `r`).
 **Initialization state.** At each program point a place is *initialized*, *moved*, *partially moved* (some field moved
 out), or *uninitialized*. Joining paths gives *maybe moved* when the states differ.
 
-**Copy types.** Integers, floats, `bool`, `char`, `&T`, `str`, `[T]`, `()`, and tuples, arrays, structs and enums that are
-all-Copy and derive `Copy`. Everything else (`String`, `List`, `Heap`, any type with `Drop`, `&mut T`) is non-Copy. A type
-that implements `Drop` can never be Copy.
+**Copy types.** Integers, floats, `bool`, `char`, `&T`, `str`, `[T]`, `CPtr<T>`, `()`, and tuples, arrays, structs and
+enums that are all-Copy and derive `Copy`. `&T`, `str`, `[T]`, and `CPtr<T>` are Copy without a derive (RF4).
+Everything else (`String`, `List`, `Map`, `Heap`, any type with `Drop`, `&mut T`) is non-Copy. A type that implements
+`Drop` can never be Copy.
 
 **Second-class types.** `&T`, `&mut T`, `str`, `[T]`, and any type that contains one (`Option<&i32>`, `(str, i32)`, a
 generic instantiated with one). They may live in locals, parameters, return values, and temporaries only (SC rules).
@@ -54,8 +55,10 @@ is E0103.
 Tests: `m05_ownership/partial_move_ok`, `m05_ownership/partial_move_from_drop`.
 
 **MV6 Heap.** `Heap.new(v)` moves `v`. `*h` on an owned `Heap<T>` binding moves the pointee out, frees the allocation, and
-leaves `h` moved. Reading or assigning through `*h` does not move.
-Tests: `m05_ownership/heap_tree_eval`, `m07_generics/generic_stack`, `m05_ownership/copy_and_clone`.
+leaves `h` moved. Reading or assigning through `*h` does not move. Only the whole pointee can move: moving a field of
+the pointee through `*h` (or a field of an array element through indexing) is not supported in stage 0 and is reported
+as E9000; move the whole pointee into a local first (stage 1 extends the checker, `stage1-subset.md`).
+Tests: `m05_ownership/heap_tree_eval`, `heap_move_whole_then_field`, `m07_generics/generic_stack`, `m05_ownership/copy_and_clone`.
 
 **MV7 Move out of borrowed content.** Moving a non-Copy value out of a place that is only borrowed (a read-only or `mut`
 parameter, anything behind a reference, an element of a collection) is E0101.
@@ -65,9 +68,11 @@ Test: `m06_conventions/move_out_of_readonly_param`.
 If it is an owned place (an owned local, an `own` parameter) or a temporary, bindings in the arm that bind non-Copy parts move
 those parts out (the scrutinee becomes partially moved or moved) and Copy parts are copied. If it is a borrowed place (a read-only
 parameter, a `mut` parameter, behind a reference), bindings are views of the parts: read-only for a read-only place,
-mutable for a `mut` place; nothing moves. A binding is dropped at the end of its arm.
+mutable for a `mut` place; nothing moves. A binding from a borrowed scrutinee is a read-only place used like a plain
+value, with no `&` written: reading it, passing it to a read-only parameter, and taking fields of it work; assigning
+to it is E0005 and moving out of it is E0101. A binding is dropped at the end of its arm.
 Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_then_use`, `m06_conventions/match_borrowed_binding`,
-`m07_generics/generic_stack`.
+`match_borrowed_binding_readonly`, `m07_generics/generic_stack`.
 
 ## 2. Mutability (MU)
 
@@ -92,15 +97,28 @@ Tests: `m06_conventions/conventions_basic`, `m06_conventions/exclusivity_ok`.
 
 **CV2 `mut` parameter.** Exclusive mutable access for the duration of the call. The argument must be a mutable place (E0113 otherwise) and
 must be written with the marker `mut` (`f(mut x)`; E0114 if missing). A `mut` marker on an argument whose parameter is not
-`mut` is E0115. The callee cannot move out of a `mut` parameter (E0101). It may pass it on as `mut` (`bump(mut c)` inside a
+`mut` (including an `own` parameter) is E0115. The callee cannot move out of a `mut` parameter (E0101). It may pass it on as `mut` (`bump(mut c)` inside a
 function whose own parameter is `mut c`).
-Tests: `m06_conventions/conventions_basic`, `forward_mut_param`, `mut_needs_mut_binding`, `missing_mut_marker`, `unneeded_mut_marker`.
+Tests: `m06_conventions/conventions_basic`, `forward_mut_param`, `mut_needs_mut_binding`, `missing_mut_marker`, `unneeded_mut_marker`,
+`call_site_markers`, `own_mut_marker`.
 
-**CV3 `own` parameter.** The argument is moved in (MV1) and the callee owns it and drops it at the end of the call (DR3). No marker at the call site.
+**CV3 `own` parameter.** The argument is moved in (MV1) and the callee owns it and drops it at the end of the call (DR3). No marker at the call site; a `mut` marker is E0115.
 
 **CV4 Receivers.** `self` is read-only, `mut self` needs a mutable place and borrows it exclusively, `own self` moves.
-The receiver of a `mut self` method is borrowed mutably without a marker (`c.bump()`).
-Tests: `m06_conventions/conventions_basic`, `m04_data/struct_and_methods`.
+The receiver of a `mut self` method is borrowed mutably without a marker (`c.bump()`); a `mut` marker in receiver
+position is a syntax error (E0001).
+Tests: `m06_conventions/conventions_basic`, `call_site_markers`, `receiver_mut_marker`, `m04_data/struct_and_methods`.
+
+**IC1 Implicit conversion.** A `String` value passed as an argument whose parameter type is `str` is borrowed as a
+`str` for the call; the `String` is not moved. The same conversion applies to the argument-like positions that
+already have a `str` type: the payload of `Some`, `Ok`, and `Err`, the value of `mem.replace`, and a struct-literal
+field; `assert_eq` converts its second operand when the first is a `str`. It does not apply anywhere else: a `let`
+annotation, an assignment, a return type, an array or tuple element, a comparison, or a built-in name that is not an
+argument keeps the type `String` and is E0003 when `str` is expected. `.as_str()` is the explicit conversion. This is
+the **only** implicit conversion in the language. There are no `&mut T` to `&T`, `&T` to `&mut T`, `&String` to
+`str`, `String` to `[u8]`, numeric widening, or user-defined conversions (all E0003).
+Tests: `m06_conventions/string_str_conversion`, `m09_stdlib/string_ops`; errors: `let_string_to_str`,
+`mut_ref_to_shared_ref`, `ref_string_to_str`, `string_to_slice`.
 
 ## 4. Exclusivity (EX)
 
@@ -111,7 +129,11 @@ two `mut` arguments.
 
 **EX2** Overlap uses the place definition above, so different fields of one local or parameter do not overlap
 (`swap_vals(mut p.a, mut p.b)` is allowed, also through nested fields and a parameter), while a whole value and one of its fields do,
-and anything reached through indexing or a `Heap` dereference is one place.
+and anything reached through indexing or a `Heap` dereference is one place. The receiver and the arguments of a
+method call form one call, and a method call used as an argument is a whole place rooted at its base (its fields,
+indices, and dereferences do not make it a smaller place). Two elements of one array are one place, so
+`swap_vals(mut xs[0].a, mut xs[1].a)` is E0110, as is `swap_vals(mut p, mut p.a)`; `xs[0].a` and `xs[1].a` are not
+separate places even though they are different fields of different elements.
 
 **EX3** Each call is checked on its own. A `mut` borrow ends when the call returns, unless the call's result is a reference derived
 from that argument (RF5).
@@ -136,9 +158,11 @@ at all. Violation: E0111, reported at the conflicting access.
 Tests: `write_while_borrowed`, `two_mut_refs`, `shared_and_mut_ref`, `move_while_borrowed`, `derived_borrow_keeps_arg_borrowed`
 (all in `m06_conventions`).
 
-**RF4 Copying.** `&T` is Copy. `&mut T` is not: using it moves it, except that passing it where a `&mut` is expected, or
-dereferencing it, reborrows it, so it stays usable afterwards.
-Test: `m06_conventions/references_basic` (`*m = *m + 5` then use of `x`).
+**RF4 Copying.** `&T`, `str`, `[T]`, and `CPtr<T>` are Copy without deriving anything: reading one copies it, and it
+stays usable. `&mut T` is not: assigning it to another local, returning it, or storing it in a struct moves it, and
+using the moved value is E0100. Passing it where a `&mut T` is expected, or dereferencing it with `*`, reborrows it,
+so it stays usable afterwards (`*m = *m + 5` then `x`; passing `m` to another `&mut` parameter).
+Tests: `m06_conventions/references_basic`, `views_are_copy`, `mut_ref_move_then_use`, `str_views`, `slice_views`.
 
 **RF5 Borrows through a call.** An argument is borrowed for the duration of the call (shared for a read-only parameter,
 mutable for a `mut` parameter). If the result type is second-class and the callee's signature derives it from that parameter (RT),
@@ -164,13 +188,34 @@ so a result derived from one is E0122, reported at the returned expression.
 
 **RT3** Two or more origin parameters is E0121, reported at the function signature.
 
-**RT4 Static.** String literals are static views. A literal can be returned from any function, whatever its parameters.
-
-Tests: `m06_conventions/return_ref_single_source`, `str_views`, `slice_views`, `return_literal_ok`, `option_of_reference_ok`;
+**RT4 Static.** String literals are static views. A literal can be returned from any function, whatever its parameters,
+in any returned expression: a tail expression, `return`, a block, an `if` branch, or a `match` arm. A `const` of type
+`str` whose value is a string literal (directly or through another such constant) is static too. No other expression
+is static in stage 0: a view of a local, parameter, temporary, `String`, or non-`str` constant follows RT1-RT3, and
+`&` of a constant is E0003 because a constant is not a place.
+Tests: `m06_conventions/return_literal_ok`, `static_literals`, `const_is_not_a_place`, `return_ref_single_source`,
+`str_views`, `slice_views`, `option_of_reference_ok`;
 errors: `return_ref_two_sources`, `return_str_two_sources` (E0121), `return_ref_to_local`, `return_view_of_local_string`,
 `return_ref_from_own_param` (E0122).
 
-## 7. Second-class types (SC)
+## 7. Iteration (IT)
+
+**IT1 Borrow.** `for pattern in C { ... }` borrows `C` shared for the whole loop, from the start of the loop to the
+end of its body. The borrow ends after the loop, so `C` is usable afterwards. It is the same loan RF2/RF3 describe:
+writing, moving, `&mut`-borrowing, or passing `C` (or an overlapping place) as `mut` inside the body is E0111. There
+is no way to consume or mutate the collection through the `for` header; stage 1's iteration protocol adds `iter()` and
+`into_iter()` (m13).
+
+**IT2 Bindings.** The loop binding is a read-only place used like a plain value, with no `&` written. Assigning to it
+is E0005; moving a non-Copy element out of it is E0101.
+
+**IT3 Forms.** `for x in xs` yields each element of an array, slice, or `List`. `for (k, v) in map` yields each entry
+of a `Map` (order unspecified). `for c in s.chars()` yields `char` scalar values, and `for i in a..b` / `a..=b`
+yields the integers of the range. Ranges are only iterable in stage 0; storing one is stage 1 (m13).
+Tests: `m09_stdlib/for_borrows_list`, `for_borrow_forms`, `range_forms`; errors: `for_mutate_array`, `for_mutate_map`
+(E0111), `for_binding_readonly` (E0005).
+
+## 8. Second-class types (SC)
 
 **SC1** A second-class value may be a local, a parameter, a return value, or a temporary. It cannot be stored.
 
@@ -183,7 +228,7 @@ at the forbidden positions above, so `Option<&i32>` is accepted as a local and r
 Tests: `ref_in_struct_field`, `ref_in_enum_variant`, `ref_in_collection`, `str_in_struct_field`, `option_ref_in_struct_field`
 (E0120); `option_of_reference_ok`.
 
-## 8. Drop (DR)
+## 9. Drop (DR)
 
 **DR1 When.** A value is dropped when the owner goes out of scope while it is initialized, when it is overwritten by assignment
 (DR4), or when it is a temporary at the end of its statement (DR5). Moved-out values are not dropped by the old owner.
@@ -204,7 +249,7 @@ Test: `m05_ownership/move_and_reinit`.
 **DR5 Temporaries.** A temporary is dropped in reverse creation order at the end of the statement that created it, including the
 `let` statement itself. Reading a field of a temporary does not extend its life. `let _ = e` does not bind, so `e` is a
 temporary. `let _x = e` binds. The temporaries of a block's tail expression are dropped when that expression finishes, before the block's locals.
-Tests: `m05_ownership/drop_temporaries`, `drop_params_and_let_underscore`.
+Tests: `m05_ownership/drop_temporaries`, `drop_block_tail`, `drop_params_and_let_underscore`.
 
 **DR6 Early exits.** `return`, `break`, `continue`, and `?` drop every initialized value in the scopes being left, in reverse
 order, before control transfers. A returned value is computed before the drops run.
@@ -221,16 +266,20 @@ Test: `m05_ownership/copy_with_drop`.
 **DR9 Shadowing.** `let x = ...` over an existing `x` does not drop the old value; both live to the end of the scope.
 Test: `m05_ownership/drop_shadowing`.
 
-**DR10 Panics.** A panic prints its message, file, and line to stderr, flushes stdout, and aborts. No drops run.
-Tests: `m02_basics/*_aborts`.
+**DR10 Panics.** A panic prints `<file>:<line>:<column>: panic: <message>` to stderr, flushes stdout first, and aborts
+with a non-zero status (SIGABRT on POSIX, a non-zero exit on Windows). No drops run, and no further statements or
+temporaries are evaluated. `panic(msg)`, `unreachable()`, `assert`, a failed `expect`, overflow in debug, division by
+zero, and an out-of-bounds index all take this path.
+Tests: `m02_basics/*_aborts`, `panic_reports_location`, `panic_flushes_stdout`, `panic_runs_no_drops`.
 
-## 9. Derives that depend on these rules (CP)
+## 10. Derives that depend on these rules (CP)
 
 `Copy` requires every field to be Copy and the type to have no `Drop`; `Clone`, `Eq`, `Ord`, `Hash`, and `Default` require every field
-to implement them. A violation is E0130, reported at the offending field (or the derive clause for the `Drop` case).
-Tests: `m05_ownership/copy_with_drop`, `m07_generics/derive_field_not_eq`.
+to implement them. A violation is E0130, reported at the offending field (or the derive clause for the `Drop` case). The exact
+derived members, their comparison orders, and the `Hash` algorithm are in `derives.md`.
+Tests: `m05_ownership/copy_with_drop`, `m07_generics/derive_field_not_eq`, `m07_generics/derive_values`.
 
-## 10. Unsafe (US)
+## 11. Unsafe (US)
 
 Calling an `extern` function and any raw-pointer operation require an `unsafe` block or `unsafe fn` (E0161). Inside `unsafe` all
 the rules above still apply; `unsafe` only enables those operations.
@@ -238,5 +287,5 @@ Test: `m08_modules/unsafe_required`.
 
 ## Summary of error codes used here
 
-E0005 MU1, MU2 · E0100 MV2, MV5, MV8 · E0101 MV7, CV1, CV2 · E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3 ·
+E0003 IC1, RT4 · E0005 MU1, MU2 · E0100 MV2, MV5, MV8 · E0101 MV7, CV1, CV2 · E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1 ·
 E0113 CV2, MU3 · E0114 CV2 · E0115 CV2 · E0120 SC2 · E0121 RT3 · E0122 RT2 · E0130 DR8, CP · E0161 US.

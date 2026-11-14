@@ -1,0 +1,37 @@
+//@ run
+//> 6
+//> 1
+//> 2
+//> 4
+
+// File I/O is byte-for-byte: no newline translation on Windows, no normalization.
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let path = "burdin_test_binary_io.txt"
+    match write_file(path, "a\r\nb\0c") {
+        Ok(_) => {},
+        Err(_) => println("write failed"),
+    }
+    match read_to_string(path) {
+        Ok(text) => {
+            show(text.len() as i32)
+            match text.find('\r') {
+                Some(i) => show(i as i32),
+                None => println("no CR"),
+            }
+            match text.find('\n') {
+                Some(i) => show(i as i32),
+                None => println("no LF"),
+            }
+            match text.find('\0') {
+                Some(i) => show(i as i32),
+                None => println("no NUL"),
+            }
+        },
+        Err(_) => println("read failed"),
+    }
+}

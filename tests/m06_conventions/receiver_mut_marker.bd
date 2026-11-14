@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// A `mut self` receiver takes no marker at the call site.
+
+struct Counter {
+    n: i32
+}
+
+Counter {
+    fn bump(mut self) { self.n = self.n + 1 }
+}
+
+fn main() {
+    let mut c = Counter { n: 0 }
+    c.bump(mut) //~ E0001
+}

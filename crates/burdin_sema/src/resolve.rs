@@ -261,12 +261,12 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
     let mut params = Vec::new();
     for p in &f.params {
         if matches!(p.kind, ast::ParamKind::SelfParam) {
-            diags.error(Code::UNSUPPORTED, p.span, "an `extern` function cannot take `self`");
+            diags.error(Code::C_ABI, p.span, "an `extern` function cannot take `self`");
             continue;
         }
         if p.convention != ast::Convention::Read {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::C_ABI,
                 p.span,
                 "an `extern` function parameter is always passed by value; `mut` and `own` do not apply",
             );
@@ -275,7 +275,7 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
         let resolved = globals.resolve_type_in(ty, None, &[], module, diags);
         if resolved != Ty::Error && !is_c_abi_value(&resolved) {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::C_ABI,
                 ty.span,
                 format!("`{resolved}` cannot be passed to a C function; only integers, floats, and `CPtr` can"),
             );
@@ -286,7 +286,7 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
     }
     let ret = f.ret.as_ref().map(|t| globals.resolve_type_in(t, None, &[], module, diags)).unwrap_or(Ty::Unit);
     if ret != Ty::Unit && ret != Ty::Error && !is_c_abi_value(&ret) {
-        diags.error(Code::UNSUPPORTED, f.name.span, format!("`{ret}` cannot be returned by a C function"));
+        diags.error(Code::C_ABI, f.name.span, format!("`{ret}` cannot be returned by a C function"));
     }
     Signature { params, ret, has_self: false, ret_origin: None }
 }

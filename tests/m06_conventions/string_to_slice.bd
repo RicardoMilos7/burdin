@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// String does not convert to a slice of bytes.
+
+fn take(t: [u8]): usize { t.len() }
+
+fn main() {
+    let s = String.from("abc")
+    println(take(s).to_string()) //~ E0003
+    println(take(s).to_string()) //~ E0003
+}

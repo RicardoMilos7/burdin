@@ -1,0 +1,100 @@
+# Burdin derives (stage 0)
+
+A struct or enum may list `derives (...)` after its name (`grammar.md`). The compiler knows exactly six derives:
+`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`. Each is independent: deriving `Copy` does not provide
+`clone()`, and deriving `Ord` does not provide `==`; list every one a program uses. A derive whose requirement is
+not met is E0130, reported at the offending field (or at the derive clause for `Drop` and `Copy`).
+
+`Drop` is not derivable (E0002). It is declared only as `Type: Drop { fn drop(mut self) { ... } }`
+(`memory-rules.md`, DR8). A type that implements `Drop` cannot be `Copy` (E0130).
+
+## `Copy`
+
+A `Copy` value is copied by assignment, by `let`, by passing, and by returning; the source stays usable. The derive
+requires every field to be `Copy` and the type not to implement `Drop`. Integers, floats, `bool`, `char`, `()`,
+tuples and arrays of `Copy` types, `&T`, `str`, `[T]`, and `CPtr<T>` are `Copy` without a derive.
+
+## `Clone`
+
+`x.clone()` produces an independent deep copy and leaves `x` usable. The derive requires every field to be
+`Clone`. `Copy` types clone by copying; `String` copies its buffer; `Heap<T>` allocates and clones the pointee; a
+`List` clones its elements; structs, tuples, arrays, and enums clone field by field.
+
+## `Eq`
+
+`==` and `!=` compare values. The derive requires every field to support `==`. Structs and tuples compare fields in
+declaration order and are equal when every field is equal. Enums are equal only in the same variant with equal
+payload fields. `Option` and `Result` support `==` when their parts do; arrays, slices, references, `List`, `Map`,
+`Heap`, and `Chars` do not support `==` in stage 0.
+
+## `Ord`
+
+`<`, `<=`, `>`, and `>=` compare values by the order below. The derive requires every field to support `<`.
+Comparison is lexicographic:
+
+- a struct or tuple compares its fields in declaration order, the first unequal field deciding;
+- an enum compares variant declaration index first (`0` is the first variant written), then, for the same variant,
+  its payload fields in declaration order;
+- integers compare numerically (signed or unsigned as written), `bool` as `false < true`, `char` by scalar value,
+  `String` and `str` byte by byte.
+
+`Ord` does not imply `Eq`; a type that needs both lists both. A float field has no derived ordering, so a struct with
+an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option`, `Result`, arrays,
+and references do not support `<` in stage 0.
+
+## `Hash`
+
+`x.hash()` returns `u64` with the FNV-1a mixing function. Start with the offset basis
+
+```
+acc = 0xcbf29ce484222325
+```
+
+and fold the value's scalar parts in order. For each part `x` (an integer, `bool`, or `char`), let `w` be its value as
+a 64-bit word: signed integers are sign-extended, unsigned integers, `bool` (`0`/`1`), and `char` (its scalar value)
+are zero-extended. Then
+
+```
+acc = (acc XOR w) * 0x00000100000001b3        (mod 2^64)
+```
+
+The parts are: a struct's or tuple's fields in declaration order; an enum's variant declaration index (as an `i32`
+word) followed by the active variant's payload fields in declaration order; an `Option`'s tag (`false` = `None`,
+`true` = `Some`) followed by the payload when `Some`. The derive requires every field to be `Hash`. Equal values hash
+equally; the values themselves are pinned by `m07_generics/derive_values`.
+
+Worked examples (these are the expected values in that test):
+
+| Value | `hash()` |
+| --- | --- |
+| `Pair { a: 0, b: 0 }` | `590684067820433389` |
+| `Pair { a: 1, b: 2 }` | `589729691727335466` |
+| `Pair { a: -1, b: 2 }` | `17855101231749507460` |
+| `E.A` (first variant) | `12638153115695167455` |
+| `E.B(2)` (second variant) | `589729691727335466` |
+
+`Pair` has two `i32` fields; `E` is `enum E { A, B(i32) }`.
+
+## `Default`
+
+`Type.default()` is the associated function that returns the type's default value. The derive is for structs only;
+on an enum it is not implemented in stage 0 (`E9000`, stage 1). The derive requires every field to have a default:
+
+- integers and floats: `0` / `0.0`; `bool`: `false`; `char`: `'\0'`; `()`: `()`;
+- a nested struct that derives `Default`: its `default()`;
+- a tuple whose parts all have a default: elementwise;
+- `String`: an empty string; `Option`: `None`;
+- arrays, `List`, `Map`, `Heap`, and references do not have a default in stage 0 (E0130).
+
+A default value is built as an ordinary value at the use site; there is no hidden storage.
+
+## Tests
+
+| Derive | Tests |
+| --- | --- |
+| `Copy`, `Clone` | `m05_ownership/copy_and_clone`, `m07_generics/derives` |
+| `Eq`, `Ord` | `m07_generics/derives`, `derive_values` |
+| `Hash` | `m07_generics/derives`, `derive_values` |
+| `Default` | `m07_generics/derives`, `derive_values` |
+| Requirement failures | `m07_generics/derive_field_not_eq` (E0130), `m05_ownership/copy_with_drop` (E0130) |
+| `Drop` not derivable | `m05_ownership/drop_derive` (E0002) |

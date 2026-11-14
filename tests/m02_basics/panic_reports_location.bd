@@ -1,0 +1,11 @@
+//@ run-abort
+//@ stderr: panic: boom
+//@ stderr: :10:5:
+//> before panic
+//> still flushed
+
+fn main() {
+    println("before panic")
+    println("still flushed")
+    panic("boom")
+}

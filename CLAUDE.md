@@ -16,9 +16,11 @@ The files in this repository are the only maintained copies. Documents hosted on
 not updated and may disagree with the repository.
 
 1. `tests/` is the conformance suite and the most precise statement of behavior. Read `tests/README.md` first: it defines
-   the test format, the error-code registry, and 16 assumptions the tests make.
+   the test format, the error-code registry, and the 16 settled language decisions.
 2. `spec/grammar.md` is the syntax of stage 0. `spec/memory-rules.md` is the exact semantics of moves, conventions,
-   exclusivity, references, and drops, with rule IDs and the tests that cover each.
+   exclusivity, references, and drops, with rule IDs and the tests that cover each. `spec/stdlib.md` is the stage 0
+   standard-library surface (names and signatures), and `spec/derives.md` is the exact behavior of `Copy`, `Clone`,
+   `Eq`, `Ord`, `Hash`, and `Default`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what the next milestones add, the decisions they need, and the
    roadmaps for later stages.
@@ -81,7 +83,7 @@ crates/
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, and code generation
 std/                      the standard library, written in Burdin
-spec/                     grammar, memory rules, stage 0 scope, stage 1 plan
+spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts
 ```
 

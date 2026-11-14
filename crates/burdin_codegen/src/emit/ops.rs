@@ -44,7 +44,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return Ok(Some(v.into()));
         }
         if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge)
-            && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_))
+            && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) | Ty::Str | Ty::String)
         {
             let lp = self.spill(lv, operand_ty)?;
             let rp = self.spill(rv, operand_ty)?;

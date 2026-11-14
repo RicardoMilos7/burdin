@@ -1,0 +1,19 @@
+//@ run
+//> a
+//> b
+
+// Only the whole pointee moves out of a Heap. A field of the pointee moves out after
+// the pointee has been moved into a local.
+
+struct Pair {
+    a: String
+    b: String
+}
+
+fn main() {
+    let h = Heap.new(Pair { a: String.from("a"), b: String.from("b") })
+    let p = *h
+    let a = p.a
+    println(a)
+    println(p.b)
+}

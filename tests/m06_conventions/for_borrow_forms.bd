@@ -1,0 +1,40 @@
+//@ run
+//> 1
+//> 2
+//> 3
+//> 3
+//> 1
+//> 2
+//> 2
+//> a
+//> b
+//> 2
+//> 11
+
+// `for` borrows its collection for the whole loop; the collection stays usable after.
+
+fn main() {
+    let xs = [1, 2, 3]
+    for x in xs {
+        println(x.to_string())
+    }
+    println(xs.len().to_string())
+
+    let sl = xs[0..2]
+    for x in sl {
+        println(x.to_string())
+    }
+    println(sl.len().to_string())
+
+    let s = String.from("ab")
+    for c in s.chars() {
+        println(c.to_string())
+    }
+    println(s.len().to_string())
+
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 10)
+    for (k, v) in m {
+        println((k + v).to_string())
+    }
+}

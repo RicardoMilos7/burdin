@@ -1,0 +1,20 @@
+//@ run-abort
+//@ stderr: boom
+//> before
+
+// A panic aborts the process; no Drop runs on the way out.
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("drop")
+    }
+}
+
+fn main() {
+    let n = Noisy { id: 1 }
+    println("before")
+    panic("boom")
+}
