@@ -8,8 +8,8 @@
 //! through a pointer as the variant's own struct of fields. `()` and `!` have no value.
 //!
 //! A `mut self` receiver is passed by address: the callee's `self` local uses the caller's place as its storage. Functions are internal and named `burdin.<name>`. The entry point
-//! `burdin_entry` calls the program's `main`; the C runtime (runtime/rt.c) defines the real `main`, output, string
-//! conversions, and the panic path.
+//! The module also defines the process entry point `main`, which calls the program's `main`, and the runtime
+//! (output, string conversions, and the panic path), generated as IR that calls libc (see `runtime.rs`).
 //!
 //! Every function starts with an `entry` block that holds only stack slots and their initialization, and branches to
 //! the body. After a terminator (`return`, `break`, a panic, ...) code generation continues in a fresh block without
@@ -17,7 +17,6 @@
 
 use burdin_diag::{SourceMap, Span};
 use burdin_sema::tir::{self, BinOp, Builtin, FloatTy, IntTy, Method, Pat, Program, Ty, UnOp};
-use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -29,6 +28,9 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, Int
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
 use std::collections::HashMap;
 use std::path::Path;
+
+mod runtime;
+use runtime::Runtime;
 
 pub struct Options {
     pub release: bool,
@@ -57,7 +59,7 @@ pub fn emit_object(
     module.set_triple(&triple);
     module.set_data_layout(&machine.get_target_data().get_data_layout());
 
-    let mut cg = Codegen::new(&context, &module, &machine, program, sources, opts.release);
+    let mut cg = Codegen::new(&context, &module, &machine, program, sources, opts.release)?;
     cg.program()?;
 
     if let Some(path) = &opts.emit_ir {
@@ -76,18 +78,6 @@ type GenResult<T> = Result<T, String>;
 
 fn llvm_err(e: inkwell::builder::BuilderError) -> String {
     format!("LLVM builder error: {e}")
-}
-
-/// Functions of the C runtime.
-struct Runtime<'ctx> {
-    print: FunctionValue<'ctx>,
-    panic: FunctionValue<'ctx>,
-    panic_bounds: FunctionValue<'ctx>,
-    string_free: FunctionValue<'ctx>,
-    str_to_string: FunctionValue<'ctx>,
-    i64_to_string: FunctionValue<'ctx>,
-    u64_to_string: FunctionValue<'ctx>,
-    char_to_string: FunctionValue<'ctx>,
 }
 
 struct LoopTargets<'ctx> {
@@ -123,6 +113,8 @@ struct Codegen<'ctx, 'a> {
     /// One frame per statement being generated: `String` temporaries to free at the end of the statement. Each slot
     /// holds an empty string until the temporary is created, so freeing a slot that was not reached is harmless.
     temps: Vec<Vec<PointerValue<'ctx>>>,
+    /// The target is Windows (the runtime uses the Windows CRT).
+    windows: bool,
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -133,42 +125,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         program: &'a Program,
         sources: &'a SourceMap,
         release: bool,
-    ) -> Self {
+    ) -> GenResult<Self> {
         let ptr_ty = cx.ptr_type(AddressSpace::default());
         let usize_ty = cx.ptr_sized_int_type(&machine.get_target_data(), None);
         let str_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into()], false);
         let string_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into()], false);
-        let void = cx.void_type();
-        let i32_ty = cx.i32_type();
-        let i64_ty = cx.i64_type();
-        let declare = |name: &str, ty| module.add_function(name, ty, Some(Linkage::External));
-        let noreturn = cx.create_enum_attribute(Attribute::get_named_enum_kind_id("noreturn"), 0);
-        let panic_tail = [ptr_ty.into(), usize_ty.into(), i32_ty.into(), i32_ty.into()];
-        let rt = Runtime {
-            print: declare(
-                "burdin_rt_print",
-                void.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into(), i32_ty.into()], false),
-            ),
-            panic: declare(
-                "burdin_rt_panic",
-                void.fn_type(&[&[ptr_ty.into(), usize_ty.into()][..], &panic_tail[..]].concat(), false),
-            ),
-            panic_bounds: declare(
-                "burdin_rt_panic_bounds",
-                void.fn_type(&[&[i64_ty.into(), i64_ty.into()][..], &panic_tail[..]].concat(), false),
-            ),
-            string_free: declare("burdin_rt_string_free", void.fn_type(&[ptr_ty.into(), usize_ty.into()], false)),
-            str_to_string: declare(
-                "burdin_rt_str_to_string",
-                void.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], false),
-            ),
-            i64_to_string: declare("burdin_rt_i64_to_string", void.fn_type(&[i64_ty.into(), ptr_ty.into()], false)),
-            u64_to_string: declare("burdin_rt_u64_to_string", void.fn_type(&[i64_ty.into(), ptr_ty.into()], false)),
-            char_to_string: declare("burdin_rt_char_to_string", void.fn_type(&[i32_ty.into(), ptr_ty.into()], false)),
-        };
-        rt.panic.add_attribute(AttributeLoc::Function, noreturn);
-        rt.panic_bounds.add_attribute(AttributeLoc::Function, noreturn);
-        Codegen {
+        let windows = machine.get_triple().as_str().to_string_lossy().contains("windows");
+        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows)?;
+        Ok(Codegen {
             cx,
             module,
             program,
@@ -189,7 +153,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             slots: Vec::new(),
             loops: Vec::new(),
             temps: Vec::new(),
-        }
+            windows,
+        })
     }
 
     // ----- types -------------------------------------------------------------
@@ -308,12 +273,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.function(self.functions[i], f)?;
         }
 
-        let entry = self.module.add_function("burdin_entry", self.cx.void_type().fn_type(&[], false), None);
-        let bb = self.cx.append_basic_block(entry, "entry");
-        self.builder.position_at_end(bb);
-        self.builder.build_call(self.functions[program.main.0], &[], "").map_err(llvm_err)?;
-        self.builder.build_return(None).map_err(llvm_err)?;
-        Ok(())
+        runtime::define_main(self.cx, self.module, self.functions[program.main.0], self.windows)
     }
 
     fn function(&mut self, value: FunctionValue<'ctx>, f: &'a tir::Function) -> GenResult<()> {
