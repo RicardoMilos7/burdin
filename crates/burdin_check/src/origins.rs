@@ -8,9 +8,8 @@
 //! The signature summaries are computed first, to a fixpoint, because a call needs its callee's origin. The
 //! errors are reported on a final pass over the stable summaries.
 
-use crate::Globals;
-use crate::tir::{self, BindMode, LocalId, LocalKind, Pat};
 use burdin_diag::{Code, Diagnostics, Span};
+use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Signature};
 use std::collections::BTreeSet;
 
 /// The parameters whose storage a value may borrow from, and whether it borrows from something that does not
@@ -46,18 +45,21 @@ impl Origin {
 }
 
 /// Computes every signature's return origin and reports E0121 and E0122.
-pub(crate) fn check(globals: &mut Globals, functions: &mut [tir::Function], diags: &mut Diagnostics) {
+pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], diags: &mut Diagnostics) {
     // The summary of one function can feed the next, so iterate until nothing changes.
     for _ in 0..=functions.len() {
         let mut changed = false;
         for i in 0..functions.len() {
+            if functions[i].symbolic {
+                continue;
+            }
             let origin = {
-                let mut analyzer = Analyzer::new(globals, &functions[i], None);
+                let mut analyzer = Analyzer::new(sigs, &functions[i], None);
                 analyzer.body()
             };
             let summary = origin.summary();
-            if globals.sigs[i].ret_origin != summary {
-                globals.sigs[i].ret_origin = summary;
+            if sigs[i].ret_origin != summary {
+                sigs[i].ret_origin = summary;
                 changed = true;
             }
         }
@@ -66,11 +68,14 @@ pub(crate) fn check(globals: &mut Globals, functions: &mut [tir::Function], diag
         }
     }
     for i in 0..functions.len() {
+        if functions[i].symbolic {
+            continue;
+        }
         let origin = {
-            let mut analyzer = Analyzer::new(globals, &functions[i], Some(diags));
+            let mut analyzer = Analyzer::new(sigs, &functions[i], Some(diags));
             analyzer.body()
         };
-        functions[i].ret_origin = globals.sigs[i].ret_origin;
+        functions[i].ret_origin = sigs[i].ret_origin;
         if functions[i].ret.is_second_class() && origin.params.len() > 1 {
             let f = &functions[i];
             let names: Vec<String> = origin.params.iter().map(|p| f.locals[f.params[*p].0].name.clone()).collect();
@@ -88,7 +93,7 @@ pub(crate) fn check(globals: &mut Globals, functions: &mut [tir::Function], diag
 }
 
 struct Analyzer<'a> {
-    globals: &'a Globals,
+    sigs: &'a [Signature],
     f: &'a tir::Function,
     /// The origin of every local that is not a borrowed parameter; borrowed parameters are computed from the
     /// signature, and view bindings inherit the origin of their scrutinee.
@@ -100,8 +105,8 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
-    fn new(globals: &'a Globals, f: &'a tir::Function, report: Option<&'a mut Diagnostics>) -> Self {
-        Analyzer { globals, f, bindings: vec![None; f.locals.len()], returns: Origin::default(), report }
+    fn new(sigs: &'a [Signature], f: &'a tir::Function, report: Option<&'a mut Diagnostics>) -> Self {
+        Analyzer { sigs, f, bindings: vec![None; f.locals.len()], returns: Origin::default(), report }
     }
 
     /// Analyzes the body and returns the union of the origins of all returned expressions.
@@ -234,7 +239,7 @@ impl<'a> Analyzer<'a> {
                 for arg in args {
                     self.expr(arg);
                 }
-                let sig = &self.globals.sigs[f.0];
+                let sig = &self.sigs[f.0];
                 if !sig.ret.is_second_class() {
                     return Origin::default();
                 }

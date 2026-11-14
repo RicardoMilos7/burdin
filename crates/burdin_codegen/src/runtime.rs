@@ -5,7 +5,7 @@
 //!
 //! The functions are internal to the module and keep the names they had as C functions (`burdin_rt_*`).
 
-use crate::{GenResult, llvm_err};
+use crate::emit::{GenResult, llvm_err};
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;

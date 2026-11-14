@@ -1,0 +1,8 @@
+[package]
+name = "burdin_tir"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+burdin_diag.workspace = true

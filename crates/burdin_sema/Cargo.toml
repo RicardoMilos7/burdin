@@ -7,3 +7,4 @@ publish.workspace = true
 [dependencies]
 burdin_diag.workspace = true
 burdin_syntax.workspace = true
+burdin_tir.workspace = true

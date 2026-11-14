@@ -145,7 +145,14 @@ fn compile(args: &Args, output: &Path) -> Result<(), ExitCode> {
     let mut diags = Diagnostics::default();
     let ast = burdin_syntax::parse(file, &sources.get(file).text, &mut diags);
     // Checking a tree with syntax errors would mostly report follow-on errors.
-    let program = if diags.has_errors() { None } else { burdin_sema::check(file, &ast, &mut diags) };
+    let program = (!diags.has_errors()).then(|| {
+        let mut program = burdin_sema::check(file, &ast, &mut diags);
+        // The memory checks run even when type checking failed, to report every error in the file.
+        let mut memory = Diagnostics::default();
+        burdin_check::check(&mut program, &mut memory);
+        diags.absorb(memory);
+        program
+    });
     if diags.has_errors() {
         eprint!("{}", diags.render(&sources));
         let n = diags.len();

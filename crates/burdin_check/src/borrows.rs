@@ -9,9 +9,9 @@
 //! for the whole loop. This is conservative for liveness and simple to keep sound, which is the right trade for
 //! the stage 0 analysis.
 
-use crate::Globals;
-use crate::tir::{self, BindMode, LocalId, Pat, Ty};
+use crate::Env;
 use burdin_diag::{Code, Diagnostics, Span};
+use burdin_tir::{self as tir, BindMode, LocalId, Pat, Ty};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Access {
@@ -36,7 +36,7 @@ struct Loan {
 }
 
 struct Checker<'a> {
-    globals: &'a Globals,
+    env: Env<'a>,
     locals: &'a [tir::Local],
     last_use: Vec<Option<usize>>,
     loans: Vec<Loan>,
@@ -47,7 +47,7 @@ struct Checker<'a> {
 }
 
 /// Checks the borrows of one function body.
-pub(crate) fn check(f: &tir::Function, globals: &Globals, diags: &mut Diagnostics) {
+pub(crate) fn check(f: &tir::Function, env: Env, diags: &mut Diagnostics) {
     let mut last_use = vec![None; f.locals.len()];
     for (i, stmt) in f.body.stmts.iter().enumerate() {
         uses_stmt(stmt, i, &mut last_use);
@@ -55,8 +55,7 @@ pub(crate) fn check(f: &tir::Function, globals: &Globals, diags: &mut Diagnostic
     if let Some(tail) = &f.body.tail {
         uses_expr(tail, f.body.stmts.len(), &mut last_use);
     }
-    let mut cx =
-        Checker { globals, locals: &f.locals, last_use, loans: Vec::new(), stmt: 0, reported: Vec::new(), diags };
+    let mut cx = Checker { env, locals: &f.locals, last_use, loans: Vec::new(), stmt: 0, reported: Vec::new(), diags };
     cx.body(&f.body);
 }
 
@@ -70,7 +69,7 @@ impl<'a> Checker<'a> {
     }
 
     fn is_copy(&self, ty: &Ty) -> bool {
-        self.globals.is_copy(ty)
+        self.env.defs.is_copy(ty)
     }
 
     fn loan_live(&self, loan: &Loan, stmt: usize) -> bool {
@@ -90,7 +89,7 @@ impl<'a> Checker<'a> {
     }
 
     fn conflicts(&self, e: &tir::Expr, access: Access) -> bool {
-        let Some((root, path, _)) = crate::tir_place(e) else { return false };
+        let Some((root, path, _)) = burdin_tir::place::tir_place(e) else { return false };
         self.loans.iter().any(|loan| {
             loan.root == root
                 && (path.starts_with(&loan.path) || loan.path.starts_with(&path))
@@ -126,7 +125,7 @@ impl<'a> Checker<'a> {
 
     /// Records a loan on the place `e`, if it is one. Its holders are attached by the enclosing `let`.
     fn add_loan(&mut self, e: &tir::Expr, mutable: bool) {
-        if let Some((root, path, _)) = crate::tir_place(e) {
+        if let Some((root, path, _)) = burdin_tir::place::tir_place(e) {
             self.loans.push(Loan { root, path, mutable, holders: Vec::new(), start: self.stmt });
         }
     }
@@ -299,7 +298,7 @@ impl<'a> Checker<'a> {
             K::Assign(place, value) => {
                 let start = self.loans.len();
                 self.expr(value, Mode::Move);
-                if let Some((root, path, _)) = crate::tir_place(place)
+                if let Some((root, path, _)) = burdin_tir::place::tir_place(place)
                     && path.is_empty()
                 {
                     // The local no longer holds the old value: the loans it held may end here. A new
@@ -337,7 +336,7 @@ impl<'a> Checker<'a> {
     }
 
     fn call(&mut self, f: usize, args: &[tir::Expr]) {
-        let sig = &self.globals.sigs[f];
+        let sig = &self.env.sigs[f];
         for (i, arg) in args.iter().enumerate() {
             let Some(param) = sig.params.get(i) else {
                 self.expr(arg, Mode::Use);

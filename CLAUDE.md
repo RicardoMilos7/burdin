@@ -46,25 +46,29 @@ tests/check-tests.sh               check test directives and error codes (no com
 On Windows run the `.sh` scripts from Git Bash. The runner expects `burdin build`, `burdin run`, and `burdin test` as described at
 the top of `tests/run-tests.sh`.
 
-## Planned layout
+## Layout
 
 ```
 Cargo.toml                workspace
 crates/
   burdin_diag/              spans, diagnostics, error codes
-  burdin_syntax/            lexer, parser, syntax tree (follows spec/grammar.md)
-  burdin_sema/              name resolution, types, interfaces, generics, exhaustiveness
-  burdin_mir/               MIR, lowering, drop elaboration
-  burdin_check/             move, mutability, exclusivity, borrow, and return-origin checks (spec/memory-rules.md)
-  burdin_codegen/           LLVM backend
+  burdin_syntax/            lexer, parser (parser/: items, types, statements, patterns, expressions), syntax tree
+  burdin_tir/               the typed tree every later stage reads: types, expressions, programs, signatures, and the
+                            questions about types (`TypeDefs`: Copy, Clone, Drop) and places
+  burdin_sema/              name resolution and type checking, monomorphization of generics, exhaustiveness
+                            (declare, impls, instances, resolve, bodies, validate; fncx/ checks one function body)
+  burdin_check/             return-origin, move, and borrow checks over the typed tree (spec/memory-rules.md)
+  burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime
   burdin_driver/            the `burdin` binary: build, run, test
 std/                      the standard library, written in Burdin
 spec/                     grammar, memory rules, stage 0 scope
 tests/                    conformance tests and scripts
 ```
 
-The crate boundaries are a plan, not a rule. Keep the front end (syntax, sema) free of LLVM so the checks can be tested
-without a backend.
+Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_codegen`, with `burdin_tir` as the
+shared vocabulary and `burdin_diag` under everything. `burdin_check` and `burdin_codegen` depend only on `burdin_tir`,
+not on sema. Keep everything before codegen free of LLVM so the checks can be tested without a backend. A MIR
+(`burdin_mir`) is not planned for stage 0: sema monomorphizes, and the checks read the typed tree.
 
 ## Toolchain
 

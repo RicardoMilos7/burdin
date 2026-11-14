@@ -1,21 +1,21 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, and sixth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, and seventh. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the sixth session (2026-11-14). **Milestones 1 to 6 are done**: all tests in `tests/m01_hello`
-through `tests/m06_conventions` pass in the debug and release profiles (95 tests; one m06 test is debug-only).
+Updated at the end of the seventh session (2026-11-14). **Milestones 1 to 7 are done**: all tests in `tests/m01_hello`
+through `tests/m07_generics` pass in the debug and release profiles (107 tests; one m06 test is debug-only).
 
 | What | Where | Status |
 | --- | --- | --- |
 | Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
-| Grammar | `spec/grammar.md` | Parser follows it except generic arguments in expressions (rule 8.2). Items other than `interface`, `use`, `extern`, and `test` parse |
+| Grammar | `spec/grammar.md` | Parser follows it, including generic arguments in expressions (rule 8.2) and `interface` items. `use`, `extern`, and `test` items are still skipped as E9000 |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6). All stage 0 memory rules are implemented |
-| Conformance tests | `tests/` | 131 tests. 95 pass today: m01 to m06 |
+| Conformance tests | `tests/` | 131 tests. 107 pass today: m01 to m07 |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
-| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_sema`, `burdin_codegen`, `burdin_driver` (`burdin` binary) |
+| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary); see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push, heap allocation (`burdin_rt_alloc`, `burdin_rt_free`), number/char/str to `String`, `str` `starts_with` and `find` (byte offsets, UTF-8 aware). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `abort`). `cc` only links |
 | CI | `.github/workflows/ci.yml` | Linux only: check-tests, fmt, clippy, unit tests, conformance tests of finished milestones. Never run yet (no remote) |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
@@ -31,7 +31,7 @@ exact packages and how to call WSL from PowerShell.
   statement-level and item-level error recovery. `interface`, `use`, `extern`, and `test` items are reported as E9000
   and skipped whole.
 - `burdin_sema`: resolves functions, constants, locals, and the built-ins (`print`, `println`, `eprint`, `eprintln`, `panic`),
-  and produces a typed tree (`tir`) where every expression has a type and a span. Types: `()`, `bool`, `char`, all
+  and produces a typed tree (`burdin_tir`) where every expression has a type and a span. Types: `()`, `bool`, `char`, all
   integers (`isize`/`usize` are 64-bit), `f32`, `f64`, `str`, `String`, `Heap<T>`, `[T; N]`, `Option<T>` (matching
   only), `!`.
   Integer and float literals take their type from context (`expect` is passed down; a literal on the left of a binary
@@ -51,7 +51,7 @@ exact packages and how to call WSL from PowerShell.
   structs and enums that derive `Eq` (all their fields must support `==`). Derive names are checked, but nothing else
   about derives yet (milestone 7). Struct patterns may leave fields out (the grammar has no `..`).
 - Milestone 5 added ownership. `Type: Drop { fn drop(mut self) }` interface blocks register a drop method, and a `Drop`
-  type is never `Copy`; deriving both is E0130. `burdin_sema/src/moves.rs` is the move checker: one function body at a
+  type is never `Copy`; deriving both is E0130. `burdin_check/src/moves.rs` is the move checker: one function body at a
   time, from signatures only. It keeps an initialization state per local and field path (struct/tuple fields, enum
   variant fields, `Option` payload), computes the MV1 move contexts, and reports use of a moved or maybe-moved place
   (E0100), a move out of borrowed content (E0101), moving a field out of a `Drop` type (E0103), and moving an outer
@@ -68,11 +68,11 @@ exact packages and how to call WSL from PowerShell.
   call exclusive (EX1).
   `&T` and `&mut T` are pointers in code generation; `&T`, `str`, and `[T]` are `Copy`, `&mut T` is not (RF4: reading
   through it or passing it where `&mut` is expected does not move it).
-  `burdin_sema/src/origins.rs` computes each signature's return origin (the single parameter a second-class result
+  `burdin_check/src/origins.rs` computes each signature's return origin (the single parameter a second-class result
   derives from, if any) to a fixpoint and stores it in `ParamSig.ret_origin`; a result the signature cannot attribute
   is checked against the body: E0121 at the signature for two or more sources, E0122 at the returned expression for a
   local, an `own` parameter, or a temporary.
-  `burdin_sema/src/borrows.rs` is the borrow checker (RF2, RF3, RF5): a loan records the place, whether it is mutable,
+  `burdin_check/src/borrows.rs` is the borrow checker (RF2, RF3, RF5): a loan records the place, whether it is mutable,
   and the locals that hold the reference, a copy of it, or a view derived from it; liveness is the last top-level
   statement that uses a holder (conservative inside loops, no CFG needed); an overlapping read of a mutable loan, or
   any overlapping write, `&mut`, or move while a loan is live is E0111. A call whose second-class result derives from
@@ -81,6 +81,30 @@ exact packages and how to call WSL from PowerShell.
   a slice binds views (MV8), and the move checker rejects moving out of borrowed content with E0101.
   Slicing `p[lo..hi]` works on arrays, `str`, `String`, and slices (bounds-checked, panicking on a bad range); `for`
   iterates slices; `as_str`, `len`, `starts_with`, and `find` are built-in methods.
+- Milestone 7 added generics, interfaces, and the rest of the derives (`burdin_sema/src/generics.rs` and the driver in
+  `check`). Generics are monomorphized inside sema, so the typed tree, the move and borrow checkers, and code generation
+  only ever see concrete types. A generic struct or enum becomes one ordinary struct or enum per distinct argument list
+  (`Stack<i32>`), a generic function one ordinary function (`max_of<i32>`), and the methods of `Stack<T> { ... }` and
+  `Stack<T>: Iface { ... }` are instantiated with each instance. Instances are allocated on request: `resolve_type`
+  and the call checker record a `Request` (a `RefCell` in `Globals`) and continue with `Ty::Error`; `check` allocates
+  what was asked for and repeats signature resolution and body checking until nothing new is requested, keeping only
+  the last pass's diagnostics. Every generic function, every impl of a generic type, and every default interface method
+  is also checked once against its declared bounds, with the parameters as `Ty::Param` and bounds from `FnItem.bounds`:
+  that is the "symbolic" check (E0141 for an operation the bounds do not give). Its code is discarded (the function
+  becomes a stub with `symbolic: true`, skipped by the other passes); only diagnostics are kept, deduplicated by
+  code and span with `Diagnostics::absorb`. Type arguments are inferred by unifying the parameter types of the symbolic
+  instance (the "identity instance") with the argument types, and from the expected type for what is left open
+  (`Stack.Empty`, `let z: i32 = pick()`).
+  Interfaces are `InterfaceInfo` (`requires`, method signatures with `Self` as `Ty::Param("Self")`, default flags).
+  `Type: Iface { ... }` registers its methods as ordinary methods of the type and instantiates the defaults it does not
+  override. E0140 is a missing method without a default, E0141 a `requires` the type does not meet (or a bound a call
+  does not meet), E0142 a built-in interface (`From`, `Eq`, ...) implemented for a type from the standard library.
+  Bounds are `Bound` (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, or a user interface). Derives: `Eq` and `Ord` on
+  structs, tuples, and enums (fields in order, variants in declaration order; codegen `cmp_at` returns -1/0/1 and
+  `<`, `>`, `<=`, `>=` compare it with 0), `Hash` (`x.hash(): u64`, FNV-1a over the fields, codegen `hash_at`), and
+  `Default` (`Type.default()`, built as a literal in sema; structs only), plus the earlier `Copy` and `Clone`. A derive
+  on a generic type holds per instance (`Pair<A, B>` is `Eq` when `A` and `B` are); E0130 is reported only for fields
+  that do not mention a type parameter.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
@@ -162,7 +186,7 @@ exact packages and how to call WSL from PowerShell.
     rule and its error code first, then implement. E0122 at the binding is the closest code, but its registry text says
     "returned".
 12. **`cargo fmt --all --check` fails on files this milestone did not touch** (for example
-    `crates/burdin_syntax/src/parser.rs`): the rustfmt from Rust 1.100 lays out some `matches!` calls differently from
+    `crates/burdin_syntax/src/parser.rs`, now `parser/`): the rustfmt from Rust 1.100 lays out some `matches!` calls differently from
     when the tree was formatted. The five files touched in the sixth session are formatted. Either reformat the whole
     tree in one commit or pin the toolchain, so the CI Format step can pass.
 
@@ -187,7 +211,7 @@ exact packages and how to call WSL from PowerShell.
 - `Drop` is declared with the interface-block syntax `Type: Drop { fn drop(mut self) }`; the block is accepted only for
   `Drop` (m07 interfaces are still E9000). The same `Type: Drop` route registers the drop method. Deriving both `Drop`
   and `Copy` is E0130.
-- The move checker is a separate pass (`burdin_sema/src/moves.rs`), not part of type checking, and it keeps the checker
+- The move checker is a separate pass (`burdin_check/src/moves.rs`), not part of type checking, and it keeps the checker
   local: one function body, signatures only. It produces `Function.moved`, the places that need drop flags, instead of
   rewriting the tree with explicit drops. Drop elaboration is entirely in code generation.
 - Code generation uses runtime drop flags, one `i1` stack slot per moved path, rather than tracking initialization
@@ -207,13 +231,45 @@ exact packages and how to call WSL from PowerShell.
   drop flags of the paths its pattern moved back to initialized, so the scrutinee is dropped exactly once.
 - Temporaries drop in reverse creation order (DR5). `let _ = place` reads the place instead of moving it.
 
+## Decided after the seventh session (structure)
+
+- The compiler is split by stage so each crate has one job and a one-way dependency: `burdin_tir` (the typed tree and
+  the type questions every stage asks), `burdin_sema` (checking and monomorphization), `burdin_check` (return origins,
+  moves, borrows), `burdin_codegen`. The driver runs `burdin_sema::check` and then `burdin_check::check`; sema returns
+  the program even when it reported errors, because the memory checks still run to report every error in a file.
+- `burdin_sema` keeps the state of a run in one `Sema` (`session.rs`); the phases are methods in `declare.rs`,
+  `impls.rs`, `instances.rs`, `resolve.rs`, and `bodies.rs`. One function body is checked by `fncx/` (`FnCx`), with
+  one file per theme (expressions, calls, patterns, operators, aggregates, control flow, generics).
+- `burdin_codegen` is one `Codegen` in `emit/`, with one file per theme (types, scopes, expressions, places, patterns,
+  operators, built-ins, glue, panics, strings, structural comparison and hashing).
+- Visibility is `pub(crate)` between modules of a crate and `pub(super)` for the methods of a split `impl`. Private
+  fields of the central struct (`FnCx`, `Codegen`, `Parser`) are visible to the theme files because they are children
+  of the module that defines it.
+
+## Decided in the seventh session
+
+- Generics are monomorphized in sema by checking the AST again with a type substitution (`FnItem.subst`), not in a MIR.
+  Instances are named `Stack<i32>` and `max_of<i32>`; a name only has to be unique.
+- Generic bodies are checked against their bounds with `Ty::Param`, and each instantiation is checked again with concrete
+  types, so an instantiation can report an error the symbolic check did not (a move error in a generic body). Duplicates
+  are merged by code and span.
+- The impl block of a generic type names the type's arguments by writing them: `Wrapper<T>: Describe where T: Describe`.
+  There is no separate `<T>` list; the arguments must be distinct plain identifiers.
+- `Ord` implies `Eq` and `Copy` implies `Clone`; derives are conditional on the field types for generic types.
+- Interface method implementations are registered as ordinary methods of the type (one namespace per type). Two
+  interfaces with a method of the same name on one type are reported as a duplicate member (E9000).
+- E9000 for: generic interfaces, generic methods (method-level `<U>`), generic type aliases, an impl for specific
+  type arguments (`Stack<i32> { ... }`), `Drop` or any built-in interface implemented by hand, `where` clauses on
+  something other than a type parameter, a user interface implemented for a type that is not a local struct or enum
+  (`i32: Shape`), struct-like variants of generic enums built with a literal, and `derives (Default)` on enums.
+
 ## Decided in the sixth session
 
 - Calling convention: every parameter except `own` is passed by address; `own` is passed by value. That makes a
   returned view of a read-only, `mut`, or `self` parameter refer to the caller's storage (RT1), and a `mut` or `own`
   parameter still sees the caller's place. `ParamSig` keeps `by_ref` (how the value is passed) separate from
   `exclusive` (whether the call borrows the argument exclusively), so the ABI does not make every call exclusive.
-- The borrow checker (`burdin_sema/src/borrows.rs`) is statement-granular and holder-based: a loan lives to the last
+- The borrow checker (`burdin_check/src/borrows.rs`) is statement-granular and holder-based: a loan lives to the last
   top-level statement that uses a local holding the reference, a copy of it, or a view derived from it. There is no
   CFG and no scope tracking; it is conservative in loops (a loan used in a loop body is live for the whole loop). It
   runs after the move checker and reports only E0111.
@@ -229,15 +285,23 @@ exact packages and how to call WSL from PowerShell.
 
 ## What is left to do, in order
 
-1. Milestone 7 (`tests/m07_generics`): monomorphization, interfaces, `requires`, derives, and the orphan rule; the
-   generic stack and `max_of`; derived `Eq`, `Ord`, and `Hash`. The parser still needs generic arguments in expressions
-   (`List<i32>.new()`, grammar rule 8.2) for this milestone and m09.
-2. Then milestones 8 to 11 in order. After each one, add its folder to the conformance step in `.github/workflows/ci.yml`.
-3. Known parser and front-end gaps to close in their milestones: the `interface`, `use`, `extern`, and `test` items
-   (m07, m08, m10). `Self` is not yet accepted in expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
-4. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried.
-5. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
-6. Before stage 1 (more features in the same Rust compiler, not a rewrite): the MIR interpreter question (comptime needs one),
+1. Milestone 8 (`tests/m08_modules`): files as modules, `use`, `priv`, `extern "C"`, `unsafe`, `CPtr<T>`. The parser
+   skips `use`, `extern`, and `unsafe` blocks as E9000 today.
+2. Then milestones 9 to 11 in order. m09 needs `List<T>`, `Map<K, V>`, `Result<T, E>`, and `?`. `List` and `Map` resolve
+   to `Ty::Error` today, and `for x in list` panics in `moves.rs` ("a `for` array has an array type"); fix both when
+   the containers arrive. They can reuse the generic machinery: a built-in generic type is a `GenericAdt` whose
+   declaration comes from the standard library. After each one, add its folder to the conformance step in `.github/workflows/ci.yml`.
+3. Known parser and front-end gaps to close in their milestones: the `use`, `extern`, and `test` items (m08, m10). `Self`
+   is not yet accepted in expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
+4. Generic gaps no test exercises yet: a static method of a generic type cannot infer its arguments from its own
+   arguments (`Holder.make(x)`; write `Holder<T>.make(x)` or give an expected type), bounds written on a generic type's
+   parameters are not checked when the type is instantiated (they only feed the symbolic check of its impls), a view
+   type as a type argument is not second-class (memory-rules SC3), interface method signatures in an impl are not
+   compared with the interface's, and `==` or `<` on a generic type's symbolic instance (`Wrapper<T> == Wrapper<T>` in
+   a generic body) is rejected.
+5. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried.
+6. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
+7. Before stage 1 (more features in the same Rust compiler, not a rewrite): the MIR interpreter question (comptime needs one),
    the design document's own open-questions list (derive syntax, `select`, extern details), and the stage 1 order (closures
    and iterators first).
 
@@ -245,6 +309,6 @@ exact packages and how to call WSL from PowerShell.
 
 Open the folder and say something like:
 
-> Read CLAUDE.md and HANDOFF.md. Continue with milestone 7.
+> Read CLAUDE.md and HANDOFF.md. Continue with milestone 8.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `HANDOFF.md`, and the `spec/` folder.
