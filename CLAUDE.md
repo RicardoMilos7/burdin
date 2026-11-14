@@ -21,8 +21,7 @@ workflow. Process rules live in `AGENTS.md`; behavior lives in `tests/` and `spe
    roadmaps for later stages.
 4. `Burdin Language Design.md` is the full language design, including features that come after stage 0.
 
-If these disagree, stop and say so. Do not pick one silently. `Burdin Stage 0 Subset.md` in the repo root is an old
-export of the stage 0 document; use `spec/stage0-subset.md` instead.
+If these disagree, stop and say so. Do not pick one silently.
 
 ## Working rules
 
