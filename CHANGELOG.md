@@ -24,6 +24,10 @@ close-out checklist in `AGENTS.md`).
 - Add `cargo bench -p burdin_bench`: generated inputs measure the lexer, the parser, name resolution and type
   checking, and code generation at three sizes, reporting median time per iteration. `--smoke` runs every stage
   once with generous time budgets and is part of CI, and `HANDOFF.md` records the first baseline (issue #41).
+- CI caches the cargo registry, `target/`, and LLVM 21. The cargo cache is keyed by `rust-toolchain.toml` and
+  `Cargo.lock`, so a toolchain or dependency change starts fresh; Linux caches the installed LLVM tree (including the
+  multiarch `libLLVM` it symlinks to) and macOS caches the Homebrew bottle downloads. `tests/check-ci.sh` fails if any
+  of those caches goes missing (issue #46).
 
 ## Unreleased — Stage 1
 

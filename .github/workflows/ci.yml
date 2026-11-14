@@ -15,12 +15,61 @@ jobs:
       - name: Check CI workflow
         run: tests/check-ci.sh
 
+      # The cache key is the pinned toolchain plus Cargo.lock, so a toolchain bump or a
+      # dependency change starts a fresh cache instead of reusing stale artifacts (issue #46).
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+
+      # LLVM 21 is the slowest download in this job. actions/cache restores as the runner
+      # user and cannot write under /usr, so the installed tree is kept in $HOME and copied
+      # into place with sudo. A distribution that splits libLLVM into the multiarch
+      # directory leaves /usr/lib/llvm-21/lib/libLLVM*.so pointing outside the tree, so the
+      # resolved real files are cached under their absolute paths too (issue #46).
+      - name: Cache LLVM 21
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/burdin/llvm-21
+          key: ${{ runner.os }}-llvm-21
+
       - name: Install LLVM 21
         run: |
-          wget -q https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 21
-          sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
+          cache=~/.cache/burdin/llvm-21
+          if [ "${{ steps.cache-llvm.outputs.cache-hit }}" = "true" ]; then
+            sudo rm -rf /usr/lib/llvm-21
+            sudo cp -a "$cache/llvm-21" /usr/lib/llvm-21
+            if [ -d "$cache/root" ]; then
+              sudo cp -a "$cache/root/." /
+            fi
+            sudo apt-get install -y libzstd-dev zlib1g-dev
+          else
+            wget -q https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 21
+            sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
+            mkdir -p "$cache/root"
+            sudo cp -a /usr/lib/llvm-21 "$cache/llvm-21"
+            # Ubuntu splits the headers and libLLVM out of the tree: the in-tree symlinks
+            # would dangle if only /usr/lib/llvm-21 were cached, so keep the real files
+            # under their absolute paths too (issue #46).
+            for extra in /usr/include/llvm-21 /usr/include/llvm-c-21; do
+              if [ -e "$extra" ]; then sudo cp -a --parents "$extra" "$cache/root"; fi
+            done
+            for link in /usr/lib/llvm-21/lib/libLLVM*.so*; do
+              if [ -L "$link" ]; then readlink -f "$link"; fi
+            done | sort -u | while read -r target; do
+              case "$target" in
+                "" | /usr/lib/llvm-21/*) ;;
+                *) sudo cp -a --parents "$target" "$cache/root" ;;
+              esac
+            done
+          fi
 
       # rust-toolchain.toml pins the channel and the clippy/rustfmt components.
       - name: Install Rust (pinned in rust-toolchain.toml)
@@ -76,6 +125,27 @@ jobs:
 
       - name: Check CI workflow
         run: tests/check-ci.sh
+
+      # The cache key is the pinned toolchain plus Cargo.lock, so a toolchain bump or a
+      # dependency change starts a fresh cache instead of reusing stale artifacts (issue #46).
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+
+      # Homebrew pours llvm@21 from a bottle. Cache the downloads so a warm run does not
+      # fetch the bottle and its dependencies again. `brew install` still runs, because the
+      # keg is not self-contained: Homebrew must install the libraries it links against
+      # (issue #46).
+      - name: Cache Homebrew downloads for LLVM 21
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: ${{ runner.os }}-homebrew-llvm-21
 
       - name: Install LLVM 21
         run: |
