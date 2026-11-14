@@ -69,12 +69,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
         }
 
-        crate::runtime::define_main(
-            self.cx,
-            self.module,
-            self.functions[program.main.expect("the checker reports a missing `main`").0],
-            self.windows,
-        )
+        match program.main {
+            Some(main) => crate::runtime::define_main(self.cx, self.module, self.functions[main.0], self.windows)?,
+            // A test build: the entry point dispatches to one `test` block by its index on the command line.
+            None => {
+                let tests: Vec<_> = program.tests.iter().map(|t| self.functions[t.func.0]).collect();
+                crate::runtime::define_test_main(self.cx, self.module, &tests, self.windows)?
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn function(&mut self, value: FunctionValue<'ctx>, f: &'a tir::Function) -> GenResult<()> {

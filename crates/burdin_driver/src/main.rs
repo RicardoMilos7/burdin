@@ -68,16 +68,48 @@ fn main() -> ExitCode {
         }
     };
     match args.command.as_str() {
-        "build" => match compile(&args, Path::new("."), args.output.as_deref()) {
+        "build" => match compile(&args, Path::new("."), args.output.as_deref(), false) {
             Ok(_) => ExitCode::SUCCESS,
             Err(code) => code,
         },
         "run" => run(&args),
-        _ => {
-            eprintln!("error: `burdin test` is not implemented yet (milestone 10)");
-            ExitCode::from(2)
+        _ => run_tests(&args),
+    }
+}
+
+/// `burdin test`: builds the package in test mode and runs each `test` block in its own process, so a panic only
+/// fails the test that aborted. The output format is the one `tests/run-tests.sh` reads.
+fn run_tests(args: &Args) -> ExitCode {
+    let dir = match TempDir::new() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: cannot create a temporary directory: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let compiled = match compile(args, &dir.path, None, true) {
+        Ok(compiled) => compiled,
+        Err(code) => return code,
+    };
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    for (index, name) in compiled.tests.iter().enumerate() {
+        let status = match Command::new(&compiled.exe).arg(index.to_string()).status() {
+            Ok(status) => status,
+            Err(e) => {
+                eprintln!("error: cannot run {}: {e}", compiled.exe.display());
+                return ExitCode::from(2);
+            }
+        };
+        if status.success() {
+            passed += 1;
+        } else {
+            failed += 1;
+            println!("FAIL {name}");
         }
     }
+    println!("test result: {passed} passed, {failed} failed");
+    if failed == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }
 
 fn run(args: &Args) -> ExitCode {
@@ -88,8 +120,8 @@ fn run(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let exe = match compile(args, &dir.path, None) {
-        Ok(exe) => exe,
+    let exe = match compile(args, &dir.path, None, false) {
+        Ok(compiled) => compiled.exe,
         Err(code) => return code,
     };
     let status = match Command::new(&exe).args(&args.program_args).status() {
@@ -118,9 +150,17 @@ fn exit_code_of(status: std::process::ExitStatus) -> u8 {
     1
 }
 
+/// What a successful compilation produced: the executable and the names of its `test` blocks (empty for a normal
+/// build).
+struct Compiled {
+    exe: PathBuf,
+    tests: Vec<String>,
+}
+
 /// Compiles `args.target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On
-/// failure the diagnostics are already printed. Returns the executable's path.
-fn compile(args: &Args, output_dir: &Path, output: Option<&Path>) -> Result<PathBuf, ExitCode> {
+/// failure the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead
+/// of its `main`.
+fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: bool) -> Result<Compiled, ExitCode> {
     let target = &args.target;
     let loaded = match package::load(target) {
         Ok(loaded) => loaded,
@@ -172,7 +212,8 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>) -> Result<Path
                     .collect(),
             })
             .collect();
-        let mut program = burdin_sema::check(&packages, loaded.entry_package, loaded.entry_module, &mut diags);
+        let mut program =
+            burdin_sema::check(&packages, loaded.entry_package, loaded.entry_module, test_mode, &mut diags);
         // The memory checks run even when type checking failed, to report every error in the program.
         let mut memory = Diagnostics::default();
         burdin_check::check(&mut program, &mut memory);
@@ -186,6 +227,7 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>) -> Result<Path
         return Err(ExitCode::from(1));
     }
     let program = program.expect("no errors means checking produced a program");
+    let tests: Vec<String> = program.tests.iter().map(|t| t.name.clone()).collect();
 
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -205,7 +247,7 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>) -> Result<Path
     let opts = burdin_codegen::Options { release: args.release, emit_ir: args.emit_ir.clone() };
     burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
     link(&object, &output, &args.link_libs).map_err(fail)?;
-    Ok(output)
+    Ok(Compiled { exe: output, tests })
 }
 
 /// Links the object file (which defines `main` and the runtime) with libc into the executable `output`.
@@ -223,7 +265,18 @@ fn link(object: &Path, output: &Path, libs: &[String]) -> Result<(), String> {
     } else {
         cmd.arg("-o").arg(output).arg(object);
         for l in libs {
-            cmd.arg(format!("-l{l}"));
+            match resolve_llvm_c(l) {
+                // `LLVM-C` is the C API of the LLVM shared library. Ubuntu installs it as `libLLVM-21.so`, not as
+                // `libLLVM-C.so`, so `llvm-config` says which directory and flag to use.
+                Some((dir, flag)) => {
+                    cmd.arg(format!("-L{}", dir.display()));
+                    cmd.arg(format!("-Wl,-rpath,{}", dir.display()));
+                    cmd.arg(flag);
+                }
+                None => {
+                    cmd.arg(format!("-l{l}"));
+                }
+            }
         }
     }
     let out = cmd.output().map_err(|e| format!("cannot run the linker `{cc}`: {e} (set BURDIN_CC)"))?;
@@ -235,6 +288,62 @@ fn link(object: &Path, output: &Path, libs: &[String]) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// `--link-lib LLVM-C` on a Unix host: the directory to search and the flag that names the LLVM shared library
+/// which exports the C API. Other names are left to the linker's own search path.
+fn resolve_llvm_c(name: &str) -> Option<(PathBuf, String)> {
+    if name != "LLVM-C" {
+        return None;
+    }
+    let (dir, libs) = llvm_config()?;
+    if dir.join("libLLVM-C.so").is_file() {
+        return Some((dir, "-lLLVM-C".to_string()));
+    }
+    if let Some(flag) = libs {
+        return Some((dir, flag));
+    }
+    if dir.join("libLLVM.so").is_file() {
+        return Some((dir, "-lLLVM".to_string()));
+    }
+    // The versioned development symlink: `libLLVM-21.so` is `-lLLVM-21`.
+    let mut found = None;
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let file = entry.file_name().to_string_lossy().to_string();
+        if let Some(stem) = file.strip_prefix("lib").and_then(|f| f.strip_suffix(".so"))
+            && stem.starts_with("LLVM-")
+        {
+            found = Some(format!("-l{stem}"));
+            break;
+        }
+    }
+    found.map(|flag| (dir, flag))
+}
+
+/// The LLVM installation's library directory and the shared-library flag `llvm-config` reports for it, from the
+/// first `llvm-config` on `PATH`.
+fn llvm_config() -> Option<(PathBuf, Option<String>)> {
+    for tool in
+        ["llvm-config", "llvm-config-21", "llvm-config-20", "llvm-config-19", "llvm-config-18", "llvm-config-17"]
+    {
+        let Ok(out) = Command::new(tool).arg("--libdir").output() else { continue };
+        if !out.status.success() {
+            continue;
+        }
+        let dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        if !dir.is_dir() {
+            continue;
+        }
+        let libs =
+            Command::new(tool).args(["--link-shared", "--libs"]).output().ok().filter(|o| o.status.success()).and_then(
+                |o| {
+                    let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    (text.starts_with("-l") && !text.contains(' ')).then_some(text)
+                },
+            );
+        return Some((dir, libs));
+    }
+    None
 }
 
 /// A uniquely named temporary directory, removed when dropped.

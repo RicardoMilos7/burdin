@@ -67,5 +67,42 @@ impl Sema<'_> {
                 }
             }
         }
+        if self.test_mode {
+            self.install_test_assertions(std_modules.as_slice());
+        }
+    }
+
+    /// In a test build, `assert` and `assert_eq` return `Result<(), AssertError>` instead of panicking, so
+    /// `assert(...)?` in a test or in a helper that returns `Result` reports a failure to the runner. The
+    /// definitions live in `std` behind names the prelude does not otherwise use; this replaces the prelude's
+    /// panicking bindings wherever they were installed and leaves a module's own `assert` alone.
+    fn install_test_assertions(&mut self, std_modules: &[usize]) {
+        let Some(&std_module) = std_modules.iter().find(|&&m| self.globals.modules[m].path == ["std"]) else {
+            return;
+        };
+        for (public, hidden) in [("assert", "__test_assert"), ("assert_eq", "__test_assert_eq")] {
+            let Some(test_global) = self.globals.exported_value(std_module, hidden) else { continue };
+            let panicking = self.globals.exported_value(std_module, public);
+            for module in 0..self.globals.modules.len() {
+                if self.globals.modules[module].package == self.globals.modules[std_module].package {
+                    continue;
+                }
+                let current = self.globals.modules[module].values.get(public).copied();
+                if current.is_some() && current.zip(panicking).is_some_and(|(c, p)| same_global(&c, &p)) {
+                    self.globals.modules[module].values.insert(public.to_string(), test_global);
+                }
+            }
+        }
+    }
+}
+
+/// Whether two global names refer to the same item.
+fn same_global(a: &Global, b: &Global) -> bool {
+    match (a, b) {
+        (Global::Func(x), Global::Func(y)) => x == y,
+        (Global::Const(x), Global::Const(y)) => x == y,
+        (Global::Generic(x), Global::Generic(y)) => x == y,
+        (Global::Extern(x), Global::Extern(y)) => x == y,
+        _ => false,
     }
 }

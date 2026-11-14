@@ -12,6 +12,21 @@ pub struct Ident {
 pub struct File {
     pub items: Vec<Item>,
     pub uses: Vec<UseDecl>,
+    /// `test` items. They are kept apart from the other items: only `burdin test` declares and checks them, so a
+    /// normal build strips them from the program.
+    pub tests: Vec<TestDecl>,
+}
+
+/// `test "name" { ... }`: a test block. The checker compiles it as an ordinary function with no parameters that
+/// returns `Result<(), AssertError>`, whose body is the block's statements followed by `Ok(())`.
+#[derive(Debug)]
+pub struct TestDecl {
+    /// The text of the string after `test`.
+    pub name: String,
+    pub name_span: Span,
+    /// The function the test is compiled as.
+    pub func: FnDecl,
+    pub span: Span,
 }
 
 #[derive(Debug)]

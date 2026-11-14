@@ -6,7 +6,9 @@ stage 0 is the core subset, and stage 1 adds the rest of the core language to th
 bootstrapped into itself. A self-hosted compiler may be reconsidered once the language is more mature and at least its
 core features are complete, but it is not planned.
 
-Read `HANDOFF.md` for the current state, the open decisions, and what to do next.
+Read `HANDOFF.md` for the current state, the open decisions, and what to do next. Read `AGENTS.md` for the shared
+working agreement: the definition of done, the verification policy, the milestone close-out checklist, and the issue
+workflow. Process rules live in `AGENTS.md`; behavior lives in `tests/` and `spec/`.
 
 ## Sources of truth, in this order
 
@@ -14,7 +16,9 @@ Read `HANDOFF.md` for the current state, the open decisions, and what to do next
    the test format, the error-code registry, and 16 assumptions the tests make.
 2. `spec/grammar.md` is the syntax of stage 0. `spec/memory-rules.md` is the exact semantics of moves, conventions,
    exclusivity, references, and drops, with rule IDs and the tests that cover each.
-3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones.
+3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
+   `spec/stage1-subset.md` is the stage 1 plan: what the next milestones add, the decisions they need, and the
+   roadmaps for later stages.
 4. `Burdin Language Design.md` is the full language design, including features that come after stage 0.
 
 If these disagree, stop and say so. Do not pick one silently. `Burdin Stage 0 Subset.md` in the repo root is an old
@@ -24,10 +28,13 @@ export of the stage 0 document; use `spec/stage0-subset.md` instead.
 
 - **Do not change a test to make it pass.** A test is the spec. If you think a test is wrong, explain why and ask. Changing
   the spec means updating the spec file and the tests first, then the code.
-- **Work one milestone at a time**, in order (`spec/stage0-subset.md`). A milestone is done when all tests in its folder and
-  all earlier folders pass. Do not start the next milestone with failing tests in the current one.
-- **Stay inside stage 0.** Do not implement deferred features (closures, string interpolation, `any`, comptime, tasks,
-  `error` declarations, extension methods, and so on) even when it would be convenient. Reserved words must still be rejected.
+- **Every change ships with tests.** A behavior change is done when a test demonstrates it and CI runs it, not when it
+  compiles. Register new diagnostics in `tests/README.md` before using them. `AGENTS.md` has the full definition of done;
+  every issue in the GitHub plan carries a `## Verification` section saying how it is proven.
+- **Work one milestone at a time**, in order (`spec/stage0-subset.md` for stage 0, `spec/stage1-subset.md` for stage 1).
+  A milestone is done when all tests in its folder and all earlier folders pass in debug and release.
+- **Stay inside the current stage.** Stage 0 is complete; stage 1 is the current plan. Do not implement deferred features
+  (stage 2 tasks, tooling, ecosystem) early, even when it would be convenient. Reserved words must still be rejected.
 - **Diagnostics are part of the product.** Every error has a code from the registry in `tests/README.md`, a source span, and
   reports at the line the tests mark. Report every error in a file, not just the first.
 - **Keep the checker local.** Memory checks look at one function body at a time, from signatures only. No whole-program
@@ -49,6 +56,10 @@ the top of `tests/run-tests.sh`.
 ## Layout
 
 ```
+CLAUDE.md                 the Claude-specific entry point and working rules
+AGENTS.md                 the shared working agreement: definition of done, close-out checklist, verification policy
+HANDOFF.md                current state, decisions, and what is next
+CHANGELOG.md              shipped milestones
 Cargo.toml                workspace
 crates/
   burdin_diag/              spans, diagnostics, error codes
@@ -63,7 +74,7 @@ crates/
   burdin_driver/            the `burdin` binary: build, run, test; package loading (`package.rs`: burdin.toml,
                             modules, dependencies)
 std/                      the standard library, written in Burdin
-spec/                     grammar, memory rules, stage 0 scope
+spec/                     grammar, memory rules, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts
 ```
 
@@ -86,5 +97,5 @@ Rust through rustup in `~/.cargo`. From PowerShell, run WSL commands with `wsl -
 outer shell does not expand `$?`), and keep Windows entries out of `PATH` inside WSL. Windows builds come later; the driver
 already has an untested `cl` link path.
 
-Diagnostics that are not in the registry: `E9000` means "not implemented in this compiler yet". It marks constructs from
-later milestones and must be gone when stage 0 is complete.
+Diagnostics that are not in the registry: `E9000` means "not implemented in this compiler yet". After stage 0 it marks
+constructs that belong to stage 1 or later; each one gets a real diagnostic when its milestone arrives.

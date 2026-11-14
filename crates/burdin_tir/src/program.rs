@@ -17,6 +17,15 @@ pub struct Program {
     pub externs: Vec<ExternFn>,
     /// `None` when the program has no `main` (already reported).
     pub main: Option<FuncId>,
+    /// The program's `test` blocks, in declaration order. Only `burdin test` fills this in; a normal build has
+    /// none, because test items are stripped before checking.
+    pub tests: Vec<TestEntry>,
+}
+
+/// One `test "name" { ... }` block, compiled as the function `func`.
+pub struct TestEntry {
+    pub name: String,
+    pub func: FuncId,
 }
 
 /// One `extern "C"` declaration. Its parameters are passed by value, as the C ABI expects.

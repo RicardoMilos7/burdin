@@ -21,7 +21,15 @@ pub struct Reported;
 pub(super) type PResult<T> = Result<T, Reported>;
 
 pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> File {
-    let mut p = Parser { file, toks: lexed.tokens, pos: 0, diags, nl_stack: Vec::new(), truncated: lexed.truncated };
+    let mut p = Parser {
+        file,
+        toks: lexed.tokens,
+        pos: 0,
+        diags,
+        nl_stack: Vec::new(),
+        truncated: lexed.truncated,
+        test_count: 0,
+    };
     p.file()
 }
 
@@ -34,6 +42,8 @@ pub(super) struct Parser<'a> {
     /// Whether line breaks are significant, one entry per open bracket (spec/grammar.md, section 2).
     nl_stack: Vec<bool>,
     truncated: bool,
+    /// How many `test` items this file has parsed, for their generated function names.
+    test_count: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -111,11 +121,6 @@ impl Parser<'_> {
         self.error_here(format!("expected {expected}, found {found}"))
     }
 
-    fn unsupported(&mut self, span: Span, what: &str) -> Reported {
-        self.diags.error(Code::UNSUPPORTED, span, format!("{what} is not implemented in this compiler yet"));
-        Reported
-    }
-
     fn expect(&mut self, kind: &TokenKind) -> PResult<Token> {
         if self.at(kind) { Ok(self.bump()) } else { Err(self.unexpected(&format!("`{}`", kind.text()))) }
     }
@@ -180,7 +185,11 @@ impl Parser<'_> {
         let start = self.pos;
         while !self.at_eof() {
             let t = self.tok();
-            let item_start = Self::starts_item_only(&t.kind) || (depth == 0 && t.kind == TokenKind::Unsafe);
+            // `test` is contextual, so it only starts an item when a string follows it.
+            let test_item = matches!(&t.kind, TokenKind::Ident(name) if name == "test")
+                && self.toks.get(self.pos + 1).is_some_and(|next| matches!(next.kind, TokenKind::Str(_)));
+            let item_start =
+                Self::starts_item_only(&t.kind) || (depth == 0 && t.kind == TokenKind::Unsafe) || test_item;
             if self.pos > start && t.nl_before && item_start {
                 break;
             }

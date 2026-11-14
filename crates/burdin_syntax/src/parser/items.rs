@@ -17,6 +17,13 @@ impl Parser<'_> {
                 }
                 continue;
             }
+            if self.at_test_item() {
+                match self.test_decl() {
+                    Ok(test) => file.tests.push(test),
+                    Err(Reported) => self.recover_item(),
+                }
+                continue;
+            }
             match self.item() {
                 Ok(Some(item)) => file.items.push(item),
                 Ok(None) => {}
@@ -26,14 +33,14 @@ impl Parser<'_> {
         file
     }
 
+    /// A `test` item: `test`, the contextual keyword, followed by a string. This is the only position where `test`
+    /// is not an ordinary identifier.
+    fn at_test_item(&self) -> bool {
+        matches!(self.kind(), TokenKind::Ident(name) if name == "test") && matches!(self.nth_kind(1), TokenKind::Str(_))
+    }
+
     pub(super) fn item(&mut self) -> PResult<Option<Item>> {
         let start = self.span();
-        if let TokenKind::Ident(name) = self.kind()
-            && name == "test"
-            && matches!(self.nth_kind(1), TokenKind::Str(_))
-        {
-            return self.skip_unsupported_item(start, "`test` blocks");
-        }
         let is_priv = self.eat(&TokenKind::Priv);
         match self.kind() {
             TokenKind::Fn | TokenKind::Unsafe => Ok(Some(Item::Fn(self.fn_decl(is_priv, start)?))),
@@ -242,38 +249,49 @@ impl Parser<'_> {
         Ok(ImplBlock { ty, interface, where_clause, methods, span: start.to(self.prev_span()) })
     }
 
-    /// Reports an item this compiler cannot compile yet and skips it whole: through its first balanced `{ ... }`,
-    /// or to the end of the line for items without a body. This keeps the methods inside it from being parsed as
-    /// separate items.
-    pub(super) fn skip_unsupported_item(&mut self, start: Span, what: &str) -> PResult<Option<Item>> {
-        self.unsupported(start, what);
-        let first = self.pos;
-        let mut depth = 0i32;
-        let mut seen_brace = false;
-        while !self.at_eof() {
-            let t = self.tok();
-            if depth == 0 && !seen_brace && self.pos > first && t.nl_before {
-                break;
+    /// `test "name" { ... }`. The test is compiled as a function with no parameters that returns
+    /// `Result<(), AssertError>`: its body is the block followed by `Ok(())`, so `assert(...)?` in the body
+    /// propagates the failure to the runner. Tests are only declared and checked by `burdin test`.
+    pub(super) fn test_decl(&mut self) -> PResult<TestDecl> {
+        let start = self.span();
+        self.bump(); // `test`
+        let name = match self.kind().clone() {
+            TokenKind::Str(name) => {
+                self.bump();
+                name
             }
-            match t.kind {
-                TokenKind::LBrace => {
-                    depth += 1;
-                    seen_brace = true;
-                }
-                TokenKind::LParen | TokenKind::LBracket => depth += 1,
-                TokenKind::RParen | TokenKind::RBracket => depth = (depth - 1).max(0),
-                TokenKind::RBrace => {
-                    depth = (depth - 1).max(0);
-                    if depth == 0 && seen_brace {
-                        self.bump();
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            self.bump();
-        }
-        Ok(None)
+            _ => return Err(self.unexpected("a test name string")),
+        };
+        let name_span = self.prev_span();
+        let body = self.block()?;
+        let body_span = body.span;
+        let index = self.test_count;
+        self.test_count += 1;
+        let span = start.to(body_span);
+
+        let path = |name: &str, args: Vec<Type>| Type {
+            kind: TypeKind::Path(vec![PathSegment { name: Ident { name: name.to_string(), span }, args }]),
+            span,
+        };
+        let ret = path("Result", vec![Type { kind: TypeKind::Unit, span }, path("AssertError", Vec::new())]);
+        let unit = Expr { kind: ExprKind::Unit, span };
+        let ok = Expr { kind: ExprKind::Name { name: Ident { name: "Ok".to_string(), span }, args: Vec::new() }, span };
+        let tail =
+            Expr { kind: ExprKind::Call(Box::new(ok), vec![Arg { mut_marker: false, expr: unit }]), span: body_span };
+        let mut stmts = body.stmts;
+        stmts.push(Stmt::Expr(tail));
+        let func = FnDecl {
+            is_priv: true,
+            is_unsafe: false,
+            name: Ident { name: format!("__burdin_test_{index}"), span: name_span },
+            generics: Vec::new(),
+            params: Vec::new(),
+            ret: Some(ret),
+            where_clause: Vec::new(),
+            body: Block { stmts, span: body_span },
+            span,
+        };
+        Ok(TestDecl { name, name_span, func, span })
     }
 
     pub(super) fn interface_decl(&mut self, is_priv: bool, start: Span) -> PResult<InterfaceDecl> {

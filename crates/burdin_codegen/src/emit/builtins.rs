@@ -29,6 +29,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 return Ok(call.try_as_basic_value().basic());
             }
+            Builtin::CStrToString => {
+                let ptr =
+                    self.expr_mode(&args[0], Mode::Use)?.expect("a C string pointer has a value").into_pointer_value();
+                let len = self
+                    .builder
+                    .build_call(self.rt.strlen, &[ptr.into()], "cstr.len")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("strlen returns a length");
+                let out = self.alloca(self.string_ty.into(), "string")?;
+                self.builder
+                    .build_call(self.rt.str_to_string, &[ptr.into(), len.into(), out.into()], "")
+                    .map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
             Builtin::StringNew => {
                 let out = self.alloca(self.string_ty.into(), "string")?;
                 self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;

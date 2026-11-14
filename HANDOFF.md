@@ -1,24 +1,26 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, and ninth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, and tenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the ninth session (2026-11-14). **Milestones 1 to 9 are done**: all tests in `tests/m01_hello`
-through `tests/m09_stdlib` pass in the debug and release profiles (127 tests in debug; 126 in release, because one
-m06 test is debug-only).
+Updated at the end of the tenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all 133
+tests pass in the debug profile and 132 in release (one m06 test is debug-only). `burdin test` runs `test` blocks, and
+the m11 program calls the LLVM C API.
 
 | What | Where | Status |
 | --- | --- | --- |
 | Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
-| Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
-| Grammar | `spec/grammar.md` | Parser follows it, including generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items. `test` items are still skipped as E9000 |
+| Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
+| Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
+| Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
+| Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6). All stage 0 memory rules are implemented |
-| Conformance tests | `tests/` | 133 tests. 127 pass today: m01 to m09 |
-| Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `assert`, `assert_eq`, `unreachable`), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
+| Conformance tests | `tests/` | 133 tests. All pass: m01 to m11 |
+| Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary); see the layout in `CLAUDE.md` |
-| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links |
+| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | CI | `.github/workflows/ci.yml` | Linux only: check-tests, fmt, clippy, unit tests, conformance tests of finished milestones. Never run yet (no remote) |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
@@ -30,8 +32,8 @@ exact packages and how to call WSL from PowerShell.
 - `burdin_syntax`: complete lexer; parser for functions, constants, structs, enums, type aliases, method blocks
   (`Type { ... }` and `Type: Interface { ... }`), types, statements, struct literals (`P { x }`, `Shape.Rect { w: 1 }`),
   `if let`, `let ... else`, and the full expression precedence table with the newline rules of section 2 and
-  statement-level and item-level error recovery. `use` items (path, `as`, and `.{...}`) and `extern "C"` blocks are
-  parsed; `test` items are still reported as E9000 and skipped whole.
+  statement-level and item-level error recovery. `use` items (path, `as`, and `.{...}`), `extern "C"` blocks, and
+  `test` items are parsed; tests are kept in `File.tests` so a normal build strips them.
 - `burdin_sema`: resolves functions, constants, locals, and the built-ins (`print`, `println`, `eprint`, `eprintln`, `panic`),
   and produces a typed tree (`burdin_tir`) where every expression has a type and a span. Types: `()`, `bool`, `char`, all
   integers (`isize`/`usize` are 64-bit), `f32`, `f64`, `str`, `String`, `Heap<T>`, `[T; N]`, `Option<T>` (matching
@@ -144,6 +146,23 @@ exact packages and how to call WSL from PowerShell.
   small runtime of C calls (`fopen`/`fread`/`fwrite`/`fclose`, `system`, `exit`, `strlen`, `memcmp`, `realloc`).
   The driver embeds `std/` with `include_str!` and adds it as a dependency of every package; `prelude.rs` copies
   its public names and module aliases into every module, keeping a module's own declarations.
+- Milestone 10 added the test runner. The parser reads `test "name" { ... }` into `ast::File.tests`, apart from the
+  other items, and builds each one as a private function `__burdin_test_N` with no parameters returning
+  `Result<(), AssertError>` whose body is the block followed by `Ok(())`. Normal builds never declare or check them
+  (tests are stripped); with `burdin_sema::check(..., test_mode, ...)`, the entry package's tests are declared and
+  checked, the prelude replaces `assert`/`assert_eq` with `std`'s `__test_assert`/`__test_assert_eq` (which return
+  `Err(())` instead of panicking), and `main` is not required. `Program.tests` carries each test's display name and
+  `FuncId`. Code generation then emits a dispatcher `main` instead of calling the program's `main`: it reads the test
+  index from `argv[1]` with `atoi`, calls that test, and returns 0 when its `Result` is `Ok` and 1 when it is `Err`.
+  `burdin test` compiles once into a temporary directory and runs the binary once per test, so a panic aborts only
+  the running test; it prints `FAIL <name>` for failures and `test result: N passed, M failed` at the end. The
+  panicking `assert` of normal builds is unchanged.
+- Milestone 11 added `CStr.to_string`: `CStr` is a `std` alias for `CPtr<CChar>`, and a `CPtr<CChar>` has an
+  associated `to_string` that reads the bytes with libc `strlen` and copies them into a `String`
+  (`Builtin::CStrToString`). `burdin` links `--link-lib LLVM-C` through `llvm-config`: Ubuntu installs the LLVM C API as
+  `libLLVM-21.so`, not `libLLVM-C.so`, so the driver asks `llvm-config --libdir` and `--link-shared --libs` and adds
+  `-L` plus an rpath. The m11 program builds and verifies `define i32 @answer() { ret i32 42 }` through the LLVM C API
+  and prints the IR. (Emitting an object file from the LLVM C API is still a later step in the stage 1 compiler.)
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
@@ -167,9 +186,10 @@ exact packages and how to call WSL from PowerShell.
   is deep: `Copy` values are copied bitwise, `String` copies its buffer, `Heap` allocates and clones the pointee, and
   aggregates clone field by field.
 - `burdin_driver`: `build` (writes `<package name>` in the current directory, `-o` to change it, `--emit-ir file.ll`),
-  `run` (builds into a temporary directory, passes the exit code through, 128+signal for a signal). A target is a
-  `.bd` file or a package directory; dependency cycles, missing paths, invalid module names, and malformed manifests
-  are reported as `error: ...` without diagnostics codes. `test` is not implemented.
+  `run` (builds into a temporary directory, passes the exit code through, 128+signal for a signal), and `test` (builds
+  in test mode and runs one process per test; it owns the counts and `FAIL` lines). A target is a `.bd` file or a
+  package directory; dependency cycles, missing paths, invalid module names, and malformed manifests are reported as
+  `error: ...` without diagnostics codes. `--link-lib LLVM-C` resolves the LLVM shared library through `llvm-config`.
 - Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
   were no syntax errors.
 
@@ -205,14 +225,15 @@ exact packages and how to call WSL from PowerShell.
 4. **Rules I made up while writing the specs** (see the end of the last session's summary): newline continuation only before
    `.`, `?`, `else`, `orelse`, `as`, `&&`, `||`; `own` parameters are immutable bindings; a block's tail-expression temporaries drop
    before its locals; `orelse` binds looser than `||`; comparison operators do not chain.
-5. **The driver now implements the runner's contract** for `build` and `run`; `test` waits for milestone 10.
-6. **`m11_llvm/llvm_return_42.bd` stops short** of emitting an object file and linking, because the target-initialization functions
-   are architecture-specific. The stage 0 milestone says "link and run", so extend it once the compiler can run the current version.
+5. **The driver implements the runner's contract** for `build`, `run`, and `test`.
+6. **`m11_llvm/llvm_return_42.bd` stops short** of emitting an object file and linking from Burdin, because the
+   target-initialization functions are architecture-specific. The test as written builds, verifies, and prints the IR;
+   emitting an object and linking it from Burdin is the next compiler step in stage 1.
 7. **Windows-specific things are untested:** binary-safe file I/O (no newline translation), `_write` versus `write`, abort exit codes
-   (`run-abort` only checks "non-zero"), and the `run-tests.sh` script needs Git Bash.
-8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`, and
-   `extern "C"` are exercised by m07 and m08. Not covered by a conformance test yet: `unsafe fn` declarations (they
-   work; tested by hand), `interface` methods that are `unsafe`, and the `test` item (m10).
+   (`run-abort` only checks "non-zero"), the test dispatcher's `atoi`/`strlen` path, and the `run-tests.sh` script needs Git Bash.
+8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`,
+   `extern "C"`, and `test` items are exercised by m07, m08, and m10. Not covered by a conformance test yet:
+   `unsafe fn` declarations (they work; tested by hand) and `interface` methods that are `unsafe`.
 9. **Two documents on claude.ai are stale.** The design doc there lacks the exclusivity rule, and the stage 0 doc there is the old
    export. The local files are the source of truth.
 10. **Ownership gaps that no test exercises yet.** Moving a field out of a temporary `match` scrutinee is still not
@@ -234,13 +255,12 @@ exact packages and how to call WSL from PowerShell.
     `cargo fmt --all` in each milestone are the two options.
 13. **The module and C bridge is narrower than the design.** There is no syntax for a private module, no module
     visibility check, and no check that public signatures only use public types. `CPtr` supports only `null()` and
-    `CString.as_ptr()`: no dereference, null test, pointer arithmetic, or comparison. `extern` accepts only integers,
-    floats, and `CPtr` (no C `bool`/`char`/structs/unions/function pointers/varargs), and only the `C` ABI. `CString`
-    has no clone and there is no `CStr` yet (m11's `CStr.to_string` needs it). `unsafe` is required only for calls, not
-    for holding or moving a `CPtr`. There is no way to re-export an imported name (no `pub use`), and no module
-    visibility. The manifest parser is deliberately minimal (path dependencies, no versions, no lockfile). A user
-    `extern` whose symbol collides with a runtime libc declaration of a different type is a backend error printed
-    without an error code or source span.
+    `CString.as_ptr()`, plus `CStr.to_string` (no dereference, null test, pointer arithmetic, or comparison).
+    `extern` accepts only integers, floats, and `CPtr` (no C `bool`/`char`/structs/unions/function pointers/varargs),
+    and only the `C` ABI. `CString` has no clone. `unsafe` is required only for calls, not for holding or moving a
+    `CPtr`. There is no way to re-export an imported name (no `pub use`), and no module visibility. The manifest parser
+    is deliberately minimal (path dependencies, no versions, no lockfile). A user `extern` whose symbol collides with
+    a runtime libc declaration of a different type is a backend error printed without an error code or source span.
 14. **`Map` is a linear-scan map**, not the hash map the stage 0 table names: the observable API and ordering are
     the same, but lookup is O(n) and keys only need `Eq`. A hash table can replace the implementation without
     changing the type or its methods; `Hash` and `hash()` already exist.
@@ -256,9 +276,10 @@ exact packages and how to call WSL from PowerShell.
     name it uses). The prelude copies public names into every module including dependency packages, so a
     dependency that declares `args` or `read_to_string` keeps its own and the program may see two different
     meanings for the same spelling.
-18. **`assert` panics in stage 0.** The design's test blocks treat `assert` as returning an error that `?`
-    propagates (m10). When the test runner arrives, `assert`/`assert_eq` need a test-mode result type, probably
-    through a compiler-known `test` context rather than the current `std` functions.
+18. **`assert` has two modes.** A normal build uses the panicking `assert`/`assert_eq` from `std`. A `burdin test`
+    build replaces those prelude names with `__test_assert`/`__test_assert_eq`, which return
+    `Result<(), AssertError>`, so `assert(...)?` reports a failed test and helper functions can propagate it. Stage 1's
+    `error` declarations replace the unit aliases and make the failure messages part of the error type.
 19. **`for` now borrows its collection for the whole loop.** A `mut` method on the same collection inside the body
     is E0111, which also rejects useful patterns such as appending while iterating a list; that is deliberate
     until the iteration protocol of stage 1.
@@ -404,41 +425,46 @@ exact packages and how to call WSL from PowerShell.
 - Assignment to a whole view-typed local (`r = &y`) ends the loans the local used to hold and gives it the new ones,
   the same way a `let` does.
 
+## Decided in the tenth session
+
+- A `test` item is parsed into `File.tests`, separate from `File.items`, and compiled as a private function
+  `__burdin_test_N()` that returns `Result<(), AssertError>`: the block's statements followed by `Ok(())`. A normal
+  build never declares or checks tests, so stripping them needs no code-generation work and a broken test body cannot
+  fail `burdin build`. Test items are only declared for the entry package's modules, not for dependencies.
+- Test mode is a flag on `burdin_sema::check`. It makes the prelude replace `assert` and `assert_eq` with
+  `std`'s `__test_assert`/`__test_assert_eq`, which return `Err(())` instead of panicking; a module's own `assert`
+  keeps its meaning. `main` is not required and `Program.main` is `None`.
+- The test binary is one executable with a generated dispatcher `main`: it reads the test index from `argv[1]`
+  (`atoi`), calls that test, and returns 0 for `Ok` and 1 for `Err`. `burdin test` runs one process per test, so a
+  panic abort fails only that test without restarting or skipping lists. This matches the design's observable
+  behavior ("marks the running test failed, the others still run") with less machinery. The name/`FuncId` pairs travel
+  in `Program.tests`.
+- `CStr` is a `std` type alias for `CPtr<CChar>`, not a new view type: `CStr.to_string(ptr)` is the associated
+  function `to_string` of a `CPtr<CChar>`, implemented with libc `strlen` plus the existing string allocator. This
+  avoids a second implicit conversion while giving the m11 test its name.
+- `--link-lib LLVM-C` is resolved by the driver through `llvm-config` because Ubuntu ships the C API inside
+  `libLLVM-21.so`, not as `libLLVM-C.so`. The driver adds the libdir and an rpath; other library names still go to the
+  linker unchanged. This is the one platform-specific exception in the driver.
+
 ## What is left to do, in order
 
-1. Milestone 10 (`tests/m10_test_runner`): the `test` item, test-mode `assert`/`assert_eq` returning errors that
-   `?` propagates, `burdin test`, abort recovery (the runner restarts after a panic and skips the test that
-   aborted), and stripping tests from normal builds. The `test` item is still skipped as E9000 in the parser, and
-   `burdin test` prints "not implemented yet"; start with the parser and the driver, then the test-mode result.
-   m11 additionally needs `CStr.to_string` and out-parameters through `CPtr<CPtr<CChar>>`, which the current
-   `CPtr` support already types.
-2. Then milestone 11. After it, add the folder to the conformance step in `.github/workflows/ci.yml` (m09 is
-   already there).
-3. Known parser and front-end gaps to close in their milestones: the `test` item (m10). `Self` is not yet accepted in
-   expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
-4. Generic gaps no test exercises yet: a static method of a generic type cannot infer its arguments from its own
-   arguments (`Holder.make(x)`; write `Holder<T>.make(x)` or give an expected type), bounds written on a generic type's
-   parameters are not checked when the type is instantiated (they only feed the symbolic check of its impls), a view
-   type as a type argument is not second-class (memory-rules SC3), interface method signatures in an impl are not
-   compared with the interface's, and `==` or `<` on a generic type's symbolic instance (`Wrapper<T> == Wrapper<T>` in
-   a generic body) is rejected.
-5. Module and C gaps no test exercises yet: no pointer intrinsics beyond `CPtr.null()` and `.as_ptr()` (no
-   dereference, null test, or pointer comparison); no C `bool`, `char`, structs, unions, function pointers, or
-   varargs across `extern`; no `unsafe` requirement for merely holding a `CPtr`; no check that public signatures use
-   public types; a dependency's non-root modules are reachable by path (`use lib.helpers.x`) even though there is no
-   module visibility syntax.
-6. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried. The new
-   runtime functions use `fopen`/`fread`/`fwrite`/`system`, which exist in the Windows CRT, but the `system` exit
-   code and binary-mode semantics are untested there.
-7. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
-8. Before stage 1 (more features in the same Rust compiler, not a rewrite): the MIR interpreter question (comptime needs one),
-   the design document's own open-questions list (derive syntax, `select`, extern details), and the stage 1 order (closures
-   and iterators first).
+1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
+   question (comptime), the closure representation, the iterator protocol (associated types or a generic
+   `Iterator<T>`), `any`/`impl`, the error representation, and allocator parameters all shape milestones 12 to 24.
+2. Write the m12 tests before the code, the same way stage 0 was built: `tests/m12_closures` and its `//@` expectations
+   are the spec for the first stage 1 milestone.
+3. Close the stage 0 correctness gaps that stage 1 inherits, each with a registry code and tests first: a view outliving
+   its source (problem 11), ranges as values (16), the move forms rejected as E9000 (10), the generic gaps (the old
+   item 4 of this list), and the module and C gaps (13).
+4. Push the repository to a remote so CI runs with m10 and m11 included, then add a Windows job once the `cl` link path
+   and the test dispatcher's `atoi`/`strlen` are tried.
+5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
+   passing suite only shows the implementation matches the hand-written expectations, not the design document.
 
 ## Starting the next session
 
 Open the folder and say something like:
 
-> Read CLAUDE.md and HANDOFF.md. Continue with milestone 10.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 12, then write its tests.
 
-If the session has no repository access to the folder, attach `CLAUDE.md`, `HANDOFF.md`, and the `spec/` folder.
+If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

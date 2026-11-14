@@ -91,12 +91,21 @@ pub(crate) struct Sema<'t> {
     pub(crate) generic_fn_bounds: Vec<(usize, &'t ast::FnDecl, usize)>,
     /// Every `Drop::drop` method and where it was declared, to check its signature once all are known.
     pub(crate) drop_checks: Vec<(FuncId, Span)>,
+    /// Declare and check the `test` items of the entry package (what `burdin test` builds).
+    pub(crate) test_mode: bool,
+    /// The `test` blocks that were declared, in declaration order.
+    pub(crate) tests: Vec<tir::TestEntry>,
 }
 
 impl<'t> Sema<'t> {
     /// Builds the module and package tables from the parsed program. `entry_package` and `entry_module` select the
     /// file whose `main` is the program's entry point (an index into that package's modules).
-    pub(crate) fn new(packages: &'t [crate::Package<'t>], entry_package: usize, entry_module: usize) -> Self {
+    pub(crate) fn new(
+        packages: &'t [crate::Package<'t>],
+        entry_package: usize,
+        entry_module: usize,
+        test_mode: bool,
+    ) -> Self {
         let mut globals = Globals::default();
         let mut module_asts = Vec::new();
         let mut first_module = Vec::new();
@@ -143,6 +152,8 @@ impl<'t> Sema<'t> {
             extern_srcs: Vec::new(),
             generic_fn_bounds: Vec::new(),
             drop_checks: Vec::new(),
+            test_mode,
+            tests: Vec::new(),
         }
     }
 
@@ -211,7 +222,9 @@ impl<'t> Sema<'t> {
         consts: Vec<tir::Const>,
         diags: &mut Diagnostics,
     ) -> tir::Program {
-        let main = self.find_main(diags);
+        // A test build replaces the program's entry point with the test dispatcher: the user's `main` is not run,
+        // and a package whose tests all live in other files needs none.
+        let main = if self.test_mode { None } else { self.find_main(diags) };
         check_const_cycles(&consts, &self.const_decls.iter().map(|c| c.decl).collect::<Vec<_>>(), diags);
         let mut checks = Diagnostics::default();
         self.check_drop_signatures(&mut checks);
@@ -227,7 +240,7 @@ impl<'t> Sema<'t> {
                 ret: e.sig.ret,
             })
             .collect();
-        tir::Program { functions, consts, structs, enums, signatures: sigs, externs, main }
+        tir::Program { functions, consts, structs, enums, signatures: sigs, externs, main, tests: self.tests }
     }
 
     fn find_main(&self, diags: &mut Diagnostics) -> Option<FuncId> {
