@@ -60,8 +60,10 @@ impl TypeDefs<'_> {
             // yields the same view.
             Ty::Ref { mutable, .. } => prop == Property::Clone || !*mutable,
             Ty::Slice(_) => true,
+            // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
+            Ty::CPtr(_) => true,
             Ty::String | Ty::Heap(_) => prop == Property::Clone,
-            Ty::Param(_) => false,
+            Ty::CString | Ty::Param(_) => false,
             Ty::Array(t, _) | Ty::Option(t) => self.holds(t, prop, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.holds(t, prop, seen)),
             Ty::Struct(a) => {
@@ -101,8 +103,8 @@ impl TypeDefs<'_> {
     fn needs_drop_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) => false,
-            Ty::String | Ty::Heap(_) => true,
+            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::CPtr(_) => false,
+            Ty::String | Ty::Heap(_) | Ty::CString => true,
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Option(t) => self.needs_drop_seen(t, seen),
             Ty::Tuple(ts) => ts.iter().any(|t| self.needs_drop_seen(t, seen)),

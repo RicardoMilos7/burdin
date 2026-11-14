@@ -17,11 +17,12 @@ pub(crate) fn builtin_sig(b: Builtin) -> Signature {
     let ret = match b {
         Builtin::Panic => Ty::Never,
         Builtin::StringNew | Builtin::StringFrom => Ty::String,
+        Builtin::CStringFrom => Ty::CString,
         _ => Ty::Unit,
     };
     let params = match b {
         Builtin::StringNew => Vec::new(),
-        Builtin::StringFrom => vec![ParamSig::plain(Ty::Str)],
+        Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         // `Heap.new` is checked separately: its result type depends on the value.
         Builtin::HeapNew => vec![ParamSig::plain(Ty::Error)],
         _ => vec![ParamSig::plain(Ty::Str)],
@@ -57,6 +58,12 @@ pub(crate) fn builtin_type(name: &str) -> Option<Ty> {
         "f32" => Ty::Float(FloatTy::F32),
         "f64" => Ty::Float(FloatTy::F64),
         "String" => Ty::String,
+        // The C bridge. `CChar` is a signed byte and `CSize` is `size_t`; `CVoid` only appears as the pointee
+        // of a `CPtr`, where it has no value of its own.
+        "CString" => Ty::CString,
+        "CChar" => Ty::Int(IntTy::I8),
+        "CSize" => Ty::Int(IntTy::Usize),
+        "CVoid" => Ty::Unit,
         _ => return None,
     })
 }
@@ -78,6 +85,7 @@ pub(crate) fn method(name: &str) -> Option<Method> {
         "len" => Method::Len,
         "starts_with" => Method::StartsWith,
         "find" => Method::Find,
+        "as_ptr" => Method::AsPtr,
         _ => return None,
     })
 }
@@ -98,6 +106,7 @@ pub(crate) fn method_sig(m: Method, recv: &Ty) -> Option<(Vec<Ty>, Ty)> {
         (Method::Len, Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _)) => Some((vec![], Ty::Int(IntTy::Usize))),
         (Method::StartsWith, Ty::Str | Ty::String) => Some((vec![Ty::Str], Ty::Bool)),
         (Method::Find, Ty::Str | Ty::String) => Some((vec![Ty::Char], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))),
+        (Method::AsPtr, Ty::CString) => Some((vec![], Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))),
         _ => None,
     }
 }

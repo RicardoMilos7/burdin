@@ -1,22 +1,23 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, and seventh. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, and eighth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the seventh session (2026-11-14). **Milestones 1 to 7 are done**: all tests in `tests/m01_hello`
-through `tests/m07_generics` pass in the debug and release profiles (107 tests; one m06 test is debug-only).
+Updated at the end of the eighth session (2026-11-14). **Milestones 1 to 8 are done**: all tests in `tests/m01_hello`
+through `tests/m08_modules` pass in the debug and release profiles (113 tests in debug; 112 in release, because one
+m06 test is debug-only).
 
 | What | Where | Status |
 | --- | --- | --- |
 | Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
-| Grammar | `spec/grammar.md` | Parser follows it, including generic arguments in expressions (rule 8.2) and `interface` items. `use`, `extern`, and `test` items are still skipped as E9000 |
+| Grammar | `spec/grammar.md` | Parser follows it, including generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items. `test` items are still skipped as E9000 |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6). All stage 0 memory rules are implemented |
-| Conformance tests | `tests/` | 131 tests. 107 pass today: m01 to m07 |
+| Conformance tests | `tests/` | 131 tests. 113 pass today: m01 to m08 |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary); see the layout in `CLAUDE.md` |
-| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push, heap allocation (`burdin_rt_alloc`, `burdin_rt_free`), number/char/str to `String`, `str` `starts_with` and `find` (byte offsets, UTF-8 aware). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `abort`). `cc` only links |
+| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push, heap allocation (`burdin_rt_alloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with` and `find` (byte offsets, UTF-8 aware). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `abort`). `cc` only links |
 | CI | `.github/workflows/ci.yml` | Linux only: check-tests, fmt, clippy, unit tests, conformance tests of finished milestones. Never run yet (no remote) |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
@@ -28,8 +29,8 @@ exact packages and how to call WSL from PowerShell.
 - `burdin_syntax`: complete lexer; parser for functions, constants, structs, enums, type aliases, method blocks
   (`Type { ... }` and `Type: Interface { ... }`), types, statements, struct literals (`P { x }`, `Shape.Rect { w: 1 }`),
   `if let`, `let ... else`, and the full expression precedence table with the newline rules of section 2 and
-  statement-level and item-level error recovery. `interface`, `use`, `extern`, and `test` items are reported as E9000
-  and skipped whole.
+  statement-level and item-level error recovery. `use` items (path, `as`, and `.{...}`) and `extern "C"` blocks are
+  parsed; `test` items are still reported as E9000 and skipped whole.
 - `burdin_sema`: resolves functions, constants, locals, and the built-ins (`print`, `println`, `eprint`, `eprintln`, `panic`),
   and produces a typed tree (`burdin_tir`) where every expression has a type and a span. Types: `()`, `bool`, `char`, all
   integers (`isize`/`usize` are 64-bit), `f32`, `f64`, `str`, `String`, `Heap<T>`, `[T; N]`, `Option<T>` (matching
@@ -105,11 +106,31 @@ exact packages and how to call WSL from PowerShell.
   `Default` (`Type.default()`, built as a literal in sema; structs only), plus the earlier `Copy` and `Clone`. A derive
   on a generic type holds per instance (`Pair<A, B>` is `Eq` when `A` and `B` are); E0130 is reported only for fields
   that do not mention a type parameter.
+- Milestone 8 added modules, packages, `priv`, `extern "C"`, `unsafe`, and the C bridge (`burdin_driver/src/package.rs`,
+  `burdin_sema/src/imports.rs`, and the module-aware declarations in `globals.rs`/`session.rs`). The driver reads a
+  minimal `burdin.toml` (`[package] name`, `[dependencies] name = { path = "..." }`) and loads every `.bd` under
+  `src/` as a module named by its path (`geometry/shapes.bd` is `geometry.shapes`); a package's entry point is
+  `src/main.bd`, and other packages reach it as `use <package>` through `src/<name>.bd` or `src/lib.bd`. A single
+  `.bd` target is a one-module package. Every module has its own value, type, interface, and module namespaces, so
+  two files may declare the same simple name; items are displayed internally with qualified names (`math.add`,
+  `lib.Gadget`) which keeps function symbols and generic instances unique. `use` resolves a module (own package
+  first, then the package's dependencies) and copies names into the importing module: `use math.add`,
+  `use math.{add, mul}`, `use geometry.shapes as sh`, `use lib`. Qualified paths work in expressions, types, struct
+  literals, patterns, and enum variants (`sh.Square { ... }`, `sh.Color.Red`, `let p: sh.Square`). `priv` is
+  package-private: another package importing a private item, reading or writing a private field, or calling a
+  private method gets E0150. `extern "C" { fn ... }` registers C functions by their plain symbol; calls require an
+  `unsafe` block or `unsafe fn` (E0161) and use the C ABI with by-value parameters limited to integers, floats, and
+  `CPtr<T>`. `unsafe` blocks are ordinary block expressions with an unsafe depth, and `unsafe fn` bodies are
+  unsafe. `CPtr<T>` is a raw, `Copy` pointer; `CPtr.null()` takes its type from context. `CString` is an owning,
+  NUL-terminated buffer (`CString.from(str)`, `.as_ptr(): CPtr<CChar>`) with `Drop`; `CChar`, `CSize`, and `CVoid`
+  are the C names (`i8`, `usize`, and unit behind a pointer). Extern declarations are deduplicated by symbol, and a
+  second declaration with a different signature is an error.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
-  `Heap<T>` is a `ptr`, `&T` and `&mut T` are a `ptr`, `[T]` is `{ ptr, usize }` like `str`, `Option<T>` is `{ i1, T }`. Functions are `burdin.<name>`, and the generated `main` calls the
-  program's `main`. Stack slots live in the `entry` block; after a terminator, generation continues in a fresh unreachable block.
+  `Heap<T>`, `CPtr<T>`, `CString`, `&T`, and `&mut T` are a `ptr`, `[T]` is `{ ptr, usize }` like `str`, `Option<T>` is `{ i1, T }`.
+  Functions are `burdin.<name>`, and the generated `main` calls the program's `main`. Extern functions keep their plain
+  C symbols and share a symbol with the runtime's own libc declarations when the types match. Stack slots live in the `entry` block; after a terminator, generation continues in a fresh unreachable block.
   Overflow of `+ - *` and unary `-` panics in debug (LLVM `*.with.overflow`) and wraps in release; division by zero and
   out-of-range shifts always panic; `MIN / -1` panics in debug and wraps in release; float-to-int casts saturate
   (`fpto*i.sat`). Panics print `path:LINE:COL: panic: message` to stderr and `abort()`. Tuples and structs are LLVM
@@ -126,8 +147,10 @@ exact packages and how to call WSL from PowerShell.
   dropping a `Heap` drops the pointee and frees the allocation; moving the pointee out of a `Heap` frees it. `clone`
   is deep: `Copy` values are copied bitwise, `String` copies its buffer, `Heap` allocates and clones the pointee, and
   aggregates clone field by field.
-- `burdin_driver`: `build` (writes `<stem>` in the current directory, `-o` to change it, `--emit-ir file.ll`), `run`
-  (builds into a temporary directory, passes the exit code through, 128+signal for a signal). `test` is not implemented.
+- `burdin_driver`: `build` (writes `<package name>` in the current directory, `-o` to change it, `--emit-ir file.ll`),
+  `run` (builds into a temporary directory, passes the exit code through, 128+signal for a signal). A target is a
+  `.bd` file or a package directory; dependency cycles, missing paths, invalid module names, and malformed manifests
+  are reported as `error: ...` without diagnostics codes. `test` is not implemented.
 - Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
   were no syntax errors.
 
@@ -152,8 +175,9 @@ exact packages and how to call WSL from PowerShell.
 
 ## Known problems and risks
 
-1. **The tests have never run against a compiler.** Expected outputs were worked out by hand. Expect a few wrong expectations and
-   some syntax slips in the first runs. Fix them in the tests only after checking the spec says the same thing.
+1. **The expected outputs were written by hand** before the compiler existed; milestones 1 to 8 now pass against it, but a
+   passing test still only reflects the implementation matching those expectations, not the design document. Review them
+   with the assumptions list before trusting the suite as a spec of intent.
 2. **Many tests depend on standard-library names I chose** (`String.from`, `push_str`, `i32.parse`, `find`, `find_str`, `env.args()`,
    `CString.from`, `CPtr.null()`, and others). They are listed in assumption 7 of `tests/README.md`. They are guesses, not decisions.
 3. **15 other assumptions in `tests/README.md` are mine, not yours.** The risky ones: call-site `mut` for `mut` parameters,
@@ -167,9 +191,9 @@ exact packages and how to call WSL from PowerShell.
    are architecture-specific. The stage 0 milestone says "link and run", so extend it once the compiler can run the current version.
 7. **Windows-specific things are untested:** binary-safe file I/O (no newline translation), `_write` versus `write`, abort exit codes
    (`run-abort` only checks "non-zero"), and the `run-tests.sh` script needs Git Bash.
-8. **The grammar is only partly tried.** Functions, statements, expressions, and the newline rules work on every test file. Still
-   untried: generic arguments in expressions (`List<i32>.new()` versus `a < b`, rule 8.2), which today make those lines fail with
-   "comparison operators cannot be chained".
+8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`, and
+   `extern "C"` are exercised by m07 and m08. Not covered by a conformance test yet: `unsafe fn` declarations (they
+   work; tested by hand), `interface` methods that are `unsafe`, and the `test` item (m10).
 9. **Two documents on claude.ai are stale.** The design doc there lacks the exclusivity rule, and the stage 0 doc there is the old
    export. The local files are the source of truth.
 10. **Ownership gaps that no test exercises yet.** Moving a field out of a temporary `match` scrutinee is still not
@@ -185,10 +209,18 @@ exact packages and how to call WSL from PowerShell.
     notion of a source's scope ending, and origin inference gives a temporary argument an empty origin. Decide the
     rule and its error code first, then implement. E0122 at the binding is the closest code, but its registry text says
     "returned".
-12. **`cargo fmt --all --check` fails on files this milestone did not touch** (for example
-    `crates/burdin_syntax/src/parser.rs`, now `parser/`): the rustfmt from Rust 1.100 lays out some `matches!` calls differently from
-    when the tree was formatted. The five files touched in the sixth session are formatted. Either reformat the whole
-    tree in one commit or pin the toolchain, so the CI Format step can pass.
+12. **`cargo fmt --all --check` now passes** (the tree was reformatted in the eighth session with the current rustfmt), but
+    the toolchain is still not pinned, so a future rustfmt can break the CI Format step. Pinning the toolchain or running
+    `cargo fmt --all` in each milestone are the two options.
+13. **The module and C bridge is narrower than the design.** There is no syntax for a private module, no module
+    visibility check, and no check that public signatures only use public types. `CPtr` supports only `null()` and
+    `CString.as_ptr()`: no dereference, null test, pointer arithmetic, or comparison. `extern` accepts only integers,
+    floats, and `CPtr` (no C `bool`/`char`/structs/unions/function pointers/varargs), and only the `C` ABI. `CString`
+    has no clone and there is no `CStr` yet (m11's `CStr.to_string` needs it). `unsafe` is required only for calls, not
+    for holding or moving a `CPtr`. There is no way to re-export an imported name (no `pub use`), and no module
+    visibility. The manifest parser is deliberately minimal (path dependencies, no versions, no lockfile). A user
+    `extern` whose symbol collides with a runtime libc declaration of a different type is a backend error printed
+    without an error code or source span.
 
 ## Decided in the third session
 
@@ -238,13 +270,61 @@ exact packages and how to call WSL from PowerShell.
   moves, borrows), `burdin_codegen`. The driver runs `burdin_sema::check` and then `burdin_check::check`; sema returns
   the program even when it reported errors, because the memory checks still run to report every error in a file.
 - `burdin_sema` keeps the state of a run in one `Sema` (`session.rs`); the phases are methods in `declare.rs`,
-  `impls.rs`, `instances.rs`, `resolve.rs`, and `bodies.rs`. One function body is checked by `fncx/` (`FnCx`), with
-  one file per theme (expressions, calls, patterns, operators, aggregates, control flow, generics).
+  `imports.rs`, `impls.rs`, `instances.rs`, `resolve.rs`, and `bodies.rs`. `Globals` (`globals.rs`) holds one
+  `ModuleInfo` per file with its own namespaces, the package and dependency tables, and extern declarations. One
+  function body is checked by `fncx/` (`FnCx`), with one file per theme (expressions, calls, patterns, operators,
+  aggregates, control flow, generics).
 - `burdin_codegen` is one `Codegen` in `emit/`, with one file per theme (types, scopes, expressions, places, patterns,
   operators, built-ins, glue, panics, strings, structural comparison and hashing).
 - Visibility is `pub(crate)` between modules of a crate and `pub(super)` for the methods of a split `impl`. Private
   fields of the central struct (`FnCx`, `Codegen`, `Parser`) are visible to the theme files because they are children
   of the module that defines it.
+
+## Decided in the eighth session
+
+- Every file is a module named by its path inside `src/` (`geometry/shapes.bd` is `geometry.shapes`). There is no
+  `mod` declaration and no root module special case inside a package: `use` paths are written from `src/`. The package
+  being built has its entry point in `src/main.bd`; a dependency is reached as `use <package>`, which names its
+  `src/<package>.bd` or `src/lib.bd`. A single `.bd` target is a one-module package whose module path is empty.
+- `burdin.toml` is read by a small purpose-built parser: `[package] name`, `[dependencies] name = { path = ... }`,
+  comments, and unknown sections/keys ignored. Dependencies are path-only and loaded recursively; diamonds reuse a
+  package, cycles are an error, and two packages may not share a name (qualified names are built from it). Path
+  resolution is relative to the manifest. Package and module names must be Burdin identifiers. A package's root
+  module is `src/<package>.bd`, with `src/lib.bd` as the conventional fallback.
+- Each module owns separate value, type, interface, and module namespaces. Declarations are stored with qualified
+  internal names (`math.add`, `lib.Gadget`, `shapes.Stack<i32>`) so LLVM symbols and generic instances are unique;
+  diagnostics show those names. `use` copies names into the importing module, and all `use` items apply module-wide
+  regardless of position. **Imports are not re-exported**: only items a module declares can be imported from it or
+  reached through a qualified path, and imports never affect another module's resolution (there is no `pub use`).
+  Types are resolved by the same rule, including type aliases: an alias that names another alias through a module
+  path is resolved first, so file order never changes what a program means.
+- A module path resolves an imported module alias first, then a module of the same package, then a direct dependency
+  of the current package. Imported aliases may be extended with submodule names that live under the aliased module's
+  file path; aliasing a package root names that one file, not its siblings.
+- `priv` is package-private, not module-private, and there is no syntax for a private module. It is enforced on
+  imports, qualified paths to private types and values, field reads and writes, struct-literal construction, enum
+  struct-variant fields in patterns, methods, and extern functions. A private item imported with `use` still binds its
+  name after the E0150, so later uses do not cascade into E0002. A method's visibility belongs to the package of the
+  impl block (or interface default) that defines it, which may differ from the type's package.
+- Impl blocks are coherent (E0142): inherent methods and `Drop` may only be added to a type the current package
+  declares, and an interface may be implemented for a foreign type only when the current package declares the
+  interface (Rust's orphan rule). `impl` blocks on generic types and interfaces may be written through a module path
+  (`shapes.Box<T> { ... }`, `Box<T>: api.Describe { ... }`), and bounds may name an imported or qualified interface.
+- `extern "C"` functions are the only C ABI declarations. Every parameter is passed by value and must be an integer,
+  a float, or a `CPtr<T>` (the return may be unit); `mut`, `own`, `self`, generics, other ABIs, and `main` or
+  `burdin_*` symbols are rejected. A symbol is declared once: a second declaration with the same signature reuses it,
+  and a different signature is E9000. The first declaration's types define the ABI; code generation reuses a matching
+  libc declaration from the runtime (`free`, `malloc`, ...).
+- `unsafe` is a depth counter in body checking: an `unsafe` block increments it, and an `unsafe fn` body starts at
+  one. Calling an `extern` function, an `unsafe` function (including an instantiated generic one), or an `unsafe`
+  interface method with the depth at zero is E0161.
+- `CPtr<T>` is a raw `Copy` pointer (`ptr` in LLVM) with no drop; `CPtr.null()` takes its type from the expected type.
+  `CString` owns a NUL-terminated `malloc`ed buffer (`ptr` in LLVM): `CString.from(str)` allocates, `.as_ptr()` yields
+  `CPtr<CChar>`, and its drop frees the buffer. A `CString` temporary whose `.as_ptr()` is taken lives to the end of
+  its statement, like a temporary `String` behind a `str` view. `CChar` is `i8`, `CSize` is `usize`, and `CVoid` is
+  the unit type used only behind a pointer.
+- Package-loading failures (manifest syntax, missing dependency, invalid module name, cycle) are driver errors printed
+  as `error: ...`; source diagnostics keep their registry codes.
 
 ## Decided in the seventh session
 
@@ -285,23 +365,29 @@ exact packages and how to call WSL from PowerShell.
 
 ## What is left to do, in order
 
-1. Milestone 8 (`tests/m08_modules`): files as modules, `use`, `priv`, `extern "C"`, `unsafe`, `CPtr<T>`. The parser
-   skips `use`, `extern`, and `unsafe` blocks as E9000 today.
-2. Then milestones 9 to 11 in order. m09 needs `List<T>`, `Map<K, V>`, `Result<T, E>`, and `?`. `List` and `Map` resolve
-   to `Ty::Error` today, and `for x in list` panics in `moves.rs` ("a `for` array has an array type"); fix both when
-   the containers arrive. They can reuse the generic machinery: a built-in generic type is a `GenericAdt` whose
-   declaration comes from the standard library. After each one, add its folder to the conformance step in `.github/workflows/ci.yml`.
-3. Known parser and front-end gaps to close in their milestones: the `use`, `extern`, and `test` items (m08, m10). `Self`
-   is not yet accepted in expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
+1. Milestone 9 (`tests/m09_stdlib`): `List<T>`, `Map<K, V>`, `Result<T, E>`, `?`, `String` methods, file I/O, and
+   processes. `List` and `Map` resolve to `Ty::Error` today, and `for x in list` panics in `moves.rs` ("a `for` array
+   has an array type"); fix both when the containers arrive. They can reuse the generic machinery: a built-in generic
+   type is a `GenericAdt` whose declaration comes from the standard library. m11 additionally needs `CStr.to_string`
+   and out-parameters through `CPtr<CPtr<CChar>>`, which the current `CPtr` support already types.
+2. Then milestones 10 and 11 in order. After each one, add its folder to the conformance step in
+   `.github/workflows/ci.yml`.
+3. Known parser and front-end gaps to close in their milestones: the `test` item (m10). `Self` is not yet accepted in
+   expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
 4. Generic gaps no test exercises yet: a static method of a generic type cannot infer its arguments from its own
    arguments (`Holder.make(x)`; write `Holder<T>.make(x)` or give an expected type), bounds written on a generic type's
    parameters are not checked when the type is instantiated (they only feed the symbolic check of its impls), a view
    type as a type argument is not second-class (memory-rules SC3), interface method signatures in an impl are not
    compared with the interface's, and `==` or `<` on a generic type's symbolic instance (`Wrapper<T> == Wrapper<T>` in
    a generic body) is rejected.
-5. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried.
-6. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
-7. Before stage 1 (more features in the same Rust compiler, not a rewrite): the MIR interpreter question (comptime needs one),
+5. Module and C gaps no test exercises yet: no pointer intrinsics beyond `CPtr.null()` and `.as_ptr()` (no
+   dereference, null test, or pointer comparison); no C `bool`, `char`, structs, unions, function pointers, or
+   varargs across `extern`; no `unsafe` requirement for merely holding a `CPtr`; no check that public signatures use
+   public types; a dependency's non-root modules are reachable by path (`use lib.helpers.x`) even though there is no
+   module visibility syntax.
+6. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried.
+7. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
+8. Before stage 1 (more features in the same Rust compiler, not a rewrite): the MIR interpreter question (comptime needs one),
    the design document's own open-questions list (derive syntax, `select`, extern details), and the stage 1 order (closures
    and iterators first).
 
@@ -309,6 +395,6 @@ exact packages and how to call WSL from PowerShell.
 
 Open the folder and say something like:
 
-> Read CLAUDE.md and HANDOFF.md. Continue with milestone 8.
+> Read CLAUDE.md and HANDOFF.md. Continue with milestone 9.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `HANDOFF.md`, and the `spec/` folder.

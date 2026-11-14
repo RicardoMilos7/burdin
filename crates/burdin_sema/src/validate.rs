@@ -69,7 +69,7 @@ pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut D
             }
         }
         if cyclic {
-            let name = if key.0 { &src.enums[key.1].0.name } else { &src.structs[key.1].0.name };
+            let name = if key.0 { &src.enums[key.1].decl.name } else { &src.structs[key.1].decl.name };
             diags.error(
                 Code::UNSUPPORTED,
                 name.span,

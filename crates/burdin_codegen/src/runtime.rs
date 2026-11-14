@@ -47,6 +47,8 @@ pub(crate) struct Runtime<'ctx> {
     pub str_starts_with: FunctionValue<'ctx>,
     /// `(ptr, len: usize, c: i32) -> i64`: the byte index of the first `c`, or -1.
     pub str_find_char: FunctionValue<'ctx>,
+    /// `(ptr, len: usize) -> ptr`: a NUL-terminated copy of the bytes in the C heap.
+    pub cstring_from: FunctionValue<'ctx>,
 }
 
 /// Generates the runtime into `module`. `windows` selects the Windows CRT functions.
@@ -153,6 +155,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             char_to_string: self.char_to_string(&h)?,
             str_starts_with: self.str_starts_with()?,
             str_find_char: self.str_find_char()?,
+            cstring_from: self.cstring_from(&h)?,
         })
     }
 
@@ -662,6 +665,43 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let f = self.function("burdin_rt_free", void.fn_type(&[self.ptr_ty.into()], false));
         self.call(libc_free, &[Self::ptr_param(f, 0).into()])?;
         self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `cstring_from(ptr, len: usize) -> ptr`: copies the bytes into a `malloc`ed buffer with a terminating NUL.
+    fn cstring_from(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i8_ty) = (self.usize_ty, self.ptr_ty, self.i8());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let f = self.function("burdin_rt_cstring_from", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let (src, len) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let one = usize_ty.const_int(1, false);
+        let size = self.b.build_int_add(len, one, "size").map_err(llvm_err)?;
+        // A wrapped size cannot be allocated.
+        let overflow = self.b.build_int_compare(IntPredicate::ULT, size, len, "").map_err(llvm_err)?;
+        let alloc = self.block(f, "alloc");
+        let oom = self.block(f, "oom");
+        let done = self.block(f, "done");
+        self.b.build_conditional_branch(overflow, oom, alloc).map_err(llvm_err)?;
+
+        self.b.position_at_end(alloc);
+        let p = self.call(malloc, &[size.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
+        let copy = self.block(f, "copy");
+        self.b.build_conditional_branch(null, oom, copy).map_err(llvm_err)?;
+
+        self.b.position_at_end(oom);
+        self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+
+        self.b.position_at_end(copy);
+        self.b.build_memcpy(p, 1, src, 1, len).map_err(|e| format!("LLVM builder error: {e}"))?;
+        let end = self.offset(p, len)?;
+        self.b.build_store(end, i8_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&p)).map_err(llvm_err)?;
         Ok(f)
     }
 

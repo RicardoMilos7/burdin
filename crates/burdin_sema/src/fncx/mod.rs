@@ -1,5 +1,5 @@
 //! Checking one function body: the typed expression tree is built here. `FnCx` is the state of one body (locals,
-//! scopes, loops); its methods are split by what they check, one file per theme.
+//! scopes, loops, module, and `unsafe` depth); its methods are split by what they check, one file per theme.
 
 mod aggregate;
 mod call;
@@ -40,6 +40,10 @@ struct FnCx<'a> {
     subst: Vec<(String, Ty)>,
     /// The bounds of the type parameters in scope (symbolic checks only).
     bounds: Vec<(String, Vec<Bound>)>,
+    /// The module whose names the body resolves.
+    module: usize,
+    /// How many `unsafe` blocks (or `unsafe fn` bodies) enclose this expression.
+    unsafe_depth: usize,
 }
 
 /// What a path in expression position can name before its last segment: a type, or a generic type whose
@@ -58,7 +62,14 @@ pub(super) fn error_expr(span: Span) -> tir::Expr {
 }
 
 impl<'a> FnCx<'a> {
-    fn new(globals: &'a Globals, diags: &'a mut Diagnostics, ret: Ty, self_ty: Option<Ty>) -> Self {
+    fn new(
+        globals: &'a Globals,
+        diags: &'a mut Diagnostics,
+        ret: Ty,
+        self_ty: Option<Ty>,
+        module: usize,
+        is_unsafe: bool,
+    ) -> Self {
         FnCx {
             globals,
             diags,
@@ -70,11 +81,17 @@ impl<'a> FnCx<'a> {
             self_local: None,
             subst: Vec::new(),
             bounds: Vec::new(),
+            module,
+            unsafe_depth: usize::from(is_unsafe),
         }
     }
 
+    fn package(&self) -> usize {
+        self.globals.package_of(self.module)
+    }
+
     pub(super) fn resolve(&mut self, ty: &ast::Type) -> Ty {
-        self.globals.resolve_type_in(ty, self.self_ty.as_ref(), &self.subst, self.diags)
+        self.globals.resolve_type_in(ty, self.self_ty.as_ref(), &self.subst, self.module, self.diags)
     }
 
     /// Whether a type parameter's bounds provide `bound`.
@@ -89,25 +106,165 @@ impl<'a> FnCx<'a> {
     /// If `e` names a type (and no value hides it), that type: the left side of `Point.new` or `Shape.Circle`.
     pub(super) fn type_path(&mut self, e: &ast::Expr) -> Option<PathTy> {
         let ast::ExprKind::Name { name, args } = &e.kind else { return None };
-        if self.lookup(&name.name).is_some() || self.globals.names.contains_key(&name.name) {
+        if self.lookup(&name.name).is_some() || self.globals.value(self.module, &name.name).is_some() {
             return None;
         }
         if args.is_empty() {
             if let Some((_, t)) = self.subst.iter().find(|(n, _)| *n == name.name) {
                 return Some(PathTy::Ty(t.clone()));
             }
-            if let Some(&TypeName::GenericAdt(g)) = self.globals.types.get(&name.name) {
+            if let Some(TypeName::GenericAdt(g)) = self.globals.type_name(self.module, &name.name) {
                 return Some(PathTy::Template(g));
             }
-            return self.globals.named_type(&name.name).or_else(|| builtin_type(&name.name)).map(PathTy::Ty);
+            return self
+                .globals
+                .named_type(self.module, &name.name)
+                .or_else(|| builtin_type(&name.name))
+                .map(PathTy::Ty);
         }
         let self_ty = self.self_ty.clone();
-        Some(PathTy::Ty(self.globals.generic_type(name, args, self_ty.as_ref(), &self.subst, self.diags)))
+        Some(PathTy::Ty(self.globals.generic_type(name, args, self_ty.as_ref(), &self.subst, self.module, self.diags)))
+    }
+
+    /// The segments of a plain expression path (`math.add`, `geometry.shapes.Square`), or `None` when the
+    /// expression has a call, index, or another non-path node in it.
+    fn flat_path(e: &ast::Expr) -> Option<Vec<ast::Ident>> {
+        match &e.kind {
+            ast::ExprKind::Name { name, args } if args.is_empty() => Some(vec![name.clone()]),
+            ast::ExprKind::Field(base, name) => {
+                let mut path = FnCx::flat_path(base)?;
+                path.push(name.clone());
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a path starts with a module rather than a local or a value.
+    fn starts_with_module(&self, path: &[ast::Ident]) -> bool {
+        path.first().is_some_and(|first| {
+            self.lookup(&first.name).is_none() && self.globals.value(self.module, &first.name).is_none()
+        })
+    }
+
+    /// A module-qualified item in expression position: `math.add`, `sh.area`. `recv` is the module part of the
+    /// path and `name` is the item (the last field of a call or access).
+    fn module_member(&self, recv: &ast::Expr, name: &ast::Ident) -> Option<(usize, ast::Ident)> {
+        let prefix = FnCx::flat_path(recv)?;
+        if !self.starts_with_module(&prefix) {
+            return None;
+        }
+        let names: Vec<String> = prefix.iter().map(|i| i.name.clone()).collect();
+        let target = self.globals.resolve_module_path(self.module, &names)?;
+        Some((target, name.clone()))
+    }
+
+    /// A generic type named through a module path, as the whole path: `Wrapper`, `sh.Wrapper`. Returns the generic
+    /// type and the module its name was found in.
+    fn generic_adt_path(&self, path: &[ast::Ident]) -> Option<(usize, usize)> {
+        for k in (0..path.len()).rev() {
+            let target = if k == 0 {
+                Some(self.module)
+            } else {
+                let names: Vec<String> = path[..k].iter().map(|i| i.name.clone()).collect();
+                self.globals.resolve_module_path(self.module, &names)
+            };
+            if let Some(target) = target
+                && k + 1 == path.len()
+            {
+                let found = if k == 0 {
+                    self.globals.type_name(target, &path[k].name)
+                } else {
+                    self.globals.exported_type(target, &path[k].name)
+                };
+                if let Some(TypeName::GenericAdt(g)) = found {
+                    return Some((g, target));
+                }
+            }
+        }
+        None
+    }
+
+    /// A module-qualified type in expression position: `sh.Square`, `geometry.shapes.Square`.
+    fn qualified_type(&mut self, e: &ast::Expr) -> Option<Ty> {
+        let path = FnCx::flat_path(e)?;
+        if path.len() < 2 || !self.starts_with_module(&path) {
+            return None;
+        }
+        let names: Vec<String> = path[..path.len() - 1].iter().map(|i| i.name.clone()).collect();
+        let target = self.globals.resolve_module_path(self.module, &names)?;
+        let last = path.last().expect("the path has a last segment");
+        self.named_type_in(target, &last.name, last.span)
+    }
+
+    /// Reports E0150 when `name` of `target` is package-private and `target` is in another package.
+    fn check_value_visibility(&mut self, target: usize, name: &str, span: Span) {
+        if self.globals.package_of(target) != self.package() && self.globals.value_is_private(target, name) {
+            self.diags.error(Code::PRIVATE_ITEM, span, format!("`{name}` is `priv` in another package"));
+        }
+    }
+
+    /// Reports E0150 when a type name of `target` is package-private and `target` is in another package.
+    fn check_type_visibility(&mut self, target: usize, name: &str, span: Span) {
+        if self.globals.package_of(target) != self.package() && self.globals.type_is_private(target, name) {
+            self.diags.error(Code::PRIVATE_ITEM, span, format!("type `{name}` is `priv` in another package"));
+        }
+    }
+
+    /// The type `name` of `module` if it is one, without a diagnostic: a module-qualified path may name a module
+    /// (`lib.helpers.f()`) or a value instead, and the caller tries those next.
+    fn named_type_in(&mut self, module: usize, name: &str, span: Span) -> Option<Ty> {
+        let found = self.globals.exported_type(module, name);
+        if found.is_some() {
+            self.check_type_visibility(module, name, span);
+        }
+        match found {
+            // A generic type needs its arguments; a later, quieter diagnostic explains the construct.
+            Some(TypeName::GenericAdt(_)) => None,
+            Some(_) => self.globals.named_type(module, name),
+            None => builtin_type(name),
+        }
+    }
+
+    /// Resolves a path that names an ADT, with an optional variant: `Square`, `Shape.Circle`,
+    /// `sh.Square`, `sh.Shape.Circle`. A generic type name resolves to the scrutinee's instance. The last value is
+    /// the module whose namespace the type name came from.
+    fn adt_path(&self, path: &[ast::Ident], scrutinee: &Ty) -> Option<(Ty, Option<ast::Ident>, usize, ast::Ident)> {
+        for k in (0..path.len()).rev() {
+            let target = if k == 0 {
+                Some(self.module)
+            } else {
+                let names: Vec<String> = path[..k].iter().map(|i| i.name.clone()).collect();
+                self.globals.resolve_module_path(self.module, &names)
+            };
+            let Some(target) = target else { continue };
+            let rest = &path[k..];
+            if rest.len() > 2 {
+                continue;
+            }
+            let name = &rest[0].name;
+            let found =
+                if k == 0 { self.globals.type_name(target, name) } else { self.globals.exported_type(target, name) };
+            let ty = match found {
+                Some(TypeName::GenericAdt(g)) => match self.globals.origin_of(scrutinee) {
+                    Some((template, _)) if *template == g => Some(scrutinee.clone()),
+                    _ => None,
+                },
+                Some(TypeName::Alias(_)) | Some(TypeName::Struct(_)) | Some(TypeName::Enum(_)) => {
+                    self.globals.named_type(target, name)
+                }
+                None => builtin_type(name),
+            };
+            if let Some(ty) = ty {
+                return Some((ty, rest.get(1).cloned(), target, rest[0].clone()));
+            }
+        }
+        None
     }
 
     /// A name that is not hidden by a local or a global: `Some`, `None`.
     pub(super) fn is_prelude(&self, name: &str) -> bool {
-        self.lookup(name).is_none() && !self.globals.names.contains_key(name)
+        self.lookup(name).is_none() && self.globals.value(self.module, name).is_none()
     }
 
     fn declare(&mut self, name: &str, ty: Ty, mutable: bool, kind: LocalKind) -> LocalId {
@@ -180,5 +337,34 @@ impl<'a> FnCx<'a> {
             return mk(tir::ExprKind::StringAsStr(Box::new(e)), Ty::Str, span);
         }
         self.expect_ty(e, want)
+    }
+
+    /// Reports E0161 when `f` is an `unsafe fn` and this expression is not in an `unsafe` context.
+    pub(super) fn check_unsafe_call(&mut self, f: tir::FuncId, name: &str, span: Span) {
+        if self.unsafe_depth == 0 && self.globals.fn_unsafe[f.0] {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                format!("calling the unsafe function `{name}` requires an `unsafe` block"),
+            );
+        }
+    }
+
+    /// Reports E0150 when a member of a type from another package is package-private.
+    pub(super) fn check_member_access(&mut self, ty: &Ty, key: (bool, usize), name: &ast::Ident) {
+        let method_key = (key, name.name.clone());
+        let owner = self
+            .globals
+            .method_pkg
+            .get(&method_key)
+            .copied()
+            .unwrap_or_else(|| if key.0 { self.globals.enum_pkg[key.1] } else { self.globals.struct_pkg[key.1] });
+        if owner != self.package() && self.globals.method_priv.get(&method_key).copied().unwrap_or(false) {
+            self.diags.error(
+                Code::PRIVATE_ITEM,
+                name.span,
+                format!("`{}` of `{ty}` is `priv` in another package", name.name),
+            );
+        }
     }
 }

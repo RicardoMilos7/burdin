@@ -22,6 +22,10 @@ pub enum Builtin {
     StringFrom,
     /// `Heap.new(value)`: allocates and moves `value` into a fresh heap allocation.
     HeapNew,
+    /// `CPtr.null()`: a null C pointer, typed by the expected type.
+    CPtrNull,
+    /// `CString.from(str)`: a new NUL-terminated copy of the bytes in the C heap.
+    CStringFrom,
 }
 
 /// Built-in methods of the primitive types.
@@ -47,6 +51,8 @@ pub enum Method {
     StartsWith,
     /// `s.find(c): Option<usize>` on `str` (and `String`); a byte index.
     Find,
+    /// `CString.as_ptr(): CPtr<CChar>`: the address of the NUL-terminated bytes.
+    AsPtr,
     /// `x.clone()`: a deep copy derived by the compiler.
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.

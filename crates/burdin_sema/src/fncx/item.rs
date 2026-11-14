@@ -10,8 +10,14 @@ use burdin_syntax::ast;
 use burdin_tir::{self as tir, LocalKind, Signature, Ty};
 
 /// Checks the value of a constant against its declared type.
-pub(crate) fn check_const(globals: &Globals, decl: &ast::ConstDecl, ty: &Ty, diags: &mut Diagnostics) -> tir::Const {
-    let mut cx = FnCx::new(globals, diags, Ty::Unit, None);
+pub(crate) fn check_const(
+    globals: &Globals,
+    decl: &ast::ConstDecl,
+    module: usize,
+    ty: &Ty,
+    diags: &mut Diagnostics,
+) -> tir::Const {
+    let mut cx = FnCx::new(globals, diags, Ty::Unit, None, module, false);
     let value = cx.expr(&decl.value, Some(ty));
     let value = cx.expect_ty(value, ty);
     if !is_const_expr(&value) {
@@ -21,7 +27,7 @@ pub(crate) fn check_const(globals: &Globals, decl: &ast::ConstDecl, ty: &Ty, dia
             "only literals, other constants, operators, and casts are allowed in a constant for now",
         );
     }
-    tir::Const { name: decl.name.name.clone(), value }
+    tir::Const { name: globals.qualified(module, &decl.name.name), value }
 }
 
 /// A function without code. A symbolic function is checked against its bounds and then replaced by one of these:
@@ -52,7 +58,7 @@ pub(crate) fn check_function(
     }
     let f = item.decl;
     let ret = sig.ret.clone();
-    let mut cx = FnCx::new(globals, diags, ret.clone(), item.self_ty.clone());
+    let mut cx = FnCx::new(globals, diags, ret.clone(), item.self_ty.clone(), item.module, item.is_unsafe);
     cx.subst = item.subst.clone();
     cx.bounds = item.bounds.clone();
     let params = cx.declare_params(f, sig);

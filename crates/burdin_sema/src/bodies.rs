@@ -12,7 +12,7 @@ impl Sema<'_> {
             .const_decls
             .iter()
             .enumerate()
-            .map(|(i, decl)| check_const(&self.globals, decl, &self.globals.const_tys[i], diags))
+            .map(|(i, src)| check_const(&self.globals, src.decl, src.module, &self.globals.const_tys[i], diags))
             .collect();
         let functions = self
             .fn_items

@@ -11,6 +11,7 @@ pub struct Ident {
 #[derive(Debug, Default)]
 pub struct File {
     pub items: Vec<Item>,
+    pub uses: Vec<UseDecl>,
 }
 
 #[derive(Debug)]
@@ -22,6 +23,29 @@ pub enum Item {
     TypeAlias(TypeAliasDecl),
     Impl(ImplBlock),
     Interface(InterfaceDecl),
+    Extern(ExternBlock),
+}
+
+/// `use a.b.c`, `use a.b as x`, or `use a.b.{c, d}`.
+#[derive(Debug)]
+pub struct UseDecl {
+    /// The module or item path, without the imported names of a brace list.
+    pub path: Vec<Ident>,
+    /// The name after `as`.
+    pub alias: Option<Ident>,
+    /// The names of a `.{...}` list.
+    pub items: Vec<Ident>,
+    pub span: Span,
+}
+
+/// `extern "C" { fn ... }`: C functions the program calls, declared without a body.
+#[derive(Debug)]
+pub struct ExternBlock {
+    pub abi: String,
+    pub abi_span: Span,
+    pub is_priv: bool,
+    pub decls: Vec<FnDecl>,
+    pub span: Span,
 }
 
 #[derive(Debug)]

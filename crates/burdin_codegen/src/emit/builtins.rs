@@ -14,6 +14,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         match b {
+            Builtin::CPtrNull => {
+                return Ok(Some(self.cx.ptr_type(inkwell::AddressSpace::default()).const_null().into()));
+            }
+            Builtin::CStringFrom => {
+                let s = self.expr_mode(&args[0], Mode::Use)?;
+                let s = self.need(s, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(s, 0, "ptr").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(s, 1, "len").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.cstring_from, &[ptr.into(), len.into()], "cstring")
+                    .map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
             Builtin::StringNew => {
                 let out = self.alloca(self.string_ty.into(), "string")?;
                 self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
@@ -75,6 +89,25 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        if m == Method::AsPtr {
+            // A `CString` receiver that is not a place is a temporary of the statement: keep it in a slot so its
+            // buffer is freed at the end of the statement, like `view_parts` does for a temporary `String`.
+            let recv_ty = args[0].ty.clone();
+            let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
+            let storage = match self.direct_place_ptr(&args[0])? {
+                Some(ptr) => ptr,
+                None => {
+                    let v = self.expr_mode(&args[0], Mode::Use)?;
+                    let slot = self.alloca(ptr_ty.into(), "cstring")?;
+                    let v = self.need(v, &recv_ty);
+                    self.builder.build_store(slot, v).map_err(llvm_err)?;
+                    self.add_temp_slot(slot, &recv_ty);
+                    slot
+                }
+            };
+            let p = self.builder.build_load(ptr_ty, storage, "cstring.ptr").map_err(llvm_err)?;
+            return Ok(Some(p));
+        }
         if m == Method::Clone {
             let recv_ty = args[0].ty.clone();
             let src = match self.direct_place_ptr(&args[0])? {

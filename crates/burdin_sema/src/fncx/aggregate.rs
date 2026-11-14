@@ -1,13 +1,13 @@
 //! Fields, struct literals, indexing, and arrays.
 
 use super::{FnCx, PathTy, error_expr, mk};
-use crate::globals::TypeName;
+use crate::globals::Global;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, IntTy, Ty};
 
 impl FnCx<'_> {
-    /// `base.name`: a field of a struct, or a unit variant (`Color.Red`).
+    /// `base.name`: a field of a struct, a unit variant (`Color.Red`), or a constant of a module.
     pub(super) fn field(&mut self, base: &ast::Expr, name: &ast::Ident, expect: Option<&Ty>, span: Span) -> tir::Expr {
         if let Some(path) = self.type_path(base) {
             let ty = match path {
@@ -17,21 +17,30 @@ impl FnCx<'_> {
                     None => return error_expr(span),
                 },
             };
-            if let Ty::Enum(a) = &ty
-                && let Some(index) = self.globals.enums[a.id].variants.iter().position(|v| v.name == name.name)
-            {
-                if self.globals.enums[a.id].variants[index].shape != tir::VariantShape::Unit {
+            return self.unit_variant(ty, name, span);
+        }
+        if let Some(ty) = self.qualified_type(base) {
+            return self.unit_variant(ty, name, span);
+        }
+        if let Some((target, item)) = self.module_member(base, name) {
+            self.check_value_visibility(target, &item.name, item.span);
+            match self.globals.exported_value(target, &item.name) {
+                Some(Global::Const(c)) => {
+                    return mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), span);
+                }
+                Some(_) => {
                     self.diags.error(
                         Code::TYPE_MISMATCH,
-                        span,
-                        format!("variant `{}` has fields; give them to build a value", name.name),
+                        item.span,
+                        format!("`{}` is a function, not a value", item.name),
                     );
                     return error_expr(span);
                 }
-                return mk(tir::ExprKind::Variant(index, Vec::new()), ty, span);
+                None => {
+                    self.diags.error(Code::UNKNOWN_NAME, item.span, format!("unknown name `{}`", item.name));
+                    return error_expr(span);
+                }
             }
-            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{ty}` has no variant `{}`", name.name));
-            return error_expr(span);
         }
         let base = self.expr(base, None);
         let base = self.auto_deref(base);
@@ -41,7 +50,7 @@ impl FnCx<'_> {
                 .iter()
                 .enumerate()
                 .find(|(_, f)| f.name == name.name)
-                .map(|(i, f)| (i, f.ty.clone())),
+                .map(|(i, f)| (i, f.ty.clone(), f.is_priv, self.globals.struct_pkg[a.id])),
             Ty::Error => return error_expr(span),
             Ty::Param(_) => {
                 self.diags.error(
@@ -53,11 +62,37 @@ impl FnCx<'_> {
             }
             _ => None,
         };
-        let Some((index, ty)) = field else {
+        let Some((index, ty, is_priv, owner)) = field else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no field `{}` on type `{}`", name.name, base.ty));
             return error_expr(span);
         };
+        if is_priv && owner != self.package() {
+            self.diags.error(
+                Code::PRIVATE_ITEM,
+                name.span,
+                format!("field `{}` of `{}` is `priv` in another package", name.name, base.ty),
+            );
+        }
         mk(tir::ExprKind::Field(Box::new(base), index), ty, span)
+    }
+
+    /// `Color.Red`: a unit variant of an enum type.
+    fn unit_variant(&mut self, ty: Ty, name: &ast::Ident, span: Span) -> tir::Expr {
+        if let Ty::Enum(a) = &ty
+            && let Some(index) = self.globals.enums[a.id].variants.iter().position(|v| v.name == name.name)
+        {
+            if self.globals.enums[a.id].variants[index].shape != tir::VariantShape::Unit {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    span,
+                    format!("variant `{}` has fields; give them to build a value", name.name),
+                );
+                return error_expr(span);
+            }
+            return mk(tir::ExprKind::Variant(index, Vec::new()), ty, span);
+        }
+        self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{ty}` has no variant `{}`", name.name));
+        error_expr(span)
     }
 
     /// `Point { x: 1, y }` or `Shape.Rect { w: 1, h: 2 }`.
@@ -68,32 +103,43 @@ impl FnCx<'_> {
         expect: Option<&Ty>,
         span: Span,
     ) -> tir::Expr {
-        if let [name] = path
-            && let Some(&TypeName::GenericAdt(g)) = self.globals.types.get(&name.name)
-        {
+        // A generic type, plain or module-qualified: the arguments come from the field values and the expected type.
+        if let Some((g, found)) = self.generic_adt_path(path) {
+            if let Some(name) = path.last() {
+                self.check_type_visibility(found, &name.name, name.span);
+            }
             return self.generic_struct_literal(g, fields, expect, span);
         }
         let text: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
         let text = text.join(".");
-        let target = match path {
-            [name] => match self.globals.named_type(&name.name) {
-                Some(ty @ Ty::Struct(_)) => Some((ty, None)),
-                Some(Ty::Error) => None,
-                Some(other) => {
-                    self.diags.error(Code::TYPE_MISMATCH, name.span, format!("`{other}` is not a struct"));
-                    None
-                }
+        // `(type, variant, package that declares the type)`.
+        let mut target: Option<(Ty, Option<usize>, usize)> = None;
+        if path.len() == 1 {
+            let name = &path[0];
+            match self.globals.named_type(self.module, &name.name) {
+                Some(ty) => match ty {
+                    Ty::Struct(a) => {
+                        target = Some((Ty::Struct(a.clone()), None, self.globals.struct_pkg[a.id]));
+                    }
+                    Ty::Error => {}
+                    other => {
+                        self.diags.error(Code::TYPE_MISMATCH, name.span, format!("`{other}` is not a struct"));
+                    }
+                },
                 None => {
                     self.diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown type `{}`", name.name));
-                    None
                 }
-            },
-            [enum_name, variant] => match self.globals.named_type(&enum_name.name) {
-                Some(ty @ Ty::Enum(_)) => {
-                    let Ty::Enum(a) = &ty else { unreachable!() };
-                    match self.globals.enums[a.id].variants.iter().position(|v| v.name == variant.name) {
+            }
+        } else if let Some((ty, variant, found, type_name)) = self.adt_path(path, &Ty::Error) {
+            self.check_type_visibility(found, &type_name.name, type_name.span);
+            match (&ty, &variant) {
+                (Ty::Struct(a), None) => {
+                    target = Some((ty.clone(), None, self.globals.struct_pkg[a.id]));
+                }
+                (Ty::Enum(a), Some(v)) => {
+                    match self.globals.enums[a.id].variants.iter().position(|x| x.name == v.name) {
                         Some(i) if self.globals.enums[a.id].variants[i].shape == tir::VariantShape::Struct => {
-                            Some((ty, Some(i)))
+                            target = Some((ty.clone(), Some(i), self.globals.enum_pkg[a.id]));
                         }
                         Some(_) => {
                             self.diags.error(
@@ -101,31 +147,23 @@ impl FnCx<'_> {
                                 span,
                                 format!("variant `{text}` has no named fields"),
                             );
-                            None
                         }
                         None => {
-                            self.diags.error(Code::UNKNOWN_NAME, variant.span, format!("unknown variant `{text}`"));
-                            None
+                            self.diags.error(Code::UNKNOWN_NAME, v.span, format!("unknown variant `{text}`"));
                         }
                     }
                 }
+                (Ty::Error, _) => {}
                 _ => {
                     self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not a struct or an enum variant"));
-                    None
                 }
-            },
-            _ => {
-                self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not a struct or an enum variant"));
-                None
             }
-        };
-        let defs: Vec<(String, Ty)> = match &target {
-            Some((Ty::Struct(a), _)) => {
-                self.globals.structs[a.id].fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect()
-            }
-            Some((Ty::Enum(a), Some(i))) => {
-                self.globals.enums[a.id].variants[*i].fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect()
-            }
+        } else {
+            self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not a struct or an enum variant"));
+        }
+        let defs: Vec<tir::FieldDef> = match &target {
+            Some((Ty::Struct(a), _, _)) => self.globals.structs[a.id].fields.clone(),
+            Some((Ty::Enum(a), Some(i), _)) => self.globals.enums[a.id].variants[*i].fields.clone(),
             _ => Vec::new(),
         };
         let mut given = vec![false; defs.len()];
@@ -142,7 +180,7 @@ impl FnCx<'_> {
                     &shorthand
                 }
             };
-            let index = defs.iter().position(|(n, _)| *n == f.name.name);
+            let index = defs.iter().position(|d| d.name == f.name.name);
             let Some(index) = index.filter(|_| target.is_some()) else {
                 if target.is_some() {
                     self.diags.error(
@@ -157,13 +195,23 @@ impl FnCx<'_> {
             if std::mem::replace(&mut given[index], true) {
                 self.diags.error(Code::TYPE_MISMATCH, f.name.span, format!("field `{}` is given twice", f.name.name));
             }
-            let fty = defs[index].1.clone();
+            if let Some((_, _, owner)) = &target
+                && defs[index].is_priv
+                && *owner != self.package()
+            {
+                self.diags.error(
+                    Code::PRIVATE_ITEM,
+                    f.name.span,
+                    format!("field `{}` of `{text}` is `priv` in another package", f.name.name),
+                );
+            }
+            let fty = defs[index].ty.clone();
             let v = self.expr(value, Some(&fty));
             let v = self.coerce_arg(v, &fty);
             checked.push((index, v));
         }
-        let Some((ty, variant)) = target else { return error_expr(span) };
-        let missing: Vec<&str> = defs.iter().zip(&given).filter(|(_, g)| !**g).map(|((n, _), _)| n.as_str()).collect();
+        let Some((ty, variant, _)) = target else { return error_expr(span) };
+        let missing: Vec<&str> = defs.iter().zip(&given).filter(|(_, g)| !**g).map(|(d, _)| d.name.as_str()).collect();
         if !missing.is_empty() {
             self.diags.error(
                 Code::TYPE_MISMATCH,

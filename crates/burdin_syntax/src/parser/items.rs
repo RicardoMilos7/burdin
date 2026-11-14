@@ -3,13 +3,20 @@
 use super::{PResult, Parser, Reported};
 use crate::ast::*;
 use crate::token::TokenKind;
-use burdin_diag::Span;
+use burdin_diag::{Code, Span};
 
 impl Parser<'_> {
     pub(super) fn file(&mut self) -> File {
         let mut file = File::default();
         while !self.at_eof() {
             self.nl_stack.clear();
+            if self.at(&TokenKind::Use) {
+                match self.use_decl() {
+                    Ok(use_decl) => file.uses.push(use_decl),
+                    Err(Reported) => self.recover_item(),
+                }
+                continue;
+            }
             match self.item() {
                 Ok(Some(item)) => file.items.push(item),
                 Ok(None) => {}
@@ -35,11 +42,79 @@ impl Parser<'_> {
             TokenKind::Interface => Ok(Some(Item::Interface(self.interface_decl(is_priv, start)?))),
             TokenKind::Type => Ok(Some(Item::TypeAlias(self.type_alias(is_priv, start)?))),
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
-            TokenKind::Use => self.skip_unsupported_item(start, "`use`"),
-            TokenKind::Extern => self.skip_unsupported_item(start, "`extern` blocks"),
+            TokenKind::Extern => Ok(Some(Item::Extern(self.extern_block(is_priv, start)?))),
             TokenKind::Ident(_) | TokenKind::SelfType if !is_priv => Ok(Some(Item::Impl(self.impl_block(start)?))),
             _ => Err(self.unexpected("an item")),
         }
+    }
+
+    /// `use path`, `use path as name`, or `use path.{item, item}`. Uses are collected separately from items,
+    /// because they declare no item of their own.
+    pub(super) fn use_decl(&mut self) -> PResult<UseDecl> {
+        let start = self.span();
+        self.expect(&TokenKind::Use)?;
+        let mut path = vec![self.ident("a module or item name")?];
+        let mut items = Vec::new();
+        while self.eat(&TokenKind::Dot) {
+            if self.at(&TokenKind::LBrace) {
+                let brace_span = self.span();
+                self.open(&TokenKind::LBrace, false)?;
+                while !self.at(&TokenKind::RBrace) {
+                    items.push(self.ident("an imported name")?);
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.close(&TokenKind::RBrace)?;
+                if items.is_empty() {
+                    self.diags.error(Code::SYNTAX, brace_span, "a `use` name list cannot be empty");
+                }
+                break;
+            }
+            path.push(self.ident("a module or item name")?);
+        }
+        let alias = if self.eat(&TokenKind::As) {
+            let alias = self.ident("a name")?;
+            if !items.is_empty() {
+                self.diags.error(Code::SYNTAX, alias.span, "an imported name list cannot be combined with `as`");
+            }
+            Some(alias)
+        } else {
+            None
+        };
+        Ok(UseDecl { path, alias, items, span: start.to(self.prev_span()) })
+    }
+
+    /// `extern "C" { [priv] fn ... }`: declarations of C functions, which have no body.
+    pub(super) fn extern_block(&mut self, is_priv: bool, start: Span) -> PResult<ExternBlock> {
+        self.expect(&TokenKind::Extern)?;
+        let abi_span = self.span();
+        let abi = match self.kind().clone() {
+            TokenKind::Str(s) => {
+                self.bump();
+                s
+            }
+            _ => return Err(self.unexpected("an ABI string, such as \"C\"")),
+        };
+        self.open(&TokenKind::LBrace, true)?;
+        let mut decls = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(self.unexpected("`}`"));
+            }
+            let fn_start = self.span();
+            let fn_priv = self.eat(&TokenKind::Priv);
+            if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
+                return Err(self.unexpected("a function signature"));
+            }
+            let (decl, has_body) = self.fn_decl_opt(fn_priv, fn_start, true)?;
+            if has_body {
+                self.diags.error(Code::SYNTAX, decl.body.span, "an `extern` function has no body");
+            }
+            decls.push(decl);
+        }
+        self.close(&TokenKind::RBrace)?;
+        Ok(ExternBlock { abi, abi_span, is_priv, decls, span: start.to(self.prev_span()) })
     }
 
     /// Ends one entry of a list inside braces: a `,` or a line break separates entries (grammar section 2,

@@ -128,6 +128,8 @@ The design document leaves these open. The tests use the choices below, so confi
    `List<T>.new/push/pop/len/last/insert/remove/clear/contains/sort`, `Map<K, V>.new/insert/get/remove/contains_key/len`,
    `Heap.new(v)`, `read_to_string(path)`, `write_file(path, text)`, `process.exit(code)`, `env.args()`
    (program name first), `panic(msg)`, `assert(cond)`, `assert_eq(a, b)`, `CString.from(str).as_ptr()`, `CPtr.null()`.
+   The C bridge types are `CPtr<T>`, `CChar` (a signed byte), `CSize` (`size_t`), `CVoid` (only behind a pointer),
+   and `CString`; `extern "C"` parameters and results are limited to integers, floats, and `CPtr`.
 8. **`main`** returns unit in stage 0 (the default-error `Result<T>` is stage 1). Fallible APIs use explicit error types.
 9. **Panics** flush stdout before aborting, and print the message, the file name, and the line to stderr.
 10. **File I/O is binary-safe** on Windows (no newline translation).

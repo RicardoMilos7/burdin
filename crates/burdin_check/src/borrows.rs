@@ -231,6 +231,12 @@ impl<'a> Checker<'a> {
                 self.add_loan(inner, false);
             }
             K::Call(f, args) => self.call(f.0, args),
+            // C functions borrow nothing from Burdin values: their arguments are scalars and raw pointers.
+            K::ExternCall(_, args) => {
+                for arg in args {
+                    self.expr(arg, Mode::Use);
+                }
+            }
             K::Builtin(b, args) => {
                 let mode = if *b == tir::Builtin::HeapNew { Mode::Move } else { Mode::Use };
                 for arg in args {
@@ -438,7 +444,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         }
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| locals_used(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| locals_used(x, out)),
-        K::Call(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| locals_used(x, out));
         }
         K::Binary(_, l, r) | K::Assign(l, r) => {
@@ -529,7 +535,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         }
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| uses_expr(x, stmt, last)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| uses_expr(x, stmt, last)),
-        K::Call(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| uses_expr(x, stmt, last));
         }
         K::Binary(_, l, r) | K::Assign(l, r) => {

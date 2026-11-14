@@ -2,7 +2,6 @@
 
 use super::{FnCx, error_expr, mk};
 use crate::generics::{Bound, Request, SYMBOLIC_CALL};
-use crate::globals::TypeName;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, Builtin, IntTy, Method, ParamSig, Ty};
@@ -20,6 +19,13 @@ impl FnCx<'_> {
     ) -> tir::Expr {
         let globals = self.globals;
         let info = &globals.generic_fns[g];
+        if info.is_unsafe && self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                id.span,
+                format!("calling the unsafe function `{}` requires an `unsafe` block", id.name),
+            );
+        }
         let pattern = &globals.sigs[info.identity.0];
         if pattern.params.len() != args.len() {
             let _ = self.args(&id.name, &pattern.params, args, None, span);
@@ -113,7 +119,7 @@ impl FnCx<'_> {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
         let found = self.globals.bound_method(&recv.ty, &name.name, &self.bounds);
-        let Some((sig, _)) = found.filter(|(sig, _)| sig.has_self) else {
+        let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| sig.has_self) else {
             self.diags.error(
                 Code::BOUND_NOT_SATISFIED,
                 name.span,
@@ -121,6 +127,13 @@ impl FnCx<'_> {
             );
             return self.args_then_error(args, span);
         };
+        if is_unsafe && self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                name.span,
+                format!("calling the unsafe method `{}` requires an `unsafe` block", name.name),
+            );
+        }
         let (receiver, rest, ret) = (sig.params[0].clone(), sig.params[1..].to_vec(), sig.ret.clone());
         let receiver_place = Some((&recv, receiver.exclusive));
         let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
@@ -136,7 +149,7 @@ impl FnCx<'_> {
             return mk(tir::ExprKind::Call(SYMBOLIC_CALL, Vec::new()), ty.clone(), span);
         }
         let found = self.globals.bound_method(ty, &name.name, &self.bounds);
-        let Some((sig, _)) = found.filter(|(sig, _)| !sig.has_self) else {
+        let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| !sig.has_self) else {
             self.diags.error(
                 Code::BOUND_NOT_SATISFIED,
                 name.span,
@@ -144,6 +157,13 @@ impl FnCx<'_> {
             );
             return self.args_then_error(args, span);
         };
+        if is_unsafe && self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                name.span,
+                format!("calling the unsafe function `{}` requires an `unsafe` block", name.name),
+            );
+        }
         let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else { return error_expr(span) };
         mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), sig.ret, span)
     }
@@ -258,6 +278,7 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let defs = &globals.structs[info.identity.1].fields;
+        let from_other_package = globals.package_of(info.module) != self.package();
         let mut given = vec![false; defs.len()];
         let mut checked: Vec<(usize, tir::Expr)> = Vec::new();
         for f in fields {
@@ -283,6 +304,13 @@ impl FnCx<'_> {
             };
             if std::mem::replace(&mut given[index], true) {
                 self.diags.error(Code::TYPE_MISMATCH, f.name.span, format!("field `{}` is given twice", f.name.name));
+            }
+            if from_other_package && defs[index].is_priv {
+                self.diags.error(
+                    Code::PRIVATE_ITEM,
+                    f.name.span,
+                    format!("field `{}` of `{}` is `priv` in another package", f.name.name, info.name),
+                );
             }
             let hint = if globals.ty_has_param(&defs[index].ty) { None } else { Some(&defs[index].ty) };
             let v = self.expr(value, hint);
@@ -338,17 +366,5 @@ impl FnCx<'_> {
             _ => return error_expr(span),
         };
         mk(kind, ty.clone(), span)
-    }
-
-    /// The struct or enum a pattern path names: a plain type, or the scrutinee itself when the path names the
-    /// generic type it is an instance of.
-    pub(super) fn adt_type_for(&self, name: &str, scrutinee: &Ty) -> Option<Ty> {
-        if let Some(&TypeName::GenericAdt(g)) = self.globals.types.get(name) {
-            return match self.globals.origin_of(scrutinee) {
-                Some((template, _)) if *template == g => Some(scrutinee.clone()),
-                _ => None,
-            };
-        }
-        self.globals.named_type(name)
     }
 }

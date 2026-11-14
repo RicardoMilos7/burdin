@@ -38,16 +38,22 @@ pub(crate) struct IfaceMethod {
     /// Written with `Self` as `Ty::Param("Self")`.
     pub sig: Signature,
     pub has_default: bool,
+    /// An `unsafe fn` of the interface: calling it requires an `unsafe` context.
+    pub is_unsafe: bool,
 }
 
 pub(crate) struct InterfaceInfo {
     pub name: String,
+    /// The module that declares the interface, whose names its bounds and default bodies use.
+    pub module: usize,
     pub requires: Vec<Bound>,
     pub methods: Vec<IfaceMethod>,
 }
 
 pub(crate) struct GenericAdt {
     pub name: String,
+    /// The module that declares the type.
+    pub module: usize,
     pub is_enum: bool,
     pub params: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
@@ -60,6 +66,9 @@ pub(crate) struct GenericAdt {
 
 pub(crate) struct GenericFn {
     pub name: String,
+    /// The module that declares the function, whose names its body uses.
+    pub module: usize,
+    pub is_unsafe: bool,
     pub params: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
     pub decl: usize,
@@ -122,9 +131,12 @@ impl Globals {
     pub(crate) fn ty_has_param(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Param(_) => true,
-            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array(inner, _) | Ty::Option(inner) | Ty::Heap(inner) => {
-                self.ty_has_param(inner)
-            }
+            Ty::Ref { inner, .. }
+            | Ty::Slice(inner)
+            | Ty::Array(inner, _)
+            | Ty::Option(inner)
+            | Ty::Heap(inner)
+            | Ty::CPtr(inner) => self.ty_has_param(inner),
             Ty::Tuple(ts) => ts.iter().any(|t| self.ty_has_param(t)),
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((_, args)) => args.iter().any(|a| self.ty_has_param(a)),
@@ -148,7 +160,8 @@ impl Globals {
             | (Ty::Slice(p), Ty::Slice(a))
             | (Ty::Array(p, _), Ty::Array(a, _))
             | (Ty::Option(p), Ty::Option(a))
-            | (Ty::Heap(p), Ty::Heap(a)) => self.unify(p, a, bindings),
+            | (Ty::Heap(p), Ty::Heap(a))
+            | (Ty::CPtr(p), Ty::CPtr(a)) => self.unify(p, a, bindings),
             (Ty::Tuple(ps), Ty::Tuple(acts)) if ps.len() == acts.len() => {
                 for (p, a) in ps.iter().zip(acts) {
                     self.unify(p, a, bindings);
@@ -177,6 +190,7 @@ impl Globals {
             Ty::Array(t, n) => Ty::Array(go(t), *n),
             Ty::Option(t) => Ty::Option(go(t)),
             Ty::Heap(t) => Ty::Heap(go(t)),
+            Ty::CPtr(t) => Ty::CPtr(go(t)),
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((template, args)) => {
@@ -227,38 +241,71 @@ impl Globals {
         }
     }
 
-    /// Resolves a bound written in a generic parameter list, a `where` clause, `requires`, or a derive.
-    pub(crate) fn resolve_bound(&self, ty: &ast::Type, diags: &mut Diagnostics) -> Option<Bound> {
-        let name = match &ty.kind {
-            ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => segs[0].name.name.as_str(),
-            _ => {
+    /// Resolves a bound written in a generic parameter list, a `where` clause, `requires`, or a derive. A user
+    /// interface may be named through a module (`T: sh.Describe`).
+    pub(crate) fn resolve_bound(&self, ty: &ast::Type, module: usize, diags: &mut Diagnostics) -> Option<Bound> {
+        let ast::TypeKind::Path(segs) = &ty.kind else {
+            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
+            return None;
+        };
+        let Some(first) = segs.first() else {
+            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
+            return None;
+        };
+        // A plain name: a built-in interface, or one in scope.
+        if segs.len() == 1 {
+            let name = first.name.name.as_str();
+            if !first.args.is_empty() {
                 diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
                 return None;
             }
-        };
-        Some(match name {
-            "Copy" => Bound::Copy,
-            "Clone" => Bound::Clone,
-            "Eq" => Bound::Eq,
-            "Ord" => Bound::Ord,
-            "Hash" => Bound::Hash,
-            "Default" => Bound::Default,
-            "Drop" | "From" => {
-                diags.error(
-                    Code::UNSUPPORTED,
-                    ty.span,
-                    format!("`{name}` as a bound is not implemented in this compiler yet"),
-                );
-                return None;
-            }
-            _ => match self.iface_names.get(name) {
-                Some(&i) => Bound::User(i),
-                None => {
-                    diags.error(Code::UNKNOWN_NAME, ty.span, format!("unknown interface `{name}`"));
+            return Some(match name {
+                "Copy" => Bound::Copy,
+                "Clone" => Bound::Clone,
+                "Eq" => Bound::Eq,
+                "Ord" => Bound::Ord,
+                "Hash" => Bound::Hash,
+                "Default" => Bound::Default,
+                "Drop" | "From" => {
+                    diags.error(
+                        Code::UNSUPPORTED,
+                        ty.span,
+                        format!("`{name}` as a bound is not implemented in this compiler yet"),
+                    );
                     return None;
                 }
-            },
-        })
+                _ => match self.iface_name(module, name) {
+                    Some(i) => Bound::User(i),
+                    None => {
+                        diags.error(Code::UNKNOWN_NAME, ty.span, format!("unknown interface `{name}`"));
+                        return None;
+                    }
+                },
+            });
+        }
+        let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
+        let Some(target) = self.resolve_module_path(module, &names) else {
+            diags.error(Code::UNKNOWN_NAME, ty.span, format!("unknown module `{}`", names.join(".")));
+            return None;
+        };
+        let last = segs.last().expect("the path has a last segment");
+        let name = last.name.name.as_str();
+        if !last.args.is_empty() {
+            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
+            return None;
+        }
+        if self.package_of(target) != self.package_of(module)
+            && self.modules[target].iface_priv.get(name).copied().unwrap_or(false)
+        {
+            diags.error(Code::PRIVATE_ITEM, last.name.span, format!("interface `{name}` is `priv` in another package"));
+        }
+        match self.exported_iface(target, name) {
+            Some(i) => Some(Bound::User(i)),
+            None => {
+                diags.error(Code::UNKNOWN_NAME, last.name.span, format!("unknown interface `{name}`"));
+                None
+            }
+        }
     }
 
     /// Whether values of `ty` meet `bound`. `env` gives the bounds of the type parameters in scope.
@@ -361,8 +408,9 @@ impl Globals {
     }
 
     /// The method `name` that the bounds of a type parameter provide: its parameters (the receiver first, if it
-    /// has one) and result, with `Self` replaced by the parameter.
-    pub(crate) fn bound_method(&self, recv: &Ty, name: &str, env: &Env) -> Option<(Signature, bool)> {
+    /// has one) and result, with `Self` replaced by the parameter, whether it has a receiver, and whether it is
+    /// `unsafe`.
+    pub(crate) fn bound_method(&self, recv: &Ty, name: &str, env: &Env) -> Option<(Signature, bool, bool)> {
         let Ty::Param(pname) = recv else { return None };
         let self_env = [("Self".to_string(), recv.clone())];
         for (n, bounds) in env {
@@ -379,6 +427,7 @@ impl Globals {
                         return Some((
                             Signature { params, ret, has_self: sig.has_self, ret_origin: None },
                             sig.has_self,
+                            m.is_unsafe,
                         ));
                     }
                 }

@@ -70,12 +70,14 @@ impl FnCx<'_> {
                 }
             };
         }
-        match self.globals.names.get(&id.name) {
-            Some(Global::Const(c)) => mk(tir::ExprKind::Const(*c), self.globals.const_tys[c.0].clone(), id.span),
-            Some(Global::Func(_) | Global::Generic(_)) => self.unsupported(id.span, "using a function as a value"),
+        match self.globals.value(self.module, &id.name) {
+            Some(Global::Const(c)) => mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), id.span),
+            Some(Global::Func(_) | Global::Generic(_) | Global::Extern(_)) => {
+                self.unsupported(id.span, "using a function as a value")
+            }
             None if builtin(&id.name).is_some() => self.unsupported(id.span, "using a function as a value"),
             None if id.name == "Some" => self.unsupported(id.span, "using `Some` as a function value"),
-            None if self.globals.types.contains_key(&id.name) => {
+            None if self.globals.type_name(self.module, &id.name).is_some() => {
                 self.diags.error(Code::TYPE_MISMATCH, id.span, format!("`{}` is a type, not a value", id.name));
                 error_expr(id.span)
             }

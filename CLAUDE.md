@@ -55,11 +55,13 @@ crates/
   burdin_syntax/            lexer, parser (parser/: items, types, statements, patterns, expressions), syntax tree
   burdin_tir/               the typed tree every later stage reads: types, expressions, programs, signatures, and the
                             questions about types (`TypeDefs`: Copy, Clone, Drop) and places
-  burdin_sema/              name resolution and type checking, monomorphization of generics, exhaustiveness
-                            (declare, impls, instances, resolve, bodies, validate; fncx/ checks one function body)
+  burdin_sema/              name resolution and type checking, modules and imports, monomorphization of generics,
+                            exhaustiveness (declare, imports, impls, instances, resolve, bodies, validate; fncx/
+                            checks one function body)
   burdin_check/             return-origin, move, and borrow checks over the typed tree (spec/memory-rules.md)
   burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime
-  burdin_driver/            the `burdin` binary: build, run, test
+  burdin_driver/            the `burdin` binary: build, run, test; package loading (`package.rs`: burdin.toml,
+                            modules, dependencies)
 std/                      the standard library, written in Burdin
 spec/                     grammar, memory rules, stage 0 scope
 tests/                    conformance tests and scripts

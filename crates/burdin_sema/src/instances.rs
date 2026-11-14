@@ -15,9 +15,9 @@ const MAX_ITEMS: usize = 4000;
 impl<'t> Sema<'t> {
     /// Makes the struct or enum for a generic type and these arguments, and registers the methods of its impl blocks.
     pub(crate) fn allocate_adt(&mut self, template: usize, args: Vec<Ty>, diags: &mut Diagnostics) {
-        let (gname, is_enum, params, decl, adt_bounds) = {
+        let (gname, gmodule, is_enum, params, decl, adt_bounds) = {
             let g = &self.globals.generic_adts[template];
-            (g.name.clone(), g.is_enum, g.params.clone(), g.decl, g.bounds.clone())
+            (g.name.clone(), g.module, g.is_enum, g.params.clone(), g.decl, g.bounds.clone())
         };
         let symbolic = args.iter().any(|a| self.globals.ty_has_param(a));
         let identity = args.iter().zip(&params).all(|(a, p)| matches!(a, Ty::Param(n) if **n == **p));
@@ -34,7 +34,8 @@ impl<'t> Sema<'t> {
             });
             let r = adt_ref(id);
             self.globals.enum_refs.push(r.clone());
-            self.src.enums.push((self.tpl.enums[decl], subst));
+            self.globals.enum_pkg.push(self.globals.package_of(gmodule));
+            self.src.enums.push(crate::session::AdtSrcEntry { decl: self.tpl.enums[decl], subst, module: gmodule });
             ((true, id), Ty::Enum(r))
         } else {
             let id = self.globals.structs.len();
@@ -46,7 +47,8 @@ impl<'t> Sema<'t> {
             });
             let r = adt_ref(id);
             self.globals.struct_refs.push(r.clone());
-            self.src.structs.push((self.tpl.structs[decl], subst));
+            self.globals.struct_pkg.push(self.globals.package_of(gmodule));
+            self.src.structs.push(crate::session::AdtSrcEntry { decl: self.tpl.structs[decl], subst, module: gmodule });
             ((false, id), Ty::Struct(r))
         };
         self.globals.adt_instances.insert((template, args.clone()), key);
@@ -66,7 +68,7 @@ impl<'t> Sema<'t> {
                 imp.params.iter().cloned().zip(adt_bounds.iter().cloned()).collect();
             env.extend(imp.wheres.iter().cloned());
             let scope = MethodScope { subst: &isubst, bounds: &env, symbolic, check_body: !symbolic || identity };
-            self.register_methods(imp.decl, imp.iface, &ty, scope, diags);
+            self.register_methods(imp.decl, imp.module, imp.iface, &ty, scope, diags);
         }
     }
 
@@ -76,11 +78,13 @@ impl<'t> Sema<'t> {
         let item = FnItem {
             decl: self.tpl.fns[g.decl],
             name: Globals::instance_name(&g.name, &args),
+            module: g.module,
             self_ty: None,
             subst: g.params.iter().cloned().zip(args.iter().cloned()).collect(),
             bounds: Vec::new(),
             symbolic: false,
             check_body: true,
+            is_unsafe: g.is_unsafe,
         };
         let id = self.push_fn(item);
         self.globals.fn_instances.insert((template, args), id);
