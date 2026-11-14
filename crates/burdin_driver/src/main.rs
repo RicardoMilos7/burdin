@@ -3,6 +3,7 @@
 mod package;
 
 use burdin_diag::{Diagnostics, SourceMap};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -254,32 +255,8 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: boo
 fn link(object: &Path, output: &Path, libs: &[String]) -> Result<(), String> {
     let cc = std::env::var("BURDIN_CC").unwrap_or_else(|_| if cfg!(windows) { "cl".into() } else { "cc".into() });
     let mut cmd = Command::new(&cc);
-    let msvc_style = cc.ends_with("cl") || cc.ends_with("cl.exe");
-    if msvc_style {
-        // MSVC: cl only calls link.exe. The object file names no C runtime, so name the static one.
-        cmd.arg("/nologo").arg(object).arg(format!("/Fe:{}", output.display()));
-        cmd.arg("/link").arg("libcmt.lib").arg("libucrt.lib").arg("libvcruntime.lib");
-        for l in libs {
-            cmd.arg(format!("{l}.lib"));
-        }
-    } else {
-        cmd.arg("-o").arg(output).arg(object);
-        for l in libs {
-            match resolve_llvm_c(l) {
-                // `LLVM-C` is the C API of the LLVM shared library. Ubuntu installs it as `libLLVM-21.so`, not as
-                // `libLLVM-C.so`, so `llvm-config` says which directory and flag to use.
-                Some((dir, flag)) => {
-                    cmd.arg(format!("-L{}", dir.display()));
-                    cmd.arg(format!("-Wl,-rpath,{}", dir.display()));
-                    cmd.arg(flag);
-                }
-                None => {
-                    cmd.arg(format!("-l{l}"));
-                }
-            }
-        }
-    }
-    let out = cmd.output().map_err(|e| format!("cannot run the linker `{cc}`: {e} (set BURDIN_CC)"))?;
+    cmd.args(link_args(&cc, object, output, libs));
+    let out = cmd.output().map_err(|e| linker_error(&cc, e))?;
     if !out.status.success() {
         return Err(format!(
             "linking failed ({cc}):\n{}{}",
@@ -288,6 +265,89 @@ fn link(object: &Path, output: &Path, libs: &[String]) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The error for a linker that did not start. A missing `cl` is by far the most common case on Windows: the driver
+/// falls back to `cl`, but it is only on `PATH` inside a Developer Command Prompt.
+fn linker_error(cc: &str, error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        format!(
+            "cannot find the linker `{cc}` on PATH; run from a Visual Studio Developer Command Prompt \
+             (so `cl` is on PATH) or set BURDIN_CC"
+        )
+    } else {
+        format!("cannot run the linker `{cc}`: {error} (set BURDIN_CC)")
+    }
+}
+
+/// The linker command line. Split out so the MSVC branch, which cannot run on Linux CI, has unit tests.
+fn link_args(cc: &str, object: &Path, output: &Path, libs: &[String]) -> Vec<OsString> {
+    if is_msvc_style(cc) {
+        // `LLVM-C.lib` lives in the LLVM installation, which is not in the linker's `LIB` path. `LLVM_SYS_211_PREFIX`
+        // and `llvm-config` are how the rest of the build finds that installation.
+        let llvm_libdir = libs.iter().any(|l| l == "LLVM-C").then(resolve_llvm_c_libdir).flatten();
+        msvc_link_args(object, output, libs, llvm_libdir.as_deref())
+    } else {
+        unix_link_args(object, output, libs)
+    }
+}
+
+/// `cl` and `cl.exe`, bare or as a path; `clang-cl` accepts the same flags. Both separators are recognized so the
+/// check does not depend on the host `Path` semantics.
+fn is_msvc_style(cc: &str) -> bool {
+    let name = cc.rsplit(['/', '\\']).next().unwrap_or(cc);
+    name.eq_ignore_ascii_case("cl")
+        || name.eq_ignore_ascii_case("cl.exe")
+        || name.eq_ignore_ascii_case("clang-cl")
+        || name.eq_ignore_ascii_case("clang-cl.exe")
+}
+
+fn msvc_link_args(object: &Path, output: &Path, libs: &[String], llvm_libdir: Option<&Path>) -> Vec<OsString> {
+    // MSVC: cl only calls link.exe. The object file names no C runtime, so name the static one.
+    let mut args: Vec<OsString> = vec![
+        "/nologo".into(),
+        object.into(),
+        format!("/Fe:{}", output.display()).into(),
+        "/link".into(),
+        "libcmt.lib".into(),
+        "libucrt.lib".into(),
+        "libvcruntime.lib".into(),
+    ];
+    if let Some(dir) = llvm_libdir {
+        args.push(format!("/LIBPATH:{}", dir.display()).into());
+    }
+    for lib in libs {
+        args.push(format!("{lib}.lib").into());
+    }
+    args
+}
+
+fn unix_link_args(object: &Path, output: &Path, libs: &[String]) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["-o".into(), output.into(), object.into()];
+    for lib in libs {
+        match resolve_llvm_c(lib) {
+            // `LLVM-C` is the C API of the LLVM shared library. Ubuntu installs it as `libLLVM-21.so`, not as
+            // `libLLVM-C.so`, so `llvm-config` says which directory and flag to use.
+            Some((dir, flag)) => {
+                args.push(format!("-L{}", dir.display()).into());
+                args.push(format!("-Wl,-rpath,{}", dir.display()).into());
+                args.push(flag.into());
+            }
+            None => args.push(format!("-l{lib}").into()),
+        }
+    }
+    args
+}
+
+/// The directory holding `LLVM-C.lib` on Windows/MSVC, from `LLVM_SYS_211_PREFIX` or `llvm-config`.
+fn resolve_llvm_c_libdir() -> Option<PathBuf> {
+    if let Some(prefix) = std::env::var_os("LLVM_SYS_211_PREFIX") {
+        let dir = PathBuf::from(prefix).join("lib");
+        if dir.join("LLVM-C.lib").is_file() {
+            return Some(dir);
+        }
+    }
+    llvm_config().map(|(dir, _)| dir).filter(|dir| dir.join("LLVM-C.lib").is_file())
 }
 
 /// `--link-lib LLVM-C` on a Unix host: the directory to search and the flag that names the LLVM shared library
@@ -371,5 +431,63 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn as_strings(args: Vec<OsString>) -> Vec<String> {
+        args.into_iter().map(|arg| arg.to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn msvc_link_args_name_the_static_crt_and_map_libraries_to_lib_files() {
+        let args =
+            as_strings(msvc_link_args(Path::new("program.obj"), Path::new("out.exe"), &["LLVM-C".to_string()], None));
+        assert_eq!(args[0], "/nologo");
+        assert!(args.contains(&"/link".to_string()));
+        assert!(args.contains(&"libcmt.lib".to_string()));
+        assert!(args.contains(&"libucrt.lib".to_string()));
+        assert!(args.contains(&"libvcruntime.lib".to_string()));
+        assert!(args.contains(&"LLVM-C.lib".to_string()));
+        assert!(!args.iter().any(|arg| arg.starts_with("/LIBPATH:")));
+    }
+
+    #[test]
+    fn msvc_link_args_add_the_llvm_library_directory() {
+        let args = as_strings(msvc_link_args(
+            Path::new("program.obj"),
+            Path::new("out.exe"),
+            &["LLVM-C".to_string()],
+            Some(Path::new(r"C:\llvm\lib")),
+        ));
+        assert!(args.contains(&r"/LIBPATH:C:\llvm\lib".to_string()));
+    }
+
+    #[test]
+    fn msvc_linker_is_recognized_by_name_or_path() {
+        for cc in ["cl", "cl.exe", "CL.EXE", r"C:\VS\bin\cl.exe", "clang-cl", "clang-cl.exe"] {
+            assert!(is_msvc_style(cc), "{cc} should use the MSVC command line");
+        }
+        for cc in ["cc", "cc.exe", "gcc", "clang"] {
+            assert!(!is_msvc_style(cc), "{cc} should not use the MSVC command line");
+        }
+    }
+
+    #[test]
+    fn unix_link_args_use_the_cc_command_line() {
+        let args = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &["m".to_string()]));
+        assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
+    }
+
+    #[test]
+    fn a_missing_linker_is_reported_with_a_fix() {
+        let error = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let message = linker_error("cl", error);
+        assert!(message.contains("cannot find the linker `cl` on PATH"), "{message}");
+        assert!(message.contains("Developer Command Prompt"), "{message}");
+        assert!(message.contains("BURDIN_CC"), "{message}");
     }
 }

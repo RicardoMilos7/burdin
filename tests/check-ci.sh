@@ -2,10 +2,14 @@
 # Checks that the CI workflow still covers everything the project requires.
 # It does not compile anything. Usage: tests/check-ci.sh
 #
-# This guards the invariants behind the first green CI run (issue #11):
-#   * the linux job and every required step are present;
-#   * LLVM 21 is installed from apt.llvm.org and pointed at;
-#   * every milestone folder under tests/ is passed to the conformance runner;
+# This guards the invariants behind the first green CI run (issue #11) and the Windows job (issue #12):
+#   * the linux job and the windows job are present, on the expected runners;
+#   * the linux job installs LLVM 21 from apt.llvm.org and points LLVM_SYS_211_PREFIX at it;
+#   * the windows job loads the MSVC environment, installs LLVM 21 from the official archive, and puts its
+#     DLL directory on PATH;
+#   * every required step is present in both jobs;
+#   * every milestone folder under tests/ is passed to each conformance runner;
+#   * the Windows job also runs the suite with BURDIN_CC=cl;
 #   * the scripts CI runs exist, are executable, and use LF endings;
 #   * a conformance test still exercises --link-lib LLVM-C.
 
@@ -22,15 +26,22 @@ if [ ! -f "$WORKFLOW" ]; then
 fi
 text=$(tr -d '\r' < "$WORKFLOW")
 
-grep -qx '  linux:' <<< "$text" || add_problem "ci.yml: no linux job"
-grep -qx '    runs-on: ubuntu-24.04' <<< "$text" || add_problem "ci.yml: linux does not run on ubuntu-24.04"
+# The lines of one top-level job, without the `  name:` line itself.
+job_block() {
+    awk -v job="$1" '
+        $0 == "  " job ":" { inside = 1; next }
+        inside && /^  [^ ]/ { inside = 0 }
+        inside { print }
+    ' <<< "$text"
+}
+
+linux=$(job_block linux)
+windows=$(job_block windows)
+[ -n "$linux" ] || add_problem "ci.yml: no linux job"
+[ -n "$windows" ] || add_problem "ci.yml: no windows job"
+
 grep -qx '  push:' <<< "$text" || add_problem "ci.yml: does not run on push"
 grep -qx '  pull_request:' <<< "$text" || add_problem "ci.yml: does not run on pull_request"
-grep -qF 'LLVM_SYS_211_PREFIX: /usr/lib/llvm-21' <<< "$text" \
-    || add_problem "ci.yml: LLVM_SYS_211_PREFIX is not set"
-grep -qF 'llvm.sh 21' <<< "$text" || add_problem "ci.yml: LLVM 21 is not installed from apt.llvm.org"
-grep -qF 'llvm-21-dev' <<< "$text" || add_problem "ci.yml: llvm-21-dev is not installed"
-grep -qF 'libpolly-21-dev' <<< "$text" || add_problem "ci.yml: libpolly-21-dev is not installed"
 
 for command in \
     'tests/check-tests.sh' \
@@ -40,31 +51,64 @@ for command in \
     'cargo test' \
     'cargo build'
 do
-    grep -qF -- "$command" <<< "$text" || add_problem "ci.yml: missing step: $command"
+    grep -qF -- "$command" <<< "$linux" || add_problem "ci.yml: linux job is missing step: $command"
+    grep -qF -- "$command" <<< "$windows" || add_problem "ci.yml: windows job is missing step: $command"
 done
 
 # The conformance step names milestone filters (m01), which match the folders (m01_hello).
-conformance=$(grep -E 'tests/run-tests\.sh' <<< "$text" | tail -n 1)
-if [ -z "$conformance" ]; then
-    add_problem "ci.yml: no conformance step (tests/run-tests.sh)"
-else
+check_conformance() {
+    local block=$1 label=$2 conformance dir folder name word found
+    # The BURDIN_CC step runs a subset; the full step is the one without an override.
+    conformance=$(grep -E 'tests/run-tests\.sh' <<< "$block" | grep -v 'BURDIN_CC' | tail -n 1)
+    if [ -z "$conformance" ]; then
+        add_problem "ci.yml: $label job has no conformance step (tests/run-tests.sh)"
+        return
+    fi
     for dir in "$SCRIPT_DIR"/m[0-9]*_*; do
         [ -d "$dir" ] || continue
         folder=$(basename "$dir")
         name=${folder%%_*}
         grep -qE "(^| )$name( |$)" <<< "$conformance" \
-            || add_problem "ci.yml: conformance step omits $name ($folder)"
+            || add_problem "ci.yml: $label conformance step omits $name ($folder)"
     done
     for word in $conformance; do
         case "$word" in
             m[0-9]*)
                 found=0
                 for dir in "$SCRIPT_DIR/$word"_*; do [ -d "$dir" ] && found=1; done
-                [ "$found" = 1 ] || add_problem "ci.yml: conformance step names missing milestone $word"
+                [ "$found" = 1 ] || add_problem "ci.yml: $label conformance step names missing milestone $word"
                 ;;
         esac
     done
-fi
+}
+
+check_conformance "$linux" linux
+check_conformance "$windows" windows
+
+# --- the linux job ----------------------------------------------------------
+
+grep -qx '    runs-on: ubuntu-24.04' <<< "$linux" || add_problem "ci.yml: linux does not run on ubuntu-24.04"
+grep -qF 'LLVM_SYS_211_PREFIX: /usr/lib/llvm-21' <<< "$linux" \
+    || add_problem "ci.yml: linux LLVM_SYS_211_PREFIX is not set"
+grep -qF 'llvm.sh 21' <<< "$linux" || add_problem "ci.yml: LLVM 21 is not installed from apt.llvm.org"
+grep -qF 'llvm-21-dev' <<< "$linux" || add_problem "ci.yml: llvm-21-dev is not installed"
+grep -qF 'libpolly-21-dev' <<< "$linux" || add_problem "ci.yml: libpolly-21-dev is not installed"
+
+# --- the windows job --------------------------------------------------------
+
+grep -qx '    runs-on: windows-latest' <<< "$windows" || add_problem "ci.yml: windows does not run on windows-latest"
+grep -qF 'ilammy/msvc-dev-cmd' <<< "$windows" \
+    || add_problem "ci.yml: windows does not load the MSVC environment (cl would not be on PATH)"
+grep -qF 'LLVM_SYS_211_PREFIX: C:/llvm' <<< "$windows" \
+    || add_problem "ci.yml: windows LLVM_SYS_211_PREFIX is not set"
+grep -qF 'llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz' <<< "$windows" \
+    || add_problem "ci.yml: windows does not install LLVM 21 from the official archive"
+grep -qF 'C:/llvm/lib/LLVM-C.lib' <<< "$windows" \
+    || add_problem "ci.yml: windows never checks that the LLVM C API import library exists"
+grep -qF 'C:\llvm\bin' <<< "$windows" \
+    || add_problem "ci.yml: windows does not put LLVM's DLL directory on PATH"
+grep -qF 'BURDIN_CC=cl' <<< "$windows" \
+    || add_problem "ci.yml: windows does not exercise the BURDIN_CC=cl link path"
 
 # The m11 test is the one that proves --link-lib LLVM-C resolves in CI.
 if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"; then

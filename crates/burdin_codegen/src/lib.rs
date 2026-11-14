@@ -55,6 +55,9 @@ pub fn emit_object(
     let triple = TargetMachine::get_default_triple();
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
     let level = if opts.release { OptimizationLevel::Default } else { OptimizationLevel::None };
+    // PIC on every platform, including COFF: a static relocation model makes LLVM address string constants with
+    // 32-bit absolute relocations (`IMAGE_REL_AMD64_ADDR32`), which the MSVC linker rejects without
+    // `/LARGEADDRESSAWARE:NO`.
     let machine = target
         .create_target_machine(&triple, "generic", "", level, RelocMode::PIC, CodeModel::Default)
         .ok_or_else(|| format!("LLVM cannot create a target machine for {}", triple.as_str().to_string_lossy()))?;

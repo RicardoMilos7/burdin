@@ -85,8 +85,12 @@ not on sema. Keep everything before codegen free of LLVM so the checks can be te
 
 ## Toolchain
 
-Current stable Rust (edition 2024; no toolchain pin for now), **LLVM 21** through `inkwell` 0.11 (feature `llvm21-1`), and the
-system C compiler driver as the linker against libc (`cc` on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
+Current stable Rust (edition 2024; no toolchain pin for now), **LLVM 21** through `inkwell` 0.11 (feature
+`llvm21-1-no-llvm-linking`), and the system C compiler driver as the linker against libc (`cc` on Linux and macOS, MSVC
+`cl` on Windows; `BURDIN_CC` overrides). `crates/burdin_codegen/build.rs` links the shared LLVM library on every
+platform: the static LLVM archives in the official Windows release are built with the static CRT and crash when linked
+into the Rust binary, which uses the dynamic CRT. On Windows/MSVC the compiler links `LLVM-C.lib`, so `LLVM-C.dll` must
+be on `PATH` for `burdin`, `burdin test`, and programs built with `--link-lib LLVM-C`.
 There is no C runtime: `burdin_codegen/src/runtime.rs` generates `main`, output, panics, string allocation and
 conversions, and heap allocation as LLVM IR that calls libc directly.
 Platforms: Linux, macOS, Windows; x86-64 and arm64.
@@ -94,8 +98,12 @@ Platforms: Linux, macOS, Windows; x86-64 and arm64.
 **Development happens in WSL Ubuntu 26.04 first** (decided). The repository stays on `F:`; build and test from WSL at
 `/mnt/f/projects/burdin-lang`. Packages: `build-essential llvm-21-dev libpolly-21-dev clang-21 libzstd-dev zlib1g-dev`, and
 Rust through rustup in `~/.cargo`. From PowerShell, run WSL commands with `wsl -d Ubuntu -e bash -lc '...'` (`-e` so the
-outer shell does not expand `$?`), and keep Windows entries out of `PATH` inside WSL. Windows builds come later; the driver
-already has an untested `cl` link path.
+outer shell does not expand `$?`), and keep Windows entries out of `PATH` inside WSL.
+
+Windows builds are covered by the `windows` CI job (issue #12). Locally, install LLVM 21 from the official
+`clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz` archive, set `LLVM_SYS_211_PREFIX` to it, put its `bin` on `PATH`,
+and run from a Visual Studio Developer Command Prompt so `cl` is on `PATH` (or set `BURDIN_CC`). `tests/run-tests.sh`
+runs from Git Bash.
 
 Diagnostics that are not in the registry: `E9000` means "not implemented in this compiler yet". After stage 0 it marks
 constructs that belong to stage 1 or later; each one gets a real diagnostic when its milestone arrives.

@@ -1,12 +1,12 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, and tenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, and eleventh. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the tenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all 133
-tests pass in the debug profile and 132 in release (one m06 test is debug-only). `burdin test` runs `test` blocks, and
-the m11 program calls the LLVM C API.
+Updated at the end of the eleventh session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all 134
+tests pass in the debug profile and 133 in release (one m02 test is debug-only). `burdin test` runs `test` blocks, and
+the m11 program calls the LLVM C API. CI now runs on Linux and Windows, and the Windows job passes the whole suite.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -16,16 +16,17 @@ the m11 program calls the LLVM C API.
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6). All stage 0 memory rules are implemented |
-| Conformance tests | `tests/` | 133 tests. All pass: m01 to m11 |
+| Conformance tests | `tests/` | 134 tests. All pass: m01 to m11 on Linux and Windows |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary); see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
-| CI | `.github/workflows/ci.yml` | Linux only, first green run on `main` on 2026-11-14: check-ci (`tests/check-ci.sh`), check-tests, fmt, clippy, unit tests, build, and conformance tests m01-m11 |
-| LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
+| CI | `.github/workflows/ci.yml` | `linux` on `ubuntu-24.04` (LLVM 21 from apt.llvm.org) and `windows` on `windows-latest` (MSVC environment through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). Both jobs run check-ci (`tests/check-ci.sh`), check-tests, fmt, clippy, unit tests, build, and conformance tests m01-m11; the Windows job also reruns m01 and m11 with `BURDIN_CC=cl` |
+| LLVM | WSL: `/usr/lib/llvm-21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
 
-Dev environment: WSL Ubuntu 26.04, stable Rust through rustup (1.100 at the time), LLVM 21. See the Toolchain section of `CLAUDE.md` for the
-exact packages and how to call WSL from PowerShell.
+Dev environment: WSL Ubuntu 26.04, stable Rust through rustup (1.100 at the time), LLVM 21; the Windows job is the
+reference for a native MSVC setup. See the Toolchain section of `CLAUDE.md` for the exact packages and how to call WSL
+from PowerShell.
 
 ### How the compiler is built so far
 
@@ -189,7 +190,9 @@ exact packages and how to call WSL from PowerShell.
   `run` (builds into a temporary directory, passes the exit code through, 128+signal for a signal), and `test` (builds
   in test mode and runs one process per test; it owns the counts and `FAIL` lines). A target is a `.bd` file or a
   package directory; dependency cycles, missing paths, invalid module names, and malformed manifests are reported as
-  `error: ...` without diagnostics codes. `--link-lib LLVM-C` resolves the LLVM shared library through `llvm-config`.
+  `error: ...` without diagnostics codes. `--link-lib LLVM-C` resolves the LLVM shared library through `llvm-config`
+  on Unix; on MSVC it passes `LLVM-C.lib` and adds `/LIBPATH:<LLVM_SYS_211_PREFIX>/lib` when that import library is
+  there. A missing `cl` is reported with the fix (a Developer Command Prompt, or `BURDIN_CC`).
 - Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
   were no syntax errors.
 
@@ -208,7 +211,9 @@ exact packages and how to call WSL from PowerShell.
 
 ## Decided in the second session
 
-- LLVM route 1 (WSL Ubuntu first) and LLVM 21, through `inkwell` 0.11.0 with the `llvm21-1-prefer-dynamic` feature.
+- LLVM route 1 (WSL Ubuntu first) and LLVM 21, through `inkwell` 0.11.0. The feature was `llvm21-1-prefer-dynamic`; in
+  the eleventh session it became `llvm21-1-no-llvm-linking` with the link step in `crates/burdin_codegen/build.rs`,
+  because `llvm-sys` falls back to the static Windows archives, which crash in a binary built with the dynamic CRT.
 - No Rust toolchain pin for now: build with current stable (edition 2024 needs 1.85 or later).
 - `E9000` is a temporary code for "not implemented in this compiler yet". It is not in the registry and no test uses it.
 
@@ -229,8 +234,9 @@ exact packages and how to call WSL from PowerShell.
 6. **`m11_llvm/llvm_return_42.bd` stops short** of emitting an object file and linking from Burdin, because the
    target-initialization functions are architecture-specific. The test as written builds, verifies, and prints the IR;
    emitting an object and linking it from Burdin is the next compiler step in stage 1.
-7. **Windows-specific things are untested:** binary-safe file I/O (no newline translation), `_write` versus `write`, abort exit codes
-   (`run-abort` only checks "non-zero"), the test dispatcher's `atoi`/`strlen` path, and the `run-tests.sh` script needs Git Bash.
+7. **Windows is covered by CI; macOS and arm64 are not.** The `windows` job exercises the CRT paths: binary-safe file
+   I/O (no newline translation), `_write` and `_setmode` versus `write`, abort exit codes (still only "non-zero" in
+   `run-abort`), and the test dispatcher's `atoi`/`strlen` path. macOS and arm64 have no job yet.
 8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`,
    `extern "C"`, and `test` items are exercised by m07, m08, and m10. Not covered by a conformance test yet:
    `unsafe fn` declarations (they work; tested by hand) and `interface` methods that are `unsafe`.
@@ -456,9 +462,9 @@ exact packages and how to call WSL from PowerShell.
 3. Close the stage 0 correctness gaps that stage 1 inherits, each with a registry code and tests first: a view outliving
    its source (problem 11), ranges as values (16), the move forms rejected as E9000 (10), the generic gaps (the old
    item 4 of this list), and the module and C gaps (13).
-4. CI runs on `ubuntu-24.04` with LLVM 21 from apt.llvm.org, and the `linux` job passes every step and m01-m11
-   (issue #11); `tests/check-ci.sh` guards that the workflow keeps covering the suite. Next: add a Windows job once
-   the `cl` link path and the test dispatcher's `atoi`/`strlen` are tried.
+4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org) and on `windows-latest` (MSVC and the official LLVM 21
+   archive, issue #12); both jobs pass every step and m01-m11, and `tests/check-ci.sh` guards that the workflow keeps
+   covering the suite. Next: add a macOS job, and an arm64 job if the platforms are wanted.
 5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
    passing suite only shows the implementation matches the hand-written expectations, not the design document.
 

@@ -127,7 +127,8 @@ The design document leaves these open. The tests use the choices below, so confi
    `s.push_str(str)`, `s.push(char)`, `s.len(): usize` (bytes), `s.starts_with(str)`, `s.find(char): Option<usize>`,
    `s.find_str(str): Option<usize>`, slicing `s[a..b]`, `.clone()`, `.as_str()`,
    `List<T>.new/push/pop/len/last/insert/remove/clear/contains/sort`, `Map<K, V>.new/insert/get/remove/contains_key/len`,
-   `Heap.new(v)`, `read_to_string(path)`, `write_file(path, text)`, `process.exit(code)`, `env.args()`
+   `Heap.new(v)`, `read_to_string(path)`, `write_file(path, text)`, `process.exit(code)`,
+   `process.run(command): Result<i32, IoError>`, `env.args()`
    (program name first), `panic(msg)`, `assert(cond)`, `assert_eq(a, b)`, `CString.from(str).as_ptr()`, `CPtr.null()`,
    `CStr.to_string(ptr: CPtr<CChar>): String` (`CStr` is an alias for `CPtr<CChar>`).
    The C bridge types are `CPtr<T>`, `CChar` (a signed byte), `CSize` (`size_t`), `CVoid` (only behind a pointer),

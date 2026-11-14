@@ -45,3 +45,66 @@ jobs:
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
         run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      LLVM_SYS_211_PREFIX: C:/llvm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check CI workflow
+        run: bash tests/check-ci.sh
+
+      # `cl` is not on PATH until the Visual Studio environment is loaded. This action exports INCLUDE, LIB,
+      # PATH, and the rest to the steps that follow, exactly like a Developer Command Prompt.
+      - name: Set up the MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # The official Windows release archive is the only LLVM 21 distribution that ships llvm-config.exe
+      # (llvm-sys needs it) and the LLVM-C import library. It is large, but the job needs the headers, the
+      # tools, and the shared library. `C:/llvm/bin` goes on PATH so LLVM-C.dll is found when the compiler
+      # or a program built with `--link-lib LLVM-C` runs.
+      - name: Install LLVM 21
+        run: |
+          curl -fsSL -o /tmp/llvm.tar.xz \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
+          mkdir -p /c/llvm
+          tar -xJf /tmp/llvm.tar.xz -C /c/llvm --strip-components=1
+          rm -f /tmp/llvm.tar.xz
+          test -x "C:/llvm/bin/llvm-config.exe"
+          test -f "C:/llvm/lib/LLVM-C.lib"
+          echo 'C:\llvm\bin' >> "$GITHUB_PATH"
+
+      - name: Install Rust (current stable)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: Check test directives
+        run: bash tests/check-tests.sh
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test
+
+      - name: Build
+        run: cargo build
+
+      # Only milestones that are finished must pass. Extend the list as milestones are completed.
+      - name: Conformance tests (finished milestones)
+        run: bash tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+
+      # The default linker on Windows is already `cl`; this proves the `BURDIN_CC` override takes the same path.
+      - name: Conformance tests with BURDIN_CC=cl
+        run: BURDIN_CC=cl bash tests/run-tests.sh m01_hello m11_llvm
