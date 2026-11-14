@@ -4,6 +4,13 @@ Burdin has no backward-compatibility promise (see `Burdin Language Design.md`). 
 GitHub milestones and the roadmap track the work in progress. A milestone closes with an entry here (see the
 close-out checklist in `AGENTS.md`).
 
+## Unreleased — Infrastructure
+
+- Pin the Rust toolchain to `1.100.0` with the `clippy` and `rustfmt` components in `rust-toolchain.toml`, so
+  `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible from a clean machine.
+  CI installs and verifies that toolchain, and `tests/check-ci.sh` fails if the pin or its verification goes missing
+  (issue #19).
+
 ## Unreleased — Stage 1
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.

@@ -24,7 +24,7 @@ the m11 program calls the LLVM C API.
 | CI | `.github/workflows/ci.yml` | Linux only, first green run on `main` on 2026-11-14: check-ci (`tests/check-ci.sh`), check-tests, fmt, clippy, unit tests, build, and conformance tests m01-m11 |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
-Dev environment: WSL Ubuntu 26.04, stable Rust through rustup (1.100 at the time), LLVM 21. See the Toolchain section of `CLAUDE.md` for the
+Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21. See the Toolchain section of `CLAUDE.md` for the
 exact packages and how to call WSL from PowerShell.
 
 ### How the compiler is built so far
@@ -209,7 +209,8 @@ exact packages and how to call WSL from PowerShell.
 ## Decided in the second session
 
 - LLVM route 1 (WSL Ubuntu first) and LLVM 21, through `inkwell` 0.11.0 with the `llvm21-1-prefer-dynamic` feature.
-- No Rust toolchain pin for now: build with current stable (edition 2024 needs 1.85 or later).
+- No Rust toolchain pin for now: build with current stable (edition 2024 needs 1.85 or later). *Superseded on
+  2026-11-14 by issue #19: `rust-toolchain.toml` pins `1.100.0` with `clippy` and `rustfmt` (see problem 12).*
 - `E9000` is a temporary code for "not implemented in this compiler yet". It is not in the registry and no test uses it.
 
 ## Known problems and risks
@@ -250,9 +251,11 @@ exact packages and how to call WSL from PowerShell.
     notion of a source's scope ending, and origin inference gives a temporary argument an empty origin. Decide the
     rule and its error code first, then implement. E0122 at the binding is the closest code, but its registry text says
     "returned".
-12. **`cargo fmt --all --check` now passes** (the tree was reformatted in the eighth session with the current rustfmt), but
-    the toolchain is still not pinned, so a future rustfmt can break the CI Format step. Pinning the toolchain or running
-    `cargo fmt --all` in each milestone are the two options.
+12. **The Rust toolchain is pinned** (issue #19, 2026-11-14) to `1.100.0` with `clippy` and `rustfmt` in
+    `rust-toolchain.toml`, so `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible
+    from a clean machine. CI installs that toolchain (`rustup toolchain install` reads the file) and verifies
+    `rustc --version` and both components; `tests/check-ci.sh` fails if the pin or CI's verification step goes missing.
+    Bumping the version means running `cargo fmt --all` after the change.
 13. **The module and C bridge is narrower than the design.** There is no syntax for a private module, no module
     visibility check, and no check that public signatures only use public types. `CPtr` supports only `null()` and
     `CString.as_ptr()`, plus `CStr.to_string` (no dereference, null test, pointer arithmetic, or comparison).

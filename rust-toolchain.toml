@@ -1,0 +1,8 @@
+# The Rust toolchain is pinned so `cargo fmt --check` and `clippy -D warnings`
+# are reproducible: a newer stable release must not change the verdict of CI
+# (issue #19). Bump `channel` deliberately, together with a `cargo fmt --all`
+# pass, and record it in HANDOFF.md. tests/check-ci.sh guards this file.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

@@ -7,6 +7,8 @@
 #   * LLVM 21 is installed from apt.llvm.org and pointed at;
 #   * every milestone folder under tests/ is passed to the conformance runner;
 #   * the scripts CI runs exist, are executable, and use LF endings;
+#   * the Rust toolchain is pinned to an exact version with clippy and rustfmt,
+#     and CI installs and verifies that pin (issue #19);
 #   * a conformance test still exercises --link-lib LLVM-C.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -31,6 +33,37 @@ grep -qF 'LLVM_SYS_211_PREFIX: /usr/lib/llvm-21' <<< "$text" \
 grep -qF 'llvm.sh 21' <<< "$text" || add_problem "ci.yml: LLVM 21 is not installed from apt.llvm.org"
 grep -qF 'llvm-21-dev' <<< "$text" || add_problem "ci.yml: llvm-21-dev is not installed"
 grep -qF 'libpolly-21-dev' <<< "$text" || add_problem "ci.yml: libpolly-21-dev is not installed"
+
+# The Rust toolchain is pinned so fmt and clippy are reproducible (issue #19).
+toolchain_file=$ROOT/rust-toolchain.toml
+if [ ! -f "$toolchain_file" ]; then
+    add_problem "rust-toolchain.toml: missing (the Rust toolchain is not pinned)"
+else
+    toolchain=$(tr -d '\r' < "$toolchain_file")
+    channel=$(sed -n 's/^channel = "\([0-9][0-9.]*\)"$/\1/p' <<< "$toolchain")
+    if [ -z "$channel" ]; then
+        add_problem "rust-toolchain.toml: no channel (an exact x.y.z version is required, not stable/nightly)"
+    elif ! grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' <<< "$channel"; then
+        add_problem "rust-toolchain.toml: channel '$channel' is not an x.y.z version"
+    fi
+    for component in clippy rustfmt; do
+        grep -qF "\"$component\"" <<< "$toolchain" \
+            || add_problem "rust-toolchain.toml: components do not include $component"
+    done
+fi
+
+if grep -qE 'rustup (toolchain install|default)[^#]*stable' <<< "$text"; then
+    add_problem "ci.yml: installs a floating 'stable' toolchain instead of the pinned one"
+fi
+grep -qF 'rustup toolchain install' <<< "$text" \
+    || add_problem "ci.yml: no rustup toolchain install step"
+grep -qF 'rust-toolchain.toml' <<< "$text" \
+    || add_problem "ci.yml: does not install from rust-toolchain.toml"
+grep -qF 'rustc --version' <<< "$text" \
+    || add_problem "ci.yml: no step verifies the pinned rustc"
+
+grep -qF 'rust-toolchain.toml' "$ROOT/CLAUDE.md" \
+    || add_problem "CLAUDE.md: does not document the rust-toolchain.toml pin"
 
 for command in \
     'tests/check-tests.sh' \
