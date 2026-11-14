@@ -104,7 +104,12 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
             place_mentions(lo, out);
             place_mentions(hi, out);
         }
-        K::StringAsStr(inner) | K::Some(inner) | K::Return(Some(inner)) | K::Cast(inner) => {
+        K::StringAsStr(inner)
+        | K::Some(inner)
+        | K::Ok(inner)
+        | K::Err(inner)
+        | K::Return(Some(inner))
+        | K::Cast(inner) => {
             place_mentions(inner, out);
         }
         K::Unary(_, inner) | K::ArrayRepeat(inner, _) => place_mentions(inner, out),
@@ -151,6 +156,18 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         }
         K::ForSlice { slice, body, .. } => {
             place_mentions(slice, out);
+            place_mentions_block(body, out);
+        }
+        K::ForList { list, body, .. } => {
+            place_mentions(list, out);
+            place_mentions_block(body, out);
+        }
+        K::ForMap { map, body, .. } => {
+            place_mentions(map, out);
+            place_mentions_block(body, out);
+        }
+        K::ForChars { string, body, .. } => {
+            place_mentions(string, out);
             place_mentions_block(body, out);
         }
         K::Match(scrutinee, arms) => {

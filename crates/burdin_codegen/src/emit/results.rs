@@ -1,0 +1,115 @@
+//! The methods of `Option<T>` and `Result<T, E>`: `unwrap`, `expect`, and the tests.
+
+use super::{Codegen, GenResult, Mode, llvm_err};
+use burdin_diag::Span;
+use burdin_tir::{self as tir, Method, Ty};
+use inkwell::IntPredicate;
+use inkwell::values::BasicValueEnum;
+
+impl<'ctx, 'a> Codegen<'ctx, 'a> {
+    /// The methods of `Option` and `Result`.
+    pub(super) fn result_method(
+        &mut self,
+        m: Method,
+        args: &'a [tir::Expr],
+        ty: &Ty,
+        span: Span,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        // `unwrap` and `expect` consume the value; the tests only read its tag.
+        let consuming = matches!(m, Method::Unwrap | Method::Expect);
+        let mode = if consuming { Mode::Move } else { Mode::Use };
+        let recv = self.expr_mode(&args[0], mode)?;
+        let recv_ty = args[0].ty.clone();
+        let value = match (&recv_ty, m) {
+            (Ty::Option(_), Method::IsSome | Method::IsNone) => {
+                let v = self.need(recv, &recv_ty).into_struct_value();
+                let tag = self.builder.build_extract_value(v, 0, "is_some").map_err(llvm_err)?.into_int_value();
+                Some(if m == Method::IsNone {
+                    self.builder.build_not(tag, "").map_err(llvm_err)?.into()
+                } else {
+                    tag.into()
+                })
+            }
+            (Ty::Result(..), Method::IsOk | Method::IsErr) => {
+                let v = self.need(recv, &recv_ty).into_struct_value();
+                let tag = self.builder.build_extract_value(v, 0, "is_ok").map_err(llvm_err)?.into_int_value();
+                Some(if m == Method::IsErr {
+                    self.builder.build_not(tag, "").map_err(llvm_err)?.into()
+                } else {
+                    tag.into()
+                })
+            }
+            (Ty::Option(inner), Method::Unwrap | Method::Expect) => {
+                let inner = (**inner).clone();
+                let Some(value) = self.unwrap_payload(recv, &recv_ty, &inner, 1, m, args, span, "None")? else {
+                    return Ok(None);
+                };
+                Some(value)
+            }
+            (Ty::Result(ok, _), Method::Unwrap | Method::Expect) => {
+                let ok = (**ok).clone();
+                let Some(value) = self.unwrap_payload(recv, &recv_ty, &ok, 1, m, args, span, "Err")? else {
+                    return Ok(None);
+                };
+                Some(value)
+            }
+            _ => return Err(format!("unsupported method {m:?} on `{recv_ty}`")),
+        };
+        let _ = ty;
+        Ok(value)
+    }
+
+    /// The payload of an `Option` or `Result`, panicking when the value is empty. Returns `None` when the payload
+    /// has no runtime value.
+    #[allow(clippy::too_many_arguments)]
+    fn unwrap_payload(
+        &mut self,
+        recv: Option<BasicValueEnum<'ctx>>,
+        recv_ty: &Ty,
+        payload_ty: &Ty,
+        field: u32,
+        m: Method,
+        args: &'a [tir::Expr],
+        span: Span,
+        empty: &str,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(t) = self.llvm_ty(payload_ty) else {
+            // The receiver is still evaluated for its effects; there is no payload value to return.
+            return Ok(None);
+        };
+        let v = self.need(recv, recv_ty).into_struct_value();
+        let tag = self.builder.build_extract_value(v, 0, "payload.present").map_err(llvm_err)?.into_int_value();
+        let slot = self.alloca(t, "unwrap.out")?;
+        let ok_bb = self.new_block("unwrap.ok");
+        let fail_bb = self.new_block("unwrap.fail");
+        let end = self.new_block("unwrap.end");
+        self.builder.build_conditional_branch(tag, ok_bb, fail_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(ok_bb);
+        let payload = self.builder.build_extract_value(v, field, "payload").map_err(llvm_err)?;
+        self.builder.build_store(slot, payload).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(fail_bb);
+        let (ptr, len) = match m {
+            Method::Expect if args.len() > 1 => {
+                let msg = self.expr_mode(&args[1], Mode::Use)?;
+                let msg = self.need(msg, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(msg, 0, "msg.ptr").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(msg, 1, "msg.len").map_err(llvm_err)?;
+                (ptr, len)
+            }
+            _ => {
+                let msg = self.str_literal(format!("called `unwrap` on a `{empty}` value").as_bytes());
+                let ptr = msg.get_field_at_index(0).expect("str has a pointer");
+                let len = msg.get_field_at_index(1).expect("str has a length");
+                (ptr, len)
+            }
+        };
+        self.emit_panic(ptr, len, span)?;
+        self.builder.position_at_end(end);
+        Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?))
+    }
+}
+
+/// `Option` and `Result` tags are `i1`s; keep the predicate import used even if the tag is compared directly.
+#[allow(dead_code)]
+const _: IntPredicate = IntPredicate::EQ;

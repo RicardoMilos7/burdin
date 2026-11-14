@@ -24,6 +24,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     path.pop();
                 }
             }
+            Pat::Ok(inner) => {
+                if let Ty::Result(ok, _) = ty {
+                    let ok = (**ok).clone();
+                    path.push(0);
+                    self.pattern_moved_paths(inner, &ok, path, out);
+                    path.pop();
+                }
+            }
+            Pat::Err(inner) => {
+                if let Ty::Result(_, err) = ty {
+                    let err = (**err).clone();
+                    path.push(1);
+                    self.pattern_moved_paths(inner, &err, path, out);
+                    path.pop();
+                }
+            }
             Pat::Product(subs) => {
                 let tys = self.field_tys(ty);
                 for (i, sub) in subs.iter().enumerate() {
@@ -168,6 +184,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     _ => unreachable!(),
                 }
             }
+            Pat::Ok(sub) | Pat::Err(sub) => {
+                let Ty::Result(ok, err) = ty else { unreachable!("checked: a Result pattern on a Result") };
+                let payload_ty = if matches!(pat, Pat::Ok(_)) { ok } else { err };
+                let want_ok = matches!(pat, Pat::Ok(_));
+                let rt = self.result_ty(ok, err);
+                let ptr = place.expect("a Result has storage");
+                let tag_ptr = self.builder.build_struct_gep(rt, ptr, 0, "").map_err(llvm_err)?;
+                let tag = self.builder.build_load(bool_ty, tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
+                let tag_ok = if want_ok { tag } else { self.builder.build_not(tag, "").map_err(llvm_err)? };
+                let payload = if self.llvm_ty(payload_ty).is_some() {
+                    let index = if want_ok { 1 } else { 2 };
+                    Some(self.builder.build_struct_gep(rt, ptr, index, "").map_err(llvm_err)?)
+                } else {
+                    None
+                };
+                let sub_ok = self.pat_test(sub, payload, payload_ty)?;
+                // `select`, not `and`: the other payload is uninitialized.
+                let no = bool_ty.const_int(0, false);
+                Ok(self.builder.build_select(tag_ok, sub_ok, no, "").map_err(llvm_err)?.into_int_value())
+            }
         }
     }
 
@@ -197,6 +233,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 };
                 path.push(0);
                 self.pat_bind(sub, payload, inner, base, path)?;
+                path.pop();
+                Ok(())
+            }
+            Pat::Ok(sub) | Pat::Err(sub) => {
+                let Ty::Result(ok, err) = ty else { unreachable!() };
+                let ok_side = matches!(pat, Pat::Ok(_));
+                let payload_ty = if ok_side { ok } else { err };
+                let index = if ok_side { 1 } else { 2 };
+                let payload = match (place, self.llvm_ty(payload_ty)) {
+                    (Some(ptr), Some(_)) => {
+                        Some(self.builder.build_struct_gep(self.result_ty(ok, err), ptr, index, "").map_err(llvm_err)?)
+                    }
+                    _ => None,
+                };
+                path.push(if ok_side { 0 } else { 1 });
+                self.pat_bind(sub, payload, payload_ty, base, path)?;
                 path.pop();
                 Ok(())
             }
@@ -271,6 +323,7 @@ pub(super) fn collect_bindings(pat: &Pat, out: &mut Vec<tir::LocalId>) {
         }
         Pat::Or(alts) => alts.iter().for_each(|a| collect_bindings(a, out)),
         Pat::Some(inner) => collect_bindings(inner, out),
+        Pat::Ok(inner) | Pat::Err(inner) => collect_bindings(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
     }
 }
@@ -282,6 +335,7 @@ pub(super) fn pattern_moves(pat: &Pat) -> bool {
         Pat::At(_, mode, inner) => *mode == tir::BindMode::Move || pattern_moves(inner),
         Pat::Or(alts) => alts.iter().any(pattern_moves),
         Pat::Some(inner) => pattern_moves(inner),
+        Pat::Ok(inner) | Pat::Err(inner) => pattern_moves(inner),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().any(pattern_moves),
         _ => false,
     }

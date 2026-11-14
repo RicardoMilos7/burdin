@@ -49,6 +49,30 @@ pub(crate) struct Runtime<'ctx> {
     pub str_find_char: FunctionValue<'ctx>,
     /// `(ptr, len: usize) -> ptr`: a NUL-terminated copy of the bytes in the C heap.
     pub cstring_from: FunctionValue<'ctx>,
+    /// `(ptr, bytes: usize) -> ptr`: `realloc`, panicking when it fails.
+    pub realloc: FunctionValue<'ctx>,
+    /// `(s: *String, c: i32)`: appends one UTF-8 code point.
+    pub string_push_char: FunctionValue<'ctx>,
+    /// `(ptr, len, ptr2, len2) -> i1`: byte equality.
+    pub str_eq: FunctionValue<'ctx>,
+    /// `(ptr, len, ptr2, len2) -> i32`: -1, 0, or 1.
+    pub str_cmp: FunctionValue<'ctx>,
+    /// `(ptr, len, needle, needle_len) -> i64`: the first byte index, or -1.
+    pub str_find_str: FunctionValue<'ctx>,
+    /// `(ptr, len, out: *i64) -> i1`: parses a signed decimal integer.
+    pub parse_i64: FunctionValue<'ctx>,
+    /// `(ptr, len, out: *i64) -> i1`: parses an unsigned decimal integer.
+    pub parse_u64: FunctionValue<'ctx>,
+    /// `(ptr, len, out: *String) -> i1`: reads a whole file.
+    pub read_to_string: FunctionValue<'ctx>,
+    /// `(path, path_len, text, text_len) -> i1`: writes a whole file.
+    pub write_file: FunctionValue<'ctx>,
+    /// `(out: *List<String>)`: the process arguments, program name first.
+    pub args: FunctionValue<'ctx>,
+    /// `(code: i32)`: ends the process.
+    pub exit: FunctionValue<'ctx>,
+    /// `(command, command_len) -> i32`: runs a shell command; -1 on failure, the exit code otherwise.
+    pub run: FunctionValue<'ctx>,
 }
 
 /// Generates the runtime into `module`. `windows` selects the Windows CRT functions.
@@ -75,6 +99,15 @@ pub(crate) fn define_main<'ctx>(
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
+    // Save the arguments for `env.args()`.
+    let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
+    let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
+    if let Some(global) = module.get_global("burdin_rt_argc") {
+        b.build_store(global.as_pointer_value(), argc).map_err(llvm_err)?;
+    }
+    if let Some(global) = module.get_global("burdin_rt_argv") {
+        b.build_store(global.as_pointer_value(), argv).map_err(llvm_err)?;
+    }
     if windows {
         // Output is binary-safe: no newline translation (tests/README.md, assumption 10).
         let setmode = libc(module, "_setmode", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], false));
@@ -139,6 +172,18 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
     fn generate(&mut self) -> GenResult<Runtime<'ctx>> {
         let h = self.helpers()?;
+        let string_push_str = self.string_push_str(&h)?;
+        let alloc = self.heap_alloc(&h)?;
+        let free = self.heap_free()?;
+        let alloc_string = h.alloc_string;
+        // The arguments `define_main` receives, saved for `env.args()`.
+        let argc_ty = self.i32();
+        let argc = self.module.add_global(argc_ty, None, "burdin_rt_argc");
+        argc.set_initializer(&argc_ty.const_zero());
+        argc.set_linkage(Linkage::Internal);
+        let argv = self.module.add_global(self.ptr_ty, None, "burdin_rt_argv");
+        argv.set_initializer(&self.ptr_ty.const_null());
+        argv.set_linkage(Linkage::Internal);
         Ok(Runtime {
             print: self.print(&h)?,
             panic: self.panic(&h)?,
@@ -146,9 +191,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             string_free: self.string_free()?,
             string_new: self.string_new()?,
             string_clone: self.string_clone(&h)?,
-            string_push_str: self.string_push_str(&h)?,
-            alloc: self.heap_alloc(&h)?,
-            free: self.heap_free()?,
+            string_push_str,
+            alloc,
+            free,
             str_to_string: self.str_to_string(&h)?,
             i64_to_string: self.int_to_string(&h, true)?,
             u64_to_string: self.int_to_string(&h, false)?,
@@ -156,6 +201,18 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             str_starts_with: self.str_starts_with()?,
             str_find_char: self.str_find_char()?,
             cstring_from: self.cstring_from(&h)?,
+            realloc: self.heap_realloc(&h)?,
+            string_push_char: self.string_push_char(string_push_str)?,
+            str_eq: self.str_eq()?,
+            str_cmp: self.str_cmp()?,
+            str_find_str: self.str_find_str()?,
+            parse_i64: self.parse_int(&h, true)?,
+            parse_u64: self.parse_int(&h, false)?,
+            read_to_string: self.read_to_string(&h, alloc_string, string_push_str, free)?,
+            write_file: self.write_file(&h)?,
+            args: self.args(argc.as_pointer_value(), argv.as_pointer_value(), alloc_string)?,
+            exit: self.exit()?,
+            run: self.run_command()?,
         })
     }
 
@@ -905,6 +962,446 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(missing);
         self.b.build_return(Some(&i64_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    // ----- collections and the prelude -------------------------------------------------
+
+    /// `realloc(ptr, bytes: usize) -> ptr`: grows an allocation, panicking when it fails.
+    fn heap_realloc(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let realloc = libc(self.module, "realloc", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let f = self.function("burdin_rt_realloc", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let (ptr, size) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let zero = self.b.build_int_compare(IntPredicate::EQ, size, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let size =
+            self.b.build_select(zero, usize_ty.const_int(1, false), size, "").map_err(llvm_err)?.into_int_value();
+        let p =
+            self.call(realloc, &[ptr.into(), size.into()])?.expect("realloc returns a pointer").into_pointer_value();
+        let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
+        let oom = self.block(f, "oom");
+        let done = self.block(f, "done");
+        self.b.build_conditional_branch(null, oom, done).map_err(llvm_err)?;
+        self.b.position_at_end(oom);
+        self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&p)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `string_push_char(s: *String, c: i32)`: appends one UTF-8 code point.
+    fn string_push_char(&mut self, push_str: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let ty = self.cx.void_type().fn_type(&[self.ptr_ty.into(), self.i32().into()], false);
+        let f = self.function("burdin_rt_string_push_char", ty);
+        let enc = self.buffer(4)?;
+        let n = self.utf8_encode(f, Self::int_param(f, 1), enc)?;
+        self.call(push_str, &[Self::ptr_param(f, 0).into(), enc.into(), n.into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `str_eq(ptr, len, ptr2, len2) -> i1`.
+    fn str_eq(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, bool_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.cx.bool_type());
+        let memcmp =
+            libc(self.module, "memcmp", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_str_eq", bool_ty.fn_type(&params, false));
+        let (a, alen, b, blen) =
+            (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
+        let same_len = self.b.build_int_compare(IntPredicate::EQ, alen, blen, "").map_err(llvm_err)?;
+        let check = self.block(f, "check");
+        let no = self.block(f, "no");
+        let yes = self.block(f, "yes");
+        self.b.build_conditional_branch(same_len, check, no).map_err(llvm_err)?;
+        self.b.position_at_end(check);
+        let r = self.call(memcmp, &[a.into(), b.into(), alen.into()])?.expect("memcmp returns int").into_int_value();
+        let eq = self.b.build_int_compare(IntPredicate::EQ, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(eq, yes, no).map_err(llvm_err)?;
+        self.b.position_at_end(yes);
+        self.b.build_return(Some(&bool_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(no);
+        self.b.build_return(Some(&bool_ty.const_zero())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `str_cmp(ptr, len, ptr2, len2) -> i32`: byte order, then length order.
+    fn str_cmp(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let memcmp =
+            libc(self.module, "memcmp", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_str_cmp", i32_ty.fn_type(&params, false));
+        let (a, alen, b, blen) =
+            (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
+        let min = self
+            .b
+            .build_select(
+                self.b.build_int_compare(IntPredicate::ULT, alen, blen, "").map_err(llvm_err)?,
+                alen,
+                blen,
+                "",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let r = self.call(memcmp, &[a.into(), b.into(), min.into()])?.expect("memcmp returns int").into_int_value();
+        let differ = self.b.build_int_compare(IntPredicate::NE, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let bytes = self.block(f, "bytes");
+        let lengths = self.block(f, "lengths");
+        self.b.build_conditional_branch(differ, bytes, lengths).map_err(llvm_err)?;
+        self.b.position_at_end(bytes);
+        let neg = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let sign =
+            self.b.build_select(neg, i32_ty.const_all_ones(), i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_return(Some(&sign)).map_err(llvm_err)?;
+        self.b.position_at_end(lengths);
+        let lt = self.b.build_int_compare(IntPredicate::ULT, alen, blen, "").map_err(llvm_err)?;
+        let eq = self.b.build_int_compare(IntPredicate::EQ, alen, blen, "").map_err(llvm_err)?;
+        let less = self
+            .b
+            .build_select(lt, i32_ty.const_all_ones(), i32_ty.const_int(1, false), "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let order = self.b.build_select(eq, i32_ty.const_zero(), less, "").map_err(llvm_err)?;
+        self.b.build_return(Some(&order)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `str_find_str(ptr, len, needle, needle_len) -> i64`: the first byte index of `needle`, or -1.
+    fn str_find_str(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i64());
+        let memcmp =
+            libc(self.module, "memcmp", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_str_find_str", i64_ty.fn_type(&params, false));
+        let (ptr, len, needle, nlen) =
+            (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
+        let empty = self.b.build_int_compare(IntPredicate::EQ, nlen, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let search = self.block(f, "search");
+        let test = self.block(f, "test");
+        let after = self.block(f, "next");
+        let found = self.block(f, "found");
+        let empty_bb = self.block(f, "empty");
+        let missing = self.block(f, "missing");
+        let start = self.b.get_insert_block().expect("positioned");
+        self.b.build_conditional_branch(empty, empty_bb, search).map_err(llvm_err)?;
+        self.b.position_at_end(empty_bb);
+        self.b.build_return(Some(&i64_ty.const_zero())).map_err(llvm_err)?;
+
+        self.b.position_at_end(search);
+        let i = self.b.build_phi(usize_ty, "i").map_err(llvm_err)?;
+        let i_v = i.as_basic_value().into_int_value();
+        let end = self.b.build_int_add(i_v, nlen, "").map_err(llvm_err)?;
+        let enough = self.b.build_int_compare(IntPredicate::ULE, end, len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(enough, test, missing).map_err(llvm_err)?;
+        self.b.position_at_end(test);
+        let at = self.offset(ptr, i_v)?;
+        let r = self.call(memcmp, &[at.into(), needle.into(), nlen.into()])?.expect("memcmp returns int");
+        let same = self
+            .b
+            .build_int_compare(IntPredicate::EQ, r.into_int_value(), i32_ty.const_zero(), "")
+            .map_err(llvm_err)?;
+        let next = self.b.build_int_add(i_v, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(same, found, after).map_err(llvm_err)?;
+        self.b.position_at_end(after);
+        self.b.build_unconditional_branch(search).map_err(llvm_err)?;
+        i.add_incoming(&[(&usize_ty.const_zero(), start), (&next, after)]);
+        self.b.position_at_end(found);
+        let at = self.b.build_int_z_extend(i_v, i64_ty, "").map_err(llvm_err)?;
+        self.b.build_return(Some(&at)).map_err(llvm_err)?;
+        self.b.position_at_end(missing);
+        self.b.build_return(Some(&i64_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `parse(ptr, len, out: *i64) -> i1`: a decimal integer with no sign (unsigned) or an optional `-`.
+    fn parse_int(&mut self, _h: &Helpers<'ctx>, signed: bool) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i8_ty, i64_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i8(), self.i64(), self.i32());
+        let name = if signed { "burdin_rt_parse_i64" } else { "burdin_rt_parse_u64" };
+        let f =
+            self.function(name, self.cx.bool_type().fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], false));
+        let (src, len, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let empty = self.b.build_int_compare(IntPredicate::EQ, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let fail = self.block(f, "parse.fail");
+        let sign = self.block(f, "parse.sign");
+        let digits = self.block(f, "parse.digits");
+        self.b.build_conditional_branch(empty, fail, sign).map_err(llvm_err)?;
+        self.b.position_at_end(sign);
+        let first = self.b.build_load(i8_ty, src, "first").map_err(llvm_err)?.into_int_value();
+        let minus = self
+            .b
+            .build_int_compare(IntPredicate::EQ, first, i8_ty.const_int(u64::from(b'-'), false), "")
+            .map_err(llvm_err)?;
+        let neg =
+            self.b.build_and(minus, self.cx.bool_type().const_int(u64::from(signed), false), "").map_err(llvm_err)?;
+        let start = self
+            .b
+            .build_select(neg, usize_ty.const_int(1, false), usize_ty.const_zero(), "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let only_sign = self.b.build_int_compare(IntPredicate::UGE, start, len, "").map_err(llvm_err)?;
+        let after_sign = self.block(f, "parse.after.sign");
+        self.b.build_conditional_branch(only_sign, fail, after_sign).map_err(llvm_err)?;
+        self.b.position_at_end(after_sign);
+        self.b.build_unconditional_branch(digits).map_err(llvm_err)?;
+
+        self.b.position_at_end(digits);
+        let i = self.b.build_phi(usize_ty, "i").map_err(llvm_err)?;
+        let acc = self.b.build_phi(i64_ty, "acc").map_err(llvm_err)?;
+        let i_v = i.as_basic_value().into_int_value();
+        let acc_v = acc.as_basic_value().into_int_value();
+        let more = self.b.build_int_compare(IntPredicate::ULT, i_v, len, "").map_err(llvm_err)?;
+        let body = self.block(f, "parse.body");
+        let done = self.block(f, "parse.done");
+        self.b.build_conditional_branch(more, body, done).map_err(llvm_err)?;
+
+        self.b.position_at_end(body);
+        let at = self.offset(src, i_v)?;
+        let ch = self.b.build_load(i8_ty, at, "").map_err(llvm_err)?.into_int_value();
+        let digit = self.b.build_int_sub(ch, i8_ty.const_int(u64::from(b'0'), false), "").map_err(llvm_err)?;
+        let digit = self.b.build_int_z_extend(digit, i64_ty, "").map_err(llvm_err)?;
+        let bad =
+            self.b.build_int_compare(IntPredicate::UGT, digit, i64_ty.const_int(9, false), "").map_err(llvm_err)?;
+        let digit_bb = self.block(f, "parse.digit");
+        self.b.build_conditional_branch(bad, fail, digit_bb).map_err(llvm_err)?;
+        self.b.position_at_end(digit_bb);
+        // The largest value that still fits: u64::MAX, i64::MAX, or 2^63 for a negative signed value.
+        let limit = if !signed {
+            i64_ty.const_all_ones()
+        } else {
+            self.b
+                .build_select(neg, i64_ty.const_int(1 << 63, false), i64_ty.const_int(i64::MAX as u64, false), "")
+                .map_err(llvm_err)?
+                .into_int_value()
+        };
+        let space = self.b.build_int_sub(limit, digit, "").map_err(llvm_err)?;
+        let allowed = self.b.build_int_unsigned_div(space, i64_ty.const_int(10, false), "").map_err(llvm_err)?;
+        let too_big = self.b.build_int_compare(IntPredicate::UGT, acc_v, allowed, "").map_err(llvm_err)?;
+        let next_bb = self.block(f, "parse.next");
+        self.b.build_conditional_branch(too_big, fail, next_bb).map_err(llvm_err)?;
+        self.b.position_at_end(next_bb);
+        let ten = self.b.build_int_mul(acc_v, i64_ty.const_int(10, false), "").map_err(llvm_err)?;
+        let next_acc = self.b.build_int_add(ten, digit, "").map_err(llvm_err)?;
+        let next_i = self.b.build_int_add(i_v, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_unconditional_branch(digits).map_err(llvm_err)?;
+        i.add_incoming(&[(&start, after_sign), (&next_i, next_bb)]);
+        acc.add_incoming(&[(&i64_ty.const_zero(), after_sign), (&next_acc, next_bb)]);
+
+        self.b.position_at_end(done);
+        let value: BasicValueEnum<'ctx> = if signed {
+            let negated = self.b.build_int_sub(i64_ty.const_zero(), acc_v, "").map_err(llvm_err)?;
+            self.b.build_select(neg, negated, acc_v, "").map_err(llvm_err)?
+        } else {
+            acc_v.into()
+        };
+        self.b.build_store(out, value).map_err(llvm_err)?;
+        self.b.build_return(Some(&self.cx.bool_type().const_int(1, false))).map_err(llvm_err)?;
+
+        self.b.position_at_end(fail);
+        self.b.build_return(Some(&self.cx.bool_type().const_zero())).map_err(llvm_err)?;
+        let _ = i32_ty;
+        Ok(f)
+    }
+
+    /// `read_to_string(path, path_len, out: *String) -> i1`: the file's bytes, or false.
+    fn read_to_string(
+        &mut self,
+        _h: &Helpers<'ctx>,
+        alloc_string: FunctionValue<'ctx>,
+        push_str: FunctionValue<'ctx>,
+        free: FunctionValue<'ctx>,
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let fopen = libc(self.module, "fopen", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let fread = libc(
+            self.module,
+            "fread",
+            usize_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into(), ptr_ty.into()], false),
+        );
+        let fclose = libc(self.module, "fclose", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function(
+            "burdin_rt_read_to_string",
+            self.cx.bool_type().fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], false),
+        );
+        let (path, plen, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        let mode = self.bytes(b"rb\0");
+        let file =
+            self.call(fopen, &[cpath.into(), mode.into()])?.expect("fopen returns a pointer").into_pointer_value();
+        let null = self.b.build_is_null(file, "").map_err(llvm_err)?;
+        let ok = self.block(f, "read.open");
+        let fail = self.block(f, "read.fail");
+        self.b.build_conditional_branch(null, fail, ok).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&self.cx.bool_type().const_zero())).map_err(llvm_err)?;
+
+        self.b.position_at_end(ok);
+        let buf = self.buffer(4096)?;
+        let chunk = self.block(f, "read.chunk");
+        let done = self.block(f, "read.done");
+        self.b.build_unconditional_branch(chunk).map_err(llvm_err)?;
+        self.b.position_at_end(chunk);
+        let n = self
+            .call(
+                fread,
+                &[buf.into(), usize_ty.const_int(1, false).into(), usize_ty.const_int(4096, false).into(), file.into()],
+            )?
+            .expect("fread returns a size")
+            .into_int_value();
+        let empty = self.b.build_int_compare(IntPredicate::EQ, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let append = self.block(f, "read.append");
+        self.b.build_conditional_branch(empty, done, append).map_err(llvm_err)?;
+        self.b.position_at_end(append);
+        self.call(push_str, &[out.into(), buf.into(), n.into()])?;
+        self.b.build_unconditional_branch(chunk).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        // The loop leaves the `String` in `out`; `alloc_string` is only used to zero it on failure paths.
+        let _ = alloc_string;
+        self.call(fclose, &[file.into()])?;
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&self.cx.bool_type().const_int(1, false))).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `write_file(path, path_len, text, text_len) -> i1`.
+    fn write_file(&mut self, _h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let fopen = libc(self.module, "fopen", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let fwrite = libc(
+            self.module,
+            "fwrite",
+            usize_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into(), ptr_ty.into()], false),
+        );
+        let fclose = libc(self.module, "fclose", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_write_file", self.cx.bool_type().fn_type(&params, false));
+        let (path, plen, text, tlen) =
+            (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        let mode = self.bytes(b"wb\0");
+        let file =
+            self.call(fopen, &[cpath.into(), mode.into()])?.expect("fopen returns a pointer").into_pointer_value();
+        let null = self.b.build_is_null(file, "").map_err(llvm_err)?;
+        let ok = self.block(f, "write.open");
+        let fail = self.block(f, "write.fail");
+        self.b.build_conditional_branch(null, fail, ok).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&self.cx.bool_type().const_zero())).map_err(llvm_err)?;
+
+        self.b.position_at_end(ok);
+        let written = self
+            .call(fwrite, &[text.into(), usize_ty.const_int(1, false).into(), tlen.into(), file.into()])?
+            .expect("fwrite returns a size")
+            .into_int_value();
+        self.call(fclose, &[file.into()])?;
+        self.call(free, &[cpath.into()])?;
+        let all = self.b.build_int_compare(IntPredicate::EQ, written, tlen, "").map_err(llvm_err)?;
+        self.b.build_return(Some(&all)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// The path bytes copied into a `malloc`ed buffer with a terminating NUL.
+    fn cstring_of(
+        &mut self,
+        ptr: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+        malloc: FunctionValue<'ctx>,
+    ) -> GenResult<PointerValue<'ctx>> {
+        let usize_ty = self.usize_ty;
+        let size = self.b.build_int_add(len, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let p = self.call(malloc, &[size.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        self.b.build_memcpy(p, 1, ptr, 1, len).map_err(llvm_err)?;
+        let end = self.offset(p, len)?;
+        self.b.build_store(end, self.i8().const_zero()).map_err(llvm_err)?;
+        Ok(p)
+    }
+
+    /// `args(out: *List<String>)`: `argv`, program name first, as owned strings.
+    fn args(
+        &mut self,
+        argc_global: PointerValue<'ctx>,
+        argv_global: PointerValue<'ctx>,
+        alloc_string: FunctionValue<'ctx>,
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let alloc = self.module.get_function("burdin_rt_alloc").expect("the runtime allocates before args");
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_args", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let out = Self::ptr_param(f, 0);
+        let argc = self.b.build_load(i32_ty, argc_global, "argc").map_err(llvm_err)?.into_int_value();
+        let n = self.b.build_int_z_extend(argc, usize_ty, "").map_err(llvm_err)?;
+        let argv = self.b.build_load(ptr_ty, argv_global, "argv").map_err(llvm_err)?.into_pointer_value();
+        let word = u64::from(self.usize_ty.get_bit_width() / 8);
+        let elem_size = 3 * word;
+        let bytes = self.b.build_int_mul(n, usize_ty.const_int(elem_size, false), "").map_err(llvm_err)?;
+        let base = self.call(alloc, &[bytes.into()])?.expect("alloc returns a pointer").into_pointer_value();
+        let header = self.block(f, "args.cond");
+        let body = self.block(f, "args.body");
+        let exit = self.block(f, "args.end");
+        let index = self.b.build_alloca(usize_ty, "args.i").map_err(llvm_err)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.b.position_at_end(header);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let go = self.b.build_int_compare(IntPredicate::ULT, i, n, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
+        self.b.position_at_end(body);
+        let slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, argv, &[i], "arg.ptr") }.map_err(llvm_err)?;
+        let cstr = self.b.build_load(ptr_ty, slot, "").map_err(llvm_err)?.into_pointer_value();
+        let len = self.call(strlen, &[cstr.into()])?.expect("strlen returns a size").into_int_value();
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, base, &[i], "arg") }.map_err(llvm_err)?;
+        self.call(alloc_string, &[elem.into(), cstr.into(), len.into()])?;
+        let next = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, next).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.b.position_at_end(exit);
+        let f0 = self.b.build_struct_gep(self.string_ty, out, 0, "").map_err(llvm_err)?;
+        let f1 = self.b.build_struct_gep(self.string_ty, out, 1, "").map_err(llvm_err)?;
+        let f2 = self.b.build_struct_gep(self.string_ty, out, 2, "").map_err(llvm_err)?;
+        self.b.build_store(f0, base).map_err(llvm_err)?;
+        self.b.build_store(f1, n).map_err(llvm_err)?;
+        self.b.build_store(f2, n).map_err(llvm_err)?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `exit(code: i32)`: ends the process.
+    fn exit(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let exit = libc(self.module, "exit", self.cx.void_type().fn_type(&[self.i32().into()], false));
+        self.mark_noreturn(exit);
+        Ok(exit)
+    }
+
+    /// `run(command, command_len) -> i32`: runs the command through the system shell. The result is -1 when the
+    /// shell could not start, and the command's exit code otherwise.
+    fn run_command(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let system = libc(self.module, "system", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_run", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let cpath = self.cstring_of(Self::ptr_param(f, 0), Self::int_param(f, 1), malloc)?;
+        let status = self.call(system, &[cpath.into()])?.expect("system returns a status").into_int_value();
+        self.call(free, &[cpath.into()])?;
+        if self.windows {
+            self.b.build_return(Some(&status)).map_err(llvm_err)?;
+            return Ok(f);
+        }
+        // POSIX `system` returns a wait status: the exit code is its second byte. -1 stays -1.
+        let minus_one = i32_ty.const_all_ones();
+        let failed = self.b.build_int_compare(IntPredicate::EQ, status, minus_one, "").map_err(llvm_err)?;
+        let shift = self.b.build_right_shift(status, i32_ty.const_int(8, false), false, "").map_err(llvm_err)?;
+        let code = self.b.build_and(shift, i32_ty.const_int(0xff, false), "").map_err(llvm_err)?;
+        let result = self.b.build_select(failed, minus_one, code, "").map_err(llvm_err)?;
+        self.b.build_return(Some(&result)).map_err(llvm_err)?;
         Ok(f)
     }
 }

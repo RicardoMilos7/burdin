@@ -81,8 +81,55 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.builder.build_and(tags, payload, "").map_err(llvm_err)
             }
+            Ty::Str | Ty::String => {
+                let (a_ptr, a_len) = self.parts_at(l, ty)?;
+                let (b_ptr, b_len) = self.parts_at(r, ty)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.str_eq, &[a_ptr.into(), a_len.into(), b_ptr.into(), b_len.into()], "")
+                    .map_err(llvm_err)?;
+                Ok(call.try_as_basic_value().basic().expect("`str_eq` returns a flag").into_int_value())
+            }
+            Ty::Result(ok, err) => {
+                let rt = t.into_struct_type();
+                let a_tag = self.builder.build_struct_gep(rt, l, 0, "").map_err(llvm_err)?;
+                let b_tag = self.builder.build_struct_gep(rt, r, 0, "").map_err(llvm_err)?;
+                let a_tag = self.builder.build_load(bool_ty, a_tag, "").map_err(llvm_err)?.into_int_value();
+                let b_tag = self.builder.build_load(bool_ty, b_tag, "").map_err(llvm_err)?.into_int_value();
+                let tags = self.builder.build_int_compare(IntPredicate::EQ, a_tag, b_tag, "").map_err(llvm_err)?;
+                let mut payload = yes;
+                if self.llvm_ty(ok).is_some() {
+                    let a = self.builder.build_struct_gep(rt, l, 1, "").map_err(llvm_err)?;
+                    let b = self.builder.build_struct_gep(rt, r, 1, "").map_err(llvm_err)?;
+                    let eq = self.eq_at(a, b, ok)?;
+                    payload = self.builder.build_select(a_tag, eq, payload, "").map_err(llvm_err)?.into_int_value();
+                }
+                if self.llvm_ty(err).is_some() {
+                    let a = self.builder.build_struct_gep(rt, l, 2, "").map_err(llvm_err)?;
+                    let b = self.builder.build_struct_gep(rt, r, 2, "").map_err(llvm_err)?;
+                    let eq = self.eq_at(a, b, err)?;
+                    let is_err = self.builder.build_not(a_tag, "").map_err(llvm_err)?;
+                    payload = self.builder.build_select(is_err, eq, payload, "").map_err(llvm_err)?.into_int_value();
+                }
+                self.builder.build_and(tags, payload, "").map_err(llvm_err)
+            }
             _ => Err(format!("unsupported `==` on `{ty}`")),
         }
+    }
+
+    /// The pointer and length of a `str` or `String` at `addr`.
+    fn parts_at(
+        &mut self,
+        addr: PointerValue<'ctx>,
+        ty: &Ty,
+    ) -> GenResult<(inkwell::values::BasicValueEnum<'ctx>, inkwell::values::BasicValueEnum<'ctx>)> {
+        let t = self.llvm_ty(ty).expect("text has a type").into_struct_type();
+        let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
+        let p = self.builder.build_struct_gep(t, addr, 0, "").map_err(llvm_err)?;
+        let l = self.builder.build_struct_gep(t, addr, 1, "").map_err(llvm_err)?;
+        let p = self.builder.build_load(ptr_ty, p, "").map_err(llvm_err)?;
+        let l = self.builder.build_load(self.usize_ty, l, "").map_err(llvm_err)?;
+        Ok((p, l))
     }
 
     /// `-1`, `0`, or `1` (an `i32`) for how the integers `a` and `b` compare.
@@ -139,6 +186,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     orders.push(self.cmp_at(a, b, fty)?);
                 }
                 self.first_difference(&orders)
+            }
+            Ty::Str | Ty::String => {
+                let (a_ptr, a_len) = self.parts_at(l, ty)?;
+                let (b_ptr, b_len) = self.parts_at(r, ty)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.str_cmp, &[a_ptr.into(), a_len.into(), b_ptr.into(), b_len.into()], "")
+                    .map_err(llvm_err)?;
+                Ok(call.try_as_basic_value().basic().expect("`str_cmp` returns an order").into_int_value())
             }
             Ty::Enum(a) => {
                 let et = t.into_struct_type();

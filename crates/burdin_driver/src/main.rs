@@ -135,12 +135,15 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>) -> Result<Path
     let mut diags = Diagnostics::default();
     for package in &loaded.packages {
         for module in &package.modules {
-            let text = match std::fs::read_to_string(&module.file) {
-                Ok(text) => text,
-                Err(e) => {
-                    eprintln!("error: cannot read {}: {e}", module.file.display());
-                    return Err(ExitCode::from(1));
-                }
+            let text = match module.text {
+                Some(text) => text.to_string(),
+                None => match std::fs::read_to_string(&module.file) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        eprintln!("error: cannot read {}: {e}", module.file.display());
+                        return Err(ExitCode::from(1));
+                    }
+                },
             };
             let file = sources.add(module.file.display().to_string(), text);
             let ast = burdin_syntax::parse(file, &sources.get(file).text, &mut diags);

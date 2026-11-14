@@ -9,22 +9,39 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "eprint" => Builtin::Eprint,
         "eprintln" => Builtin::Eprintln,
         "panic" => Builtin::Panic,
+        "__read_to_string" => Builtin::ReadToString,
+        "__write_file" => Builtin::WriteFile,
+        "__args" => Builtin::EnvArgs,
+        "__exit" => Builtin::ProcessExit,
+        "__run" => Builtin::RunCommand,
         _ => return None,
     })
 }
 
 pub(crate) fn builtin_sig(b: Builtin) -> Signature {
     let ret = match b {
-        Builtin::Panic => Ty::Never,
+        Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
         Builtin::StringNew | Builtin::StringFrom => Ty::String,
         Builtin::CStringFrom => Ty::CString,
+        Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit)),
+        Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(Ty::Unit)),
+        Builtin::EnvArgs => Ty::List(Box::new(Ty::String)),
+        Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(Ty::Unit)),
         _ => Ty::Unit,
     };
     let params = match b {
-        Builtin::StringNew => Vec::new(),
+        Builtin::StringNew | Builtin::EnvArgs | Builtin::Unreachable => Vec::new(),
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
+        Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
+        Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
+        Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
+        Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        // `assert_eq` checks its two arguments specially: their type is inferred, not fixed.
+        Builtin::AssertEq => Vec::new(),
         // `Heap.new` is checked separately: its result type depends on the value.
         Builtin::HeapNew => vec![ParamSig::plain(Ty::Error)],
+        // `swap` and `replace` check their arguments separately.
+        Builtin::Swap | Builtin::Replace => Vec::new(),
         _ => vec![ParamSig::plain(Ty::Str)],
     };
     Signature { params, ret, has_self: false, ret_origin: None }
@@ -68,45 +85,76 @@ pub(crate) fn builtin_type(name: &str) -> Option<Ty> {
     })
 }
 
-pub(crate) fn method(name: &str) -> Option<Method> {
-    Some(match name {
-        "to_string" => Method::ToString,
-        "wrapping_add" => Method::WrappingAdd,
-        "wrapping_sub" => Method::WrappingSub,
-        "wrapping_mul" => Method::WrappingMul,
-        "checked_add" => Method::CheckedAdd,
-        "checked_sub" => Method::CheckedSub,
-        "checked_mul" => Method::CheckedMul,
-        "min" => Method::Min,
-        "max" => Method::Max,
-        "abs" => Method::Abs,
-        "push_str" => Method::PushStr,
-        "as_str" => Method::AsStr,
-        "len" => Method::Len,
-        "starts_with" => Method::StartsWith,
-        "find" => Method::Find,
-        "as_ptr" => Method::AsPtr,
-        _ => return None,
-    })
+/// A parameter the callee takes ownership of (the element of `List.push`, the key and value of
+/// `Map.insert`).
+fn value_param(ty: Ty) -> ParamSig {
+    ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true }
 }
 
-/// The parameter types (after the receiver) and the result type of a built-in method, if `recv` has it.
-pub(crate) fn method_sig(m: Method, recv: &Ty) -> Option<(Vec<Ty>, Ty)> {
-    match (m, recv) {
-        (Method::ToString, Ty::Int(_) | Ty::Bool | Ty::Char | Ty::Str) => Some((vec![], Ty::String)),
-        (Method::WrappingAdd | Method::WrappingSub | Method::WrappingMul | Method::Min | Method::Max, Ty::Int(_)) => {
-            Some((vec![recv.clone()], recv.clone()))
+/// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the
+/// receiver, and its result. `None` when `recv` has no such method.
+pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
+    let plain = |ty: Ty| ParamSig::plain(ty);
+    let elem = |t: &Ty| t.clone();
+    Some(match (name, recv) {
+        ("to_string", Ty::Int(_) | Ty::Bool | Ty::Char | Ty::Str) => (Method::ToString, vec![], Ty::String),
+        ("wrapping_add", Ty::Int(_)) => (Method::WrappingAdd, vec![plain(recv.clone())], recv.clone()),
+        ("wrapping_sub", Ty::Int(_)) => (Method::WrappingSub, vec![plain(recv.clone())], recv.clone()),
+        ("wrapping_mul", Ty::Int(_)) => (Method::WrappingMul, vec![plain(recv.clone())], recv.clone()),
+        ("checked_add", Ty::Int(_)) => {
+            (Method::CheckedAdd, vec![plain(recv.clone())], Ty::Option(Box::new(recv.clone())))
         }
-        (Method::CheckedAdd | Method::CheckedSub | Method::CheckedMul, Ty::Int(_)) => {
-            Some((vec![recv.clone()], Ty::Option(Box::new(recv.clone()))))
+        ("checked_sub", Ty::Int(_)) => {
+            (Method::CheckedSub, vec![plain(recv.clone())], Ty::Option(Box::new(recv.clone())))
         }
-        (Method::Abs, Ty::Int(i)) if i.signed() => Some((vec![], recv.clone())),
-        (Method::PushStr, Ty::String) => Some((vec![Ty::Str], Ty::Unit)),
-        (Method::AsStr, Ty::String | Ty::Str) => Some((vec![], Ty::Str)),
-        (Method::Len, Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _)) => Some((vec![], Ty::Int(IntTy::Usize))),
-        (Method::StartsWith, Ty::Str | Ty::String) => Some((vec![Ty::Str], Ty::Bool)),
-        (Method::Find, Ty::Str | Ty::String) => Some((vec![Ty::Char], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))),
-        (Method::AsPtr, Ty::CString) => Some((vec![], Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))),
-        _ => None,
-    }
+        ("checked_mul", Ty::Int(_)) => {
+            (Method::CheckedMul, vec![plain(recv.clone())], Ty::Option(Box::new(recv.clone())))
+        }
+        ("min", Ty::Int(_)) => (Method::Min, vec![plain(recv.clone())], recv.clone()),
+        ("max", Ty::Int(_)) => (Method::Max, vec![plain(recv.clone())], recv.clone()),
+        ("abs", Ty::Int(i)) if i.signed() => (Method::Abs, vec![], recv.clone()),
+        ("push_str", Ty::String) => (Method::PushStr, vec![plain(Ty::Str)], Ty::Unit),
+        ("push", Ty::String) => (Method::PushChar, vec![plain(Ty::Char)], Ty::Unit),
+        ("push", Ty::List(t)) => (Method::Push, vec![value_param(elem(t))], Ty::Unit),
+        ("pop", Ty::List(t)) => (Method::ListPop, vec![], Ty::Option(t.clone())),
+        ("last", Ty::List(t)) => {
+            (Method::ListLast, vec![], Ty::Option(Box::new(Ty::Ref { mutable: false, inner: t.clone() })))
+        }
+        ("insert", Ty::List(t)) => {
+            (Method::ListInsert, vec![plain(Ty::Int(IntTy::Usize)), value_param(elem(t))], Ty::Unit)
+        }
+        ("remove", Ty::List(t)) => (Method::ListRemove, vec![plain(Ty::Int(IntTy::Usize))], elem(t)),
+        ("contains", Ty::List(t)) => (Method::ListContains, vec![plain(elem(t))], Ty::Bool),
+        ("sort", Ty::List(_)) => (Method::ListSort, vec![], Ty::Unit),
+        ("clear", Ty::List(_) | Ty::Map(..)) => (Method::Clear, vec![], Ty::Unit),
+        ("insert", Ty::Map(k, v)) => (Method::MapInsert, vec![value_param(elem(k)), value_param(elem(v))], Ty::Unit),
+        ("get", Ty::Map(k, v)) => {
+            let view = Ty::Ref { mutable: false, inner: v.clone() };
+            (Method::MapGet, vec![plain(elem(k))], Ty::Option(Box::new(view)))
+        }
+        ("remove", Ty::Map(k, v)) => (Method::MapRemove, vec![plain(elem(k))], Ty::Option(v.clone())),
+        ("contains_key", Ty::Map(k, _)) => (Method::MapContainsKey, vec![plain(elem(k))], Ty::Bool),
+        ("unwrap", Ty::Option(t)) => (Method::Unwrap, vec![], elem(t)),
+        ("unwrap", Ty::Result(t, _)) => (Method::Unwrap, vec![], elem(t)),
+        ("expect", Ty::Option(t)) => (Method::Expect, vec![plain(Ty::Str)], elem(t)),
+        ("expect", Ty::Result(t, _)) => (Method::Expect, vec![plain(Ty::Str)], elem(t)),
+        ("is_some", Ty::Option(_)) => (Method::IsSome, vec![], Ty::Bool),
+        ("is_none", Ty::Option(_)) => (Method::IsNone, vec![], Ty::Bool),
+        ("is_ok", Ty::Result(..)) => (Method::IsOk, vec![], Ty::Bool),
+        ("is_err", Ty::Result(..)) => (Method::IsErr, vec![], Ty::Bool),
+        ("as_str", Ty::String | Ty::Str) => (Method::AsStr, vec![], Ty::Str),
+        ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::List(_) | Ty::Map(..)) => {
+            (Method::Len, vec![], Ty::Int(IntTy::Usize))
+        }
+        ("starts_with", Ty::Str | Ty::String) => (Method::StartsWith, vec![plain(Ty::Str)], Ty::Bool),
+        ("find", Ty::Str | Ty::String) => {
+            (Method::Find, vec![plain(Ty::Char)], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))
+        }
+        ("find_str", Ty::Str | Ty::String) => {
+            (Method::FindStr, vec![plain(Ty::Str)], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))
+        }
+        ("chars", Ty::Str | Ty::String) => (Method::Chars, vec![], Ty::Chars),
+        ("as_ptr", Ty::CString) => (Method::AsPtr, vec![], Ty::CPtr(Box::new(Ty::Int(IntTy::I8)))),
+        _ => return None,
+    })
 }

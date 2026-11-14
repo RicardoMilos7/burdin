@@ -105,6 +105,32 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         None => Ok(None),
                     }
                 }
+                Ty::List(elem) => {
+                    let elem = (**elem).clone();
+                    let base_ptr = self.place_ptr(base)?;
+                    let i = self.expr_mode(index, Mode::Use)?;
+                    let i = self.need_int(i, &Ty::Int(IntTy::Usize));
+                    let Some(base_ptr) = base_ptr else {
+                        return Ok(None);
+                    };
+                    let data_field =
+                        self.builder.build_struct_gep(self.string_ty, base_ptr, 0, "list.ptr").map_err(llvm_err)?;
+                    let len_field =
+                        self.builder.build_struct_gep(self.string_ty, base_ptr, 1, "list.len").map_err(llvm_err)?;
+                    let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
+                    let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
+                    let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+                    self.bounds_check(i, len, e.span)?;
+                    match self.llvm_ty(&elem) {
+                        Some(elem_t) => {
+                            // SAFETY (LLVM): the index was checked against the length above.
+                            let p = unsafe { self.builder.build_in_bounds_gep(elem_t, data, &[i], "") }
+                                .map_err(llvm_err)?;
+                            Ok(Some(p))
+                        }
+                        None => Ok(None),
+                    }
+                }
                 _ => {
                     // The base diverged; this code is unreachable.
                     self.expr_mode(base, Mode::Use)?;

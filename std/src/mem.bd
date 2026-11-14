@@ -1,0 +1,11 @@
+// Memory helpers.
+
+/// Exchanges the values of two places.
+fn swap<T>(mut a: T, mut b: T) {
+    __swap(mut a, mut b)
+}
+
+/// Stores `value` in `place` and returns the value that was there.
+fn replace<T>(mut place: T, value: T): T {
+    __replace(mut place, value)
+}

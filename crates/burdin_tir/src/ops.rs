@@ -1,5 +1,7 @@
 //! Ids, built-in functions and methods, and operators.
 
+use crate::ty::IntTy;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FuncId(pub usize);
 
@@ -26,6 +28,32 @@ pub enum Builtin {
     CPtrNull,
     /// `CString.from(str)`: a new NUL-terminated copy of the bytes in the C heap.
     CStringFrom,
+    /// `List<T>.new()`: an empty list.
+    ListNew,
+    /// `Map<K, V>.new()`: an empty map.
+    MapNew,
+    /// `i32.parse(str)` (and every integer type): the number, or an error.
+    IntParse(IntTy),
+    /// `read_to_string(path)`: the file's bytes as a `String`.
+    ReadToString,
+    /// `write_file(path, text)`: writes the bytes.
+    WriteFile,
+    /// `env.args()`: the process arguments, program name first.
+    EnvArgs,
+    /// `process.exit(code)`: ends the process.
+    ProcessExit,
+    /// `assert(condition)`: panics when it is false.
+    Assert,
+    /// `assert_eq(a, b)`: panics when the two values differ.
+    AssertEq,
+    /// `unreachable()`: panics.
+    Unreachable,
+    /// `process.run(command)`: runs a command through the system shell.
+    RunCommand,
+    /// `mem.swap(a, b)`: exchanges two places.
+    Swap,
+    /// `mem.replace(place, value)`: stores a value and returns the old one.
+    Replace,
 }
 
 /// Built-in methods of the primitive types.
@@ -43,6 +71,48 @@ pub enum Method {
     Abs,
     /// `String.push_str(str)`: appends bytes, growing the buffer.
     PushStr,
+    /// `String.push(char)`: appends one UTF-8 character.
+    PushChar,
+    /// `List<T>.push(value)`: appends an element.
+    Push,
+    /// `List<T>.pop(): Option<T>`: removes and returns the last element.
+    ListPop,
+    /// `List<T>.last(): Option<&T>`: a view of the last element.
+    ListLast,
+    /// `List<T>.insert(index, value)`: inserts at `index`.
+    ListInsert,
+    /// `List<T>.remove(index): T`: removes and returns the element at `index`.
+    ListRemove,
+    /// `List<T>.contains(value): bool`.
+    ListContains,
+    /// `List<T>.sort()`: orders the elements with `Ord`.
+    ListSort,
+    /// `List<T>.clear()` and `Map<K, V>.clear()`: drops the elements and leaves the collection empty.
+    Clear,
+    /// `Map<K, V>.insert(key, value)`: adds or replaces a value.
+    MapInsert,
+    /// `Map<K, V>.get(key): Option<&V>`: a view of the value.
+    MapGet,
+    /// `Map<K, V>.remove(key): Option<V>`.
+    MapRemove,
+    /// `Map<K, V>.contains_key(key): bool`.
+    MapContainsKey,
+    /// `Option<T>.unwrap()` and `Result<T, E>.unwrap()`: the payload, panicking on the empty case.
+    Unwrap,
+    /// `Option<T>.expect(message)` and `Result<T, E>.expect(message)`.
+    Expect,
+    /// `Option<T>.is_some()`.
+    IsSome,
+    /// `Option<T>.is_none()`.
+    IsNone,
+    /// `Result<T, E>.is_ok()`.
+    IsOk,
+    /// `Result<T, E>.is_err()`.
+    IsErr,
+    /// `str.find_str(needle): Option<usize>`: the byte index of a substring.
+    FindStr,
+    /// `str.chars()`: the characters of a string, for a `for` loop.
+    Chars,
     /// `String.as_str()`: a `str` view of the bytes.
     AsStr,
     /// `x.len()` on `str`, `[T]`, `String`, and arrays.
@@ -57,6 +127,42 @@ pub enum Method {
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.
     Hash,
+}
+
+impl Method {
+    /// Whether the method takes ownership of argument `index` (the receiver is argument 0).
+    pub fn owns_argument(self, index: usize) -> bool {
+        match self {
+            Method::Push => index == 1,
+            Method::ListInsert => index == 2,
+            Method::MapInsert => index == 1 || index == 2,
+            // Unwrapping consumes the `Option` or `Result`.
+            Method::Unwrap | Method::Expect => index == 0,
+            _ => false,
+        }
+    }
+
+    /// Whether the method changes its receiver, so the call borrows it exclusively.
+    pub fn mutates_receiver(self) -> bool {
+        matches!(
+            self,
+            Method::PushStr
+                | Method::PushChar
+                | Method::Push
+                | Method::ListPop
+                | Method::ListInsert
+                | Method::ListRemove
+                | Method::ListSort
+                | Method::Clear
+                | Method::MapInsert
+                | Method::MapRemove
+        )
+    }
+
+    /// Whether the result is a view derived from the receiver.
+    pub fn result_borrows_receiver(self) -> bool {
+        matches!(self, Method::ListLast | Method::MapGet | Method::Chars)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

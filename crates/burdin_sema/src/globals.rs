@@ -69,6 +69,13 @@ pub(crate) struct ExternInfo {
     pub(crate) sig: Signature,
 }
 
+/// One `Type: From<Source>` block: the `from` method `?` calls to convert a `Source` error.
+pub(crate) struct FromImpl {
+    pub(crate) target: Ty,
+    pub(crate) source: Ty,
+    pub(crate) func: FuncId,
+}
+
 #[derive(Default)]
 pub(crate) struct Globals {
     pub(crate) modules: Vec<ModuleInfo>,
@@ -108,6 +115,11 @@ pub(crate) struct Globals {
     /// `extern "C"` declarations, by symbol (a symbol is declared once).
     pub(crate) externs: Vec<ExternInfo>,
     pub(crate) extern_symbols: HashMap<String, usize>,
+    /// `Type: From<Source>` conversions, for `?`.
+    pub(crate) from_impls: Vec<FromImpl>,
+    /// The methods of `Type: From<..>` blocks: their one parameter is taken by ownership even though the
+    /// declaration does not write `own`, because a conversion consumes its input.
+    pub(crate) from_methods: Vec<FuncId>,
     /// Instances asked for while resolving types and checking calls, to be allocated before the next pass.
     pub(crate) requests: RefCell<Vec<Request>>,
 }
@@ -199,6 +211,11 @@ impl Globals {
             s if s.is_empty() => name.to_string(),
             s => format!("{s}.{name}"),
         }
+    }
+
+    /// The user's `Type: From<Source>` conversion from `source` into `target`, if there is one.
+    pub(crate) fn conversion(&self, source: &Ty, target: &Ty) -> Option<FuncId> {
+        self.from_impls.iter().find(|f| &f.source == source && &f.target == target).map(|f| f.func)
     }
 
     /// The module of `package` whose path is exactly `path`.

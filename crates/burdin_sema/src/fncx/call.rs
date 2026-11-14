@@ -1,7 +1,7 @@
 //! Calls: functions, methods, associated functions, extern functions, and the argument conventions.
 
 use super::{FnCx, PathTy, error_expr, mk};
-use crate::builtins::{builtin, builtin_sig, method, method_sig};
+use crate::builtins::{builtin, builtin_sig, method};
 use crate::globals::{Callee, Global, adt_key};
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -33,12 +33,19 @@ impl FnCx<'_> {
                         );
                         return self.args_then_error(args, span);
                     }
+                    None if id.name == "swap" || id.name == "__swap" => return self.swap_call(args, span),
+                    None if id.name == "replace" || id.name == "__replace" => {
+                        return self.replace_call(args, span);
+                    }
                     None => match builtin(&id.name) {
+                        Some(Builtin::AssertEq) => return self.assert_eq(args, span),
                         Some(b) => {
                             let sig = builtin_sig(b);
                             (sig.params, sig.ret, Callee::Builtin(b))
                         }
                         None if id.name == "Some" => return self.some(args, expect, span),
+                        None if id.name == "Ok" => return self.result_ctor(true, args, expect, span),
+                        None if id.name == "Err" => return self.result_ctor(false, args, expect, span),
                         None => {
                             self.diags.error(Code::UNKNOWN_NAME, id.span, format!("unknown function `{}`", id.name));
                             return self.args_then_error(args, span);
@@ -101,6 +108,122 @@ impl FnCx<'_> {
         };
         let ty = Ty::Option(Box::new(inner_expect.unwrap_or_else(|| v.ty.clone())));
         mk(tir::ExprKind::Some(Box::new(v)), ty, span)
+    }
+
+    /// `Ok(value)` and `Err(value)` of a `Result<T, E>`. The expected type gives both type arguments, so a
+    /// `Result` built without one needs an annotation.
+    pub(super) fn result_ctor(&mut self, ok: bool, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        if args.len() != 1 {
+            let name = if ok { "Ok" } else { "Err" };
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{name}` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let (payload_expect, result_ty) = match expect {
+            Some(Ty::Result(t, e)) => {
+                let payload = if ok { (**t).clone() } else { (**e).clone() };
+                (payload, Ty::Result(t.clone(), e.clone()))
+            }
+            Some(Ty::Error) => (Ty::Error, Ty::Error),
+            _ => {
+                self.expr(&args[0].expr, None);
+                let name = if ok { "Ok" } else { "Err" };
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    span,
+                    format!("cannot infer the type of this `{name}`; give the binding a `Result` type"),
+                );
+                return error_expr(span);
+            }
+        };
+        let value = self.expr(&args[0].expr, Some(&payload_expect));
+        let value = self.coerce_arg(value, &payload_expect);
+        let kind = if ok { tir::ExprKind::Ok(Box::new(value)) } else { tir::ExprKind::Err(Box::new(value)) };
+        mk(kind, result_ty, span)
+    }
+
+    /// `assert_eq(a, b)`: both values must have the same `Eq` type.
+    fn assert_eq(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        if args.len() != 2 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`assert_eq` takes 2 arguments, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let l = self.expr(&args[0].expr, None);
+        let l = self.auto_deref(l);
+        let r = self.expr(&args[1].expr, Some(&l.ty));
+        let r = self.coerce_arg(r, &l.ty);
+        if !self.globals.has_eq(&l.ty) && !self.param_has(&l.ty, crate::generics::Bound::Eq) {
+            self.diags.error(
+                Code::BOUND_NOT_SATISFIED,
+                span,
+                format!("`assert_eq` needs `Eq` values, but `{}` does not support `==`", l.ty),
+            );
+        }
+        mk(tir::ExprKind::Builtin(Builtin::AssertEq, vec![l, r]), Ty::Unit, span)
+    }
+
+    /// `swap(mut a, mut b)`: two places of one type, both mutable and non-overlapping.
+    fn swap_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        if args.len() != 2 {
+            self.diags.error(Code::ARG_COUNT, span, format!("`swap` takes 2 arguments, but {} were given", args.len()));
+            return self.args_then_error(args, span);
+        }
+        let a = self.expr(&args[0].expr, None);
+        let b = self.expr(&args[1].expr, None);
+        for e in [&a, &b] {
+            if e.ty != Ty::Error && (!is_place_expr(e) || !self.place_mutable(e)) {
+                self.diags.error(Code::MUT_OF_IMMUTABLE, e.span, "`swap` needs two mutable places");
+            }
+        }
+        if !crate::types::compatible(&a.ty, &b.ty) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                span,
+                format!("`swap` needs two values of the same type, found `{}` and `{}`", a.ty, b.ty),
+            );
+        }
+        let mut pa = Vec::new();
+        let mut pb = Vec::new();
+        place_mentions(&a, &mut pa);
+        place_mentions(&b, &mut pb);
+        if pa.iter().any(|p| pb.iter().any(|q| places_overlap(p, q))) {
+            self.diags.error(Code::EXCLUSIVITY, span, "`swap` needs two places that do not overlap");
+        }
+        mk(tir::ExprKind::Builtin(Builtin::Swap, vec![a, b]), Ty::Unit, span)
+    }
+
+    /// `replace(mut place, value)`: stores `value` and returns what `place` held.
+    fn replace_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        if args.len() != 2 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`replace` takes 2 arguments, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let place = self.expr(&args[0].expr, None);
+        if place.ty != Ty::Error && (!is_place_expr(&place) || !self.place_mutable(&place)) {
+            self.diags.error(Code::MUT_OF_IMMUTABLE, place.span, "`replace` needs a mutable place");
+        }
+        let value = self.expr(&args[1].expr, Some(&place.ty));
+        let value = self.coerce_arg(value, &place.ty);
+        let ty = place.ty.clone();
+        let mut pa = Vec::new();
+        let mut pv = Vec::new();
+        place_mentions(&place, &mut pa);
+        place_mentions(&value, &mut pv);
+        if pa.iter().any(|p| pv.iter().any(|q| places_overlap(p, q))) {
+            self.diags.error(Code::EXCLUSIVITY, span, "`replace` needs a place that the new value does not mention");
+        }
+        mk(tir::ExprKind::Builtin(Builtin::Replace, vec![place, value]), ty, span)
     }
 
     /// Checks call arguments against the parameter conventions (CV1-CV3) and reports exclusivity violations
@@ -234,6 +357,30 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
+        // The prelude modules: `env.args()` and `process.exit`.
+        if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
+            && type_args.is_empty()
+            && self.lookup(&id.name).is_none()
+            && self.globals.value(self.module, &id.name).is_none()
+        {
+            if id.name == "env" && name.name == "args" {
+                if !args.is_empty() {
+                    self.diags.error(Code::ARG_COUNT, span, "`env.args` takes no arguments");
+                    return self.args_then_error(args, span);
+                }
+                let ty = Ty::List(Box::new(Ty::String));
+                return mk(tir::ExprKind::Builtin(Builtin::EnvArgs, Vec::new()), ty, span);
+            }
+            if id.name == "process" && name.name == "exit" {
+                let sig = builtin_sig(Builtin::ProcessExit);
+                let Some(checked) =
+                    self.args("process.exit", &[ParamSig::plain(Ty::Int(IntTy::I32))], args, None, span)
+                else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::ProcessExit, checked), sig.ret, span);
+            }
+        }
         // `Heap.new(value)`: the only associated function of a built-in type that is not written as a type path,
         // because `Heap` alone is not a type.
         if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
@@ -320,23 +467,59 @@ impl FnCx<'_> {
         if name.name == "hash" && args.is_empty() && self.globals.has_hash(&recv.ty) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
-        let Some((params, ret)) = method(&name.name).and_then(|m| method_sig(m, &recv.ty)) else {
+        let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{}`", name.name, recv.ty));
             return self.args_then_error(args, span);
         };
-        let m = method(&name.name).expect("checked above");
-        if m == Method::PushStr && is_place_expr(&recv) && !self.place_mutable(&recv) {
-            let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
-            let whose = local.unwrap_or_else(|| "this receiver".to_string());
-            self.diags.error(
-                Code::MUT_OF_IMMUTABLE,
-                recv.span,
-                format!("`push_str` changes its receiver, but `{whose}` is not mutable"),
-            );
+        if m.mutates_receiver() && !matches!(recv.ty, Ty::Error) {
+            if !is_place_expr(&recv) {
+                self.diags.error(
+                    Code::MUT_OF_IMMUTABLE,
+                    recv.span,
+                    format!("`{}` changes its receiver, so the receiver must be a mutable place", name.name),
+                );
+            } else if !self.place_mutable(&recv) {
+                let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+                let whose = local.unwrap_or_else(|| "this receiver".to_string());
+                self.diags.error(
+                    Code::MUT_OF_IMMUTABLE,
+                    recv.span,
+                    format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
+                );
+            }
         }
-        let params: Vec<ParamSig> = params.into_iter().map(ParamSig::plain).collect();
-        // `push_str` mutates the receiver, so no other argument may touch it (EX1).
-        let receiver_place = Some((&recv, m == Method::PushStr));
+        match (&m, &recv.ty) {
+            (Method::ListSort, Ty::List(elem)) => {
+                if !self.globals.has_ord(elem) {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!("cannot sort a `List<{elem}>`: `{elem}` does not support `Ord`"),
+                    );
+                }
+            }
+            (Method::ListContains, Ty::List(elem)) => {
+                if !self.globals.has_eq(elem) {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!("cannot search a `List<{elem}>`: `{elem}` does not support `==`"),
+                    );
+                }
+            }
+            (Method::MapGet | Method::MapRemove | Method::MapContainsKey | Method::MapInsert, Ty::Map(k, _))
+                if !self.globals.has_eq(k) =>
+            {
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("cannot use `{k}` as a map key: it does not support `==`"),
+                );
+            }
+            _ => {}
+        }
+        // A mutating method borrows the receiver exclusively (EX1).
+        let receiver_place = Some((&recv, m.mutates_receiver()));
         let Some(mut checked) = self.args(&name.name, &params, args, receiver_place, span) else {
             return error_expr(span);
         };
@@ -447,6 +630,41 @@ impl FnCx<'_> {
             }
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`CPtr` has no function `{}`", name.name));
             return self.args_then_error(args, span);
+        }
+        // `List<T>.new()` and `Map<K, V>.new()`.
+        if let Ty::List(_) = ty
+            && name.name == "new"
+        {
+            if !args.is_empty() {
+                self.diags.error(Code::ARG_COUNT, span, "`List.new` takes no arguments");
+                return self.args_then_error(args, span);
+            }
+            return mk(tir::ExprKind::Builtin(Builtin::ListNew, Vec::new()), ty.clone(), span);
+        }
+        if let Ty::Map(..) = ty
+            && name.name == "new"
+        {
+            if !args.is_empty() {
+                self.diags.error(Code::ARG_COUNT, span, "`Map.new` takes no arguments");
+                return self.args_then_error(args, span);
+            }
+            return mk(tir::ExprKind::Builtin(Builtin::MapNew, Vec::new()), ty.clone(), span);
+        }
+        // `i32.parse(s)`: the number in the text, or an error.
+        if let Ty::Int(i) = ty {
+            if name.name != "parse" {
+                self.diags.error(
+                    Code::UNKNOWN_NAME,
+                    name.span,
+                    format!("`{}` has no function `{}`", i.name(), name.name),
+                );
+                return self.args_then_error(args, span);
+            }
+            let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
+                return error_expr(span);
+            };
+            let ret = Ty::Result(Box::new(ty.clone()), Box::new(Ty::Unit));
+            return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
         }
         // The associated functions of `String` (the only built-in owning type with any so far).
         if *ty == Ty::String && name.name != "default" {

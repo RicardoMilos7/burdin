@@ -78,7 +78,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     None => None,
                 }
             }
-            K::Builtin(b, args) => self.builtin(*b, args, e.span)?,
+            K::Builtin(b, args) => self.builtin(*b, args, &e.ty, e.span)?,
             K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
             K::StringAsStr(inner) => {
                 let (ptr, len) = self.view_parts(inner)?;
@@ -130,6 +130,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::ForSlice { pat, slice, body } => {
                 self.for_slice(pat, slice, body)?;
+                None
+            }
+            K::ForList { pat, list, body } => {
+                self.for_list(pat, list, body)?;
+                None
+            }
+            K::ForMap { pat, map, body } => {
+                self.for_map(pat, map, body)?;
+                None
+            }
+            K::ForChars { pat, string, body } => {
+                self.for_chars(pat, string, body)?;
                 None
             }
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty, mode)?,
@@ -251,6 +263,25 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::None => {
                 let Ty::Option(t) = &e.ty else { unreachable!("`None` is an Option") };
                 Some(self.option_ty(t).const_zero().into())
+            }
+            K::Ok(inner) | K::Err(inner) => {
+                let v = self.expr_mode(inner, Mode::Move)?;
+                let Ty::Result(ok, err) = &e.ty else { unreachable!("a Result constructor builds a Result") };
+                let rt = self.result_ty(ok, err);
+                let is_ok = matches!(e.kind, K::Ok(_));
+                let tag = self.cx.bool_type().const_int(u64::from(is_ok), false);
+                let mut agg = self
+                    .builder
+                    .build_insert_value(undef(rt.into()).into_struct_value(), tag, 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                let payload = if is_ok { ok } else { err };
+                if self.llvm_ty(payload).is_some() {
+                    let v = self.need(v, payload);
+                    let index = if is_ok { 1 } else { 2 };
+                    agg = self.builder.build_insert_value(agg, v, index, "").map_err(llvm_err)?.into_struct_value();
+                }
+                Some(agg.into())
             }
             K::Index(..) | K::Field(..) | K::Deref(..) | K::DerefRef(..) => self.expr_place(e, mode)?,
         };

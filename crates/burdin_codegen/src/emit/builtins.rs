@@ -11,6 +11,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         &mut self,
         b: Builtin,
         args: &'a [tir::Expr],
+        ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         match b {
@@ -56,6 +57,184 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_store(ptr, v).map_err(llvm_err)?;
                 }
                 return Ok(Some(ptr.into()));
+            }
+            Builtin::ListNew | Builtin::MapNew => {
+                return Ok(Some(self.string_ty.const_zero().into()));
+            }
+            Builtin::Swap => {
+                let ty = args[0].ty.clone();
+                let (Some(a), Some(b)) = (self.place_ptr(&args[0])?, self.place_ptr(&args[1])?) else {
+                    return Ok(None);
+                };
+                if let Some(t) = self.llvm_ty(&ty) {
+                    let va = self.builder.build_load(t, a, "swap.a").map_err(llvm_err)?;
+                    let vb = self.builder.build_load(t, b, "swap.b").map_err(llvm_err)?;
+                    self.builder.build_store(a, vb).map_err(llvm_err)?;
+                    self.builder.build_store(b, va).map_err(llvm_err)?;
+                }
+                return Ok(None);
+            }
+            Builtin::Replace => {
+                let ty = args[0].ty.clone();
+                let Some(slot) = self.place_ptr(&args[0])? else { return Ok(None) };
+                let Some(t) = self.llvm_ty(&ty) else {
+                    self.expr_mode(&args[1], Mode::Move)?;
+                    return Ok(None);
+                };
+                let old = self.builder.build_load(t, slot, "replace.old").map_err(llvm_err)?;
+                let value = self.expr_mode(&args[1], Mode::Move)?;
+                let value = self.need(value, &ty);
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                return Ok(Some(old));
+            }
+            Builtin::RunCommand => {
+                let s = self.expr_mode(&args[0], Mode::Use)?;
+                let s = self.need(s, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(s, 1, "").map_err(llvm_err)?;
+                let call = self.builder.build_call(self.rt.run, &[ptr.into(), len.into()], "").map_err(llvm_err)?;
+                let status = call.try_as_basic_value().basic().expect("run returns a status").into_int_value();
+                let failed = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, status, self.cx.i32_type().const_all_ones(), "")
+                    .map_err(llvm_err)?;
+                let ok = self.builder.build_not(failed, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("run returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                if self.llvm_ty(ok_ty).is_some() {
+                    value =
+                        self.builder.build_insert_value(value, status, 1, "").map_err(llvm_err)?.into_struct_value();
+                }
+                return Ok(Some(value.into()));
+            }
+            Builtin::IntParse(int_ty) => {
+                let s = self.expr_mode(&args[0], Mode::Use)?;
+                let s = self.need(s, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(s, 1, "").map_err(llvm_err)?;
+                let out = self.alloca(self.cx.i64_type().into(), "parse.out")?;
+                let f = if int_ty.signed() { self.rt.parse_i64 } else { self.rt.parse_u64 };
+                let call = self.builder.build_call(f, &[ptr.into(), len.into(), out.into()], "").map_err(llvm_err)?;
+                let ok = call.try_as_basic_value().basic().expect("parse returns a flag").into_int_value();
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("parse returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut good =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                if self.llvm_ty(ok_ty).is_some() {
+                    let raw = self.builder.build_load(self.cx.i64_type(), out, "").map_err(llvm_err)?.into_int_value();
+                    let value = if let Ty::Int(i) = &**ok_ty {
+                        if i.bits() == 64 {
+                            raw
+                        } else {
+                            self.builder.build_int_truncate(raw, self.int_ty(*i), "").map_err(llvm_err)?
+                        }
+                    } else {
+                        raw
+                    };
+                    good = self.builder.build_insert_value(good, value, 1, "").map_err(llvm_err)?.into_struct_value();
+                }
+                return Ok(Some(good.into()));
+            }
+            Builtin::ReadToString => {
+                let path = self.expr_mode(&args[0], Mode::Use)?;
+                let path = self.need(path, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(path, 0, "").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(path, 1, "").map_err(llvm_err)?;
+                let out = self.alloca(self.string_ty.into(), "read.string")?;
+                self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.read_to_string, &[ptr.into(), len.into(), out.into()], "")
+                    .map_err(llvm_err)?;
+                let ok = call.try_as_basic_value().basic().expect("read returns a flag").into_int_value();
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_to_string returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "read.out")?;
+                let good = self.new_block("read.ok");
+                let bad = self.new_block("read.err");
+                let end = self.new_block("read.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(out, &Ty::String)?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::WriteFile => {
+                let path = self.expr_mode(&args[0], Mode::Use)?;
+                let path = self.need(path, &Ty::Str).into_struct_value();
+                let text = self.expr_mode(&args[1], Mode::Use)?;
+                let text = self.need(text, &Ty::Str).into_struct_value();
+                let pptr = self.builder.build_extract_value(path, 0, "").map_err(llvm_err)?;
+                let plen = self.builder.build_extract_value(path, 1, "").map_err(llvm_err)?;
+                let tptr = self.builder.build_extract_value(text, 0, "").map_err(llvm_err)?;
+                let tlen = self.builder.build_extract_value(text, 1, "").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.write_file, &[pptr.into(), plen.into(), tptr.into(), tlen.into()], "")
+                    .map_err(llvm_err)?;
+                let ok = call.try_as_basic_value().basic().expect("write returns a flag").into_int_value();
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("write_file returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::EnvArgs => {
+                let out = self.alloca(self.string_ty.into(), "args.list")?;
+                let out = self
+                    .builder
+                    .build_pointer_cast(out, self.cx.ptr_type(inkwell::AddressSpace::default()), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_call(self.rt.args, &[out.into()], "").map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::ProcessExit => {
+                let code = self.expr_mode(&args[0], Mode::Use)?;
+                let code = self.need_int(code, &Ty::Int(burdin_tir::IntTy::I32));
+                self.builder.build_call(self.rt.exit, &[code.into()], "").map_err(llvm_err)?;
+                self.builder.build_unreachable().map_err(llvm_err)?;
+                self.continue_dead();
+                return Ok(None);
+            }
+            Builtin::Assert => {
+                let cond = self.expr_mode(&args[0], Mode::Use)?;
+                let cond = self.need_int(cond, &Ty::Bool);
+                self.check(cond, "assertion failed", span)?;
+                return Ok(None);
+            }
+            Builtin::AssertEq => {
+                let ty = args[0].ty.clone();
+                let l = self.expr_mode(&args[0], Mode::Use)?;
+                let r = self.expr_mode(&args[1], Mode::Use)?;
+                let lp = self.spill(l, &ty)?;
+                let rp = self.spill(r, &ty)?;
+                if let (Some(lp), Some(rp)) = (lp, rp) {
+                    let eq = self.eq_at(lp, rp, &ty)?;
+                    self.check(eq, "assertion failed: the two values differ", span)?;
+                }
+                return Ok(None);
+            }
+            Builtin::Unreachable => {
+                let msg = self.str_literal(b"unreachable");
+                let ptr = msg.get_field_at_index(0).expect("str has a pointer");
+                let len = msg.get_field_at_index(1).expect("str has a length");
+                self.emit_panic(ptr, len, span)?;
+                self.continue_dead();
+                return Ok(None);
             }
             _ => {}
         }
@@ -138,6 +317,63 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             };
             return Ok(Some(hash.into()));
         }
+        if m == Method::PushChar {
+            let recv = self.place_ptr(&args[0])?.ok_or("`push` needs a place receiver")?;
+            let c = self.expr_mode(&args[1], Mode::Use)?;
+            let c = self.need_int(c, &Ty::Char);
+            self.builder.build_call(self.rt.string_push_char, &[recv.into(), c.into()], "").map_err(llvm_err)?;
+            return Ok(None);
+        }
+        if m == Method::Chars {
+            let (ptr, len) = self.view_parts(&args[0])?;
+            return Ok(Some(self.make_str(ptr, len)?.into()));
+        }
+        if m == Method::FindStr {
+            let (ptr, len) = self.view_parts(&args[0])?;
+            let needle = self.expr_mode(&args[1], Mode::Use)?;
+            let needle = self.need(needle, &Ty::Str).into_struct_value();
+            let nptr = self.builder.build_extract_value(needle, 0, "").map_err(llvm_err)?;
+            let nlen = self.builder.build_extract_value(needle, 1, "").map_err(llvm_err)?;
+            let call = self
+                .builder
+                .build_call(self.rt.str_find_str, &[ptr.into(), len.into(), nptr.into(), nlen.into()], "")
+                .map_err(llvm_err)?;
+            let idx = call.try_as_basic_value().basic().expect("`find_str` returns an index").into_int_value();
+            let i64_ty = self.cx.i64_type();
+            let found =
+                self.builder.build_int_compare(IntPredicate::SGE, idx, i64_ty.const_zero(), "").map_err(llvm_err)?;
+            let Ty::Option(inner) = ty else { unreachable!("`find_str` returns an `Option`") };
+            let opt_ty = self.option_ty(inner);
+            let payload = self.builder.build_int_truncate(idx, self.usize_ty, "").map_err(llvm_err)?;
+            let agg = self
+                .builder
+                .build_insert_value(opt_ty.const_zero(), found, 0, "")
+                .map_err(llvm_err)?
+                .into_struct_value();
+            let agg = self.builder.build_insert_value(agg, payload, 1, "").map_err(llvm_err)?.into_struct_value();
+            return Ok(Some(agg.into()));
+        }
+        if matches!(
+            m,
+            Method::Push
+                | Method::ListPop
+                | Method::ListLast
+                | Method::ListInsert
+                | Method::ListRemove
+                | Method::ListContains
+                | Method::ListSort
+                | Method::Clear
+                | Method::MapInsert
+                | Method::MapGet
+                | Method::MapRemove
+                | Method::MapContainsKey
+        ) {
+            return self.collection_method(m, args, ty, span);
+        }
+        if matches!(m, Method::Unwrap | Method::Expect | Method::IsSome | Method::IsNone | Method::IsOk | Method::IsErr)
+        {
+            return self.result_method(m, args, ty, span);
+        }
         if m == Method::PushStr {
             let recv = self.place_ptr(&args[0])?.ok_or("`push_str` needs a place receiver")?;
             let s = self.expr_mode(&args[1], Mode::Use)?;
@@ -162,6 +398,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.usize_ty.const_int(*n, false).into()
                 }
                 Ty::Str | Ty::String | Ty::Slice(_) => {
+                    let (_, len) = self.view_parts(&args[0])?;
+                    len
+                }
+                Ty::List(_) | Ty::Map(..) => {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }

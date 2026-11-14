@@ -174,6 +174,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Pat::Some(inner) => self.bind_pattern(inner, origin),
+            Pat::Ok(inner) | Pat::Err(inner) => self.bind_pattern(inner, origin),
             Pat::Product(subs) | Pat::Variant(_, subs) => {
                 for sub in subs {
                     self.bind_pattern(sub, origin);
@@ -218,9 +219,13 @@ impl<'a> Analyzer<'a> {
                 self.expr(hi);
                 self.expr(base)
             }
-            K::StringAsStr(inner) | K::Some(inner) | K::ArrayRepeat(inner, _) | K::Unary(_, inner) | K::Cast(inner) => {
-                self.expr(inner)
-            }
+            K::StringAsStr(inner)
+            | K::Some(inner)
+            | K::Ok(inner)
+            | K::Err(inner)
+            | K::ArrayRepeat(inner, _)
+            | K::Unary(_, inner)
+            | K::Cast(inner) => self.expr(inner),
             K::Array(elems) | K::Tuple(elems) => {
                 let mut origin = Origin::default();
                 for x in elems {
@@ -256,11 +261,16 @@ impl<'a> Analyzer<'a> {
                     _ => Origin::default(),
                 }
             }
-            K::Builtin(_, args) => {
+            K::Builtin(b, args) => {
+                let mut origin = Origin::local();
+                if *b == tir::Builtin::Replace {
+                    // The old value comes out of the place, so a view result derives from it.
+                    origin = self.expr(&args[0]);
+                }
                 for arg in args {
                     self.expr(arg);
                 }
-                Origin::local()
+                origin
             }
             K::Method(m, args) => {
                 for arg in args {
@@ -269,6 +279,7 @@ impl<'a> Analyzer<'a> {
                 match m {
                     // A view of the receiver, or a copy of it.
                     tir::Method::AsStr | tir::Method::Clone => self.expr(&args[0]),
+                    tir::Method::ListLast | tir::Method::MapGet | tir::Method::Chars => self.expr(&args[0]),
                     _ => Origin::default(),
                 }
             }
@@ -305,6 +316,24 @@ impl<'a> Analyzer<'a> {
             K::ForSlice { pat, slice, body } => {
                 let origin = self.expr(slice);
                 self.bind_pattern(pat, &origin);
+                self.block(body);
+                Origin::default()
+            }
+            K::ForList { pat, list, body } => {
+                let origin = self.expr(list);
+                self.bind_pattern(pat, &origin);
+                self.block(body);
+                Origin::default()
+            }
+            K::ForMap { pat, map, body } => {
+                let origin = self.expr(map);
+                self.bind_pattern(pat, &origin);
+                self.block(body);
+                Origin::default()
+            }
+            K::ForChars { pat, string, body } => {
+                self.expr(string);
+                self.bind_pattern(pat, &Origin::default());
                 self.block(body);
                 Origin::default()
             }

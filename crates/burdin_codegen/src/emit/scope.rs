@@ -183,6 +183,35 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         Ok(())
                     })
                 }
+                Ty::Result(ok, err) => {
+                    let (ok, err) = ((**ok).clone(), (**err).clone());
+                    let rt = cg.result_ty(&ok, &err);
+                    let tag_ptr = cg.builder.build_struct_gep(rt, addr, 0, "").map_err(llvm_err)?;
+                    let tag =
+                        cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
+                    cg.if_then(tag, "result.drop.ok", |cg| {
+                        if cg.needs_drop(&ok) {
+                            let payload = cg.builder.build_struct_gep(rt, addr, 1, "").map_err(llvm_err)?;
+                            let mut child = path.to_vec();
+                            child.push(0);
+                            cg.drop_at_address(id, &child, &ok, payload)?;
+                        }
+                        Ok(())
+                    })?;
+                    let tag_ptr = cg.builder.build_struct_gep(rt, addr, 0, "").map_err(llvm_err)?;
+                    let tag =
+                        cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
+                    let is_err = cg.builder.build_not(tag, "").map_err(llvm_err)?;
+                    cg.if_then(is_err, "result.drop.err", |cg| {
+                        if cg.needs_drop(&err) {
+                            let payload = cg.builder.build_struct_gep(rt, addr, 2, "").map_err(llvm_err)?;
+                            let mut child = path.to_vec();
+                            child.push(1);
+                            cg.drop_at_address(id, &child, &err, payload)?;
+                        }
+                        Ok(())
+                    })
+                }
                 _ => cg.drop_value(addr, ty),
             }
         };

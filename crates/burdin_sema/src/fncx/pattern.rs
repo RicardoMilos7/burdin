@@ -95,6 +95,32 @@ impl FnCx<'_> {
                     _ => pat_mismatch(self, "`Some(...)`"),
                 }
             }
+            P::TupleStruct(path, elems)
+                if path.len() == 1
+                    && (path[0].name == "Ok" || path[0].name == "Err")
+                    && self.is_prelude(&path[0].name) =>
+            {
+                let ok = path[0].name == "Ok";
+                match ty {
+                    Ty::Result(t, e) if elems.len() == 1 => {
+                        let payload = if ok { (**t).clone() } else { (**e).clone() };
+                        let inner = self.pattern(&elems[0], &payload, owned);
+                        if ok { Pat::Ok(Box::new(inner)) } else { Pat::Err(Box::new(inner)) }
+                    }
+                    Ty::Result(..) => {
+                        let name = if ok { "Ok" } else { "Err" };
+                        self.diags.error(Code::ARG_COUNT, p.span, format!("`{name}` takes one pattern"));
+                        Pat::Wild
+                    }
+                    Ty::Error => {
+                        elems.iter().for_each(|e| {
+                            self.pattern(e, &Ty::Error, owned);
+                        });
+                        Pat::Wild
+                    }
+                    _ => pat_mismatch(self, if ok { "`Ok(...)`" } else { "`Err(...)`" }),
+                }
+            }
             P::Or(alts) => {
                 let before = self.locals.len();
                 let alts: Vec<Pat> = alts.iter().map(|a| self.pattern(a, ty, owned)).collect();

@@ -2,7 +2,7 @@
 
 use crate::builtins::builtin_type;
 use crate::generics::{BUILTIN_INTERFACES, Bound, Head, ImplInfo};
-use crate::globals::{Globals, TypeName, adt_key};
+use crate::globals::{FromImpl, Globals, TypeName, adt_key};
 use crate::session::{FnItem, ImplTemplate, Sema};
 use burdin_diag::{Code, Diagnostics};
 use burdin_syntax::ast;
@@ -47,7 +47,7 @@ impl<'t> Sema<'t> {
             };
             if let Some((g, seg)) = generic {
                 let type_pkg = self.globals.package_of(self.globals.generic_adts[g].module);
-                if !self.check_impl_coherence(kind, type_pkg, imp, module, diags) {
+                if !self.check_impl_coherence(&kind, type_pkg, imp, module, diags) {
                     return;
                 }
                 self.register_generic_impl(imp, module, g, seg, kind, diags);
@@ -60,7 +60,7 @@ impl<'t> Sema<'t> {
         }
         let self_ty = self.globals.resolve_type(&imp.ty, None, module, diags);
         let Some(key) = adt_key(&self_ty) else {
-            if matches!(kind, ImplKind::Builtin) && self_ty != Ty::Error {
+            if matches!(kind, ImplKind::Builtin | ImplKind::From(_)) && self_ty != Ty::Error {
                 diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
@@ -76,7 +76,7 @@ impl<'t> Sema<'t> {
             return;
         };
         let type_pkg = if key.0 { self.globals.enum_pkg[key.1] } else { self.globals.struct_pkg[key.1] };
-        if !self.check_impl_coherence(kind, type_pkg, imp, module, diags) {
+        if !self.check_impl_coherence(&kind, type_pkg, imp, module, diags) {
             return;
         }
         match kind {
@@ -87,6 +87,7 @@ impl<'t> Sema<'t> {
                     "implementing a built-in interface by hand is not implemented in this compiler yet; use `derives`",
                 );
             }
+            ImplKind::From(source) => self.register_from_impl(imp, module, &self_ty, key, source, diags),
             ImplKind::Drop => self.register_drop_impl(imp, module, &self_ty, key, diags),
             ImplKind::Inherent | ImplKind::User(_) => {
                 let iface = kind.user_interface();
@@ -109,7 +110,7 @@ impl<'t> Sema<'t> {
     /// implemented for a foreign type only when this package declares the interface.
     fn check_impl_coherence(
         &self,
-        kind: ImplKind,
+        kind: &ImplKind,
         type_pkg: usize,
         imp: &ast::ImplBlock,
         module: usize,
@@ -134,8 +135,16 @@ impl<'t> Sema<'t> {
                 );
                 false
             }
+            ImplKind::From(_) if !local_type => {
+                diags.error(
+                    Code::ORPHAN_RULE,
+                    imp.span,
+                    "`From` can only be implemented for a type declared in this package",
+                );
+                false
+            }
             ImplKind::User(i)
-                if !local_type && self.globals.package_of(self.globals.interfaces[i].module) != package =>
+                if !local_type && self.globals.package_of(self.globals.interfaces[*i].module) != package =>
             {
                 diags.error(Code::ORPHAN_RULE, imp.span, "this package declares neither the type nor the interface");
                 false
@@ -170,6 +179,18 @@ impl<'t> Sema<'t> {
         if !qualified {
             if name == "Drop" {
                 return Some(ImplKind::Drop);
+            }
+            if name == "From" {
+                if seg.args.len() != 1 {
+                    diags.error(
+                        Code::ARG_COUNT,
+                        t.span,
+                        format!("`From` takes one type argument, but {} were given", seg.args.len()),
+                    );
+                    return None;
+                }
+                let source = self.globals.resolve_type(&seg.args[0], None, module, diags);
+                return Some(ImplKind::From(source));
             }
             if BUILTIN_INTERFACES.contains(&name.as_str()) {
                 return Some(ImplKind::Builtin);
@@ -295,6 +316,34 @@ impl<'t> Sema<'t> {
         wheres
     }
 
+    /// `Type: From<Source> { fn from(value: Source): Type }`: the conversion `?` applies to an error.
+    fn register_from_impl(
+        &mut self,
+        imp: &'t ast::ImplBlock,
+        module: usize,
+        self_ty: &Ty,
+        key: (bool, usize),
+        source: Ty,
+        diags: &mut Diagnostics,
+    ) {
+        let Some(m) = imp.methods.iter().find(|m| m.name.name == "from") else {
+            diags.error(
+                Code::MISSING_INTERFACE_METHOD,
+                imp.span,
+                "this implementation of `From` is missing the method `from`",
+            );
+            return;
+        };
+        if !m.generics.is_empty() {
+            diags.error(Code::UNSUPPORTED, m.name.span, "generic methods are not implemented in this compiler yet");
+            return;
+        }
+        self.register_methods(imp, module, None, self_ty, MethodScope::plain(), diags);
+        let Some(&func) = self.globals.methods.get(&(key, "from".to_string())) else { return };
+        self.globals.from_methods.push(func);
+        self.globals.from_impls.push(FromImpl { target: self_ty.clone(), source, func });
+    }
+
     /// `Type: Drop { fn drop(mut self) { ... } }`: the one method the drop glue calls.
     fn register_drop_impl(
         &mut self,
@@ -339,12 +388,14 @@ impl<'t> Sema<'t> {
 }
 
 /// What an impl block implements.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ImplKind {
     /// `Type { ... }`: methods of the type itself.
     Inherent,
     /// `Type: Drop { ... }`.
     Drop,
+    /// `Type: From<Source> { fn from(value: Source): Type }`.
+    From(Ty),
     /// A built-in interface other than `Drop`, which is only derived for now.
     Builtin,
     /// `Type: Interface { ... }` for an interface declared in the program (an index into the interfaces).
@@ -352,9 +403,9 @@ enum ImplKind {
 }
 
 impl ImplKind {
-    fn user_interface(self) -> Option<usize> {
+    fn user_interface(&self) -> Option<usize> {
         match self {
-            ImplKind::User(i) => Some(i),
+            ImplKind::User(i) => Some(*i),
             _ => None,
         }
     }

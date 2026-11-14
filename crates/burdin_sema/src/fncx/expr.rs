@@ -139,8 +139,8 @@ impl FnCx<'_> {
                 self.if_let(pattern, scrutinee, then_block, else_expr.as_deref(), expect, span)
             }
             K::Range { .. } => self.unsupported(span, "ranges outside `for` loops"),
-            K::OrElse(..) => self.unsupported(span, "`orelse`"),
-            K::Try(_) => self.unsupported(span, "`?`"),
+            K::OrElse(value, default) => self.orelse(value, default, span),
+            K::Try(inner) => self.try_expr(inner, span),
             K::SelfValue => match self.self_local {
                 Some(id) => mk(tir::ExprKind::Local(id), self.locals[id.0].ty.clone(), span),
                 None => {

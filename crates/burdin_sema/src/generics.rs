@@ -136,7 +136,10 @@ impl Globals {
             | Ty::Array(inner, _)
             | Ty::Option(inner)
             | Ty::Heap(inner)
-            | Ty::CPtr(inner) => self.ty_has_param(inner),
+            | Ty::CPtr(inner)
+            | Ty::List(inner) => self.ty_has_param(inner),
+            Ty::Result(ok, err) => self.ty_has_param(ok) || self.ty_has_param(err),
+            Ty::Map(k, v) => self.ty_has_param(k) || self.ty_has_param(v),
             Ty::Tuple(ts) => ts.iter().any(|t| self.ty_has_param(t)),
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((_, args)) => args.iter().any(|a| self.ty_has_param(a)),
@@ -161,7 +164,16 @@ impl Globals {
             | (Ty::Array(p, _), Ty::Array(a, _))
             | (Ty::Option(p), Ty::Option(a))
             | (Ty::Heap(p), Ty::Heap(a))
-            | (Ty::CPtr(p), Ty::CPtr(a)) => self.unify(p, a, bindings),
+            | (Ty::CPtr(p), Ty::CPtr(a))
+            | (Ty::List(p), Ty::List(a)) => self.unify(p, a, bindings),
+            (Ty::Result(po, pe), Ty::Result(ao, ae)) => {
+                self.unify(po, ao, bindings);
+                self.unify(pe, ae, bindings);
+            }
+            (Ty::Map(pk, pv), Ty::Map(ak, av)) => {
+                self.unify(pk, ak, bindings);
+                self.unify(pv, av, bindings);
+            }
             (Ty::Tuple(ps), Ty::Tuple(acts)) if ps.len() == acts.len() => {
                 for (p, a) in ps.iter().zip(acts) {
                     self.unify(p, a, bindings);
@@ -189,6 +201,9 @@ impl Globals {
             Ty::Slice(t) => Ty::Slice(go(t)),
             Ty::Array(t, n) => Ty::Array(go(t), *n),
             Ty::Option(t) => Ty::Option(go(t)),
+            Ty::Result(t, e) => Ty::Result(go(t), go(e)),
+            Ty::List(t) => Ty::List(go(t)),
+            Ty::Map(k, v) => Ty::Map(go(k), go(v)),
             Ty::Heap(t) => Ty::Heap(go(t)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
@@ -354,6 +369,7 @@ impl Globals {
     pub(crate) fn has_ord(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
+            Ty::Str | Ty::String => true,
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -372,6 +388,7 @@ impl Globals {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Option(t) => self.has_hash(t),
+            Ty::Result(t, e) => self.has_hash(t) && self.has_hash(e),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];

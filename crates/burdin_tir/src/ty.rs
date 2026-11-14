@@ -89,8 +89,16 @@ pub enum Ty {
     /// `[T]`: a slice view, a pointer and a length.
     Slice(Box<Ty>),
     Array(Box<Ty>, u64),
-    /// The prelude's `Option<T>`. Only matching on it is supported so far (milestone 2 needs `checked_add`).
+    /// The prelude's `Option<T>`.
     Option(Box<Ty>),
+    /// The prelude's `Result<T, E>`: `Ok(T)` or `Err(E)`.
+    Result(Box<Ty>, Box<Ty>),
+    /// `List<T>`: a growable, owned array in the C heap.
+    List(Box<Ty>),
+    /// `Map<K, V>`: an owned collection of key/value pairs.
+    Map(Box<Ty>, Box<Ty>),
+    /// The iterator `str.chars()` returns, only usable in a `for` loop.
+    Chars,
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
     Heap(Box<Ty>),
     /// `CPtr<T>`: a raw C pointer. It has no destructor and is copied like a number.
@@ -127,7 +135,9 @@ impl Ty {
     pub fn is_second_class(&self) -> bool {
         match self {
             Ty::Str | Ty::Slice(_) | Ty::Ref { .. } => true,
-            Ty::Array(t, _) | Ty::Option(t) => t.is_second_class(),
+            Ty::Array(t, _) | Ty::Option(t) | Ty::List(t) => t.is_second_class(),
+            Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
+            Ty::Map(k, v) => k.is_second_class() || v.is_second_class(),
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
             _ => false,
         }
@@ -150,6 +160,10 @@ impl fmt::Display for Ty {
             Ty::Slice(t) => write!(f, "[{t}]"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
             Ty::Option(t) => write!(f, "Option<{t}>"),
+            Ty::Result(t, e) => write!(f, "Result<{t}, {e}>"),
+            Ty::List(t) => write!(f, "List<{t}>"),
+            Ty::Map(k, v) => write!(f, "Map<{k}, {v}>"),
+            Ty::Chars => f.write_str("Chars"),
             Ty::Heap(t) => write!(f, "Heap<{t}>"),
             Ty::CPtr(t) => write!(f, "CPtr<{t}>"),
             Ty::CString => f.write_str("CString"),

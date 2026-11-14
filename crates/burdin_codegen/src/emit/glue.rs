@@ -112,8 +112,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
             Ty::Param(_) => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
-            // nothing.
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) => Ok(()),
+            // nothing. The `Chars` iterator is a view of a `str` too.
+            Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) | Ty::Chars => Ok(()),
             Ty::CString => {
                 let p = self.builder.build_load(ptr_ty, addr, "cstring").map_err(llvm_err)?.into_pointer_value();
                 self.builder.build_call(self.rt.free, &[p.into()], "").map_err(llvm_err)?;
@@ -186,6 +186,37 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     Ok(())
                 })
             }
+            Ty::Result(ok, err) => {
+                let (ok, err) = ((**ok).clone(), (**err).clone());
+                let rt = self.result_ty(&ok, &err);
+                let tag_ptr = self.builder.build_struct_gep(rt, addr, 0, "is_ok").map_err(llvm_err)?;
+                let tag = self.builder.build_load(self.cx.bool_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
+                self.if_then(tag, "result.drop.ok", move |cg| {
+                    if cg.needs_drop(&ok) {
+                        let p = cg.builder.build_struct_gep(rt, addr, 1, "").map_err(llvm_err)?;
+                        cg.drop_value(p, &ok)?;
+                    }
+                    Ok(())
+                })?;
+                let tag_ptr = self.builder.build_struct_gep(rt, addr, 0, "is_ok").map_err(llvm_err)?;
+                let tag = self.builder.build_load(self.cx.bool_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
+                let is_err = self.builder.build_not(tag, "").map_err(llvm_err)?;
+                self.if_then(is_err, "result.drop.err", move |cg| {
+                    if cg.needs_drop(&err) {
+                        let p = cg.builder.build_struct_gep(rt, addr, 2, "").map_err(llvm_err)?;
+                        cg.drop_value(p, &err)?;
+                    }
+                    Ok(())
+                })
+            }
+            Ty::List(elem) => {
+                let elem = (**elem).clone();
+                self.drop_sequence(addr, &elem, "list")
+            }
+            Ty::Map(key, value) => {
+                let entry = Ty::Tuple(vec![(**key).clone(), (**value).clone()]);
+                self.drop_sequence(addr, &entry, "map")
+            }
             Ty::Array(elem, n) => {
                 let n = *n;
                 if n == 0 || !self.needs_drop(elem) {
@@ -252,6 +283,40 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
+    /// Drops the elements of a list or map at `addr` in index order, then frees its buffer. A list and a map
+    /// have the layout `{ ptr, len, cap }`, like a `String`.
+    fn drop_sequence(&mut self, addr: PointerValue<'ctx>, elem: &Ty, name: &str) -> GenResult<()> {
+        let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+        let ptr_field = self.builder.build_struct_gep(self.string_ty, addr, 0, "").map_err(llvm_err)?;
+        let len_field = self.builder.build_struct_gep(self.string_ty, addr, 1, "").map_err(llvm_err)?;
+        let base = self.builder.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        if self.needs_drop(elem) && self.llvm_ty(elem).is_some() {
+            let elem = elem.clone();
+            let elem_t = self.llvm_ty(&elem).expect("checked above");
+            let index = self.alloca(self.usize_ty.into(), "drop.i")?;
+            self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+            let header = self.new_block(&format!("{name}.drop.cond"));
+            let body = self.new_block(&format!("{name}.drop.body"));
+            let exit = self.new_block(&format!("{name}.drop.end"));
+            self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+            self.builder.position_at_end(header);
+            let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+            let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+            self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
+            self.builder.position_at_end(body);
+            // SAFETY (LLVM): i < len.
+            let p = unsafe { self.builder.build_in_bounds_gep(elem_t, base, &[i], "") }.map_err(llvm_err)?;
+            self.drop_value(p, &elem)?;
+            let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+            self.builder.build_store(index, next).map_err(llvm_err)?;
+            self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+            self.builder.position_at_end(exit);
+        }
+        self.builder.build_call(self.rt.free, &[base.into()], "").map_err(llvm_err)?;
+        Ok(())
+    }
+
     /// Deep-copies the value at `src` into `dst` (the compiler-derived `clone`).
     pub(super) fn clone_value(&mut self, dst: PointerValue<'ctx>, src: PointerValue<'ctx>, ty: &Ty) -> GenResult<()> {
         if self.llvm_ty(ty).is_none() {
@@ -310,6 +375,58 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 Ok(())
             }
+            Ty::Result(ok, err) => {
+                let (ok, err) = ((**ok).clone(), (**err).clone());
+                let rt = self.result_ty(&ok, &err);
+                let src_tag_ptr = self.builder.build_struct_gep(rt, src, 0, "").map_err(llvm_err)?;
+                let dst_tag_ptr = self.builder.build_struct_gep(rt, dst, 0, "").map_err(llvm_err)?;
+                let tag = self
+                    .builder
+                    .build_load(self.cx.bool_type(), src_tag_ptr, "is_ok")
+                    .map_err(llvm_err)?
+                    .into_int_value();
+                self.builder.build_store(dst_tag_ptr, tag).map_err(llvm_err)?;
+                if self.llvm_ty(&ok).is_some() && self.llvm_ty(&err).is_some() {
+                    let ok_bb = self.new_block("result.clone.ok");
+                    let err_bb = self.new_block("result.clone.err");
+                    let end = self.new_block("result.clone.end");
+                    self.builder.build_conditional_branch(tag, ok_bb, err_bb).map_err(llvm_err)?;
+                    self.builder.position_at_end(ok_bb);
+                    let s = self.builder.build_struct_gep(rt, src, 1, "").map_err(llvm_err)?;
+                    let d = self.builder.build_struct_gep(rt, dst, 1, "").map_err(llvm_err)?;
+                    self.clone_value(d, s, &ok)?;
+                    self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                    self.builder.position_at_end(err_bb);
+                    let s = self.builder.build_struct_gep(rt, src, 2, "").map_err(llvm_err)?;
+                    let d = self.builder.build_struct_gep(rt, dst, 2, "").map_err(llvm_err)?;
+                    self.clone_value(d, s, &err)?;
+                    self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                    self.builder.position_at_end(end);
+                } else if self.llvm_ty(&ok).is_some() {
+                    self.if_then(tag, "result.clone.ok", move |cg| {
+                        let s = cg.builder.build_struct_gep(rt, src, 1, "").map_err(llvm_err)?;
+                        let d = cg.builder.build_struct_gep(rt, dst, 1, "").map_err(llvm_err)?;
+                        cg.clone_value(d, s, &ok)
+                    })?;
+                } else if self.llvm_ty(&err).is_some() {
+                    let is_err = self.builder.build_not(tag, "").map_err(llvm_err)?;
+                    self.if_then(is_err, "result.clone.err", move |cg| {
+                        let s = cg.builder.build_struct_gep(rt, src, 2, "").map_err(llvm_err)?;
+                        let d = cg.builder.build_struct_gep(rt, dst, 2, "").map_err(llvm_err)?;
+                        cg.clone_value(d, s, &err)
+                    })?;
+                }
+                Ok(())
+            }
+            Ty::List(elem) => {
+                let elem = (**elem).clone();
+                self.clone_sequence(dst, src, &elem)
+            }
+            Ty::Map(key, value) => {
+                let entry = Ty::Tuple(vec![(**key).clone(), (**value).clone()]);
+                self.clone_sequence(dst, src, &entry)
+            }
+            Ty::Chars => self.copy_bits(dst, src, ty),
             Ty::Array(elem, n) => {
                 let n = *n;
                 let elem = (**elem).clone();
@@ -340,6 +457,63 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             _ => self.copy_bits(dst, src, ty),
         }
+    }
+
+    /// Deep-copies a list or map buffer: allocates `cap` elements and clones the first `len`.
+    fn clone_sequence(&mut self, dst: PointerValue<'ctx>, src: PointerValue<'ctx>, elem: &Ty) -> GenResult<()> {
+        let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+        let usize_ty = self.usize_ty;
+        let field = |cg: &mut Self, base: PointerValue<'ctx>, i: u32| -> GenResult<PointerValue<'ctx>> {
+            cg.builder.build_struct_gep(cg.string_ty, base, i, "").map_err(llvm_err)
+        };
+        let src_ptr_field = field(self, src, 0)?;
+        let src_len_field = field(self, src, 1)?;
+        let src_cap_field = field(self, src, 2)?;
+        let base = self.builder.build_load(ptr_ty, src_ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let len = self.builder.build_load(usize_ty, src_len_field, "").map_err(llvm_err)?.into_int_value();
+        let cap = self.builder.build_load(usize_ty, src_cap_field, "").map_err(llvm_err)?.into_int_value();
+        let size = self.llvm_ty(elem).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1);
+        let bytes = self.builder.build_int_mul(cap, usize_ty.const_int(size, false), "").map_err(llvm_err)?;
+        let at_least_one = self
+            .builder
+            .build_select(
+                self.builder.build_int_compare(IntPredicate::EQ, bytes, usize_ty.const_zero(), "").map_err(llvm_err)?,
+                usize_ty.const_int(1, false),
+                bytes,
+                "",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let call = self.builder.build_call(self.rt.alloc, &[at_least_one.into()], "copy").map_err(llvm_err)?;
+        let new_base = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+        if let Some(elem_t) = self.llvm_ty(elem) {
+            let index = self.alloca(usize_ty.into(), "clone.i")?;
+            self.builder.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+            let header = self.new_block("seq.clone.cond");
+            let body = self.new_block("seq.clone.body");
+            let exit = self.new_block("seq.clone.end");
+            self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+            self.builder.position_at_end(header);
+            let i = self.builder.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+            let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+            self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
+            self.builder.position_at_end(body);
+            // SAFETY (LLVM): i < len <= cap.
+            let s = unsafe { self.builder.build_in_bounds_gep(elem_t, base, &[i], "") }.map_err(llvm_err)?;
+            let d = unsafe { self.builder.build_in_bounds_gep(elem_t, new_base, &[i], "") }.map_err(llvm_err)?;
+            self.clone_value(d, s, elem)?;
+            let next = self.builder.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+            self.builder.build_store(index, next).map_err(llvm_err)?;
+            self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+            self.builder.position_at_end(exit);
+        }
+        let dst_ptr_field = field(self, dst, 0)?;
+        let dst_len_field = field(self, dst, 1)?;
+        let dst_cap_field = field(self, dst, 2)?;
+        self.builder.build_store(dst_ptr_field, new_base).map_err(llvm_err)?;
+        self.builder.build_store(dst_len_field, len).map_err(llvm_err)?;
+        self.builder.build_store(dst_cap_field, cap).map_err(llvm_err)?;
+        Ok(())
     }
 
     pub(super) fn clone_enum_fields(

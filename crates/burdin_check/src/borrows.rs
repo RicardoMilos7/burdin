@@ -237,30 +237,39 @@ impl<'a> Checker<'a> {
                     self.expr(arg, Mode::Use);
                 }
             }
-            K::Builtin(b, args) => {
-                let mode = if *b == tir::Builtin::HeapNew { Mode::Move } else { Mode::Use };
-                for arg in args {
-                    self.expr(arg, mode);
-                }
-            }
-            K::Method(m, args) => match m {
-                tir::Method::PushStr => {
+            K::Builtin(b, args) => match b {
+                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::Swap => {
                     self.access_place(&args[0], Access::BorrowMut);
-                    for arg in &args[1..] {
-                        self.expr(arg, Mode::Use);
-                    }
+                    self.access_place(&args[1], Access::BorrowMut);
                 }
-                tir::Method::AsStr => {
-                    self.access_place(&args[0], Access::Read);
-                    self.add_loan(&args[0], false);
+                tir::Builtin::Replace => {
+                    self.access_place(&args[0], Access::BorrowMut);
+                    self.expr(&args[1], Mode::Move);
                 }
-                tir::Method::Clone => self.expr(&args[0], Mode::Use),
                 _ => {
                     for arg in args {
                         self.expr(arg, Mode::Use);
                     }
                 }
             },
+            K::Method(m, args) => {
+                if m.mutates_receiver() {
+                    self.access_place(&args[0], Access::BorrowMut);
+                    for (i, arg) in args.iter().enumerate().skip(1) {
+                        self.expr(arg, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
+                    }
+                } else if m.result_borrows_receiver() || *m == tir::Method::AsStr {
+                    self.access_place(&args[0], Access::Read);
+                    self.add_loan(&args[0], false);
+                } else if *m == tir::Method::Clone {
+                    self.expr(&args[0], Mode::Use);
+                } else {
+                    for (i, arg) in args.iter().enumerate() {
+                        self.expr(arg, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
+                    }
+                }
+            }
             K::Block(b) => self.block(b),
             K::If(cond, then, other) => {
                 self.expr(cond, Mode::Use);
@@ -280,11 +289,33 @@ impl<'a> Checker<'a> {
                 self.block(body);
             }
             K::ForArray { array, body, .. } => {
-                self.expr(array, Mode::Use);
+                // The loop borrows the collection for as long as it runs, so the body cannot change it.
+                self.access_place(array, Access::Read);
+                self.add_loan(array, false);
                 self.block(body);
             }
             K::ForSlice { slice, body, .. } => {
-                self.expr(slice, Mode::Use);
+                // The loop borrows the collection for as long as it runs, so the body cannot change it.
+                self.access_place(slice, Access::Read);
+                self.add_loan(slice, false);
+                self.block(body);
+            }
+            K::ForList { list, body, .. } => {
+                // The loop borrows the collection for as long as it runs, so the body cannot change it.
+                self.access_place(list, Access::Read);
+                self.add_loan(list, false);
+                self.block(body);
+            }
+            K::ForMap { map, body, .. } => {
+                // The loop borrows the collection for as long as it runs, so the body cannot change it.
+                self.access_place(map, Access::Read);
+                self.add_loan(map, false);
+                self.block(body);
+            }
+            K::ForChars { string, body, .. } => {
+                // The loop borrows the collection for as long as it runs, so the body cannot change it.
+                self.access_place(string, Access::Read);
+                self.add_loan(string, false);
                 self.block(body);
             }
             K::Match(scrutinee, arms) => {
@@ -337,7 +368,7 @@ impl<'a> Checker<'a> {
                     self.expr(v, Mode::Move);
                 }
             }
-            K::Some(inner) => self.expr(inner, Mode::Move),
+            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.expr(inner, Mode::Move),
         }
     }
 
@@ -402,6 +433,7 @@ fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
             }
         }
         Pat::Some(inner) => view_bindings(inner, locals, out),
+        Pat::Ok(inner) | Pat::Err(inner) => view_bindings(inner, locals, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => {
             for sub in subs {
                 view_bindings(sub, locals, out);
@@ -439,9 +471,12 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(lo, out);
             locals_used(hi, out);
         }
-        K::StringAsStr(inner) | K::Some(inner) | K::Return(Some(inner)) | K::ArrayRepeat(inner, _) => {
-            locals_used(inner, out)
-        }
+        K::StringAsStr(inner)
+        | K::Some(inner)
+        | K::Ok(inner)
+        | K::Err(inner)
+        | K::Return(Some(inner))
+        | K::ArrayRepeat(inner, _) => locals_used(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| locals_used(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| locals_used(x, out)),
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
@@ -475,6 +510,18 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         }
         K::ForSlice { slice, body, .. } => {
             locals_used(slice, out);
+            locals_used_block(body, out);
+        }
+        K::ForList { list, body, .. } => {
+            locals_used(list, out);
+            locals_used_block(body, out);
+        }
+        K::ForMap { map, body, .. } => {
+            locals_used(map, out);
+            locals_used_block(body, out);
+        }
+        K::ForChars { string, body, .. } => {
+            locals_used(string, out);
             locals_used_block(body, out);
         }
         K::Match(scrutinee, arms) => {
@@ -530,9 +577,12 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(lo, stmt, last);
             uses_expr(hi, stmt, last);
         }
-        K::StringAsStr(inner) | K::Some(inner) | K::Return(Some(inner)) | K::ArrayRepeat(inner, _) => {
-            uses_expr(inner, stmt, last)
-        }
+        K::StringAsStr(inner)
+        | K::Some(inner)
+        | K::Ok(inner)
+        | K::Err(inner)
+        | K::Return(Some(inner))
+        | K::ArrayRepeat(inner, _) => uses_expr(inner, stmt, last),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| uses_expr(x, stmt, last)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| uses_expr(x, stmt, last)),
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
@@ -566,6 +616,18 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         }
         K::ForSlice { slice, body, .. } => {
             uses_expr(slice, stmt, last);
+            uses_block(body, stmt, last);
+        }
+        K::ForList { list, body, .. } => {
+            uses_expr(list, stmt, last);
+            uses_block(body, stmt, last);
+        }
+        K::ForMap { map, body, .. } => {
+            uses_expr(map, stmt, last);
+            uses_block(body, stmt, last);
+        }
+        K::ForChars { string, body, .. } => {
+            uses_expr(string, stmt, last);
             uses_block(body, stmt, last);
         }
         K::Match(scrutinee, arms) => {
