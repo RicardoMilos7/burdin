@@ -11,6 +11,7 @@
 #   * the scripts CI runs exist, are executable, and use LF endings;
 #   * the Rust toolchain is pinned to an exact version with clippy and rustfmt,
 #     and CI installs and verifies that pin (issue #19);
+#   * the compiler benchmarks exist and CI runs their smoke budgets (issue #41);
 #   * a conformance test still exercises --link-lib LLVM-C.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -126,12 +127,28 @@ for job in linux macos; do
         'cargo fmt --all --check' \
         'cargo clippy --all-targets -- -D warnings' \
         'cargo test' \
-        'cargo build'
+        'cargo build' \
+        'cargo bench -p burdin_bench -- --smoke'
     do
         require_command "$job" "$block" "$command"
     done
     check_conformance "$job" "$block"
 done
+
+# The compiler benchmarks (issue #41): CI runs the smoke budgets, so the bench target, the crate that generates
+# its inputs, and the `--smoke` mode of the harness must all stay in place.
+bench_manifest=$ROOT/crates/burdin_bench/Cargo.toml
+bench_target=$ROOT/crates/burdin_bench/benches/compiler.rs
+bench_lib=$ROOT/crates/burdin_bench/src/lib.rs
+[ -f "$bench_manifest" ] || add_problem "crates/burdin_bench/Cargo.toml: missing"
+[ -f "$bench_target" ] || add_problem "crates/burdin_bench/benches/compiler.rs: missing"
+[ -f "$bench_lib" ] || add_problem "crates/burdin_bench/src/lib.rs: missing"
+if [ -f "$bench_manifest" ] && ! grep -qF 'name = "compiler"' "$bench_manifest"; then
+    add_problem "crates/burdin_bench/Cargo.toml: no 'compiler' benchmark target"
+fi
+if [ -f "$bench_target" ] && ! grep -qF '"--smoke"' "$bench_target"; then
+    add_problem "crates/burdin_bench/benches/compiler.rs: no --smoke mode"
+fi
 
 # The m11 test is the one that proves --link-lib LLVM-C resolves in CI.
 if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"; then
