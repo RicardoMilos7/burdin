@@ -13,7 +13,8 @@ usage:
   burdin test <file.bd | package directory> [--release]
 
 environment:
-  BURDIN_CC   C compiler driver used to link against libc (default: cc; cl on Windows)";
+  BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
+  LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`";
 
 struct Args {
     command: String,
@@ -297,36 +298,52 @@ fn resolve_llvm_c(name: &str) -> Option<(PathBuf, String)> {
         return None;
     }
     let (dir, libs) = llvm_config()?;
-    if dir.join("libLLVM-C.so").is_file() {
-        return Some((dir, "-lLLVM-C".to_string()));
+    llvm_c_link(&dir, libs)
+}
+
+/// Picks the linker flag for the LLVM shared library in `dir`. Linux installs `libLLVM-C.so` or a versioned
+/// `libLLVM-21.so`; Homebrew on macOS installs `libLLVM.dylib`. `libs` is what `llvm-config --link-shared --libs`
+/// reported, used when the directory listing does not name a single library.
+fn llvm_c_link(dir: &Path, libs: Option<String>) -> Option<(PathBuf, String)> {
+    for stem in ["LLVM-C", "LLVM"] {
+        for extension in ["so", "dylib"] {
+            if dir.join(format!("lib{stem}.{extension}")).is_file() {
+                return Some((dir.to_path_buf(), format!("-l{stem}")));
+            }
+        }
     }
     if let Some(flag) = libs {
-        return Some((dir, flag));
+        return Some((dir.to_path_buf(), flag));
     }
-    if dir.join("libLLVM.so").is_file() {
-        return Some((dir, "-lLLVM".to_string()));
-    }
-    // The versioned development symlink: `libLLVM-21.so` is `-lLLVM-21`.
+    // The versioned development symlink: `libLLVM-21.so` or `libLLVM-21.dylib` is `-lLLVM-21`.
     let mut found = None;
-    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let file = entry.file_name().to_string_lossy().to_string();
-        if let Some(stem) = file.strip_prefix("lib").and_then(|f| f.strip_suffix(".so"))
+        if let Some(stem) =
+            file.strip_prefix("lib").and_then(|f| f.strip_suffix(".so").or_else(|| f.strip_suffix(".dylib")))
             && stem.starts_with("LLVM-")
         {
             found = Some(format!("-l{stem}"));
             break;
         }
     }
-    found.map(|flag| (dir, flag))
+    found.map(|flag| (dir.to_path_buf(), flag))
 }
 
-/// The LLVM installation's library directory and the shared-library flag `llvm-config` reports for it, from the
-/// first `llvm-config` on `PATH`.
+/// The LLVM installation's library directory and the shared-library flag `llvm-config` reports for it. The tool is
+/// looked up in `LLVM_SYS_211_PREFIX` (the variable that configures the `inkwell` build) and then on `PATH`, because
+/// Homebrew's LLVM is keg-only and its `bin` directory is usually not on `PATH`.
 fn llvm_config() -> Option<(PathBuf, Option<String>)> {
-    for tool in
+    let mut tools = Vec::new();
+    if let Some(prefix) = std::env::var_os("LLVM_SYS_211_PREFIX") {
+        tools.push(PathBuf::from(prefix).join("bin").join("llvm-config"));
+    }
+    tools.extend(
         ["llvm-config", "llvm-config-21", "llvm-config-20", "llvm-config-19", "llvm-config-18", "llvm-config-17"]
-    {
-        let Ok(out) = Command::new(tool).arg("--libdir").output() else { continue };
+            .map(PathBuf::from),
+    );
+    for tool in tools {
+        let Ok(out) = Command::new(&tool).arg("--libdir").output() else { continue };
         if !out.status.success() {
             continue;
         }
@@ -334,13 +351,15 @@ fn llvm_config() -> Option<(PathBuf, Option<String>)> {
         if !dir.is_dir() {
             continue;
         }
-        let libs =
-            Command::new(tool).args(["--link-shared", "--libs"]).output().ok().filter(|o| o.status.success()).and_then(
-                |o| {
-                    let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    (text.starts_with("-l") && !text.contains(' ')).then_some(text)
-                },
-            );
+        let libs = Command::new(&tool)
+            .args(["--link-shared", "--libs"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| {
+                let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                (text.starts_with("-l") && !text.contains(' ')).then_some(text)
+            });
         return Some((dir, libs));
     }
     None
@@ -371,5 +390,73 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// An empty directory removed when dropped; each test gets its own.
+    struct LibDir(PathBuf);
+
+    impl LibDir {
+        fn new(name: &str) -> LibDir {
+            let path = std::env::temp_dir().join(format!("burdin-link-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir(&path).unwrap();
+            LibDir(path)
+        }
+
+        fn touch(&self, name: &str) {
+            fs::write(self.0.join(name), b"").unwrap();
+        }
+    }
+
+    impl Drop for LibDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn llvm_c_prefers_the_c_api_library() {
+        let dir = LibDir::new("c-api");
+        dir.touch("libLLVM.so");
+        dir.touch("libLLVM-C.so");
+        let (found, flag) = llvm_c_link(&dir.0, None).unwrap();
+        assert_eq!(found, dir.0);
+        assert_eq!(flag, "-lLLVM-C");
+    }
+
+    #[test]
+    fn llvm_c_finds_the_homebrew_dylib() {
+        let dir = LibDir::new("homebrew");
+        dir.touch("libLLVM.dylib");
+        let (_, flag) = llvm_c_link(&dir.0, None).unwrap();
+        assert_eq!(flag, "-lLLVM");
+    }
+
+    #[test]
+    fn llvm_c_finds_a_versioned_dylib() {
+        let dir = LibDir::new("versioned-dylib");
+        dir.touch("libLLVM-21.dylib");
+        let (_, flag) = llvm_c_link(&dir.0, None).unwrap();
+        assert_eq!(flag, "-lLLVM-21");
+    }
+
+    #[test]
+    fn llvm_c_falls_back_to_the_llvm_config_flag() {
+        let dir = LibDir::new("llvm-config");
+        let (_, flag) = llvm_c_link(&dir.0, Some("-lLLVM-21".to_string())).unwrap();
+        assert_eq!(flag, "-lLLVM-21");
+    }
+
+    #[test]
+    fn llvm_c_ignores_other_library_names() {
+        let dir = LibDir::new("empty");
+        assert!(llvm_c_link(&dir.0, None).is_none());
+        assert!(resolve_llvm_c("m").is_none());
     }
 }

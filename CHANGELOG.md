@@ -10,10 +10,16 @@ close-out checklist in `AGENTS.md`).
   `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible from a clean machine.
   CI installs and verifies that toolchain, and `tests/check-ci.sh` fails if the pin or its verification goes missing
   (issue #19).
+- CI gained a `macos` job on `macos-latest` (Apple Silicon): Homebrew's `llvm@21`, the pinned Rust toolchain, and the
+  same checks as Linux, including every conformance milestone m01-m11. `tests/check-platform.sh` proves the emitted
+  LLVM triple follows the host and that `usize`/`isize` are 64-bit; it runs on both jobs. `tests/check-ci.sh` now
+  guards both jobs. The driver resolves `--link-lib LLVM-C` for Homebrew's `libLLVM.dylib` layout, finds `llvm-config`
+  through `LLVM_SYS_211_PREFIX`, and its resolution logic has unit tests (issues #16, #17, #18).
 
 ## Unreleased — Stage 1
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
+
 
 ## Stage 0 — 2026-11-14
 
