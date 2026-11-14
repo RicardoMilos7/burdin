@@ -15,6 +15,9 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 4. `HANDOFF.md` for the current state; `Burdin Language Design.md` for the full rationale.
 5. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
 
+The files in this repository are the only maintained copies. Documents hosted on claude.ai are historical: they are
+not updated and may disagree with the repository.
+
 ## Commands
 
 ```

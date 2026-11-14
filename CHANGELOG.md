@@ -6,6 +6,8 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- Retire the claude.ai copies of the design and stage 0 documents (issue #44): the repository files are canonical and
+  say so, the external copies are recorded as historical, and the design document marks its snippets as illustrative.
 - Pin the Rust toolchain to `1.100.0` with the `clippy` and `rustfmt` components in `rust-toolchain.toml`, so
   `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible from a clean machine.
   CI installs and verifies that toolchain, and `tests/check-ci.sh` fails if the pin or its verification goes missing

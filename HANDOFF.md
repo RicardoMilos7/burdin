@@ -8,11 +8,12 @@ Updated at the end of the tenth session (2026-11-14). **Milestones 1 to 11 are d
 tests pass in the debug profile and 132 in release (one m06 test is debug-only). `burdin test` runs `test` blocks, and
 the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18). The twelfth
 session deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43); `spec/stage0-subset.md` is the only stage 0
-scope document.
+scope document. The thirteenth session retired the claude.ai copies of the design and stage 0 documents (issue #44):
+the repository files are canonical and now say so, and the external copies are recorded as historical.
 
 | What | Where | Status |
 | --- | --- | --- |
-| Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
+| Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
@@ -243,8 +244,11 @@ exact packages and how to call WSL from PowerShell.
 8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`,
    `extern "C"`, and `test` items are exercised by m07, m08, and m10. Not covered by a conformance test yet:
    `unsafe fn` declarations (they work; tested by hand) and `interface` methods that are `unsafe`.
-9. **Two documents on claude.ai are stale.** The design doc there lacks the exclusivity rule, and the stage 0 doc there is the old
-   export. The local files are the source of truth.
+9. **The claude.ai copies are historical (issue #44).** The design document there lacks the exclusivity rule, and the
+   stage 0 document there is the old export. The repository files are the only maintained copies and say so at their
+   tops (`CLAUDE.md`, `AGENTS.md`, `Burdin Language Design.md`, and `spec/stage0-subset.md`). Deleting or archiving the
+   claude.ai pages themselves is a manual action for the owner, who has the account access; the repository has no link
+   to them, so nothing here depends on those pages.
 10. **Ownership gaps that no test exercises yet.** Moving a field out of a temporary `match` scrutinee is still not
     tracked, so the temporary's other fields are leaked. The move forms the checker cannot follow are rejected with
     E9000 rather than miscompiled: moving a non-`Copy` value through indexing or a `Heap` dereference (a field of an

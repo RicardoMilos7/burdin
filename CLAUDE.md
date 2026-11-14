@@ -12,6 +12,9 @@ workflow. Process rules live in `AGENTS.md`; behavior lives in `tests/` and `spe
 
 ## Sources of truth, in this order
 
+The files in this repository are the only maintained copies. Documents hosted on claude.ai are historical: they are
+not updated and may disagree with the repository.
+
 1. `tests/` is the conformance suite and the most precise statement of behavior. Read `tests/README.md` first: it defines
    the test format, the error-code registry, and 16 assumptions the tests make.
 2. `spec/grammar.md` is the syntax of stage 0. `spec/memory-rules.md` is the exact semantics of moves, conventions,
