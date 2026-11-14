@@ -7,6 +7,7 @@
 //! until its milestone.
 
 mod exhaust;
+mod moves;
 pub mod tir;
 
 use burdin_diag::{Code, Diagnostics, FileId, Span};
@@ -14,13 +15,17 @@ use burdin_syntax::ast;
 use exhaust::Adts;
 use std::collections::HashMap;
 use std::rc::Rc;
-use tir::{AdtRef, BinOp, Builtin, ConstId, FloatTy, FuncId, IntTy, LocalId, Method, Pat, Ty, UnOp};
+use tir::{
+    AdtRef, BinOp, BindMode, Builtin, ConstId, FloatTy, FuncId, IntTy, LocalId, LocalKind, Method, Pat, Ty, UnOp,
+};
 
 #[derive(Clone)]
 struct ParamSig {
     ty: Ty,
-    /// Passed by address: a `mut self` receiver.
+    /// Passed by address: a `mut self` receiver (and later named `mut` parameters).
     by_ref: bool,
+    /// An `own` parameter: the callee takes ownership and drops the value.
+    own: bool,
 }
 
 struct Signature {
@@ -58,6 +63,8 @@ struct Globals {
     enum_refs: Vec<AdtRef>,
     /// Methods by the type they belong to (`(false, struct)` or `(true, enum)`) and name.
     methods: HashMap<((bool, usize), String), FuncId>,
+    /// The `Drop::drop` method of a type that has a `Type: Drop` block.
+    drop_methods: HashMap<(bool, usize), FuncId>,
     sigs: Vec<Signature>,
     const_tys: Vec<Ty>,
 }
@@ -67,6 +74,16 @@ fn adt_key(ty: &Ty) -> Option<(bool, usize)> {
         Ty::Struct(a) => Some((false, a.id)),
         Ty::Enum(a) => Some((true, a.id)),
         _ => None,
+    }
+}
+
+/// The name of the interface in a `Type: Interface { ... }` block, when it is a plain path.
+fn interface_name(ty: &ast::Type) -> String {
+    match &ty.kind {
+        ast::TypeKind::Path(segments) if segments.len() == 1 && segments[0].args.is_empty() => {
+            segments[0].name.name.clone()
+        }
+        _ => String::new(),
     }
 }
 
@@ -88,6 +105,7 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
         struct_refs: Vec::new(),
         enum_refs: Vec::new(),
         methods: HashMap::new(),
+        drop_methods: HashMap::new(),
         sigs: Vec::new(),
         const_tys: Vec::new(),
     };
@@ -136,11 +154,15 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
         let fields = s
             .fields
             .iter()
-            .map(|f| tir::FieldDef { name: f.name.name.clone(), ty: globals.resolve_type(&f.ty, None, diags) })
+            .map(|f| tir::FieldDef {
+                name: f.name.name.clone(),
+                ty: globals.resolve_type(&f.ty, None, diags),
+                span: f.name.span,
+            })
             .collect();
         check_unique_fields(s.fields.iter().map(|f| &f.name), diags);
         let derives = derives(&s.derives, diags);
-        globals.structs.push(tir::StructDef { name: s.name.name.clone(), fields, derives });
+        globals.structs.push(tir::StructDef { name: s.name.name.clone(), fields, derives, drop_method: None });
     }
     for e in &enum_decls {
         let mut variants: Vec<tir::VariantDef> = Vec::new();
@@ -158,7 +180,11 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                     let fields = tys
                         .iter()
                         .enumerate()
-                        .map(|(i, t)| tir::FieldDef { name: i.to_string(), ty: globals.resolve_type(t, None, diags) })
+                        .map(|(i, t)| tir::FieldDef {
+                            name: i.to_string(),
+                            ty: globals.resolve_type(t, None, diags),
+                            span: t.span,
+                        })
                         .collect();
                     (tir::VariantShape::Tuple, fields)
                 }
@@ -169,6 +195,7 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                         .map(|f| tir::FieldDef {
                             name: f.name.name.clone(),
                             ty: globals.resolve_type(&f.ty, None, diags),
+                            span: f.name.span,
                         })
                         .collect();
                     (tir::VariantShape::Struct, fields)
@@ -177,7 +204,7 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
             variants.push(tir::VariantDef { name: v.name.name.clone(), shape, fields });
         }
         let derives = derives(&e.derives, diags);
-        globals.enums.push(tir::EnumDef { name: e.name.name.clone(), variants, derives });
+        globals.enums.push(tir::EnumDef { name: e.name.name.clone(), variants, derives, drop_method: None });
     }
     check_infinite_size(&globals, &struct_decls, &enum_decls, diags);
 
@@ -207,14 +234,6 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                 const_decls.push(c);
             }
             ast::Item::Impl(imp) => {
-                if let Some(i) = &imp.interface {
-                    diags.error(
-                        Code::UNSUPPORTED,
-                        i.span,
-                        "interface implementations are not implemented in this compiler yet",
-                    );
-                    continue;
-                }
                 if !imp.where_clause.is_empty() {
                     diags.error(
                         Code::UNSUPPORTED,
@@ -222,6 +241,18 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                         "`where` clauses are not implemented in this compiler yet",
                     );
                 }
+                let interface = imp.interface.as_ref().map(interface_name);
+                if let Some(name) = &interface
+                    && name != "Drop"
+                {
+                    diags.error(
+                        Code::UNSUPPORTED,
+                        imp.interface.as_ref().expect("checked").span,
+                        "interface implementations are not implemented in this compiler yet",
+                    );
+                    continue;
+                }
+                let is_drop = interface.as_deref() == Some("Drop");
                 let self_ty = globals.resolve_type(&imp.ty, None, diags);
                 let Some(key) = adt_key(&self_ty) else {
                     if self_ty != Ty::Error {
@@ -233,13 +264,25 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                     }
                     continue;
                 };
+                if is_drop && imp.methods.len() != 1 {
+                    diags.error(
+                        Code::UNSUPPORTED,
+                        imp.span,
+                        "a `Drop` implementation must contain exactly one `drop` method",
+                    );
+                    continue;
+                }
                 for m in &imp.methods {
                     let mkey = (key, m.name.name.clone());
                     let is_variant = match &self_ty {
                         Ty::Enum(a) => globals.enums[a.id].variants.iter().any(|v| v.name == m.name.name),
                         _ => false,
                     };
-                    if globals.methods.contains_key(&mkey) || is_variant {
+                    if is_drop && m.name.name != "drop" {
+                        diags.error(Code::UNSUPPORTED, m.name.span, "a `Drop` implementation must define `drop`");
+                        continue;
+                    }
+                    if globals.methods.contains_key(&mkey) || is_variant || globals.drop_methods.contains_key(&key) {
                         diags.error(
                             Code::UNSUPPORTED,
                             m.name.span,
@@ -248,6 +291,29 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                         continue;
                     }
                     let sig = fn_signature(m, Some(&self_ty), &globals, diags);
+                    if is_drop {
+                        let ok = sig.has_self && sig.params.len() == 1 && sig.params[0].by_ref && sig.ret == Ty::Unit;
+                        if !ok {
+                            diags.error(
+                                Code::TYPE_MISMATCH,
+                                m.span,
+                                "`drop` must be declared as `fn drop(mut self)` and return nothing",
+                            );
+                        }
+                        let id = FuncId(fn_items.len());
+                        globals.drop_methods.insert(key, id);
+                        match key.0 {
+                            false => globals.structs[key.1].drop_method = Some(id),
+                            true => globals.enums[key.1].drop_method = Some(id),
+                        }
+                        globals.sigs.push(sig);
+                        fn_items.push(FnItem {
+                            decl: m,
+                            name: format!("{self_ty}.drop"),
+                            self_ty: Some(self_ty.clone()),
+                        });
+                        continue;
+                    }
                     globals.methods.insert(mkey, FuncId(fn_items.len()));
                     globals.sigs.push(sig);
                     fn_items.push(FnItem {
@@ -309,7 +375,8 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                 ast::ParamKind::SelfParam => continue,
             };
             let Some(ps) = sig_params.next() else { break };
-            let id = cx.declare(name, ps.ty.clone(), mutable);
+            let kind = if ps.own { LocalKind::OwnParam } else { LocalKind::BorrowedParam };
+            let id = cx.declare(name, ps.ty.clone(), mutable, kind);
             cx.locals[id.0].by_ref = ps.by_ref;
             if name == "self" {
                 cx.self_local = Some(id);
@@ -330,7 +397,13 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
             );
         }
         let locals = cx.locals;
-        functions.push(tir::Function { name: item.name.clone(), params, ret, locals, body });
+        functions.push(tir::Function { name: item.name.clone(), params, ret, locals, body, moved: Vec::new() });
+    }
+
+    validate_derives(&globals, diags);
+
+    for f in &mut functions {
+        f.moved = moves::check_function(f, &globals, diags);
     }
 
     if diags.has_errors() {
@@ -424,6 +497,11 @@ fn derives(list: &[ast::Type], diags: &mut Diagnostics) -> tir::Derives {
             }
         };
         *flag = true;
+        match name {
+            "Copy" => d.copy_span = Some(t.span),
+            "Clone" => d.clone_span = Some(t.span),
+            _ => {}
+        }
     }
     d
 }
@@ -484,6 +562,56 @@ fn check_infinite_size(
     }
 }
 
+/// The requirements of the derives that depend on the memory rules (CP in memory-rules.md): `Copy` needs every
+/// field to be Copy and the type to have no `Drop`; `Clone` needs every field to be Clone.
+fn validate_derives(globals: &Globals, diags: &mut Diagnostics) {
+    let mut fields: Vec<(Ty, Span)> = Vec::new();
+    for i in 0..globals.structs.len() {
+        let s = &globals.structs[i];
+        let ty = Ty::Struct(AdtRef { id: i, name: Rc::from(s.name.as_str()) });
+        fields.clear();
+        fields.extend(s.fields.iter().map(|f| (f.ty.clone(), f.span)));
+        check_derives(globals, diags, &ty, &s.derives, &fields);
+    }
+    for i in 0..globals.enums.len() {
+        let e = &globals.enums[i];
+        let ty = Ty::Enum(AdtRef { id: i, name: Rc::from(e.name.as_str()) });
+        fields.clear();
+        fields.extend(e.variants.iter().flat_map(|v| v.fields.iter()).map(|f| (f.ty.clone(), f.span)));
+        check_derives(globals, diags, &ty, &e.derives, &fields);
+    }
+}
+
+fn check_derives(globals: &Globals, diags: &mut Diagnostics, ty: &Ty, derives: &tir::Derives, fields: &[(Ty, Span)]) {
+    if derives.copy {
+        if globals.has_drop_impl(ty)
+            && let Some(span) = derives.copy_span
+        {
+            diags.error(Code::DERIVE_REQUIREMENT, span, "a type that implements `Drop` cannot derive `Copy`");
+        }
+        for (fty, span) in fields {
+            if !globals.is_copy(fty) {
+                diags.error(
+                    Code::DERIVE_REQUIREMENT,
+                    *span,
+                    format!("`Copy` requires every field to be `Copy`, but this one is `{fty}`"),
+                );
+            }
+        }
+    }
+    if derives.clone {
+        for (fty, span) in fields {
+            if !globals.is_clone(fty) {
+                diags.error(
+                    Code::DERIVE_REQUIREMENT,
+                    *span,
+                    format!("`Clone` requires every field to be `Clone`, but this one is `{fty}`"),
+                );
+            }
+        }
+    }
+}
+
 fn fn_signature(f: &ast::FnDecl, self_ty: Option<&Ty>, globals: &Globals, diags: &mut Diagnostics) -> Signature {
     if !f.generics.is_empty() || !f.where_clause.is_empty() {
         diags.error(Code::UNSUPPORTED, f.name.span, "generic functions are not implemented in this compiler yet");
@@ -504,17 +632,17 @@ fn fn_signature(f: &ast::FnDecl, self_ty: Option<&Ty>, globals: &Globals, diags:
                     diags.error(Code::UNSUPPORTED, p.span, "`own self` is not implemented in this compiler yet");
                 }
                 has_self = true;
-                params.push(ParamSig { ty: st.clone(), by_ref: p.convention == ast::Convention::Mut });
+                params.push(ParamSig { ty: st.clone(), by_ref: p.convention == ast::Convention::Mut, own: false });
             }
             ast::ParamKind::Named { ty, .. } => {
-                if p.convention != ast::Convention::Read {
-                    diags.error(
-                        Code::UNSUPPORTED,
-                        p.span,
-                        "`mut` and `own` parameters are not implemented in this compiler yet",
-                    );
+                if p.convention == ast::Convention::Mut {
+                    diags.error(Code::UNSUPPORTED, p.span, "`mut` parameters are not implemented in this compiler yet");
                 }
-                params.push(ParamSig { ty: globals.resolve_type(ty, self_ty, diags), by_ref: false });
+                params.push(ParamSig {
+                    ty: globals.resolve_type(ty, self_ty, diags),
+                    by_ref: false,
+                    own: p.convention == ast::Convention::Own,
+                });
             }
         }
     }
@@ -604,8 +732,19 @@ fn builtin(name: &str) -> Option<Builtin> {
 }
 
 fn builtin_sig(b: Builtin) -> Signature {
-    let ret = if b == Builtin::Panic { Ty::Never } else { Ty::Unit };
-    Signature { params: vec![ParamSig { ty: Ty::Str, by_ref: false }], ret, has_self: false }
+    let ret = match b {
+        Builtin::Panic => Ty::Never,
+        Builtin::StringNew | Builtin::StringFrom => Ty::String,
+        _ => Ty::Unit,
+    };
+    let params = match b {
+        Builtin::StringNew => Vec::new(),
+        Builtin::StringFrom => vec![ParamSig { ty: Ty::Str, by_ref: false, own: false }],
+        // `Heap.new` is checked separately: its result type depends on the value.
+        Builtin::HeapNew => vec![ParamSig { ty: Ty::Error, by_ref: false, own: false }],
+        _ => vec![ParamSig { ty: Ty::Str, by_ref: false, own: false }],
+    };
+    Signature { params, ret, has_self: false }
 }
 
 fn int_ty(name: &str) -> Option<IntTy> {
@@ -668,6 +807,9 @@ impl Globals {
                 if name == "Option" && seg.args.len() == 1 && !self.types.contains_key(name) {
                     return Ty::Option(Box::new(self.resolve_type(&seg.args[0], self_ty, diags)));
                 }
+                if name == "Heap" && seg.args.len() == 1 && !self.types.contains_key(name) {
+                    return Ty::Heap(Box::new(self.resolve_type(&seg.args[0], self_ty, diags)));
+                }
                 if !seg.args.is_empty() {
                     diags.error(Code::UNSUPPORTED, ty.span, "generic types are not implemented in this compiler yet");
                     return Ty::Error;
@@ -720,7 +862,84 @@ impl Globals {
                 let e = &self.enums[a.id];
                 e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq(&f.ty)))
             }
-            Ty::Str | Ty::String | Ty::Array(..) => false,
+            Ty::Str | Ty::String | Ty::Array(..) | Ty::Heap(_) => false,
+        }
+    }
+
+    /// Whether values of `ty` are copied instead of moved (memory-rules.md, Copy types).
+    fn is_copy(&self, ty: &Ty) -> bool {
+        self.is_copy_seen(ty, &mut Vec::new())
+    }
+
+    fn is_copy_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
+        match ty {
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
+            Ty::Array(t, _) | Ty::Option(t) => self.is_copy_seen(t, seen),
+            Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_seen(t, seen)),
+            Ty::String | Ty::Heap(_) => false,
+            Ty::Struct(a) => {
+                if !self.structs[a.id].derives.copy {
+                    return false;
+                }
+                if seen.contains(&(false, a.id)) {
+                    return true;
+                }
+                seen.push((false, a.id));
+                self.structs[a.id].fields.iter().all(|f| self.is_copy_seen(&f.ty, seen))
+            }
+            Ty::Enum(a) => {
+                if !self.enums[a.id].derives.copy {
+                    return false;
+                }
+                if seen.contains(&(true, a.id)) {
+                    return true;
+                }
+                seen.push((true, a.id));
+                self.enums[a.id].variants.iter().all(|v| v.fields.iter().all(|f| self.is_copy_seen(&f.ty, seen)))
+            }
+        }
+    }
+
+    /// Whether `x.clone()` applies to values of `ty` (the `Clone` requirement of derives, CP).
+    fn is_clone(&self, ty: &Ty) -> bool {
+        self.is_clone_seen(ty, &mut Vec::new())
+    }
+
+    fn is_clone_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
+        match ty {
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
+            Ty::String | Ty::Heap(_) => true,
+            Ty::Array(t, _) | Ty::Option(t) => self.is_clone_seen(t, seen),
+            Ty::Tuple(ts) => ts.iter().all(|t| self.is_clone_seen(t, seen)),
+            Ty::Struct(a) => {
+                if !self.structs[a.id].derives.clone {
+                    return false;
+                }
+                if seen.contains(&(false, a.id)) {
+                    return true;
+                }
+                seen.push((false, a.id));
+                self.structs[a.id].fields.iter().all(|f| self.is_clone_seen(&f.ty, seen))
+            }
+            Ty::Enum(a) => {
+                if !self.enums[a.id].derives.clone {
+                    return false;
+                }
+                if seen.contains(&(true, a.id)) {
+                    return true;
+                }
+                seen.push((true, a.id));
+                self.enums[a.id].variants.iter().all(|v| v.fields.iter().all(|f| self.is_clone_seen(&f.ty, seen)))
+            }
+        }
+    }
+
+    /// Whether the type itself declares `Type: Drop { ... }` (fields cannot be moved out, DR8).
+    fn has_drop_impl(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Struct(a) => self.structs[a.id].drop_method.is_some(),
+            Ty::Enum(a) => self.enums[a.id].drop_method.is_some(),
+            _ => false,
         }
     }
 }
@@ -793,6 +1012,7 @@ fn method(name: &str) -> Option<Method> {
         "min" => Method::Min,
         "max" => Method::Max,
         "abs" => Method::Abs,
+        "push_str" => Method::PushStr,
         _ => return None,
     })
 }
@@ -808,15 +1028,16 @@ fn method_sig(m: Method, recv: &Ty) -> Option<(Vec<Ty>, Ty)> {
             Some((vec![recv.clone()], Ty::Option(Box::new(recv.clone()))))
         }
         (Method::Abs, Ty::Int(i)) if i.signed() => Some((vec![], recv.clone())),
+        (Method::PushStr, Ty::String) => Some((vec![Ty::Str], Ty::Unit)),
         _ => None,
     }
 }
 
-/// The local a place expression starts from: a local followed by fields and indexing.
+/// The local a place expression starts from: a local followed by fields, indexing, and dereferences.
 fn place_root(e: &tir::Expr) -> Option<LocalId> {
     match &e.kind {
         tir::ExprKind::Local(id) => Some(*id),
-        tir::ExprKind::Index(base, _) | tir::ExprKind::Field(base, _) => place_root(base),
+        tir::ExprKind::Index(base, _) | tir::ExprKind::Field(base, _) | tir::ExprKind::Deref(base) => place_root(base),
         _ => None,
     }
 }
@@ -871,7 +1092,7 @@ impl<'a> FnCx<'a> {
         if self.lookup(&id.name).is_some() || self.globals.names.contains_key(&id.name) {
             return None;
         }
-        self.globals.named_type(&id.name)
+        self.globals.named_type(&id.name).or_else(|| builtin_type(&id.name))
     }
 
     /// A name that is not hidden by a local or a global: `Some`, `None`.
@@ -879,15 +1100,24 @@ impl<'a> FnCx<'a> {
         self.lookup(name).is_none() && !self.globals.names.contains_key(name)
     }
 
-    fn declare(&mut self, name: &str, ty: Ty, mutable: bool) -> LocalId {
+    fn declare(&mut self, name: &str, ty: Ty, mutable: bool, kind: LocalKind) -> LocalId {
         let id = LocalId(self.locals.len());
-        self.locals.push(tir::Local { name: name.to_string(), ty, mutable, by_ref: false });
+        self.locals.push(tir::Local { name: name.to_string(), ty, mutable, by_ref: false, kind });
         self.scopes.last_mut().expect("a scope is open").insert(name.to_string(), id);
         id
     }
 
     fn lookup(&self, name: &str) -> Option<LocalId> {
         self.scopes.iter().rev().find_map(|s| s.get(name).copied())
+    }
+
+    /// Whether a pattern matching `e` takes ownership of it: a place rooted at an owned local, or a temporary.
+    /// A place rooted at a read-only or `mut` parameter (or a view) is only borrowed.
+    fn owns_scrutinee(&self, e: &tir::Expr) -> bool {
+        match place_root(e) {
+            Some(root) => matches!(self.locals[root.0].kind, LocalKind::Owned | LocalKind::OwnParam),
+            None => true,
+        }
     }
 
     fn unsupported(&mut self, span: Span, what: &str) -> tir::Expr {
@@ -948,7 +1178,7 @@ impl<'a> FnCx<'a> {
                         }
                         checked
                     });
-                    let pat = self.pattern(pattern, &local_ty);
+                    let pat = self.pattern(pattern, &local_ty, true);
                     let refutable = !self.exhaustive(&local_ty, &[&pat]);
                     if refutable && else_checked.is_none() {
                         self.diags.error(
@@ -1254,7 +1484,8 @@ impl<'a> FnCx<'a> {
                 }
             };
             self.scopes.push(HashMap::new());
-            let pat = self.pattern(pattern, &elem);
+            // `for` borrows the collection, so its elements are read-only views.
+            let pat = self.pattern(pattern, &elem, false);
             if !self.exhaustive(&elem, &[&pat]) {
                 self.diags.error(
                     Code::NON_EXHAUSTIVE,
@@ -1276,7 +1507,9 @@ impl<'a> FnCx<'a> {
         }
         self.scopes.push(HashMap::new());
         let var = match &pattern.kind {
-            ast::PatternKind::Binding { name, mutable } => Some(self.declare(&name.name, ty, *mutable)),
+            ast::PatternKind::Binding { name, mutable } => {
+                Some(self.declare(&name.name, ty, *mutable, LocalKind::Owned))
+            }
             ast::PatternKind::Wild => None,
             _ => {
                 self.scopes.pop();
@@ -1299,12 +1532,13 @@ impl<'a> FnCx<'a> {
         span: Span,
     ) -> tir::Expr {
         let scrutinee = self.expr(scrutinee, None);
+        let owned = self.owns_scrutinee(&scrutinee);
         let mut ty = Ty::Never;
         let mut checked = Vec::new();
         for arm in arms {
             self.scopes.push(HashMap::new());
             let pat = match &arm.pattern {
-                Some(p) => self.pattern(p, &scrutinee.ty),
+                Some(p) => self.pattern(p, &scrutinee.ty, owned),
                 None => Pat::Wild,
             };
             let guard = arm.guard.as_ref().map(|g| {
@@ -1328,7 +1562,25 @@ impl<'a> FnCx<'a> {
         mk(tir::ExprKind::Match(Box::new(scrutinee), checked), ty, span)
     }
 
-    fn pattern(&mut self, p: &ast::Pattern, ty: &Ty) -> Pat {
+    /// How a binding of type `ty` takes its value: a view when the scrutinee is borrowed, otherwise a move for a
+    /// non-Copy type and a copy for a Copy one.
+    fn bind_mode(&self, ty: &Ty, owned: bool) -> BindMode {
+        if !owned {
+            BindMode::View
+        } else if self.globals.is_copy(ty) {
+            BindMode::Copy
+        } else {
+            BindMode::Move
+        }
+    }
+
+    fn declare_binding(&mut self, name: &ast::Ident, ty: &Ty, mutable: bool, owned: bool) -> (LocalId, BindMode) {
+        let mode = self.bind_mode(ty, owned);
+        let kind = if mode == BindMode::View { LocalKind::View } else { LocalKind::Owned };
+        (self.declare(&name.name, ty.clone(), mutable, kind), mode)
+    }
+
+    fn pattern(&mut self, p: &ast::Pattern, ty: &Ty, owned: bool) -> Pat {
         use ast::PatternKind as P;
         let pat_mismatch = |cx: &mut Self, what: &str| {
             if *ty != Ty::Error {
@@ -1349,11 +1601,13 @@ impl<'a> FnCx<'a> {
                     self.unsupported(p.span, "constants in patterns");
                     return Pat::Wild;
                 }
-                Pat::Binding(self.declare(&name.name, ty.clone(), *mutable))
+                let (id, mode) = self.declare_binding(name, ty, *mutable, owned);
+                Pat::Binding(id, mode)
             }
             P::At(name, inner) => {
-                let inner = self.pattern(inner, ty);
-                Pat::At(self.declare(&name.name, ty.clone(), false), Box::new(inner))
+                let inner = self.pattern(inner, ty, owned);
+                let (id, mode) = self.declare_binding(name, ty, false, owned);
+                Pat::At(id, mode, Box::new(inner))
             }
             P::Lit(lit) => self.lit_pattern(lit, ty, p.span).unwrap_or(Pat::Wild),
             P::Range(lo, hi) => {
@@ -1376,14 +1630,14 @@ impl<'a> FnCx<'a> {
             }
             P::TupleStruct(path, elems) if path.len() == 1 && path[0].name == "Some" && self.is_prelude("Some") => {
                 match ty {
-                    Ty::Option(inner) if elems.len() == 1 => Pat::Some(Box::new(self.pattern(&elems[0], inner))),
+                    Ty::Option(inner) if elems.len() == 1 => Pat::Some(Box::new(self.pattern(&elems[0], inner, owned))),
                     Ty::Option(_) => {
                         self.diags.error(Code::ARG_COUNT, p.span, "`Some` takes one pattern");
                         Pat::Wild
                     }
                     Ty::Error => {
                         elems.iter().for_each(|e| {
-                            self.pattern(e, &Ty::Error);
+                            self.pattern(e, &Ty::Error, owned);
                         });
                         Pat::Wild
                     }
@@ -1392,7 +1646,7 @@ impl<'a> FnCx<'a> {
             }
             P::Or(alts) => {
                 let before = self.locals.len();
-                let alts: Vec<Pat> = alts.iter().map(|a| self.pattern(a, ty)).collect();
+                let alts: Vec<Pat> = alts.iter().map(|a| self.pattern(a, ty, owned)).collect();
                 if self.locals.len() != before {
                     self.unsupported(p.span, "bindings inside `|` patterns");
                 }
@@ -1400,12 +1654,12 @@ impl<'a> FnCx<'a> {
             }
             P::Tuple(elems) => match ty {
                 Ty::Tuple(ts) if ts.len() == elems.len() => {
-                    Pat::Product(elems.iter().zip(ts).map(|(e, t)| self.pattern(e, t)).collect())
+                    Pat::Product(elems.iter().zip(ts).map(|(e, t)| self.pattern(e, t, owned)).collect())
                 }
                 Ty::Unit if elems.is_empty() => Pat::Product(Vec::new()),
                 Ty::Error => {
                     elems.iter().for_each(|e| {
-                        self.pattern(e, &Ty::Error);
+                        self.pattern(e, &Ty::Error, owned);
                     });
                     Pat::Wild
                 }
@@ -1428,7 +1682,7 @@ impl<'a> FnCx<'a> {
             P::TupleStruct(path, elems) => {
                 let Some((index, shape, field_tys)) = self.variant_pattern(path, ty, p.span) else {
                     elems.iter().for_each(|e| {
-                        self.pattern(e, &Ty::Error);
+                        self.pattern(e, &Ty::Error, owned);
                     });
                     return Pat::Wild;
                 };
@@ -1440,11 +1694,11 @@ impl<'a> FnCx<'a> {
                         format!("this variant has {} field(s) and is not matched like this", field_tys.len()),
                     );
                     elems.iter().for_each(|e| {
-                        self.pattern(e, &Ty::Error);
+                        self.pattern(e, &Ty::Error, owned);
                     });
                     return Pat::Wild;
                 }
-                Pat::Variant(index, elems.iter().zip(&field_tys).map(|(e, t)| self.pattern(e, t)).collect())
+                Pat::Variant(index, elems.iter().zip(&field_tys).map(|(e, t)| self.pattern(e, t, owned)).collect())
             }
             P::Struct(path, fields) => {
                 // A struct, or a variant with named fields.
@@ -1486,14 +1740,17 @@ impl<'a> FnCx<'a> {
                     let Some(i) = defs.iter().position(|(n, _)| *n == f.name.name) else {
                         self.diags.error(Code::UNKNOWN_NAME, f.name.span, format!("no field `{}` here", f.name.name));
                         if let Some(sub) = &f.pattern {
-                            self.pattern(sub, &Ty::Error);
+                            self.pattern(sub, &Ty::Error, owned);
                         }
                         continue;
                     };
                     let fty = defs[i].1.clone();
                     subs[i] = match &f.pattern {
-                        Some(sub) => self.pattern(sub, &fty),
-                        None => Pat::Binding(self.declare(&f.name.name, fty, false)),
+                        Some(sub) => self.pattern(sub, &fty, owned),
+                        None => {
+                            let (id, mode) = self.declare_binding(&f.name, &fty, false, owned);
+                            Pat::Binding(id, mode)
+                        }
                     };
                 }
                 match variant {
@@ -1702,13 +1959,31 @@ impl<'a> FnCx<'a> {
                 let ty = e.ty.clone();
                 mk(tir::ExprKind::Unary(UnOp::Not, Box::new(e)), ty, span)
             }
-            ast::UnOp::Deref | ast::UnOp::Ref | ast::UnOp::RefMut => self.unsupported(span, "references"),
+            ast::UnOp::Deref => {
+                let e = self.expr(operand, None);
+                match &e.ty {
+                    Ty::Heap(inner) => {
+                        let inner = (**inner).clone();
+                        mk(tir::ExprKind::Deref(Box::new(e)), inner, span)
+                    }
+                    Ty::Error | Ty::Never => error_expr(span),
+                    other => {
+                        self.diags.error(
+                            Code::TYPE_MISMATCH,
+                            span,
+                            format!("cannot dereference a `{other}`; `*` applies to `Heap<T>`"),
+                        );
+                        error_expr(span)
+                    }
+                }
+            }
+            ast::UnOp::Ref | ast::UnOp::RefMut => self.unsupported(span, "references"),
         }
     }
 
     fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
         if let ast::ExprKind::Field(recv, name) = &callee.kind {
-            return self.method_call(recv, name, args, span);
+            return self.method_call(recv, name, args, span, expect);
         }
         let (params, ret, target) = match &callee.kind {
             ast::ExprKind::Name(id) if self.lookup(&id.name).is_none() => match self.globals.names.get(&id.name) {
@@ -1804,7 +2079,24 @@ impl<'a> FnCx<'a> {
         error_expr(span)
     }
 
-    fn method_call(&mut self, recv: &ast::Expr, name: &ast::Ident, args: &[ast::Arg], span: Span) -> tir::Expr {
+    fn method_call(
+        &mut self,
+        recv: &ast::Expr,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
+        // `Heap.new(value)`: the only associated function of a built-in type that is not written as a type path,
+        // because `Heap` alone is not a type.
+        if let ast::ExprKind::Name(id) = &recv.kind
+            && id.name == "Heap"
+            && name.name == "new"
+            && self.lookup("Heap").is_none()
+            && !self.globals.names.contains_key("Heap")
+        {
+            return self.heap_new(args, expect, span);
+        }
         if let Some(ty) = self.type_path(recv) {
             return self.assoc_call(&ty, name, args, span);
         }
@@ -1840,19 +2132,75 @@ impl<'a> FnCx<'a> {
             checked.insert(0, recv);
             return mk(tir::ExprKind::Call(f, checked), ret, span);
         }
+        // `x.clone()`: the deep copy the compiler derives (CP).
+        if name.name == "clone" && args.is_empty() && self.globals.is_clone(&recv.ty) {
+            let ty = recv.ty.clone();
+            return mk(tir::ExprKind::Method(Method::Clone, vec![recv]), ty, span);
+        }
         let Some((params, ret)) = method(&name.name).and_then(|m| method_sig(m, &recv.ty)) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{}`", name.name, recv.ty));
             return self.args_then_error(args, span);
         };
         let m = method(&name.name).expect("checked above");
-        let params: Vec<ParamSig> = params.into_iter().map(|ty| ParamSig { ty, by_ref: false }).collect();
+        if m == Method::PushStr
+            && let Some(root) = place_root(&recv)
+            && !self.locals[root.0].mutable
+        {
+            let local = &self.locals[root.0].name;
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`push_str` changes its receiver, but `{local}` is not mutable"),
+            );
+        }
+        let params: Vec<ParamSig> = params.into_iter().map(|ty| ParamSig { ty, by_ref: false, own: false }).collect();
         let Some(mut checked) = self.args(&name.name, &params, args, span) else { return error_expr(span) };
         checked.insert(0, recv);
         mk(tir::ExprKind::Method(m, checked), ret, span)
     }
 
+    /// `Heap.new(value)`.
+    fn heap_new(&mut self, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        let inner = match expect {
+            Some(Ty::Heap(t)) => Some((**t).clone()),
+            _ => None,
+        };
+        if args.len() != 1 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`Heap.new` takes 1 argument, but {} were given", args.len()),
+            );
+            return error_expr(span);
+        }
+        let value = self.expr(&args[0].expr, inner.as_ref());
+        let ty = Ty::Heap(Box::new(value.ty.clone()));
+        mk(tir::ExprKind::Builtin(Builtin::HeapNew, vec![value]), ty, span)
+    }
+
     /// `Type.function(...)` or `Enum.Variant(...)`.
     fn assoc_call(&mut self, ty: &Ty, name: &ast::Ident, args: &[ast::Arg], span: Span) -> tir::Expr {
+        // The associated functions of `String` (the only built-in type with any so far).
+        if *ty == Ty::String {
+            let b = match name.name.as_str() {
+                "new" => Builtin::StringNew,
+                "from" => Builtin::StringFrom,
+                _ => {
+                    self.diags.error(
+                        Code::UNKNOWN_NAME,
+                        name.span,
+                        format!("`String` has no function `{}`", name.name),
+                    );
+                    return self.args_then_error(args, span);
+                }
+            };
+            let sig = builtin_sig(b);
+            let Some(checked) = self.args(&name.name, &sig.params, args, span) else { return error_expr(span) };
+            return mk(tir::ExprKind::Builtin(b, checked), sig.ret, span);
+        }
         if let Ty::Enum(a) = ty
             && let Some(index) = self.globals.enums[a.id].variants.iter().position(|v| v.name == name.name)
         {
@@ -1865,7 +2213,8 @@ impl<'a> FnCx<'a> {
                 );
                 return self.args_then_error(args, span);
             }
-            let params: Vec<ParamSig> = v.fields.iter().map(|f| ParamSig { ty: f.ty.clone(), by_ref: false }).collect();
+            let params: Vec<ParamSig> =
+                v.fields.iter().map(|f| ParamSig { ty: f.ty.clone(), by_ref: false, own: false }).collect();
             let Some(checked) = self.args(&name.name, &params, args, span) else { return error_expr(span) };
             let fields = checked.into_iter().enumerate().collect();
             return mk(tir::ExprKind::Variant(index, fields), ty.clone(), span);
@@ -2037,8 +2386,9 @@ impl<'a> FnCx<'a> {
         span: Span,
     ) -> tir::Expr {
         let scrutinee = self.expr(scrutinee, None);
+        let owned = self.owns_scrutinee(&scrutinee);
         self.scopes.push(HashMap::new());
-        let pat = self.pattern(pattern, &scrutinee.ty);
+        let pat = self.pattern(pattern, &scrutinee.ty, owned);
         let (then, then_ty) = self.block(then_block, if else_expr.is_some() { expect } else { None });
         self.scopes.pop();
         let then = mk(tir::ExprKind::Block(then), then_ty.clone(), then_block.span);

@@ -32,8 +32,8 @@ enum P {
 
 fn lower(p: &Pat) -> P {
     match p {
-        Pat::Wild | Pat::Binding(_) => P::Wild,
-        Pat::At(_, inner) => lower(inner),
+        Pat::Wild | Pat::Binding(..) => P::Wild,
+        Pat::At(_, _, inner) => lower(inner),
         Pat::Bool(b) => P::Ctor(Ctor::Bool(*b), Vec::new()),
         Pat::Int(v) => P::Ctor(Ctor::Range(*v, *v), Vec::new()),
         Pat::Char(c) => P::Ctor(Ctor::Range(*c as i128, *c as i128), Vec::new()),

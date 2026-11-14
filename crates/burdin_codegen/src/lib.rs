@@ -1,22 +1,33 @@
 //! LLVM code generation from the typed tree.
 //!
 //! Representation: integers are `iN` (`isize` and `usize` are pointer-sized), `char` is `i32`, `bool` is `i1`, `str`
-//! is `{ ptr, usize }`, `String` is `{ ptr, usize len, usize cap }`, arrays are LLVM arrays, and `Option<T>` is
-//! `{ i1 is_some, T }`. Tuples and structs are LLVM structs with one member per field, in declaration order (a field
-//! without a value, such as `()`, is an empty struct, so member indices are field indices). An enum is
-//! `{ i32 tag, [N x iA] payload }`, where the payload is sized and aligned for the largest variant and is read
-//! through a pointer as the variant's own struct of fields. `()` and `!` have no value.
+//! is `{ ptr, usize }`, `String` is `{ ptr, usize len, usize cap }`, `Heap<T>` is a `malloc`ed `ptr` to a `T`, arrays
+//! are LLVM arrays, and `Option<T>` is `{ i1 is_some, T }`. Tuples and structs are LLVM structs with one member per
+//! field, in declaration order (a field without a value, such as `()`, is an empty struct, so member indices are
+//! field indices). An enum is `{ i32 tag, [N x iA] payload }`, where the payload is sized and aligned for the largest
+//! variant and is read through a pointer as the variant's own struct of fields. `()` and `!` have no value.
 //!
-//! A `mut self` receiver is passed by address: the callee's `self` local uses the caller's place as its storage. Functions are internal and named `burdin.<name>`. The entry point
-//! `burdin_entry` calls the program's `main`; the C runtime (runtime/rt.c) defines the real `main`, output, string
-//! conversions, and the panic path.
+//! **Ownership.** Values are owned by exactly one place: a local, a parameter, a field, or a temporary. A move reads
+//! the value and leaves the source uninitialized. The move checker records every place a function reads in a move
+//! context (`tir::Function::moved`); code generation gives each such place a runtime `i1` drop flag in a stack slot, set
+//! when the place is initialized and cleared by a move. Every drop site — the end of a scope, an overwritten assignment
+//! (DR4), the end of a statement for temporaries (DR5), and every early exit (DR6) — checks the flag of each tracked
+//! path and drops a partially moved aggregate field by field (DR7). Writing a place sets its flags again.
+//!
+//! Drop and clone glue live in internal functions (`burdin.drop.N`, `burdin.clone.N`). A type that contains itself
+//! through a `Heap` gets its glue declared before a body is generated, so recursion terminates. `Heap.new` allocates,
+//! moving the value out of a `Heap` frees the allocation (MV6), and a `String` frees its buffer from its drop glue.
+//!
+//! A `mut self` receiver is passed by address: the callee's `self` local uses the caller's place as its storage.
+//! Functions are internal and named `burdin.<name>`. The entry point `burdin_entry` calls the program's `main`; the C
+//! runtime (runtime/rt.c) defines the real `main`, output, string allocation, heap allocation, and the panic path.
 //!
 //! Every function starts with an `entry` block that holds only stack slots and their initialization, and branches to
 //! the body. After a terminator (`return`, `break`, a panic, ...) code generation continues in a fresh block without
 //! predecessors, so the rest of the tree can be generated without special cases.
 
 use burdin_diag::{SourceMap, Span};
-use burdin_sema::tir::{self, BinOp, Builtin, FloatTy, IntTy, Method, Pat, Program, Ty, UnOp};
+use burdin_sema::tir::{self, BinOp, Builtin, FloatTy, IntTy, LocalKind, Method, Pat, Program, Ty, UnOp};
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -84,10 +95,43 @@ struct Runtime<'ctx> {
     panic: FunctionValue<'ctx>,
     panic_bounds: FunctionValue<'ctx>,
     string_free: FunctionValue<'ctx>,
+    string_new: FunctionValue<'ctx>,
+    string_clone: FunctionValue<'ctx>,
+    string_push_str: FunctionValue<'ctx>,
     str_to_string: FunctionValue<'ctx>,
+    alloc: FunctionValue<'ctx>,
+    free: FunctionValue<'ctx>,
     i64_to_string: FunctionValue<'ctx>,
     u64_to_string: FunctionValue<'ctx>,
     char_to_string: FunctionValue<'ctx>,
+}
+
+/// How an expression's value is used: `Move` consumes it, `Use` only reads or borrows it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Move,
+    Use,
+}
+
+/// Which glue function a pending declaration stands for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Glue {
+    Drop,
+    Clone,
+}
+
+/// The generator state to restore after a glue function body, which is generated with its own function, locals,
+/// scopes, and flags.
+struct SavedContext<'ctx, 'a> {
+    position: Option<BasicBlock<'ctx>>,
+    entry: Option<BasicBlock<'ctx>>,
+    function: Option<FunctionValue<'ctx>>,
+    locals: &'a [tir::Local],
+    ret: &'a Ty,
+    scopes: Vec<Vec<tir::LocalId>>,
+    temps: Vec<Vec<(PointerValue<'ctx>, Ty)>>,
+    flags: Vec<(tir::MovedPlace, PointerValue<'ctx>)>,
+    loops: Vec<LoopTargets<'ctx>>,
 }
 
 struct LoopTargets<'ctx> {
@@ -95,6 +139,8 @@ struct LoopTargets<'ctx> {
     break_bb: BasicBlock<'ctx>,
     /// The number of temporary frames open when the loop started; `break` and `continue` free the ones above.
     temp_depth: usize,
+    /// The number of scopes open when the loop started; `break` and `continue` drop the ones above.
+    scope_depth: usize,
 }
 
 struct Codegen<'ctx, 'a> {
@@ -113,6 +159,11 @@ struct Codegen<'ctx, 'a> {
     rt: Runtime<'ctx>,
     functions: Vec<FunctionValue<'ctx>>,
     str_literals: HashMap<Vec<u8>, StructValue<'ctx>>,
+    /// Drop and clone glue functions generated so far, and the ones still to generate.
+    glue: Vec<(Glue, Ty, FunctionValue<'ctx>)>,
+    pending_glue: Vec<(Glue, Ty, FunctionValue<'ctx>)>,
+    /// Set while generating a glue body; restored when the body is done.
+    context: Option<SavedContext<'ctx, 'a>>,
     // State of the function being generated.
     function: Option<FunctionValue<'ctx>>,
     locals: &'a [tir::Local],
@@ -120,9 +171,13 @@ struct Codegen<'ctx, 'a> {
     /// Storage of the locals (`None` for locals without a value).
     slots: Vec<Option<PointerValue<'ctx>>>,
     loops: Vec<LoopTargets<'ctx>>,
-    /// One frame per statement being generated: `String` temporaries to free at the end of the statement. Each slot
-    /// holds an empty string until the temporary is created, so freeing a slot that was not reached is harmless.
-    temps: Vec<Vec<PointerValue<'ctx>>>,
+    /// One entry per block: the locals declared in it, in declaration order.
+    scopes: Vec<Vec<tir::LocalId>>,
+    /// The drop flags of the places `tir::Function::moved` lists, innermost path last.
+    flags: Vec<(tir::MovedPlace, PointerValue<'ctx>)>,
+    /// One frame per statement being generated: values to drop at the end of the statement. Each slot holds a
+    /// value of its type; the slot is zeroed once it is dropped, so dropping it twice is harmless.
+    temps: Vec<Vec<(PointerValue<'ctx>, Ty)>>,
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -158,10 +213,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 void.fn_type(&[&[i64_ty.into(), i64_ty.into()][..], &panic_tail[..]].concat(), false),
             ),
             string_free: declare("burdin_rt_string_free", void.fn_type(&[ptr_ty.into(), usize_ty.into()], false)),
+            string_new: declare("burdin_rt_string_new", void.fn_type(&[ptr_ty.into()], false)),
+            string_clone: declare("burdin_rt_string_clone", void.fn_type(&[ptr_ty.into(), ptr_ty.into()], false)),
+            string_push_str: declare(
+                "burdin_rt_string_push_str",
+                void.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false),
+            ),
             str_to_string: declare(
                 "burdin_rt_str_to_string",
                 void.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], false),
             ),
+            alloc: declare("burdin_rt_alloc", ptr_ty.fn_type(&[usize_ty.into()], false)),
+            free: declare("burdin_rt_free", void.fn_type(&[ptr_ty.into()], false)),
             i64_to_string: declare("burdin_rt_i64_to_string", void.fn_type(&[i64_ty.into(), ptr_ty.into()], false)),
             u64_to_string: declare("burdin_rt_u64_to_string", void.fn_type(&[i64_ty.into(), ptr_ty.into()], false)),
             char_to_string: declare("burdin_rt_char_to_string", void.fn_type(&[i32_ty.into(), ptr_ty.into()], false)),
@@ -183,11 +246,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             rt,
             functions: Vec::new(),
             str_literals: HashMap::new(),
+            glue: Vec::new(),
+            pending_glue: Vec::new(),
+            context: None,
             function: None,
             locals: &[],
             ret: &Ty::Unit,
             slots: Vec::new(),
             loops: Vec::new(),
+            scopes: Vec::new(),
+            flags: Vec::new(),
             temps: Vec::new(),
         }
     }
@@ -215,6 +283,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Float(FloatTy::F64) => self.cx.f64_type().into(),
             Ty::Str => self.str_ty.into(),
             Ty::String => self.string_ty.into(),
+            Ty::Heap(_) => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
             Ty::Option(inner) => self.option_ty(inner).into(),
             Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
@@ -307,6 +376,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         for (i, f) in program.functions.iter().enumerate() {
             self.function(self.functions[i], f)?;
         }
+        // Drop and clone glue may declare more glue for the types they contain; generate until there is none left.
+        while let Some((kind, ty, value)) = self.pending_glue.pop() {
+            match kind {
+                Glue::Drop => self.drop_glue_body(value, &ty)?,
+                Glue::Clone => self.clone_glue_body(value, &ty)?,
+            }
+        }
 
         let entry = self.module.add_function("burdin_entry", self.cx.void_type().fn_type(&[], false), None);
         let bb = self.cx.append_basic_block(entry, "entry");
@@ -327,6 +403,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.loops.clear();
         self.temps = vec![Vec::new()];
         self.slots.clear();
+        self.scopes = Vec::new();
+        // The function scope holds the `own` parameters; the body block's locals drop before them (DR3).
+        self.scopes.push(f.params.iter().copied().filter(|p| f.locals[p.0].kind == LocalKind::OwnParam).collect());
+        self.flags.clear();
+        for moved in &f.moved {
+            let flag = self.entry_builder.build_alloca(self.cx.bool_type(), "moved").map_err(llvm_err)?;
+            let one = self.cx.bool_type().const_int(1, false);
+            self.entry_builder.build_store(flag, one).map_err(llvm_err)?;
+            self.flags.push((moved.clone(), flag));
+        }
         for local in &f.locals {
             let slot = match self.llvm_ty(&local.ty) {
                 Some(t) if !local.by_ref => Some(self.entry_builder.build_alloca(t, &local.name).map_err(llvm_err)?),
@@ -346,8 +432,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 arg_index += 1;
             }
         }
-        let result = self.block(&f.body)?;
+        let result = self.block(&f.body, Mode::Move)?;
         self.free_temps_from(0)?;
+        // The body block dropped its own locals; only the parameters are left in their scope.
+        self.drop_scope(0)?;
         match self.llvm_ty(&f.ret) {
             Some(_) => match result {
                 Some(v) => self.builder.build_return(Some(&v)).map_err(llvm_err)?,
@@ -393,20 +481,28 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.need(v, ty).into_int_value()
     }
 
-    // ----- statements and temporaries ------------------------------------------
+    // ----- statements, scopes, and temporaries ---------------------------------
 
-    fn block(&mut self, b: &'a tir::Block) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+    fn block(&mut self, b: &'a tir::Block, tail_mode: Mode) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        self.scopes.push(Vec::new());
         for s in &b.stmts {
             self.temps.push(Vec::new());
             match s {
-                tir::Stmt::Let(Pat::Binding(local), init, None) => {
-                    let v = self.expr(init)?;
+                tir::Stmt::Let(Pat::Binding(local, _), init, None) => {
+                    let v = self.expr_mode(init, Mode::Move)?;
                     if let (Some(slot), Some(v)) = (self.slots[local.0], v) {
                         self.builder.build_store(slot, v).map_err(llvm_err)?;
                     }
+                    self.set_initialized(*local, &[]);
+                    self.scopes.last_mut().expect("a scope is open").push(*local);
+                }
+                tir::Stmt::Let(Pat::Wild, init, None) => {
+                    // `let _ = e` binds nothing, so the value is a temporary (DR5).
+                    let v = self.expr_mode(init, Mode::Move)?;
+                    self.add_temp_value(v, &init.ty)?;
                 }
                 tir::Stmt::Let(pat, init, else_block) => {
-                    let v = self.expr(init)?;
+                    let v = self.expr_mode(init, Mode::Move)?;
                     let place = self.spill(v, &init.ty)?;
                     if let Some(else_block) = else_block {
                         let ok = self.pat_test(pat, place, &init.ty)?;
@@ -415,51 +511,417 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         self.builder.build_conditional_branch(ok, bind_bb, else_bb).map_err(llvm_err)?;
                         self.builder.position_at_end(else_bb);
                         // The checker proved the block diverges.
-                        self.block(else_block)?;
+                        self.block(else_block, Mode::Use)?;
                         self.builder.build_unreachable().map_err(llvm_err)?;
                         self.builder.position_at_end(bind_bb);
                     }
-                    self.pat_bind(pat, place, &init.ty)?;
+                    self.pat_bind(pat, place, &init.ty, None, &mut Vec::new())?;
+                    let mut bound = Vec::new();
+                    collect_bindings(pat, &mut bound);
+                    for id in bound {
+                        self.set_initialized(id, &[]);
+                        self.scopes.last_mut().expect("a scope is open").push(id);
+                    }
                 }
                 tir::Stmt::Expr(e) => {
-                    self.expr(e)?;
+                    let v = self.expr_mode(e, Mode::Move)?;
+                    // The value of an expression statement is a temporary of the statement (DR5).
+                    if self.needs_drop(&e.ty) {
+                        self.add_temp_value(v, &e.ty)?;
+                    }
                 }
             }
             let depth = self.temps.len() - 1;
             self.free_temps_from(depth)?;
             self.temps.pop();
         }
-        match &b.tail {
-            Some(e) => self.expr(e),
-            None => Ok(None),
+        // The tail expression's temporaries drop when it finishes, before the block's locals (DR5).
+        self.temps.push(Vec::new());
+        let result = match &b.tail {
+            Some(e) => self.expr_mode(e, tail_mode)?,
+            None => None,
+        };
+        let depth = self.temps.len() - 1;
+        self.free_temps_from(depth)?;
+        self.temps.pop();
+        let index = self.scopes.len() - 1;
+        self.drop_scope(index)?;
+        self.scopes.pop();
+        Ok(result)
+    }
+
+    /// Drops the locals of the scope at `index`, in reverse declaration order (DR2).
+    fn drop_scope(&mut self, index: usize) -> GenResult<()> {
+        let locals = self.scopes[index].clone();
+        for id in locals.into_iter().rev() {
+            self.drop_local(id)?;
         }
+        Ok(())
+    }
+
+    fn drop_local(&mut self, id: tir::LocalId) -> GenResult<()> {
+        let local = &self.locals[id.0];
+        if local.by_ref || matches!(local.kind, LocalKind::BorrowedParam | LocalKind::View) {
+            return Ok(());
+        }
+        let ty = local.ty.clone();
+        if !self.needs_drop(&ty) {
+            return Ok(());
+        }
+        self.drop_at(id, &[], &ty)
+    }
+
+    /// Drops the value at `local` + `path`, honoring the drop flags of every tracked path inside it (DR7).
+    fn drop_at(&mut self, id: tir::LocalId, path: &[usize], ty: &Ty) -> GenResult<()> {
+        let Some(addr) = self.local_address(id, path)? else { return Ok(()) };
+        let flag = self.flag_for(id, path);
+        let inner = self.has_inner_flag(id, path);
+        if !inner {
+            return match flag {
+                None => self.drop_value(addr, ty),
+                Some(flag) => {
+                    let alive = self.builder.build_load(self.cx.bool_type(), flag, "init").map_err(llvm_err)?;
+                    self.if_then(alive.into_int_value(), "drop", |cg| cg.drop_value(addr, ty))
+                }
+            };
+        }
+        // Some part was moved on some path: drop the parts that are still initialized, field by field.
+        let run = match flag {
+            None => None,
+            Some(flag) => {
+                Some(self.builder.build_load(self.cx.bool_type(), flag, "init").map_err(llvm_err)?.into_int_value())
+            }
+        };
+        let emit = |cg: &mut Self| -> GenResult<()> {
+            match ty {
+                Ty::Struct(_) | Ty::Tuple(_) => {
+                    for (i, fty) in cg.field_tys(ty).iter().enumerate() {
+                        let mut child = path.to_vec();
+                        child.push(i);
+                        if cg.needs_drop(fty) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some() {
+                            cg.drop_at(id, &child, fty)?;
+                        }
+                    }
+                    Ok(())
+                }
+                Ty::Enum(a) => {
+                    let et = cg.enum_ty(a.id);
+                    let tag_ptr = cg.builder.build_struct_gep(et, addr, 0, "tag").map_err(llvm_err)?;
+                    let tag = cg.builder.build_load(cg.cx.i32_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
+                    let end = cg.new_block("enum.drop.end");
+                    let mut cases = Vec::new();
+                    for (vi, v) in cg.program.enums[a.id].variants.iter().enumerate() {
+                        if v.fields.is_empty() {
+                            continue;
+                        }
+                        cases.push((vi, cg.new_block("enum.drop")));
+                    }
+                    let switch_cases: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> =
+                        cases.iter().map(|(vi, bb)| (cg.cx.i32_type().const_int(*vi as u64, false), *bb)).collect();
+                    cg.builder.build_switch(tag, end, &switch_cases).map_err(llvm_err)?;
+                    for (vi, case) in cases {
+                        cg.builder.position_at_end(case);
+                        let payload = cg.builder.build_struct_gep(et, addr, 1, "").map_err(llvm_err)?;
+                        let vt = cg.variant_ty(a.id, vi);
+                        for (fi, fty) in cg.variant_tys(a.id, vi).iter().enumerate() {
+                            let mut child = path.to_vec();
+                            child.push(vi);
+                            child.push(fi);
+                            if cg.needs_drop(fty) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some()
+                            {
+                                let p = cg.builder.build_struct_gep(vt, payload, fi as u32, "").map_err(llvm_err)?;
+                                cg.drop_at_address(id, &child, fty, p)?;
+                            }
+                        }
+                        cg.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                    }
+                    cg.builder.position_at_end(end);
+                    Ok(())
+                }
+                Ty::Option(inner_ty) => {
+                    let ot = cg.option_ty(inner_ty);
+                    let tag_ptr = cg.builder.build_struct_gep(ot, addr, 0, "").map_err(llvm_err)?;
+                    let tag = cg
+                        .builder
+                        .build_load(cg.cx.bool_type(), tag_ptr, "is_some")
+                        .map_err(llvm_err)?
+                        .into_int_value();
+                    cg.if_then(tag, "option.drop", |cg| {
+                        if cg.llvm_ty(inner_ty).is_some() {
+                            let payload = cg.builder.build_struct_gep(ot, addr, 1, "").map_err(llvm_err)?;
+                            let mut child = path.to_vec();
+                            child.push(0);
+                            cg.drop_at_address(id, &child, inner_ty, payload)?;
+                        }
+                        Ok(())
+                    })
+                }
+                _ => cg.drop_value(addr, ty),
+            }
+        };
+        match run {
+            None => emit(self),
+            Some(cond) => self.if_then(cond, "drop", emit),
+        }
+    }
+
+    /// Like [`Self::drop_at`], but the address of the value is already known.
+    fn drop_at_address(
+        &mut self,
+        id: tir::LocalId,
+        path: &[usize],
+        ty: &Ty,
+        addr: PointerValue<'ctx>,
+    ) -> GenResult<()> {
+        let flag = self.flag_for(id, path);
+        if !self.has_inner_flag(id, path) {
+            return match flag {
+                None => self.drop_value(addr, ty),
+                Some(flag) => {
+                    let alive = self.builder.build_load(self.cx.bool_type(), flag, "init").map_err(llvm_err)?;
+                    self.if_then(alive.into_int_value(), "drop", move |cg| cg.drop_value(addr, ty))
+                }
+            };
+        }
+        // Nested variants of an enum payload: reuse the local walk by addressing the value directly.
+        match ty {
+            Ty::Struct(_) | Ty::Tuple(_) => {
+                for (i, fty) in self.field_tys(ty).iter().enumerate() {
+                    let mut child = path.to_vec();
+                    child.push(i);
+                    if self.needs_drop(fty) || self.has_inner_flag(id, &child) || self.flag_for(id, &child).is_some() {
+                        let t = self.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
+                        let p = self.builder.build_struct_gep(t, addr, i as u32, "").map_err(llvm_err)?;
+                        self.drop_at_address(id, &child, fty, p)?;
+                    }
+                }
+                Ok(())
+            }
+            Ty::Option(inner_ty) => {
+                let ot = self.option_ty(inner_ty);
+                let tag_ptr = self.builder.build_struct_gep(ot, addr, 0, "").map_err(llvm_err)?;
+                let tag = self
+                    .builder
+                    .build_load(self.cx.bool_type(), tag_ptr, "is_some")
+                    .map_err(llvm_err)?
+                    .into_int_value();
+                let inner_ty = inner_ty.clone();
+                self.if_then(tag, "option.drop", move |cg| {
+                    if cg.llvm_ty(&inner_ty).is_some() {
+                        let payload = cg.builder.build_struct_gep(ot, addr, 1, "").map_err(llvm_err)?;
+                        let mut child = path.to_vec();
+                        child.push(0);
+                        cg.drop_at_address(id, &child, &inner_ty, payload)?;
+                    }
+                    Ok(())
+                })
+            }
+            _ => self.drop_value(addr, ty),
+        }
+    }
+
+    /// Runs `f` in a block guarded by `cond`, continuing afterwards.
+    fn if_then(
+        &mut self,
+        cond: IntValue<'ctx>,
+        name: &str,
+        f: impl FnOnce(&mut Self) -> GenResult<()>,
+    ) -> GenResult<()> {
+        let then_bb = self.new_block(name);
+        let end = self.new_block("drop.end");
+        self.builder.build_conditional_branch(cond, then_bb, end).map_err(llvm_err)?;
+        self.builder.position_at_end(then_bb);
+        f(self)?;
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        Ok(())
     }
 
     /// Frees the temporaries of the frames from `depth` up, leaving their slots empty.
     fn free_temps_from(&mut self, depth: usize) -> GenResult<()> {
-        let slots: Vec<PointerValue<'ctx>> = self.temps[depth..].iter().flatten().copied().collect();
-        for slot in slots {
-            let s = self.builder.build_load(self.string_ty, slot, "tmp").map_err(llvm_err)?.into_struct_value();
-            let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
-            let cap = self.builder.build_extract_value(s, 2, "").map_err(llvm_err)?;
-            self.builder.build_call(self.rt.string_free, &[ptr.into(), cap.into()], "").map_err(llvm_err)?;
-            self.builder.build_store(slot, self.string_ty.const_zero()).map_err(llvm_err)?;
+        let units: Vec<(PointerValue<'ctx>, Ty)> = self.temps[depth..].iter().flatten().cloned().collect();
+        for (slot, ty) in units {
+            self.drop_value(slot, &ty)?;
+            if let Some(t) = self.llvm_ty(&ty) {
+                self.builder.build_store(slot, undef(t)).map_err(llvm_err)?;
+            }
         }
         Ok(())
     }
 
-    /// Records a `String` temporary to free at the end of the current statement.
-    fn add_temp(&mut self, v: BasicValueEnum<'ctx>) -> GenResult<()> {
-        let slot = self.alloca(self.string_ty.into(), "tmp")?;
-        self.entry_builder.build_store(slot, self.string_ty.const_zero()).map_err(llvm_err)?;
+    /// Records a value as a temporary of the current statement.
+    fn add_temp_value(&mut self, v: Option<BasicValueEnum<'ctx>>, ty: &Ty) -> GenResult<()> {
+        if !self.needs_drop(ty) {
+            return Ok(());
+        }
+        let Some(t) = self.llvm_ty(ty) else { return Ok(()) };
+        let slot = self.alloca(t, "tmp")?;
+        let v = self.need(v, ty);
         self.builder.build_store(slot, v).map_err(llvm_err)?;
-        self.temps.last_mut().expect("a temporary frame is open").push(slot);
+        self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone()));
         Ok(())
+    }
+
+    /// Records the value at `slot` as a temporary of the current statement.
+    fn add_temp_slot(&mut self, slot: PointerValue<'ctx>, ty: &Ty) {
+        if self.needs_drop(ty) {
+            self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone()));
+        }
+    }
+
+    // ----- drop locations and flags --------------------------------------------
+
+    fn flag_for(&self, id: tir::LocalId, path: &[usize]) -> Option<PointerValue<'ctx>> {
+        self.flags.iter().find(|(p, _)| p.local == id && p.path.as_slice() == path).map(|(_, f)| *f)
+    }
+
+    fn has_inner_flag(&self, id: tir::LocalId, path: &[usize]) -> bool {
+        self.flags.iter().any(|(p, _)| p.local == id && p.path.len() > path.len() && p.path.starts_with(path))
+    }
+
+    /// Marks the place at `path` as moved: every flag at or inside it is cleared.
+    fn mark_moved(&mut self, id: tir::LocalId, path: &[usize]) {
+        let zero = self.cx.bool_type().const_int(0, false);
+        let flags: Vec<PointerValue<'ctx>> =
+            self.flags.iter().filter(|(p, _)| p.local == id && p.path.starts_with(path)).map(|(_, f)| *f).collect();
+        for f in flags {
+            self.builder.build_store(f, zero).map_err(llvm_err).expect("storing a flag cannot fail");
+        }
+    }
+
+    /// Marks the place at `path` (and everything inside it) as initialized again.
+    fn set_initialized(&mut self, id: tir::LocalId, path: &[usize]) {
+        let one = self.cx.bool_type().const_int(1, false);
+        let flags: Vec<PointerValue<'ctx>> =
+            self.flags.iter().filter(|(p, _)| p.local == id && p.path.starts_with(path)).map(|(_, f)| *f).collect();
+        for f in flags {
+            self.builder.build_store(f, one).map_err(llvm_err).expect("storing a flag cannot fail");
+        }
+    }
+
+    /// The address of `local` plus a field path: struct and tuple fields, `Option` payloads (`[0]`), and enum
+    /// variant fields (`[variant, field]`).
+    fn local_address(&mut self, id: tir::LocalId, path: &[usize]) -> GenResult<Option<PointerValue<'ctx>>> {
+        let Some(mut ptr) = self.slots[id.0] else { return Ok(None) };
+        let mut ty = self.locals[id.0].ty.clone();
+        let mut i = 0;
+        while i < path.len() {
+            match &ty {
+                Ty::Struct(_) | Ty::Tuple(_) => {
+                    let t = self.llvm_ty(&ty).expect("an aggregate has a type").into_struct_type();
+                    let index = path[i];
+                    ptr = self.builder.build_struct_gep(t, ptr, index as u32, "").map_err(llvm_err)?;
+                    ty = self.field_tys(&ty)[index].clone();
+                    i += 1;
+                }
+                Ty::Enum(a) => {
+                    let vi = path[i];
+                    let fi = path[i + 1];
+                    let et = self.enum_ty(a.id);
+                    let payload = self.builder.build_struct_gep(et, ptr, 1, "").map_err(llvm_err)?;
+                    let vt = self.variant_ty(a.id, vi);
+                    ptr = self.builder.build_struct_gep(vt, payload, fi as u32, "").map_err(llvm_err)?;
+                    ty = self.variant_tys(a.id, vi)[fi].clone();
+                    i += 2;
+                }
+                Ty::Option(inner) => {
+                    let ot = self.option_ty(inner);
+                    ptr = self.builder.build_struct_gep(ot, ptr, 1, "").map_err(llvm_err)?;
+                    ty = (**inner).clone();
+                    i += 1;
+                }
+                _ => return Ok(None),
+            }
+        }
+        Ok(Some(ptr))
+    }
+
+    /// The local and field path of a place expression, if it starts at a local.
+    fn place_path(&self, e: &tir::Expr) -> Option<(tir::LocalId, Vec<usize>)> {
+        match &e.kind {
+            tir::ExprKind::Local(id) => Some((*id, Vec::new())),
+            tir::ExprKind::Field(base, i) => {
+                let (root, mut path) = self.place_path(base)?;
+                path.push(*i);
+                Some((root, path))
+            }
+            tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => self.place_path(base),
+            _ => None,
+        }
+    }
+
+    // ----- type predicates ------------------------------------------------------
+
+    fn is_copy(&self, ty: &Ty) -> bool {
+        self.is_copy_seen(ty, &mut Vec::new())
+    }
+
+    fn is_copy_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
+        match ty {
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
+            Ty::Array(t, _) | Ty::Option(t) => self.is_copy_seen(t, seen),
+            Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_seen(t, seen)),
+            Ty::String | Ty::Heap(_) => false,
+            Ty::Struct(a) => {
+                let s = &self.program.structs[a.id];
+                if !s.derives.copy {
+                    return false;
+                }
+                if seen.contains(&(false, a.id)) {
+                    return true;
+                }
+                seen.push((false, a.id));
+                s.fields.iter().all(|f| self.is_copy_seen(&f.ty, seen))
+            }
+            Ty::Enum(a) => {
+                let e = &self.program.enums[a.id];
+                if !e.derives.clone || !e.derives.copy {
+                    return false;
+                }
+                if seen.contains(&(true, a.id)) {
+                    return true;
+                }
+                seen.push((true, a.id));
+                e.variants.iter().all(|v| v.fields.iter().all(|f| self.is_copy_seen(&f.ty, seen)))
+            }
+        }
+    }
+
+    /// Whether dropping a value of `ty` runs any code.
+    fn needs_drop(&self, ty: &Ty) -> bool {
+        self.needs_drop_seen(ty, &mut Vec::new())
+    }
+
+    fn needs_drop_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
+        match ty {
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
+            Ty::String | Ty::Heap(_) => true,
+            Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
+            Ty::Option(t) => self.needs_drop_seen(t, seen),
+            Ty::Tuple(ts) => ts.iter().any(|t| self.needs_drop_seen(t, seen)),
+            Ty::Struct(a) => {
+                if seen.contains(&(false, a.id)) {
+                    return false;
+                }
+                seen.push((false, a.id));
+                let s = &self.program.structs[a.id];
+                s.drop_method.is_some() || s.fields.iter().any(|f| self.needs_drop_seen(&f.ty, seen))
+            }
+            Ty::Enum(a) => {
+                if seen.contains(&(true, a.id)) {
+                    return false;
+                }
+                seen.push((true, a.id));
+                let e = &self.program.enums[a.id];
+                e.drop_method.is_some()
+                    || e.variants.iter().any(|v| v.fields.iter().any(|f| self.needs_drop_seen(&f.ty, seen)))
+            }
+        }
     }
 
     // ----- expressions ---------------------------------------------------------
 
-    fn expr(&mut self, e: &'a tir::Expr) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+    fn expr_mode(&mut self, e: &'a tir::Expr, mode: Mode) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         use tir::ExprKind as K;
         let v: Option<BasicValueEnum<'ctx>> = match &e.kind {
             K::Unit => None,
@@ -475,15 +937,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             },
             K::Char(c) => Some(self.cx.i32_type().const_int(u64::from(*c as u32), false).into()),
             K::Str(s) => Some(self.str_literal(s.as_bytes()).into()),
-            K::Local(id) => match (self.slots[id.0], self.llvm_ty(&e.ty)) {
-                (Some(slot), Some(t)) => {
-                    Some(self.builder.build_load(t, slot, &self.locals[id.0].name).map_err(llvm_err)?)
+            K::Local(id) => {
+                let v = match (self.slots[id.0], self.llvm_ty(&e.ty)) {
+                    (Some(slot), Some(t)) => {
+                        Some(self.builder.build_load(t, slot, &self.locals[id.0].name).map_err(llvm_err)?)
+                    }
+                    _ => None,
+                };
+                if mode == Mode::Move && !self.is_copy(&e.ty) {
+                    self.mark_moved(*id, &[]);
                 }
-                _ => None,
-            },
+                v
+            }
             K::Const(id) => {
                 let program = self.program;
-                self.expr(&program.consts[id.0].value)?
+                self.expr_mode(&program.consts[id.0].value, mode)?
             }
             K::Call(f, args) => {
                 let program = self.program;
@@ -498,7 +966,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         values.push(ptr.into());
                         continue;
                     }
-                    let v = self.expr(a)?;
+                    let m = if callee.locals[p.0].kind == LocalKind::OwnParam { Mode::Move } else { Mode::Use };
+                    let v = self.expr_mode(a, m)?;
                     if self.llvm_ty(&callee.locals[p.0].ty).is_some() {
                         values.push(self.need(v, &callee.locals[p.0].ty).into());
                     }
@@ -513,25 +982,25 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
             K::StringAsStr(inner) => {
                 let is_place = is_place(inner);
-                let s = self.expr(inner)?;
+                let s = self.expr_mode(inner, Mode::Use)?;
                 let s = self.need(s, &Ty::String);
                 if !is_place {
-                    self.add_temp(s)?;
+                    self.add_temp_value(Some(s), &Ty::String)?;
                 }
                 let s = s.into_struct_value();
                 let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
                 let len = self.builder.build_extract_value(s, 1, "").map_err(llvm_err)?;
                 Some(self.make_str(ptr, len)?.into())
             }
-            K::Block(b) => self.block(b)?,
-            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty)?,
+            K::Block(b) => self.block(b, mode)?,
+            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty, mode)?,
             K::While(cond, body) => {
                 let header = self.new_block("while.cond");
                 let body_bb = self.new_block("while.body");
                 let exit = self.new_block("while.end");
                 self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
                 self.builder.position_at_end(header);
-                let c = self.expr(cond)?;
+                let c = self.expr_mode(cond, Mode::Use)?;
                 let c = self.need_int(c, &Ty::Bool);
                 self.builder.build_conditional_branch(c, body_bb, exit).map_err(llvm_err)?;
                 self.builder.position_at_end(body_bb);
@@ -558,23 +1027,25 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.for_array(pat, array, body)?;
                 None
             }
-            K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty)?,
+            K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty, mode)?,
             K::Break | K::Continue => {
                 let target = self.loops.last().expect("checked: inside a loop");
-                let (bb, depth) = match e.kind {
-                    K::Break => (target.break_bb, target.temp_depth),
-                    _ => (target.continue_bb, target.temp_depth),
+                let (bb, temp_depth, scope_depth) = match e.kind {
+                    K::Break => (target.break_bb, target.temp_depth, target.scope_depth),
+                    _ => (target.continue_bb, target.temp_depth, target.scope_depth),
                 };
-                self.free_temps_from(depth)?;
+                self.drop_scopes_above(scope_depth)?;
+                self.free_temps_from(temp_depth)?;
                 self.builder.build_unconditional_branch(bb).map_err(llvm_err)?;
                 self.continue_dead();
                 None
             }
             K::Return(value) => {
                 let v = match value {
-                    Some(v) => self.expr(v)?,
+                    Some(v) => self.expr_mode(v, Mode::Move)?,
                     None => None,
                 };
+                self.drop_scopes_above(0)?;
                 self.free_temps_from(0)?;
                 let ret = self.ret;
                 if self.llvm_ty(ret).is_some() {
@@ -587,18 +1058,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 None
             }
             K::Assign(place, value) => {
-                let v = self.expr(value)?;
-                if let Some(ptr) = self.place_ptr(place)?
-                    && self.llvm_ty(&place.ty).is_some()
-                {
-                    let v = self.need(v, &place.ty);
-                    self.builder.build_store(ptr, v).map_err(llvm_err)?;
-                }
+                let v = self.expr_mode(value, Mode::Move)?;
+                self.assign(place, v)?;
                 None
             }
             K::Binary(op, l, r) => self.binary(*op, l, r, e.span)?,
             K::Unary(op, operand) => {
-                let v = self.expr(operand)?;
+                let v = self.expr_mode(operand, Mode::Use)?;
                 let v = self.need(v, &operand.ty);
                 match (op, &operand.ty) {
                     (UnOp::Not, _) => Some(self.builder.build_not(v.into_int_value(), "").map_err(llvm_err)?.into()),
@@ -610,7 +1076,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
             }
             K::Cast(operand) => {
-                let v = self.expr(operand)?;
+                let v = self.expr_mode(operand, Mode::Use)?;
                 match self.llvm_ty(&operand.ty) {
                     Some(_) => {
                         let v = self.need(v, &operand.ty);
@@ -622,20 +1088,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Array(elems) => {
                 let Some(t) = self.llvm_ty(&e.ty) else {
                     for el in elems {
-                        self.expr(el)?;
+                        self.expr_mode(el, Mode::Move)?;
                     }
                     return Ok(None);
                 };
                 let mut agg = undef(t).into_array_value();
                 for (i, el) in elems.iter().enumerate() {
-                    let v = self.expr(el)?;
+                    let v = self.expr_mode(el, Mode::Move)?;
                     let v = self.need(v, &el.ty);
                     agg = self.builder.build_insert_value(agg, v, i as u32, "").map_err(llvm_err)?.into_array_value();
                 }
                 Some(agg.into())
             }
             K::ArrayRepeat(value, n) => {
-                let v = self.expr(value)?;
+                let v = self.expr_mode(value, Mode::Move)?;
                 match (self.llvm_ty(&e.ty), self.llvm_ty(&value.ty)) {
                     (Some(t), Some(elem_t)) => {
                         let v = self.need(v, &value.ty);
@@ -654,7 +1120,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::Variant(index, fields) => self.variant(*index, fields, &e.ty)?,
             K::Some(inner) => {
-                let v = self.expr(inner)?;
+                let v = self.expr_mode(inner, Mode::Move)?;
                 let Ty::Option(t) = &e.ty else { unreachable!("`Some` builds an Option") };
                 let opt_ty = self.option_ty(t);
                 let yes = self.cx.bool_type().const_int(1, false);
@@ -681,18 +1147,69 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let Ty::Option(t) = &e.ty else { unreachable!("`None` is an Option") };
                 Some(self.option_ty(t).const_zero().into())
             }
-            K::Index(..) | K::Field(..) => {
-                let ptr = self.place_ptr(e)?;
-                match (ptr, self.llvm_ty(&e.ty)) {
-                    (Some(ptr), Some(t)) => Some(self.builder.build_load(t, ptr, "").map_err(llvm_err)?),
-                    _ => None,
-                }
-            }
+            K::Index(..) | K::Field(..) | K::Deref(..) => self.expr_place(e, mode)?,
         };
         if e.ty == Ty::Never {
             return Ok(None);
         }
         Ok(v)
+    }
+
+    /// Reads a place expression in `mode`; a move leaves the place uninitialized and frees a `Heap` whose pointee
+    /// was moved out (MV1, MV6).
+    fn expr_place(&mut self, e: &'a tir::Expr, mode: Mode) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(ptr) = self.place_ptr(e)? else { return Ok(None) };
+        let Some(t) = self.llvm_ty(&e.ty) else { return Ok(None) };
+        let v = self.builder.build_load(t, ptr, "").map_err(llvm_err)?;
+        if mode == Mode::Move && !self.is_copy(&e.ty) {
+            if let Some((root, path)) = self.place_path(e) {
+                self.mark_moved(root, &path);
+            }
+            if matches!(e.kind, tir::ExprKind::Deref(_)) {
+                // The pointee was moved out of the allocation: free it (MV6).
+                self.builder.build_call(self.rt.free, &[ptr.into()], "").map_err(llvm_err)?;
+            }
+        }
+        Ok(Some(v))
+    }
+
+    /// `place = value`: evaluates the value (by the caller), drops the old value (DR4), stores, and marks the place
+    /// initialized again.
+    fn assign(&mut self, place: &'a tir::Expr, v: Option<BasicValueEnum<'ctx>>) -> GenResult<()> {
+        let Some(ptr) = self.place_ptr(place)? else { return Ok(()) };
+        let Some(_t) = self.llvm_ty(&place.ty) else { return Ok(()) };
+        let root = self.place_path(place);
+        let through = matches!(place.kind, tir::ExprKind::Index(..) | tir::ExprKind::Deref(_));
+        if self.needs_drop(&place.ty) {
+            match (&root, through) {
+                (Some((id, path)), false) => self.drop_at(*id, path, &place.ty)?,
+                (Some((id, path)), true) => {
+                    // Assigning through an index or a `Heap` overwrites a value addressed by the base place.
+                    if matches!(place.kind, tir::ExprKind::Deref(_)) {
+                        self.drop_at(*id, path, &place.ty)?;
+                    } else {
+                        self.drop_value(ptr, &place.ty)?;
+                    }
+                }
+                (None, _) => self.drop_value(ptr, &place.ty)?,
+            }
+        }
+        let v = self.need(v, &place.ty);
+        self.builder.build_store(ptr, v).map_err(llvm_err)?;
+        if let Some((id, path)) = &root
+            && !through
+        {
+            self.set_initialized(*id, path);
+        }
+        Ok(())
+    }
+
+    /// Drops every scope above `depth`, from the innermost out; used by `break`, `continue`, and `return` (DR6).
+    fn drop_scopes_above(&mut self, depth: usize) -> GenResult<()> {
+        for index in (depth..self.scopes.len()).rev() {
+            self.drop_scope(index)?;
+        }
+        Ok(())
     }
 
     fn loop_body(
@@ -701,8 +1218,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         continue_bb: BasicBlock<'ctx>,
         break_bb: BasicBlock<'ctx>,
     ) -> GenResult<()> {
-        self.loops.push(LoopTargets { continue_bb, break_bb, temp_depth: self.temps.len() });
-        self.block(body)?;
+        self.loops.push(LoopTargets {
+            continue_bb,
+            break_bb,
+            temp_depth: self.temps.len(),
+            scope_depth: self.scopes.len(),
+        });
+        self.block(body, Mode::Use)?;
         self.loops.pop();
         Ok(())
     }
@@ -717,14 +1239,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<()> {
         let Ty::Int(ity) = lo.ty.clone() else {
             // The range diverges (for example `return..x`); nothing after it runs.
-            self.expr(lo)?;
-            self.expr(hi)?;
+            self.expr_mode(lo, Mode::Use)?;
+            self.expr_mode(hi, Mode::Use)?;
             return Ok(());
         };
         let signed = ity.signed();
-        let lo_v = self.expr(lo)?;
+        let lo_v = self.expr_mode(lo, Mode::Use)?;
         let lo_v = self.need_int(lo_v, &lo.ty);
-        let hi_v = self.expr(hi)?;
+        let hi_v = self.expr_mode(hi, Mode::Use)?;
         let hi_v = self.need_int(hi_v, &lo.ty);
         let counter = self.alloca(self.int_ty(ity).into(), "for.counter")?;
         self.builder.build_store(counter, lo_v).map_err(llvm_err)?;
@@ -780,8 +1302,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         then: &'a tir::Block,
         other: Option<&'a tir::Expr>,
         ty: &Ty,
+        mode: Mode,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let c = self.expr(cond)?;
+        let c = self.expr_mode(cond, Mode::Use)?;
         let c = self.need_int(c, &Ty::Bool);
         let result = match self.llvm_ty(ty) {
             Some(t) => Some(self.alloca(t, "if.result")?),
@@ -793,7 +1316,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_conditional_branch(c, then_bb, else_bb).map_err(llvm_err)?;
 
         self.builder.position_at_end(then_bb);
-        let v = self.block(then)?;
+        let v = self.block(then, mode)?;
         if let (Some(slot), Some(v)) = (result, v) {
             self.builder.build_store(slot, v).map_err(llvm_err)?;
         }
@@ -801,7 +1324,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         self.builder.position_at_end(else_bb);
         if let Some(other) = other {
-            let v = self.expr(other)?;
+            let v = self.expr_mode(other, mode)?;
             if let (Some(slot), Some(v)) = (result, v) {
                 self.builder.build_store(slot, v).map_err(llvm_err)?;
             }
@@ -820,17 +1343,35 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         scrutinee: &'a tir::Expr,
         arms: &'a [tir::Arm],
         ty: &Ty,
+        mode: Mode,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let v = self.expr(scrutinee)?;
-        let place = match self.llvm_ty(&scrutinee.ty) {
-            Some(t) => {
-                let slot = self.alloca(t, "match.value")?;
-                let v = self.need(v, &scrutinee.ty);
-                self.builder.build_store(slot, v).map_err(llvm_err)?;
-                Some(slot)
+        // A place scrutinee is matched in place: moving bindings take parts out of it (MV8). A temporary is
+        // spilled; it is dropped at the end of the statement unless an arm moves parts out of it (which the
+        // generated code cannot track), in which case its ownership passes to the bindings.
+        let direct = self.direct_place_ptr(scrutinee)?;
+        let place = match direct {
+            Some(ptr) => Some(ptr),
+            None => {
+                let v = self.expr_mode(scrutinee, Mode::Use)?;
+                let slot = match self.llvm_ty(&scrutinee.ty) {
+                    Some(t) => {
+                        let slot = self.alloca(t, "match.value")?;
+                        let v = self.need(v, &scrutinee.ty);
+                        self.builder.build_store(slot, v).map_err(llvm_err)?;
+                        Some(slot)
+                    }
+                    None => None,
+                };
+                if arms.iter().all(|a| !pattern_moves(&a.pat)) {
+                    self.add_temp_slot(
+                        slot.unwrap_or_else(|| self.cx.ptr_type(AddressSpace::default()).get_undef()),
+                        &scrutinee.ty,
+                    );
+                }
+                slot
             }
-            None => None,
         };
+        let base = if direct.is_some() { self.place_path(scrutinee) } else { None };
         let result = match self.llvm_ty(ty) {
             Some(t) => Some(self.alloca(t, "match.result")?),
             None => None,
@@ -842,15 +1383,24 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let ok = self.pat_test(&arm.pat, place, &scrutinee.ty)?;
             self.builder.build_conditional_branch(ok, arm_bb, next).map_err(llvm_err)?;
             self.builder.position_at_end(arm_bb);
-            self.pat_bind(&arm.pat, place, &scrutinee.ty)?;
+            self.scopes.push(Vec::new());
+            self.pat_bind(&arm.pat, place, &scrutinee.ty, base.as_ref(), &mut Vec::new())?;
+            let mut bound = Vec::new();
+            collect_bindings(&arm.pat, &mut bound);
+            for id in bound {
+                self.scopes.last_mut().expect("an arm scope is open").push(id);
+            }
             if let Some(guard) = &arm.guard {
-                let g = self.expr(guard)?;
+                let g = self.expr_mode(guard, Mode::Use)?;
                 let g = self.need_int(g, &Ty::Bool);
                 let body_bb = self.new_block("match.body");
                 self.builder.build_conditional_branch(g, body_bb, next).map_err(llvm_err)?;
                 self.builder.position_at_end(body_bb);
             }
-            let v = self.expr(&arm.body)?;
+            let v = self.expr_mode(&arm.body, mode)?;
+            // The arm's bindings drop at the end of the arm (MV8).
+            self.drop_scope(self.scopes.len() - 1)?;
+            self.scopes.pop();
             if let (Some(slot), Some(v)) = (result, v) {
                 self.builder.build_store(slot, v).map_err(llvm_err)?;
             }
@@ -866,6 +1416,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
+    /// The address of a place expression that starts at a local, without spilling anything.
+    fn direct_place_ptr(&mut self, e: &'a tir::Expr) -> GenResult<Option<PointerValue<'ctx>>> {
+        if self.place_path(e).is_none() {
+            return Ok(None);
+        }
+        self.place_ptr(e)
+    }
+
     /// Whether the value at `place` (of type `ty`) matches `pat`. Reads memory only; never has side effects.
     fn pat_test(&mut self, pat: &Pat, place: Option<PointerValue<'ctx>>, ty: &Ty) -> GenResult<IntValue<'ctx>> {
         let bool_ty = self.cx.bool_type();
@@ -876,8 +1434,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ok(cg.builder.build_load(t, ptr, "").map_err(llvm_err)?.into_int_value())
         };
         match pat {
-            Pat::Wild | Pat::Binding(_) => Ok(yes),
-            Pat::At(_, inner) => self.pat_test(inner, place, ty),
+            Pat::Wild | Pat::Binding(..) => Ok(yes),
+            Pat::At(_, _, inner) => self.pat_test(inner, place, ty),
             Pat::Bool(b) => {
                 let v = load_int(self)?;
                 let c = bool_ty.const_int(u64::from(*b), false);
@@ -920,7 +1478,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let tys = self.field_tys(ty);
                 let mut acc = yes;
                 for (i, sub) in subs.iter().enumerate() {
-                    if matches!(sub, Pat::Wild | Pat::Binding(_)) {
+                    if matches!(sub, Pat::Wild | Pat::Binding(..)) {
                         continue;
                     }
                     let p = self.builder.build_struct_gep(t.into_struct_type(), ptr, i as u32, "").map_err(llvm_err)?;
@@ -938,7 +1496,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let tag = self.builder.build_load(i32_ty, tag_ptr, "tag").map_err(llvm_err)?.into_int_value();
                 let want = i32_ty.const_int(*index as u64, false);
                 let tag_ok = self.builder.build_int_compare(IntPredicate::EQ, tag, want, "").map_err(llvm_err)?;
-                if subs.iter().all(|s| matches!(s, Pat::Wild | Pat::Binding(_))) {
+                if subs.iter().all(|s| matches!(s, Pat::Wild | Pat::Binding(..))) {
                     return Ok(tag_ok);
                 }
                 let vt = self.variant_ty(a.id, *index);
@@ -946,7 +1504,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let payload = self.builder.build_struct_gep(et, ptr, 1, "").map_err(llvm_err)?;
                 let mut acc = yes;
                 for (i, sub) in subs.iter().enumerate() {
-                    if matches!(sub, Pat::Wild | Pat::Binding(_)) {
+                    if matches!(sub, Pat::Wild | Pat::Binding(..)) {
                         continue;
                     }
                     let p = self.builder.build_struct_gep(vt, payload, i as u32, "").map_err(llvm_err)?;
@@ -982,13 +1540,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// Stores the parts of the value at `place` into the bindings of `pat` (which matched).
-    fn pat_bind(&mut self, pat: &Pat, place: Option<PointerValue<'ctx>>, ty: &Ty) -> GenResult<()> {
+    /// Stores the parts of the value at `place` into the bindings of `pat` (which matched). A `Move` binding takes
+    /// its part out of the scrutinee, clearing the drop flags of the paths it moves (MV8).
+    fn pat_bind(
+        &mut self,
+        pat: &Pat,
+        place: Option<PointerValue<'ctx>>,
+        ty: &Ty,
+        base: Option<&(tir::LocalId, Vec<usize>)>,
+        path: &mut Vec<usize>,
+    ) -> GenResult<()> {
         match pat {
-            Pat::Binding(id) => self.bind(*id, place, ty),
-            Pat::At(id, inner) => {
-                self.bind(*id, place, ty)?;
-                self.pat_bind(inner, place, ty)
+            Pat::Binding(id, mode) => self.bind(*id, *mode, place, ty, base, path),
+            Pat::At(id, mode, inner) => {
+                self.bind(*id, *mode, place, ty, base, path)?;
+                self.pat_bind(inner, place, ty, base, path)
             }
             Pat::Some(sub) => {
                 let Ty::Option(inner) = ty else { unreachable!() };
@@ -998,14 +1564,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     }
                     _ => None,
                 };
-                self.pat_bind(sub, payload, inner)
+                path.push(0);
+                self.pat_bind(sub, payload, inner, base, path)?;
+                path.pop();
+                Ok(())
             }
             Pat::Product(subs) => {
                 let (Some(ptr), Some(t)) = (place, self.llvm_ty(ty)) else { return Ok(()) };
                 let tys = self.field_tys(ty);
                 for (i, sub) in subs.iter().enumerate() {
                     let p = self.builder.build_struct_gep(t.into_struct_type(), ptr, i as u32, "").map_err(llvm_err)?;
-                    self.pat_bind(sub, Some(p), &tys[i])?;
+                    path.push(i);
+                    self.pat_bind(sub, Some(p), &tys[i], base, path)?;
+                    path.pop();
                 }
                 Ok(())
             }
@@ -1020,7 +1591,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let tys = self.variant_tys(a.id, *index);
                 for (i, sub) in subs.iter().enumerate() {
                     let p = self.builder.build_struct_gep(vt, payload, i as u32, "").map_err(llvm_err)?;
-                    self.pat_bind(sub, Some(p), &tys[i])?;
+                    path.push(*index);
+                    path.push(i);
+                    self.pat_bind(sub, Some(p), &tys[i], base, path)?;
+                    path.pop();
+                    path.pop();
                 }
                 Ok(())
             }
@@ -1029,10 +1604,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    fn bind(&mut self, id: tir::LocalId, place: Option<PointerValue<'ctx>>, ty: &Ty) -> GenResult<()> {
+    fn bind(
+        &mut self,
+        id: tir::LocalId,
+        mode: tir::BindMode,
+        place: Option<PointerValue<'ctx>>,
+        ty: &Ty,
+        base: Option<&(tir::LocalId, Vec<usize>)>,
+        path: &[usize],
+    ) -> GenResult<()> {
         if let (Some(slot), Some(ptr), Some(t)) = (self.slots[id.0], place, self.llvm_ty(ty)) {
             let v = self.builder.build_load(t, ptr, "").map_err(llvm_err)?;
             self.builder.build_store(slot, v).map_err(llvm_err)?;
+        }
+        self.set_initialized(id, &[]);
+        if mode == tir::BindMode::Move
+            && let Some((root, base_path)) = base
+        {
+            let mut full = base_path.clone();
+            full.extend_from_slice(path);
+            self.mark_moved(*root, &full);
         }
         Ok(())
     }
@@ -1052,12 +1643,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             tir::ExprKind::Index(base, index) => {
                 let Ty::Array(_, len) = &base.ty else {
                     // The base diverged; this code is unreachable.
-                    self.expr(base)?;
-                    self.expr(index)?;
+                    self.expr_mode(base, Mode::Use)?;
+                    self.expr_mode(index, Mode::Use)?;
                     return Ok(None);
                 };
                 let base_ptr = self.place_ptr(base)?;
-                let i = self.expr(index)?;
+                let i = self.expr_mode(index, Mode::Use)?;
                 let i = self.need_int(i, &Ty::Int(IntTy::Usize));
                 let n = self.usize_ty.const_int(*len, false);
                 let in_bounds = self.builder.build_int_compare(IntPredicate::ULT, i, n, "").map_err(llvm_err)?;
@@ -1086,13 +1677,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     unsafe { self.builder.build_in_bounds_gep(array_t, base_ptr, &[zero, i], "") }.map_err(llvm_err)?;
                 Ok(Some(ptr))
             }
+            tir::ExprKind::Deref(base) => {
+                let v = self.expr_mode(base, Mode::Use)?;
+                match v {
+                    Some(v) => Ok(Some(v.into_pointer_value())),
+                    None => Ok(None),
+                }
+            }
             _ => {
-                let v = self.expr(e)?;
+                let v = self.expr_mode(e, Mode::Use)?;
                 match self.llvm_ty(&e.ty) {
                     Some(t) => {
                         let slot = self.alloca(t, "tmp")?;
                         let v = self.need(v, &e.ty);
                         self.builder.build_store(slot, v).map_err(llvm_err)?;
+                        // The value is a temporary of the statement that contains this expression (DR5).
+                        self.add_temp_slot(slot, &e.ty);
                         Ok(Some(slot))
                     }
                     None => Ok(None),
@@ -1144,7 +1744,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn product(&mut self, fields: &[(usize, &'a tir::Expr)], ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let mut values = Vec::new();
         for (i, e) in fields {
-            let v = self.expr(e)?;
+            let v = self.expr_mode(e, Mode::Move)?;
             values.push((*i, v, &e.ty));
         }
         let Some(t) = self.llvm_ty(ty) else { return Ok(None) };
@@ -1167,7 +1767,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let Ty::Enum(a) = ty else { unreachable!("a variant has an enum type") };
         let mut values = Vec::new();
         for (i, e) in fields {
-            let v = self.expr(e)?;
+            let v = self.expr_mode(e, Mode::Move)?;
             values.push((*i, v, &e.ty));
         }
         let et = self.enum_ty(a.id);
@@ -1192,7 +1792,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn for_array(&mut self, pat: &'a Pat, array: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
         let Ty::Array(elem, n) = &array.ty else {
             // The array expression diverges; nothing after it runs.
-            self.expr(array)?;
+            self.expr_mode(array, Mode::Use)?;
             return Ok(());
         };
         let base = self.place_ptr(array)?;
@@ -1220,7 +1820,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             _ => None,
         };
-        self.pat_bind(pat, elem_ptr, elem)?;
+        self.pat_bind(pat, elem_ptr, elem, None, &mut Vec::new())?;
         self.loop_body(body, latch, exit)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
@@ -1325,8 +1925,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return self.short_circuit(op, l, r).map(Some);
         }
         let operand_ty = if l.ty == Ty::Never { &r.ty } else { &l.ty };
-        let lv = self.expr(l)?;
-        let rv = self.expr(r)?;
+        let lv = self.expr_mode(l, Mode::Use)?;
+        let rv = self.expr_mode(r, Mode::Use)?;
         if matches!(op, BinOp::Eq | BinOp::Ne)
             && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) | Ty::Option(_))
         {
@@ -1403,7 +2003,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     fn short_circuit(&mut self, op: BinOp, l: &'a tir::Expr, r: &'a tir::Expr) -> GenResult<BasicValueEnum<'ctx>> {
-        let lv = self.expr(l)?;
+        let lv = self.expr_mode(l, Mode::Use)?;
         let lv = self.need_int(lv, &Ty::Bool);
         let left_end = self.builder.get_insert_block().expect("positioned");
         let rhs_bb = self.new_block("logic.rhs");
@@ -1414,7 +2014,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         .map_err(llvm_err)?;
         self.builder.position_at_end(rhs_bb);
-        let rv = self.expr(r)?;
+        let rv = self.expr_mode(r, Mode::Use)?;
         let rv = self.need_int(rv, &Ty::Bool);
         let right_end = self.builder.get_insert_block().expect("positioned");
         self.builder.build_unconditional_branch(merge).map_err(llvm_err)?;
@@ -1599,7 +2199,39 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     // ----- built-ins ---------------------------------------------------------------
 
     fn builtin(&mut self, b: Builtin, args: &'a [tir::Expr], span: Span) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let s = self.expr(&args[0])?;
+        match b {
+            Builtin::StringNew => {
+                let out = self.alloca(self.string_ty.into(), "string")?;
+                self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::StringFrom => {
+                let s = self.expr_mode(&args[0], Mode::Use)?;
+                let s = self.need(s, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(s, 0, "ptr").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(s, 1, "len").map_err(llvm_err)?;
+                let out = self.alloca(self.string_ty.into(), "string")?;
+                self.builder
+                    .build_call(self.rt.str_to_string, &[ptr.into(), len.into(), out.into()], "")
+                    .map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::HeapNew => {
+                let value = self.expr_mode(&args[0], Mode::Move)?;
+                let inner = args[0].ty.clone();
+                let size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0);
+                let size = self.usize_ty.const_int(size.max(1), false);
+                let call = self.builder.build_call(self.rt.alloc, &[size.into()], "heap").map_err(llvm_err)?;
+                let ptr = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+                if self.llvm_ty(&inner).is_some() {
+                    let v = self.need(value, &inner);
+                    self.builder.build_store(ptr, v).map_err(llvm_err)?;
+                }
+                return Ok(Some(ptr.into()));
+            }
+            _ => {}
+        }
+        let s = self.expr_mode(&args[0], Mode::Use)?;
         let s = self.need(s, &Ty::Str).into_struct_value();
         let ptr = self.builder.build_extract_value(s, 0, "ptr").map_err(llvm_err)?;
         let len = self.builder.build_extract_value(s, 1, "len").map_err(llvm_err)?;
@@ -1613,6 +2245,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.continue_dead();
                 return Ok(None);
             }
+            _ => unreachable!("handled above"),
         };
         let i32_ty = self.cx.i32_type();
         let args: [BasicMetadataValueEnum; 4] =
@@ -1628,10 +2261,41 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        if m == Method::Clone {
+            let recv_ty = args[0].ty.clone();
+            let src = match self.direct_place_ptr(&args[0])? {
+                Some(ptr) => ptr,
+                None => {
+                    let v = self.expr_mode(&args[0], Mode::Use)?;
+                    let t = self.llvm_ty(&recv_ty).expect("a cloned value has a type");
+                    let slot = self.alloca(t, "clone.src")?;
+                    let v = self.need(v, &recv_ty);
+                    self.builder.build_store(slot, v).map_err(llvm_err)?;
+                    self.add_temp_slot(slot, &recv_ty);
+                    slot
+                }
+            };
+            let t = self.llvm_ty(ty).expect("a cloned value has a type");
+            let dst = self.alloca(t, "clone.dst")?;
+            let glue = self.clone_glue(ty);
+            self.builder.build_call(glue, &[dst.into(), src.into()], "").map_err(llvm_err)?;
+            return Ok(Some(self.builder.build_load(t, dst, "").map_err(llvm_err)?));
+        }
+        if m == Method::PushStr {
+            let recv = self.place_ptr(&args[0])?.ok_or("`push_str` needs a place receiver")?;
+            let s = self.expr_mode(&args[1], Mode::Use)?;
+            let s = self.need(s, &Ty::Str).into_struct_value();
+            let ptr = self.builder.build_extract_value(s, 0, "ptr").map_err(llvm_err)?;
+            let len = self.builder.build_extract_value(s, 1, "len").map_err(llvm_err)?;
+            self.builder
+                .build_call(self.rt.string_push_str, &[recv.into(), ptr.into(), len.into()], "")
+                .map_err(llvm_err)?;
+            return Ok(None);
+        }
         let recv_ty = &args[0].ty;
         let mut values = Vec::new();
         for a in args {
-            let v = self.expr(a)?;
+            let v = self.expr_mode(a, Mode::Use)?;
             values.push(self.need(v, &a.ty));
         }
         let recv = values[0];
@@ -1710,6 +2374,381 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             _ => return Err(format!("unsupported to_string on `{ty}`")),
         }
         self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)
+    }
+
+    // ----- drop and clone glue ---------------------------------------------------
+
+    fn drop_glue(&mut self, ty: &Ty) -> FunctionValue<'ctx> {
+        if let Some(f) = self.glue.iter().find(|(k, t, _)| *k == Glue::Drop && t == ty).map(|(_, _, f)| *f) {
+            return f;
+        }
+        let void = self.cx.void_type();
+        let ptr = self.cx.ptr_type(AddressSpace::default());
+        let name = format!("burdin.drop.{}", self.glue.len());
+        let f = self.module.add_function(&name, void.fn_type(&[ptr.into()], false), Some(Linkage::Internal));
+        self.glue.push((Glue::Drop, ty.clone(), f));
+        self.pending_glue.push((Glue::Drop, ty.clone(), f));
+        f
+    }
+
+    fn clone_glue(&mut self, ty: &Ty) -> FunctionValue<'ctx> {
+        if let Some(f) = self.glue.iter().find(|(k, t, _)| *k == Glue::Clone && t == ty).map(|(_, _, f)| *f) {
+            return f;
+        }
+        let void = self.cx.void_type();
+        let ptr = self.cx.ptr_type(AddressSpace::default());
+        let name = format!("burdin.clone.{}", self.glue.len());
+        let f =
+            self.module.add_function(&name, void.fn_type(&[ptr.into(), ptr.into()], false), Some(Linkage::Internal));
+        self.glue.push((Glue::Clone, ty.clone(), f));
+        self.pending_glue.push((Glue::Clone, ty.clone(), f));
+        f
+    }
+
+    fn drop_glue_body(&mut self, value: FunctionValue<'ctx>, ty: &Ty) -> GenResult<()> {
+        self.start_glue(value)?;
+        let ptr = value.get_nth_param(0).expect("the drop glue takes one pointer").into_pointer_value();
+        self.drop_value(ptr, ty)?;
+        self.finish_glue()?;
+        Ok(())
+    }
+
+    fn clone_glue_body(&mut self, value: FunctionValue<'ctx>, ty: &Ty) -> GenResult<()> {
+        self.start_glue(value)?;
+        let dst = value.get_nth_param(0).expect("clone takes a destination").into_pointer_value();
+        let src = value.get_nth_param(1).expect("clone takes a source").into_pointer_value();
+        self.clone_value(dst, src, ty)?;
+        self.finish_glue()?;
+        Ok(())
+    }
+
+    fn start_glue(&mut self, value: FunctionValue<'ctx>) -> GenResult<()> {
+        let saved_position = self.builder.get_insert_block();
+        let saved_entry = self.entry_builder.get_insert_block();
+        self.context = Some(SavedContext {
+            position: saved_position,
+            entry: saved_entry,
+            function: self.function,
+            locals: self.locals,
+            ret: self.ret,
+            scopes: std::mem::take(&mut self.scopes),
+            temps: std::mem::take(&mut self.temps),
+            flags: std::mem::take(&mut self.flags),
+            loops: std::mem::take(&mut self.loops),
+        });
+        let entry = self.cx.append_basic_block(value, "entry");
+        let body = self.cx.append_basic_block(value, "body");
+        self.entry_builder.position_at_end(entry);
+        self.builder.position_at_end(body);
+        self.function = Some(value);
+        self.locals = &[];
+        self.ret = &Ty::Unit;
+        self.scopes = vec![Vec::new()];
+        self.temps = vec![Vec::new()];
+        self.loops.clear();
+        self.flags.clear();
+        Ok(())
+    }
+
+    fn finish_glue(&mut self) -> GenResult<()> {
+        let value = self.current_fn();
+        self.builder.build_return(None).map_err(llvm_err)?;
+        let entry = value.get_first_basic_block().expect("glue has an entry block");
+        self.entry_builder
+            .build_unconditional_branch(entry.get_next_basic_block().expect("glue has a body"))
+            .map_err(llvm_err)?;
+        let ctx = self.context.take().expect("inside a glue body");
+        self.function = ctx.function;
+        self.locals = ctx.locals;
+        self.ret = ctx.ret;
+        self.scopes = ctx.scopes;
+        self.temps = ctx.temps;
+        self.flags = ctx.flags;
+        self.loops = ctx.loops;
+        if let Some(position) = ctx.position {
+            self.builder.position_at_end(position);
+        }
+        if let Some(entry) = ctx.entry {
+            self.entry_builder.position_at_end(entry);
+        }
+        Ok(())
+    }
+
+    /// Drops the fully initialized value at `addr` (DR2). Does not look at drop flags: the caller knows the value
+    /// is initialized, or has already checked the flag for it.
+    fn drop_value(&mut self, addr: PointerValue<'ctx>, ty: &Ty) -> GenResult<()> {
+        let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+        match ty {
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
+            Ty::String => {
+                let s = self.builder.build_load(self.string_ty, addr, "s").map_err(llvm_err)?.into_struct_value();
+                let p = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
+                let cap = self.builder.build_extract_value(s, 2, "").map_err(llvm_err)?;
+                self.builder.build_call(self.rt.string_free, &[p.into(), cap.into()], "").map_err(llvm_err)?;
+                Ok(())
+            }
+            Ty::Heap(inner) => {
+                let inner = (**inner).clone();
+                let p = self.builder.build_load(ptr_ty, addr, "heap").map_err(llvm_err)?.into_pointer_value();
+                let is_null = self.builder.build_is_null(p, "").map_err(llvm_err)?;
+                let alive = self.builder.build_not(is_null, "").map_err(llvm_err)?;
+                self.if_then(alive, "heap.drop", move |cg| {
+                    if cg.needs_drop(&inner) {
+                        let glue = cg.drop_glue(&inner);
+                        cg.builder.build_call(glue, &[p.into()], "").map_err(llvm_err)?;
+                    }
+                    cg.builder.build_call(cg.rt.free, &[p.into()], "").map_err(llvm_err)?;
+                    Ok(())
+                })
+            }
+            Ty::Struct(a) => {
+                if let Some(m) = self.program.structs[a.id].drop_method {
+                    self.builder.build_call(self.functions[m.0], &[addr.into()], "").map_err(llvm_err)?;
+                }
+                let st = self.llvm_ty(ty).expect("a struct has a type").into_struct_type();
+                for (i, fty) in self.field_tys(ty).iter().enumerate() {
+                    if !self.needs_drop(fty) {
+                        continue;
+                    }
+                    let f = self.builder.build_struct_gep(st, addr, i as u32, "").map_err(llvm_err)?;
+                    self.drop_value(f, fty)?;
+                }
+                Ok(())
+            }
+            Ty::Tuple(ts) => {
+                let ts = ts.clone();
+                let st = self.llvm_ty(ty).expect("a tuple has a type").into_struct_type();
+                for (i, fty) in ts.iter().enumerate() {
+                    if !self.needs_drop(fty) {
+                        continue;
+                    }
+                    let f = self.builder.build_struct_gep(st, addr, i as u32, "").map_err(llvm_err)?;
+                    self.drop_value(f, fty)?;
+                }
+                Ok(())
+            }
+            Ty::Enum(a) => {
+                let id = a.id;
+                if let Some(m) = self.program.enums[id].drop_method {
+                    self.builder.build_call(self.functions[m.0], &[addr.into()], "").map_err(llvm_err)?;
+                }
+                self.drop_enum_fields(addr, id)
+            }
+            Ty::Option(inner) => {
+                let inner = (**inner).clone();
+                let ot = self.option_ty(&inner);
+                let tag_ptr = self.builder.build_struct_gep(ot, addr, 0, "is_some").map_err(llvm_err)?;
+                let tag = self.builder.build_load(self.cx.bool_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
+                self.if_then(tag, "option.drop", move |cg| {
+                    if cg.llvm_ty(&inner).is_some() && cg.needs_drop(&inner) {
+                        let p = cg.builder.build_struct_gep(ot, addr, 1, "").map_err(llvm_err)?;
+                        cg.drop_value(p, &inner)?;
+                    }
+                    Ok(())
+                })
+            }
+            Ty::Array(elem, n) => {
+                let n = *n;
+                if n == 0 || !self.needs_drop(elem) {
+                    return Ok(());
+                }
+                let elem = (**elem).clone();
+                let array_t = self.llvm_ty(ty).expect("an array has a type");
+                let index = self.alloca(self.usize_ty.into(), "drop.i")?;
+                self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+                let header = self.new_block("array.drop.cond");
+                let body = self.new_block("array.drop.body");
+                let exit = self.new_block("array.drop.end");
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(header);
+                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                let go = self
+                    .builder
+                    .build_int_compare(IntPredicate::ULT, i, self.usize_ty.const_int(n, false), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                // SAFETY (LLVM): i < n.
+                let p = unsafe { self.builder.build_in_bounds_gep(array_t, addr, &[i], "") }.map_err(llvm_err)?;
+                self.drop_value(p, &elem)?;
+                let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                self.builder.build_store(index, next).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(exit);
+                Ok(())
+            }
+        }
+    }
+
+    /// Switches on the tag of the enum at `addr` and drops the active variant's fields, in field order.
+    fn drop_enum_fields(&mut self, addr: PointerValue<'ctx>, id: usize) -> GenResult<()> {
+        let et = self.enum_ty(id);
+        let tag_ptr = self.builder.build_struct_gep(et, addr, 0, "tag").map_err(llvm_err)?;
+        let tag = self.builder.build_load(self.cx.i32_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
+        let end = self.new_block("enum.drop.end");
+        let mut cases = Vec::new();
+        for (vi, v) in self.program.enums[id].variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            cases.push((vi, self.new_block("enum.drop")));
+        }
+        let switch_cases: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> =
+            cases.iter().map(|(vi, bb)| (self.cx.i32_type().const_int(*vi as u64, false), *bb)).collect();
+        self.builder.build_switch(tag, end, &switch_cases).map_err(llvm_err)?;
+        for (vi, case) in cases {
+            self.builder.position_at_end(case);
+            let payload = self.builder.build_struct_gep(et, addr, 1, "").map_err(llvm_err)?;
+            let vt = self.variant_ty(id, vi);
+            for (fi, fty) in self.variant_tys(id, vi).iter().enumerate() {
+                if !self.needs_drop(fty) {
+                    continue;
+                }
+                let f = self.builder.build_struct_gep(vt, payload, fi as u32, "").map_err(llvm_err)?;
+                self.drop_value(f, fty)?;
+            }
+            self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        }
+        self.builder.position_at_end(end);
+        Ok(())
+    }
+
+    /// Deep-copies the value at `src` into `dst` (the compiler-derived `clone`).
+    fn clone_value(&mut self, dst: PointerValue<'ctx>, src: PointerValue<'ctx>, ty: &Ty) -> GenResult<()> {
+        if self.llvm_ty(ty).is_none() {
+            return Ok(());
+        }
+        if self.is_copy(ty) {
+            return self.copy_bits(dst, src, ty);
+        }
+        let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+        match ty {
+            Ty::String => {
+                self.builder.build_call(self.rt.string_clone, &[dst.into(), src.into()], "").map_err(llvm_err)?;
+                Ok(())
+            }
+            Ty::Heap(inner) => {
+                let inner = (**inner).clone();
+                let p = self.builder.build_load(ptr_ty, src, "heap").map_err(llvm_err)?.into_pointer_value();
+                let size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1);
+                let size = self.usize_ty.const_int(size, false);
+                let call = self.builder.build_call(self.rt.alloc, &[size.into()], "heap").map_err(llvm_err)?;
+                let newp = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+                self.clone_value(newp, p, &inner)?;
+                self.builder.build_store(dst, newp).map_err(llvm_err)?;
+                Ok(())
+            }
+            Ty::Struct(_) | Ty::Tuple(_) => {
+                let st = self.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
+                for (i, fty) in self.field_tys(ty).iter().enumerate() {
+                    if self.llvm_ty(fty).is_none() {
+                        continue;
+                    }
+                    let d = self.builder.build_struct_gep(st, dst, i as u32, "").map_err(llvm_err)?;
+                    let s = self.builder.build_struct_gep(st, src, i as u32, "").map_err(llvm_err)?;
+                    self.clone_value(d, s, fty)?;
+                }
+                Ok(())
+            }
+            Ty::Enum(a) => self.clone_enum_fields(dst, src, a.id),
+            Ty::Option(inner) => {
+                let inner = (**inner).clone();
+                let ot = self.option_ty(&inner);
+                let src_tag = self.builder.build_struct_gep(ot, src, 0, "").map_err(llvm_err)?;
+                let dst_tag = self.builder.build_struct_gep(ot, dst, 0, "").map_err(llvm_err)?;
+                let tag = self
+                    .builder
+                    .build_load(self.cx.bool_type(), src_tag, "is_some")
+                    .map_err(llvm_err)?
+                    .into_int_value();
+                self.builder.build_store(dst_tag, tag).map_err(llvm_err)?;
+                if self.llvm_ty(&inner).is_some() {
+                    self.if_then(tag, "option.clone", move |cg| {
+                        let s = cg.builder.build_struct_gep(ot, src, 1, "").map_err(llvm_err)?;
+                        let d = cg.builder.build_struct_gep(ot, dst, 1, "").map_err(llvm_err)?;
+                        cg.clone_value(d, s, &inner)
+                    })?;
+                }
+                Ok(())
+            }
+            Ty::Array(elem, n) => {
+                let n = *n;
+                let elem = (**elem).clone();
+                let array_t = self.llvm_ty(ty).expect("an array has a type");
+                let index = self.alloca(self.usize_ty.into(), "clone.i")?;
+                self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+                let header = self.new_block("array.clone.cond");
+                let body = self.new_block("array.clone.body");
+                let exit = self.new_block("array.clone.end");
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(header);
+                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                let go = self
+                    .builder
+                    .build_int_compare(IntPredicate::ULT, i, self.usize_ty.const_int(n, false), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                // SAFETY (LLVM): i < n.
+                let s = unsafe { self.builder.build_in_bounds_gep(array_t, src, &[i], "") }.map_err(llvm_err)?;
+                let d = unsafe { self.builder.build_in_bounds_gep(array_t, dst, &[i], "") }.map_err(llvm_err)?;
+                self.clone_value(d, s, &elem)?;
+                let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                self.builder.build_store(index, next).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(exit);
+                Ok(())
+            }
+            _ => self.copy_bits(dst, src, ty),
+        }
+    }
+
+    fn clone_enum_fields(&mut self, dst: PointerValue<'ctx>, src: PointerValue<'ctx>, id: usize) -> GenResult<()> {
+        let et = self.enum_ty(id);
+        let src_tag_ptr = self.builder.build_struct_gep(et, src, 0, "").map_err(llvm_err)?;
+        let dst_tag_ptr = self.builder.build_struct_gep(et, dst, 0, "").map_err(llvm_err)?;
+        let tag = self.builder.build_load(self.cx.i32_type(), src_tag_ptr, "tag").map_err(llvm_err)?.into_int_value();
+        self.builder.build_store(dst_tag_ptr, tag).map_err(llvm_err)?;
+        let end = self.new_block("enum.clone.end");
+        let mut cases = Vec::new();
+        for (vi, v) in self.program.enums[id].variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            cases.push((vi, self.new_block("enum.clone")));
+        }
+        let switch_cases: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> =
+            cases.iter().map(|(vi, bb)| (self.cx.i32_type().const_int(*vi as u64, false), *bb)).collect();
+        self.builder.build_switch(tag, end, &switch_cases).map_err(llvm_err)?;
+        for (vi, case) in cases {
+            self.builder.position_at_end(case);
+            let sp = self.builder.build_struct_gep(et, src, 1, "").map_err(llvm_err)?;
+            let dp = self.builder.build_struct_gep(et, dst, 1, "").map_err(llvm_err)?;
+            let vt = self.variant_ty(id, vi);
+            for (fi, fty) in self.variant_tys(id, vi).iter().enumerate() {
+                if self.llvm_ty(fty).is_none() {
+                    continue;
+                }
+                let s = self.builder.build_struct_gep(vt, sp, fi as u32, "").map_err(llvm_err)?;
+                let d = self.builder.build_struct_gep(vt, dp, fi as u32, "").map_err(llvm_err)?;
+                self.clone_value(d, s, fty)?;
+            }
+            self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        }
+        self.builder.position_at_end(end);
+        Ok(())
+    }
+
+    /// A bitwise copy of a value of `ty`.
+    fn copy_bits(&mut self, dst: PointerValue<'ctx>, src: PointerValue<'ctx>, ty: &Ty) -> GenResult<()> {
+        let Some(t) = self.llvm_ty(ty) else { return Ok(()) };
+        let size = self.target_data.get_abi_size(&t);
+        if size == 0 {
+            return Ok(());
+        }
+        let size = self.usize_ty.const_int(size, false);
+        self.builder.build_memcpy(dst, 1, src, 1, size).map_err(llvm_err)?;
+        Ok(())
     }
 
     // ----- panics --------------------------------------------------------------------
@@ -1794,7 +2833,34 @@ fn wrapping_op(m: Method) -> BinOp {
 fn is_place(e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) => is_place(base),
+        tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => is_place(base),
+        _ => false,
+    }
+}
+
+/// The locals a pattern binds, in source order.
+fn collect_bindings(pat: &Pat, out: &mut Vec<tir::LocalId>) {
+    match pat {
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Binding(id, _) => out.push(*id),
+        Pat::At(id, _, inner) => {
+            out.push(*id);
+            collect_bindings(inner, out);
+        }
+        Pat::Or(alts) => alts.iter().for_each(|a| collect_bindings(a, out)),
+        Pat::Some(inner) => collect_bindings(inner, out),
+        Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
+    }
+}
+
+/// Whether a pattern takes any part of the scrutinee by move.
+fn pattern_moves(pat: &Pat) -> bool {
+    match pat {
+        Pat::Binding(_, mode) => *mode == tir::BindMode::Move,
+        Pat::At(_, mode, inner) => *mode == tir::BindMode::Move || pattern_moves(inner),
+        Pat::Or(alts) => alts.iter().any(pattern_moves),
+        Pat::Some(inner) => pattern_moves(inner),
+        Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().any(pattern_moves),
         _ => false,
     }
 }

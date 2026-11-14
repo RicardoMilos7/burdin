@@ -108,6 +108,57 @@ void burdin_rt_string_free(uint8_t *ptr, size_t cap) {
     }
 }
 
+/* The allocation behind a `Heap<T>`. */
+void *burdin_rt_alloc(size_t size) {
+    void *ptr = malloc(size == 0 ? 1 : size);
+    if (ptr == NULL) {
+        write_cstr(2, "panic: out of memory\n");
+        die();
+    }
+    return ptr;
+}
+
+void burdin_rt_free(void *ptr) {
+    free(ptr);
+}
+
+void burdin_rt_string_new(BurdinString *out) {
+    out->ptr = NULL;
+    out->len = 0;
+    out->cap = 0;
+}
+
+void burdin_rt_string_clone(BurdinString *dst, const BurdinString *src) {
+    alloc_string(dst, src->ptr, src->len);
+}
+
+/* Appends `len` bytes, growing the buffer when needed. */
+void burdin_rt_string_push_str(BurdinString *s, const uint8_t *ptr, size_t len) {
+    if (len == 0) {
+        return;
+    }
+    size_t need = s->len + len;
+    if (need < s->len) {
+        write_cstr(2, "panic: out of memory\n");
+        die();
+    }
+    if (need > s->cap) {
+        size_t cap = s->cap + s->cap / 2 + 8;
+        if (cap < need) {
+            cap = need;
+        }
+        uint8_t *grown = (uint8_t *)realloc(s->ptr, cap);
+        if (grown == NULL) {
+            write_cstr(2, "panic: out of memory\n");
+            die();
+        }
+        s->ptr = grown;
+        s->cap = cap;
+    }
+    memcpy(s->ptr + s->len, ptr, len);
+    s->len = need;
+}
+
 void burdin_rt_str_to_string(const uint8_t *ptr, size_t len, BurdinString *out) {
     alloc_string(out, ptr, len);
 }

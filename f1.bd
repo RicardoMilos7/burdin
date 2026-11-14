@@ -1,0 +1,3 @@
+struct Thing { id: i32 }
+fn take(own t: Thing) -> bool { true }
+fn main() { let a = Thing { id: 1 }; println(take(a).to_string()) }
