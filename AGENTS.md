@@ -22,7 +22,7 @@ tests/run-tests.sh                 run the conformance tests
 tests/run-tests.sh m05 -v          one milestone, with diffs
 tests/run-tests.sh --release       release profile (skips debug-only tests)
 tests/check-tests.sh               validate directives and error codes (no compiler needed)
-tests/check-ci.sh                  validate that the CI workflow still covers the suite (no compiler needed)
+tests/check-ci.sh                  validate the CI workflow and the pinned Rust toolchain (no compiler needed)
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests

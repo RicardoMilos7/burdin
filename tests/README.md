@@ -64,7 +64,7 @@ tests/run-tests.sh --release          # release profile (skips debug-only tests)
 tests/run-tests.sh --list             # list tests and their kinds
 BURDIN=/path/to/burdin tests/run-tests.sh # choose the compiler driver
 tests/check-tests.sh                  # check directives and error codes (no compiler needed)
-tests/check-ci.sh                     # check the CI workflow still covers the suite (no compiler needed)
+tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
 pwsh tests/check-tests.ps1            # the same check in PowerShell
 ```
 

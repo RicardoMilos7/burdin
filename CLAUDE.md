@@ -85,8 +85,12 @@ not on sema. Keep everything before codegen free of LLVM so the checks can be te
 
 ## Toolchain
 
-Current stable Rust (edition 2024; no toolchain pin for now), **LLVM 21** through `inkwell` 0.11 (feature `llvm21-1`), and the
-system C compiler driver as the linker against libc (`cc` on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
+Rust is pinned by `rust-toolchain.toml` to an exact stable version with the `clippy` and `rustfmt` components (currently
+`1.100.0`; edition 2024), so `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` give the same
+verdict on a clean machine. Bump the version deliberately, together with a `cargo fmt --all` pass and a HANDOFF.md note;
+`tests/check-ci.sh` fails if the pin, its components, or CI's verification step goes missing. **LLVM 21** through
+`inkwell` 0.11 (feature `llvm21-1`), and the system C compiler driver as the linker against libc (`cc` on Linux and
+macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
 There is no C runtime: `burdin_codegen/src/runtime.rs` generates `main`, output, panics, string allocation and
 conversions, and heap allocation as LLVM IR that calls libc directly.
 Platforms: Linux, macOS, Windows; x86-64 and arm64.
