@@ -86,6 +86,8 @@ pub enum Ty {
     Array(Box<Ty>, u64),
     /// The prelude's `Option<T>`. Only matching on it is supported so far (milestone 2 needs `checked_add`).
     Option(Box<Ty>),
+    /// `Heap<T>`: a single owned allocation of a value in the C heap.
+    Heap(Box<Ty>),
     /// A tuple of two or more elements (or one, written with a trailing comma).
     Tuple(Vec<Ty>),
     Struct(AdtRef),
@@ -118,6 +120,7 @@ impl fmt::Display for Ty {
             Ty::String => f.write_str("String"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
             Ty::Option(t) => write!(f, "Option<{t}>"),
+            Ty::Heap(t) => write!(f, "Heap<{t}>"),
             Ty::Tuple(elems) => {
                 f.write_str("(")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -154,6 +157,12 @@ pub enum Builtin {
     Eprint,
     Eprintln,
     Panic,
+    /// `String.new()`: an empty string.
+    StringNew,
+    /// `String.from(str)`: a new string with a copy of the bytes.
+    StringFrom,
+    /// `Heap.new(value)`: allocates and moves `value` into a fresh heap allocation.
+    HeapNew,
 }
 
 /// Built-in methods of the primitive types.
@@ -169,6 +178,10 @@ pub enum Method {
     Min,
     Max,
     Abs,
+    /// `String.push_str(str)`: appends bytes, growing the buffer.
+    PushStr,
+    /// `x.clone()`: a deep copy derived by the compiler.
+    Clone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,17 +229,23 @@ pub struct Derives {
     pub ord: bool,
     pub hash: bool,
     pub default: bool,
+    /// Where the derive names were written, for diagnostics at the derive clause.
+    pub copy_span: Option<Span>,
+    pub clone_span: Option<Span>,
 }
 
 pub struct FieldDef {
     pub name: String,
     pub ty: Ty,
+    pub span: Span,
 }
 
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
     pub derives: Derives,
+    /// The `Drop::drop` method of `Type: Drop { ... }`, called by the drop glue.
+    pub drop_method: Option<FuncId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,6 +266,8 @@ pub struct EnumDef {
     pub name: String,
     pub variants: Vec<VariantDef>,
     pub derives: Derives,
+    /// The `Drop::drop` method of `Type: Drop { ... }`, called by the drop glue.
+    pub drop_method: Option<FuncId>,
 }
 
 /// A constant. Its value is expanded at every use, so it costs nothing at run time beyond the expression itself.
@@ -261,6 +282,29 @@ pub struct Function {
     pub ret: Ty,
     pub locals: Vec<Local>,
     pub body: Block,
+    /// Every place read in a move context, as a local and a field path from it. The code generator
+    /// allocates a runtime drop flag for each of them.
+    pub moved: Vec<MovedPlace>,
+}
+
+/// A place that is moved somewhere in a function: `local` followed by struct or tuple field indices.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovedPlace {
+    pub local: LocalId,
+    pub path: Vec<usize>,
+}
+
+/// How a local came to be, which decides whether and when it is dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalKind {
+    /// A read-only or `mut` parameter: borrowed, never dropped by the callee.
+    BorrowedParam,
+    /// An `own` parameter: owned by the callee and dropped when it returns.
+    OwnParam,
+    /// A `let` or pattern binding that takes ownership: dropped at the end of its scope.
+    Owned,
+    /// A pattern binding that is a view of a borrowed scrutinee: not dropped.
+    View,
 }
 
 pub struct Local {
@@ -269,6 +313,7 @@ pub struct Local {
     pub mutable: bool,
     /// A parameter passed by address (a `mut self` receiver): the local is the caller's place.
     pub by_ref: bool,
+    pub kind: LocalKind,
 }
 
 pub struct Block {
@@ -331,6 +376,8 @@ pub enum ExprKind {
     Unary(UnOp, Box<Expr>),
     /// Converts the operand to this expression's type.
     Cast(Box<Expr>),
+    /// `*h` on a `Heap<T>`: the pointee.
+    Deref(Box<Expr>),
     Array(Vec<Expr>),
     ArrayRepeat(Box<Expr>, u64),
     Index(Box<Expr>, Box<Expr>),
@@ -351,11 +398,22 @@ pub struct Arm {
     pub body: Expr,
 }
 
+/// How a pattern binding takes its value from the scrutinee.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BindMode {
+    /// The binding takes ownership of the value, which is moved out of an owned scrutinee.
+    Move,
+    /// The value is a Copy type, so it is copied and the scrutinee is untouched.
+    Copy,
+    /// A read-only view of a borrowed scrutinee; nothing is moved and the binding is not dropped.
+    View,
+}
+
 pub enum Pat {
     Wild,
-    Binding(LocalId),
+    Binding(LocalId, BindMode),
     /// `name @ pattern`.
-    At(LocalId, Box<Pat>),
+    At(LocalId, BindMode, Box<Pat>),
     Bool(bool),
     Int(i128),
     Char(char),

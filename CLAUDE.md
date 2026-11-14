@@ -68,8 +68,8 @@ without a backend.
 
 Current stable Rust (edition 2024; no toolchain pin for now), **LLVM 21** through `inkwell` 0.11 (feature `llvm21-1`), and the
 system C compiler driver as the linker against libc (`cc` on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
-There is no C runtime: `burdin_codegen/src/runtime.rs` generates `main`, output, panics, and string conversions as
-LLVM IR that calls libc directly.
+There is no C runtime: `burdin_codegen/src/runtime.rs` generates `main`, output, panics, string allocation and
+conversions, and heap allocation as LLVM IR that calls libc directly.
 Platforms: Linux, macOS, Windows; x86-64 and arm64.
 
 **Development happens in WSL Ubuntu 26.04 first** (decided). The repository stays on `F:`; build and test from WSL at

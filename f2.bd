@@ -1,0 +1,2 @@
+fn f(own x: i32) -> i32 { x }
+fn main() { println(f(1).to_string()) }

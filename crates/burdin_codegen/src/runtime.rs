@@ -1,7 +1,7 @@
 //! The runtime, generated as LLVM IR into every program: the process entry point (`main`), output, `String`
-//! conversions, and the panic path. It calls libc directly: `write`, `malloc`, `free`, and `abort`, and on Windows
-//! the CRT's `_write`, `_setmode`, and `_set_abort_behavior`. Output is unbuffered, so there is nothing to flush
-//! when a panic aborts.
+//! allocation and conversions, `Heap` allocation, and the panic path. It calls libc directly: `write`, `malloc`,
+//! `realloc`, `free`, and `abort`, and on Windows the CRT's `_write`, `_setmode`, and `_set_abort_behavior`. Output
+//! is unbuffered, so there is nothing to flush when a panic aborts.
 //!
 //! The functions are internal to the module and keep the names they had as C functions (`burdin_rt_*`).
 
@@ -25,6 +25,16 @@ pub(crate) struct Runtime<'ctx> {
     pub panic_bounds: FunctionValue<'ctx>,
     /// `(ptr, cap: usize)`
     pub string_free: FunctionValue<'ctx>,
+    /// `(out: *String)`: an empty `String`.
+    pub string_new: FunctionValue<'ctx>,
+    /// `(dst: *String, src: *String)`: a copy of `src`'s buffer.
+    pub string_clone: FunctionValue<'ctx>,
+    /// `(s: *String, ptr, len: usize)`: appends `len` bytes, growing the buffer when needed.
+    pub string_push_str: FunctionValue<'ctx>,
+    /// `(size: usize)`: a `Heap` allocation, at least one byte, that panics on failure.
+    pub alloc: FunctionValue<'ctx>,
+    /// `(ptr)`: frees a `Heap` allocation.
+    pub free: FunctionValue<'ctx>,
     /// `(ptr, len: usize, out: *String)`
     pub str_to_string: FunctionValue<'ctx>,
     /// `(v: i64, out: *String)`
@@ -128,6 +138,11 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             panic: self.panic(&h)?,
             panic_bounds: self.panic_bounds(&h)?,
             string_free: self.string_free()?,
+            string_new: self.string_new()?,
+            string_clone: self.string_clone(&h)?,
+            string_push_str: self.string_push_str(&h)?,
+            alloc: self.heap_alloc(&h)?,
+            free: self.heap_free()?,
             str_to_string: self.str_to_string(&h)?,
             i64_to_string: self.int_to_string(&h, true)?,
             u64_to_string: self.int_to_string(&h, false)?,
@@ -510,6 +525,136 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.call(free, &[Self::ptr_param(f, 0).into()])?;
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
         self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `string_new(out: *String)`: an empty `String` (null buffer, no capacity).
+    fn string_new(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_string_new", void.fn_type(&[self.ptr_ty.into()], false));
+        self.b.build_store(Self::ptr_param(f, 0), self.string_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `string_clone(dst: *String, src: *String)`: a new buffer holding a copy of `src`.
+    fn string_clone(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let void = self.cx.void_type();
+        let ty = void.fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let f = self.function("burdin_rt_string_clone", ty);
+        let src = Self::ptr_param(f, 1);
+        let ptr_field = self.b.build_struct_gep(self.string_ty, src, 0, "").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, src, 1, "").map_err(llvm_err)?;
+        let bytes = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?;
+        let len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?;
+        self.call(h.alloc_string, &[Self::ptr_param(f, 0).into(), bytes.into(), len.into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `string_push_str(s: *String, ptr, len: usize)`: appends `len` bytes, growing the buffer to at least
+    /// `len + len / 2 + 8` when it does not fit. An empty append does nothing.
+    fn string_push_str(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let void = self.cx.void_type();
+        let realloc = libc(self.module, "realloc", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let ty = void.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false);
+        let f = self.function("burdin_rt_string_push_str", ty);
+        let (s, bytes, len) = (Self::ptr_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
+        let ptr_field = self.b.build_struct_gep(self.string_ty, s, 0, "").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, s, 1, "").map_err(llvm_err)?;
+        let cap_field = self.b.build_struct_gep(self.string_ty, s, 2, "").map_err(llvm_err)?;
+
+        let done = self.block(f, "done");
+        let grow = self.block(f, "grow");
+        let oom = self.block(f, "oom");
+        let check_cap = self.block(f, "check.cap");
+        let copy = self.block(f, "copy");
+        let resize = self.block(f, "resize");
+        let resized = self.block(f, "resized");
+
+        let empty = self.b.build_int_compare(IntPredicate::EQ, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(empty, done, grow).map_err(llvm_err)?;
+
+        self.b.position_at_end(grow);
+        let old_len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let cap = self.b.build_load(usize_ty, cap_field, "").map_err(llvm_err)?.into_int_value();
+        let need = self.b.build_int_add(old_len, len, "").map_err(llvm_err)?;
+        // A wrapped sum is an allocation that cannot be satisfied.
+        let overflow = self.b.build_int_compare(IntPredicate::ULT, need, old_len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(overflow, oom, check_cap).map_err(llvm_err)?;
+
+        self.b.position_at_end(check_cap);
+        let fits = self.b.build_int_compare(IntPredicate::ULE, need, cap, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(fits, copy, resize).map_err(llvm_err)?;
+
+        self.b.position_at_end(resize);
+        let half = self.b.build_right_shift(cap, usize_ty.const_int(1, false), false, "").map_err(llvm_err)?;
+        let extra = self.b.build_int_add(half, usize_ty.const_int(8, false), "").map_err(llvm_err)?;
+        let grown_cap = self.b.build_int_add(cap, extra, "").map_err(llvm_err)?;
+        let too_small = self.b.build_int_compare(IntPredicate::ULT, grown_cap, need, "").map_err(llvm_err)?;
+        let new_cap = self.b.build_select(too_small, need, grown_cap, "").map_err(llvm_err)?.into_int_value();
+        let old_ptr = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let grown = self
+            .call(realloc, &[old_ptr.into(), new_cap.into()])?
+            .expect("realloc returns a pointer")
+            .into_pointer_value();
+        let failed = self.b.build_is_null(grown, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(failed, oom, resized).map_err(llvm_err)?;
+
+        self.b.position_at_end(resized);
+        self.b.build_store(ptr_field, grown).map_err(llvm_err)?;
+        self.b.build_store(cap_field, new_cap).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(copy).map_err(llvm_err)?;
+
+        self.b.position_at_end(oom);
+        self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+
+        self.b.position_at_end(copy);
+        let buf = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let dest = self.offset(buf, old_len)?;
+        self.b.build_memcpy(dest, 1, bytes, 1, len).map_err(|e| format!("LLVM builder error: {e}"))?;
+        self.b.build_store(len_field, need).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `alloc(size: usize)`: a `malloc`ed block of at least one byte for `Heap<T>`, or a panic.
+    fn heap_alloc(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let f = self.function("burdin_rt_alloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let size = Self::int_param(f, 0);
+        let zero = self.b.build_int_compare(IntPredicate::EQ, size, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let size =
+            self.b.build_select(zero, usize_ty.const_int(1, false), size, "").map_err(llvm_err)?.into_int_value();
+        let p = self.call(malloc, &[size.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
+        let oom = self.block(f, "oom");
+        let done = self.block(f, "done");
+        self.b.build_conditional_branch(null, oom, done).map_err(llvm_err)?;
+        self.b.position_at_end(oom);
+        self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&p)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `free(ptr)`: releases a `Heap` allocation.
+    fn heap_free(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let void = self.cx.void_type();
+        let libc_free = libc(self.module, "free", void.fn_type(&[self.ptr_ty.into()], false));
+        let f = self.function("burdin_rt_free", void.fn_type(&[self.ptr_ty.into()], false));
+        self.call(libc_free, &[Self::ptr_param(f, 0).into()])?;
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(f)
     }

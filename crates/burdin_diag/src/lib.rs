@@ -86,7 +86,12 @@ impl Code {
     pub const IMMUTABLE: Code = Code("E0005");
     pub const NON_EXHAUSTIVE: Code = Code("E0006");
     pub const LITERAL_RANGE: Code = Code("E0008");
+    pub const MOVED: Code = Code("E0100");
+    pub const MOVE_FROM_BORROW: Code = Code("E0101");
+    pub const PARTIAL_MOVE_FROM_DROP: Code = Code("E0103");
+    pub const MOVED_IN_LOOP: Code = Code("E0104");
     pub const MUT_OF_IMMUTABLE: Code = Code("E0113");
+    pub const DERIVE_REQUIREMENT: Code = Code("E0130");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.
     pub const UNSUPPORTED: Code = Code("E9000");
