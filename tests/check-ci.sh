@@ -2,10 +2,12 @@
 # Checks that the CI workflow still covers everything the project requires.
 # It does not compile anything. Usage: tests/check-ci.sh
 #
-# This guards the invariants behind the first green CI run (issue #11):
-#   * the linux job and every required step are present;
-#   * LLVM 21 is installed from apt.llvm.org and pointed at;
-#   * every milestone folder under tests/ is passed to the conformance runner;
+# This guards the invariants behind the CI jobs (issues #11, #16, #17, #18):
+#   * the linux and macos jobs, and every required step, are present;
+#   * Linux installs LLVM 21 from apt.llvm.org; macOS installs Homebrew's llvm@21 and points
+#     LLVM_SYS_211_PREFIX and PATH at it, which is what `--link-lib LLVM-C` resolves through;
+#   * macOS runs on macos-latest (Apple Silicon) and checks the host target;
+#   * every job passes every milestone folder under tests/ to the conformance runner;
 #   * the scripts CI runs exist, are executable, and use LF endings;
 #   * the Rust toolchain is pinned to an exact version with clippy and rustfmt,
 #     and CI installs and verifies that pin (issue #19);
@@ -24,15 +26,14 @@ if [ ! -f "$WORKFLOW" ]; then
 fi
 text=$(tr -d '\r' < "$WORKFLOW")
 
-grep -qx '  linux:' <<< "$text" || add_problem "ci.yml: no linux job"
-grep -qx '    runs-on: ubuntu-24.04' <<< "$text" || add_problem "ci.yml: linux does not run on ubuntu-24.04"
-grep -qx '  push:' <<< "$text" || add_problem "ci.yml: does not run on push"
-grep -qx '  pull_request:' <<< "$text" || add_problem "ci.yml: does not run on pull_request"
-grep -qF 'LLVM_SYS_211_PREFIX: /usr/lib/llvm-21' <<< "$text" \
-    || add_problem "ci.yml: LLVM_SYS_211_PREFIX is not set"
-grep -qF 'llvm.sh 21' <<< "$text" || add_problem "ci.yml: LLVM 21 is not installed from apt.llvm.org"
-grep -qF 'llvm-21-dev' <<< "$text" || add_problem "ci.yml: llvm-21-dev is not installed"
-grep -qF 'libpolly-21-dev' <<< "$text" || add_problem "ci.yml: libpolly-21-dev is not installed"
+# The steps of one job: from `  <name>:` to the next job at the same indentation.
+job_block() {
+    awk -v job="$1:" '
+        $0 == "  " job { inside = 1; next }
+        inside && /^  [A-Za-z0-9_-]+:$/ { exit }
+        inside { print }
+    ' <<< "$text"
+}
 
 # The Rust toolchain is pinned so fmt and clippy are reproducible (issue #19).
 toolchain_file=$ROOT/rust-toolchain.toml
@@ -55,49 +56,82 @@ fi
 if grep -qE 'rustup (toolchain install|default)[^#]*stable' <<< "$text"; then
     add_problem "ci.yml: installs a floating 'stable' toolchain instead of the pinned one"
 fi
-grep -qF 'rustup toolchain install' <<< "$text" \
-    || add_problem "ci.yml: no rustup toolchain install step"
-grep -qF 'rust-toolchain.toml' <<< "$text" \
-    || add_problem "ci.yml: does not install from rust-toolchain.toml"
-grep -qF 'rustc --version' <<< "$text" \
-    || add_problem "ci.yml: no step verifies the pinned rustc"
-
 grep -qF 'rust-toolchain.toml' "$ROOT/CLAUDE.md" \
     || add_problem "CLAUDE.md: does not document the rust-toolchain.toml pin"
 
-for command in \
-    'tests/check-tests.sh' \
-    'tests/check-ci.sh' \
-    'cargo fmt --all --check' \
-    'cargo clippy --all-targets -- -D warnings' \
-    'cargo test' \
-    'cargo build'
-do
-    grep -qF -- "$command" <<< "$text" || add_problem "ci.yml: missing step: $command"
-done
+require_command() {   # $1 job, $2 block, $3 command
+    grep -qF -- "$3" <<< "$2" || add_problem "ci.yml: $1 job: missing step: $3"
+}
 
-# The conformance step names milestone filters (m01), which match the folders (m01_hello).
-conformance=$(grep -E 'tests/run-tests\.sh' <<< "$text" | tail -n 1)
-if [ -z "$conformance" ]; then
-    add_problem "ci.yml: no conformance step (tests/run-tests.sh)"
-else
+check_conformance() {   # $1 job, $2 block
+    local job=$1 block=$2 conformance folder name word dir found
+    conformance=$(grep -E 'tests/run-tests\.sh' <<< "$block" | tail -n 1)
+    if [ -z "$conformance" ]; then
+        add_problem "ci.yml: $job job: no conformance step (tests/run-tests.sh)"
+        return
+    fi
     for dir in "$SCRIPT_DIR"/m[0-9]*_*; do
         [ -d "$dir" ] || continue
         folder=$(basename "$dir")
         name=${folder%%_*}
         grep -qE "(^| )$name( |$)" <<< "$conformance" \
-            || add_problem "ci.yml: conformance step omits $name ($folder)"
+            || add_problem "ci.yml: $job job: conformance step omits $name ($folder)"
     done
     for word in $conformance; do
         case "$word" in
             m[0-9]*)
                 found=0
                 for dir in "$SCRIPT_DIR/$word"_*; do [ -d "$dir" ] && found=1; done
-                [ "$found" = 1 ] || add_problem "ci.yml: conformance step names missing milestone $word"
+                [ "$found" = 1 ] || add_problem "ci.yml: $job job: conformance step names missing milestone $word"
                 ;;
         esac
     done
-fi
+}
+
+linux=$(job_block linux)
+macos=$(job_block macos)
+[ -n "$linux" ] || add_problem "ci.yml: no linux job"
+[ -n "$macos" ] || add_problem "ci.yml: no macos job"
+
+grep -qx '    runs-on: ubuntu-24.04' <<< "$linux" || add_problem "ci.yml: linux does not run on ubuntu-24.04"
+grep -qx '    runs-on: macos-latest' <<< "$macos" || add_problem "ci.yml: macos does not run on macos-latest"
+grep -qx '  push:' <<< "$text" || add_problem "ci.yml: does not run on push"
+grep -qx '  pull_request:' <<< "$text" || add_problem "ci.yml: does not run on pull_request"
+
+# Linux: LLVM 21 from apt.llvm.org.
+grep -qF 'LLVM_SYS_211_PREFIX: /usr/lib/llvm-21' <<< "$linux" \
+    || add_problem "ci.yml: linux job: LLVM_SYS_211_PREFIX is not set"
+grep -qF 'llvm.sh 21' <<< "$linux" || add_problem "ci.yml: linux job: LLVM 21 is not installed from apt.llvm.org"
+grep -qF 'llvm-21-dev' <<< "$linux" || add_problem "ci.yml: linux job: llvm-21-dev is not installed"
+grep -qF 'libpolly-21-dev' <<< "$linux" || add_problem "ci.yml: linux job: libpolly-21-dev is not installed"
+
+# macOS: Homebrew's keg-only LLVM 21, exported for inkwell and for the driver's llvm-config lookup.
+grep -qF 'brew install llvm@21' <<< "$macos" || add_problem "ci.yml: macos job: llvm@21 is not installed"
+grep -qF 'LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)' <<< "$macos" \
+    || add_problem "ci.yml: macos job: LLVM_SYS_211_PREFIX is not set from Homebrew"
+grep -qF '$(brew --prefix llvm@21)/bin' <<< "$macos" \
+    || add_problem "ci.yml: macos job: llvm-config is not added to PATH"
+
+for job in linux macos; do
+    case "$job" in
+        linux) block=$linux ;;
+        macos) block=$macos ;;
+    esac
+    for command in \
+        'tests/check-tests.sh' \
+        'tests/check-ci.sh' \
+        'tests/check-platform.sh' \
+        'rustup toolchain install' \
+        'rustc --version' \
+        'cargo fmt --all --check' \
+        'cargo clippy --all-targets -- -D warnings' \
+        'cargo test' \
+        'cargo build'
+    do
+        require_command "$job" "$block" "$command"
+    done
+    check_conformance "$job" "$block"
+done
 
 # The m11 test is the one that proves --link-lib LLVM-C resolves in CI.
 if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"; then
@@ -105,7 +139,7 @@ if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"
 fi
 
 # Scripts CI invokes must exist, be executable, and have LF endings.
-for rel in tests/check-tests.sh tests/run-tests.sh tests/check-ci.sh; do
+for rel in tests/check-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"
