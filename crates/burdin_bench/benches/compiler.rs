@@ -8,17 +8,24 @@
 //!
 //! `cargo bench -p burdin_bench -- --smoke` runs one small generated input through every stage, checks that it
 //! compiles, and fails when a stage takes longer than a deliberately generous budget. That is the CI guard
-//! against catastrophic regressions (a hang or an accidental quadratic pass); committed baselines and
-//! threshold tracking are issue #446.
+//! against catastrophic regressions (a hang or an accidental quadratic pass).
+//!
+//! A run can also be recorded and compared with a stored baseline: `--save FILE` writes the medians of this
+//! run, and `--baseline FILE` compares this run with them and exits 1 when a case is more than `--threshold`
+//! percent slower (default 25). CI runs both through `tests/bench-regression.sh`, with the baseline in a cache
+//! keyed by the runner, the pinned toolchain, and `Cargo.lock` (issue #446).
 //!
 //! `cargo bench -p burdin_bench -- <filter>` measures only the cases whose name contains `filter`
 //! (`lex`, `sema`, `large`, ...).
 
 use std::hint::black_box;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use burdin_bench::{Generated, check, check_memory, emit, parse_generated};
+use burdin_bench::{
+    Comparison, Generated, Measurement, check, check_memory, compare, emit, parse_baseline, parse_generated,
+    render_baseline,
+};
 use burdin_diag::Diagnostics;
 use burdin_syntax::lexer;
 use burdin_syntax::lexer::LexResult;
@@ -31,17 +38,24 @@ const SIZES: &[(&str, usize)] = &[("small", 8), ("medium", 32), ("large", 128)];
 /// How long the harness keeps iterating a case before it reports the median.
 const TARGET: Duration = Duration::from_millis(250);
 
+/// How much slower a case may get before `--baseline` reports a regression, in percent. Hosted runners vary
+/// enough that a tighter threshold is noise; it is a flag so a stable machine can tighten it.
+const DEFAULT_THRESHOLD: u32 = 25;
+
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        print_usage();
-        return;
-    }
-    if args.iter().any(|a| a == "--smoke") {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let args = match parse_args(&raw) {
+        Ok(args) => args,
+        Err(message) => {
+            eprintln!("bench: {message}");
+            print_usage();
+            std::process::exit(2);
+        }
+    };
+    if args.smoke {
         std::process::exit(smoke());
     }
-    let filter = args.iter().find(|a| !a.starts_with('-')).map(String::as_str);
-    run(filter);
+    std::process::exit(run(&args));
 }
 
 fn print_usage() {
@@ -49,16 +63,83 @@ fn print_usage() {
         "\
 usage: cargo bench -p burdin_bench [-- FILTER]
        cargo bench -p burdin_bench -- --smoke
+       cargo bench -p burdin_bench -- [--save FILE] [--baseline FILE [--threshold PERCENT]] [FILTER]
 
-  FILTER   measure only cases whose name contains FILTER
-  --smoke  run one small generated input through every stage with generous time budgets (the CI guard)"
+  FILTER      measure only cases whose name contains FILTER
+  --smoke     run one small generated input through every stage with generous time budgets (the CI guard)
+  --save      write this run's medians to FILE in the baseline format (case<TAB>nanoseconds)
+  --baseline  compare this run with FILE and exit 1 when a case is slower by more than the threshold
+  --threshold how much slower a case may be before --baseline reports it, in percent (default 25)"
     );
 }
 
-fn run(filter: Option<&str>) {
+struct Args {
+    smoke: bool,
+    save: Option<PathBuf>,
+    baseline: Option<PathBuf>,
+    threshold: u32,
+    filter: Option<String>,
+}
+
+fn parse_args(raw: &[String]) -> Result<Args, String> {
+    let mut args = Args { smoke: false, save: None, baseline: None, threshold: DEFAULT_THRESHOLD, filter: None };
+    let mut threshold_given = false;
+    let mut iter = raw.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            // cargo appends `--bench` when it runs a benchmark target; it is not an option of this harness.
+            "--bench" => {}
+            "--smoke" => args.smoke = true,
+            "--save" => args.save = Some(PathBuf::from(value(&mut iter, "--save")?)),
+            "--baseline" => args.baseline = Some(PathBuf::from(value(&mut iter, "--baseline")?)),
+            "--threshold" => {
+                threshold_given = true;
+                let text = value(&mut iter, "--threshold")?;
+                args.threshold =
+                    text.parse().map_err(|_| format!("--threshold: '{text}' is not a whole percentage"))?;
+            }
+            other if other.starts_with('-') => return Err(format!("unknown option: {other}")),
+            other => {
+                if let Some(filter) = &args.filter {
+                    return Err(format!("two filters: '{filter}' and '{other}'"));
+                }
+                args.filter = Some(other.to_string());
+            }
+        }
+    }
+    if args.smoke && (args.save.is_some() || args.baseline.is_some() || args.filter.is_some() || threshold_given) {
+        return Err("--smoke does not take --save, --baseline, --threshold, or a filter".to_string());
+    }
+    Ok(args)
+}
+
+fn value<'a>(iter: &mut impl Iterator<Item = &'a String>, option: &str) -> Result<&'a str, String> {
+    iter.next().map(String::as_str).ok_or_else(|| format!("{option} needs a value"))
+}
+
+fn run(args: &Args) -> i32 {
+    let measurements = measure(args.filter.as_deref());
+    if let Some(path) = &args.save
+        && let Err(error) = std::fs::write(path, render_baseline(&measurements))
+    {
+        eprintln!("bench: cannot write {}: {error}", path.display());
+        return 2;
+    }
+    if let Some(path) = &args.baseline {
+        return compare_with_baseline(path, &measurements, args.threshold);
+    }
+    0
+}
+
+fn measure(filter: Option<&str>) -> Vec<Measurement> {
     println!("burdin compiler benchmarks (median per iteration)");
     println!("parse includes a clone of the pre-lexed token stream; code generation is the debug profile");
     println!();
+    let mut measurements = Vec::new();
     for &(size, units) in SIZES {
         let generated = parse_generated(units);
         assert_no_errors(&generated);
@@ -74,6 +155,7 @@ fn run(filter: Option<&str>) {
                 500,
             );
             report("lex", size, stats);
+            measurements.push(measurement("lex", size, stats.median));
         }
 
         if enabled(filter, "parse", size) {
@@ -90,6 +172,7 @@ fn run(filter: Option<&str>) {
                 300,
             );
             report("parse", size, stats);
+            measurements.push(measurement("parse", size, stats.median));
         }
 
         if enabled(filter, "sema", size) {
@@ -107,6 +190,7 @@ fn run(filter: Option<&str>) {
                 100,
             );
             report("sema", size, stats);
+            measurements.push(measurement("sema", size, stats.median));
         }
 
         if enabled(filter, "codegen", size) {
@@ -128,6 +212,85 @@ fn run(filter: Option<&str>) {
             );
             let _ = std::fs::remove_file(&object);
             report("codegen", size, stats);
+            measurements.push(measurement("codegen", size, stats.median));
+        }
+    }
+    measurements
+}
+
+fn measurement(stage: &str, size: &str, median: Duration) -> Measurement {
+    Measurement { case: format!("{stage}/{size}"), median }
+}
+
+/// Reads a stored baseline, compares this run with it, and returns 1 when a case is over the threshold so a
+/// caller (a developer, or `tests/bench-regression.sh`) can decide whether that fails the run.
+fn compare_with_baseline(path: &Path, current: &[Measurement], threshold: u32) -> i32 {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("bench: cannot read baseline {}: {error}", path.display());
+            return 2;
+        }
+    };
+    let baseline = match parse_baseline(&text) {
+        Ok(baseline) => baseline,
+        Err(message) => {
+            eprintln!("bench: {} is not a baseline: {message}", path.display());
+            return 2;
+        }
+    };
+    let comparison = compare(&baseline, current, threshold);
+    print_comparison(path, &comparison, threshold);
+    if comparison.regression_count() > 0 { 1 } else { 0 }
+}
+
+fn print_comparison(path: &Path, comparison: &Comparison, threshold: u32) {
+    println!();
+    println!(
+        "baseline: {} ({} cases, threshold {threshold}%)",
+        path.display(),
+        comparison.changes.len() + comparison.missing.len()
+    );
+    println!("{:<18} {:>12} {:>12} {:>9}  verdict", "case", "baseline", "current", "change");
+    for change in &comparison.changes {
+        let percent = change.ratio_percent - 100.0;
+        let verdict = if change.regressed {
+            "REGRESSION"
+        } else if percent <= -(f64::from(threshold)) {
+            "faster"
+        } else {
+            "ok"
+        };
+        println!(
+            "{:<18} {:>12} {:>12} {:>+8.1}%  {verdict}",
+            change.case,
+            format_duration(change.baseline),
+            format_duration(change.current),
+            percent
+        );
+    }
+    if !comparison.missing.is_empty() {
+        println!("not measured: {}", comparison.missing.join(", "));
+    }
+    if !comparison.new.is_empty() {
+        println!("new (no baseline entry): {}", comparison.new.join(", "));
+    }
+    let regressions = comparison.regression_count();
+    if regressions == 0 {
+        println!(
+            "bench check: every compared case is within {threshold}% of the baseline ({} compared)",
+            comparison.changes.len()
+        );
+    } else {
+        println!("bench check: {regressions} case(s) over the {threshold}% threshold:");
+        for change in comparison.changes.iter().filter(|change| change.regressed) {
+            println!(
+                "  {} {} -> {} ({:+.1}%)",
+                change.case,
+                format_duration(change.baseline),
+                format_duration(change.current),
+                change.ratio_percent - 100.0
+            );
         }
     }
 }
@@ -184,7 +347,7 @@ fn smoke() -> i32 {
     println!("bench smoke: {SMOKE_UNITS} generated chunks");
     // The measured times on the reference machine are ~0.3 ms, 2 ms, 1 ms, and 45 ms. These budgets are
     // hundreds of times those, so a slow or busy runner passes and only a hang or an accidental quadratic
-    // pass fails (issue #446 owns tighter threshold tracking).
+    // pass fails (the `--baseline` comparison is the tighter check; issue #446).
     for (stage, elapsed, budget) in [
         ("lex", lex_time, Duration::from_secs(1)),
         ("parse", parse_time, Duration::from_secs(1)),
@@ -239,6 +402,7 @@ fn run_iterations(mut run_once: impl FnMut(), min_iters: u32, max_iters: u32) ->
     Stats { median: samples[samples.len() / 2], iters }
 }
 
+#[derive(Clone, Copy)]
 struct Stats {
     median: Duration,
     iters: u32,

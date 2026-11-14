@@ -34,6 +34,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
 cargo bench -p burdin_bench        compiler benchmarks (lex, parse, sema, codegen)
 cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs
+cargo bench -p burdin_bench -- --save FILE       record a benchmark baseline
+cargo bench -p burdin_bench -- --baseline FILE   compare with a baseline (exit 1 on a regression)
+tests/bench-regression.sh          benchmark regression check CI runs (advisory, issue #446)
 ```
 
 Development happens in WSL Ubuntu first; the shell scripts also run from Git Bash on Windows.
