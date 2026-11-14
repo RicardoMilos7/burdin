@@ -187,3 +187,83 @@ impl fmt::Display for Ty {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_widths_and_ranges() {
+        assert_eq!(IntTy::I8.bits(), 8);
+        assert_eq!(IntTy::I8.min(), -128);
+        assert_eq!(IntTy::I8.max(), 127);
+        assert_eq!(IntTy::U8.min(), 0);
+        assert_eq!(IntTy::U8.max(), 255);
+        assert_eq!(IntTy::I64.min(), i64::MIN as i128);
+        assert_eq!(IntTy::I64.max(), i64::MAX as i128);
+        assert_eq!(IntTy::U64.max(), u64::MAX as i128);
+        // Every supported target is 64-bit, so the pointer types are too.
+        assert_eq!(IntTy::Isize.bits(), POINTER_BITS);
+        assert_eq!(IntTy::Usize.bits(), 64);
+        assert_eq!(IntTy::Usize.max(), u64::MAX as i128);
+        assert!(IntTy::Isize.signed());
+        assert!(!IntTy::Usize.signed());
+        assert_eq!(IntTy::I32.name(), "i32");
+        assert_eq!(IntTy::Usize.name(), "usize");
+    }
+
+    #[test]
+    fn second_class_types_are_views() {
+        let i32_ = Ty::Int(IntTy::I32);
+        assert!(Ty::Str.is_second_class());
+        assert!(Ty::Slice(Box::new(i32_.clone())).is_second_class());
+        assert!(Ty::Ref { mutable: true, inner: Box::new(i32_.clone()) }.is_second_class());
+        assert!(Ty::Tuple(vec![i32_.clone(), Ty::Str]).is_second_class());
+        assert!(Ty::Option(Box::new(Ty::Str)).is_second_class());
+        assert!(Ty::Array(Box::new(Ty::Str), 2).is_second_class());
+        assert!(Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Str)).is_second_class());
+        assert!(Ty::Map(Box::new(Ty::Str), Box::new(Ty::Bool)).is_second_class());
+        // Owned types are not views.
+        assert!(!Ty::String.is_second_class());
+        assert!(!Ty::Heap(Box::new(i32_.clone())).is_second_class());
+        assert!(!Ty::List(Box::new(i32_.clone())).is_second_class());
+        assert!(!i32_.is_second_class());
+    }
+
+    #[test]
+    fn display_spells_types_like_the_source() {
+        let i32_ = Ty::Int(IntTy::I32);
+        let cases = [
+            (Ty::Unit, "()"),
+            (Ty::Bool, "bool"),
+            (Ty::Char, "char"),
+            (i32_.clone(), "i32"),
+            (Ty::Float(FloatTy::F32), "f32"),
+            (Ty::Float(FloatTy::F64), "f64"),
+            (Ty::Str, "str"),
+            (Ty::String, "String"),
+            (Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) }, "&i32"),
+            (Ty::Ref { mutable: true, inner: Box::new(i32_.clone()) }, "&mut i32"),
+            (Ty::Slice(Box::new(i32_.clone())), "[i32]"),
+            (Ty::Array(Box::new(i32_.clone()), 4), "[i32; 4]"),
+            (Ty::Option(Box::new(i32_.clone())), "Option<i32>"),
+            (Ty::Result(Box::new(i32_.clone()), Box::new(Ty::Str)), "Result<i32, str>"),
+            (Ty::List(Box::new(i32_.clone())), "List<i32>"),
+            (Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone())), "Map<str, i32>"),
+            (Ty::Chars, "Chars"),
+            (Ty::Heap(Box::new(i32_.clone())), "Heap<i32>"),
+            (Ty::CPtr(Box::new(i32_.clone())), "CPtr<i32>"),
+            (Ty::CString, "CString"),
+            (Ty::Tuple(vec![i32_.clone()]), "(i32,)"),
+            (Ty::Tuple(vec![i32_.clone(), Ty::Bool]), "(i32, bool)"),
+            (Ty::Struct(AdtRef { id: 0, name: "P".into() }), "P"),
+            (Ty::Enum(AdtRef { id: 0, name: "E".into() }), "E"),
+            (Ty::Never, "!"),
+            (Ty::Param("T".into()), "T"),
+            (Ty::Error, "{error}"),
+        ];
+        for (ty, want) in cases {
+            assert_eq!(ty.to_string(), want);
+        }
+    }
+}

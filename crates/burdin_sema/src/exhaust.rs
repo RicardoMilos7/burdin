@@ -172,3 +172,194 @@ fn complete_ctors(ty: &Ty, heads: &[Ctor], adts: &TypeDefs) -> Option<Vec<Ctor>>
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burdin_diag::{FileId, Span};
+    use burdin_tir::{AdtRef, Derives, EnumDef, FieldDef, IntTy, StructDef, VariantDef, VariantShape};
+
+    fn span() -> Span {
+        Span::new(FileId(0), 0, 0)
+    }
+
+    fn field(name: &str, ty: Ty) -> FieldDef {
+        FieldDef { name: name.into(), ty, span: span(), is_priv: false }
+    }
+
+    fn variant(name: &str, fields: Vec<FieldDef>) -> VariantDef {
+        let shape = if fields.is_empty() { VariantShape::Unit } else { VariantShape::Tuple };
+        VariantDef { name: name.into(), shape, fields }
+    }
+
+    fn enum_def(name: &str, variants: Vec<VariantDef>) -> EnumDef {
+        EnumDef { name: name.into(), variants, derives: Derives::default(), drop_method: None }
+    }
+
+    fn adt(name: &str, id: usize) -> AdtRef {
+        AdtRef { id, name: name.into() }
+    }
+
+    fn exhaustive_with(ty: &Ty, pats: &[Pat]) -> bool {
+        exhaustive_with_defs(ty, pats, &[], &[])
+    }
+
+    fn exhaustive_with_defs(ty: &Ty, pats: &[Pat], structs: &[StructDef], enums: &[EnumDef]) -> bool {
+        let refs: Vec<&Pat> = pats.iter().collect();
+        exhaustive(ty, &refs, &TypeDefs { structs, enums })
+    }
+
+    #[test]
+    fn bool_needs_both_values() {
+        assert!(!exhaustive_with(&Ty::Bool, &[Pat::Bool(true)]));
+        assert!(!exhaustive_with(&Ty::Bool, &[Pat::Bool(false)]));
+        assert!(exhaustive_with(&Ty::Bool, &[Pat::Bool(true), Pat::Bool(false)]));
+        assert!(exhaustive_with(&Ty::Bool, &[Pat::Wild]));
+    }
+
+    #[test]
+    fn option_needs_none_and_some() {
+        let opt_bool = Ty::Option(Box::new(Ty::Bool));
+        assert!(!exhaustive_with(&opt_bool, &[Pat::Some(Box::new(Pat::Wild))]));
+        assert!(!exhaustive_with(&opt_bool, &[Pat::None]));
+        assert!(exhaustive_with(&opt_bool, &[Pat::None, Pat::Some(Box::new(Pat::Wild))]));
+    }
+
+    #[test]
+    fn nested_option_payloads_are_checked_too() {
+        let opt_opt = Ty::Option(Box::new(Ty::Option(Box::new(Ty::Bool))));
+        let some_some = || Pat::Some(Box::new(Pat::Some(Box::new(Pat::Wild))));
+        // `Some(Some(_))` leaves `Some(None)` out.
+        assert!(!exhaustive_with(&opt_opt, &[Pat::None, some_some()]));
+        assert!(exhaustive_with(&opt_opt, &[Pat::None, Pat::Some(Box::new(Pat::None)), some_some()]));
+    }
+
+    #[test]
+    fn result_needs_ok_and_err_with_every_payload() {
+        let result = Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Int(IntTy::I32)));
+        assert!(!exhaustive_with(&result, &[Pat::Ok(Box::new(Pat::Wild))]));
+        assert!(exhaustive_with(&result, &[Pat::Ok(Box::new(Pat::Wild)), Pat::Err(Box::new(Pat::Wild))]));
+        assert!(!exhaustive_with(&result, &[Pat::Ok(Box::new(Pat::Bool(true))), Pat::Err(Box::new(Pat::Wild))]));
+        assert!(exhaustive_with(
+            &result,
+            &[Pat::Ok(Box::new(Pat::Bool(true))), Pat::Ok(Box::new(Pat::Bool(false))), Pat::Err(Box::new(Pat::Wild))]
+        ));
+    }
+
+    #[test]
+    fn integer_ranges_split_at_their_boundaries() {
+        let i8_ = Ty::Int(IntTy::I8);
+        assert!(!exhaustive_with(&i8_, &[Pat::Range(0, 127)]));
+        assert!(exhaustive_with(&i8_, &[Pat::Range(-128, -1), Pat::Range(0, 127)]));
+        assert!(exhaustive_with(&i8_, &[Pat::Range(-128, 127)]));
+        // Overlapping ranges still cover every value.
+        assert!(exhaustive_with(&i8_, &[Pat::Range(-128, 10), Pat::Range(5, 127)]));
+        // One missing value is enough to make the match non-exhaustive.
+        assert!(!exhaustive_with(&i8_, &[Pat::Range(-128, -1), Pat::Range(1, 127)]));
+        let u8_ = Ty::Int(IntTy::U8);
+        assert!(!exhaustive_with(&u8_, &[Pat::Range(0, 254)]));
+        assert!(exhaustive_with(&u8_, &[Pat::Range(0, 255)]));
+        // A wildcard covers whatever the ranges leave out.
+        assert!(exhaustive_with(&i8_, &[Pat::Int(0), Pat::Wild]));
+    }
+
+    #[test]
+    fn char_ranges_cover_the_code_point_space() {
+        assert!(!exhaustive_with(&Ty::Char, &[Pat::Char('a')]));
+        assert!(exhaustive_with(&Ty::Char, &[Pat::Range(0, 0x60), Pat::Range(0x61, 0x10FFFF)]));
+        // 0x61 is 'a', so this leaves exactly one character out.
+        assert!(!exhaustive_with(&Ty::Char, &[Pat::Range(0, 0x60), Pat::Range(0x62, 0x10FFFF)]));
+        assert!(exhaustive_with(&Ty::Char, &[Pat::Char('a'), Pat::Wild]));
+    }
+
+    #[test]
+    fn enum_variants_must_all_appear() {
+        let color = enum_def("Color", vec![variant("Red", vec![]), variant("Green", vec![]), variant("Blue", vec![])]);
+        let enums = [color];
+        let ty = Ty::Enum(adt("Color", 0));
+        assert!(!exhaustive_with_defs(&ty, &[Pat::Variant(0, vec![]), Pat::Variant(1, vec![])], &[], &enums));
+        assert!(exhaustive_with_defs(
+            &ty,
+            &[Pat::Variant(0, vec![]), Pat::Variant(1, vec![]), Pat::Variant(2, vec![])],
+            &[],
+            &enums
+        ));
+        assert!(exhaustive_with_defs(&ty, &[Pat::Wild], &[], &enums));
+    }
+
+    #[test]
+    fn enum_payloads_are_checked_per_variant() {
+        let msg = enum_def(
+            "Msg",
+            vec![variant("Quit", vec![]), variant("Move", vec![field("x", Ty::Bool), field("y", Ty::Bool)])],
+        );
+        let enums = [msg];
+        let ty = Ty::Enum(adt("Msg", 0));
+        // `Move(true, _)` leaves `Move(false, _)` out.
+        assert!(!exhaustive_with_defs(
+            &ty,
+            &[Pat::Variant(0, vec![]), Pat::Variant(1, vec![Pat::Bool(true), Pat::Wild])],
+            &[],
+            &enums
+        ));
+        assert!(exhaustive_with_defs(
+            &ty,
+            &[
+                Pat::Variant(0, vec![]),
+                Pat::Variant(1, vec![Pat::Bool(true), Pat::Wild]),
+                Pat::Variant(1, vec![Pat::Bool(false), Pat::Wild])
+            ],
+            &[],
+            &enums
+        ));
+    }
+
+    #[test]
+    fn tuples_need_every_combination() {
+        let pair = Ty::Tuple(vec![Ty::Bool, Ty::Bool]);
+        assert!(!exhaustive_with(&pair, &[Pat::Product(vec![Pat::Bool(true), Pat::Wild])]));
+        assert!(exhaustive_with(
+            &pair,
+            &[Pat::Product(vec![Pat::Bool(true), Pat::Wild]), Pat::Product(vec![Pat::Bool(false), Pat::Wild])]
+        ));
+        assert!(exhaustive_with(&pair, &[Pat::Product(vec![Pat::Wild, Pat::Wild])]));
+        // The rows above cover `(false, _)` and `(true, true)` only.
+        assert!(!exhaustive_with(
+            &pair,
+            &[Pat::Product(vec![Pat::Bool(true), Pat::Bool(true)]), Pat::Product(vec![Pat::Bool(false), Pat::Wild])]
+        ));
+    }
+
+    #[test]
+    fn struct_fields_are_checked_like_a_tuple() {
+        let def = StructDef {
+            name: "S".into(),
+            fields: vec![field("a", Ty::Bool), field("b", Ty::Bool)],
+            derives: Derives::default(),
+            drop_method: None,
+        };
+        let structs = [def];
+        let ty = Ty::Struct(adt("S", 0));
+        assert!(!exhaustive_with_defs(&ty, &[Pat::Product(vec![Pat::Bool(true), Pat::Wild])], &structs, &[]));
+        assert!(exhaustive_with_defs(&ty, &[Pat::Product(vec![Pat::Wild, Pat::Wild])], &structs, &[]));
+    }
+
+    #[test]
+    fn or_patterns_expand_to_one_row_per_alternative() {
+        let i8_ = Ty::Int(IntTy::I8);
+        assert!(exhaustive_with(&i8_, &[Pat::Or(vec![Pat::Range(-128, -1), Pat::Range(0, 127)])]));
+        assert!(!exhaustive_with(&i8_, &[Pat::Or(vec![Pat::Int(1), Pat::Int(2)])]));
+        assert!(exhaustive_with(&Ty::Bool, &[Pat::Or(vec![Pat::Bool(true), Pat::Bool(false)])]));
+    }
+
+    #[test]
+    fn empty_types_and_the_unit_type() {
+        // A `!` or an error-typed value has no values, so a match on it needs no arms.
+        assert!(exhaustive_with(&Ty::Never, &[]));
+        assert!(exhaustive_with(&Ty::Error, &[]));
+        // `()` has exactly one value, which the empty product pattern names.
+        assert!(!exhaustive_with(&Ty::Unit, &[]));
+        assert!(exhaustive_with(&Ty::Unit, &[Pat::Product(vec![])]));
+        assert!(exhaustive_with(&Ty::Unit, &[Pat::Wild]));
+    }
+}

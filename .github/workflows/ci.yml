@@ -88,6 +88,11 @@ jobs:
       - name: Check test directives
         run: tests/check-tests.sh
 
+      # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
+      # crate or one of the four focused test areas loses them (issue #45).
+      - name: Check unit tests
+        run: tests/check-unit-tests.sh
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -95,7 +100,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
-        run: cargo test
+        run: cargo test --workspace
 
       - name: Build
         run: cargo build
@@ -202,6 +207,11 @@ jobs:
       - name: Check test directives
         run: tests/check-tests.sh
 
+      # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
+      # crate or one of the four focused test areas loses them (issue #45).
+      - name: Check unit tests
+        run: tests/check-unit-tests.sh
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -209,7 +219,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
-        run: cargo test
+        run: cargo test --workspace
 
       - name: Build
         run: cargo build
@@ -348,6 +358,11 @@ jobs:
       - name: Check test directives
         run: bash tests/check-tests.sh
 
+      # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
+      # crate or one of the four focused test areas loses them (issue #45).
+      - name: Check unit tests
+        run: bash tests/check-unit-tests.sh
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -355,7 +370,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
-        run: cargo test
+        run: cargo test --workspace
 
       - name: Build
         run: cargo build

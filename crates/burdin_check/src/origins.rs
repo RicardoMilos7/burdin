@@ -370,3 +370,36 @@ impl<'a> Analyzer<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_summary_needs_exactly_one_parameter() {
+        assert_eq!(Origin::param(0).summary(), Some(0));
+        assert_eq!(Origin::param(2).summary(), Some(2));
+        assert_eq!(Origin::local().summary(), None);
+        assert_eq!(Origin::default().summary(), None);
+        let mut two = Origin::param(0);
+        two.join(&Origin::param(1));
+        assert_eq!(two.summary(), None, "two parameters cannot be attributed");
+        let mut mixed = Origin::param(0);
+        mixed.join(&Origin::local());
+        assert_eq!(mixed.summary(), None, "a local cannot escape in a view");
+    }
+
+    #[test]
+    fn joining_unions_parameters_and_locals() {
+        let mut a = Origin::param(0);
+        a.join(&Origin::param(1));
+        assert_eq!(a.params.iter().copied().collect::<Vec<_>>(), vec![0, 1]);
+        assert!(!a.local);
+        a.join(&Origin::local());
+        assert!(a.local);
+        // Joining a local origin into itself changes nothing.
+        let mut b = Origin::local();
+        b.join(&Origin::local());
+        assert!(b.params.is_empty() && b.local);
+    }
+}

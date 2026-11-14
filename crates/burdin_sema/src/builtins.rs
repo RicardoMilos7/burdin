@@ -159,3 +159,55 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         _ => return None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_type_names_resolve() {
+        assert_eq!(builtin_type("i32"), Some(Ty::Int(IntTy::I32)));
+        assert_eq!(builtin_type("usize"), Some(Ty::Int(IntTy::Usize)));
+        assert_eq!(builtin_type("f64"), Some(Ty::Float(FloatTy::F64)));
+        assert_eq!(builtin_type("bool"), Some(Ty::Bool));
+        assert_eq!(builtin_type("char"), Some(Ty::Char));
+        assert_eq!(builtin_type("String"), Some(Ty::String));
+        assert_eq!(builtin_type("CString"), Some(Ty::CString));
+        assert_eq!(builtin_type("CChar"), Some(Ty::Int(IntTy::I8)));
+        assert_eq!(builtin_type("CSize"), Some(Ty::Int(IntTy::Usize)));
+        assert_eq!(builtin_type("CVoid"), Some(Ty::Unit));
+        assert_eq!(builtin_type("Point"), None);
+    }
+
+    #[test]
+    fn method_resolution_dispatches_on_the_receiver() {
+        let i32_ = Ty::Int(IntTy::I32);
+        let (found, params, ret) = method("to_string", &i32_).unwrap();
+        assert_eq!(found, Method::ToString);
+        assert!(params.is_empty());
+        assert_eq!(ret, Ty::String);
+        assert!(method("to_string", &Ty::String).is_none(), "String already is a string");
+        assert!(method("abs", &Ty::Int(IntTy::U32)).is_none(), "unsigned integers have no abs");
+        assert!(method("min", &Ty::Float(FloatTy::F64)).is_none(), "min is integer-only");
+        assert!(method("nope", &i32_).is_none());
+
+        let list = Ty::List(Box::new(i32_.clone()));
+        let (found, params, ret) = method("push", &list).unwrap();
+        assert_eq!(found, Method::Push);
+        assert!(params[0].own, "push takes its element by ownership");
+        assert_eq!(ret, Ty::Unit);
+        let (found, _, ret) = method("pop", &list).unwrap();
+        assert_eq!(found, Method::ListPop);
+        assert_eq!(ret, Ty::Option(Box::new(i32_.clone())));
+        let (found, _, ret) = method("last", &list).unwrap();
+        assert_eq!(found, Method::ListLast);
+        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) })));
+
+        let (found, _, ret) = method("checked_add", &i32_).unwrap();
+        assert_eq!(found, Method::CheckedAdd);
+        assert_eq!(ret, Ty::Option(Box::new(i32_.clone())));
+        let (found, _, ret) = method("unwrap", &Ty::Option(Box::new(i32_.clone()))).unwrap();
+        assert_eq!(found, Method::Unwrap);
+        assert_eq!(ret, i32_);
+    }
+}

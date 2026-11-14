@@ -73,3 +73,51 @@ pub(crate) fn is_const_expr(e: &tir::Expr) -> bool {
         _ => e.ty == Ty::Error,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burdin_diag::{FileId, Span};
+
+    fn expr(kind: tir::ExprKind, ty: Ty) -> tir::Expr {
+        tir::Expr { kind, ty, span: Span::new(FileId(0), 0, 0) }
+    }
+
+    fn int(value: i128) -> tir::Expr {
+        expr(tir::ExprKind::Int(value), Ty::Int(tir::IntTy::I32))
+    }
+
+    #[test]
+    fn literals_and_operators_on_them_are_constants() {
+        assert!(is_const_expr(&int(1)));
+        assert!(is_const_expr(&expr(tir::ExprKind::Bool(true), Ty::Bool)));
+        assert!(is_const_expr(&expr(tir::ExprKind::Str("x".into()), Ty::Str)));
+        assert!(is_const_expr(&expr(
+            tir::ExprKind::Binary(tir::BinOp::Add, Box::new(int(1)), Box::new(int(2))),
+            Ty::Int(tir::IntTy::I32)
+        )));
+        assert!(is_const_expr(&expr(tir::ExprKind::Unary(tir::UnOp::Neg, Box::new(int(1))), Ty::Int(tir::IntTy::I32))));
+        assert!(is_const_expr(&expr(tir::ExprKind::Cast(Box::new(int(1))), Ty::Int(tir::IntTy::I64))));
+    }
+
+    #[test]
+    fn calls_and_locals_are_not_constants() {
+        let i32_ = Ty::Int(tir::IntTy::I32);
+        assert!(!is_const_expr(&expr(tir::ExprKind::Local(tir::LocalId(0)), i32_.clone())));
+        assert!(!is_const_expr(&expr(tir::ExprKind::Call(tir::FuncId(0), vec![]), i32_.clone())));
+        // A binary expression is only constant when both sides are.
+        assert!(!is_const_expr(&expr(
+            tir::ExprKind::Binary(
+                tir::BinOp::Add,
+                Box::new(int(1)),
+                Box::new(expr(tir::ExprKind::Local(tir::LocalId(0)), i32_.clone()))
+            ),
+            i32_
+        )));
+    }
+
+    #[test]
+    fn an_error_typed_expression_is_accepted_to_avoid_cascades() {
+        assert!(is_const_expr(&expr(tir::ExprKind::Call(tir::FuncId(0), vec![]), Ty::Error)));
+    }
+}

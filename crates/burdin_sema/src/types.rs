@@ -306,3 +306,33 @@ pub(crate) fn check_storable(ty: &Ty, span: Span, what: &str, diags: &mut Diagno
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burdin_diag::FileId;
+    use burdin_tir::IntTy;
+
+    #[test]
+    fn compatible_allows_error_and_never_but_not_mismatches() {
+        let i32_ = Ty::Int(IntTy::I32);
+        assert!(compatible(&i32_, &i32_));
+        assert!(compatible(&Ty::Error, &i32_));
+        assert!(compatible(&i32_, &Ty::Error));
+        assert!(compatible(&Ty::Never, &i32_));
+        assert!(!compatible(&i32_, &Ty::Never), "only an actual `!` adapts");
+        assert!(!compatible(&Ty::Bool, &i32_));
+        assert!(!compatible(&Ty::Str, &Ty::String), "String coerces to str, not the other way");
+    }
+
+    #[test]
+    fn storable_rejects_view_types() {
+        let span = Span::new(FileId(0), 0, 0);
+        let mut diags = Diagnostics::default();
+        check_storable(&Ty::Str, span, "a field", &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags.iter().next().unwrap().code, Code::SECOND_CLASS_POSITION);
+        check_storable(&Ty::String, span, "a field", &mut diags);
+        assert_eq!(diags.len(), 1, "an owned type is storable");
+    }
+}

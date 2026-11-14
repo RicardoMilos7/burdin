@@ -134,3 +134,131 @@ impl TypeDefs<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::defs::{FieldDef, VariantDef, VariantShape};
+    use crate::ops::FuncId;
+    use crate::ty::{AdtRef, IntTy};
+    use burdin_diag::{FileId, Span};
+
+    fn span() -> Span {
+        Span::new(FileId(0), 0, 0)
+    }
+
+    fn field(name: &str, ty: Ty) -> FieldDef {
+        FieldDef { name: name.into(), ty, span: span(), is_priv: false }
+    }
+
+    fn struct_def(name: &str, fields: Vec<FieldDef>, derives: Derives, drop_method: Option<FuncId>) -> StructDef {
+        StructDef { name: name.into(), fields, derives, drop_method }
+    }
+
+    fn derives(copy: bool, clone: bool) -> Derives {
+        Derives { copy, clone, ..Derives::default() }
+    }
+
+    fn adt(name: &str, id: usize) -> AdtRef {
+        AdtRef { id, name: name.into() }
+    }
+
+    fn int() -> Ty {
+        Ty::Int(IntTy::I32)
+    }
+
+    #[test]
+    fn copy_needs_the_derive_and_copy_fields() {
+        let structs = [
+            struct_def("Point", vec![field("x", int()), field("y", int())], derives(true, true), None),
+            struct_def("Text", vec![field("s", Ty::String)], derives(true, true), None),
+            struct_def("Plain", vec![field("x", int())], Derives::default(), None),
+        ];
+        let defs = TypeDefs { structs: &structs, enums: &[] };
+        assert!(defs.is_copy(&Ty::Struct(adt("Point", 0))));
+        assert!(!defs.is_copy(&Ty::Struct(adt("Text", 1))), "String is not Copy");
+        assert!(!defs.is_copy(&Ty::Struct(adt("Plain", 2))), "no derive");
+        assert!(defs.is_copy(&int()));
+        assert!(defs.is_copy(&Ty::Tuple(vec![int(), Ty::Bool])));
+        assert!(defs.is_copy(&Ty::Array(Box::new(int()), 4)));
+        assert!(defs.is_copy(&Ty::CPtr(Box::new(Ty::String))));
+        assert!(defs.is_copy(&Ty::Ref { mutable: false, inner: Box::new(Ty::String) }));
+        assert!(!defs.is_copy(&Ty::Ref { mutable: true, inner: Box::new(int()) }), "a &mut is not Copy");
+        assert!(!defs.is_copy(&Ty::String));
+        assert!(!defs.is_copy(&Ty::List(Box::new(int()))));
+    }
+
+    #[test]
+    fn clone_follows_the_parts() {
+        let defs = TypeDefs { structs: &[], enums: &[] };
+        assert!(defs.is_clone(&Ty::String));
+        assert!(defs.is_clone(&Ty::Heap(Box::new(int()))));
+        assert!(defs.is_clone(&Ty::List(Box::new(Ty::String))));
+        assert!(!defs.is_clone(&Ty::List(Box::new(Ty::CString))));
+        assert!(!defs.is_clone(&Ty::CString));
+        assert!(defs.is_clone(&Ty::Ref { mutable: true, inner: Box::new(int()) }));
+    }
+
+    #[test]
+    fn drop_follows_the_fields() {
+        let structs = [
+            struct_def("Owns", vec![field("s", Ty::String)], Derives::default(), None),
+            struct_def("Empty", vec![field("x", int())], Derives::default(), None),
+            struct_def("WithDrop", vec![], Derives::default(), Some(FuncId(3))),
+        ];
+        let defs = TypeDefs { structs: &structs, enums: &[] };
+        assert!(defs.needs_drop(&Ty::String));
+        assert!(!defs.needs_drop(&int()));
+        assert!(defs.needs_drop(&Ty::Struct(adt("Owns", 0))));
+        assert!(!defs.needs_drop(&Ty::Struct(adt("Empty", 1))));
+        assert!(defs.needs_drop(&Ty::Struct(adt("WithDrop", 2))), "a Drop impl needs no fields");
+        // An empty array holds no value to drop.
+        assert!(!defs.needs_drop(&Ty::Array(Box::new(Ty::String), 0)));
+        assert!(defs.needs_drop(&Ty::Array(Box::new(Ty::String), 1)));
+        assert!(defs.needs_drop(&Ty::Option(Box::new(Ty::String))));
+        assert!(!defs.needs_drop(&Ty::Ref { mutable: false, inner: Box::new(Ty::String) }));
+        assert!(defs.needs_drop(&Ty::List(Box::new(int()))));
+        assert!(defs.needs_drop(&Ty::Map(Box::new(Ty::Str), Box::new(int()))));
+        assert!(defs.needs_drop(&Ty::CString));
+    }
+
+    #[test]
+    fn drop_impl_question_is_separate_from_drop_glue() {
+        let structs = [struct_def("WithDrop", vec![], Derives::default(), Some(FuncId(0)))];
+        let defs = TypeDefs { structs: &structs, enums: &[] };
+        assert!(defs.has_drop_impl(&Ty::Struct(adt("WithDrop", 0))));
+        assert!(!defs.has_drop_impl(&Ty::String));
+    }
+
+    #[test]
+    fn recursive_types_terminate() {
+        // `Node { next: Option<Node> }` is not a legal by-value type, but the questions must still terminate on
+        // any cycle a definition could describe.
+        let node = Ty::Struct(adt("Node", 0));
+        let structs =
+            [struct_def("Node", vec![field("next", Ty::Option(Box::new(node.clone())))], derives(true, true), None)];
+        let defs = TypeDefs { structs: &structs, enums: &[] };
+        assert!(!defs.needs_drop(&node));
+        assert!(defs.is_copy(&node));
+        assert!(defs.is_clone(&node));
+    }
+
+    #[test]
+    fn enum_questions_look_at_every_variant() {
+        let with_string = EnumDef {
+            name: "E".into(),
+            variants: vec![
+                VariantDef { name: "Unit".into(), shape: VariantShape::Unit, fields: vec![] },
+                VariantDef { name: "Text".into(), shape: VariantShape::Tuple, fields: vec![field("s", Ty::String)] },
+            ],
+            derives: Derives { hash: true, ..Derives::default() },
+            drop_method: None,
+        };
+        let defs = TypeDefs { structs: &[], enums: &[with_string] };
+        let ty = Ty::Enum(adt("E", 0));
+        assert!(defs.needs_drop(&ty));
+        assert!(!defs.is_copy(&ty));
+        assert!(!defs.is_clone(&ty));
+        assert!(!defs.has_drop_impl(&ty));
+    }
+}

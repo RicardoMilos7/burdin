@@ -224,3 +224,179 @@ impl Parser<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burdin_diag::SourceMap;
+
+    fn parse_str(src: &str) -> (File, Diagnostics) {
+        let mut diags = Diagnostics::default();
+        let lexed = crate::lexer::lex(FileId(0), src, &mut diags);
+        let file = parse_file(FileId(0), lexed, &mut diags);
+        (file, diags)
+    }
+
+    fn render(src: &str) -> (File, String) {
+        let (file, diags) = parse_str(src);
+        let mut sources = SourceMap::default();
+        let id = sources.add("t.bd".into(), src.into());
+        assert_eq!(id, FileId(0));
+        (file, diags.render(&sources))
+    }
+
+    fn fn_names(file: &File) -> Vec<&str> {
+        file.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Fn(f) => Some(f.name.name.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn binding_names(block: &Block) -> Vec<&str> {
+        block
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::Let { pattern, .. } => match &pattern.kind {
+                    PatternKind::Binding { name, .. } => Some(name.name.as_str()),
+                    _ => None,
+                },
+                Stmt::Expr(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn recovers_at_the_next_statement() {
+        let (file, out) = render("fn main() {\n    let = 5\n    let x = 1\n    let y = x + 1\n}\n");
+        assert_eq!(out, "t.bd:2:9: error[E0001]: expected a pattern, found `=`\n");
+        assert_eq!(fn_names(&file), ["main"]);
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(binding_names(&main.body), ["x", "y"]);
+    }
+
+    #[test]
+    fn recovers_at_the_next_item() {
+        let (file, out) = render("fn broken( { }\nfn good() {}\n");
+        assert_eq!(out, "t.bd:1:12: error[E0001]: expected a parameter name, found `{`\n");
+        assert_eq!(fn_names(&file), ["good"]);
+    }
+
+    #[test]
+    fn recovers_from_an_unclosed_bracket_at_the_block_end() {
+        let (file, out) = render("fn main() {\n    g(1, 2\n}\nfn good() {}\n");
+        assert_eq!(out, "t.bd:3:1: error[E0001]: expected `)`, found `}`\n");
+        assert_eq!(fn_names(&file), ["main", "good"]);
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(main.body.stmts.len(), 0);
+    }
+
+    #[test]
+    fn item_recovery_ignores_unbalanced_brackets() {
+        // `starts_item_only` ends recovery at the next item keyword even with unclosed brackets, so one broken
+        // signature cannot swallow the rest of the file.
+        let (file, out) = render("fn broken( ( (\nfn good() {}\n");
+        assert_eq!(out, "t.bd:1:12: error[E0001]: expected a parameter name, found `(`\n");
+        assert_eq!(fn_names(&file), ["good"]);
+    }
+
+    #[test]
+    fn missing_statement_separator_is_reported_and_recovered() {
+        let (file, out) = render("fn main() {\n    let x = 1 let y = 2\n}\n");
+        assert_eq!(out, "t.bd:2:15: error[E0001]: expected a line break or `}` after the statement, found `let`\n");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(binding_names(&main.body), ["x"]);
+    }
+
+    #[test]
+    fn a_newline_ends_an_expression_except_before_and_or() {
+        let (file, out) = render("fn main() {\n    let ok = true\n    && false\n    let x = 1\n    + 2\n}\n");
+        assert_eq!(out, "t.bd:5:5: error[E0001]: expected an expression, found `+`\n");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(binding_names(&main.body), ["ok", "x"]);
+        let Stmt::Let { init, .. } = &main.body.stmts[0] else { unreachable!() };
+        assert!(matches!(init.kind, ExprKind::Binary(BinOp::And, _, _)));
+        let Stmt::Let { init, .. } = &main.body.stmts[1] else { unreachable!() };
+        assert!(matches!(init.kind, ExprKind::Int(1)));
+    }
+
+    #[test]
+    fn closing_angles_are_split_out_of_shifts_and_comparisons() {
+        let (file, out) =
+            render("struct Stack<T> { items: T }\nfn f(x: Stack<Stack<i32>>) {}\nfn g(a: bool) { let b = a >= a }\n");
+        assert_eq!(out, "");
+        assert_eq!(fn_names(&file), ["f", "g"]);
+    }
+
+    #[test]
+    fn errors_point_at_the_offending_token() {
+        let (_, out) = render("fn main() {\n    let x = )\n}\n");
+        assert_eq!(out, "t.bd:2:13: error[E0001]: expected an expression, found `)`\n");
+    }
+
+    #[test]
+    fn a_truncated_lexer_adds_no_parser_error() {
+        let (_, out) = render("fn main() {\n    /* no end");
+        assert_eq!(out, "t.bd:2:5: error[E0001]: unterminated block comment\n");
+    }
+
+    #[test]
+    fn test_items_survive_recovery() {
+        let (file, out) = render("fn broken( { }\ntest \"one\" { assert(true) }\nfn good() {}\n");
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert_eq!(fn_names(&file), ["good"]);
+        assert_eq!(file.tests.len(), 1);
+        assert_eq!(file.tests[0].name, "one");
+    }
+
+    #[test]
+    fn malformed_input_never_panics() {
+        let snippets = [
+            "",
+            "fn",
+            "fn f(",
+            "fn f() {",
+            "fn f() { let",
+            "fn f() { let x =",
+            "fn f() { x = (",
+            "struct",
+            "struct S {",
+            "enum E {",
+            "fn f() { match x {",
+            "fn f() { if",
+            "fn f() { for",
+            "fn f() { 1 +",
+            "test",
+            "test \"a\"",
+            "use",
+            "use a.",
+            "impl",
+            "extern",
+            "extern \"C\" {",
+            "fn f() { g(] }",
+            "fn f() { a.b. }",
+            "fn f() { let (a, = 1 }",
+            ">>=",
+            "@@@",
+        ];
+        for src in snippets {
+            let (_, out) = render(src);
+            assert!(!out.is_empty() || src.is_empty(), "no diagnosis for {src:?}");
+        }
+    }
+
+    #[test]
+    fn semicolons_still_separate_statements() {
+        // The parser resumes at the next line; the AST keeps only the statements that parsed, with their spans.
+        let (file, out) = render("fn main() {\n    let a = 1;\n    let b = 2;\n}\n");
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(binding_names(&main.body), ["a", "b"]);
+        let Stmt::Let { span: first, .. } = &main.body.stmts[0] else { unreachable!() };
+        let Stmt::Let { span: second, .. } = &main.body.stmts[1] else { unreachable!() };
+        assert!(first.lo < second.lo && first.hi <= second.lo);
+    }
+}

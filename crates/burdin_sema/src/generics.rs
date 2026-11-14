@@ -468,3 +468,210 @@ pub(crate) fn param_ty(name: &str) -> Ty {
 pub(crate) fn nowhere(file: burdin_diag::FileId) -> Span {
     Span::new(file, 0, 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burdin_tir::{AdtRef, IntTy};
+
+    fn param(name: &str) -> Ty {
+        param_ty(name)
+    }
+
+    fn i32_() -> Ty {
+        Ty::Int(IntTy::I32)
+    }
+
+    fn bool_() -> Ty {
+        Ty::Bool
+    }
+
+    fn opt(ty: Ty) -> Ty {
+        Ty::Option(Box::new(ty))
+    }
+
+    fn bindings(pat: &Ty, act: &Ty) -> Vec<(String, Ty)> {
+        let mut out = Vec::new();
+        Globals::default().unify(pat, act, &mut out);
+        out
+    }
+
+    /// A pattern, the actual type, and the bindings unifying them must produce.
+    type Case = (Ty, Ty, Vec<(String, Ty)>);
+
+    #[test]
+    fn binds_a_parameter_to_the_actual_type() {
+        assert_eq!(bindings(&param("T"), &i32_()), vec![("T".to_string(), i32_())]);
+        // A parameter that already stands for a type is not a binding site.
+        assert_eq!(bindings(&i32_(), &i32_()), vec![]);
+        assert_eq!(bindings(&param("T"), &Ty::Str), vec![("T".to_string(), Ty::Str)]);
+    }
+
+    #[test]
+    fn binds_parameters_in_nested_positions() {
+        let cases: Vec<Case> = vec![
+            (opt(param("T")), opt(i32_()), vec![("T".into(), i32_())]),
+            (
+                Ty::Result(Box::new(param("T")), Box::new(param("E"))),
+                Ty::Result(Box::new(i32_()), Box::new(bool_())),
+                vec![("T".into(), i32_()), ("E".into(), bool_())],
+            ),
+            (Ty::List(Box::new(param("T"))), Ty::List(Box::new(bool_())), vec![("T".into(), bool_())]),
+            (
+                Ty::Map(Box::new(param("K")), Box::new(param("V"))),
+                Ty::Map(Box::new(Ty::Str), Box::new(i32_())),
+                vec![("K".into(), Ty::Str), ("V".into(), i32_())],
+            ),
+            (Ty::Heap(Box::new(param("T"))), Ty::Heap(Box::new(i32_())), vec![("T".into(), i32_())]),
+            (Ty::CPtr(Box::new(param("T"))), Ty::CPtr(Box::new(bool_())), vec![("T".into(), bool_())]),
+            (Ty::Slice(Box::new(param("T"))), Ty::Slice(Box::new(Ty::Str)), vec![("T".into(), Ty::Str)]),
+            (Ty::Array(Box::new(param("T")), 3), Ty::Array(Box::new(i32_()), 3), vec![("T".into(), i32_())]),
+            (
+                Ty::Ref { mutable: true, inner: Box::new(param("T")) },
+                Ty::Ref { mutable: true, inner: Box::new(bool_()) },
+                vec![("T".into(), bool_())],
+            ),
+            (
+                Ty::Tuple(vec![param("A"), param("B")]),
+                Ty::Tuple(vec![i32_(), Ty::Str]),
+                vec![("A".into(), i32_()), ("B".into(), Ty::Str)],
+            ),
+        ];
+        for (pat, act, want) in cases {
+            assert_eq!(bindings(&pat, &act), want, "unifying {pat} with {act}");
+        }
+    }
+
+    #[test]
+    fn keeps_the_first_binding_of_a_parameter() {
+        let mut out = Vec::new();
+        let pat = Ty::Tuple(vec![param("T"), param("T")]);
+        let act = Ty::Tuple(vec![i32_(), bool_()]);
+        Globals::default().unify(&pat, &act, &mut out);
+        assert_eq!(out, vec![("T".to_string(), i32_())]);
+    }
+
+    #[test]
+    fn error_and_never_actuals_bind_nothing() {
+        for actual in [Ty::Error, Ty::Never] {
+            let mut out = Vec::new();
+            Globals::default().unify(&param("T"), &actual, &mut out);
+            assert!(out.is_empty(), "{actual}");
+            let mut out = Vec::new();
+            Globals::default().unify(&opt(param("T")), &opt(actual), &mut out);
+            assert!(out.is_empty());
+        }
+    }
+
+    #[test]
+    fn mismatched_shapes_bind_nothing() {
+        assert!(bindings(&opt(param("T")), &Ty::List(Box::new(i32_()))).is_empty());
+        assert!(bindings(&Ty::Tuple(vec![param("T")]), &Ty::Tuple(vec![i32_(), bool_()])).is_empty());
+        assert!(bindings(&Ty::List(Box::new(param("T"))), &Ty::Map(Box::new(i32_()), Box::new(i32_()))).is_empty());
+    }
+
+    #[test]
+    fn struct_and_enum_instances_unify_through_their_template() {
+        let mut g = Globals::default();
+        let pattern = Ty::Struct(AdtRef { id: 0, name: Rc::from("Pair<T>") });
+        let actual = Ty::Struct(AdtRef { id: 1, name: Rc::from("Pair<i32>") });
+        g.adt_origin.insert((false, 0), (7, vec![param("T")]));
+        g.adt_origin.insert((false, 1), (7, vec![i32_()]));
+        let mut out = Vec::new();
+        g.unify(&pattern, &actual, &mut out);
+        assert_eq!(out, vec![("T".to_string(), i32_())]);
+
+        // A different template never unifies, even when both sides are structs.
+        let other = Ty::Struct(AdtRef { id: 2, name: Rc::from("Other<i32>") });
+        g.adt_origin.insert((false, 2), (8, vec![i32_()]));
+        let mut out = Vec::new();
+        g.unify(&pattern, &other, &mut out);
+        assert!(out.is_empty());
+
+        let enum_pattern = Ty::Enum(AdtRef { id: 0, name: Rc::from("Opt<T>") });
+        let enum_actual = Ty::Enum(AdtRef { id: 1, name: Rc::from("Opt<bool>") });
+        g.adt_origin.insert((true, 0), (9, vec![param("T")]));
+        g.adt_origin.insert((true, 1), (9, vec![bool_()]));
+        let mut out = Vec::new();
+        g.unify(&enum_pattern, &enum_actual, &mut out);
+        assert_eq!(out, vec![("T".to_string(), bool_())]);
+    }
+
+    #[test]
+    fn subst_replaces_parameters_deeply() {
+        let g = Globals::default();
+        let env = vec![("T".to_string(), i32_()), ("E".to_string(), bool_())];
+        assert_eq!(g.subst_ty(&param("T"), &env), i32_());
+        // A parameter that is not in the environment stays as it is.
+        assert_eq!(g.subst_ty(&param("U"), &env), param("U"));
+        let ty = Ty::Tuple(vec![
+            param("T"),
+            Ty::Result(Box::new(param("T")), Box::new(param("E"))),
+            Ty::Map(Box::new(param("E")), Box::new(param("T"))),
+            Ty::Ref { mutable: false, inner: Box::new(param("T")) },
+        ]);
+        let want = Ty::Tuple(vec![
+            i32_(),
+            Ty::Result(Box::new(i32_()), Box::new(bool_())),
+            Ty::Map(Box::new(bool_()), Box::new(i32_())),
+            Ty::Ref { mutable: false, inner: Box::new(i32_()) },
+        ]);
+        assert_eq!(g.subst_ty(&ty, &env), want);
+    }
+
+    #[test]
+    fn ty_has_param_sees_through_constructors() {
+        let mut g = Globals::default();
+        assert!(g.ty_has_param(&param("T")));
+        assert!(g.ty_has_param(&opt(param("T"))));
+        assert!(g.ty_has_param(&Ty::Tuple(vec![i32_(), Ty::List(Box::new(param("T")))])));
+        assert!(!g.ty_has_param(&opt(i32_())));
+        assert!(!g.ty_has_param(&Ty::Str));
+
+        let instance = Ty::Struct(AdtRef { id: 0, name: Rc::from("Box<T>") });
+        g.adt_origin.insert((false, 0), (7, vec![param("T")]));
+        assert!(g.ty_has_param(&instance));
+        g.adt_origin.insert((false, 0), (7, vec![i32_()]));
+        assert!(!g.ty_has_param(&instance));
+    }
+
+    #[test]
+    fn instance_names_spell_their_arguments() {
+        assert_eq!(Globals::instance_name("Stack", &[i32_()]), "Stack<i32>");
+        assert_eq!(Globals::instance_name("Pair", &[i32_(), bool_()]), "Pair<i32, bool>");
+    }
+
+    #[test]
+    fn bounds_carry_what_they_imply() {
+        let mut g = Globals::default();
+        assert_eq!(g.bound_closure(Bound::Ord), vec![Bound::Ord, Bound::Eq]);
+        assert_eq!(g.bound_closure(Bound::Copy), vec![Bound::Copy, Bound::Clone]);
+        assert_eq!(g.bound_closure(Bound::Hash), vec![Bound::Hash]);
+
+        // A user interface brings what its `requires` clause lists.
+        g.interfaces.push(InterfaceInfo {
+            name: "Show".into(),
+            module: 0,
+            requires: vec![Bound::Eq],
+            methods: Vec::new(),
+        });
+        assert_eq!(g.bound_closure(Bound::User(0)), vec![Bound::User(0), Bound::Eq]);
+    }
+
+    #[test]
+    fn satisfies_reads_the_bounds_of_a_type_parameter() {
+        let g = Globals::default();
+        let env: &[(String, Vec<Bound>)] = &[("T".to_string(), vec![Bound::Ord])];
+        assert!(g.satisfies(&param("T"), Bound::Ord, env));
+        assert!(g.satisfies(&param("T"), Bound::Eq, env), "Ord implies Eq");
+        assert!(!g.satisfies(&param("T"), Bound::Hash, env));
+        assert!(!g.satisfies(&param("U"), Bound::Copy, env));
+
+        // Concrete types answer from their own rules; `Error` and `Never` satisfy everything.
+        assert!(g.satisfies(&i32_(), Bound::Copy, &[]));
+        assert!(g.satisfies(&opt(i32_()), Bound::Hash, &[]));
+        assert!(!g.satisfies(&Ty::String, Bound::Copy, &[]));
+        assert!(g.satisfies(&Ty::Error, Bound::Hash, &[]));
+        assert!(g.satisfies(&Ty::Never, Bound::Copy, &[]));
+    }
+}

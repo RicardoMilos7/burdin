@@ -390,11 +390,288 @@ mod tests {
     use super::*;
     use TokenKind::*;
 
+    fn lex_all(src: &str) -> (Vec<Token>, Diagnostics) {
+        let mut d = Diagnostics::default();
+        let r = lex(FileId(0), src, &mut d);
+        (r.tokens, d)
+    }
+
     fn kinds(src: &str) -> Vec<TokenKind> {
         let mut d = Diagnostics::default();
         let r = lex(FileId(0), src, &mut d);
         assert!(!d.has_errors(), "unexpected errors for {src:?}");
         r.tokens.into_iter().map(|t| t.kind).collect()
+    }
+
+    #[test]
+    fn every_keyword_has_its_own_token() {
+        let cases: &[(&str, TokenKind)] = &[
+            ("as", As),
+            ("break", Break),
+            ("const", Const),
+            ("continue", Continue),
+            ("else", Else),
+            ("enum", Enum),
+            ("extern", Extern),
+            ("false", False),
+            ("fn", Fn),
+            ("for", For),
+            ("if", If),
+            ("in", In),
+            ("interface", Interface),
+            ("let", Let),
+            ("loop", Loop),
+            ("match", Match),
+            ("mut", Mut),
+            ("orelse", Orelse),
+            ("own", Own),
+            ("priv", Priv),
+            ("return", Return),
+            ("self", SelfValue),
+            ("Self", SelfType),
+            ("struct", Struct),
+            ("true", True),
+            ("type", Type),
+            ("unsafe", Unsafe),
+            ("use", Use),
+            ("where", Where),
+            ("while", While),
+            ("any", Reserved("any".into())),
+            ("comptime", Reserved("comptime".into())),
+            ("derive", Reserved("derive".into())),
+            ("impl", Reserved("impl".into())),
+        ];
+        for (word, want) in cases {
+            let mut d = Diagnostics::default();
+            let r = lex(FileId(0), word, &mut d);
+            assert!(!d.has_errors(), "unexpected errors for {word:?}");
+            assert_eq!(r.tokens.len(), 2, "{word:?}");
+            assert_eq!(&r.tokens[0].kind, want, "{word:?}");
+            assert_eq!(r.tokens[0].span, Span::new(FileId(0), 0, word.len() as u32), "{word:?}");
+            assert_eq!(r.tokens[1].kind, Eof, "{word:?}");
+        }
+    }
+
+    #[test]
+    fn punctuation_uses_the_longest_token() {
+        let cases: &[(&str, TokenKind)] = &[
+            ("..=", DotDotEq),
+            ("..", DotDot),
+            (".", Dot),
+            ("=>", FatArrow),
+            ("<<", Shl),
+            (">>", Shr),
+            ("&&", AndAnd),
+            ("||", OrOr),
+            ("==", EqEq),
+            ("!=", NotEq),
+            ("<=", Le),
+            (">=", Ge),
+            ("(", LParen),
+            (")", RParen),
+            ("[", LBracket),
+            ("]", RBracket),
+            ("{", LBrace),
+            ("}", RBrace),
+            (",", Comma),
+            (":", Colon),
+            (";", Semi),
+            ("@", At),
+            ("?", Question),
+            ("=", Eq),
+            ("+", Plus),
+            ("-", Minus),
+            ("*", Star),
+            ("/", Slash),
+            ("%", Percent),
+            ("&", Amp),
+            ("|", Pipe),
+            ("^", Caret),
+            ("!", Bang),
+            ("<", Lt),
+            (">", Gt),
+        ];
+        for (src, want) in cases {
+            assert_eq!(kinds(src), vec![want.clone(), Eof], "{src:?}");
+        }
+    }
+
+    #[test]
+    fn identifiers_and_the_underscore() {
+        assert_eq!(kinds("_"), vec![Underscore, Eof]);
+        assert_eq!(
+            kinds("_x x_1 Self self test"),
+            vec![
+                Ident("_x".into()),
+                Ident("x_1".into()),
+                SelfType,
+                SelfValue,
+                // `test` is contextual: it only starts an item when a string follows it.
+                Ident("test".into()),
+                Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn non_ascii_identifiers_are_reported_and_skipped() {
+        let (tokens, d) = lex_all("héllo");
+        assert_eq!(
+            tokens.iter().map(|t| t.kind.clone()).collect::<Vec<_>>(),
+            vec![Ident("h".into()), Ident("llo".into()), Eof]
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(d.iter().next().unwrap().span, Span::new(FileId(0), 1, 3));
+        assert!(d.iter().next().unwrap().message.contains('é'));
+    }
+
+    #[test]
+    fn integer_literals_take_their_radix() {
+        assert_eq!(
+            kinds("0 42 0xFF 0o17 0b1010 1_000_000"),
+            vec![Int(0), Int(42), Int(255), Int(15), Int(10), Int(1_000_000), Eof]
+        );
+    }
+
+    #[test]
+    fn float_literals_keep_their_spelling() {
+        assert_eq!(
+            kinds("1.5 1e3 1E+3 1.5e-2 1_0.2_5"),
+            vec![
+                Float("1.5".into()),
+                Float("1e3".into()),
+                Float("1E+3".into()),
+                Float("1.5e-2".into()),
+                Float("10.25".into()),
+                Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_numbers_report_once_and_still_produce_a_token() {
+        for (src, message) in [
+            ("1u8", "invalid number literal `1u8`"),
+            ("0x", "invalid number literal `0x`"),
+            ("0b2", "invalid number literal `0b2`"),
+            ("0xFFg", "invalid number literal `0xFFg`"),
+            ("1e", "invalid number literal `1e`"),
+        ] {
+            let (tokens, d) = lex_all(src);
+            assert_eq!(d.len(), 1, "{src:?}");
+            assert_eq!(d.iter().next().unwrap().message, message, "{src:?}");
+            assert_eq!(tokens[0].kind, Int(0), "{src:?}");
+        }
+    }
+
+    #[test]
+    fn too_large_integer_literals_are_literal_range_errors() {
+        assert_eq!(kinds(&u128::MAX.to_string()), vec![Int(u128::MAX), Eof]);
+        let too_big = "340282366920938463463374607431768211456";
+        let (tokens, d) = lex_all(too_big);
+        assert_eq!(tokens[0].kind, Int(0));
+        assert_eq!(d.len(), 1);
+        let diag = d.iter().next().unwrap();
+        assert_eq!(diag.code, Code::LITERAL_RANGE);
+        assert_eq!(diag.span, Span::new(FileId(0), 0, too_big.len() as u32));
+    }
+
+    #[test]
+    fn numbers_after_a_dot_are_plain_digits() {
+        // `t.0.1` is three tokens plus a field access, not a float; `1.5` is a float.
+        assert_eq!(kinds("t.0.1 1.5"), vec![Ident("t".into()), Dot, Int(0), Dot, Int(1), Float("1.5".into()), Eof]);
+    }
+
+    #[test]
+    fn string_literals_unescape_and_normalize_crlf() {
+        assert_eq!(
+            kinds(r#""tab\t nl\n nul\0 quote\" slash\\""#),
+            vec![Str("tab\t nl\n nul\0 quote\" slash\\".into()), Eof]
+        );
+        assert_eq!(kinds("\"a\r\nb\""), vec![Str("a\nb".into()), Eof]);
+        assert_eq!(kinds("\"é\""), vec![Str("é".into()), Eof]);
+    }
+
+    #[test]
+    fn unknown_escape_is_reported_once_and_dropped() {
+        let (tokens, d) = lex_all(r#""a\qb""#);
+        assert_eq!(tokens[0].kind, Str("ab".into()));
+        assert_eq!(d.len(), 1);
+        assert!(d.iter().next().unwrap().message.contains("unknown escape sequence"));
+    }
+
+    #[test]
+    fn char_literals_handle_escapes_and_unicode() {
+        assert_eq!(
+            kinds(r"'a' '\n' '\\' '\'' 'é' '\0'"),
+            vec![Char('a'), Char('\n'), Char('\\'), Char('\''), Char('é'), Char('\0'), Eof]
+        );
+    }
+
+    #[test]
+    fn malformed_char_literals_report_exactly_one_character() {
+        let (tokens, d) = lex_all("'' 'ab'");
+        assert_eq!(d.len(), 2);
+        assert!(d.iter().all(|x| x.message.contains("exactly one character")));
+        assert_eq!(tokens[0].kind, Char('\0'));
+        assert_eq!(tokens[1].kind, Char('a'));
+    }
+
+    #[test]
+    fn unterminated_char_literal_recovers_at_the_newline() {
+        let (tokens, d) = lex_all("'a\nb");
+        assert_eq!(d.len(), 1);
+        assert!(d.iter().next().unwrap().message.contains("unterminated character literal"));
+        assert_eq!(tokens[1].kind, Ident("b".into()));
+        assert_eq!(tokens[2].kind, Eof);
+    }
+
+    #[test]
+    fn token_spans_and_newlines_are_recorded() {
+        let (tokens, d) = lex_all("a + 22\nbb");
+        assert!(!d.has_errors());
+        let seen: Vec<(TokenKind, u32, u32, bool)> =
+            tokens.iter().map(|t| (t.kind.clone(), t.span.lo, t.span.hi, t.nl_before)).collect();
+        assert_eq!(
+            seen,
+            vec![
+                (Ident("a".into()), 0, 1, false),
+                (Plus, 2, 3, false),
+                (Int(22), 4, 6, false),
+                (Ident("bb".into()), 7, 9, true),
+                (Eof, 9, 9, false),
+            ]
+        );
+        // A CRLF is one line break, not two.
+        let (tokens, _) = lex_all("a\r\nb");
+        assert!(tokens[1].nl_before);
+    }
+
+    #[test]
+    fn comments_produce_no_tokens() {
+        assert_eq!(
+            kinds("a // b c\nd /* e\nf */ g"),
+            vec![Ident("a".into()), Ident("d".into()), Ident("g".into()), Eof]
+        );
+    }
+
+    #[test]
+    fn unknown_characters_are_skipped_whole() {
+        let (tokens, d) = lex_all("# é @");
+        assert_eq!(tokens.iter().map(|t| t.kind.clone()).collect::<Vec<_>>(), vec![At, Eof]);
+        let messages: Vec<&str> = d.iter().map(|x| x.message.as_str()).collect();
+        assert_eq!(messages, ["unexpected character `#`", "unexpected character `é`"]);
+    }
+
+    #[test]
+    fn unterminated_comment_truncates_the_file() {
+        let mut d = Diagnostics::default();
+        let r = lex(FileId(0), "a /* no end", &mut d);
+        assert!(r.truncated);
+        assert_eq!(r.tokens.len(), 2);
+        assert_eq!(r.tokens[1].kind, Eof);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d.iter().next().unwrap().message, "unterminated block comment");
     }
 
     #[test]
