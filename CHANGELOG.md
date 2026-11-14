@@ -35,6 +35,10 @@ close-out checklist in `AGENTS.md`).
   LLVM tree (including the multiarch `libLLVM` it symlinks to), macOS caches the Homebrew bottle downloads, and
   Windows caches the unpacked official archive. `tests/check-ci.sh` fails if any of those caches goes missing
   (issue #46).
+- Every CI job runs the finished conformance milestones in the release profile as well as debug, covering release
+  code generation; tests marked `//@ debug-only` (the m02 overflow abort test) are skipped. `tests/check-ci.sh` fails
+  if a job loses its release step, if the runner stops selecting the profile or skipping debug-only tests, or if no
+  test is marked debug-only (issue #47).
 - The compiler benchmarks gained regression tracking (issue #446): `cargo bench -p burdin_bench -- --save FILE`
   records a run's medians in a plain-text baseline, and `--baseline FILE` compares a later run with it, reporting
   every case more than `--threshold` percent slower (default 25) and exiting 1. `tests/bench-regression.sh` runs the

@@ -71,6 +71,9 @@ tests/check-docs.sh                   # check documentation links and the driver
 pwsh tests/check-tests.ps1            # the same check in PowerShell
 ```
 
+CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and
+release. The release run skips tests marked `//@ debug-only`.
+
 The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, then `PATH`. It expects `burdin build`,
 `burdin run`, and `burdin test` to behave as documented in [the driver contract](../README.md#the-driver-contract) at
 the repository root (summarized at the top of `run-tests.sh`): diagnostics as
