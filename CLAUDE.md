@@ -75,6 +75,8 @@ crates/
   burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime
   burdin_driver/            the `burdin` binary: build, run, test; package loading (`package.rs`: burdin.toml,
                             modules, dependencies)
+  burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
+                            resolution and type checking, and code generation
 std/                      the standard library, written in Burdin
 spec/                     grammar, memory rules, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts

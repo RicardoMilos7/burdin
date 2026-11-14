@@ -17,6 +17,9 @@ close-out checklist in `AGENTS.md`).
   LLVM triple follows the host and that `usize`/`isize` are 64-bit; it runs on both jobs. `tests/check-ci.sh` now
   guards both jobs. The driver resolves `--link-lib LLVM-C` for Homebrew's `libLLVM.dylib` layout, finds `llvm-config`
   through `LLVM_SYS_211_PREFIX`, and its resolution logic has unit tests (issues #16, #17, #18).
+- Add `cargo bench -p burdin_bench`: generated inputs measure the lexer, the parser, name resolution and type
+  checking, and code generation at three sizes, reporting median time per iteration. `--smoke` runs every stage
+  once with generous time budgets and is part of CI, and `HANDOFF.md` records the first baseline (issue #41).
 
 ## Unreleased — Stage 1
 

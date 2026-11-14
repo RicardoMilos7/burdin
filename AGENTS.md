@@ -30,6 +30,8 @@ tests/check-platform.sh            check the host triple and 64-bit isize/usize 
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
+cargo bench -p burdin_bench        compiler benchmarks (lex, parse, sema, codegen)
+cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs
 ```
 
 Development happens in WSL Ubuntu first; the shell scripts also run from Git Bash on Windows.
@@ -113,6 +115,7 @@ CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, stage 0 scope, stage 1 plan
 tests/                    conformance suite, README with the format and error codes
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
-                          burdin_check, burdin_codegen, burdin_driver
+                          burdin_check, burdin_codegen, burdin_driver,
+                          burdin_bench (generated inputs and `cargo bench` targets)
 std/                      the standard library, written in Burdin
 ```

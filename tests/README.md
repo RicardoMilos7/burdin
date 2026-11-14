@@ -76,6 +76,19 @@ The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, t
 `burdin test`. If the real driver differs, change the section marked in that file. The exit code is 0 only when every
 test passes. On Windows, run it from Git Bash.
 
+## Benchmarks
+
+The compiler benchmarks are not part of the conformance run:
+
+```
+cargo bench -p burdin_bench               # medians per stage and size
+cargo bench -p burdin_bench -- --smoke    # the time budgets CI runs
+cargo bench -p burdin_bench -- lex        # only cases whose name contains `lex`
+```
+
+`crates/burdin_bench` generates its inputs, so a size is the only parameter of a measurement. `HANDOFF.md` records
+the baseline and the meaning of the `--smoke` budgets.
+
 ## Error codes
 
 The registry the tests use. The compiler adopts these numbers (or the tests are updated).

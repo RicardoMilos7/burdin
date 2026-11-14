@@ -1,15 +1,17 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, and tenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, and thirteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the tenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all 133
-tests pass in the debug profile and 132 in release (one m06 test is debug-only). `burdin test` runs `test` blocks, and
-the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18). The twelfth
-session deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43); `spec/stage0-subset.md` is the only stage 0
-scope document. The thirteenth session retired the claude.ai copies of the design and stage 0 documents (issue #44):
-the repository files are canonical and now say so, and the external copies are recorded as historical.
+Updated at the end of the thirteenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all
+133 tests pass in the debug profile and 132 in release (one m06 test is debug-only). `burdin test` runs `test` blocks,
+and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18). The
+twelfth session deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43); `spec/stage0-subset.md` is the
+only stage 0 scope document. The thirteenth session retired the claude.ai copies of the design and stage 0 documents
+(issue #44): the repository files are canonical and now say so, and the external copies are recorded as historical. It
+also added the compiler benchmarks: `cargo bench -p burdin_bench` measures the four stages and CI runs its `--smoke`
+budgets (#41).
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -22,9 +24,10 @@ the repository files are canonical and now say so, and the external copies are r
 | Conformance tests | `tests/` | 133 tests. All pass: m01 to m11 |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
-| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary); see the layout in `CLAUDE.md` |
+| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`; see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org) and `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`). Both run check-ci, check-tests, fmt, clippy, unit tests, build, `tests/check-platform.sh`, and conformance m01-m11. `tests/check-ci.sh` guards both jobs |
+| Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org) and `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`). Both run check-ci, check-tests, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11. `tests/check-ci.sh` guards both jobs |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
 Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21. See the Toolchain section of `CLAUDE.md` for the
@@ -197,6 +200,31 @@ exact packages and how to call WSL from PowerShell.
   `libLLVM-21.so` and Homebrew's `libLLVM-C.dylib` / `libLLVM.dylib`, and adds `-L` plus an rpath.
 - Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
   were no syntax errors.
+
+### Compiler benchmarks (issue #41)
+
+`crates/burdin_bench` generates its inputs (`src/lib.rs`) and the `benches/compiler.rs` target times one stage at a
+time. A generated chunk is a struct with methods, an enum with a `match`, a generic function, an arithmetic loop, a
+`List` loop, and a `String` loop; `main` calls the arithmetic and enum functions. The programs use only built-in
+types and methods, so sema does not spend each iteration checking `std`. The parser case clones a pre-lexed token
+stream because the parser takes tokens by value; that copy is part of the number.
+
+First baseline, 2026-11-14, `cargo bench -p burdin_bench`, medians per iteration, `bench` profile, WSL Ubuntu 26.04
+on x86-64 with Rust 1.100.0 and LLVM 21.1.8 (a different machine will differ; compare a run against itself, not
+against this table):
+
+| Case | small (8 chunks, ~600 lines) | medium (32, ~2,400 lines) | large (128, ~9,600 lines) |
+| --- | --- | --- | --- |
+| lex | 125 us | 417 us | 1.55 ms |
+| parse | 345 us | 1.30 ms | 4.92 ms |
+| sema | 492 us | 1.78 ms | 7.15 ms |
+| codegen (debug) | 16.8 ms | 53.3 ms | 201 ms |
+
+`cargo bench -p burdin_bench -- --smoke` runs 16 chunks through all four stages, checks that the generated program
+compiles, and fails when a stage exceeds 1 s (lex, parse), 2 s (sema), or 10 s (codegen). Those buy roughly two to
+three orders of magnitude of headroom, so a busy runner passes and only a hang or an accidental super-linear pass
+fails. CI runs it after `cargo build`, and `tests/check-ci.sh` requires the step and the bench target. Tighter
+threshold tracking against a stored baseline is issue #446.
 
 ## Decisions already made (do not reopen without a reason)
 
