@@ -199,3 +199,126 @@ pub fn place_mentions_block(b: &Block, out: &mut Vec<Place>) {
 pub fn places_overlap(a: &(LocalId, Vec<usize>), b: &(LocalId, Vec<usize>)) -> bool {
     a.0 == b.0 && (a.1.starts_with(&b.1) || b.1.starts_with(&a.1))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops::FuncId;
+    use crate::ty::IntTy;
+    use burdin_diag::{FileId, Span};
+
+    fn span() -> Span {
+        Span::new(FileId(0), 0, 0)
+    }
+
+    fn i32_() -> Ty {
+        Ty::Int(IntTy::I32)
+    }
+
+    fn local(id: usize, ty: Ty) -> Expr {
+        Expr { kind: ExprKind::Local(LocalId(id)), ty, span: span() }
+    }
+
+    fn field(base: Expr, index: usize) -> Expr {
+        let ty = base.ty.clone();
+        Expr { kind: ExprKind::Field(Box::new(base), index), ty, span: span() }
+    }
+
+    fn index(base: Expr, index: Expr) -> Expr {
+        let ty = match &base.ty {
+            Ty::Array(t, _) | Ty::Slice(t) => (**t).clone(),
+            _ => Ty::Error,
+        };
+        Expr { kind: ExprKind::Index(Box::new(base), Box::new(index)), ty, span: span() }
+    }
+
+    fn array(elem: Ty) -> Ty {
+        Ty::Array(Box::new(elem), 3)
+    }
+
+    fn deref(base: Expr) -> Expr {
+        Expr { kind: ExprKind::Deref(Box::new(base)), ty: i32_(), span: span() }
+    }
+
+    fn deref_ref(base: Expr) -> Expr {
+        Expr { kind: ExprKind::DerefRef(Box::new(base)), ty: i32_(), span: span() }
+    }
+
+    fn call(args: Vec<Expr>) -> Expr {
+        Expr { kind: ExprKind::Call(FuncId(0), args), ty: Ty::Unit, span: span() }
+    }
+
+    #[test]
+    fn place_roots_look_through_fields_indexes_and_derefs() {
+        assert_eq!(place_root(&local(0, i32_())), Some(LocalId(0)));
+        assert_eq!(place_root(&field(field(local(0, i32_()), 1), 2)), Some(LocalId(0)));
+        assert_eq!(place_root(&index(local(1, array(i32_())), local(2, i32_()))), Some(LocalId(1)));
+        assert_eq!(place_root(&deref(local(3, Ty::CPtr(Box::new(i32_()))))), Some(LocalId(3)));
+        assert_eq!(
+            place_root(&deref_ref(local(4, Ty::Ref { mutable: false, inner: Box::new(i32_()) }))),
+            Some(LocalId(4))
+        );
+        assert_eq!(place_root(&call(vec![local(5, i32_())])), None);
+    }
+
+    #[test]
+    fn tir_places_are_a_root_and_a_direct_field_path() {
+        assert_eq!(tir_place(&local(0, i32_())), Some((LocalId(0), vec![], true)));
+        assert_eq!(tir_place(&field(field(local(0, i32_()), 2), 1)), Some((LocalId(0), vec![2, 1], true)));
+        // Indexing and dereferences cut the path: a later field does not extend it.
+        let indexed = index(local(0, array(i32_())), local(1, i32_()));
+        assert_eq!(tir_place(&indexed), Some((LocalId(0), vec![], false)));
+        assert_eq!(tir_place(&field(indexed, 3)), Some((LocalId(0), vec![], false)));
+        assert_eq!(tir_place(&deref(local(2, Ty::CPtr(Box::new(i32_()))))), Some((LocalId(2), vec![], false)));
+        assert_eq!(
+            tir_place(&deref_ref(local(3, Ty::Ref { mutable: true, inner: Box::new(i32_()) }))),
+            Some((LocalId(3), vec![], false))
+        );
+        assert_eq!(tir_place(&call(vec![])), None);
+    }
+
+    #[test]
+    fn place_expressions_are_locals_fields_indexes_and_derefs() {
+        assert!(is_place_expr(&local(0, array(i32_()))));
+        assert!(is_place_expr(&field(local(0, array(i32_())), 0)));
+        assert!(is_place_expr(&index(local(0, array(i32_())), local(1, i32_()))));
+        assert!(is_place_expr(&deref(local(0, array(i32_())))));
+        assert!(is_place_expr(&deref_ref(local(0, array(i32_())))));
+        assert!(!is_place_expr(&call(vec![local(0, i32_())])));
+        // `&place` produces a reference value; it does not itself name storage.
+        let borrowed = Expr {
+            kind: ExprKind::Ref { place: Box::new(local(0, array(i32_()))), mutable: false },
+            ty: Ty::Ref { mutable: false, inner: Box::new(array(i32_())) },
+            span: span(),
+        };
+        assert!(!is_place_expr(&borrowed));
+    }
+
+    #[test]
+    fn views_reach_through_references_and_slices_only() {
+        assert!(!through_view(&local(0, i32_())));
+        assert!(!through_view(&deref(local(0, i32_()))));
+        assert!(through_view(&deref_ref(local(0, i32_()))));
+        assert!(through_view(&field(deref_ref(local(0, i32_())), 0)));
+        assert!(!through_view(&index(local(2, array(i32_())), local(1, i32_()))));
+        assert!(through_view(&index(local(3, Ty::Slice(Box::new(i32_()))), local(1, i32_()))));
+    }
+
+    #[test]
+    fn overlap_is_prefix_based_within_one_local() {
+        assert!(places_overlap(&(LocalId(0), vec![]), &(LocalId(0), vec![1])));
+        assert!(places_overlap(&(LocalId(0), vec![1]), &(LocalId(0), vec![1, 2])));
+        assert!(places_overlap(&(LocalId(0), vec![2]), &(LocalId(0), vec![2])));
+        assert!(!places_overlap(&(LocalId(0), vec![1]), &(LocalId(0), vec![2])));
+        assert!(!places_overlap(&(LocalId(0), vec![]), &(LocalId(1), vec![])));
+    }
+
+    #[test]
+    fn place_mentions_collects_every_place_an_expression_names() {
+        let arg = field(local(0, i32_()), 1);
+        let indexed = index(local(1, array(i32_())), local(2, i32_()));
+        let mut out = Vec::new();
+        place_mentions(&call(vec![arg, indexed]), &mut out);
+        assert_eq!(out, vec![(LocalId(0), vec![1]), (LocalId(1), vec![]), (LocalId(2), vec![])]);
+    }
+}

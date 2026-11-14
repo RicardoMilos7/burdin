@@ -17,6 +17,7 @@
 #     toolchain and Cargo.lock, and cache LLVM 21: the installed tree on Linux, the
 #     Homebrew bottle downloads on macOS (issue #46);
 #   * the compiler benchmarks exist and CI runs their smoke budgets (issue #41);
+#   * every job runs the workspace unit tests and the front-end unit-test guard (issue #45);
 #   * a conformance test still exercises --link-lib LLVM-C;
 #   * the documentation check (which reads the driver contract in README.md) runs in both jobs.
 
@@ -192,6 +193,7 @@ for job in linux macos windows; do
     esac
     for command in \
         'tests/check-tests.sh' \
+        'tests/check-unit-tests.sh' \
         'tests/check-ci.sh' \
         'tests/check-platform.sh' \
         'tests/check-docs.sh' \
@@ -199,7 +201,7 @@ for job in linux macos windows; do
         'rustc --version' \
         'cargo fmt --all --check' \
         'cargo clippy --all-targets -- -D warnings' \
-        'cargo test' \
+        'cargo test --workspace' \
         'cargo build' \
         'cargo bench -p burdin_bench -- --smoke'
     do
@@ -237,7 +239,9 @@ elif ! grep -qF 'check-docs' "$ROOT/README.md"; then
 fi
 
 # Scripts CI invokes must exist, be executable, and have LF endings.
-for rel in tests/check-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh tests/check-docs.sh; do
+for rel in \
+    tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
+    tests/check-docs.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"

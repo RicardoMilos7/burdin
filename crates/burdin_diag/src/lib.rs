@@ -179,5 +179,46 @@ mod tests {
         assert_eq!(f.line_col(3), (2, 1));
         // 'é' is two bytes, so byte 6 (the space) is the third character of line 2.
         assert_eq!(f.line_col(6), (2, 3));
+        // A CRLF is one line break: the byte after it starts line 2.
+        let crlf = SourceFile::new("w.bd".into(), "a\r\nb".into());
+        assert_eq!(crlf.line_col(3), (2, 1));
+    }
+
+    #[test]
+    fn span_to_covers_both_spans() {
+        let a = Span::new(FileId(0), 4, 6);
+        let b = Span::new(FileId(0), 1, 3);
+        assert_eq!(a.to(b), Span::new(FileId(0), 1, 6));
+        assert_eq!(b.to(a), Span::new(FileId(0), 1, 6));
+    }
+
+    #[test]
+    fn render_sorts_by_file_and_offset() {
+        let mut sources = SourceMap::default();
+        let first = sources.add("a.bd".into(), "x\ny\n".into());
+        let second = sources.add("b.bd".into(), "z\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::TYPE_MISMATCH, Span::new(second, 0, 1), "later file");
+        d.error(Code::SYNTAX, Span::new(first, 2, 3), "second line");
+        d.error(Code::SYNTAX, Span::new(first, 0, 1), "first line");
+        assert_eq!(
+            d.render(&sources),
+            "a.bd:1:1: error[E0001]: first line\n\
+             a.bd:2:1: error[E0001]: second line\n\
+             b.bd:1:1: error[E0003]: later file\n"
+        );
+    }
+
+    #[test]
+    fn absorb_skips_duplicates_but_keeps_other_codes() {
+        let span = Span::new(FileId(0), 0, 1);
+        let mut d = Diagnostics::default();
+        d.error(Code::SYNTAX, span, "first");
+        let mut other = Diagnostics::default();
+        other.error(Code::SYNTAX, span, "duplicate");
+        other.error(Code::TYPE_MISMATCH, span, "different code");
+        d.absorb(other);
+        assert_eq!(d.len(), 2);
+        assert_eq!(d.iter().map(|x| x.message.as_str()).collect::<Vec<_>>(), ["first", "different code"]);
     }
 }

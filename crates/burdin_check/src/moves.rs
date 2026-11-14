@@ -967,3 +967,84 @@ fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burdin_diag::FileId;
+
+    fn span(lo: u32) -> Span {
+        Span::new(FileId(0), lo, lo + 1)
+    }
+
+    #[test]
+    fn statuses_merge_to_maybe_only_when_they_differ() {
+        assert_eq!(Status::Init.merge(Status::Init), Status::Init);
+        assert_eq!(Status::Moved.merge(Status::Moved), Status::Moved);
+        assert_eq!(Status::Maybe.merge(Status::Maybe), Status::Maybe);
+        assert_eq!(Status::Init.merge(Status::Moved), Status::Maybe);
+        assert_eq!(Status::Moved.merge(Status::Init), Status::Maybe);
+        assert_eq!(Status::Moved.merge(Status::Maybe), Status::Maybe);
+    }
+
+    #[test]
+    fn paths_inherit_the_state_of_their_parent() {
+        let mut state = LocalState::default();
+        assert_eq!(state.get(&[]), Status::Init);
+        assert_eq!(state.get(&[0, 1]), Status::Init);
+        state.move_out(&[0], span(4));
+        assert_eq!(state.get(&[0]), Status::Moved);
+        assert_eq!(state.get(&[0, 1]), Status::Moved, "a path inherits from its parent");
+        assert_eq!(state.get(&[1]), Status::Init);
+        assert_eq!(state.moved_span(&[0, 7]), Some(span(4)));
+        assert_eq!(state.moved_span(&[1]), None);
+        assert!(state.has_moved_inside(&[]));
+        assert!(!state.has_moved_inside(&[0]));
+        assert!(!state.has_moved_inside(&[1]));
+    }
+
+    #[test]
+    fn moving_marks_tracked_descendants_and_reinit_clears_them() {
+        let mut state = LocalState::default();
+        state.move_out(&[1, 2], span(1));
+        state.move_out(&[1, 3], span(2));
+        assert_eq!(state.get(&[1, 2]), Status::Moved);
+        assert_eq!(state.get(&[1, 3]), Status::Moved);
+        state.reinit(&[1]);
+        assert_eq!(state.get(&[1]), Status::Init);
+        assert_eq!(state.get(&[1, 2]), Status::Init);
+        assert_eq!(state.get(&[1, 3]), Status::Init);
+    }
+
+    #[test]
+    fn merging_a_moved_path_with_an_initialized_one_makes_it_maybe() {
+        let mut moved = LocalState::default();
+        moved.move_out(&[0], span(5));
+        moved.merge_with(&LocalState::default());
+        assert_eq!(moved.get(&[0]), Status::Maybe);
+        assert_eq!(moved.moved_span(&[0]), None, "a maybe-moved path has no single move site");
+    }
+
+    #[test]
+    fn merging_two_moves_keeps_the_first_move_site() {
+        let mut a = LocalState::default();
+        a.move_out(&[0], span(1));
+        let mut b = LocalState::default();
+        b.move_out(&[0], span(9));
+        a.merge_with(&b);
+        assert_eq!(a.get(&[0]), Status::Moved);
+        assert_eq!(a.moved_span(&[0]), Some(span(1)));
+    }
+
+    #[test]
+    fn merging_initialized_paths_drops_their_entries() {
+        let mut a = LocalState::default();
+        a.move_out(&[0], span(1));
+        a.reinit(&[0]);
+        let mut b = LocalState::default();
+        b.move_out(&[0], span(2));
+        b.reinit(&[0]);
+        a.merge_with(&b);
+        assert!(a.paths.is_empty(), "an initialized place needs no entry");
+    }
+}

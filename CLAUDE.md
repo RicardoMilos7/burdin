@@ -50,6 +50,7 @@ If these disagree, stop and say so. Do not pick one silently.
 tests/run-tests.sh                 run the conformance tests against the compiler (BURDIN=path overrides the binary)
 tests/run-tests.sh m05 -v          only milestone 5, with diffs for failures
 tests/check-tests.sh               check test directives and error codes (no compiler needed; also check-tests.ps1)
+tests/check-unit-tests.sh          check the front-end unit tests and their CI coverage (no compiler needed)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
 ```
 

@@ -167,6 +167,51 @@ impl Method {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_value_parameters_are_owned() {
+        assert!(Method::Push.owns_argument(1));
+        assert!(!Method::Push.owns_argument(0));
+        assert!(Method::ListInsert.owns_argument(2));
+        assert!(Method::MapInsert.owns_argument(1));
+        assert!(Method::MapInsert.owns_argument(2));
+        assert!(Method::Unwrap.owns_argument(0));
+        assert!(Method::Expect.owns_argument(0));
+        assert!(!Method::Len.owns_argument(0));
+        assert!(!Method::ListContains.owns_argument(1));
+    }
+
+    #[test]
+    fn mutation_and_borrowed_results_follow_the_method() {
+        for method in [
+            Method::PushStr,
+            Method::PushChar,
+            Method::Push,
+            Method::ListPop,
+            Method::ListInsert,
+            Method::ListRemove,
+            Method::ListSort,
+            Method::Clear,
+            Method::MapInsert,
+            Method::MapRemove,
+        ] {
+            assert!(method.mutates_receiver(), "{method:?}");
+        }
+        for method in [Method::ToString, Method::Len, Method::Clone, Method::ListLast, Method::MapGet, Method::AsStr] {
+            assert!(!method.mutates_receiver(), "{method:?}");
+        }
+        for method in [Method::ListLast, Method::MapGet, Method::Chars] {
+            assert!(method.result_borrows_receiver(), "{method:?}");
+        }
+        for method in [Method::Push, Method::ListPop, Method::ListContains, Method::Len] {
+            assert!(!method.result_borrows_receiver(), "{method:?}");
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinOp {
     Add,
