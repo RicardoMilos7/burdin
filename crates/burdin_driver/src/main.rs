@@ -11,10 +11,7 @@ usage:
   burdin test <file.bd | package directory> [--release]
 
 environment:
-  BURDIN_CC   C compiler used to build the runtime and link (default: cc)";
-
-/// The C runtime, compiled and linked with every program.
-const RUNTIME_C: &str = include_str!("../../../runtime/rt.c");
+  BURDIN_CC   C compiler driver used to link against libc (default: cc; cl on Windows)";
 
 struct Args {
     command: String,
@@ -166,35 +163,28 @@ fn compile(args: &Args, output: &Path) -> Result<(), ExitCode> {
     let module_name = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     let opts = burdin_codegen::Options { release: args.release, emit_ir: args.emit_ir.clone() };
     burdin_codegen::emit_object(&program, &sources, &module_name, &object, &opts).map_err(fail)?;
-    link(&dir.path, &object, output, &args.link_libs, args.release).map_err(fail)
+    link(&object, output, &args.link_libs).map_err(fail)
 }
 
-fn link(dir: &Path, object: &Path, output: &Path, libs: &[String], release: bool) -> Result<(), String> {
-    let runtime = dir.join("rt.c");
-    std::fs::write(&runtime, RUNTIME_C).map_err(|e| format!("cannot write the runtime: {e}"))?;
+/// Links the object file (which defines `main` and the runtime) with libc into the executable `output`.
+fn link(object: &Path, output: &Path, libs: &[String]) -> Result<(), String> {
     let cc = std::env::var("BURDIN_CC").unwrap_or_else(|_| if cfg!(windows) { "cl".into() } else { "cc".into() });
     let mut cmd = Command::new(&cc);
     let msvc_style = cc.ends_with("cl") || cc.ends_with("cl.exe");
     if msvc_style {
-        // MSVC: cl compiles the runtime and calls link.exe.
-        let objdir = dir.display().to_string();
-        cmd.arg("/nologo")
-            .arg(if release { "/O2" } else { "/Od" })
-            .arg(&runtime)
-            .arg(object)
-            .arg(format!("/Fe:{}", output.display()))
-            .arg(format!("/Fo:{objdir}\\"));
-        cmd.arg("/link");
+        // MSVC: cl only calls link.exe. The object file names no C runtime, so name the static one.
+        cmd.arg("/nologo").arg(object).arg(format!("/Fe:{}", output.display()));
+        cmd.arg("/link").arg("libcmt.lib").arg("libucrt.lib").arg("libvcruntime.lib");
         for l in libs {
             cmd.arg(format!("{l}.lib"));
         }
     } else {
-        cmd.arg(if release { "-O2" } else { "-O0" }).arg("-o").arg(output).arg(object).arg(&runtime);
+        cmd.arg("-o").arg(output).arg(object);
         for l in libs {
             cmd.arg(format!("-l{l}"));
         }
     }
-    let out = cmd.output().map_err(|e| format!("cannot run the C compiler `{cc}`: {e} (set BURDIN_CC)"))?;
+    let out = cmd.output().map_err(|e| format!("cannot run the linker `{cc}`: {e} (set BURDIN_CC)"))?;
     if !out.status.success() {
         return Err(format!(
             "linking failed ({cc}):\n{}{}",
