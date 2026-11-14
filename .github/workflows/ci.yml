@@ -148,6 +148,15 @@ jobs:
         with:
           arch: x64
 
+      # Git for Windows ships a coreutils `link.exe` in `usr/bin`. On the current runner image rustc can pick it
+      # up instead of MSVC's linker, which fails with "extra operand" while linking build scripts. Name the
+      # MSVC linker for the target explicitly so the choice does not depend on PATH order.
+      - name: Configure the MSVC linker
+        run: |
+          linker="${VCToolsInstallDir}bin\\HostX64\\x64\\link.exe"
+          test -x "$(cygpath -u "$linker")"
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> "$GITHUB_ENV"
+
       # The official Windows release archive is the only LLVM 21 distribution that ships llvm-config.exe
       # (llvm-sys needs it) and the LLVM-C import library. It is large, but the job needs the headers, the
       # tools, and the shared library. `C:/llvm/bin` goes on PATH so LLVM-C.dll is found when the compiler

@@ -133,6 +133,9 @@ grep -qF 'C:\llvm\bin' <<< "$windows" \
     || add_problem "ci.yml: windows job: does not put LLVM's DLL directory on PATH"
 grep -qF 'BURDIN_CC=cl' <<< "$windows" \
     || add_problem "ci.yml: windows job: does not exercise the BURDIN_CC=cl link path"
+# Git for Windows ships a coreutils `link.exe`; rustc must be pointed at MSVC's linker explicitly.
+grep -qF 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER' <<< "$windows" \
+    || add_problem "ci.yml: windows job: does not pin the MSVC linker (Git's link.exe can shadow it)"
 
 for job in linux macos windows; do
     case "$job" in
