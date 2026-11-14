@@ -67,11 +67,13 @@ BURDIN=/path/to/burdin tests/run-tests.sh # choose the compiler driver
 tests/check-tests.sh                  # check directives and error codes (no compiler needed)
 tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
 tests/check-platform.sh               # check the host triple and 64-bit isize/usize (needs a built driver)
+tests/check-docs.sh                   # check documentation links and the driver contract (needs a built driver)
 pwsh tests/check-tests.ps1            # the same check in PowerShell
 ```
 
 The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, then `PATH`. It expects `burdin build`,
-`burdin run`, and `burdin test` to behave as described at the top of `run-tests.sh`: diagnostics as
+`burdin run`, and `burdin test` to behave as documented in [the driver contract](../README.md#the-driver-contract) at
+the repository root (summarized at the top of `run-tests.sh`): diagnostics as
 `path:LINE:COL: error[E0000]: message`, and a `test result: N passed, M failed` line plus `FAIL <name>` lines from
 `burdin test`. If the real driver differs, change the section marked in that file. The exit code is 0 only when every
 test passes. On Windows, run it from Git Bash.

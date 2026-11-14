@@ -1,4 +1,5 @@
-//! The `burdin` command: `build`, `run`, and `test` (the contract is at the top of tests/run-tests.sh).
+//! The `burdin` command: `build`, `run`, and `test`. The contract is documented in `README.md` at the repository
+//! root (`The driver contract`) and summarized at the top of tests/run-tests.sh.
 
 mod package;
 
