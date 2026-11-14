@@ -90,7 +90,14 @@ impl Code {
     pub const MOVE_FROM_BORROW: Code = Code("E0101");
     pub const PARTIAL_MOVE_FROM_DROP: Code = Code("E0103");
     pub const MOVED_IN_LOOP: Code = Code("E0104");
+    pub const EXCLUSIVITY: Code = Code("E0110");
+    pub const BORROW_CONFLICT: Code = Code("E0111");
     pub const MUT_OF_IMMUTABLE: Code = Code("E0113");
+    pub const MISSING_MUT_MARKER: Code = Code("E0114");
+    pub const UNNEEDED_MUT_MARKER: Code = Code("E0115");
+    pub const SECOND_CLASS_POSITION: Code = Code("E0120");
+    pub const RETURN_MULTIPLE_ORIGINS: Code = Code("E0121");
+    pub const RETURN_LOCAL_ORIGIN: Code = Code("E0122");
     pub const DERIVE_REQUIREMENT: Code = Code("E0130");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.

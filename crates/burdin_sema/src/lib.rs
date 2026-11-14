@@ -6,8 +6,10 @@
 //! methods of numbers, and the output and panic built-ins. Everything else is reported with `Code::UNSUPPORTED`
 //! until its milestone.
 
+mod borrows;
 mod exhaust;
 mod moves;
+mod origins;
 pub mod tir;
 
 use burdin_diag::{Code, Diagnostics, FileId, Span};
@@ -22,10 +24,24 @@ use tir::{
 #[derive(Clone)]
 struct ParamSig {
     ty: Ty,
-    /// Passed by address: a `mut self` receiver (and later named `mut` parameters).
+    /// The callee sees the caller's place: every parameter except an `own` one (a read-only or `mut` parameter,
+    /// and every receiver except `own self`). Passed by address.
     by_ref: bool,
-    /// An `own` parameter: the callee takes ownership and drops the value.
+    /// A named `mut` parameter, which the call site writes as `f(mut x)`. (`mut self` needs no marker.)
+    mut_param: bool,
+    /// An `own` parameter (including `own self`): the callee takes ownership and drops the value.
     own: bool,
+    /// Borrowed exclusively for the duration of the call (`mut` and `own` parameters, `mut self`), so no other
+    /// argument of the same call may touch an overlapping place (EX1).
+    exclusive: bool,
+}
+
+impl ParamSig {
+    /// A plain read-only parameter: borrowed for the call, never dropped by the callee. Used for built-in
+    /// functions and methods, whose arguments code generation evaluates directly.
+    fn plain(ty: Ty) -> ParamSig {
+        ParamSig { ty, by_ref: false, mut_param: false, own: false, exclusive: false }
+    }
 }
 
 struct Signature {
@@ -33,6 +49,9 @@ struct Signature {
     ret: Ty,
     /// The first parameter is `self`.
     has_self: bool,
+    /// Which parameter a second-class return value derives from (memory-rules.md, RT1). `None` when the result
+    /// is static. Filled in by [`origins`] once the body is known.
+    ret_origin: Option<usize>,
 }
 
 enum Callee {
@@ -154,10 +173,10 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
         let fields = s
             .fields
             .iter()
-            .map(|f| tir::FieldDef {
-                name: f.name.name.clone(),
-                ty: globals.resolve_type(&f.ty, None, diags),
-                span: f.name.span,
+            .map(|f| {
+                let ty = globals.resolve_type(&f.ty, None, diags);
+                check_storable(&ty, f.ty.span, "a struct field", diags);
+                tir::FieldDef { name: f.name.name.clone(), ty, span: f.name.span }
             })
             .collect();
         check_unique_fields(s.fields.iter().map(|f| &f.name), diags);
@@ -180,10 +199,10 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                     let fields = tys
                         .iter()
                         .enumerate()
-                        .map(|(i, t)| tir::FieldDef {
-                            name: i.to_string(),
-                            ty: globals.resolve_type(t, None, diags),
-                            span: t.span,
+                        .map(|(i, t)| {
+                            let ty = globals.resolve_type(t, None, diags);
+                            check_storable(&ty, t.span, "an enum variant field", diags);
+                            tir::FieldDef { name: i.to_string(), ty, span: t.span }
                         })
                         .collect();
                     (tir::VariantShape::Tuple, fields)
@@ -192,10 +211,10 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
                     check_unique_fields(fs.iter().map(|f| &f.name), diags);
                     let fields = fs
                         .iter()
-                        .map(|f| tir::FieldDef {
-                            name: f.name.name.clone(),
-                            ty: globals.resolve_type(&f.ty, None, diags),
-                            span: f.name.span,
+                        .map(|f| {
+                            let ty = globals.resolve_type(&f.ty, None, diags);
+                            check_storable(&ty, f.ty.span, "an enum variant field", diags);
+                            tir::FieldDef { name: f.name.name.clone(), ty, span: f.name.span }
                         })
                         .collect();
                     (tir::VariantShape::Struct, fields)
@@ -368,7 +387,7 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
         let mut sig_params = sig.params.iter();
         for p in &f.params {
             let (name, mutable) = match &p.kind {
-                ast::ParamKind::Named { name, .. } => (name.name.as_str(), false),
+                ast::ParamKind::Named { name, .. } => (name.name.as_str(), p.convention == ast::Convention::Mut),
                 ast::ParamKind::SelfParam if sig.has_self && params.is_empty() => {
                     ("self", p.convention == ast::Convention::Mut)
                 }
@@ -397,13 +416,28 @@ pub fn check(file: FileId, ast: &ast::File, diags: &mut Diagnostics) -> Option<t
             );
         }
         let locals = cx.locals;
-        functions.push(tir::Function { name: item.name.clone(), params, ret, locals, body, moved: Vec::new() });
+        functions.push(tir::Function {
+            name: item.name.clone(),
+            span: f.span,
+            params,
+            ret,
+            locals,
+            body,
+            moved: Vec::new(),
+            ret_origin: None,
+        });
     }
 
     validate_derives(&globals, diags);
 
-    for f in &mut functions {
-        f.moved = moves::check_function(f, &globals, diags);
+    // The return origin of a signature is inferred from the body (RT): first to a fixpoint, then reported.
+    origins::check(&mut globals, &mut functions, diags);
+
+    for func in &mut functions {
+        func.moved = moves::check_function(func, &globals, diags);
+    }
+    for func in &functions {
+        borrows::check(func, &globals, diags);
     }
 
     if diags.has_errors() {
@@ -628,26 +662,32 @@ fn fn_signature(f: &ast::FnDecl, self_ty: Option<&Ty>, globals: &Globals, diags:
                     diags.error(Code::SYNTAX, p.span, "`self` can only be the first parameter of a method");
                     continue;
                 };
-                if p.convention == ast::Convention::Own {
-                    diags.error(Code::UNSUPPORTED, p.span, "`own self` is not implemented in this compiler yet");
-                }
                 has_self = true;
-                params.push(ParamSig { ty: st.clone(), by_ref: p.convention == ast::Convention::Mut, own: false });
+                // `self` reads the caller's value (read-only, `mut`, or `own`): only `own self` takes it (CV4).
+                params.push(ParamSig {
+                    ty: st.clone(),
+                    by_ref: p.convention != ast::Convention::Own,
+                    mut_param: false,
+                    own: p.convention == ast::Convention::Own,
+                    exclusive: p.convention != ast::Convention::Read,
+                });
             }
             ast::ParamKind::Named { ty, .. } => {
-                if p.convention == ast::Convention::Mut {
-                    diags.error(Code::UNSUPPORTED, p.span, "`mut` parameters are not implemented in this compiler yet");
-                }
-                params.push(ParamSig {
-                    ty: globals.resolve_type(ty, self_ty, diags),
-                    by_ref: false,
-                    own: p.convention == ast::Convention::Own,
+                let ty = globals.resolve_type(ty, self_ty, diags);
+                params.push(match p.convention {
+                    // A read-only parameter borrows the caller's place, so a view derived from it can be
+                    // returned (RT1).
+                    ast::Convention::Read => ParamSig { ty, by_ref: true, mut_param: false, own: false, exclusive: false },
+                    // The callee sees the caller's place, so it is passed by address and the call site
+                    // marks it `mut` (CV2).
+                    ast::Convention::Mut => ParamSig { ty, by_ref: true, mut_param: true, own: false, exclusive: true },
+                    ast::Convention::Own => ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true },
                 });
             }
         }
     }
     let ret = f.ret.as_ref().map(|t| globals.resolve_type(t, self_ty, diags)).unwrap_or(Ty::Unit);
-    Signature { params, ret, has_self }
+    Signature { params, ret, has_self, ret_origin: None }
 }
 
 /// A constant is expanded at every use, so it must not refer to itself, directly or through other constants.
@@ -739,12 +779,12 @@ fn builtin_sig(b: Builtin) -> Signature {
     };
     let params = match b {
         Builtin::StringNew => Vec::new(),
-        Builtin::StringFrom => vec![ParamSig { ty: Ty::Str, by_ref: false, own: false }],
+        Builtin::StringFrom => vec![ParamSig::plain(Ty::Str)],
         // `Heap.new` is checked separately: its result type depends on the value.
-        Builtin::HeapNew => vec![ParamSig { ty: Ty::Error, by_ref: false, own: false }],
-        _ => vec![ParamSig { ty: Ty::Str, by_ref: false, own: false }],
+        Builtin::HeapNew => vec![ParamSig::plain(Ty::Error)],
+        _ => vec![ParamSig::plain(Ty::Str)],
     };
-    Signature { params, ret, has_self: false }
+    Signature { params, ret, has_self: false, ret_origin: None }
 }
 
 fn int_ty(name: &str) -> Option<IntTy> {
@@ -804,11 +844,28 @@ impl Globals {
             ast::TypeKind::Path(segments) if segments.len() == 1 => {
                 let seg = &segments[0];
                 let name = seg.name.name.as_str();
-                if name == "Option" && seg.args.len() == 1 && !self.types.contains_key(name) {
-                    return Ty::Option(Box::new(self.resolve_type(&seg.args[0], self_ty, diags)));
-                }
-                if name == "Heap" && seg.args.len() == 1 && !self.types.contains_key(name) {
-                    return Ty::Heap(Box::new(self.resolve_type(&seg.args[0], self_ty, diags)));
+                if !self.types.contains_key(name) {
+                    match (name, seg.args.len()) {
+                        ("Option", 1) => {
+                            return Ty::Option(Box::new(self.resolve_type(&seg.args[0], self_ty, diags)));
+                        }
+                        ("Heap", 1) => {
+                            let inner = self.resolve_type(&seg.args[0], self_ty, diags);
+                            check_storable(&inner, seg.args[0].span, "a `Heap` element", diags);
+                            return Ty::Heap(Box::new(inner));
+                        }
+                        // The standard-library containers arrive with milestone 9. The stage 0 storage rule
+                        // (memory-rules.md, SC2) already applies to their type arguments.
+                        ("List", 1) | ("Map", 2) => {
+                            for arg in &seg.args {
+                                let t = self.resolve_type(arg, self_ty, diags);
+                                let what = format!("a `{name}` element");
+                                check_storable(&t, arg.span, &what, diags);
+                            }
+                            return Ty::Error;
+                        }
+                        _ => {}
+                    }
                 }
                 if !seg.args.is_empty() {
                     diags.error(Code::UNSUPPORTED, ty.span, "generic types are not implemented in this compiler yet");
@@ -820,6 +877,11 @@ impl Globals {
                 diags.error(Code::UNKNOWN_NAME, ty.span, format!("unknown type `{name}`"));
                 Ty::Error
             }
+            ast::TypeKind::Ref { mutable, ty: inner } => {
+                let inner = self.resolve_type(inner, self_ty, diags);
+                Ty::Ref { mutable: *mutable, inner: Box::new(inner) }
+            }
+            ast::TypeKind::Slice(elem) => Ty::Slice(Box::new(self.resolve_type(elem, self_ty, diags))),
             ast::TypeKind::Tuple(elems) => {
                 Ty::Tuple(elems.iter().map(|e| self.resolve_type(e, self_ty, diags)).collect())
             }
@@ -848,6 +910,47 @@ impl Globals {
         Adts { structs: &self.structs, enums: &self.enums }
     }
 
+    /// The type a path with generic arguments stands for, as written in an expression (`List<i32>.new()`).
+    fn generic_type(
+        &self,
+        name: &ast::Ident,
+        args: &[ast::Type],
+        self_ty: Option<&Ty>,
+        diags: &mut Diagnostics,
+    ) -> Ty {
+        let n = name.name.as_str();
+        if self.types.contains_key(n) {
+            diags.error(
+                Code::UNSUPPORTED,
+                name.span,
+                "generic types are not implemented in this compiler yet",
+            );
+            return Ty::Error;
+        }
+        match (n, args.len()) {
+            ("Option", 1) => Ty::Option(Box::new(self.resolve_type(&args[0], self_ty, diags))),
+            ("Heap", 1) => {
+                let inner = self.resolve_type(&args[0], self_ty, diags);
+                check_storable(&inner, args[0].span, "a `Heap` element", diags);
+                Ty::Heap(Box::new(inner))
+            }
+            // The standard-library containers arrive with milestone 9, but their type arguments are already
+            // checked against the storage rule (SC2).
+            ("List", 1) | ("Map", 2) => {
+                for arg in args {
+                    let t = self.resolve_type(arg, self_ty, diags);
+                    let what = format!("a `{n}` element");
+                    check_storable(&t, arg.span, &what, diags);
+                }
+                Ty::Error
+            }
+            _ => {
+                diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown type `{n}`"));
+                Ty::Error
+            }
+        }
+    }
+
     /// Whether `==` and `!=` apply to values of `ty`.
     fn has_eq(&self, ty: &Ty) -> bool {
         match ty {
@@ -863,6 +966,7 @@ impl Globals {
                 e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq(&f.ty)))
             }
             Ty::Str | Ty::String | Ty::Array(..) | Ty::Heap(_) => false,
+            Ty::Ref { .. } | Ty::Slice(_) => false,
         }
     }
 
@@ -874,6 +978,9 @@ impl Globals {
     fn is_copy_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
+            // A shared reference and a view are copied; a mutable reference is not (RF4).
+            Ty::Ref { mutable, .. } => !*mutable,
+            Ty::Slice(_) => true,
             Ty::Array(t, _) | Ty::Option(t) => self.is_copy_seen(t, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_seen(t, seen)),
             Ty::String | Ty::Heap(_) => false,
@@ -909,6 +1016,8 @@ impl Globals {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
             Ty::String | Ty::Heap(_) => true,
+            // Cloning a view yields the same view, which is already a copy of the pointer.
+            Ty::Ref { .. } | Ty::Slice(_) => true,
             Ty::Array(t, _) | Ty::Option(t) => self.is_clone_seen(t, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.is_clone_seen(t, seen)),
             Ty::Struct(a) => {
@@ -946,6 +1055,17 @@ impl Globals {
 
 fn compatible(actual: &Ty, expected: &Ty) -> bool {
     actual == expected || *actual == Ty::Error || *expected == Ty::Error || *actual == Ty::Never
+}
+
+/// Reports E0120 when a view type is used where a stored type is required (memory-rules.md, SC2).
+fn check_storable(ty: &Ty, span: Span, what: &str, diags: &mut Diagnostics) {
+    if ty.is_second_class() {
+        diags.error(
+            Code::SECOND_CLASS_POSITION,
+            span,
+            format!("`{ty}` is a view of other storage, so it cannot be used as {what}"),
+        );
+    }
 }
 
 /// An expression whose type comes only from its context: a literal, or operators applied to literals.
@@ -1013,6 +1133,10 @@ fn method(name: &str) -> Option<Method> {
         "max" => Method::Max,
         "abs" => Method::Abs,
         "push_str" => Method::PushStr,
+        "as_str" => Method::AsStr,
+        "len" => Method::Len,
+        "starts_with" => Method::StartsWith,
+        "find" => Method::Find,
         _ => return None,
     })
 }
@@ -1029,6 +1153,12 @@ fn method_sig(m: Method, recv: &Ty) -> Option<(Vec<Ty>, Ty)> {
         }
         (Method::Abs, Ty::Int(i)) if i.signed() => Some((vec![], recv.clone())),
         (Method::PushStr, Ty::String) => Some((vec![Ty::Str], Ty::Unit)),
+        (Method::AsStr, Ty::String | Ty::Str) => Some((vec![], Ty::Str)),
+        (Method::Len, Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _)) => {
+            Some((vec![], Ty::Int(IntTy::Usize)))
+        }
+        (Method::StartsWith, Ty::Str | Ty::String) => Some((vec![Ty::Str], Ty::Bool)),
+        (Method::Find, Ty::Str | Ty::String) => Some((vec![Ty::Char], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))),
         _ => None,
     }
 }
@@ -1038,8 +1168,166 @@ fn place_root(e: &tir::Expr) -> Option<LocalId> {
     match &e.kind {
         tir::ExprKind::Local(id) => Some(*id),
         tir::ExprKind::Index(base, _) | tir::ExprKind::Field(base, _) | tir::ExprKind::Deref(base) => place_root(base),
+        tir::ExprKind::DerefRef(base) => place_root(base),
         _ => None,
     }
+}
+
+/// Whether an expression is a place: a local followed by fields, indexing, and dereferences.
+fn is_place_expr(e: &tir::Expr) -> bool {
+    match &e.kind {
+        tir::ExprKind::Local(_) => true,
+        tir::ExprKind::Field(base, _)
+        | tir::ExprKind::Index(base, _)
+        | tir::ExprKind::Deref(base)
+        | tir::ExprKind::DerefRef(base) => is_place_expr(base),
+        _ => false,
+    }
+}
+
+/// The place an expression names: a root local and a field path, which stops at indexing, a `Heap`
+/// dereference, or a reference dereference (memory-rules.md, place definition). The flag is false once the path
+/// was cut, so a later field selection does not extend it.
+fn tir_place(e: &tir::Expr) -> Option<(LocalId, Vec<usize>, bool)> {
+    match &e.kind {
+        tir::ExprKind::Local(id) => Some((*id, Vec::new(), true)),
+        tir::ExprKind::Field(base, i) => {
+            let (root, mut path, direct) = tir_place(base)?;
+            if direct {
+                path.push(*i);
+            }
+            Some((root, path, direct))
+        }
+        tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) | tir::ExprKind::DerefRef(base) => {
+            let (root, _, _) = tir_place(base)?;
+            Some((root, Vec::new(), false))
+        }
+        _ => None,
+    }
+}
+
+/// Every place an expression mentions (EX1). Index expressions and the parts of compound expressions are
+/// visited too; a place on its own contributes its truncated place.
+fn place_mentions(e: &tir::Expr, out: &mut Vec<(LocalId, Vec<usize>)>) {
+    use tir::ExprKind as K;
+    let record = |e: &tir::Expr, out: &mut Vec<(LocalId, Vec<usize>)>| {
+        if let Some((root, path, _)) = tir_place(e) {
+            out.push((root, path));
+        }
+    };
+    match &e.kind {
+        K::Unit
+        | K::Bool(_)
+        | K::Int(_)
+        | K::Float(_)
+        | K::Char(_)
+        | K::Str(_)
+        | K::Const(_)
+        | K::None
+        | K::Break
+        | K::Continue => {}
+        K::Local(_) => record(e, out),
+        K::Field(base, _) | K::Deref(base) | K::DerefRef(base) => {
+            record(e, out);
+            if tir_place(base).is_none() {
+                place_mentions(base, out);
+            }
+        }
+        K::Index(base, index) => {
+            record(e, out);
+            place_mentions(index, out);
+            if tir_place(base).is_none() {
+                place_mentions(base, out);
+            }
+        }
+        K::Ref { place, .. } => {
+            record(place, out);
+            if tir_place(place).is_none() {
+                place_mentions(place, out);
+            }
+        }
+        K::Slice { base, lo, hi } => {
+            place_mentions(base, out);
+            place_mentions(lo, out);
+            place_mentions(hi, out);
+        }
+        K::StringAsStr(inner) | K::Some(inner) | K::Return(Some(inner)) | K::Cast(inner) => {
+            place_mentions(inner, out);
+        }
+        K::Unary(_, inner) | K::ArrayRepeat(inner, _) => place_mentions(inner, out),
+        K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| place_mentions(x, out)),
+        K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| place_mentions(x, out)),
+        K::Call(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+            args.iter().for_each(|x| place_mentions(x, out));
+        }
+        K::Binary(_, l, r) | K::Assign(l, r) => {
+            place_mentions(l, out);
+            place_mentions(r, out);
+        }
+        K::Block(b) => {
+            for s in &b.stmts {
+                match s {
+                    tir::Stmt::Let(_, init, _) => place_mentions(init, out),
+                    tir::Stmt::Expr(x) => place_mentions(x, out),
+                }
+            }
+            if let Some(t) = &b.tail {
+                place_mentions(t, out);
+            }
+        }
+        K::If(c, then, other) => {
+            place_mentions(c, out);
+            place_mentions_block(then, out);
+            if let Some(o) = other {
+                place_mentions(o, out);
+            }
+        }
+        K::While(c, body) => {
+            place_mentions(c, out);
+            place_mentions_block(body, out);
+        }
+        K::Loop(body) => place_mentions_block(body, out),
+        K::ForRange { lo, hi, body, .. } => {
+            place_mentions(lo, out);
+            place_mentions(hi, out);
+            place_mentions_block(body, out);
+        }
+        K::ForArray { array, body, .. } => {
+            place_mentions(array, out);
+            place_mentions_block(body, out);
+        }
+        K::ForSlice { slice, body, .. } => {
+            place_mentions(slice, out);
+            place_mentions_block(body, out);
+        }
+        K::Match(scrutinee, arms) => {
+            place_mentions(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    place_mentions(g, out);
+                }
+                place_mentions(&arm.body, out);
+            }
+        }
+        K::Return(None) => {}
+    }
+}
+
+fn place_mentions_block(b: &tir::Block, out: &mut Vec<(LocalId, Vec<usize>)>) {
+    for s in &b.stmts {
+        match s {
+            tir::Stmt::Let(_, init, _) => place_mentions(init, out),
+            tir::Stmt::Expr(x) => place_mentions(x, out),
+        }
+    }
+    if let Some(t) = &b.tail {
+        place_mentions(t, out);
+    }
+}
+
+/// Two places overlap when one is a prefix of the other (EX2).
+fn places_overlap(a: &(LocalId, Vec<usize>), b: &(LocalId, Vec<usize>)) -> bool {
+    a.0 == b.0 && (a.1.starts_with(&b.1) || b.1.starts_with(&a.1))
 }
 
 struct FnCx<'a> {
@@ -1087,12 +1375,16 @@ impl<'a> FnCx<'a> {
     }
 
     /// If `e` names a type (and no value hides it), that type: the left side of `Point.new` or `Shape.Circle`.
-    fn type_path(&self, e: &ast::Expr) -> Option<Ty> {
-        let ast::ExprKind::Name(id) = &e.kind else { return None };
-        if self.lookup(&id.name).is_some() || self.globals.names.contains_key(&id.name) {
+    fn type_path(&mut self, e: &ast::Expr) -> Option<Ty> {
+        let ast::ExprKind::Name { name, args } = &e.kind else { return None };
+        if self.lookup(&name.name).is_some() || self.globals.names.contains_key(&name.name) {
             return None;
         }
-        self.globals.named_type(&id.name).or_else(|| builtin_type(&id.name))
+        if args.is_empty() {
+            return self.globals.named_type(&name.name).or_else(|| builtin_type(&name.name));
+        }
+        let self_ty = self.self_ty.clone();
+        Some(self.globals.generic_type(name, args, self_ty.as_ref(), self.diags))
     }
 
     /// A name that is not hidden by a local or a global: `Some`, `None`.
@@ -1109,6 +1401,28 @@ impl<'a> FnCx<'a> {
 
     fn lookup(&self, name: &str) -> Option<LocalId> {
         self.scopes.iter().rev().find_map(|s| s.get(name).copied())
+    }
+
+    /// Inserts the implicit dereferences of a receiver: field access and method calls go through `&T` (RF1).
+    fn auto_deref(&self, mut e: tir::Expr) -> tir::Expr {
+        loop {
+            let Ty::Ref { inner, .. } = &e.ty else { return e };
+            let ty = (**inner).clone();
+            let span = e.span;
+            e = mk(tir::ExprKind::DerefRef(Box::new(e)), ty, span);
+        }
+    }
+
+    /// Whether the place `e` may be assigned to or borrowed with `&mut` (MU1, MU3).
+    fn place_mutable(&self, e: &tir::Expr) -> bool {
+        match &e.kind {
+            tir::ExprKind::Local(id) => self.locals[id.0].mutable,
+            tir::ExprKind::Field(base, _) | tir::ExprKind::Deref(base) => self.place_mutable(base),
+            tir::ExprKind::DerefRef(base) => matches!(base.ty, Ty::Ref { mutable: true, .. }),
+            // Elements of an array place are mutable with it; elements of a slice view are read-only.
+            tir::ExprKind::Index(base, _) => matches!(base.ty, Ty::Array(..)) && self.place_mutable(base),
+            _ => false,
+        }
     }
 
     /// Whether a pattern matching `e` takes ownership of it: a place rooted at an owned local, or a temporary.
@@ -1227,7 +1541,12 @@ impl<'a> FnCx<'a> {
             K::Str(s) => mk(tir::ExprKind::Str(s.clone()), Ty::Str, span),
             K::Bool(b) => mk(tir::ExprKind::Bool(*b), Ty::Bool, span),
             K::Unit => mk(tir::ExprKind::Unit, Ty::Unit, span),
-            K::Name(id) => self.name(id, expect),
+            K::Name { name, args } if args.is_empty() => self.name(name, expect),
+            // A generic type path only means something as the left side of an associated call.
+            K::Name { name, args: _ } => {
+                self.diags.error(Code::TYPE_MISMATCH, span, format!("`{}` is a type, not a value", name.name));
+                error_expr(span)
+            }
             K::Block(b) => {
                 let (b, ty) = self.block(b, expect);
                 mk(tir::ExprKind::Block(b), ty, span)
@@ -1313,6 +1632,7 @@ impl<'a> FnCx<'a> {
             K::Field(base, name) => self.field(base, name, span),
             K::TupleField(base, index, index_span) => {
                 let base = self.expr(base, None);
+                let base = self.auto_deref(base);
                 let ty = match &base.ty {
                     Ty::Tuple(elems) if (*index as usize) < elems.len() => elems[*index as usize].clone(),
                     Ty::Error => return error_expr(span),
@@ -1472,7 +1792,7 @@ impl<'a> FnCx<'a> {
         let ast::ExprKind::Range { lo, hi, inclusive } = &iter.kind else {
             let array = self.expr(iter, None);
             let elem = match &array.ty {
-                Ty::Array(t, _) => (**t).clone(),
+                Ty::Array(t, _) | Ty::Slice(t) => (**t).clone(),
                 Ty::Error | Ty::Never => Ty::Error,
                 other => {
                     self.diags.error(
@@ -1497,7 +1817,12 @@ impl<'a> FnCx<'a> {
             let (body, _) = self.block(body, None);
             self.loops.pop();
             self.scopes.pop();
-            return mk(tir::ExprKind::ForArray { pat, array: Box::new(array), body }, Ty::Unit, span);
+            let kind = if matches!(array.ty, Ty::Slice(_)) {
+                tir::ExprKind::ForSlice { pat, slice: Box::new(array), body }
+            } else {
+                tir::ExprKind::ForArray { pat, array: Box::new(array), body }
+            };
+            return mk(kind, Ty::Unit, span);
         };
         let (lo, hi) = self.operands(lo, hi, None);
         let ty = if lo.ty == Ty::Never { hi.ty.clone() } else { lo.ty.clone() };
@@ -1825,23 +2150,20 @@ impl<'a> FnCx<'a> {
         let rhs = self.expr(rhs, Some(&place.ty));
         let rhs = self.expect_ty(rhs, &place.ty);
         if place.ty != Ty::Error {
-            match place_root(&place) {
-                Some(root) if !self.locals[root.0].mutable => {
-                    let name = self.locals[root.0].name.clone();
-                    self.diags.error(
-                        Code::IMMUTABLE,
-                        lhs.span,
-                        format!("cannot assign to `{name}`: it is not mutable"),
-                    );
-                }
-                Some(_) => {}
-                None => {
-                    self.diags.error(
-                        Code::IMMUTABLE,
-                        lhs.span,
-                        "the left side of `=` is not a variable or an element of one",
-                    );
-                }
+            if !is_place_expr(&place) {
+                self.diags.error(
+                    Code::IMMUTABLE,
+                    lhs.span,
+                    "the left side of `=` is not a variable or an element of one",
+                );
+            } else if !self.place_mutable(&place) {
+                let name = place_root(&place).map(|root| self.locals[root.0].name.clone());
+                let whose = name.map(|n| format!("{n}")).unwrap_or_else(|| "this place".to_string());
+                self.diags.error(
+                    Code::IMMUTABLE,
+                    lhs.span,
+                    format!("cannot assign to `{whose}`: it is not mutable"),
+                );
             }
         }
         mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)
@@ -1966,18 +2288,41 @@ impl<'a> FnCx<'a> {
                         let inner = (**inner).clone();
                         mk(tir::ExprKind::Deref(Box::new(e)), inner, span)
                     }
+                    Ty::Ref { inner, .. } => {
+                        let inner = (**inner).clone();
+                        mk(tir::ExprKind::DerefRef(Box::new(e)), inner, span)
+                    }
                     Ty::Error | Ty::Never => error_expr(span),
                     other => {
                         self.diags.error(
                             Code::TYPE_MISMATCH,
                             span,
-                            format!("cannot dereference a `{other}`; `*` applies to `Heap<T>`"),
+                            format!("cannot dereference a `{other}`; `*` applies to `Heap<T>` and references"),
                         );
                         error_expr(span)
                     }
                 }
             }
-            ast::UnOp::Ref | ast::UnOp::RefMut => self.unsupported(span, "references"),
+            ast::UnOp::Ref | ast::UnOp::RefMut => {
+                let mutable = op == ast::UnOp::RefMut;
+                let place = self.expr(operand, None);
+                if place.ty == Ty::Error {
+                    return error_expr(span);
+                }
+                if !is_place_expr(&place) {
+                    self.diags.error(Code::TYPE_MISMATCH, span, "`&` needs a place to borrow");
+                    return error_expr(span);
+                }
+                if mutable && !self.place_mutable(&place) {
+                    self.diags.error(
+                        Code::MUT_OF_IMMUTABLE,
+                        span,
+                        "cannot take a mutable reference to a place that is not mutable",
+                    );
+                }
+                let ty = Ty::Ref { mutable, inner: Box::new(place.ty.clone()) };
+                mk(tir::ExprKind::Ref { place: Box::new(place), mutable }, ty, span)
+            }
         }
     }
 
@@ -1986,42 +2331,44 @@ impl<'a> FnCx<'a> {
             return self.method_call(recv, name, args, span, expect);
         }
         let (params, ret, target) = match &callee.kind {
-            ast::ExprKind::Name(id) if self.lookup(&id.name).is_none() => match self.globals.names.get(&id.name) {
-                Some(Global::Func(f)) => {
-                    let f = *f;
-                    let sig = &self.globals.sigs[f.0];
-                    (sig.params.clone(), sig.ret.clone(), Callee::User(f))
-                }
-                Some(Global::Const(_)) => {
-                    self.diags.error(
-                        Code::TYPE_MISMATCH,
-                        id.span,
-                        format!("`{}` is a constant, not a function", id.name),
-                    );
-                    return self.args_then_error(args, span);
-                }
-                None => match builtin(&id.name) {
-                    Some(b) => {
-                        let sig = builtin_sig(b);
-                        (sig.params, sig.ret, Callee::Builtin(b))
+            ast::ExprKind::Name { name: id, args: type_args }
+                if type_args.is_empty() && self.lookup(&id.name).is_none() =>
+                match self.globals.names.get(&id.name) {
+                    Some(Global::Func(f)) => {
+                        let f = *f;
+                        let sig = &self.globals.sigs[f.0];
+                        (sig.params.clone(), sig.ret.clone(), Callee::User(f))
                     }
-                    None if id.name == "Some" => return self.some(args, expect, span),
-                    None => {
-                        self.diags.error(Code::UNKNOWN_NAME, id.span, format!("unknown function `{}`", id.name));
+                    Some(Global::Const(_)) => {
+                        self.diags.error(
+                            Code::TYPE_MISMATCH,
+                            id.span,
+                            format!("`{}` is a constant, not a function", id.name),
+                        );
                         return self.args_then_error(args, span);
                     }
+                    None => match builtin(&id.name) {
+                        Some(b) => {
+                            let sig = builtin_sig(b);
+                            (sig.params, sig.ret, Callee::Builtin(b))
+                        }
+                        None if id.name == "Some" => return self.some(args, expect, span),
+                        None => {
+                            self.diags.error(Code::UNKNOWN_NAME, id.span, format!("unknown function `{}`", id.name));
+                            return self.args_then_error(args, span);
+                        }
+                    },
                 },
-            },
             _ => {
                 self.unsupported(callee.span, "calling this expression");
                 return self.args_then_error(args, span);
             }
         };
         let name = match &callee.kind {
-            ast::ExprKind::Name(id) => id.name.clone(),
+            ast::ExprKind::Name { name, .. } => name.name.clone(),
             _ => String::new(),
         };
-        let Some(checked) = self.args(&name, &params, args, span) else { return error_expr(span) };
+        let Some(checked) = self.args(&name, &params, args, None, span) else { return error_expr(span) };
         let kind = match target {
             Callee::User(f) => tir::ExprKind::Call(f, checked),
             Callee::Builtin(b) => tir::ExprKind::Builtin(b, checked),
@@ -2048,8 +2395,17 @@ impl<'a> FnCx<'a> {
         mk(tir::ExprKind::Some(Box::new(v)), ty, span)
     }
 
-    /// Checks call arguments against the parameter types. `None` after a wrong argument count (reported).
-    fn args(&mut self, name: &str, params: &[ParamSig], args: &[ast::Arg], span: Span) -> Option<Vec<tir::Expr>> {
+    /// Checks call arguments against the parameter conventions (CV1-CV3) and reports exclusivity violations
+    /// (EX1). `receiver` is the method receiver and whether it is borrowed exclusively (`mut self`, or the
+    /// receiver of `String.push_str`).
+    fn args(
+        &mut self,
+        name: &str,
+        params: &[ParamSig],
+        args: &[ast::Arg],
+        receiver: Option<(&tir::Expr, bool)>,
+        span: Span,
+    ) -> Option<Vec<tir::Expr>> {
         if params.len() != args.len() {
             for a in args {
                 self.expr(&a.expr, None);
@@ -2063,13 +2419,76 @@ impl<'a> FnCx<'a> {
         }
         let mut checked = Vec::new();
         for (a, p) in args.iter().zip(params) {
-            if a.mut_marker || p.by_ref {
-                self.unsupported(a.expr.span, "`mut` arguments");
+            if p.mut_param && !a.mut_marker {
+                self.diags.error(
+                    Code::MISSING_MUT_MARKER,
+                    a.expr.span,
+                    format!("this parameter of `{name}` is `mut`; pass the argument as `mut ...`"),
+                );
+            } else if !p.mut_param && a.mut_marker {
+                self.diags.error(
+                    Code::UNNEEDED_MUT_MARKER,
+                    a.expr.span,
+                    format!("this parameter of `{name}` is not `mut`; the argument takes no `mut` marker"),
+                );
             }
             let arg = self.expr(&a.expr, Some(&p.ty));
-            checked.push(self.coerce_arg(arg, &p.ty));
+            let arg = self.coerce_arg(arg, &p.ty);
+            if p.mut_param && !matches!(arg.ty, Ty::Error) {
+                if !is_place_expr(&arg) {
+                    self.diags.error(
+                        Code::MUT_OF_IMMUTABLE,
+                        arg.span,
+                        "the argument of a `mut` parameter must be a place",
+                    );
+                } else if !self.place_mutable(&arg) {
+                    self.diags.error(
+                        Code::MUT_OF_IMMUTABLE,
+                        arg.span,
+                        "cannot pass this place as `mut`: it is not mutable",
+                    );
+                }
+            }
+            checked.push(arg);
         }
+        self.exclusivity(receiver, params, &checked, span);
         Some(checked)
+    }
+
+    /// No argument may mention a place that overlaps one passed as `mut` (EX1, EX2).
+    fn exclusivity(
+        &mut self,
+        receiver: Option<(&tir::Expr, bool)>,
+        params: &[ParamSig],
+        args: &[tir::Expr],
+        span: Span,
+    ) {
+        let mut entries: Vec<(bool, Vec<(LocalId, Vec<usize>)>)> = Vec::new();
+        if let Some((receiver, exclusive)) = receiver {
+            let mut places = Vec::new();
+            place_mentions(receiver, &mut places);
+            entries.push((exclusive, places));
+        }
+        for (p, a) in params.iter().zip(args) {
+            let mut places = Vec::new();
+            place_mentions(a, &mut places);
+            entries.push((p.mut_param, places));
+        }
+        for i in 0..entries.len() {
+            if !entries[i].0 {
+                continue;
+            }
+            for j in 0..entries.len() {
+                if i != j && entries[i].1.iter().any(|p| entries[j].1.iter().any(|q| places_overlap(p, q))) {
+                    self.diags.error(
+                        Code::EXCLUSIVITY,
+                        span,
+                        "another argument of this call touches the same value as a `mut` argument",
+                    );
+                    return;
+                }
+            }
+        }
     }
 
     fn args_then_error(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
@@ -2089,7 +2508,8 @@ impl<'a> FnCx<'a> {
     ) -> tir::Expr {
         // `Heap.new(value)`: the only associated function of a built-in type that is not written as a type path,
         // because `Heap` alone is not a type.
-        if let ast::ExprKind::Name(id) = &recv.kind
+        if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
+            && type_args.is_empty()
             && id.name == "Heap"
             && name.name == "new"
             && self.lookup("Heap").is_none()
@@ -2104,6 +2524,14 @@ impl<'a> FnCx<'a> {
         if recv.ty == Ty::Error {
             return self.args_then_error(args, span);
         }
+        // `x.clone()`: the deep copy the compiler derives (CP). It applies to the receiver as written, before
+        // any auto-dereference, so cloning a shared reference clones the reference.
+        if name.name == "clone" && args.is_empty() && self.globals.is_clone(&recv.ty) {
+            let ty = recv.ty.clone();
+            return mk(tir::ExprKind::Method(Method::Clone, vec![recv]), ty, span);
+        }
+        // Field access and method calls see through references (RF1).
+        let recv = self.auto_deref(recv);
         if let Some(key) = adt_key(&recv.ty)
             && let Some(&f) = self.globals.methods.get(&(key, name.name.clone()))
         {
@@ -2117,44 +2545,44 @@ impl<'a> FnCx<'a> {
                 return self.args_then_error(args, span);
             }
             let (receiver, rest, ret) = (sig.params[0].clone(), sig.params[1..].to_vec(), sig.ret.clone());
-            if receiver.by_ref
-                && let Some(root) = place_root(&recv)
-                && !self.locals[root.0].mutable
-            {
-                let local = &self.locals[root.0].name;
+            // Only `mut self` borrows the receiver exclusively; `own self` takes it, and read-only `self`
+            // only reads it.
+            if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
+                let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+                let whose = local.unwrap_or_else(|| "this receiver".to_string());
                 self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
                     recv.span,
-                    format!("`{}` changes its receiver, but `{local}` is not mutable", name.name),
+                    format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
                 );
             }
-            let Some(mut checked) = self.args(&name.name, &rest, args, span) else { return error_expr(span) };
+            let receiver_place = Some((&recv, receiver.exclusive));
+            let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
+                return error_expr(span);
+            };
             checked.insert(0, recv);
             return mk(tir::ExprKind::Call(f, checked), ret, span);
-        }
-        // `x.clone()`: the deep copy the compiler derives (CP).
-        if name.name == "clone" && args.is_empty() && self.globals.is_clone(&recv.ty) {
-            let ty = recv.ty.clone();
-            return mk(tir::ExprKind::Method(Method::Clone, vec![recv]), ty, span);
         }
         let Some((params, ret)) = method(&name.name).and_then(|m| method_sig(m, &recv.ty)) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{}`", name.name, recv.ty));
             return self.args_then_error(args, span);
         };
         let m = method(&name.name).expect("checked above");
-        if m == Method::PushStr
-            && let Some(root) = place_root(&recv)
-            && !self.locals[root.0].mutable
-        {
-            let local = &self.locals[root.0].name;
+        if m == Method::PushStr && is_place_expr(&recv) && !self.place_mutable(&recv) {
+            let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+            let whose = local.unwrap_or_else(|| "this receiver".to_string());
             self.diags.error(
                 Code::MUT_OF_IMMUTABLE,
                 recv.span,
-                format!("`push_str` changes its receiver, but `{local}` is not mutable"),
+                format!("`push_str` changes its receiver, but `{whose}` is not mutable"),
             );
         }
-        let params: Vec<ParamSig> = params.into_iter().map(|ty| ParamSig { ty, by_ref: false, own: false }).collect();
-        let Some(mut checked) = self.args(&name.name, &params, args, span) else { return error_expr(span) };
+        let params: Vec<ParamSig> = params.into_iter().map(ParamSig::plain).collect();
+        // `push_str` mutates the receiver, so no other argument may touch it (EX1).
+        let receiver_place = Some((&recv, m == Method::PushStr));
+        let Some(mut checked) = self.args(&name.name, &params, args, receiver_place, span) else {
+            return error_expr(span);
+        };
         checked.insert(0, recv);
         mk(tir::ExprKind::Method(m, checked), ret, span)
     }
@@ -2198,7 +2626,9 @@ impl<'a> FnCx<'a> {
                 }
             };
             let sig = builtin_sig(b);
-            let Some(checked) = self.args(&name.name, &sig.params, args, span) else { return error_expr(span) };
+            let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                return error_expr(span);
+            };
             return mk(tir::ExprKind::Builtin(b, checked), sig.ret, span);
         }
         if let Ty::Enum(a) = ty
@@ -2213,9 +2643,8 @@ impl<'a> FnCx<'a> {
                 );
                 return self.args_then_error(args, span);
             }
-            let params: Vec<ParamSig> =
-                v.fields.iter().map(|f| ParamSig { ty: f.ty.clone(), by_ref: false, own: false }).collect();
-            let Some(checked) = self.args(&name.name, &params, args, span) else { return error_expr(span) };
+            let params: Vec<ParamSig> = v.fields.iter().map(|f| ParamSig::plain(f.ty.clone())).collect();
+            let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };
             let fields = checked.into_iter().enumerate().collect();
             return mk(tir::ExprKind::Variant(index, fields), ty.clone(), span);
         }
@@ -2230,7 +2659,7 @@ impl<'a> FnCx<'a> {
         };
         let sig = &self.globals.sigs[f.0];
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
-        let Some(checked) = self.args(&name.name, &params, args, span) else { return error_expr(span) };
+        let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };
         mk(tir::ExprKind::Call(f, checked), ret, span)
     }
 
@@ -2254,6 +2683,7 @@ impl<'a> FnCx<'a> {
             return error_expr(span);
         }
         let base = self.expr(base, None);
+        let base = self.auto_deref(base);
         let field = match &base.ty {
             Ty::Struct(a) => self.globals.structs[a.id]
                 .fields
@@ -2335,7 +2765,10 @@ impl<'a> FnCx<'a> {
             let value = match &f.value {
                 Some(v) => v,
                 None => {
-                    shorthand = ast::Expr { kind: ast::ExprKind::Name(f.name.clone()), span: f.name.span };
+                    shorthand = ast::Expr {
+                        kind: ast::ExprKind::Name { name: f.name.clone(), args: Vec::new() },
+                        span: f.name.span,
+                    };
                     &shorthand
                 }
             };
@@ -2408,13 +2841,37 @@ impl<'a> FnCx<'a> {
 
     fn index(&mut self, base: &ast::Expr, index: &ast::Expr, span: Span) -> tir::Expr {
         let base = self.expr(base, None);
-        if matches!(index.kind, ast::ExprKind::Range { .. }) {
-            return self.unsupported(index.span, "slicing");
+        let base = self.auto_deref(base);
+        if let ast::ExprKind::Range { lo, hi, inclusive } = &index.kind {
+            if *inclusive {
+                return self.unsupported(index.span, "an inclusive slice range");
+            }
+            let usize_ty = Ty::Int(IntTy::Usize);
+            let lo = self.expr(lo, Some(&usize_ty));
+            let lo = self.expect_ty(lo, &usize_ty);
+            let hi = self.expr(hi, Some(&usize_ty));
+            let hi = self.expect_ty(hi, &usize_ty);
+            let ty = match &base.ty {
+                Ty::Str | Ty::String => Ty::Str,
+                Ty::Slice(_) => base.ty.clone(),
+                Ty::Array(elem, _) => Ty::Slice(elem.clone()),
+                Ty::Error => Ty::Error,
+                other => {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        base.span,
+                        format!("cannot take a slice of a value of type `{other}`"),
+                    );
+                    return error_expr(span);
+                }
+            };
+            let kind = tir::ExprKind::Slice { base: Box::new(base), lo: Box::new(lo), hi: Box::new(hi) };
+            return mk(kind, ty, span);
         }
         let index = self.expr(index, Some(&Ty::Int(IntTy::Usize)));
         let index = self.expect_ty(index, &Ty::Int(IntTy::Usize));
         let ty = match &base.ty {
-            Ty::Array(elem, _) => (**elem).clone(),
+            Ty::Array(elem, _) | Ty::Slice(elem) => (**elem).clone(),
             Ty::Error => Ty::Error,
             other => {
                 self.diags.error(

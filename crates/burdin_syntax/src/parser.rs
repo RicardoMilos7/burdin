@@ -570,6 +570,68 @@ impl Parser<'_> {
         }
     }
 
+    /// Grammar rule 8.2: after an identifier that starts with an uppercase letter, a `<` starts generic arguments
+    /// if a type list parses and its closing `>` is followed by `.`, `(`, or `{`. Otherwise the `<` is a comparison.
+    /// The test is a scan ahead, so a comparison never leaves a `>>` split in its wake.
+    fn generic_args_ahead(&self) -> bool {
+        let TokenKind::Ident(name) = self.kind() else { return false };
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) || !matches!(self.nth_kind(1), TokenKind::Lt) {
+            return false;
+        }
+        let continues = |i: usize| {
+            matches!(
+                self.toks.get(i).map(|t| &t.kind),
+                Some(TokenKind::Dot | TokenKind::LParen | TokenKind::LBrace)
+            )
+        };
+        let mut depth = 0i32;
+        let mut i = self.pos + 1;
+        while let Some(t) = self.toks.get(i) {
+            match &t.kind {
+                TokenKind::Lt => depth += 1,
+                TokenKind::Gt => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return depth == 0 && continues(i + 1);
+                    }
+                }
+                // `>>` can close two levels; `>=` can never close a generic argument list.
+                TokenKind::Shr => {
+                    depth -= 2;
+                    if depth <= 0 {
+                        return depth == 0 && continues(i + 1);
+                    }
+                }
+                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
+                    return false;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Parses `<` Type { `,` Type } `>` after the identifier of a path expression.
+    fn expr_generic_args(&mut self) -> PResult<Vec<Type>> {
+        self.open(&TokenKind::Lt, false)?;
+        let mut args = Vec::new();
+        loop {
+            if self.eat_closing_angle() {
+                break;
+            }
+            args.push(self.ty()?);
+            if !self.eat(&TokenKind::Comma) {
+                if !self.eat_closing_angle() {
+                    return Err(self.unexpected("`,` or `>`"));
+                }
+                break;
+            }
+        }
+        self.nl_stack.pop();
+        Ok(args)
+    }
+
     fn path_segment(&mut self) -> PResult<PathSegment> {
         let name = self.ident("a type name")?;
         let mut args = Vec::new();
@@ -1029,11 +1091,14 @@ impl Parser<'_> {
                 lit(ExprKind::SelfValue)
             }
             TokenKind::Ident(_) => {
+                let generic = self.generic_args_ahead();
                 let name = self.ident("an expression")?;
+                let args = if generic { self.expr_generic_args()? } else { Vec::new() };
                 if self.at_struct_literal(r) {
                     return self.struct_literal(vec![name], start);
                 }
-                Ok(Expr { span: name.span, kind: ExprKind::Name(name) })
+                let span = if args.is_empty() { name.span } else { start.to(self.prev_span()) };
+                Ok(Expr { span, kind: ExprKind::Name { name, args } })
             }
             TokenKind::LParen => {
                 self.open(&TokenKind::LParen, false)?;
@@ -1218,7 +1283,7 @@ const LEVEL_CMP: u8 = 6;
 /// The identifiers of a path expression such as `Shape.Rect`, or `None` if `e` is not a plain path.
 fn expr_path(e: &Expr) -> Option<Vec<Ident>> {
     match &e.kind {
-        ExprKind::Name(id) => Some(vec![id.clone()]),
+        ExprKind::Name { name, args } if args.is_empty() => Some(vec![name.clone()]),
         ExprKind::Field(base, id) => {
             let mut path = expr_path(base)?;
             path.push(id.clone());

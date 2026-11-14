@@ -237,6 +237,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Str => self.str_ty.into(),
             Ty::String => self.string_ty.into(),
             Ty::Heap(_) => self.cx.ptr_type(AddressSpace::default()).into(),
+            // A reference is the address of the referent; a slice is a pointer and a length, like a `str`.
+            Ty::Ref { .. } => self.cx.ptr_type(AddressSpace::default()).into(),
+            Ty::Slice(_) => self.str_ty.into(),
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
             Ty::Option(inner) => self.option_ty(inner).into(),
             Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
@@ -800,7 +803,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 Some((root, path))
             }
-            tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => self.place_path(base),
+            tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) | tir::ExprKind::DerefRef(base) => {
+                self.place_path(base)
+            }
             _ => None,
         }
     }
@@ -814,6 +819,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn is_copy_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
+            // A shared reference and a slice are views: copying one copies the view, not its storage.
+            Ty::Ref { mutable: false, .. } | Ty::Slice(_) => true,
+            // A `&mut T` is not Copy (RF4): using it moves it.
+            Ty::Ref { mutable: true, .. } => false,
             Ty::Array(t, _) | Ty::Option(t) => self.is_copy_seen(t, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_seen(t, seen)),
             Ty::String | Ty::Heap(_) => false,
@@ -850,6 +859,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn needs_drop_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
+            Ty::Ref { .. } | Ty::Slice(_) => false,
             Ty::String | Ty::Heap(_) => true,
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Option(t) => self.needs_drop_seen(t, seen),
@@ -936,17 +946,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Builtin(b, args) => self.builtin(*b, args, e.span)?,
             K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
             K::StringAsStr(inner) => {
-                let is_place = is_place(inner);
-                let s = self.expr_mode(inner, Mode::Use)?;
-                let s = self.need(s, &Ty::String);
-                if !is_place {
-                    self.add_temp_value(Some(s), &Ty::String)?;
-                }
-                let s = s.into_struct_value();
-                let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
-                let len = self.builder.build_extract_value(s, 1, "").map_err(llvm_err)?;
+                let (ptr, len) = self.view_parts(inner)?;
                 Some(self.make_str(ptr, len)?.into())
             }
+            K::Ref { place, .. } => {
+                // The address of the place; a value without storage still gets a well-formed pointer.
+                let ptr = match self.place_ptr(place)? {
+                    Some(ptr) => ptr,
+                    None => self.cx.ptr_type(AddressSpace::default()).get_undef(),
+                };
+                Some(ptr.into())
+            }
+            K::Slice { base, lo, hi } => Some(self.slice(base, lo, hi, e.span)?.into()),
             K::Block(b) => self.block(b, mode)?,
             K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty, mode)?,
             K::While(cond, body) => {
@@ -980,6 +991,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::ForArray { pat, array, body } => {
                 self.for_array(pat, array, body)?;
+                None
+            }
+            K::ForSlice { pat, slice, body } => {
+                self.for_slice(pat, slice, body)?;
                 None
             }
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty, mode)?,
@@ -1102,7 +1117,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let Ty::Option(t) = &e.ty else { unreachable!("`None` is an Option") };
                 Some(self.option_ty(t).const_zero().into())
             }
-            K::Index(..) | K::Field(..) | K::Deref(..) => self.expr_place(e, mode)?,
+            K::Index(..) | K::Field(..) | K::Deref(..) | K::DerefRef(..) => self.expr_place(e, mode)?,
         };
         if e.ty == Ty::Never {
             return Ok(None);
@@ -1644,42 +1659,66 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_struct_gep(t.into_struct_type(), ptr, *index as u32, "").map_err(llvm_err)?;
                 Ok(Some(field))
             }
-            tir::ExprKind::Index(base, index) => {
-                let Ty::Array(_, len) = &base.ty else {
+            tir::ExprKind::Index(base, index) => match &base.ty {
+                Ty::Array(_, len) => {
+                    let len = *len;
+                    let base_ptr = self.place_ptr(base)?;
+                    let i = self.expr_mode(index, Mode::Use)?;
+                    let i = self.need_int(i, &Ty::Int(IntTy::Usize));
+                    self.bounds_check(i, self.usize_ty.const_int(len, false), e.span)?;
+                    let (Some(base_ptr), Some(array_t)) = (base_ptr, self.llvm_ty(&base.ty)) else {
+                        return Ok(None);
+                    };
+                    let zero = self.usize_ty.const_int(0, false);
+                    // SAFETY (LLVM): the index was checked against the array length above.
+                    let ptr = unsafe { self.builder.build_in_bounds_gep(array_t, base_ptr, &[zero, i], "") }
+                        .map_err(llvm_err)?;
+                    Ok(Some(ptr))
+                }
+                Ty::Slice(elem) => {
+                    let elem = (**elem).clone();
+                    let v = self.expr_mode(base, Mode::Use)?;
+                    if self.llvm_ty(&base.ty).is_none() {
+                        self.expr_mode(index, Mode::Use)?;
+                        return Ok(None);
+                    }
+                    let s = self.need(v, &base.ty).into_struct_value();
+                    let ptr = self
+                        .builder
+                        .build_extract_value(s, 0, "slice.ptr")
+                        .map_err(llvm_err)?
+                        .into_pointer_value();
+                    let len = self
+                        .builder
+                        .build_extract_value(s, 1, "slice.len")
+                        .map_err(llvm_err)?
+                        .into_int_value();
+                    let i = self.expr_mode(index, Mode::Use)?;
+                    let i = self.need_int(i, &Ty::Int(IntTy::Usize));
+                    self.bounds_check(i, len, e.span)?;
+                    match self.llvm_ty(&elem) {
+                        Some(elem_t) => {
+                            // SAFETY (LLVM): the index was checked against the length above.
+                            let ptr = unsafe { self.builder.build_in_bounds_gep(elem_t, ptr, &[i], "") }
+                                .map_err(llvm_err)?;
+                            Ok(Some(ptr))
+                        }
+                        None => Ok(None),
+                    }
+                }
+                _ => {
                     // The base diverged; this code is unreachable.
                     self.expr_mode(base, Mode::Use)?;
                     self.expr_mode(index, Mode::Use)?;
-                    return Ok(None);
-                };
-                let base_ptr = self.place_ptr(base)?;
-                let i = self.expr_mode(index, Mode::Use)?;
-                let i = self.need_int(i, &Ty::Int(IntTy::Usize));
-                let n = self.usize_ty.const_int(*len, false);
-                let in_bounds = self.builder.build_int_compare(IntPredicate::ULT, i, n, "").map_err(llvm_err)?;
-                let ok = self.new_block("index.ok");
-                let fail = self.new_block("index.fail");
-                self.builder.build_conditional_branch(in_bounds, ok, fail).map_err(llvm_err)?;
-                self.builder.position_at_end(fail);
-                let (file, line, col) = self.location(e.span);
-                let i64_ty = self.cx.i64_type();
-                let i_wide = self.builder.build_int_z_extend_or_bit_cast(i, i64_ty, "").map_err(llvm_err)?;
-                let args = [
-                    i_wide.into(),
-                    i64_ty.const_int(*len, false).into(),
-                    file.0.into(),
-                    file.1.into(),
-                    line.into(),
-                    col.into(),
-                ];
-                self.builder.build_call(self.rt.panic_bounds, &args, "").map_err(llvm_err)?;
-                self.builder.build_unreachable().map_err(llvm_err)?;
-                self.builder.position_at_end(ok);
-                let (Some(base_ptr), Some(array_t)) = (base_ptr, self.llvm_ty(&base.ty)) else { return Ok(None) };
-                let zero = self.usize_ty.const_int(0, false);
-                // SAFETY (LLVM): the index was checked against the array length above.
-                let ptr =
-                    unsafe { self.builder.build_in_bounds_gep(array_t, base_ptr, &[zero, i], "") }.map_err(llvm_err)?;
-                Ok(Some(ptr))
+                    Ok(None)
+                }
+            },
+            tir::ExprKind::DerefRef(base) => {
+                let v = self.expr_mode(base, Mode::Use)?;
+                match v {
+                    Some(v) => Ok(Some(v.into_pointer_value())),
+                    None => Ok(None),
+                }
             }
             tir::ExprKind::Deref(base) => {
                 let v = self.expr_mode(base, Mode::Use)?;
@@ -2484,6 +2523,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
+            // A reference or a slice is a view of someone else's storage: dropping it does nothing.
+            Ty::Ref { .. } | Ty::Slice(_) => Ok(()),
             Ty::String => {
                 let s = self.builder.build_load(self.string_ty, addr, "s").map_err(llvm_err)?.into_struct_value();
                 let p = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
@@ -2833,11 +2874,14 @@ fn wrapping_op(m: Method) -> BinOp {
     }
 }
 
-/// A local, possibly followed by fields and indexing: its storage outlives the current statement.
+/// A local, possibly followed by fields, indexing, and dereferences: its storage outlives the current statement.
 fn is_place(e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => is_place(base),
+        tir::ExprKind::Field(base, _)
+        | tir::ExprKind::Index(base, _)
+        | tir::ExprKind::Deref(base)
+        | tir::ExprKind::DerefRef(base) => is_place(base),
         _ => false,
     }
 }
