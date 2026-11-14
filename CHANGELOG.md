@@ -4,9 +4,28 @@ Burdin has no backward-compatibility promise (see `Burdin Language Design.md`). 
 GitHub milestones and the roadmap track the work in progress. A milestone closes with an entry here (see the
 close-out checklist in `AGENTS.md`).
 
+## Unreleased — Infrastructure
+
+- Pin the Rust toolchain to `1.100.0` with the `clippy` and `rustfmt` components in `rust-toolchain.toml`, so
+  `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible from a clean machine.
+  CI installs and verifies that toolchain, and `tests/check-ci.sh` fails if the pin or its verification goes missing
+  (issue #19).
+- CI gained a `macos` job on `macos-latest` (Apple Silicon): Homebrew's `llvm@21`, the pinned Rust toolchain, and the
+  same checks as Linux, including every conformance milestone m01-m11. `tests/check-platform.sh` proves the emitted
+  LLVM triple follows the host and that `usize`/`isize` are 64-bit; it runs on every job. `tests/check-ci.sh` guards
+  all three jobs. The driver resolves `--link-lib LLVM-C` for Homebrew's `libLLVM.dylib` layout, finds `llvm-config`
+  through `LLVM_SYS_211_PREFIX`, and its resolution logic has unit tests (issues #16, #17, #18).
+- CI gained a `windows` job on `windows-latest`: the MSVC environment through `ilammy/msvc-dev-cmd`, the official
+  LLVM 21 Windows archive, and the same checks as the other jobs, including every conformance milestone m01-m11 and a
+  `BURDIN_CC=cl` run. LLVM is linked as a shared library on every platform, because the static Windows archives crash
+  in the dynamic-CRT Rust binary; the driver maps `--link-lib LLVM-C` to `LLVM-C.lib` and reports a missing `cl` with
+  an actionable message. `process.run` exit codes are covered on both the POSIX and Windows CRTs (issues #12, #13,
+  #14, #15).
+
 ## Unreleased — Stage 1
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
+
 
 ## Stage 0 — 2026-11-14
 
@@ -23,8 +42,6 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
 - `std` embedded in the driver: `String`, `List`, `Map`, `Result` with `?`, file I/O, process/environment helpers,
   `CString`/`CPtr`/`CStr`, and the test-mode assertions.
 - The m11 LLVM C API program builds and verifies a function through `extern "C"` and `--link-lib LLVM-C`.
-- CI runs on the remote on two platforms. The `linux` job on `ubuntu-24.04` installs LLVM 21 from apt.llvm.org; the
-  `windows` job on `windows-latest` loads the MSVC environment and installs the official LLVM 21 Windows archive.
-  Both pass check-tests, fmt, clippy, unit tests, build, and every conformance milestone m01-m11; the Windows job also
-  exercises `BURDIN_CC=cl`, binary-safe CRT output and files, abort exit codes, and `--link-lib LLVM-C` against
-  `LLVM-C.lib`. `tests/check-ci.sh` guards both jobs' milestones and prerequisites.
+- CI runs on the remote: the `linux` job on `ubuntu-24.04` installs LLVM 21 from apt.llvm.org and passes
+  check-tests, fmt, clippy, unit tests, build, and every conformance milestone m01-m11. `tests/check-ci.sh`
+  guards the workflow's milestone coverage and prerequisites.

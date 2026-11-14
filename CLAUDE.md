@@ -21,8 +21,7 @@ workflow. Process rules live in `AGENTS.md`; behavior lives in `tests/` and `spe
    roadmaps for later stages.
 4. `Burdin Language Design.md` is the full language design, including features that come after stage 0.
 
-If these disagree, stop and say so. Do not pick one silently. `Burdin Stage 0 Subset.md` in the repo root is an old
-export of the stage 0 document; use `spec/stage0-subset.md` instead.
+If these disagree, stop and say so. Do not pick one silently.
 
 ## Working rules
 
@@ -85,12 +84,15 @@ not on sema. Keep everything before codegen free of LLVM so the checks can be te
 
 ## Toolchain
 
-Current stable Rust (edition 2024; no toolchain pin for now), **LLVM 21** through `inkwell` 0.11 (feature
-`llvm21-1-no-llvm-linking`), and the system C compiler driver as the linker against libc (`cc` on Linux and macOS, MSVC
-`cl` on Windows; `BURDIN_CC` overrides). `crates/burdin_codegen/build.rs` links the shared LLVM library on every
-platform: the static LLVM archives in the official Windows release are built with the static CRT and crash when linked
-into the Rust binary, which uses the dynamic CRT. On Windows/MSVC the compiler links `LLVM-C.lib`, so `LLVM-C.dll` must
-be on `PATH` for `burdin`, `burdin test`, and programs built with `--link-lib LLVM-C`.
+Rust is pinned by `rust-toolchain.toml` to an exact stable version with the `clippy` and `rustfmt` components (currently
+`1.100.0`; edition 2024), so `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` give the same
+verdict on a clean machine. Bump the version deliberately, together with a `cargo fmt --all` pass and a HANDOFF.md note;
+`tests/check-ci.sh` fails if the pin, its components, or CI's verification step goes missing. **LLVM 21** through
+`inkwell` 0.11 (feature `llvm21-1-no-llvm-linking`), and the system C compiler driver as the linker against libc (`cc`
+on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides). `crates/burdin_codegen/build.rs` links the shared LLVM
+library on every platform: the static LLVM archives in the official Windows release are built with the static CRT and
+crash when linked into the Rust binary, which uses the dynamic CRT. On Windows/MSVC the compiler links `LLVM-C.lib`, so
+`LLVM-C.dll` must be on `PATH` for `burdin`, `burdin test`, and programs built with `--link-lib LLVM-C`.
 There is no C runtime: `burdin_codegen/src/runtime.rs` generates `main`, output, panics, string allocation and
 conversions, and heap allocation as LLVM IR that calls libc directly.
 Platforms: Linux, macOS, Windows; x86-64 and arm64.

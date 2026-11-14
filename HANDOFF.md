@@ -1,17 +1,19 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, and eleventh. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, and thirteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the eleventh session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all 134
-tests pass in the debug profile and 133 in release (one m02 test is debug-only). `burdin test` runs `test` blocks, and
-the m11 program calls the LLVM C API. CI now runs on Linux and Windows, and the Windows job passes the whole suite.
+Updated at the end of the thirteenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all
+134 tests pass in the debug profile and 133 in release (one m02 test is debug-only). `burdin test` runs `test` blocks,
+and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
+twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43); the thirteenth added the Windows CI job
+and the shared LLVM link (issue #12).
 
 | What | Where | Status |
 | --- | --- | --- |
 | Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
-| Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
+| Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items |
@@ -21,12 +23,12 @@ the m11 program calls the LLVM C API. CI now runs on Linux and Windows, and the 
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary); see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
-| CI | `.github/workflows/ci.yml` | `linux` on `ubuntu-24.04` (LLVM 21 from apt.llvm.org) and `windows` on `windows-latest` (MSVC environment through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). Both jobs run check-ci (`tests/check-ci.sh`), check-tests, fmt, clippy, unit tests, build, and conformance tests m01-m11; the Windows job also reruns m01 and m11 with `BURDIN_CC=cl` |
-| LLVM | WSL: `/usr/lib/llvm-21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, fmt, clippy, unit tests, build, `tests/check-platform.sh`, and conformance m01-m11; the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. `tests/check-ci.sh` guards all three jobs |
+| LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
 
-Dev environment: WSL Ubuntu 26.04, stable Rust through rustup (1.100 at the time), LLVM 21; the Windows job is the
-reference for a native MSVC setup. See the Toolchain section of `CLAUDE.md` for the exact packages and how to call WSL
-from PowerShell.
+Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21; the macOS and
+Windows jobs are the reference for native setups. See the Toolchain section of `CLAUDE.md` for the exact packages and
+how to call WSL from PowerShell.
 
 ### How the compiler is built so far
 
@@ -190,9 +192,11 @@ from PowerShell.
   `run` (builds into a temporary directory, passes the exit code through, 128+signal for a signal), and `test` (builds
   in test mode and runs one process per test; it owns the counts and `FAIL` lines). A target is a `.bd` file or a
   package directory; dependency cycles, missing paths, invalid module names, and malformed manifests are reported as
-  `error: ...` without diagnostics codes. `--link-lib LLVM-C` resolves the LLVM shared library through `llvm-config`
-  on Unix; on MSVC it passes `LLVM-C.lib` and adds `/LIBPATH:<LLVM_SYS_211_PREFIX>/lib` when that import library is
-  there. A missing `cl` is reported with the fix (a Developer Command Prompt, or `BURDIN_CC`).
+  `error: ...` without diagnostics codes. `--link-lib LLVM-C` resolves the LLVM shared library through
+  `llvm-config`, which it finds through `LLVM_SYS_211_PREFIX` and then `PATH`; it accepts Linux's `libLLVM-C.so` /
+  `libLLVM-21.so` and Homebrew's `libLLVM-C.dylib` / `libLLVM.dylib`, and adds `-L` plus an rpath. On MSVC it passes
+  `LLVM-C.lib` and adds `/LIBPATH:<LLVM_SYS_211_PREFIX>/lib` when that import library is there. A missing `cl` is
+  reported with the fix (a Developer Command Prompt, or `BURDIN_CC`).
 - Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
   were no syntax errors.
 
@@ -212,16 +216,19 @@ from PowerShell.
 ## Decided in the second session
 
 - LLVM route 1 (WSL Ubuntu first) and LLVM 21, through `inkwell` 0.11.0. The feature was `llvm21-1-prefer-dynamic`; in
-  the eleventh session it became `llvm21-1-no-llvm-linking` with the link step in `crates/burdin_codegen/build.rs`,
+  the thirteenth session it became `llvm21-1-no-llvm-linking` with the link step in `crates/burdin_codegen/build.rs`,
   because `llvm-sys` falls back to the static Windows archives, which crash in a binary built with the dynamic CRT.
-- No Rust toolchain pin for now: build with current stable (edition 2024 needs 1.85 or later).
+- No Rust toolchain pin for now: build with current stable (edition 2024 needs 1.85 or later). *Superseded on
+  2026-11-14 by issue #19: `rust-toolchain.toml` pins `1.100.0` with `clippy` and `rustfmt` (see problem 12).*
 - `E9000` is a temporary code for "not implemented in this compiler yet". It is not in the registry and no test uses it.
 
 ## Known problems and risks
 
-1. **The expected outputs were written by hand** before the compiler existed; milestones 1 to 9 now pass against it, but a
-   passing test still only reflects the implementation matching those expectations, not the design document. Review them
-   with the assumptions list before trusting the suite as a spec of intent.
+1. **The expected outputs were reviewed on 2026-11-14 (issue #20).** Every test in every milestone folder was read
+   against the design, the grammar, the memory rules, the stage 0 subset, and the assumptions list. No expectation was
+   found to encode an accidental behavior, so no test changed; every intentional choice or deviation the suite pins is
+   recorded in `tests/README.md` under "Intentional choices and deviations". A new test still needs the same review: a
+   passing test proves the implementation matches the expectation, not the design document.
 2. **Many tests depend on standard-library names I chose** (`String.from`, `push_str`, `i32.parse`, `find`, `find_str`, `env.args()`,
    `CString.from`, `CPtr.null()`, and others). They are listed in assumption 7 of `tests/README.md`. They are guesses, not decisions.
 3. **15 other assumptions in `tests/README.md` are mine, not yours.** The risky ones: call-site `mut` for `mut` parameters,
@@ -234,9 +241,11 @@ from PowerShell.
 6. **`m11_llvm/llvm_return_42.bd` stops short** of emitting an object file and linking from Burdin, because the
    target-initialization functions are architecture-specific. The test as written builds, verifies, and prints the IR;
    emitting an object and linking it from Burdin is the next compiler step in stage 1.
-7. **Windows is covered by CI; macOS and arm64 are not.** The `windows` job exercises the CRT paths: binary-safe file
-   I/O (no newline translation), `_write` and `_setmode` versus `write`, abort exit codes (still only "non-zero" in
-   `run-abort`), and the test dispatcher's `atoi`/`strlen` path. macOS and arm64 have no job yet.
+7. **Windows and Apple Silicon macOS are covered by CI; Intel macOS and other arm64 hosts are not.** The `windows` job
+   exercises the CRT paths: binary-safe file I/O (no newline translation), `_write` and `_setmode` versus `write`, abort
+   exit codes (still only "non-zero" in `run-abort`), and the test dispatcher's `atoi`/`strlen` path. The `macos` job
+   covers the arm64 triple, `cc` linking, libc calls, the test dispatcher, and `--link-lib LLVM-C`. Intel macOS is not
+   tested.
 8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`,
    `extern "C"`, and `test` items are exercised by m07, m08, and m10. Not covered by a conformance test yet:
    `unsafe fn` declarations (they work; tested by hand) and `interface` methods that are `unsafe`.
@@ -256,9 +265,11 @@ from PowerShell.
     notion of a source's scope ending, and origin inference gives a temporary argument an empty origin. Decide the
     rule and its error code first, then implement. E0122 at the binding is the closest code, but its registry text says
     "returned".
-12. **`cargo fmt --all --check` now passes** (the tree was reformatted in the eighth session with the current rustfmt), but
-    the toolchain is still not pinned, so a future rustfmt can break the CI Format step. Pinning the toolchain or running
-    `cargo fmt --all` in each milestone are the two options.
+12. **The Rust toolchain is pinned** (issue #19, 2026-11-14) to `1.100.0` with `clippy` and `rustfmt` in
+    `rust-toolchain.toml`, so `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible
+    from a clean machine. CI installs that toolchain (`rustup toolchain install` reads the file) and verifies
+    `rustc --version` and both components; `tests/check-ci.sh` fails if the pin or CI's verification step goes missing.
+    Bumping the version means running `cargo fmt --all` after the change.
 13. **The module and C bridge is narrower than the design.** There is no syntax for a private module, no module
     visibility check, and no check that public signatures only use public types. `CPtr` supports only `null()` and
     `CString.as_ptr()`, plus `CStr.to_string` (no dereference, null test, pointer arithmetic, or comparison).
@@ -452,6 +463,32 @@ from PowerShell.
   `libLLVM-21.so`, not as `libLLVM-C.so`. The driver adds the libdir and an rpath; other library names still go to the
   linker unchanged. This is the one platform-specific exception in the driver.
 
+## Decided in the eleventh session
+
+- CI has a `macos` job on `macos-latest` (Apple Silicon) next to `linux`. It installs Homebrew's keg-only `llvm@21`,
+  exports `LLVM_SYS_211_PREFIX`, and adds `<prefix>/bin` to `PATH` so the driver's `llvm-config` lookup and the
+  `--link-lib LLVM-C` resolution work without hardcoded paths. No test assumes x86-64: the whole suite runs on arm64.
+- `tests/check-platform.sh` is the regression check for the host target. It builds a small program, requires the emitted
+  `target triple` to match `uname` and `cc`'s target, and runs the program to show `usize` and `isize` are 64-bit. It
+  runs on all three jobs, so a change that hardcodes a triple or narrows the pointer types fails CI on any platform.
+- The driver resolves `--link-lib LLVM-C` for both `.so` and `.dylib`, prefers `llvm-config` from
+  `LLVM_SYS_211_PREFIX` (then `PATH`), and has unit tests for the resolution order. Homebrew's `libLLVM.dylib` has an
+  absolute install name, so no rpath is required; the driver still passes `-Wl,-rpath` as on Linux.
+
+## Decided in the thirteenth session
+
+- CI has a `windows` job on `windows-latest` next to `linux` and `macos`. `ilammy/msvc-dev-cmd` loads the MSVC
+  environment, the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive is unpacked into `C:\llvm`, and its
+  `bin` goes on `PATH` so `LLVM-C.dll` is found. The job runs every check plus m01-m11 and a `BURDIN_CC=cl` smoke run.
+- LLVM is linked as a shared library on every platform: `inkwell` uses `llvm21-1-no-llvm-linking` and
+  `crates/burdin_codegen/build.rs` emits the link. The static LLVM archives from the official Windows release are
+  built with the static CRT and crash inside the Rust binary, which uses the dynamic CRT; `llvm-sys` also refuses
+  dynamic linking on MSVC, so the script links `LLVM-C.lib` directly.
+- Code generation keeps `RelocMode::PIC` on COFF. A static relocation model makes LLVM address string constants with
+  `IMAGE_REL_AMD64_ADDR32` relocations, which `link.exe` rejects (`LNK2017`).
+- The driver maps `--link-lib LLVM-C` to `LLVM-C.lib` plus `/LIBPATH` from `LLVM_SYS_211_PREFIX`, and a missing `cl`
+  names both the Developer Command Prompt and `BURDIN_CC`.
+
 ## What is left to do, in order
 
 1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
@@ -462,9 +499,10 @@ from PowerShell.
 3. Close the stage 0 correctness gaps that stage 1 inherits, each with a registry code and tests first: a view outliving
    its source (problem 11), ranges as values (16), the move forms rejected as E9000 (10), the generic gaps (the old
    item 4 of this list), and the module and C gaps (13).
-4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org) and on `windows-latest` (MSVC and the official LLVM 21
-   archive, issue #12); both jobs pass every step and m01-m11, and `tests/check-ci.sh` guards that the workflow keeps
-   covering the suite. Next: add a macOS job, and an arm64 job if the platforms are wanted.
+4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
+   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m11
+   (issues #11, #16, and #12). `tests/check-ci.sh` guards that the workflow keeps covering the suite and every job, and
+   `tests/check-platform.sh` guards the host triple. Next: an Intel macOS job and another arm64 host if they are wanted.
 5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
    passing suite only shows the implementation matches the hand-written expectations, not the design document.
 

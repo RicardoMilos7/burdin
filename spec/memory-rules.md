@@ -5,8 +5,9 @@ returned views, second-class types, and drops. The design document says what the
 checker does. Each rule has an ID, an error code where it can be violated, and the tests that cover it
 (paths relative to `tests/`, without `.bd`).
 
-All checks run on a function body at a time, on the MIR control-flow graph. Nothing here looks at another function's body:
-a call is checked from its signature alone.
+All checks run on a function body at a time, on the typed tree (`burdin_tir`). Nothing here looks at another
+function's body: a call is checked from its signature alone. Stage 0 has no MIR; the design's MIR steps belong to
+stage 1 (`stage1-subset.md`).
 
 ## 0. Definitions
 
@@ -17,7 +18,7 @@ the whole expression's base (`xs`, `h`, `r`).
 
 **Overlap.** Two places overlap when one is a prefix of the other (including equal). `p` and `p.a` overlap, `p.a` and `p.b` do not.
 
-**Initialization state.** At each point of the CFG a place is *initialized*, *moved*, *partially moved* (some field moved
+**Initialization state.** At each program point a place is *initialized*, *moved*, *partially moved* (some field moved
 out), or *uninitialized*. Joining paths gives *maybe moved* when the states differ.
 
 **Copy types.** Integers, floats, `bool`, `char`, `&T`, `str`, `[T]`, `()`, and tuples, arrays, structs and enums that are
@@ -124,8 +125,9 @@ Tests (E0110): `exclusivity_same_twice`, `exclusivity_arg_reads_value`, `exclusi
 and method calls auto-dereference, so `r.n` works for `r: &Counter` and `r: &mut Counter`.
 Tests: `m06_conventions/references_basic`.
 
-**RF2 Liveness.** A borrow is live from where it is created to the last use of the reference or of any value derived from it,
-on any path. It is not tied to a scope. Liveness is computed on the CFG.
+**RF2 Liveness.** A borrow is live from where it is created to the last use of the reference or of any value derived
+from it. It is not tied to a scope. Stage 0 computes liveness per top-level statement, so a use anywhere inside a loop
+keeps the loan live for the whole loop; that is conservative, not a full CFG analysis.
 Test: `m06_conventions/borrow_ends_at_last_use`.
 
 **RF3 Conflicts.** While a shared borrow of `P` is live, an overlapping place may not be assigned, moved, borrowed with `&mut`,

@@ -22,10 +22,19 @@ jobs:
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
 
-      - name: Install Rust (current stable)
+      # rust-toolchain.toml pins the channel and the clippy/rustfmt components.
+      - name: Install Rust (pinned in rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Verify pinned Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          case "$(rustc --version)" in
+            "rustc $channel "*) ;;
+            *) echo "expected rustc $channel, got $(rustc --version)"; exit 1 ;;
+          esac
+          rustup component list --installed | grep -q '^clippy-' || { echo "clippy is missing"; exit 1; }
+          rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
         run: tests/check-tests.sh
@@ -41,6 +50,63 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      - name: Check host target
+        run: tests/check-platform.sh
+
+      # Only milestones that are finished must pass. Extend the list as milestones are completed.
+      - name: Conformance tests (finished milestones)
+        run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+
+  # macOS on arm64: proves the host-triple target, the C libc calls, and LLVM-C linking on Apple's
+  # toolchain (issues #16, #17, #18). Homebrew's LLVM is keg-only, so point inkwell at its prefix and
+  # put its llvm-config on PATH for `--link-lib LLVM-C`.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check CI workflow
+        run: tests/check-ci.sh
+
+      - name: Install LLVM 21
+        run: |
+          brew install llvm@21
+          echo "LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)" >> "$GITHUB_ENV"
+          echo "$(brew --prefix llvm@21)/bin" >> "$GITHUB_PATH"
+
+      # rust-toolchain.toml pins the channel and the clippy/rustfmt components.
+      - name: Install Rust (pinned in rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Verify pinned Rust toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          case "$(rustc --version)" in
+            "rustc $channel "*) ;;
+            *) echo "expected rustc $channel, got $(rustc --version)"; exit 1 ;;
+          esac
+          rustup component list --installed | grep -q '^clippy-' || { echo "clippy is missing"; exit 1; }
+          rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
+
+      - name: Check test directives
+        run: tests/check-tests.sh
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test
+
+      - name: Build
+        run: cargo build
+
+      # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
+      - name: Check host target
+        run: tests/check-platform.sh
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
@@ -81,10 +147,19 @@ jobs:
           test -f "C:/llvm/lib/LLVM-C.lib"
           echo 'C:\llvm\bin' >> "$GITHUB_PATH"
 
-      - name: Install Rust (current stable)
+      # rust-toolchain.toml pins the channel and the clippy/rustfmt components.
+      - name: Install Rust (pinned in rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Verify pinned Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          case "$(rustc --version)" in
+            "rustc $channel "*) ;;
+            *) echo "expected rustc $channel, got $(rustc --version)"; exit 1 ;;
+          esac
+          rustup component list --installed | grep -q '^clippy-' || { echo "clippy is missing"; exit 1; }
+          rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
         run: bash tests/check-tests.sh
@@ -100,6 +175,9 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      - name: Check host target
+        run: bash tests/check-platform.sh
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
