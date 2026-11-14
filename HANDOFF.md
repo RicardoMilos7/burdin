@@ -11,7 +11,9 @@ twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and
 root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
 design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in
 CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12); the fifteenth runs
-the finished conformance milestones in the release profile in every CI job (issue #47).
+the finished conformance milestones in the release profile in every CI job (issue #47) and adds benchmark regression
+tracking: the harness saves and compares a baseline, and each CI job keeps one in a cache and reports regressions
+advisably (issue #446).
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -27,8 +29,8 @@ the finished conformance milestones in the release profile in every CI job (issu
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`; see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
-| Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches |
+| Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446) |
 | LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
 
 Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21; the macOS and
@@ -205,7 +207,7 @@ how to call WSL from PowerShell.
 - Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
   were no syntax errors.
 
-### Compiler benchmarks (issue #41)
+### Compiler benchmarks and regression tracking (issues #41, #446)
 
 `crates/burdin_bench` generates its inputs (`src/lib.rs`) and the `benches/compiler.rs` target times one stage at a
 time. A generated chunk is a struct with methods, an enum with a `match`, a generic function, an arithmetic loop, a
@@ -227,8 +229,22 @@ against this table):
 `cargo bench -p burdin_bench -- --smoke` runs 16 chunks through all four stages, checks that the generated program
 compiles, and fails when a stage exceeds 1 s (lex, parse), 2 s (sema), or 10 s (codegen). Those buy roughly two to
 three orders of magnitude of headroom, so a busy runner passes and only a hang or an accidental super-linear pass
-fails. CI runs it after `cargo build`, and `tests/check-ci.sh` requires the step and the bench target. Tighter
-threshold tracking against a stored baseline is issue #446.
+fails. CI runs it after `cargo build`, and `tests/check-ci.sh` requires the step and the bench target.
+
+For tighter tracking, `--save FILE` writes a run's medians in a plain-text baseline (`case<TAB>nanoseconds`, one line
+per case), and `--baseline FILE` compares a later run with it: each case gets a row with the baseline median, the
+current median, the change, and a verdict, and the harness exits 1 when a case is more than `--threshold` percent
+slower (default 25; exactly at the threshold is within it). A case with no baseline entry is reported as new and a
+baseline entry the run did not measure as missing; neither is a regression. `tests/bench-regression.sh` runs the full
+suite and does both, and every CI job runs it. The baseline lives in `~/.cache/burdin/bench`, restored and saved with
+`actions/cache` under a key that names the runner OS and architecture, the pinned toolchain, and `Cargo.lock`, so a
+development machine is never compared with a runner and a toolchain or dependency change starts a fresh baseline. A
+push to main records the new baseline (even when the run flagged a regression, so the baseline follows main); a pull
+request compares against the last main run on the same platform and never writes the cache. The comparison is
+advisory (`continue-on-error`) until the runner numbers are stable: a regression is shown in the job log without
+failing the job. A missing baseline (including one evicted after seven days without a run) is recorded and passes.
+`tests/check-ci.sh` fails if the step, the script, the cache, or the harness modes go missing, and
+`cargo test -p burdin_bench` covers the format and the threshold arithmetic.
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -551,6 +567,23 @@ threshold tracking against a stored baseline is issue #446.
   `//@ debug-only`; the m02 overflow test is the one such test. `tests/check-ci.sh` requires a release step covering
   every milestone folder in every job, the runner's `--release` handling, and at least one `//@ debug-only` test so
   the skip path stays exercised (issue #47).
+- The benchmark baseline lives in the CI cache, not in the repository (issue #446). Numbers from a development
+  machine and from a hosted runner are not comparable, and committing one machine's numbers would make every CI run
+  report a false regression. The cache key includes the runner OS and architecture, `rust-toolchain.toml`, and
+  `Cargo.lock`, so a run is only compared with a run of the same kind, and a missing or expired cache records a fresh
+  baseline instead of failing. The trade-off is that the baseline cannot be reviewed in a diff (the run that records
+  it is in its log) and a cache evicted after seven days without a run restarts the trend.
+- The regression comparison is advisory (`continue-on-error: true`), as issue #446 asks until the numbers are stable.
+  The harness keeps the exit status (1 over the threshold, 2 on an error), so tightening the policy is a workflow
+  change, not a code change.
+- The default threshold is 25% and `--threshold` overrides it. Hosted runners are noisy enough that a tighter default
+  would flag noise; the baseline format and the comparison live in `burdin_bench`'s library, so the arithmetic is
+  unit-tested without a backend or a runner.
+- A push to main records the new baseline even when that run flagged a regression, so the baseline follows main and a
+  persistent regression does not keep firing on every pull request while the numbers are still settling.
+- `tests/check-ci.sh` guards the tracking the same way it guards the other CI invariants: every job must restore and
+  save the baseline cache with the runner-and-lockfile key, run `tests/bench-regression.sh`, keep the step advisory,
+  and record the baseline only on main.
 
 ## What is left to do, in order
 
@@ -566,8 +599,9 @@ threshold tracking against a stored baseline is issue #446.
    `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m11 in both
    the debug and release profiles (issues #11, #16, #47, and #12), and cache cargo and LLVM 21 (issue #46).
    `tests/check-ci.sh` guards that the workflow keeps covering the suite in both profiles, every job, and their
-   caches; `tests/check-platform.sh` guards the host triple. Next: an Intel macOS job and another arm64 host if they
-   are wanted.
+   caches; `tests/check-platform.sh` guards the host triple. Every job also records and compares benchmark baselines,
+   advisory until the runner numbers are stable (issue #446); when they are, drop `continue-on-error` from the step.
+   Next: an Intel macOS job and another arm64 host if they are wanted.
 5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
    passing suite only shows the implementation matches the hand-written expectations, not the design document.
 

@@ -101,9 +101,35 @@ jobs:
         run: cargo build
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
-      # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
+      # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
         run: cargo bench -p burdin_bench -- --smoke
+
+      # Benchmark regression tracking (issue #446): the full suite runs and its medians are compared with the
+      # baseline cached from the last run of the same kind. The key holds the runner OS and architecture, the
+      # pinned toolchain, and Cargo.lock, so a development machine is never compared with a runner. A push to
+      # main records the new baseline; a pull request compares against the last main run. The step is advisory
+      # for now: `continue-on-error` reports a regression without failing the job until the numbers are stable.
+      - name: Restore benchmark baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/burdin/bench
+          key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+
+      - name: Compiler benchmarks (regression tracking, advisory)
+        continue-on-error: true
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then export BURDIN_BENCH_UPDATE=1; fi
+          tests/bench-regression.sh
+
+      - name: Save benchmark baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/burdin/bench
+          key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check documentation
         run: tests/check-docs.sh
@@ -189,9 +215,35 @@ jobs:
         run: cargo build
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
-      # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
+      # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
         run: cargo bench -p burdin_bench -- --smoke
+
+      # Benchmark regression tracking (issue #446): the full suite runs and its medians are compared with the
+      # baseline cached from the last run of the same kind. The key holds the runner OS and architecture, the
+      # pinned toolchain, and Cargo.lock, so a development machine is never compared with a runner. A push to
+      # main records the new baseline; a pull request compares against the last main run. The step is advisory
+      # for now: `continue-on-error` reports a regression without failing the job until the numbers are stable.
+      - name: Restore benchmark baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/burdin/bench
+          key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+
+      - name: Compiler benchmarks (regression tracking, advisory)
+        continue-on-error: true
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then export BURDIN_BENCH_UPDATE=1; fi
+          tests/bench-regression.sh
+
+      - name: Save benchmark baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/burdin/bench
+          key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check documentation
         run: tests/check-docs.sh
@@ -309,9 +361,35 @@ jobs:
         run: cargo build
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
-      # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
+      # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
         run: cargo bench -p burdin_bench -- --smoke
+
+      # Benchmark regression tracking (issue #446): the full suite runs and its medians are compared with the
+      # baseline cached from the last run of the same kind. The key holds the runner OS and architecture, the
+      # pinned toolchain, and Cargo.lock, so a development machine is never compared with a runner. A push to
+      # main records the new baseline; a pull request compares against the last main run. The step is advisory
+      # for now: `continue-on-error` reports a regression without failing the job until the numbers are stable.
+      - name: Restore benchmark baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/burdin/bench
+          key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+
+      - name: Compiler benchmarks (regression tracking, advisory)
+        continue-on-error: true
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then export BURDIN_BENCH_UPDATE=1; fi
+          bash tests/bench-regression.sh
+
+      - name: Save benchmark baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/burdin/bench
+          key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check documentation
         run: bash tests/check-docs.sh

@@ -39,6 +39,14 @@ close-out checklist in `AGENTS.md`).
   code generation; tests marked `//@ debug-only` (the m02 overflow abort test) are skipped. `tests/check-ci.sh` fails
   if a job loses its release step, if the runner stops selecting the profile or skipping debug-only tests, or if no
   test is marked debug-only (issue #47).
+- The compiler benchmarks gained regression tracking (issue #446): `cargo bench -p burdin_bench -- --save FILE`
+  records a run's medians in a plain-text baseline, and `--baseline FILE` compares a later run with it, reporting
+  every case more than `--threshold` percent slower (default 25) and exiting 1. `tests/bench-regression.sh` runs the
+  full suite, and every CI job records and compares a baseline kept in `actions/cache`, keyed by the runner OS and
+  architecture, the pinned toolchain, and `Cargo.lock`; a main push updates it and a pull request compares against
+  the last main run. The comparison is advisory until the runner numbers are stable. `tests/check-ci.sh` fails if
+  the step, the script, the cache, or the harness modes go missing, and `cargo test -p burdin_bench` covers the
+  baseline format and the threshold arithmetic.
 
 ## Unreleased — Stage 1
 
