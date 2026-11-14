@@ -1,5 +1,9 @@
 # Burdin stage 0 subset
 
+> **Status.** This file is the canonical stage 0 scope document. The old `Burdin Stage 0 Subset.md` export and
+> any copy hosted on claude.ai are historical and are not updated; the repository files are the only maintained
+> copies.
+
 Stage 0 is a Rust compiler for the core subset of Burdin: enough to write real, compiler-sized programs. It enforces
 the memory-model checks from the start. Everything else waits for stage 1, which adds the rest of the core language to
 the same Rust compiler. The compiler stays in Rust; Burdin is not bootstrapped into itself (see "After stage 1" below).

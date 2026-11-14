@@ -51,6 +51,11 @@ jobs:
       - name: Build
         run: cargo build
 
+      # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
+      # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
+      - name: Compiler benchmarks (smoke budgets)
+        run: cargo bench -p burdin_bench -- --smoke
+
       - name: Check host target
         run: tests/check-platform.sh
 
@@ -103,6 +108,11 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
+      # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
+      - name: Compiler benchmarks (smoke budgets)
+        run: cargo bench -p burdin_bench -- --smoke
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -175,6 +185,11 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
+      # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
+      - name: Compiler benchmarks (smoke budgets)
+        run: cargo bench -p burdin_bench -- --smoke
 
       - name: Check host target
         run: bash tests/check-platform.sh

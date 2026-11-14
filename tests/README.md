@@ -1,7 +1,8 @@
 # Burdin stage 0 conformance tests
 
 These programs are the target for the stage 0 compiler (Rust, LLVM backend). They come from
-`Burdin Language Design.md` and [the stage 0 subset](../spec/stage0-subset.md). Each folder is one milestone; a
+[the design document](../Burdin%20Language%20Design.md) and [the stage 0 subset](../spec/stage0-subset.md). The design
+document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
 Anything the stage 0 subset defers (closures, iterators, interpolation, `any`, `error` declarations,
@@ -74,6 +75,19 @@ The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, t
 `path:LINE:COL: error[E0000]: message`, and a `test result: N passed, M failed` line plus `FAIL <name>` lines from
 `burdin test`. If the real driver differs, change the section marked in that file. The exit code is 0 only when every
 test passes. On Windows, run it from Git Bash.
+
+## Benchmarks
+
+The compiler benchmarks are not part of the conformance run:
+
+```
+cargo bench -p burdin_bench               # medians per stage and size
+cargo bench -p burdin_bench -- --smoke    # the time budgets CI runs
+cargo bench -p burdin_bench -- lex        # only cases whose name contains `lex`
+```
+
+`crates/burdin_bench` generates its inputs, so a size is the only parameter of a measurement. `HANDOFF.md` records
+the baseline and the meaning of the `--smoke` budgets.
 
 ## Error codes
 
