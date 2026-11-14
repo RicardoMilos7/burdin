@@ -262,7 +262,12 @@ pub enum ExprKind {
     Str(String),
     Bool(bool),
     Unit,
-    Name(Ident),
+    /// `name`, or a type path with generic arguments (`List<i32>`), which only means something as the left side
+    /// of an associated call or a variant path (grammar rule 8.2).
+    Name {
+        name: Ident,
+        args: Vec<Type>,
+    },
     SelfValue,
     Tuple(Vec<Expr>),
     Array(Vec<Expr>),

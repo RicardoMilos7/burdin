@@ -83,6 +83,13 @@ pub enum Ty {
     Float(FloatTy),
     Str,
     String,
+    /// A shared (`&T`) or mutable (`&mut T`) reference. The value is the address of the referent.
+    Ref {
+        mutable: bool,
+        inner: Box<Ty>,
+    },
+    /// `[T]`: a slice view, a pointer and a length.
+    Slice(Box<Ty>),
     Array(Box<Ty>, u64),
     /// The prelude's `Option<T>`. Only matching on it is supported so far (milestone 2 needs `checked_add`).
     Option(Box<Ty>),
@@ -105,6 +112,21 @@ impl Ty {
     pub fn is_numeric(&self) -> bool {
         matches!(self, Ty::Int(_) | Ty::Float(_))
     }
+
+    pub fn is_ref(&self) -> bool {
+        matches!(self, Ty::Ref { .. })
+    }
+
+    /// Whether a value of this type is a view of other storage: a reference, a `str`, a slice, or an aggregate
+    /// that contains one (memory-rules.md, second-class types).
+    pub fn is_second_class(&self) -> bool {
+        match self {
+            Ty::Str | Ty::Slice(_) | Ty::Ref { .. } => true,
+            Ty::Array(t, _) | Ty::Option(t) => t.is_second_class(),
+            Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for Ty {
@@ -118,6 +140,9 @@ impl fmt::Display for Ty {
             Ty::Float(FloatTy::F64) => f.write_str("f64"),
             Ty::Str => f.write_str("str"),
             Ty::String => f.write_str("String"),
+            Ty::Ref { mutable: false, inner } => write!(f, "&{inner}"),
+            Ty::Ref { mutable: true, inner } => write!(f, "&mut {inner}"),
+            Ty::Slice(t) => write!(f, "[{t}]"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
             Ty::Option(t) => write!(f, "Option<{t}>"),
             Ty::Heap(t) => write!(f, "Heap<{t}>"),
@@ -180,6 +205,14 @@ pub enum Method {
     Abs,
     /// `String.push_str(str)`: appends bytes, growing the buffer.
     PushStr,
+    /// `String.as_str()`: a `str` view of the bytes.
+    AsStr,
+    /// `x.len()` on `str`, `[T]`, `String`, and arrays.
+    Len,
+    /// `s.starts_with(prefix)` on `str` (and `String`).
+    StartsWith,
+    /// `s.find(c): Option<usize>` on `str` (and `String`); a byte index.
+    Find,
     /// `x.clone()`: a deep copy derived by the compiler.
     Clone,
 }
@@ -278,6 +311,8 @@ pub struct Const {
 
 pub struct Function {
     pub name: String,
+    /// Where the function was declared, for diagnostics about its signature.
+    pub span: Span,
     pub params: Vec<LocalId>,
     pub ret: Ty,
     pub locals: Vec<Local>,
@@ -285,6 +320,10 @@ pub struct Function {
     /// Every place read in a move context, as a local and a field path from it. The code generator
     /// allocates a runtime drop flag for each of them.
     pub moved: Vec<MovedPlace>,
+    /// The parameter a second-class return value derives from (memory-rules.md, RT1). `None` when the result is
+    /// static (or the return type is not second-class). The borrow checker uses it to keep the argument borrowed
+    /// until the last use of the result (RF5).
+    pub ret_origin: Option<usize>,
 }
 
 /// A place that is moved somewhere in a function: `local` followed by struct or tuple field indices.
@@ -366,6 +405,12 @@ pub enum ExprKind {
         array: Box<Expr>,
         body: Block,
     },
+    /// `for pattern in slice`: iterate a `[T]` view, whose length is known only at run time.
+    ForSlice {
+        pat: Pat,
+        slice: Box<Expr>,
+        body: Block,
+    },
     Match(Box<Expr>, Vec<Arm>),
     Break,
     Continue,
@@ -378,6 +423,19 @@ pub enum ExprKind {
     Cast(Box<Expr>),
     /// `*h` on a `Heap<T>`: the pointee.
     Deref(Box<Expr>),
+    /// `&place` or `&mut place`: the address of the place (a temporary gets a slot of its own).
+    Ref {
+        place: Box<Expr>,
+        mutable: bool,
+    },
+    /// `*r` on a `&T` or `&mut T`: the referent.
+    DerefRef(Box<Expr>),
+    /// `base[lo..hi]`: a view of bytes or elements of the base.
+    Slice {
+        base: Box<Expr>,
+        lo: Box<Expr>,
+        hi: Box<Expr>,
+    },
     Array(Vec<Expr>),
     ArrayRepeat(Box<Expr>, u64),
     Index(Box<Expr>, Box<Expr>),
