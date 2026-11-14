@@ -21,3 +21,6 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
 - `std` embedded in the driver: `String`, `List`, `Map`, `Result` with `?`, file I/O, process/environment helpers,
   `CString`/`CPtr`/`CStr`, and the test-mode assertions.
 - The m11 LLVM C API program builds and verifies a function through `extern "C"` and `--link-lib LLVM-C`.
+- CI runs on the remote: the `linux` job on `ubuntu-24.04` installs LLVM 21 from apt.llvm.org and passes
+  check-tests, fmt, clippy, unit tests, build, and every conformance milestone m01-m11. `tests/check-ci.sh`
+  guards the workflow's milestone coverage and prerequisites.

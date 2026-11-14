@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check CI workflow
+        run: tests/check-ci.sh
+
       - name: Install LLVM 21
         run: |
           wget -q https://apt.llvm.org/llvm.sh
