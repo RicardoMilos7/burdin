@@ -214,9 +214,11 @@ exact packages and how to call WSL from PowerShell.
 
 ## Known problems and risks
 
-1. **The expected outputs were written by hand** before the compiler existed; milestones 1 to 9 now pass against it, but a
-   passing test still only reflects the implementation matching those expectations, not the design document. Review them
-   with the assumptions list before trusting the suite as a spec of intent.
+1. **The expected outputs were reviewed on 2026-11-14 (issue #20).** Every test in every milestone folder was read
+   against the design, the grammar, the memory rules, the stage 0 subset, and the assumptions list. No expectation was
+   found to encode an accidental behavior, so no test changed; every intentional choice or deviation the suite pins is
+   recorded in `tests/README.md` under "Intentional choices and deviations". A new test still needs the same review: a
+   passing test proves the implementation matches the expectation, not the design document.
 2. **Many tests depend on standard-library names I chose** (`String.from`, `push_str`, `i32.parse`, `find`, `find_str`, `env.args()`,
    `CString.from`, `CPtr.null()`, and others). They are listed in assumption 7 of `tests/README.md`. They are guesses, not decisions.
 3. **15 other assumptions in `tests/README.md` are mine, not yours.** The risky ones: call-site `mut` for `mut` parameters,
