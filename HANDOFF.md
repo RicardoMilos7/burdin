@@ -1,16 +1,17 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, and fourteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, and fifteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirteenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all
+Updated at the end of the fifteenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all
 134 tests pass in the debug profile and 133 in release (one m02 test is debug-only). `burdin test` runs `test` blocks,
 and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
 twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a
 root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
 design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in
-CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12).
+CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12); the fifteenth runs
+the finished conformance milestones in the release profile in every CI job (issue #47).
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -28,7 +29,7 @@ CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM 
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`; see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11; the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs and their caches |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches |
 | LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
 
 Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21; the macOS and
@@ -544,6 +545,14 @@ threshold tracking against a stored baseline is issue #446.
 - The driver maps `--link-lib LLVM-C` to `LLVM-C.lib` plus `/LIBPATH` from `LLVM_SYS_211_PREFIX`, and a missing `cl`
   names both the Developer Command Prompt and `BURDIN_CC`.
 
+## Decided in the fifteenth session
+
+- Every CI job runs the finished conformance milestones twice: the debug profile, where overflow panics, and the
+  release profile, where it wraps (`tests/run-tests.sh --release`). The release run skips tests marked
+  `//@ debug-only`; the m02 overflow test is the one such test. `tests/check-ci.sh` requires a release step covering
+  every milestone folder in every job, the runner's `--release` handling, and at least one `//@ debug-only` test so
+  the skip path stays exercised (issue #47).
+
 ## What is left to do, in order
 
 1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
@@ -555,10 +564,11 @@ threshold tracking against a stored baseline is issue #446.
    its source (problem 11), ranges as values (16), the move forms rejected as E9000 (10), the generic gaps (the old
    item 4 of this list), and the module and C gaps (13).
 4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
-   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m11
-   (issues #11, #16, and #12), and cache cargo and LLVM 21 (issue #46). `tests/check-ci.sh` guards that the workflow
-   keeps covering the suite, every job, and their caches; `tests/check-platform.sh` guards the host triple. Next: an
-   Intel macOS job and another arm64 host if they are wanted.
+   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m11 in both
+   the debug and release profiles (issues #11, #16, #47, and #12), and cache cargo and LLVM 21 (issue #46).
+   `tests/check-ci.sh` guards that the workflow keeps covering the suite in both profiles, every job, and their
+   caches; `tests/check-platform.sh` guards the host triple. Next: an Intel macOS job and another arm64 host if they
+   are wanted.
 5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
    passing suite only shows the implementation matches the hand-written expectations, not the design document.
 

@@ -40,6 +40,10 @@ close-out checklist in `AGENTS.md`).
   state in `burdin_check`, and diagnostics. CI runs `cargo test --workspace` in every job, and
   `tests/check-unit-tests.sh` fails when a front-end crate or one of the four named areas loses its tests
   (issue #45).
+- Every CI job runs the finished conformance milestones in the release profile as well as debug, covering release
+  code generation; tests marked `//@ debug-only` (the m02 overflow abort test) are skipped. `tests/check-ci.sh` fails
+  if a job loses its release step, if the runner stops selecting the profile or skipping debug-only tests, or if no
+  test is marked debug-only (issue #47).
 
 ## Unreleased — Stage 1
 

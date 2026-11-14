@@ -2,13 +2,15 @@
 # Checks that the CI workflow still covers everything the project requires.
 # It does not compile anything. Usage: tests/check-ci.sh
 #
-# This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18):
+# This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18, #47):
 #   * the linux, macos, and windows jobs, and every required step, are present;
 #   * Linux installs LLVM 21 from apt.llvm.org; macOS installs Homebrew's llvm@21 and points
 #     LLVM_SYS_211_PREFIX and PATH at it; Windows loads the MSVC environment, installs the official LLVM 21
 #     archive, and puts its DLL directory on PATH;
 #   * macOS runs on macos-latest (Apple Silicon) and Windows on windows-latest; every job checks the host target;
-#   * every job passes every milestone folder under tests/ to the conformance runner;
+#   * every job passes every milestone folder under tests/ to the conformance runner in both the debug and
+#     release profiles; the release step uses --release, and the runner skips tests marked debug-only
+#     (issue #47);
 #   * the Windows job also runs the suite with BURDIN_CC=cl;
 #   * the scripts CI runs exist, are executable, and use LF endings;
 #   * the Rust toolchain is pinned to an exact version with clippy and rustfmt,
@@ -71,12 +73,26 @@ require_command() {   # $1 job, $2 block, $3 command
     grep -qF -- "$3" <<< "$2" || add_problem "ci.yml: $1 job: missing step: $3"
 }
 
-check_conformance() {   # $1 job, $2 block
-    local job=$1 block=$2 conformance folder name word dir found
-    # The BURDIN_CC step runs a subset; the full step is the one without an override.
-    conformance=$(grep -E 'tests/run-tests\.sh' <<< "$block" | grep -v 'BURDIN_CC' | tail -n 1)
+profile_conformance() {   # $1 block, $2 debug|release
+    local steps
+    # The BURDIN_CC step runs a subset, so it is never the full-suite step for either profile.
+    steps=$(grep -E 'tests/run-tests\.sh' <<< "$1" | grep -v 'BURDIN_CC')
+    if [ "$2" = "release" ]; then
+        grep -F -- '--release' <<< "$steps" | tail -n 1
+    else
+        grep -vF -- '--release' <<< "$steps" | tail -n 1
+    fi
+}
+
+check_conformance() {   # $1 job, $2 block, $3 debug|release
+    local job=$1 block=$2 profile=$3 conformance label folder name word dir found
+    case "$profile" in
+        release) label="release-profile" ;;
+        *) label="debug-profile" ;;
+    esac
+    conformance=$(profile_conformance "$block" "$profile")
     if [ -z "$conformance" ]; then
-        add_problem "ci.yml: $job job: no conformance step (tests/run-tests.sh)"
+        add_problem "ci.yml: $job job: no $label conformance step (tests/run-tests.sh)"
         return
     fi
     for dir in "$SCRIPT_DIR"/m[0-9]*_*; do
@@ -84,14 +100,14 @@ check_conformance() {   # $1 job, $2 block
         folder=$(basename "$dir")
         name=${folder%%_*}
         grep -qE "(^| )$name( |$)" <<< "$conformance" \
-            || add_problem "ci.yml: $job job: conformance step omits $name ($folder)"
+            || add_problem "ci.yml: $job job: $label conformance step omits $name ($folder)"
     done
     for word in $conformance; do
         case "$word" in
             m[0-9]*)
                 found=0
                 for dir in "$SCRIPT_DIR/$word"_*; do [ -d "$dir" ] && found=1; done
-                [ "$found" = 1 ] || add_problem "ci.yml: $job job: conformance step names missing milestone $word"
+                [ "$found" = 1 ] || add_problem "ci.yml: $job job: $label conformance step names missing milestone $word"
                 ;;
         esac
     done
@@ -207,9 +223,22 @@ for job in linux macos windows; do
     do
         require_command "$job" "$block" "$command"
     done
-    check_conformance "$job" "$block"
+    check_conformance "$job" "$block" debug
+    check_conformance "$job" "$block" release
     check_caches "$job" "$block"
 done
+
+# The release run (issue #47) is only meaningful when the runner selects the profile and skips
+# debug-only tests, and the suite must contain one so that skip path stays exercised.
+runner=$ROOT/tests/run-tests.sh
+if [ -f "$runner" ]; then
+    grep -qF -- '--release' "$runner" \
+        || add_problem "tests/run-tests.sh: no --release option"
+    grep -qF 'debug-only' "$runner" \
+        || add_problem "tests/run-tests.sh: the release profile does not skip debug-only tests"
+    grep -rqs --include='*.bd' '^//@ debug-only' "$SCRIPT_DIR" \
+        || add_problem "tests/: no test is marked //@ debug-only, so the release profile never exercises the skip"
+fi
 
 # The compiler benchmarks (issue #41): CI runs the smoke budgets, so the bench target, the crate that generates
 # its inputs, and the `--smoke` mode of the harness must all stay in place.
