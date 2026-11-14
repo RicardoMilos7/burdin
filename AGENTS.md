@@ -44,6 +44,11 @@ Development happens in WSL Ubuntu first; the shell scripts also run from Git Bas
 - **Keep the checker local.** Memory checks look at one function body at a time, from signatures only. No whole-program
   analysis and no lifetime annotations.
 - **Prefer simple and correct over clever.** The compiler will be read and extended for a long time.
+- **The crate layout is not fixed.** The map below is the current shape, not a constraint. When a milestone needs a new
+  responsibility with its own boundary (an LSP server, a package resolver, a formatter), add a new crate under
+  `crates/` for it and extend the workspace rather than piling code into an existing crate. Keep the one-way dependency
+  direction: syntax to sema to check to codegen, `burdin_tir` as the shared vocabulary, `burdin_diag` under everything,
+  and nothing before codegen touching LLVM. Update this file's map when a crate is added, removed, or renamed.
 - **Update the docs with the code.** `HANDOFF.md`, the relevant `spec/*.md`, and `CHANGELOG.md` change in the same
   milestone as the behavior.
 
@@ -84,6 +89,9 @@ Development happens in WSL Ubuntu first; the shell scripts also run from Git Bas
 ## Issue workflow
 
 - Every GitHub issue ends with a `## Verification` section. If it is missing, add it before starting.
+- **Every pull request states which issue it closes**, in the body, with a closing keyword and the issue number
+  (`Closes #12`), one line per issue when it closes several. A PR that closes no issue says why in its body instead of
+  leaving it unstated.
 - Decision issues are closed only when the rule and its tests land; implementation follows in the feature issue.
 - Close an issue only with a comment naming the test paths and the command(s) that pass.
 - Process rules (this file, the close-out checklist, CI policy, changelog policy) are not issues. They live here and in
