@@ -21,7 +21,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
 pub(crate) fn builtin_sig(b: Builtin) -> Signature {
     let ret = match b {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
-        Builtin::StringNew | Builtin::StringFrom => Ty::String,
+        Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString => Ty::String,
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit)),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(Ty::Unit)),
@@ -32,6 +32,7 @@ pub(crate) fn builtin_sig(b: Builtin) -> Signature {
     let params = match b {
         Builtin::StringNew | Builtin::EnvArgs | Builtin::Unreachable => Vec::new(),
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
+        Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
         Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],

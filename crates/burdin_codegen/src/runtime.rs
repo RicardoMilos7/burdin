@@ -49,6 +49,8 @@ pub(crate) struct Runtime<'ctx> {
     pub str_find_char: FunctionValue<'ctx>,
     /// `(ptr, len: usize) -> ptr`: a NUL-terminated copy of the bytes in the C heap.
     pub cstring_from: FunctionValue<'ctx>,
+    /// `(ptr) -> usize`: the length of a NUL-terminated C string (libc `strlen`).
+    pub strlen: FunctionValue<'ctx>,
     /// `(ptr, bytes: usize) -> ptr`: `realloc`, panicking when it fails.
     pub realloc: FunctionValue<'ctx>,
     /// `(s: *String, c: i32)`: appends one UTF-8 code point.
@@ -99,7 +101,86 @@ pub(crate) fn define_main<'ctx>(
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
-    // Save the arguments for `env.args()`.
+    prepare_main(&b, module, f, windows)?;
+    b.build_call(program_main, &[], "").map_err(llvm_err)?;
+    b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+    Ok(())
+}
+
+/// Defines the process entry point of a `burdin test` binary. The driver starts it once per test with the test's
+/// index as the only argument; this selects that test, calls it, and returns 0 when it passed and 1 when an
+/// `assert` failed. Running one test per process is what makes a panic abort only the running test. A missing or
+/// unknown index returns 2 or 3, which the driver reports as an error of its own.
+pub(crate) fn define_test_main<'ctx>(
+    cx: &'ctx Context,
+    module: &Module<'ctx>,
+    tests: &[FunctionValue<'ctx>],
+    windows: bool,
+) -> GenResult<()> {
+    let i32_ty = cx.i32_type();
+    let ptr_ty = cx.ptr_type(AddressSpace::default());
+    let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
+    let b = cx.create_builder();
+    b.position_at_end(cx.append_basic_block(f, "entry"));
+    prepare_main(&b, module, f, windows)?;
+
+    let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
+    let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
+    let has_arg =
+        b.build_int_compare(IntPredicate::SGT, argc, i32_ty.const_int(1, false), "has_arg").map_err(llvm_err)?;
+    let parse = cx.append_basic_block(f, "parse");
+    let missing = cx.append_basic_block(f, "missing");
+    b.build_conditional_branch(has_arg, parse, missing).map_err(llvm_err)?;
+    b.position_at_end(missing);
+    b.build_return(Some(&i32_ty.const_int(2, false))).map_err(llvm_err)?;
+
+    b.position_at_end(parse);
+    let slot =
+        unsafe { b.build_in_bounds_gep(ptr_ty, argv, &[i32_ty.const_int(1, false)], "arg") }.map_err(llvm_err)?;
+    let arg = b.build_load(ptr_ty, slot, "arg").map_err(llvm_err)?.into_pointer_value();
+    // `atoi` returns `int` on every CRT, so the index does not depend on the size of C's `long`.
+    let atoi = libc(module, "atoi", i32_ty.fn_type(&[ptr_ty.into()], false));
+    let index = b
+        .build_call(atoi, &[arg.into()], "index")
+        .map_err(llvm_err)?
+        .try_as_basic_value()
+        .basic()
+        .expect("atoi returns an int")
+        .into_int_value();
+
+    for (i, test) in tests.iter().enumerate() {
+        let case = cx.append_basic_block(f, &format!("test.{i}"));
+        let next = cx.append_basic_block(f, &format!("next.{i}"));
+        let is =
+            b.build_int_compare(IntPredicate::EQ, index, i32_ty.const_int(i as u64, false), "").map_err(llvm_err)?;
+        b.build_conditional_branch(is, case, next).map_err(llvm_err)?;
+        b.position_at_end(case);
+        let result = b
+            .build_call(*test, &[], "result")
+            .map_err(llvm_err)?
+            .try_as_basic_value()
+            .basic()
+            .expect("a test returns its Result")
+            .into_struct_value();
+        let ok = b.build_extract_value(result, 0, "ok").map_err(llvm_err)?;
+        let code = b
+            .build_select(ok.into_int_value(), i32_ty.const_zero(), i32_ty.const_int(1, false), "code")
+            .map_err(llvm_err)?;
+        b.build_return(Some(&code)).map_err(llvm_err)?;
+        b.position_at_end(next);
+    }
+    b.build_return(Some(&i32_ty.const_int(3, false))).map_err(llvm_err)?;
+    Ok(())
+}
+
+/// Saves `argc`/`argv` for `env.args()` and switches the standard handles to binary mode on Windows.
+fn prepare_main<'ctx>(
+    b: &Builder<'ctx>,
+    module: &Module<'ctx>,
+    f: FunctionValue<'ctx>,
+    windows: bool,
+) -> GenResult<()> {
+    let i32_ty = b.get_insert_block().expect("positioned").get_context().i32_type();
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
     if let Some(global) = module.get_global("burdin_rt_argc") {
@@ -117,8 +198,6 @@ pub(crate) fn define_main<'ctx>(
             b.build_call(setmode, &args, "").map_err(llvm_err)?;
         }
     }
-    b.build_call(program_main, &[], "").map_err(llvm_err)?;
-    b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
     Ok(())
 }
 
@@ -201,6 +280,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             str_starts_with: self.str_starts_with()?,
             str_find_char: self.str_find_char()?,
             cstring_from: self.cstring_from(&h)?,
+            strlen: libc(self.module, "strlen", self.usize_ty.fn_type(&[self.ptr_ty.into()], false)),
             realloc: self.heap_realloc(&h)?,
             string_push_char: self.string_push_char(string_push_str)?,
             str_eq: self.str_eq()?,

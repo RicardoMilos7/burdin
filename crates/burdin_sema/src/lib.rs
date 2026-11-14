@@ -57,16 +57,18 @@ pub struct Package<'a> {
 }
 
 /// Type-checks a parsed program. `entry_package` and `entry_module` name the module whose `main` is the program's
-/// entry point (the module index is relative to that package). Errors go to `diags`; the program is returned either
-/// way, because the memory checks still run on it to report every error in the file. Do not generate code when
-/// `diags` has errors.
+/// entry point (the module index is relative to that package). With `test_mode`, the `test` items of the entry
+/// package are declared and checked too, and `main` is not required; that is what `burdin test` builds.
+/// Errors go to `diags`; the program is returned either way, because the memory checks still run on it to report
+/// every error in the file. Do not generate code when `diags` has errors.
 pub fn check<'a>(
     packages: &'a [Package<'a>],
     entry_package: usize,
     entry_module: usize,
+    test_mode: bool,
     diags: &mut Diagnostics,
 ) -> Program {
-    let mut sema = Sema::new(packages, entry_package, entry_module);
+    let mut sema = Sema::new(packages, entry_package, entry_module, test_mode);
     sema.declare_types(diags);
     sema.declare_values(diags);
     sema.resolve_imports(diags);

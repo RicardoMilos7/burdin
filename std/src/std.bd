@@ -13,6 +13,9 @@ type ParseIntError = ()
 /// The error type of `assert` and `assert_eq`.
 type AssertError = ()
 
+/// A borrowed C string: a pointer to NUL-terminated bytes. `CStr.to_string(ptr)` copies them into a `String`.
+type CStr = CPtr<CChar>
+
 /// Panics with `assertion failed` when `cond` is false.
 fn assert(cond: bool) {
     if !cond {
@@ -24,6 +27,26 @@ fn assert(cond: bool) {
 fn assert_eq<T: Eq>(a: T, b: T) {
     if a != b {
         panic("assertion failed: the two values differ")
+    }
+}
+
+/// The test-mode `assert`: a false condition is an error instead of a panic, so `burdin test` reports the test
+/// as failed and keeps running the others. `burdin test` binds this as `assert`; normal builds use the panicking
+/// version above.
+priv fn __test_assert(cond: bool): Result<(), AssertError> {
+    if cond {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+/// The test-mode `assert_eq`.
+priv fn __test_assert_eq<T: Eq>(a: T, b: T): Result<(), AssertError> {
+    if a == b {
+        Ok(())
+    } else {
+        Err(())
     }
 }
 

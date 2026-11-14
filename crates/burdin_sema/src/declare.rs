@@ -273,6 +273,34 @@ impl<'t> Sema<'t> {
                 }
             }
         }
+        if self.test_mode {
+            self.declare_tests(diags);
+        }
+    }
+
+    /// Declares the `test` blocks of the entry package as ordinary functions named by the parser
+    /// (`__burdin_test_N`), each returning `Result<(), AssertError>`. Tests of dependency packages are not run, so
+    /// they are not declared. A normal build ignores them entirely: they are stripped from the program.
+    fn declare_tests(&mut self, diags: &mut Diagnostics) {
+        let root = self.globals.modules[self.entry].package;
+        for module in 0..self.module_asts.len() {
+            if self.globals.modules[module].package != root {
+                continue;
+            }
+            let ast = self.module_asts[module];
+            for test in &ast.tests {
+                let name = test.func.name.name.clone();
+                if self.globals.modules[module].values.contains_key(&name) || builtin(&name).is_some() {
+                    diags.error(Code::UNSUPPORTED, test.name_span, format!("`{name}` is defined more than once"));
+                    continue;
+                }
+                let full = self.globals.qualified(module, &name);
+                let id = self.push_fn(FnItem::plain(&test.func, full, module, None));
+                self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
+                self.globals.modules[module].value_priv.insert(name, true);
+                self.tests.push(tir::TestEntry { name: test.name.clone(), func: id });
+            }
+        }
     }
 
     /// Registers the functions of an `extern "C"` block. A symbol is declared once: a second declaration with the

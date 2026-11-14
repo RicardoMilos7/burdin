@@ -28,6 +28,8 @@ pub enum Builtin {
     CPtrNull,
     /// `CString.from(str)`: a new NUL-terminated copy of the bytes in the C heap.
     CStringFrom,
+    /// `CStr.to_string(ptr)`: copies a NUL-terminated C string into a `String`.
+    CStrToString,
     /// `List<T>.new()`: an empty list.
     ListNew,
     /// `Map<K, V>.new()`: an empty map.

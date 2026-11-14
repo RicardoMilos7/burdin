@@ -623,10 +623,18 @@ impl FnCx<'_> {
         if let Ty::Param(_) = ty {
             return self.param_assoc_call(ty, name, args, span);
         }
-        // A raw pointer has only `null`.
-        if let Ty::CPtr(_) = ty {
+        // A raw pointer has `null`; a pointer to `CChar` is how `CStr` is written, so it also reads the
+        // NUL-terminated bytes into a `String`.
+        if let Ty::CPtr(inner) = ty {
             if name.name == "null" && args.is_empty() {
                 return mk(tir::ExprKind::Builtin(Builtin::CPtrNull, Vec::new()), ty.clone(), span);
+            }
+            if name.name == "to_string" && **inner == Ty::Int(IntTy::I8) {
+                let sig = builtin_sig(Builtin::CStrToString);
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::CStrToString, checked), sig.ret, span);
             }
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`CPtr` has no function `{}`", name.name));
             return self.args_then_error(args, span);
