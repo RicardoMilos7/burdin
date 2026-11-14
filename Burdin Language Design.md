@@ -1,5 +1,9 @@
 # Burdin Language Design
 
+> **Status.** The repository copy of this file is canonical. Copies hosted on claude.ai are historical: they are
+> no longer updated and may disagree with this document. Code snippets here are illustrative drafts, not compiled
+> examples; the executable specification is the conformance suite in `tests/` (see `tests/README.md`).
+
 ## Overview
 
 Burdin (file extension `.bd`) is a statically typed, natively compiled language with Rust-level safety, no garbage collector, and a simpler memory model built on value semantics. It is a personal experiment in building a language with AI assistance, and the author's own ecosystem (UI and TUI libraries, tools) will be written in it. It is not meant for production use.
