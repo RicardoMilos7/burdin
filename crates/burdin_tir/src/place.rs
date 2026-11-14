@@ -110,7 +110,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         K::Unary(_, inner) | K::ArrayRepeat(inner, _) => place_mentions(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| place_mentions(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| place_mentions(x, out)),
-        K::Call(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| place_mentions(x, out));
         }
         K::Binary(_, l, r) | K::Assign(l, r) => {

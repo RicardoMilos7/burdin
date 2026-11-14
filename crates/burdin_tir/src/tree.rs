@@ -86,6 +86,8 @@ pub enum ExprKind {
     Local(LocalId),
     Const(ConstId),
     Call(FuncId, Vec<Expr>),
+    /// A call to the C function `n` of [`crate::Program::externs`].
+    ExternCall(usize, Vec<Expr>),
     Builtin(Builtin, Vec<Expr>),
     /// A built-in method: the receiver comes first in the arguments.
     Method(Method, Vec<Expr>),

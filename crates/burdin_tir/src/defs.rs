@@ -18,10 +18,13 @@ pub struct Derives {
     pub clone_span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub struct FieldDef {
     pub name: String,
     pub ty: Ty,
     pub span: Span,
+    /// Package-private: other packages can read and write it only through `Type`'s own code (E0150).
+    pub is_priv: bool,
 }
 
 pub struct StructDef {

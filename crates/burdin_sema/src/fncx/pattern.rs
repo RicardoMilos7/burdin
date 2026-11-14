@@ -48,7 +48,7 @@ impl FnCx<'_> {
                         _ => pat_mismatch(self, "`None`"),
                     };
                 }
-                if let Some(Global::Const(_)) = self.globals.names.get(&name.name) {
+                if let Some(Global::Const(_)) = self.globals.value(self.module, &name.name) {
                     self.unsupported(p.span, "constants in patterns");
                     return Pat::Wild;
                 }
@@ -153,49 +153,69 @@ impl FnCx<'_> {
             }
             P::Struct(path, fields) => {
                 // A struct, or a variant with named fields.
-                let (variant, defs): (Option<usize>, Vec<(String, Ty)>) = if path.len() == 1 {
-                    match self.adt_type_for(&path[0].name, ty) {
-                        Some(Ty::Struct(a)) if *ty == Ty::Struct(a.clone()) || *ty == Ty::Error => {
-                            let defs = self.globals.structs[a.id]
-                                .fields
-                                .iter()
-                                .map(|f| (f.name.clone(), f.ty.clone()))
-                                .collect();
-                            (None, defs)
+                let owner;
+                let (variant, defs): (Option<usize>, Vec<tir::FieldDef>) =
+                    if let Some((target, variant, found, type_name)) = self.adt_path(path, ty) {
+                        match variant {
+                            None => {
+                                // A variant pattern goes through `variant_pattern`, which checks visibility.
+                                self.check_type_visibility(found, &type_name.name, type_name.span);
+                                let Ty::Struct(a) = target else {
+                                    if target == Ty::Error {
+                                        return Pat::Wild;
+                                    }
+                                    return pat_mismatch(self, &format!("a `{}` pattern", path.last().unwrap().name));
+                                };
+                                if *ty != Ty::Struct(a.clone()) && *ty != Ty::Error {
+                                    return pat_mismatch(self, &format!("a `{}` pattern", a.name));
+                                }
+                                owner = self.globals.struct_pkg[a.id];
+                                (None, self.globals.structs[a.id].fields.clone())
+                            }
+                            Some(_) => {
+                                let Some((index, shape, _)) = self.variant_pattern(path, ty, p.span) else {
+                                    return Pat::Wild;
+                                };
+                                if shape != tir::VariantShape::Struct {
+                                    return pat_mismatch(self, "a pattern with named fields");
+                                }
+                                let Ty::Enum(a) = ty else { return Pat::Wild };
+                                owner = self.globals.enum_pkg[a.id];
+                                (Some(index), self.globals.enums[a.id].variants[index].fields.clone())
+                            }
                         }
-                        Some(_) => return pat_mismatch(self, &format!("a `{}` pattern", path[0].name)),
-                        None => {
-                            self.diags.error(
-                                Code::UNKNOWN_NAME,
-                                path[0].span,
-                                format!("unknown type `{}`", path[0].name),
-                            );
+                    } else if path.len() == 1 {
+                        self.diags.error(Code::UNKNOWN_NAME, path[0].span, format!("unknown type `{}`", path[0].name));
+                        return Pat::Wild;
+                    } else {
+                        let Some((index, shape, _)) = self.variant_pattern(path, ty, p.span) else {
                             return Pat::Wild;
+                        };
+                        if shape != tir::VariantShape::Struct {
+                            return pat_mismatch(self, "a pattern with named fields");
                         }
-                    }
-                } else {
-                    let Some((index, shape, _)) = self.variant_pattern(path, ty, p.span) else { return Pat::Wild };
-                    if shape != tir::VariantShape::Struct {
-                        return pat_mismatch(self, "a pattern with named fields");
-                    }
-                    let Ty::Enum(a) = ty else { return Pat::Wild };
-                    let defs = self.globals.enums[a.id].variants[index]
-                        .fields
-                        .iter()
-                        .map(|f| (f.name.clone(), f.ty.clone()))
-                        .collect();
-                    (Some(index), defs)
-                };
+                        let Ty::Enum(a) = ty else { return Pat::Wild };
+                        owner = self.globals.enum_pkg[a.id];
+                        (Some(index), self.globals.enums[a.id].variants[index].fields.clone())
+                    };
+                let from_other_package = owner != self.package();
                 let mut subs: Vec<Pat> = defs.iter().map(|_| Pat::Wild).collect();
                 for f in fields {
-                    let Some(i) = defs.iter().position(|(n, _)| *n == f.name.name) else {
+                    let Some(i) = defs.iter().position(|d| d.name == f.name.name) else {
                         self.diags.error(Code::UNKNOWN_NAME, f.name.span, format!("no field `{}` here", f.name.name));
                         if let Some(sub) = &f.pattern {
                             self.pattern(sub, &Ty::Error, owned);
                         }
                         continue;
                     };
-                    let fty = defs[i].1.clone();
+                    if from_other_package && defs[i].is_priv {
+                        self.diags.error(
+                            Code::PRIVATE_ITEM,
+                            f.name.span,
+                            format!("field `{}` is `priv` in another package", f.name.name),
+                        );
+                    }
+                    let fty = defs[i].ty.clone();
                     subs[i] = match &f.pattern {
                         Some(sub) => self.pattern(sub, &fty, owned),
                         None => {
@@ -221,18 +241,25 @@ impl FnCx<'_> {
         ty: &Ty,
         span: Span,
     ) -> Option<(usize, tir::VariantShape, Vec<Ty>)> {
-        let enum_ty = if path.len() == 2 { self.adt_type_for(&path[0].name, ty) } else { None };
-        let Some(Ty::Enum(a)) = enum_ty else {
-            let text: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
-            self.diags.error(Code::UNKNOWN_NAME, span, format!("`{}` is not an enum variant", text.join(".")));
+        let text: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
+        let text = text.join(".");
+        let Some((enum_ty, variant, found, type_name)) = self.adt_path(path, ty).filter(|(_, v, _, _)| v.is_some())
+        else {
+            self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not an enum variant"));
+            return None;
+        };
+        self.check_type_visibility(found, &type_name.name, type_name.span);
+        let variant = variant.expect("checked above");
+        let Ty::Enum(a) = enum_ty else {
+            self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not an enum variant"));
             return None;
         };
         let def = &self.globals.enums[a.id];
-        let Some(index) = def.variants.iter().position(|v| v.name == path[1].name) else {
+        let Some(index) = def.variants.iter().position(|v| v.name == variant.name) else {
             self.diags.error(
                 Code::UNKNOWN_NAME,
-                path[1].span,
-                format!("`{}` has no variant `{}`", a.name, path[1].name),
+                variant.span,
+                format!("`{}` has no variant `{}`", a.name, variant.name),
             );
             return None;
         };

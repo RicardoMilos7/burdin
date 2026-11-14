@@ -152,7 +152,12 @@ impl FnCx<'_> {
                     error_expr(span)
                 }
             },
-            K::UnsafeBlock(_) => self.unsupported(span, "`unsafe` blocks"),
+            K::UnsafeBlock(b) => {
+                self.unsafe_depth += 1;
+                let (b, ty) = self.block(b, expect);
+                self.unsafe_depth -= 1;
+                mk(tir::ExprKind::Block(b), ty, span)
+            }
         }
     }
 }

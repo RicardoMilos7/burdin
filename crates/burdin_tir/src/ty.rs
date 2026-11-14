@@ -93,6 +93,10 @@ pub enum Ty {
     Option(Box<Ty>),
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
     Heap(Box<Ty>),
+    /// `CPtr<T>`: a raw C pointer. It has no destructor and is copied like a number.
+    CPtr(Box<Ty>),
+    /// `CString`: an owned, NUL-terminated C string in the C heap.
+    CString,
     /// A tuple of two or more elements (or one, written with a trailing comma).
     Tuple(Vec<Ty>),
     Struct(AdtRef),
@@ -147,6 +151,8 @@ impl fmt::Display for Ty {
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
             Ty::Option(t) => write!(f, "Option<{t}>"),
             Ty::Heap(t) => write!(f, "Heap<{t}>"),
+            Ty::CPtr(t) => write!(f, "CPtr<{t}>"),
+            Ty::CString => f.write_str("CString"),
             Ty::Tuple(elems) => {
                 f.write_str("(")?;
                 for (i, t) in elems.iter().enumerate() {

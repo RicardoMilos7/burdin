@@ -63,6 +63,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     None => None,
                 }
             }
+            K::ExternCall(id, args) => {
+                let ext = &self.program.externs[*id];
+                let mut values: Vec<BasicMetadataValueEnum> = Vec::new();
+                for (a, ty) in args.iter().zip(&ext.params) {
+                    let v = self.expr_mode(a, Mode::Use)?;
+                    if self.llvm_ty(ty).is_some() {
+                        values.push(self.need(v, ty).into());
+                    }
+                }
+                let call = self.builder.build_call(self.externs[*id], &values, "").map_err(llvm_err)?;
+                match self.llvm_ty(&e.ty) {
+                    Some(_) => call.try_as_basic_value().basic(),
+                    None => None,
+                }
+            }
             K::Builtin(b, args) => self.builtin(*b, args, e.span)?,
             K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
             K::StringAsStr(inner) => {

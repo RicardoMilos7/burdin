@@ -111,8 +111,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
             Ty::Param(_) => Ok(()),
-            // A reference or a slice is a view of someone else's storage: dropping it does nothing.
-            Ty::Ref { .. } | Ty::Slice(_) => Ok(()),
+            // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
+            // nothing.
+            Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) => Ok(()),
+            Ty::CString => {
+                let p = self.builder.build_load(ptr_ty, addr, "cstring").map_err(llvm_err)?.into_pointer_value();
+                self.builder.build_call(self.rt.free, &[p.into()], "").map_err(llvm_err)?;
+                Ok(())
+            }
             Ty::String => {
                 let s = self.builder.build_load(self.string_ty, addr, "s").map_err(llvm_err)?.into_struct_value();
                 let p = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;

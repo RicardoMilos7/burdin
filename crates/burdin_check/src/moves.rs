@@ -362,6 +362,13 @@ impl<'a> Checker<'a> {
                     self.expr(a, m);
                 }
             }
+            // Every `extern` parameter is passed by value and is a C scalar or a `CPtr`, so all are Copy and the
+            // arguments are only read.
+            K::ExternCall(_, args) => {
+                for a in args {
+                    self.expr(a, Mode::Use);
+                }
+            }
             K::Builtin(b, args) => {
                 let m = if *b == tir::Builtin::HeapNew { Mode::Move } else { Mode::Use };
                 for a in args {

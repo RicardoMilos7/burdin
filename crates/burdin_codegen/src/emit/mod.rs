@@ -88,6 +88,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     string_ty: StructType<'ctx>,
     rt: Runtime<'ctx>,
     functions: Vec<FunctionValue<'ctx>>,
+    /// The declarations of `Program::externs`, in the same order.
+    externs: Vec<FunctionValue<'ctx>>,
     str_literals: HashMap<Vec<u8>, StructValue<'ctx>>,
     /// Drop and clone glue functions generated so far, and the ones still to generate.
     glue: Vec<(Glue, Ty, FunctionValue<'ctx>)>,
@@ -141,6 +143,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             string_ty,
             rt,
             functions: Vec::new(),
+            externs: Vec::new(),
             str_literals: HashMap::new(),
             glue: Vec::new(),
             pending_glue: Vec::new(),

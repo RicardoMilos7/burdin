@@ -27,6 +27,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Float(FloatTy::F64) => self.cx.f64_type().into(),
             Ty::Str => self.str_ty.into(),
             Ty::String => self.string_ty.into(),
+            // A `CString` is the address of its NUL-terminated buffer; a `CPtr` is a raw address.
+            Ty::CString | Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Heap(_) => self.cx.ptr_type(AddressSpace::default()).into(),
             // A reference is the address of the referent; a slice is a pointer and a length, like a `str`.
             Ty::Ref { .. } => self.cx.ptr_type(AddressSpace::default()).into(),

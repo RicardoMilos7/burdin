@@ -1,4 +1,4 @@
-//! Calls: functions, methods, associated functions, and the argument conventions.
+//! Calls: functions, methods, associated functions, extern functions, and the argument conventions.
 
 use super::{FnCx, PathTy, error_expr, mk};
 use crate::builtins::{builtin, builtin_sig, method, method_sig};
@@ -17,13 +17,14 @@ impl FnCx<'_> {
             ast::ExprKind::Name { name: id, args: type_args }
                 if type_args.is_empty() && self.lookup(&id.name).is_none() =>
             {
-                match self.globals.names.get(&id.name) {
+                match self.globals.value(self.module, &id.name) {
                     Some(Global::Func(f)) => {
-                        let f = *f;
+                        self.check_unsafe_call(f, &id.name, id.span);
                         let sig = &self.globals.sigs[f.0];
                         (sig.params.clone(), sig.ret.clone(), Callee::User(f))
                     }
-                    Some(&Global::Generic(g)) => return self.generic_call(g, id, args, span, expect),
+                    Some(Global::Generic(g)) => return self.generic_call(g, id, args, span, expect),
+                    Some(Global::Extern(e)) => return self.extern_call(id, e, args, span),
                     Some(Global::Const(_)) => {
                         self.diags.error(
                             Code::TYPE_MISMATCH,
@@ -60,6 +61,27 @@ impl FnCx<'_> {
             Callee::Builtin(b) => tir::ExprKind::Builtin(b, checked),
         };
         mk(kind, ret, span)
+    }
+
+    /// A call to an `extern "C"` function: it always requires an `unsafe` context, and its arguments are passed
+    /// by value.
+    fn extern_call(&mut self, name: &ast::Ident, id: usize, args: &[ast::Arg], span: Span) -> tir::Expr {
+        let info = &self.globals.externs[id];
+        let sig = info.sig.clone();
+        let symbol = info.symbol.clone();
+        // Visibility is checked where the name is bound (the `use` import, or a module-qualified call), so a
+        // `priv` declaration in one module does not hide a public declaration of the same symbol in another.
+        if self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                format!("calling the C function `{symbol}` requires an `unsafe` block"),
+            );
+        }
+        let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+            return error_expr(span);
+        };
+        mk(tir::ExprKind::ExternCall(id, checked), sig.ret, span)
     }
 
     /// `Some(value)`.
@@ -219,15 +241,33 @@ impl FnCx<'_> {
             && id.name == "Heap"
             && name.name == "new"
             && self.lookup("Heap").is_none()
-            && !self.globals.names.contains_key("Heap")
+            && self.globals.value(self.module, "Heap").is_none()
         {
             return self.heap_new(args, expect, span);
+        }
+        // `CPtr.null()`, typed by the expected type.
+        if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
+            && type_args.is_empty()
+            && id.name == "CPtr"
+            && name.name == "null"
+            && self.lookup("CPtr").is_none()
+            && self.globals.value(self.module, "CPtr").is_none()
+        {
+            return self.cptr_null(expect, span);
         }
         if let Some(path) = self.type_path(recv) {
             return match path {
                 PathTy::Ty(ty) => self.assoc_call(&ty, name, args, span),
                 PathTy::Template(g) => self.assoc_call_template(g, name, args, expect, span),
             };
+        }
+        // A module-qualified type: `sh.Square.new()`.
+        if let Some(ty) = self.qualified_type(recv) {
+            return self.assoc_call(&ty, name, args, span);
+        }
+        // A module-qualified function: `math.add(...)`, `sh.area(...)`.
+        if let Some((target, item)) = self.module_member(recv, name) {
+            return self.module_call(target, &item, args, span, expect);
         }
         let recv = self.expr(recv, None);
         if recv.ty == Ty::Error {
@@ -247,6 +287,8 @@ impl FnCx<'_> {
         if let Some(key) = adt_key(&recv.ty)
             && let Some(&f) = self.globals.methods.get(&(key, name.name.clone()))
         {
+            self.check_member_access(&recv.ty, key, name);
+            self.check_unsafe_call(f, &name.name, name.span);
             let sig = &self.globals.sigs[f.0];
             if !sig.has_self {
                 self.diags.error(
@@ -302,6 +344,68 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Method(m, checked), ret, span)
     }
 
+    /// A function or constant found through a module path: `math.add(...)`, `sh.area(...)`.
+    fn module_call(
+        &mut self,
+        target: usize,
+        item: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
+        self.check_value_visibility(target, &item.name, item.span);
+        match self.globals.exported_value(target, &item.name) {
+            Some(Global::Func(f)) => {
+                self.check_unsafe_call(f, &item.name, item.span);
+                let sig = &self.globals.sigs[f.0];
+                let (params, ret) = (sig.params.clone(), sig.ret.clone());
+                let Some(checked) = self.args(&item.name, &params, args, None, span) else {
+                    return error_expr(span);
+                };
+                mk(tir::ExprKind::Call(f, checked), ret, span)
+            }
+            Some(Global::Generic(g)) => self.generic_call(g, item, args, span, expect),
+            Some(Global::Extern(e)) => self.extern_call(item, e, args, span),
+            Some(Global::Const(_)) => {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    item.span,
+                    format!("`{}` is a constant, not a function", item.name),
+                );
+                self.args_then_error(args, span)
+            }
+            None => {
+                if self.globals.type_name(target, &item.name).is_some() {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        item.span,
+                        format!("`{}` is a type, not a function", item.name),
+                    );
+                } else {
+                    self.diags.error(Code::UNKNOWN_NAME, item.span, format!("unknown function `{}`", item.name));
+                }
+                self.args_then_error(args, span)
+            }
+        }
+    }
+
+    /// `CPtr.null()`.
+    fn cptr_null(&mut self, expect: Option<&Ty>, span: Span) -> tir::Expr {
+        match expect {
+            Some(Ty::CPtr(inner)) => {
+                mk(tir::ExprKind::Builtin(Builtin::CPtrNull, Vec::new()), Ty::CPtr(inner.clone()), span)
+            }
+            _ => {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    span,
+                    "cannot tell the type of this `CPtr.null()`; annotate the binding with a `CPtr` type",
+                );
+                error_expr(span)
+            }
+        }
+    }
+
     /// `Heap.new(value)`.
     pub(super) fn heap_new(&mut self, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
         let inner = match expect {
@@ -324,7 +428,7 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(Builtin::HeapNew, vec![value]), ty, span)
     }
 
-    /// `Type.function(...)` or `Enum.Variant(...)`.
+    /// `Type.function(...)`, `Enum.Variant(...)`, and the built-in types' associated functions.
     pub(super) fn assoc_call(&mut self, ty: &Ty, name: &ast::Ident, args: &[ast::Arg], span: Span) -> tir::Expr {
         // The type already failed to resolve; do not report a second error for its associated items.
         if *ty == Ty::Error {
@@ -336,7 +440,15 @@ impl FnCx<'_> {
         if let Ty::Param(_) = ty {
             return self.param_assoc_call(ty, name, args, span);
         }
-        // The associated functions of `String` (the only built-in type with any so far).
+        // A raw pointer has only `null`.
+        if let Ty::CPtr(_) = ty {
+            if name.name == "null" && args.is_empty() {
+                return mk(tir::ExprKind::Builtin(Builtin::CPtrNull, Vec::new()), ty.clone(), span);
+            }
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`CPtr` has no function `{}`", name.name));
+            return self.args_then_error(args, span);
+        }
+        // The associated functions of `String` (the only built-in owning type with any so far).
         if *ty == Ty::String && name.name != "default" {
             let b = match name.name.as_str() {
                 "new" => Builtin::StringNew,
@@ -355,6 +467,18 @@ impl FnCx<'_> {
                 return error_expr(span);
             };
             return mk(tir::ExprKind::Builtin(b, checked), sig.ret, span);
+        }
+        // The C string bridge.
+        if *ty == Ty::CString {
+            if name.name == "from" {
+                let sig = builtin_sig(Builtin::CStringFrom);
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::CStringFrom, checked), sig.ret, span);
+            }
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`CString` has no function `{}`", name.name));
+            return self.args_then_error(args, span);
         }
         if let Ty::Enum(a) = ty
             && let Some(index) = self.globals.enums[a.id].variants.iter().position(|v| v.name == name.name)
@@ -385,6 +509,10 @@ impl FnCx<'_> {
             );
             return self.args_then_error(args, span);
         };
+        if let Some(key) = adt_key(ty) {
+            self.check_member_access(ty, key, name);
+        }
+        self.check_unsafe_call(f, &name.name, name.span);
         let sig = &self.globals.sigs[f.0];
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
         let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };

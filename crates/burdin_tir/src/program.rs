@@ -13,8 +13,18 @@ pub struct Program {
     pub enums: Vec<EnumDef>,
     /// One signature per function, in the same order as [`Program::functions`].
     pub signatures: Vec<Signature>,
+    /// The C functions the program calls, in the order of its `extern "C"` declarations.
+    pub externs: Vec<ExternFn>,
     /// `None` when the program has no `main` (already reported).
     pub main: Option<FuncId>,
+}
+
+/// One `extern "C"` declaration. Its parameters are passed by value, as the C ABI expects.
+pub struct ExternFn {
+    /// The symbol to link against: the name as written in the `extern` block.
+    pub symbol: String,
+    pub params: Vec<Ty>,
+    pub ret: Ty,
 }
 
 #[derive(Clone)]

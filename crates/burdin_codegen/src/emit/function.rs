@@ -11,6 +11,35 @@ use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(crate) fn program(&mut self) -> GenResult<()> {
         let program = self.program;
+        // `extern "C"` declarations first: they are what the runtime and the program call by symbol.
+        for e in &program.externs {
+            let params: Vec<BasicMetadataTypeEnum> = e
+                .params
+                .iter()
+                .map(|t| {
+                    self.llvm_ty(t)
+                        .map(|t| t.into())
+                        .ok_or_else(|| format!("extern function `{}` has a parameter without a C value", e.symbol))
+                })
+                .collect::<GenResult<_>>()?;
+            let fn_ty = match self.llvm_ty(&e.ret) {
+                Some(t) => t.fn_type(&params, false),
+                None => self.cx.void_type().fn_type(&params, false),
+            };
+            // The runtime already declares some libc functions (`free`, `malloc`, ...). Reuse the declaration when
+            // it has the same type; a different one would silently link to the wrong ABI.
+            let value = match self.module.get_function(&e.symbol) {
+                Some(existing) if existing.get_type() == fn_ty => existing,
+                Some(_) => {
+                    return Err(format!(
+                        "extern function `{}` conflicts with a runtime declaration of the same symbol",
+                        e.symbol
+                    ));
+                }
+                None => self.module.add_function(&e.symbol, fn_ty, Some(Linkage::External)),
+            };
+            self.externs.push(value);
+        }
         for f in &program.functions {
             let ptr_ty = self.cx.ptr_type(AddressSpace::default());
             let params: Vec<BasicMetadataTypeEnum> = f

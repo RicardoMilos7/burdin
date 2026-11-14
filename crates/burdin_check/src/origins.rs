@@ -235,6 +235,13 @@ impl<'a> Analyzer<'a> {
                 }
                 origin
             }
+            // A C function returns a scalar or a raw pointer, never a view of Burdin storage.
+            K::ExternCall(_, args) => {
+                for arg in args {
+                    self.expr(arg);
+                }
+                Origin::default()
+            }
             K::Call(f, args) => {
                 for arg in args {
                     self.expr(arg);
