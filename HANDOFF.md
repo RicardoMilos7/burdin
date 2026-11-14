@@ -55,8 +55,11 @@ exact packages and how to call WSL from PowerShell.
   time, from signatures only. It keeps an initialization state per local and field path (struct/tuple fields, enum
   variant fields, `Option` payload), computes the MV1 move contexts, and reports use of a moved or maybe-moved place
   (E0100), a move out of borrowed content (E0101), moving a field out of a `Drop` type (E0103), and moving an outer
-  local inside a loop (E0104). It does not rewrite the tree; it returns the list of places read in a move context
-  (`Function.moved`) for code generation. `Heap.new` builds `Heap<T>`; `String.new`, `String.from`, `push_str`, and
+  local inside a loop (E0104). The loop condition is checked inside the loop, only branches that can fall through are
+  merged, and a guard that fails restores the drop flags of the bindings its pattern moved. Moves it cannot follow are
+  rejected with E9000 instead of being miscompiled: moving a non-`Copy` value through indexing or a `Heap`
+  dereference, moving a value out of `match *h`, and a moving pattern with a guard on a temporary scrutinee. It does
+  not rewrite the tree; it returns the list of places read in a move context (`Function.moved`) for code generation. `Heap.new` builds `Heap<T>`; `String.new`, `String.from`, `push_str`, and
   `clone` are built-in methods.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
@@ -124,10 +127,12 @@ exact packages and how to call WSL from PowerShell.
    "comparison operators cannot be chained".
 9. **Two documents on claude.ai are stale.** The design doc there lacks the exclusivity rule, and the stage 0 doc there is the old
    export. The local files are the source of truth.
-10. **Ownership gaps that no test exercises yet.** Moving a field out of a temporary `match` scrutinee is not tracked,
-    so the temporary's other fields are leaked; moving out of `match *h` moves the pointee but does not free the heap
-    allocation; moving an array element marks the whole array moved (indexing is not a place, assumption 16), which
-    leaks the remaining elements. Revisit when m09's `List`/`Map` and m06's references make them reachable.
+10. **Ownership gaps that no test exercises yet.** Moving a field out of a temporary `match` scrutinee is still not
+    tracked, so the temporary's other fields are leaked. The move forms the checker cannot follow are rejected with
+    E9000 rather than miscompiled: moving a non-`Copy` value through indexing or a `Heap` dereference (a field of an
+    array element or of the pointee), moving a value out of `match *h`, and a moving pattern with a guard on a
+    temporary scrutinee. A `match` on an owned local or an `own` parameter is tracked normally. Revisit when m09's
+    `List`/`Map` and m06's references make these reachable.
 
 ## Decided in the third session
 
@@ -163,6 +168,12 @@ exact packages and how to call WSL from PowerShell.
   `String.new()` is empty, `String.from` copies, `push_str` grows, and `clone` copies the buffer.
 - `x.clone()` is a built-in deep clone for every type that satisfies the `Clone` requirements (`Copy` types,
   `String`, `Heap`, and aggregates that derive `Clone`), not a user-overridable method.
+- The move checker rejects the move forms it cannot follow with E9000 rather than accepting them and misplacing
+  drops. A move is tracked only for fields of a local or parameter and for the whole pointee `*h`; moving a field
+  through indexing or a `Heap` dereference, moving bindings out of `match *h`, and guarded moving patterns on a
+  temporary scrutinee are E9000. The same rule keeps code generation honest: a `match` arm whose guard fails sets the
+  drop flags of the paths its pattern moved back to initialized, so the scrutinee is dropped exactly once.
+- Temporaries drop in reverse creation order (DR5). `let _ = place` reads the place instead of moving it.
 
 ## What is left to do, in order
 

@@ -497,9 +497,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.scopes.last_mut().expect("a scope is open").push(*local);
                 }
                 tir::Stmt::Let(Pat::Wild, init, None) => {
-                    // `let _ = e` binds nothing, so the value is a temporary (DR5).
-                    let v = self.expr_mode(init, Mode::Move)?;
-                    self.add_temp_value(v, &init.ty)?;
+                    // `let _ = e` binds nothing. A place in `e` is only read; an rvalue becomes a temporary (DR5).
+                    let v = self.expr_mode(init, Mode::Use)?;
+                    if !is_place(init) {
+                        self.add_temp_value(v, &init.ty)?;
+                    }
                 }
                 tir::Stmt::Let(pat, init, else_block) => {
                     let v = self.expr_mode(init, Mode::Move)?;
@@ -737,9 +739,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
-    /// Frees the temporaries of the frames from `depth` up, leaving their slots empty.
+    /// Frees the temporaries of the frames from `depth` up, leaving their slots empty. Temporaries drop in
+    /// reverse creation order (DR5), so its newest temporary goes first.
     fn free_temps_from(&mut self, depth: usize) -> GenResult<()> {
-        let units: Vec<(PointerValue<'ctx>, Ty)> = self.temps[depth..].iter().flatten().cloned().collect();
+        let units: Vec<(PointerValue<'ctx>, Ty)> =
+            self.temps[depth..].iter().rev().flat_map(|frame| frame.iter().rev()).cloned().collect();
         for (slot, ty) in units {
             self.drop_value(slot, &ty)?;
             if let Some(t) = self.llvm_ty(&ty) {
@@ -836,13 +840,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(Some(ptr))
     }
 
-    /// The local and field path of a place expression, if it starts at a local.
+    /// The local and field path of a place expression, if it starts at a local. As in the move checker, a field
+    /// selection beyond an index or a `Heap` dereference does not extend the path: neither is a place.
     fn place_path(&self, e: &tir::Expr) -> Option<(tir::LocalId, Vec<usize>)> {
         match &e.kind {
             tir::ExprKind::Local(id) => Some((*id, Vec::new())),
             tir::ExprKind::Field(base, i) => {
                 let (root, mut path) = self.place_path(base)?;
-                path.push(*i);
+                if is_direct_place(base) {
+                    path.push(*i);
+                }
                 Some((root, path))
             }
             tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => self.place_path(base),
@@ -875,7 +882,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             Ty::Enum(a) => {
                 let e = &self.program.enums[a.id];
-                if !e.derives.clone || !e.derives.copy {
+                if !e.derives.copy {
                     return false;
                 }
                 if seen.contains(&(true, a.id)) {
@@ -1174,31 +1181,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// `place = value`: evaluates the value (by the caller), drops the old value (DR4), stores, and marks the place
-    /// initialized again.
+    /// initialized again. A place behind an index or a `Heap` dereference is not tracked (neither is a place), so
+    /// its old value is dropped through its address and no drop flag is touched.
     fn assign(&mut self, place: &'a tir::Expr, v: Option<BasicValueEnum<'ctx>>) -> GenResult<()> {
         let Some(ptr) = self.place_ptr(place)? else { return Ok(()) };
         let Some(_t) = self.llvm_ty(&place.ty) else { return Ok(()) };
         let root = self.place_path(place);
-        let through = matches!(place.kind, tir::ExprKind::Index(..) | tir::ExprKind::Deref(_));
+        let crossing = !is_direct_place(place);
         if self.needs_drop(&place.ty) {
-            match (&root, through) {
+            match (&root, crossing) {
+                (_, true) | (None, false) => self.drop_value(ptr, &place.ty)?,
                 (Some((id, path)), false) => self.drop_at(*id, path, &place.ty)?,
-                (Some((id, path)), true) => {
-                    // Assigning through an index or a `Heap` overwrites a value addressed by the base place.
-                    if matches!(place.kind, tir::ExprKind::Deref(_)) {
-                        self.drop_at(*id, path, &place.ty)?;
-                    } else {
-                        self.drop_value(ptr, &place.ty)?;
-                    }
-                }
-                (None, _) => self.drop_value(ptr, &place.ty)?,
             }
         }
         let v = self.need(v, &place.ty);
         self.builder.build_store(ptr, v).map_err(llvm_err)?;
-        if let Some((id, path)) = &root
-            && !through
-        {
+        if !crossing && let Some((id, path)) = &root {
             self.set_initialized(*id, path);
         }
         Ok(())
@@ -1394,7 +1392,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let g = self.expr_mode(guard, Mode::Use)?;
                 let g = self.need_int(g, &Ty::Bool);
                 let body_bb = self.new_block("match.body");
-                self.builder.build_conditional_branch(g, body_bb, next).map_err(llvm_err)?;
+                let fail_bb = self.new_block("match.guard.fail");
+                self.builder.build_conditional_branch(g, body_bb, fail_bb).map_err(llvm_err)?;
+                // A failed guard does not take the arm: the parts the pattern bound are still owned by the
+                // scrutinee, so put their drop flags back. The binding slots are discarded unread.
+                self.builder.position_at_end(fail_bb);
+                if let Some((root, base)) = &base {
+                    let mut paths = Vec::new();
+                    self.pattern_moved_paths(&arm.pat, &scrutinee.ty, &mut Vec::new(), &mut paths);
+                    for path in paths {
+                        let mut full = base.clone();
+                        full.extend(path);
+                        self.set_initialized(*root, &full);
+                    }
+                }
+                self.builder.build_unconditional_branch(next).map_err(llvm_err)?;
                 self.builder.position_at_end(body_bb);
             }
             let v = self.expr_mode(&arm.body, mode)?;
@@ -1413,6 +1425,50 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         match (result, self.llvm_ty(ty)) {
             (Some(slot), Some(t)) => Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?)),
             _ => Ok(None),
+        }
+    }
+
+    /// Collects the paths, relative to the pattern's root, of bindings that take their value by moving it.
+    fn pattern_moved_paths(&self, pat: &Pat, ty: &Ty, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        match pat {
+            Pat::Binding(_, tir::BindMode::Move) | Pat::At(_, tir::BindMode::Move, _) => out.push(path.clone()),
+            Pat::At(_, _, inner) => self.pattern_moved_paths(inner, ty, path, out),
+            Pat::Or(alts) => {
+                if let Some(first) = alts.first() {
+                    self.pattern_moved_paths(first, ty, path, out);
+                }
+            }
+            Pat::Some(inner) => {
+                if let Ty::Option(inner_ty) = ty {
+                    let inner_ty = (**inner_ty).clone();
+                    path.push(0);
+                    self.pattern_moved_paths(inner, &inner_ty, path, out);
+                    path.pop();
+                }
+            }
+            Pat::Product(subs) => {
+                let tys = self.field_tys(ty);
+                for (i, sub) in subs.iter().enumerate() {
+                    let Some(sub_ty) = tys.get(i).cloned() else { continue };
+                    path.push(i);
+                    self.pattern_moved_paths(sub, &sub_ty, path, out);
+                    path.pop();
+                }
+            }
+            Pat::Variant(index, subs) => {
+                if let Ty::Enum(a) = ty {
+                    let tys = self.variant_tys(a.id, *index);
+                    for (i, sub) in subs.iter().enumerate() {
+                        let Some(sub_ty) = tys.get(i).cloned() else { continue };
+                        path.push(*index);
+                        path.push(i);
+                        self.pattern_moved_paths(sub, &sub_ty, path, out);
+                        path.pop();
+                        path.pop();
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2834,6 +2890,16 @@ fn is_place(e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
         tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => is_place(base),
+        _ => false,
+    }
+}
+
+/// A place made only of a local and field selections. Indexing and `Heap` dereferences are not places, so a
+/// field selection beyond one of them does not extend the drop-flag path.
+fn is_direct_place(e: &tir::Expr) -> bool {
+    match &e.kind {
+        tir::ExprKind::Local(_) => true,
+        tir::ExprKind::Field(base, _) => is_direct_place(base),
         _ => false,
     }
 }
