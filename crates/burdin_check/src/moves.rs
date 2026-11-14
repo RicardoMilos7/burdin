@@ -68,7 +68,7 @@ impl LocalState {
 
     /// Marks `path` as initialized again; its descendants are initialized too.
     fn reinit(&mut self, path: &[usize]) {
-        self.paths.retain(|k, _| !(k.as_slice().starts_with(path) && k.len() >= path.len()));
+        self.paths.retain(|k, _| !(k.starts_with(path) && k.len() >= path.len()));
         self.paths.insert(path.to_vec(), Entry { status: Status::Init, moved_at: None });
     }
 

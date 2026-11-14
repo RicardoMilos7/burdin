@@ -40,8 +40,12 @@ case "$host_os:$host_machine" in
     Linux:x86_64)     expected_arch=x86_64; expected_os='linux' ;;
     Linux:aarch64|Linux:arm64)
                       expected_arch=aarch64; expected_os='linux' ;;
+    MINGW*:x86_64|MSYS*:x86_64|CYGWIN*:x86_64)
+                      expected_arch=x86_64; expected_os='windows' ;;
+    MINGW*:aarch64|MSYS*:aarch64|CYGWIN*:aarch64)
+                      expected_arch=aarch64; expected_os='windows' ;;
     *)
-        echo "SKIP  unsupported host $host_os/$host_machine (expected macOS arm64/x86_64 or Linux x86_64/aarch64)"
+        echo "SKIP  unsupported host $host_os/$host_machine (expected macOS, Linux, or Windows on x86_64/aarch64)"
         exit 0
         ;;
 esac

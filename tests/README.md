@@ -189,10 +189,10 @@ deliberately differs is recorded below.
 | `m06_conventions` | 43 | `mut`/`own`, exclusivity, borrows, views, return origins, E0120/E0121/E0122 |
 | `m07_generics` | 12 | monomorphization, bounds, interfaces, defaults, `requires`, derives, E0140/E0141/E0142 |
 | `m08_modules` | 6 | files and folders as modules, `use`, `priv` in and across packages, `extern "C"`, E0150/E0161 |
-| `m09_stdlib` | 14 | `Option`/`Result`/`?`, `String`, `List`, `Map`, file I/O, process and environment |
+| `m09_stdlib` | 15 | `Option`/`Result`/`?`, `String`, `List`, `Map`, file I/O, process and environment |
 | `m10_test_runner` | 5 | `test` blocks, counts, failed names, abort recovery, stripping from builds |
 | `m11_llvm` | 1 | the LLVM C API through `extern "C"` and `CPtr` |
-| **Total** | **133** | |
+| **Total** | **134** | |
 
 ## Intentional choices and deviations
 

@@ -1,0 +1,17 @@
+//@ run
+//> 3
+//> 0
+
+// `system` reports the child's exit code on both the POSIX and the Windows CRT: the POSIX wait status is shifted,
+// the Windows one is returned as is.
+
+fn main() {
+    match process.run("exit 3") {
+        Ok(code) => println(code.to_string()),
+        Err(_) => println("failed"),
+    }
+    match process.run("exit 0") {
+        Ok(code) => println(code.to_string()),
+        Err(_) => println("failed"),
+    }
+}

@@ -197,3 +197,120 @@ jobs:
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
         run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      LLVM_SYS_211_PREFIX: C:/llvm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check CI workflow
+        run: bash tests/check-ci.sh
+
+      # `cl` is not on PATH until the Visual Studio environment is loaded. This action exports INCLUDE, LIB,
+      # PATH, and the rest to the steps that follow, exactly like a Developer Command Prompt.
+      - name: Set up the MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Git for Windows ships a coreutils `link.exe` in `usr/bin`. On the current runner image rustc can pick it
+      # up instead of MSVC's linker, which fails with "extra operand" while linking build scripts. Name the
+      # MSVC linker for the target explicitly so the choice does not depend on PATH order.
+      - name: Configure the MSVC linker
+        run: |
+          linker="${VCToolsInstallDir}bin\\HostX64\\x64\\link.exe"
+          test -x "$(cygpath -u "$linker")"
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> "$GITHUB_ENV"
+
+      # The cache key is the pinned toolchain plus Cargo.lock, so a toolchain bump or a
+      # dependency change starts a fresh cache instead of reusing stale artifacts (issue #46).
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+
+      # The official Windows release archive is the only LLVM 21 distribution that ships llvm-config.exe
+      # (llvm-sys needs it) and the LLVM-C import library. It is ~900 MB, so the archive is cached and the job
+      # only downloads it on the first run; the unpacked tree is four times larger and not worth caching (#46).
+      - name: Cache LLVM 21
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: C:/llvm-cache/llvm.tar.xz
+          key: ${{ runner.os }}-llvm-21
+
+      - name: Install LLVM 21
+        run: |
+          archive=/c/llvm-cache/llvm.tar.xz
+          if [ "${{ steps.cache-llvm.outputs.cache-hit }}" != "true" ]; then
+            mkdir -p /c/llvm-cache
+            curl -fsSL -o "$archive" \
+              "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
+          fi
+          mkdir -p /c/llvm
+          tar -xJf "$archive" -C /c/llvm --strip-components=1
+
+      # `C:/llvm/bin` goes on PATH so LLVM-C.dll is found when the compiler or a program built with
+      # `--link-lib LLVM-C` runs. The checks run on both a cache hit and a miss.
+      - name: Verify LLVM 21
+        run: |
+          test -x "C:/llvm/bin/llvm-config.exe"
+          test -f "C:/llvm/lib/LLVM-C.lib"
+          echo 'C:\llvm\bin' >> "$GITHUB_PATH"
+
+      # rust-toolchain.toml pins the channel and the clippy/rustfmt components.
+      - name: Install Rust (pinned in rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Verify pinned Rust toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          case "$(rustc --version)" in
+            "rustc $channel "*) ;;
+            *) echo "expected rustc $channel, got $(rustc --version)"; exit 1 ;;
+          esac
+          rustup component list --installed | grep -q '^clippy-' || { echo "clippy is missing"; exit 1; }
+          rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
+
+      - name: Check test directives
+        run: bash tests/check-tests.sh
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test
+
+      - name: Build
+        run: cargo build
+
+      # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
+      # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
+      - name: Compiler benchmarks (smoke budgets)
+        run: cargo bench -p burdin_bench -- --smoke
+
+      - name: Check documentation
+        run: bash tests/check-docs.sh
+
+      - name: Check host target
+        run: bash tests/check-platform.sh
+
+      # Only milestones that are finished must pass. Extend the list as milestones are completed.
+      - name: Conformance tests (finished milestones)
+        run: bash tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+
+      # The default linker on Windows is already `cl`; this proves the `BURDIN_CC` override takes the same path.
+      - name: Conformance tests with BURDIN_CC=cl
+        run: BURDIN_CC=cl bash tests/run-tests.sh m01_hello m11_llvm

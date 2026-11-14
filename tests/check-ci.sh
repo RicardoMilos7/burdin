@@ -2,12 +2,14 @@
 # Checks that the CI workflow still covers everything the project requires.
 # It does not compile anything. Usage: tests/check-ci.sh
 #
-# This guards the invariants behind the CI jobs (issues #11, #16, #17, #18):
-#   * the linux and macos jobs, and every required step, are present;
+# This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18):
+#   * the linux, macos, and windows jobs, and every required step, are present;
 #   * Linux installs LLVM 21 from apt.llvm.org; macOS installs Homebrew's llvm@21 and points
-#     LLVM_SYS_211_PREFIX and PATH at it, which is what `--link-lib LLVM-C` resolves through;
-#   * macOS runs on macos-latest (Apple Silicon) and checks the host target;
+#     LLVM_SYS_211_PREFIX and PATH at it; Windows loads the MSVC environment, installs the official LLVM 21
+#     archive, and puts its DLL directory on PATH;
+#   * macOS runs on macos-latest (Apple Silicon) and Windows on windows-latest; every job checks the host target;
 #   * every job passes every milestone folder under tests/ to the conformance runner;
+#   * the Windows job also runs the suite with BURDIN_CC=cl;
 #   * the scripts CI runs exist, are executable, and use LF endings;
 #   * the Rust toolchain is pinned to an exact version with clippy and rustfmt,
 #     and CI installs and verifies that pin (issue #19);
@@ -70,7 +72,8 @@ require_command() {   # $1 job, $2 block, $3 command
 
 check_conformance() {   # $1 job, $2 block
     local job=$1 block=$2 conformance folder name word dir found
-    conformance=$(grep -E 'tests/run-tests\.sh' <<< "$block" | tail -n 1)
+    # The BURDIN_CC step runs a subset; the full step is the one without an override.
+    conformance=$(grep -E 'tests/run-tests\.sh' <<< "$block" | grep -v 'BURDIN_CC' | tail -n 1)
     if [ -z "$conformance" ]; then
         add_problem "ci.yml: $job job: no conformance step (tests/run-tests.sh)"
         return
@@ -139,11 +142,14 @@ check_caches() {   # $1 job, $2 block
 
 linux=$(job_block linux)
 macos=$(job_block macos)
+windows=$(job_block windows)
 [ -n "$linux" ] || add_problem "ci.yml: no linux job"
 [ -n "$macos" ] || add_problem "ci.yml: no macos job"
+[ -n "$windows" ] || add_problem "ci.yml: no windows job"
 
 grep -qx '    runs-on: ubuntu-24.04' <<< "$linux" || add_problem "ci.yml: linux does not run on ubuntu-24.04"
 grep -qx '    runs-on: macos-latest' <<< "$macos" || add_problem "ci.yml: macos does not run on macos-latest"
+grep -qx '    runs-on: windows-latest' <<< "$windows" || add_problem "ci.yml: windows does not run on windows-latest"
 grep -qx '  push:' <<< "$text" || add_problem "ci.yml: does not run on push"
 grep -qx '  pull_request:' <<< "$text" || add_problem "ci.yml: does not run on pull_request"
 
@@ -161,10 +167,28 @@ grep -qF 'LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)' <<< "$macos" \
 grep -qF '$(brew --prefix llvm@21)/bin' <<< "$macos" \
     || add_problem "ci.yml: macos job: llvm-config is not added to PATH"
 
-for job in linux macos; do
+# Windows: the MSVC environment, the official LLVM 21 archive, and its DLL directory on PATH.
+grep -qF 'ilammy/msvc-dev-cmd' <<< "$windows" \
+    || add_problem "ci.yml: windows job: does not load the MSVC environment (cl would not be on PATH)"
+grep -qF 'LLVM_SYS_211_PREFIX: C:/llvm' <<< "$windows" \
+    || add_problem "ci.yml: windows job: LLVM_SYS_211_PREFIX is not set"
+grep -qF 'llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz' <<< "$windows" \
+    || add_problem "ci.yml: windows job: does not install LLVM 21 from the official archive"
+grep -qF 'C:/llvm/lib/LLVM-C.lib' <<< "$windows" \
+    || add_problem "ci.yml: windows job: never checks that the LLVM C API import library exists"
+grep -qF 'C:\llvm\bin' <<< "$windows" \
+    || add_problem "ci.yml: windows job: does not put LLVM's DLL directory on PATH"
+grep -qF 'BURDIN_CC=cl' <<< "$windows" \
+    || add_problem "ci.yml: windows job: does not exercise the BURDIN_CC=cl link path"
+# Git for Windows ships a coreutils `link.exe`; rustc must be pointed at MSVC's linker explicitly.
+grep -qF 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER' <<< "$windows" \
+    || add_problem "ci.yml: windows job: does not pin the MSVC linker (Git's link.exe can shadow it)"
+
+for job in linux macos windows; do
     case "$job" in
         linux) block=$linux ;;
         macos) block=$macos ;;
+        windows) block=$windows ;;
     esac
     for command in \
         'tests/check-tests.sh' \
