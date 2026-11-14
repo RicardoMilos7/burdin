@@ -608,7 +608,7 @@ test "user is valid" {
 
 ## Tooling and compiler
 
-A single command-line tool, `burdin`, handles building, testing, formatting, and linting, and the compiler is first written in Rust, uses LLVM for every build, and is rewritten in Burdin as soon as possible.
+A single command-line tool, `burdin`, handles building, testing, formatting, and linting, and the compiler is written in Rust and uses LLVM for every build. It stays in Rust at least until the language is mature and its core features are complete.
 
 **The `burdin` tool**
 
@@ -636,13 +636,12 @@ A single command-line tool, `burdin`, handles building, testing, formatting, and
 
 **Build speed.** LLVM at its lowest level is slower than a dedicated fast backend, so speed comes from elsewhere: a fast front end, parallel code generation per module, cached object files so only changed modules rebuild, and a fast linker. A custom debug backend is a possible future project.
 
-**Self-hosting plan**
+**Implementation plan**
 
-1. **Stage 0:** a Rust compiler for a subset of the language that is just enough to write a compiler: structs, enums, `match`, generics with interfaces, `List`, `Map`, `String`, file I/O, `Result` with `?`, and arenas with handles. It enforces the memory-model checks (parameter conventions, exclusivity, drops) from the start and may skip tasks and comptime derive at first.
-2. **Stage 1:** the compiler is rewritten in Burdin and built with stage 0. Tasks and comptime derive are added here.
-3. **Stage 2:** the stage 1 compiler compiles itself. When its output matches the stage 1 build, the compiler is self-hosted, and the Rust compiler becomes a frozen bootstrap tool.
+1. **Stage 0:** a Rust compiler for the core subset of the language, enough to write compiler-sized programs: structs, enums, `match`, generics with interfaces, `List`, `Map`, `String`, file I/O, `Result` with `?`, and arenas with handles. It enforces the memory-model checks (parameter conventions, exclusivity, drops) from the start and skips tasks and comptime at first.
+2. **Stage 1:** the same Rust compiler grows the rest of the core language: closures and iterators, formatting and interpolation, `error` declarations, comptime, allocators, and then tasks.
 
-The self-hosted compiler calls LLVM through its C API using bindgen output.
+**No self-hosting for now.** Burdin is not bootstrapped into itself. The compiler is mostly written by AI, which has no prior experience with Burdin, and a self-hosted compiler would mean building every feature twice and debugging two unproven things at once (the program and the compiler compiling it). Self-hosting may be reconsidered once the language is mature and at least its core features are complete. It is not a goal that shapes the language or the compiler before then.
 
 **Working with AI.** A written specification plus a large suite of example programs and tests is the most valuable asset, because it lets each piece the AI writes be checked and keeps regressions visible as the language changes. Build a thin vertical slice first, then widen it.
 
@@ -681,4 +680,4 @@ The design is settled at the level of ideas, and these details still need decisi
 1. Write the grammar and a first specification from this document.
 2. Collect example programs and expected outputs, which become the conformance test suite.
 3. Define the stage 0 subset precisely and build the Rust compiler for it end to end (a vertical slice).
-4. Start the self-hosted rewrite once stage 0 can compile a compiler-sized program.
+4. Grow the same Rust compiler through stage 1 until the core features are complete. Self-hosting is not planned.

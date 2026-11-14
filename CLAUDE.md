@@ -1,8 +1,10 @@
 # Burdin
 
 Burdin is a personal, AI-assisted experiment in building a native-compiled language with Rust-level memory safety, no
-garbage collector, and value semantics. It is not for production. The compiler is written in Rust first (stage 0), then
-rewritten in Burdin (stage 1) as soon as stage 0 can compile it.
+garbage collector, and value semantics. It is not for production. The compiler is written in Rust and stays in Rust:
+stage 0 is the core subset, and stage 1 adds the rest of the core language to the same Rust compiler. Burdin is not
+bootstrapped into itself. A self-hosted compiler may be reconsidered once the language is more mature and at least its
+core features are complete, but it is not planned.
 
 Read `HANDOFF.md` for the current state, the open decisions, and what to do next.
 
@@ -30,8 +32,8 @@ export of the stage 0 document; use `spec/stage0-subset.md` instead.
   reports at the line the tests mark. Report every error in a file, not just the first.
 - **Keep the checker local.** Memory checks look at one function body at a time, from signatures only. No whole-program
   analysis and no lifetime annotations.
-- **Prefer simple and correct over clever.** This compiler will be read and rewritten in Burdin, so avoid Rust features
-  that have no easy equivalent in the stage 0 subset where it costs little.
+- **Prefer simple and correct over clever.** This compiler will be read and extended for a long time, so keep it plain
+  and easy to follow.
 
 ## Commands
 

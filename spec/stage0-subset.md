@@ -3,8 +3,9 @@
 This is the maintained copy. `../Burdin Stage 0 Subset.md` is the original export from claude.ai and is out of date:
 it predates the milestone folders, the error-code registry, and the decisions in `memory-rules.md`.
 
-Stage 0 is a Rust compiler for the smallest subset of Burdin that can express the Burdin compiler itself. It enforces
-the memory-model checks from the start. Everything else waits for stage 1, when the compiler is rewritten in Burdin.
+Stage 0 is a Rust compiler for the core subset of Burdin: enough to write real, compiler-sized programs. It enforces
+the memory-model checks from the start. Everything else waits for stage 1, which adds the rest of the core language to
+the same Rust compiler. The compiler stays in Rust; Burdin is not bootstrapped into itself (see "After stage 1" below).
 The language is described in `../Burdin Language Design.md`, the syntax in `grammar.md`, the checks in `memory-rules.md`,
 and the conformance tests in `../tests/`.
 
@@ -12,7 +13,7 @@ and the conformance tests in `../tests/`.
 
 A feature is in stage 0 only if one of these is true:
 
-1. The stage 1 compiler needs it to be written (data structures, control flow, text handling, file I/O, calling LLVM).
+1. A compiler-sized Burdin program needs it (data structures, control flow, text handling, file I/O, calling C).
 2. It is part of the memory-model checks (moves, parameter conventions, exclusivity, drops), which stage 0 must enforce.
 3. It is cheaper to build now than to avoid (for example shadowing and tuples).
 
@@ -88,9 +89,9 @@ and aborts. Files, processes, paths, and environment go through one platform mod
 | Comptime, const generics, `embed`, comptime derives | Stage 1, after a MIR interpreter |
 | `build.bd` | Stage 1 |
 | Allocator parameters, `Arena`, `Shared<T>`, leak-detecting allocator | Stage 1 |
-| Tasks, channels, `select`, `Mutex`, atomics, `thread.spawn` | After self-hosting |
-| Bindgen for C and Rust | After self-hosting |
-| `fmt`, `lint`, `doc`, `add`, language server, lockfile, multiple-package workspaces | After self-hosting |
+| Tasks, channels, `select`, `Mutex`, atomics, `thread.spawn` | After stage 1 |
+| Bindgen for C and Rust | After stage 1 |
+| `fmt`, `lint`, `doc`, `add`, language server, lockfile, multiple-package workspaces | After stage 1 |
 | `i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment | When wanted |
 | `Set`, `Deque`, doc tests, `bench` blocks | When wanted |
 
@@ -111,4 +112,11 @@ Each milestone is a vertical slice. It is done when every test in its folder (an
 | 8 | `m08_modules` | Files as modules, `use`, `priv`, `extern "C"`, `CPtr<T>` | Multi-file program runs; `priv` across packages rejected; libc call works |
 | 9 | `m09_stdlib` | `Option`, `Result`, `?`, `String`, `List`, `Map`, file I/O, processes | Word count and tokenizer pass |
 | 10 | `m10_test_runner` | `test` blocks, assert errors, abort recovery, driver commands | The runner reports passed and failed counts correctly, including after an abort |
-| 11 | `m11_llvm` | LLVM C API from Burdin | A Burdin program builds and verifies a function returning 42. Then stage 0 is complete and the stage 1 rewrite starts |
+| 11 | `m11_llvm` | LLVM C API from Burdin (a large, real C library through `extern`) | A Burdin program builds and verifies a function returning 42. Then stage 0 is complete and stage 1 starts |
+
+## After stage 1
+
+The compiler stays in Rust. Stage 1 adds the deferred core features (closures and iterators first) to the Rust compiler,
+with new milestones and tests written the same way as stage 0's. Rewriting the compiler in Burdin is not planned. It may
+be reconsidered once the language is more mature and at least its core features are complete; until then, nothing in
+the language or the compiler should be shaped around self-hosting.

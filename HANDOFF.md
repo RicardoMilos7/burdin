@@ -89,7 +89,8 @@ exact packages and how to call WSL from PowerShell.
 
 ## Decisions already made (do not reopen without a reason)
 
-- Compiler: Rust first, LLVM only (no Cranelift; lowest optimization level for debug), then rewritten in Burdin.
+- Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least
+  until the language is mature and its core features are complete (decided in the sixth session, 2026-11-14).
 - Platforms: Linux, macOS, Windows; x86-64 and arm64; MSVC toolchain on Windows.
 - Memory model: value semantics, single owner, parameter conventions (read-only default, `mut`, `own`), second-class references
   and views, automatic `Drop`, `Heap<T>`, global allocator, abort on panic.
@@ -185,8 +186,9 @@ exact packages and how to call WSL from PowerShell.
    accepted in expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
 4. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried.
 5. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
-6. Before stage 1: the MIR interpreter question (comptime needs one), the design document's own open-questions list (derive syntax,
-   `select`, extern details), and the stage 1 order (closures and iterators first).
+6. Before stage 1 (more features in the same Rust compiler, not a rewrite): the MIR interpreter question (comptime needs one),
+   the design document's own open-questions list (derive syntax, `select`, extern details), and the stage 1 order (closures
+   and iterators first).
 
 ## Starting the next session
 
