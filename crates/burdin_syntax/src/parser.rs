@@ -579,10 +579,7 @@ impl Parser<'_> {
             return false;
         }
         let continues = |i: usize| {
-            matches!(
-                self.toks.get(i).map(|t| &t.kind),
-                Some(TokenKind::Dot | TokenKind::LParen | TokenKind::LBrace)
-            )
+            matches!(self.toks.get(i).map(|t| &t.kind), Some(TokenKind::Dot | TokenKind::LParen | TokenKind::LBrace))
         };
         let mut depth = 0i32;
         let mut i = self.pos + 1;
