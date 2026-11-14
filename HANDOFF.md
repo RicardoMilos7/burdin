@@ -21,7 +21,7 @@ the m11 program calls the LLVM C API.
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary); see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
-| CI | `.github/workflows/ci.yml` | Linux only: check-tests, fmt, clippy, unit tests, conformance tests of finished milestones. Never run yet (no remote) |
+| CI | `.github/workflows/ci.yml` | Linux only, first green run on `main` on 2026-11-14: check-ci (`tests/check-ci.sh`), check-tests, fmt, clippy, unit tests, build, and conformance tests m01-m11 |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
 Dev environment: WSL Ubuntu 26.04, stable Rust through rustup (1.100 at the time), LLVM 21. See the Toolchain section of `CLAUDE.md` for the
@@ -456,8 +456,9 @@ exact packages and how to call WSL from PowerShell.
 3. Close the stage 0 correctness gaps that stage 1 inherits, each with a registry code and tests first: a view outliving
    its source (problem 11), ranges as values (16), the move forms rejected as E9000 (10), the generic gaps (the old
    item 4 of this list), and the module and C gaps (13).
-4. Push the repository to a remote so CI runs with m10 and m11 included, then add a Windows job once the `cl` link path
-   and the test dispatcher's `atoi`/`strlen` are tried.
+4. CI runs on `ubuntu-24.04` with LLVM 21 from apt.llvm.org, and the `linux` job passes every step and m01-m11
+   (issue #11); `tests/check-ci.sh` guards that the workflow keeps covering the suite. Next: add a Windows job once
+   the `cl` link path and the test dispatcher's `atoi`/`strlen` are tried.
 5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
    passing suite only shows the implementation matches the hand-written expectations, not the design document.
 
