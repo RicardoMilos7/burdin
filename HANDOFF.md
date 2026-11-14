@@ -6,12 +6,14 @@ Written at the end of the first session, updated at the end of the second, third
 
 Updated at the end of the tenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all 133
 tests pass in the debug profile and 132 in release (one m06 test is debug-only). `burdin test` runs `test` blocks, and
-the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18).
+the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18). The twelfth
+session deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43); `spec/stage0-subset.md` is the only stage 0
+scope document.
 
 | What | Where | Status |
 | --- | --- | --- |
 | Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
-| Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
+| Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items |

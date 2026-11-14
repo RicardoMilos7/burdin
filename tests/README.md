@@ -1,7 +1,7 @@
 # Burdin stage 0 conformance tests
 
 These programs are the target for the stage 0 compiler (Rust, LLVM backend). They come from
-`Burdin Language Design.md` and the Stage 0 Subset document. Each folder is one milestone; a
+`Burdin Language Design.md` and [the stage 0 subset](../spec/stage0-subset.md). Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
 Anything the stage 0 subset defers (closures, iterators, interpolation, `any`, `error` declarations,
