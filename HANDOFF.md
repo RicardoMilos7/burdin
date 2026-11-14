@@ -9,8 +9,8 @@ Updated at the end of the thirteenth session (2026-11-14). **Milestones 1 to 11 
 and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
 twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a
 root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
-design and stage 0 documents and added the compiler benchmarks (#44, #41); the fourteenth added the Windows CI job and
-the shared LLVM link (issue #12).
+design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in
+CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12).
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ the shared LLVM link (issue #12).
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`; see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-docs.sh`, `tests/check-platform.sh`, and conformance m01-m11; the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. `tests/check-ci.sh` guards all three jobs |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11; the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs and their caches |
 | LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
 
 Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21; the macOS and
@@ -507,11 +507,33 @@ threshold tracking against a stored baseline is issue #446.
   `LLVM_SYS_211_PREFIX` (then `PATH`), and has unit tests for the resolution order. Homebrew's `libLLVM.dylib` has an
   absolute install name, so no rpath is required; the driver still passes `-Wl,-rpath` as on Linux.
 
+## Decided in the thirteenth session
+
+- Both CI jobs restore the cargo registry and `target/` from `actions/cache` with the key
+  `${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}`. There are no
+  `restore-keys`: a cache is reused only when the pinned toolchain and `Cargo.lock` both match, which is the guarantee
+  issue #46 asks for. The OS and architecture are in the key so the linux and macos jobs never share build artifacts.
+- LLVM caching differs by platform because `actions/cache` restores as the runner user. On Linux the installed tree is
+  kept in `~/.cache/burdin/llvm-21` and copied into `/usr/lib/llvm-21` with sudo. When a distribution splits libLLVM
+  into the multiarch directory, `/usr/lib/llvm-21/lib/libLLVM*.so` points outside the tree, so the resolved real files
+  are cached under their absolute paths and restored the same way; caching the tree alone would leave the symlinks
+  dangling. A cache hit still installs `libzstd-dev` and `zlib1g-dev`, which are not part of the LLVM tree. On macOS
+  the keg is not self-contained, so the cache holds Homebrew's bottle downloads (`~/Library/Caches/Homebrew`) and
+  `brew install llvm@21` still runs to resolve the keg's dependencies.
+- `tests/check-ci.sh` now fails if either job loses a cache: the cargo step must include `~/.cargo/registry` and
+  `target/` with the toolchain-and-lockfile key, and an LLVM 21 cache must be present with the platform's path. The
+  Linux job must also handle a libLLVM symlink that leaves the tree, and the macOS job must cache its Homebrew
+  downloads.
+
 ## Decided in the fourteenth session
 
 - CI has a `windows` job on `windows-latest` next to `linux` and `macos`. `ilammy/msvc-dev-cmd` loads the MSVC
   environment, the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive is unpacked into `C:\llvm`, and its
-  `bin` goes on `PATH` so `LLVM-C.dll` is found. The job runs every check plus m01-m11 and a `BURDIN_CC=cl` smoke run.
+  `bin` goes on `PATH` so `LLVM-C.dll` is found. The job runs every check plus m01-m11 and a `BURDIN_CC=cl` smoke run,
+  and caches the cargo registry, `target/`, and the unpacked LLVM archive with the same key shape as the other jobs.
+- Git for Windows ships a coreutils `link.exe`, and the runner image made rustc pick it instead of MSVC's linker, so
+  the Windows job names MSVC's `link.exe` through `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` instead of relying on
+  PATH order.
 - LLVM is linked as a shared library on every platform: `inkwell` uses `llvm21-1-no-llvm-linking` and
   `crates/burdin_codegen/build.rs` emits the link. The static LLVM archives from the official Windows release are
   built with the static CRT and crash inside the Rust binary, which uses the dynamic CRT; `llvm-sys` also refuses
@@ -533,8 +555,9 @@ threshold tracking against a stored baseline is issue #446.
    item 4 of this list), and the module and C gaps (13).
 4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
    `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m11
-   (issues #11, #16, and #12). `tests/check-ci.sh` guards that the workflow keeps covering the suite and every job, and
-   `tests/check-platform.sh` guards the host triple. Next: an Intel macOS job and another arm64 host if they are wanted.
+   (issues #11, #16, and #12), and cache cargo and LLVM 21 (issue #46). `tests/check-ci.sh` guards that the workflow
+   keeps covering the suite, every job, and their caches; `tests/check-platform.sh` guards the host triple. Next: an
+   Intel macOS job and another arm64 host if they are wanted.
 5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
    passing suite only shows the implementation matches the hand-written expectations, not the design document.
 

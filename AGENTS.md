@@ -25,7 +25,7 @@ tests/run-tests.sh                 run the conformance tests
 tests/run-tests.sh m05 -v          one milestone, with diffs
 tests/run-tests.sh --release       release profile (skips debug-only tests)
 tests/check-tests.sh               validate directives and error codes (no compiler needed)
-tests/check-ci.sh                  validate the CI workflow and the pinned Rust toolchain (no compiler needed)
+tests/check-ci.sh                  validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
 tests/check-platform.sh            check the host triple and 64-bit isize/usize (needs a built driver)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
 cargo fmt --all --check            formatting

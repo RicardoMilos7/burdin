@@ -13,6 +13,9 @@
 #   * the scripts CI runs exist, are executable, and use LF endings;
 #   * the Rust toolchain is pinned to an exact version with clippy and rustfmt,
 #     and CI installs and verifies that pin (issue #19);
+#   * both jobs cache the cargo registry and target/ with a key built from the pinned
+#     toolchain and Cargo.lock, and cache LLVM 21: the installed tree on Linux, the
+#     Homebrew bottle downloads on macOS (issue #46);
 #   * the compiler benchmarks exist and CI runs their smoke budgets (issue #41);
 #   * a conformance test still exercises --link-lib LLVM-C;
 #   * the documentation check (which reads the driver contract in README.md) runs in both jobs.
@@ -93,6 +96,50 @@ check_conformance() {   # $1 job, $2 block
     done
 }
 
+cache_steps() {   # $1 job block: only the steps that use actions/cache
+    awk '
+        function flush() { if (step ~ /actions\/cache@/) printf "%s", step }
+        /^      - / { flush(); step = $0 "\n"; next }
+        { step = step $0 "\n" }
+        END { flush() }
+    ' <<< "$1"
+}
+
+check_caches() {   # $1 job, $2 block
+    local job=$1 block=$2 caches
+    caches=$(cache_steps "$block")
+    if [ -z "$caches" ]; then
+        add_problem "ci.yml: $job job: no actions/cache step"
+        return
+    fi
+    grep -qF 'uses: actions/cache@v4' <<< "$caches" \
+        || add_problem "ci.yml: $job job: caches do not use actions/cache@v4"
+    grep -qF '~/.cargo/registry' <<< "$caches" \
+        || add_problem "ci.yml: $job job: cargo cache omits ~/.cargo/registry"
+    grep -qE '^[[:space:]]+target$' <<< "$caches" \
+        || add_problem "ci.yml: $job job: cargo cache omits target/"
+    grep -qF "hashFiles('rust-toolchain.toml', 'Cargo.lock')" <<< "$caches" \
+        || add_problem "ci.yml: $job job: cargo cache key is not built from rust-toolchain.toml and Cargo.lock"
+    grep -qE 'key:.*llvm-21' <<< "$caches" \
+        || add_problem "ci.yml: $job job: no LLVM 21 cache key"
+    case "$job" in
+        linux)
+            grep -qF '~/.cache/burdin/llvm-21' <<< "$caches" \
+                || add_problem "ci.yml: linux job: LLVM cache does not use a runner-writable path"
+            grep -qF 'cache=~/.cache/burdin/llvm-21' <<< "$block" \
+                || add_problem "ci.yml: linux job: install step does not use the cached LLVM path"
+            grep -qF 'steps.cache-llvm.outputs.cache-hit' <<< "$block" \
+                || add_problem "ci.yml: linux job: LLVM install ignores the cache hit"
+            grep -qF 'readlink -f' <<< "$block" \
+                || add_problem "ci.yml: linux job: LLVM cache does not follow libLLVM symlinks outside the tree"
+            ;;
+        macos)
+            grep -qF '~/Library/Caches/Homebrew' <<< "$caches" \
+                || add_problem "ci.yml: macos job: LLVM bottle downloads are not cached"
+            ;;
+    esac
+}
+
 linux=$(job_block linux)
 macos=$(job_block macos)
 windows=$(job_block windows)
@@ -159,6 +206,7 @@ for job in linux macos windows; do
         require_command "$job" "$block" "$command"
     done
     check_conformance "$job" "$block"
+    check_caches "$job" "$block"
 done
 
 # The compiler benchmarks (issue #41): CI runs the smoke budgets, so the bench target, the crate that generates

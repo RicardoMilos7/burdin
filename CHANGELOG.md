@@ -11,7 +11,7 @@ close-out checklist in `AGENTS.md`).
 - The driver contract is documented in a new root `README.md`: `burdin build`, `run`, and `test`, the diagnostic
   format, `--emit-ir`, `--link-lib` (including how `LLVM-C` resolves through `llvm-config`), `BURDIN_CC`, and the
   test output format. The file is the documentation index, and `tests/check-docs.sh` checks its links and the
-  documented behavior; both CI jobs run it (issue #42).
+  documented behavior; every CI job runs it (issue #42).
 - Pin the Rust toolchain to `1.100.0` with the `clippy` and `rustfmt` components in `rust-toolchain.toml`, so
   `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible from a clean machine.
   CI installs and verifies that toolchain, and `tests/check-ci.sh` fails if the pin or its verification goes missing
@@ -30,6 +30,11 @@ close-out checklist in `AGENTS.md`).
 - Add `cargo bench -p burdin_bench`: generated inputs measure the lexer, the parser, name resolution and type
   checking, and code generation at three sizes, reporting median time per iteration. `--smoke` runs every stage
   once with generous time budgets and is part of CI, and `HANDOFF.md` records the first baseline (issue #41).
+- CI caches the cargo registry, `target/`, and LLVM 21 in all three jobs. The cargo cache is keyed by
+  `rust-toolchain.toml` and `Cargo.lock`, so a toolchain or dependency change starts fresh; Linux caches the installed
+  LLVM tree (including the multiarch `libLLVM` it symlinks to), macOS caches the Homebrew bottle downloads, and
+  Windows caches the unpacked official archive. `tests/check-ci.sh` fails if any of those caches goes missing
+  (issue #46).
 
 ## Unreleased — Stage 1
 
