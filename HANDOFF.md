@@ -16,7 +16,7 @@ through `tests/m05_ownership` pass in the debug and release profiles.
 | Conformance tests | `tests/` | 131 tests. 57 pass today: m01 to m05, and 5 in m06 |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_sema`, `burdin_codegen`, `burdin_driver` (`burdin` binary) |
-| C runtime | `runtime/rt.c` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push, heap allocation (`burdin_rt_alloc`, `burdin_rt_free`), number/char/str to `String`. Embedded in the driver |
+| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push, heap allocation (`burdin_rt_alloc`, `burdin_rt_free`), number/char/str to `String`. Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `abort`). `cc` only links |
 | CI | `.github/workflows/ci.yml` | Linux only: check-tests, fmt, clippy, unit tests, conformance tests of finished milestones. Never run yet (no remote) |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
@@ -64,8 +64,8 @@ exact packages and how to call WSL from PowerShell.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
-  `Heap<T>` is a `ptr`, `Option<T>` is `{ i1, T }`. Functions are `burdin.<name>`, and `burdin_entry` calls `main`.
-  Stack slots live in the `entry` block; after a terminator, generation continues in a fresh unreachable block.
+  `Heap<T>` is a `ptr`, `Option<T>` is `{ i1, T }`. Functions are `burdin.<name>`, and the generated `main` calls the
+  program's `main`. Stack slots live in the `entry` block; after a terminator, generation continues in a fresh unreachable block.
   Overflow of `+ - *` and unary `-` panics in debug (LLVM `*.with.overflow`) and wraps in release; division by zero and
   out-of-range shifts always panic; `MIN / -1` panics in debug and wraps in release; float-to-int casts saturate
   (`fpto*i.sat`). Panics print `path:LINE:COL: panic: message` to stderr and `abort()`. Tuples and structs are LLVM

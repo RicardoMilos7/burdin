@@ -57,7 +57,6 @@ crates/
   burdin_codegen/           LLVM backend
   burdin_driver/            the `burdin` binary: build, run, test
 std/                      the standard library, written in Burdin
-runtime/                  the small C or Burdin runtime (start-up, panic path)
 spec/                     grammar, memory rules, stage 0 scope
 tests/                    conformance tests and scripts
 ```
@@ -68,7 +67,9 @@ without a backend.
 ## Toolchain
 
 Current stable Rust (edition 2024; no toolchain pin for now), **LLVM 21** through `inkwell` 0.11 (feature `llvm21-1`), and the
-system C compiler to build `runtime/rt.c` and link (`cc` on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
+system C compiler driver as the linker against libc (`cc` on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides).
+There is no C runtime: `burdin_codegen/src/runtime.rs` generates `main`, output, panics, string allocation and
+conversions, and heap allocation as LLVM IR that calls libc directly.
 Platforms: Linux, macOS, Windows; x86-64 and arm64.
 
 **Development happens in WSL Ubuntu 26.04 first** (decided). The repository stays on `F:`; build and test from WSL at
