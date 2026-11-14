@@ -9,7 +9,9 @@
 //! `println`, integer `to_string`), so sema spends its time on the measured program and not on checking `std`
 //! once per iteration.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+use std::time::Duration;
 
 use burdin_diag::{Diagnostics, FileId, SourceMap};
 use burdin_syntax::ast;
@@ -174,6 +176,127 @@ pub fn emit(program: &Program, sources: &SourceMap, object: &std::path::Path) ->
     burdin_codegen::emit_object(program, sources, "bench", object, &opts)
 }
 
+// --- Baselines ---------------------------------------------------------------------------------
+//
+// `cargo bench -p burdin_bench -- --save FILE` writes the medians of a run in the format below, and
+// `--baseline FILE` compares a later run with them. The file is deliberately plain text: a developer can
+// read it, CI can cache it, and the only edit it ever needs is moving a number.
+
+/// The first line of a saved baseline, documenting the format for whoever opens the file.
+pub const BASELINE_HEADER: &str =
+    "# Burdin compiler benchmark baseline (format 1: case<TAB>median nanoseconds per iteration).";
+
+/// One benchmark case and its median time per iteration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Measurement {
+    pub case: String,
+    pub median: Duration,
+}
+
+/// One case present in both the baseline and the current run.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Change {
+    pub case: String,
+    pub baseline: Duration,
+    pub current: Duration,
+    /// The current median relative to the baseline, in percent (100 is unchanged).
+    pub ratio_percent: f64,
+    /// Whether the case is slower than the comparison threshold allows.
+    pub regressed: bool,
+}
+
+/// The result of comparing a run with a stored baseline.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Comparison {
+    /// The cases in both files, in baseline order.
+    pub changes: Vec<Change>,
+    /// The baseline cases this run did not measure (a filtered run leaves cases out).
+    pub missing: Vec<String>,
+    /// The measured cases the baseline does not contain.
+    pub new: Vec<String>,
+}
+
+impl Comparison {
+    /// The number of cases over the threshold; zero means the run is within the baseline.
+    pub fn regression_count(&self) -> usize {
+        self.changes.iter().filter(|change| change.regressed).count()
+    }
+}
+
+/// Writes the measurements in the baseline format: the header comment, then one
+/// `case<TAB>nanoseconds` line per case, in the order given.
+pub fn render_baseline(measurements: &[Measurement]) -> String {
+    let mut text = String::from(BASELINE_HEADER);
+    text.push('\n');
+    for measurement in measurements {
+        writeln!(text, "{}\t{}", measurement.case, measurement.median.as_nanos())
+            .expect("writing to a String cannot fail");
+    }
+    text
+}
+
+/// Reads the baseline format. Blank lines and `#` comments are ignored, so a baseline can carry notes.
+/// Duplicate cases, an empty file, and malformed lines are errors: a silently mangled baseline would
+/// compare the wrong numbers.
+pub fn parse_baseline(text: &str) -> Result<Vec<Measurement>, String> {
+    let mut measurements = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim_end_matches('\r');
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let number = index + 1;
+        let (case, nanos) =
+            line.split_once('\t').ok_or_else(|| format!("line {number}: expected 'case<TAB>nanoseconds'"))?;
+        if case.is_empty() || case.chars().any(char::is_whitespace) {
+            return Err(format!("line {number}: invalid case name '{case}'"));
+        }
+        let nanos: u64 =
+            nanos.trim().parse().map_err(|_| format!("line {number}: '{nanos}' is not a nanosecond count"))?;
+        if !seen.insert(case) {
+            return Err(format!("line {number}: duplicate case '{case}'"));
+        }
+        measurements.push(Measurement { case: case.to_string(), median: Duration::from_nanos(nanos) });
+    }
+    if measurements.is_empty() {
+        return Err("no measurements".to_string());
+    }
+    Ok(measurements)
+}
+
+/// Compares a run with a baseline. A case is a regression when its median is more than
+/// `threshold_percent` above the baseline; exactly at the threshold is within it. Cases measured
+/// without a baseline entry are reported as new, and baseline entries the run did not measure are
+/// reported as missing; neither is a regression.
+pub fn compare(baseline: &[Measurement], current: &[Measurement], threshold_percent: u32) -> Comparison {
+    let medians: HashMap<&str, Duration> = current.iter().map(|m| (m.case.as_str(), m.median)).collect();
+    let baseline_cases: HashSet<&str> = baseline.iter().map(|m| m.case.as_str()).collect();
+
+    let mut changes = Vec::new();
+    let mut missing = Vec::new();
+    for stored in baseline {
+        match medians.get(stored.case.as_str()) {
+            Some(&now) => changes.push(change(stored, now, threshold_percent)),
+            None => missing.push(stored.case.clone()),
+        }
+    }
+    let new = current.iter().filter(|m| !baseline_cases.contains(m.case.as_str())).map(|m| m.case.clone()).collect();
+    Comparison { changes, missing, new }
+}
+
+fn change(baseline: &Measurement, current: Duration, threshold_percent: u32) -> Change {
+    let baseline_ns = baseline.median.as_nanos();
+    let current_ns = current.as_nanos();
+    let ratio_percent = if baseline_ns == 0 {
+        if current_ns == 0 { 100.0 } else { f64::INFINITY }
+    } else {
+        current_ns as f64 / baseline_ns as f64 * 100.0
+    };
+    let regressed = current_ns * 100 > baseline_ns * (100 + u128::from(threshold_percent));
+    Change { case: baseline.case.clone(), baseline: baseline.median, current, ratio_percent, regressed }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +314,57 @@ mod tests {
     #[test]
     fn generation_is_deterministic() {
         assert_eq!(generate(3), generate(3));
+    }
+
+    fn measurement(case: &str, nanos: u64) -> Measurement {
+        Measurement { case: case.to_string(), median: Duration::from_nanos(nanos) }
+    }
+
+    #[test]
+    fn baseline_round_trips_through_text() {
+        let measurements = [measurement("lex/small", 125_345), measurement("codegen/large", 201_000_000)];
+        let text = render_baseline(&measurements);
+        assert!(text.starts_with(BASELINE_HEADER));
+        assert_eq!(parse_baseline(&text).expect("a rendered baseline parses"), measurements);
+    }
+
+    #[test]
+    fn baseline_parse_ignores_comments_and_blank_lines() {
+        let text = "# a note\r\n\r\nlex/small\t42\r\nsema/large\t7\n";
+        assert_eq!(
+            parse_baseline(text).expect("comments and blank lines are allowed"),
+            [measurement("lex/small", 42), measurement("sema/large", 7),]
+        );
+    }
+
+    #[test]
+    fn baseline_parse_rejects_malformed_text() {
+        for text in ["", "lex/small 42", "lex/small\tfast", "lex/small\t1\nlex/small\t2", "\t5"] {
+            assert!(parse_baseline(text).is_err(), "{text:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn comparison_flags_only_cases_over_the_threshold() {
+        let baseline = [measurement("same", 1_000), measurement("over", 1_000), measurement("faster", 1_000)];
+        let current = [measurement("same", 1_250), measurement("over", 1_251), measurement("faster", 900)];
+        let comparison = compare(&baseline, &current, 25);
+        assert_eq!(comparison.changes.len(), 3);
+        assert!(!comparison.changes[0].regressed, "exactly 25% is within the threshold");
+        assert!(comparison.changes[1].regressed, "25.1% is over the threshold");
+        assert!(!comparison.changes[2].regressed, "a faster case is never a regression");
+        assert_eq!(comparison.regression_count(), 1);
+        assert!((comparison.changes[1].ratio_percent - 125.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn comparison_reports_missing_and_new_cases() {
+        let baseline = [measurement("lex/small", 1_000), measurement("sema/large", 2_000)];
+        let current = [measurement("lex/small", 1_000), measurement("parse/large", 3_000)];
+        let comparison = compare(&baseline, &current, 25);
+        assert_eq!(comparison.changes.len(), 1);
+        assert_eq!(comparison.missing, vec!["sema/large".to_string()]);
+        assert_eq!(comparison.new, vec!["parse/large".to_string()]);
+        assert_eq!(comparison.regression_count(), 0, "a missing or new case is not a regression");
     }
 }

@@ -83,13 +83,20 @@ test passes. On Windows, run it from Git Bash.
 The compiler benchmarks are not part of the conformance run:
 
 ```
-cargo bench -p burdin_bench               # medians per stage and size
-cargo bench -p burdin_bench -- --smoke    # the time budgets CI runs
-cargo bench -p burdin_bench -- lex        # only cases whose name contains `lex`
+cargo bench -p burdin_bench                       # medians per stage and size
+cargo bench -p burdin_bench -- --smoke            # the time budgets CI runs
+cargo bench -p burdin_bench -- lex                # only cases whose name contains `lex`
+cargo bench -p burdin_bench -- --save bench.txt   # record the medians as a baseline
+cargo bench -p burdin_bench -- --baseline bench.txt   # compare; exit 1 when a case is over the threshold
+tests/bench-regression.sh                         # the advisory check CI runs
 ```
 
-`crates/burdin_bench` generates its inputs, so a size is the only parameter of a measurement. `HANDOFF.md` records
-the baseline and the meaning of the `--smoke` budgets.
+`crates/burdin_bench` generates its inputs, so a size is the only parameter of a measurement. A baseline is a
+plain text file of `case<TAB>median nanoseconds` lines, and `--threshold` sets the percentage (default 25) a case
+may get slower before `--baseline` reports it. CI keeps the baseline in `actions/cache`, keyed by the runner OS
+and architecture, the pinned toolchain, and `Cargo.lock`, so only numbers from the same kind of machine are
+compared; a push to main records a new baseline, and a pull request compares against the last main run on that
+platform. `HANDOFF.md` records the first baseline and the meaning of the `--smoke` budgets.
 
 ## Error codes
 

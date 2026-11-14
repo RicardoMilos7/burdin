@@ -35,6 +35,14 @@ close-out checklist in `AGENTS.md`).
   LLVM tree (including the multiarch `libLLVM` it symlinks to), macOS caches the Homebrew bottle downloads, and
   Windows caches the unpacked official archive. `tests/check-ci.sh` fails if any of those caches goes missing
   (issue #46).
+- The compiler benchmarks gained regression tracking (issue #446): `cargo bench -p burdin_bench -- --save FILE`
+  records a run's medians in a plain-text baseline, and `--baseline FILE` compares a later run with it, reporting
+  every case more than `--threshold` percent slower (default 25) and exiting 1. `tests/bench-regression.sh` runs the
+  full suite, and every CI job records and compares a baseline kept in `actions/cache`, keyed by the runner OS and
+  architecture, the pinned toolchain, and `Cargo.lock`; a main push updates it and a pull request compares against
+  the last main run. The comparison is advisory until the runner numbers are stable. `tests/check-ci.sh` fails if
+  the step, the script, the cache, or the harness modes go missing, and `cargo test -p burdin_bench` covers the
+  baseline format and the threshold arithmetic.
 
 ## Unreleased — Stage 1
 

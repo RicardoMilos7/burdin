@@ -17,6 +17,9 @@
 #     toolchain and Cargo.lock, and cache LLVM 21: the installed tree on Linux, the
 #     Homebrew bottle downloads on macOS (issue #46);
 #   * the compiler benchmarks exist and CI runs their smoke budgets (issue #41);
+#   * every job runs the advisory benchmark regression check, keeps its baseline in a cache scoped to
+#     the runner, the pinned toolchain, and Cargo.lock, and records a new baseline on a push to main
+#     (issue #446);
 #   * a conformance test still exercises --link-lib LLVM-C;
 #   * the documentation check (which reads the driver contract in README.md) runs in both jobs.
 
@@ -140,6 +143,29 @@ check_caches() {   # $1 job, $2 block
     esac
 }
 
+# Benchmark regression tracking (issue #446). The baseline is restored from and saved to actions/cache with a
+# key that names the runner, the pinned toolchain, and Cargo.lock; the comparison is advisory, and only a push
+# to main records a new baseline.
+check_bench_regression() {   # $1 job, $2 block
+    local job=$1 block=$2
+    grep -qF 'actions/cache/restore@v4' <<< "$block" \
+        || add_problem "ci.yml: $job job: no step restores the benchmark baseline"
+    grep -qF 'actions/cache/save@v4' <<< "$block" \
+        || add_problem "ci.yml: $job job: no step saves the benchmark baseline"
+    grep -qF 'bench-${{ runner.os }}-${{ runner.arch }}-' <<< "$block" \
+        || add_problem "ci.yml: $job job: the benchmark baseline cache key does not name the runner"
+    grep -qF "hashFiles('rust-toolchain.toml', 'Cargo.lock')" <<< "$block" \
+        || add_problem "ci.yml: $job job: the benchmark baseline is not scoped to the toolchain and Cargo.lock"
+    grep -qF 'tests/bench-regression.sh' <<< "$block" \
+        || add_problem "ci.yml: $job job: does not run tests/bench-regression.sh"
+    grep -qF 'continue-on-error: true' <<< "$block" \
+        || add_problem "ci.yml: $job job: the benchmark regression step is not advisory"
+    grep -qF 'BURDIN_BENCH_UPDATE' <<< "$block" \
+        || add_problem "ci.yml: $job job: a main-branch push does not record the benchmark baseline"
+    grep -qF "github.ref == 'refs/heads/main'" <<< "$block" \
+        || add_problem "ci.yml: $job job: the benchmark baseline is saved outside main"
+}
+
 linux=$(job_block linux)
 macos=$(job_block macos)
 windows=$(job_block windows)
@@ -195,6 +221,7 @@ for job in linux macos windows; do
         'tests/check-ci.sh' \
         'tests/check-platform.sh' \
         'tests/check-docs.sh' \
+        'tests/bench-regression.sh' \
         'rustup toolchain install' \
         'rustc --version' \
         'cargo fmt --all --check' \
@@ -207,6 +234,7 @@ for job in linux macos windows; do
     done
     check_conformance "$job" "$block"
     check_caches "$job" "$block"
+    check_bench_regression "$job" "$block"
 done
 
 # The compiler benchmarks (issue #41): CI runs the smoke budgets, so the bench target, the crate that generates
@@ -224,6 +252,23 @@ if [ -f "$bench_target" ] && ! grep -qF '"--smoke"' "$bench_target"; then
     add_problem "crates/burdin_bench/benches/compiler.rs: no --smoke mode"
 fi
 
+# Benchmark regression tracking (issue #446): the harness must keep the modes the script uses to record and
+# compare a baseline, and the script must keep running that comparison and updating the baseline.
+bench_script=$ROOT/tests/bench-regression.sh
+[ -f "$bench_script" ] || add_problem "tests/bench-regression.sh: missing"
+if [ -f "$bench_target" ]; then
+    for mode in '"--save"' '"--baseline"' '"--threshold"'; do
+        grep -qF -- "$mode" "$bench_target" \
+            || add_problem "crates/burdin_bench/benches/compiler.rs: no $mode mode"
+    done
+fi
+if [ -f "$bench_script" ]; then
+    for word in '--save' '--baseline' '--threshold' 'BURDIN_BENCH_UPDATE'; do
+        grep -qF -- "$word" "$bench_script" \
+            || add_problem "tests/bench-regression.sh: does not use $word"
+    done
+fi
+
 # The m11 test is the one that proves --link-lib LLVM-C resolves in CI.
 if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"; then
     add_problem "tests/m11_llvm: no test uses //@ link-lib: LLVM-C"
@@ -237,7 +282,7 @@ elif ! grep -qF 'check-docs' "$ROOT/README.md"; then
 fi
 
 # Scripts CI invokes must exist, be executable, and have LF endings.
-for rel in tests/check-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh tests/check-docs.sh; do
+for rel in tests/check-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh tests/check-docs.sh tests/bench-regression.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"
