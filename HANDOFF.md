@@ -1,22 +1,22 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, and fifth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, and sixth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the fifth session (2026-11-14). **Milestones 1 to 5 are done**: all tests in `tests/m01_hello`
-through `tests/m05_ownership` pass in the debug and release profiles.
+Updated at the end of the sixth session (2026-11-14). **Milestones 1 to 6 are done**: all tests in `tests/m01_hello`
+through `tests/m06_conventions` pass in the debug and release profiles (95 tests; one m06 test is debug-only).
 
 | What | Where | Status |
 | --- | --- | --- |
 | Full language design | `Burdin Language Design.md` | Written. Local copy is newer than the one on claude.ai |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written. `Burdin Stage 0 Subset.md` in the root is an old export, safe to delete |
 | Grammar | `spec/grammar.md` | Parser follows it except generic arguments in expressions (rule 8.2). Items other than `interface`, `use`, `extern`, and `test` parse |
-| Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` implemented (milestone 5). Exclusivity, references, and views come in milestone 6 |
-| Conformance tests | `tests/` | 131 tests. 57 pass today: m01 to m05, and 5 in m06 |
+| Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6). All stage 0 memory rules are implemented |
+| Conformance tests | `tests/` | 131 tests. 95 pass today: m01 to m06 |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_sema`, `burdin_codegen`, `burdin_driver` (`burdin` binary) |
-| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push, heap allocation (`burdin_rt_alloc`, `burdin_rt_free`), number/char/str to `String`. Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `abort`). `cc` only links |
+| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push, heap allocation (`burdin_rt_alloc`, `burdin_rt_free`), number/char/str to `String`, `str` `starts_with` and `find` (byte offsets, UTF-8 aware). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `abort`). `cc` only links |
 | CI | `.github/workflows/ci.yml` | Linux only: check-tests, fmt, clippy, unit tests, conformance tests of finished milestones. Never run yet (no remote) |
 | LLVM | WSL: `/usr/lib/llvm-21` | LLVM 21.1.8 from Ubuntu 26.04 |
 
@@ -42,8 +42,8 @@ exact packages and how to call WSL from PowerShell.
 - Milestone 4 added tuples, structs, enums (unit, tuple, and struct variants), type aliases, and method blocks.
   Types and values are separate namespaces; `Point.new` and `Shape.Circle` resolve the left side as a type when no
   local or global value has that name. Methods are ordinary functions named `Type.method` with `self` first; `self` is
-  read-only and passed by value, `mut self` is passed by address (the callee's `self` is the caller's place) and needs
-  a mutable receiver (E0113). `own self` and `mut` named parameters are still E9000 (milestone 6); `own` named
+  read-only and passed by address, `mut self` is passed by address (the callee's `self` is the caller's place) and needs
+  a mutable receiver (E0113). `own self` and `mut` named parameters were E9000 until milestone 6; `own` named
   parameters pass ownership and are implemented (milestone 5).
   `Some(x)` and `None` build `Option` values (`None` needs an expected type). `if let` is checked as a two-arm `match`;
   `let` takes any pattern, which must be irrefutable (E0006) unless it has an `else` block that diverges. `for` also
@@ -61,10 +61,30 @@ exact packages and how to call WSL from PowerShell.
   dereference, moving a value out of `match *h`, and a moving pattern with a guard on a temporary scrutinee. It does
   not rewrite the tree; it returns the list of places read in a move context (`Function.moved`) for code generation. `Heap.new` builds `Heap<T>`; `String.new`, `String.from`, `push_str`, and
   `clone` are built-in methods.
+- Milestone 6 added the conventions, references, views, and exclusivity. Every parameter that is not `own` is passed by
+  address (`ParamSig.by_ref`); `own` is passed by value. That is what makes a returned view of a read-only, `mut`, or
+  `self` parameter refer to the caller's storage (RT1). `ParamSig.exclusive` separately marks the parameters whose
+  argument is borrowed exclusively for the call (`mut`, `own`, `mut self`), so passing by address does not make every
+  call exclusive (EX1).
+  `&T` and `&mut T` are pointers in code generation; `&T`, `str`, and `[T]` are `Copy`, `&mut T` is not (RF4: reading
+  through it or passing it where `&mut` is expected does not move it).
+  `burdin_sema/src/origins.rs` computes each signature's return origin (the single parameter a second-class result
+  derives from, if any) to a fixpoint and stores it in `ParamSig.ret_origin`; a result the signature cannot attribute
+  is checked against the body: E0121 at the signature for two or more sources, E0122 at the returned expression for a
+  local, an `own` parameter, or a temporary.
+  `burdin_sema/src/borrows.rs` is the borrow checker (RF2, RF3, RF5): a loan records the place, whether it is mutable,
+  and the locals that hold the reference, a copy of it, or a view derived from it; liveness is the last top-level
+  statement that uses a holder (conservative inside loops, no CFG needed); an overlapping read of a mutable loan, or
+  any overlapping write, `&mut`, or move while a loan is live is E0111. A call whose second-class result derives from
+  an argument keeps that argument borrowed until the result's last use. Exclusivity (EX1, EX2) is checked in
+  `burdin_sema` per call, receiver included, over the places each argument mentions (E0110). `match` on a reference or
+  a slice binds views (MV8), and the move checker rejects moving out of borrowed content with E0101.
+  Slicing `p[lo..hi]` works on arrays, `str`, `String`, and slices (bounds-checked, panicking on a bad range); `for`
+  iterates slices; `as_str`, `len`, `starts_with`, and `find` are built-in methods.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
-  `Heap<T>` is a `ptr`, `Option<T>` is `{ i1, T }`. Functions are `burdin.<name>`, and the generated `main` calls the
+  `Heap<T>` is a `ptr`, `&T` and `&mut T` are a `ptr`, `[T]` is `{ ptr, usize }` like `str`, `Option<T>` is `{ i1, T }`. Functions are `burdin.<name>`, and the generated `main` calls the
   program's `main`. Stack slots live in the `entry` block; after a terminator, generation continues in a fresh unreachable block.
   Overflow of `+ - *` and unary `-` panics in debug (LLVM `*.with.overflow`) and wraps in release; division by zero and
   out-of-range shifts always panic; `MIN / -1` panics in debug and wraps in release; float-to-int casts saturate
@@ -133,7 +153,18 @@ exact packages and how to call WSL from PowerShell.
     E9000 rather than miscompiled: moving a non-`Copy` value through indexing or a `Heap` dereference (a field of an
     array element or of the pointee), moving a value out of `match *h`, and a moving pattern with a guard on a
     temporary scrutinee. A `match` on an owned local or an `own` parameter is tracked normally. Revisit when m09's
-    `List`/`Map` and m06's references make these reachable.
+    `List`/`Map` make these reachable.
+11. **A view can outlive the storage it borrows from without a diagnostic.** No registry code covers it, and the spec
+    only states the function-return case (RT2). Examples: `let r = first_of(Pair { a: 1, b: 2 })` (the temporary drops
+    at the end of the `let`, DR5), `let r = { let p = Pair { a: 1, b: 2 }; first_of(p) }` (the source local dies with
+    the block), and `let t = "x".to_string().as_str()`. The borrow checker creates no loan for a temporary and has no
+    notion of a source's scope ending, and origin inference gives a temporary argument an empty origin. Decide the
+    rule and its error code first, then implement. E0122 at the binding is the closest code, but its registry text says
+    "returned".
+12. **`cargo fmt --all --check` fails on files this milestone did not touch** (for example
+    `crates/burdin_syntax/src/parser.rs`): the rustfmt from Rust 1.100 lays out some `matches!` calls differently from
+    when the tree was formatted. The five files touched in the sixth session are formatted. Either reformat the whole
+    tree in one commit or pin the toolchain, so the CI Format step can pass.
 
 ## Decided in the third session
 
@@ -176,14 +207,34 @@ exact packages and how to call WSL from PowerShell.
   drop flags of the paths its pattern moved back to initialized, so the scrutinee is dropped exactly once.
 - Temporaries drop in reverse creation order (DR5). `let _ = place` reads the place instead of moving it.
 
+## Decided in the sixth session
+
+- Calling convention: every parameter except `own` is passed by address; `own` is passed by value. That makes a
+  returned view of a read-only, `mut`, or `self` parameter refer to the caller's storage (RT1), and a `mut` or `own`
+  parameter still sees the caller's place. `ParamSig` keeps `by_ref` (how the value is passed) separate from
+  `exclusive` (whether the call borrows the argument exclusively), so the ABI does not make every call exclusive.
+- The borrow checker (`burdin_sema/src/borrows.rs`) is statement-granular and holder-based: a loan lives to the last
+  top-level statement that uses a local holding the reference, a copy of it, or a view derived from it. There is no
+  CFG and no scope tracking; it is conservative in loops (a loan used in a loop body is live for the whole loop). It
+  runs after the move checker and reports only E0111.
+- A call whose second-class result derives from an argument creates a derived loan (RF5) only when that parameter is
+  not `own`. A result derived from an `own` parameter is already E0122 in the callee, so skipping the loan avoids a
+  spurious E0111 in callers of code that is already rejected.
+- `str.starts_with` and `str.find` are generated runtime functions using `memcmp`. `find` encodes the char and returns
+  the byte offset of its first occurrence, or -1, so slicing with the result stays UTF-8 correct.
+- `match` on a reference or a slice binds its pattern as views (MV8): nothing is moved, and moving out of borrowed
+  content is E0101 from the move checker.
+- Assignment to a whole view-typed local (`r = &y`) ends the loans the local used to hold and gives it the new ones,
+  the same way a `let` does.
+
 ## What is left to do, in order
 
-1. Milestone 6 (`tests/m06_conventions`): `mut`, `own`, `&T`, `str`, `[T]`, references and views, exclusivity, and the
-   single-source return rule. Five tests in the folder already pass.
-2. Then milestones 7 to 11 in order. After each one, add its folder to the conformance step in `.github/workflows/ci.yml`.
-3. Known parser gaps to close in their milestones: generic arguments in expressions (`List<i32>.new()`, grammar rule 8.2,
-   needed by m07 and m09) and the `interface`, `use`, `extern`, and `test` items (m07, m08, m10). `Self` is not yet
-   accepted in expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
+1. Milestone 7 (`tests/m07_generics`): monomorphization, interfaces, `requires`, derives, and the orphan rule; the
+   generic stack and `max_of`; derived `Eq`, `Ord`, and `Hash`. The parser still needs generic arguments in expressions
+   (`List<i32>.new()`, grammar rule 8.2) for this milestone and m09.
+2. Then milestones 8 to 11 in order. After each one, add its folder to the conformance step in `.github/workflows/ci.yml`.
+3. Known parser and front-end gaps to close in their milestones: the `interface`, `use`, `extern`, and `test` items
+   (m07, m08, m10). `Self` is not yet accepted in expressions (`Self.new()`, `Self { ... }`); no test needs it so far.
 4. Push the repository to a remote so CI runs, and add a Windows job once the `cl` link path is tried.
 5. After the first real runs, review failing tests together with the assumptions list and settle each assumption in the spec.
 6. Before stage 1 (more features in the same Rust compiler, not a rewrite): the MIR interpreter question (comptime needs one),
@@ -194,6 +245,6 @@ exact packages and how to call WSL from PowerShell.
 
 Open the folder and say something like:
 
-> Read CLAUDE.md and HANDOFF.md. Continue with milestone 6.
+> Read CLAUDE.md and HANDOFF.md. Continue with milestone 7.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `HANDOFF.md`, and the `spec/` folder.

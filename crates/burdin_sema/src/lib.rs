@@ -677,11 +677,15 @@ fn fn_signature(f: &ast::FnDecl, self_ty: Option<&Ty>, globals: &Globals, diags:
                 params.push(match p.convention {
                     // A read-only parameter borrows the caller's place, so a view derived from it can be
                     // returned (RT1).
-                    ast::Convention::Read => ParamSig { ty, by_ref: true, mut_param: false, own: false, exclusive: false },
+                    ast::Convention::Read => {
+                        ParamSig { ty, by_ref: true, mut_param: false, own: false, exclusive: false }
+                    }
                     // The callee sees the caller's place, so it is passed by address and the call site
                     // marks it `mut` (CV2).
                     ast::Convention::Mut => ParamSig { ty, by_ref: true, mut_param: true, own: false, exclusive: true },
-                    ast::Convention::Own => ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true },
+                    ast::Convention::Own => {
+                        ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true }
+                    }
                 });
             }
         }
@@ -911,20 +915,10 @@ impl Globals {
     }
 
     /// The type a path with generic arguments stands for, as written in an expression (`List<i32>.new()`).
-    fn generic_type(
-        &self,
-        name: &ast::Ident,
-        args: &[ast::Type],
-        self_ty: Option<&Ty>,
-        diags: &mut Diagnostics,
-    ) -> Ty {
+    fn generic_type(&self, name: &ast::Ident, args: &[ast::Type], self_ty: Option<&Ty>, diags: &mut Diagnostics) -> Ty {
         let n = name.name.as_str();
         if self.types.contains_key(n) {
-            diags.error(
-                Code::UNSUPPORTED,
-                name.span,
-                "generic types are not implemented in this compiler yet",
-            );
+            diags.error(Code::UNSUPPORTED, name.span, "generic types are not implemented in this compiler yet");
             return Ty::Error;
         }
         match (n, args.len()) {
@@ -1154,9 +1148,7 @@ fn method_sig(m: Method, recv: &Ty) -> Option<(Vec<Ty>, Ty)> {
         (Method::Abs, Ty::Int(i)) if i.signed() => Some((vec![], recv.clone())),
         (Method::PushStr, Ty::String) => Some((vec![Ty::Str], Ty::Unit)),
         (Method::AsStr, Ty::String | Ty::Str) => Some((vec![], Ty::Str)),
-        (Method::Len, Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _)) => {
-            Some((vec![], Ty::Int(IntTy::Usize)))
-        }
+        (Method::Len, Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _)) => Some((vec![], Ty::Int(IntTy::Usize))),
         (Method::StartsWith, Ty::Str | Ty::String) => Some((vec![Ty::Str], Ty::Bool)),
         (Method::Find, Ty::Str | Ty::String) => Some((vec![Ty::Char], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))),
         _ => None,
@@ -1173,14 +1165,24 @@ fn place_root(e: &tir::Expr) -> Option<LocalId> {
     }
 }
 
-/// Whether an expression is a place: a local followed by fields, indexing, and dereferences.
+/// Whether a place expression reaches through a reference or a slice, so its storage belongs to another value.
+fn through_view(e: &tir::Expr) -> bool {
+    match &e.kind {
+        tir::ExprKind::DerefRef(_) => true,
+        tir::ExprKind::Index(base, _) => through_view(base) || matches!(base.ty, Ty::Slice(_)),
+        tir::ExprKind::Field(base, _) => through_view(base),
+        _ => false,
+    }
+}
+
+/// Whether an expression is a place: a local followed by fields, indexing, and dereferences. A reference
+/// dereference is always a place: it names the referent, whatever expression produced the reference.
 fn is_place_expr(e: &tir::Expr) -> bool {
     match &e.kind {
-        tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _)
-        | tir::ExprKind::Index(base, _)
-        | tir::ExprKind::Deref(base)
-        | tir::ExprKind::DerefRef(base) => is_place_expr(base),
+        tir::ExprKind::Local(_) | tir::ExprKind::DerefRef(_) => true,
+        tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => {
+            is_place_expr(base)
+        }
         _ => false,
     }
 }
@@ -1206,11 +1208,14 @@ fn tir_place(e: &tir::Expr) -> Option<(LocalId, Vec<usize>, bool)> {
     }
 }
 
+/// A place as the exclusivity check compares them: the local at its root and the field path below it.
+type Place = (LocalId, Vec<usize>);
+
 /// Every place an expression mentions (EX1). Index expressions and the parts of compound expressions are
 /// visited too; a place on its own contributes its truncated place.
-fn place_mentions(e: &tir::Expr, out: &mut Vec<(LocalId, Vec<usize>)>) {
+fn place_mentions(e: &tir::Expr, out: &mut Vec<Place>) {
     use tir::ExprKind as K;
-    let record = |e: &tir::Expr, out: &mut Vec<(LocalId, Vec<usize>)>| {
+    let record = |e: &tir::Expr, out: &mut Vec<Place>| {
         if let Some((root, path, _)) = tir_place(e) {
             out.push((root, path));
         }
@@ -1313,7 +1318,7 @@ fn place_mentions(e: &tir::Expr, out: &mut Vec<(LocalId, Vec<usize>)>) {
     }
 }
 
-fn place_mentions_block(b: &tir::Block, out: &mut Vec<(LocalId, Vec<usize>)>) {
+fn place_mentions_block(b: &tir::Block, out: &mut Vec<Place>) {
     for s in &b.stmts {
         match s {
             tir::Stmt::Let(_, init, _) => place_mentions(init, out),
@@ -1426,8 +1431,12 @@ impl<'a> FnCx<'a> {
     }
 
     /// Whether a pattern matching `e` takes ownership of it: a place rooted at an owned local, or a temporary.
-    /// A place rooted at a read-only or `mut` parameter (or a view) is only borrowed.
+    /// A place rooted at a read-only or `mut` parameter (or a view), or reached through a reference or a slice,
+    /// is only borrowed (MV8).
     fn owns_scrutinee(&self, e: &tir::Expr) -> bool {
+        if through_view(e) {
+            return false;
+        }
         match place_root(e) {
             Some(root) => matches!(self.locals[root.0].kind, LocalKind::Owned | LocalKind::OwnParam),
             None => true,
@@ -2158,12 +2167,8 @@ impl<'a> FnCx<'a> {
                 );
             } else if !self.place_mutable(&place) {
                 let name = place_root(&place).map(|root| self.locals[root.0].name.clone());
-                let whose = name.map(|n| format!("{n}")).unwrap_or_else(|| "this place".to_string());
-                self.diags.error(
-                    Code::IMMUTABLE,
-                    lhs.span,
-                    format!("cannot assign to `{whose}`: it is not mutable"),
-                );
+                let whose = name.unwrap_or_else(|| "this place".to_string());
+                self.diags.error(Code::IMMUTABLE, lhs.span, format!("cannot assign to `{whose}`: it is not mutable"));
             }
         }
         mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)
@@ -2333,6 +2338,7 @@ impl<'a> FnCx<'a> {
         let (params, ret, target) = match &callee.kind {
             ast::ExprKind::Name { name: id, args: type_args }
                 if type_args.is_empty() && self.lookup(&id.name).is_none() =>
+            {
                 match self.globals.names.get(&id.name) {
                     Some(Global::Func(f)) => {
                         let f = *f;
@@ -2358,7 +2364,8 @@ impl<'a> FnCx<'a> {
                             return self.args_then_error(args, span);
                         }
                     },
-                },
+                }
+            }
             _ => {
                 self.unsupported(callee.span, "calling this expression");
                 return self.args_then_error(args, span);
@@ -2463,7 +2470,7 @@ impl<'a> FnCx<'a> {
         args: &[tir::Expr],
         span: Span,
     ) {
-        let mut entries: Vec<(bool, Vec<(LocalId, Vec<usize>)>)> = Vec::new();
+        let mut entries: Vec<(bool, Vec<Place>)> = Vec::new();
         if let Some((receiver, exclusive)) = receiver {
             let mut places = Vec::new();
             place_mentions(receiver, &mut places);
@@ -2611,6 +2618,13 @@ impl<'a> FnCx<'a> {
 
     /// `Type.function(...)` or `Enum.Variant(...)`.
     fn assoc_call(&mut self, ty: &Ty, name: &ast::Ident, args: &[ast::Arg], span: Span) -> tir::Expr {
+        // The type already failed to resolve; do not report a second error for its associated items.
+        if *ty == Ty::Error {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            return error_expr(span);
+        }
         // The associated functions of `String` (the only built-in type with any so far).
         if *ty == Ty::String {
             let b = match name.name.as_str() {

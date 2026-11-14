@@ -72,8 +72,8 @@ pub(crate) fn check(globals: &mut Globals, functions: &mut [tir::Function], diag
         };
         functions[i].ret_origin = globals.sigs[i].ret_origin;
         if functions[i].ret.is_second_class() && origin.params.len() > 1 {
-            let names: Vec<String> =
-                origin.params.iter().map(|i| functions[*i].locals[functions[*i].params[*i].0].name.clone()).collect();
+            let f = &functions[i];
+            let names: Vec<String> = origin.params.iter().map(|p| f.locals[f.params[*p].0].name.clone()).collect();
             diags.error(
                 Code::RETURN_MULTIPLE_ORIGINS,
                 functions[i].span,

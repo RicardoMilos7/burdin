@@ -55,15 +55,8 @@ pub(crate) fn check(f: &tir::Function, globals: &Globals, diags: &mut Diagnostic
     if let Some(tail) = &f.body.tail {
         uses_expr(tail, f.body.stmts.len(), &mut last_use);
     }
-    let mut cx = Checker {
-        globals,
-        locals: &f.locals,
-        last_use,
-        loans: Vec::new(),
-        stmt: 0,
-        reported: Vec::new(),
-        diags,
-    };
+    let mut cx =
+        Checker { globals, locals: &f.locals, last_use, loans: Vec::new(), stmt: 0, reported: Vec::new(), diags };
     cx.body(&f.body);
 }
 
@@ -304,13 +297,22 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Assign(place, value) => {
+                let start = self.loans.len();
                 self.expr(value, Mode::Move);
                 if let Some((root, path, _)) = crate::tir_place(place)
                     && path.is_empty()
                 {
-                    // The local no longer holds the old value: the loans it held may end here.
+                    // The local no longer holds the old value: the loans it held may end here. A new
+                    // reference or view stored in it is held by it (as in a `let`).
                     for loan in &mut self.loans {
                         loan.holders.retain(|h| *h != root);
+                    }
+                    if self.locals[root.0].ty.is_second_class() {
+                        for loan in &mut self.loans[start..] {
+                            if !loan.holders.contains(&root) {
+                                loan.holders.push(root);
+                            }
+                        }
                     }
                 }
                 self.access_place(place, Access::Write);
@@ -356,6 +358,9 @@ impl<'a> Checker<'a> {
         if sig.ret.is_second_class()
             && let Some(index) = sig.ret_origin
             && let Some(param) = sig.params.get(index)
+            // A result that derives from an `own` parameter borrows from a value the callee drops, which the
+            // origin check already rejects (RT2).
+            && !param.own
             && let Some(arg) = args.get(index)
         {
             let mutable = param.exclusive || matches!(sig.ret, Ty::Ref { mutable: true, .. });

@@ -43,6 +43,10 @@ pub(crate) struct Runtime<'ctx> {
     pub u64_to_string: FunctionValue<'ctx>,
     /// `(c: i32, out: *String)`
     pub char_to_string: FunctionValue<'ctx>,
+    /// `(ptr, len: usize, prefix, prefix_len: usize) -> i1`: whether the string starts with `prefix`.
+    pub str_starts_with: FunctionValue<'ctx>,
+    /// `(ptr, len: usize, c: i32) -> i64`: the byte index of the first `c`, or -1.
+    pub str_find_char: FunctionValue<'ctx>,
 }
 
 /// Generates the runtime into `module`. `windows` selects the Windows CRT functions.
@@ -147,6 +151,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             i64_to_string: self.int_to_string(&h, true)?,
             u64_to_string: self.int_to_string(&h, false)?,
             char_to_string: self.char_to_string(&h)?,
+            str_starts_with: self.str_starts_with()?,
+            str_find_char: self.str_find_char()?,
         })
     }
 
@@ -704,12 +710,27 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
     /// `char_to_string(c: i32, out: *String)`: the UTF-8 encoding of a Unicode scalar value.
     fn char_to_string(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
-        let (i8_ty, i32_ty, usize_ty) = (self.i8(), self.i32(), self.usize_ty);
+        let i32_ty = self.i32();
         let void = self.cx.void_type();
         let f = self.function("burdin_rt_char_to_string", void.fn_type(&[i32_ty.into(), self.ptr_ty.into()], false));
         let buf = self.buffer(4)?;
         let c = Self::int_param(f, 0);
-        let join = self.block(f, "join");
+        let len = self.utf8_encode(f, c, buf)?;
+        let args = [Self::ptr_param(f, 1).into(), buf.into(), len.into()];
+        self.call(h.alloc_string, &args)?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// Writes the UTF-8 encoding of `c` into `buf` (four bytes) and returns its length (1 to 4).
+    fn utf8_encode(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        c: IntValue<'ctx>,
+        buf: PointerValue<'ctx>,
+    ) -> GenResult<IntValue<'ctx>> {
+        let (i8_ty, i32_ty, usize_ty) = (self.i8(), self.i32(), self.usize_ty);
+        let join = self.block(f, "utf8.join");
         // (encoded length, smallest code point that needs the next length, leading-byte marker)
         let cases: [(u32, u64, u64); 4] = [(1, 0x80, 0x00), (2, 0x800, 0xC0), (3, 0x10000, 0xE0), (4, 0, 0xF0)];
         let mut incoming = Vec::new();
@@ -749,15 +770,101 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             incoming.push((usize_ty.const_int(u64::from(n), false), encode));
             self.b.position_at_end(test);
         }
-        // The last test block already branches to the 4-byte case.
         self.b.position_at_end(join);
         let len = self.b.build_phi(usize_ty, "len").map_err(llvm_err)?;
         for (v, bb) in &incoming {
             len.add_incoming(&[(v, *bb)]);
         }
-        let args = [Self::ptr_param(f, 1).into(), buf.into(), len.as_basic_value().into()];
-        self.call(h.alloc_string, &args)?;
-        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(len.as_basic_value().into_int_value())
+    }
+
+    /// `str_starts_with(ptr, len: usize, prefix, prefix_len: usize) -> i1`
+    fn str_starts_with(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let memcmp =
+            libc(self.module, "memcmp", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let bool_ty = self.cx.bool_type();
+        let f = self.function(
+            "burdin_rt_str_starts_with",
+            bool_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()], false),
+        );
+        let (ptr, len, prefix, prefix_len) =
+            (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
+        let check = self.block(f, "check");
+        let no = self.block(f, "no");
+        let done = self.block(f, "done");
+        let fits = self.b.build_int_compare(IntPredicate::ULE, prefix_len, len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(fits, check, no).map_err(llvm_err)?;
+
+        self.b.position_at_end(check);
+        let r = self.call(memcmp, &[ptr.into(), prefix.into(), prefix_len.into()])?.expect("memcmp returns int");
+        let eq = self
+            .b
+            .build_int_compare(IntPredicate::EQ, r.into_int_value(), i32_ty.const_zero(), "")
+            .map_err(llvm_err)?;
+        let check_end = self.b.get_insert_block().expect("positioned");
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(no);
+        let no_end = self.b.get_insert_block().expect("positioned");
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        let phi = self.b.build_phi(bool_ty, "starts_with").map_err(llvm_err)?;
+        phi.add_incoming(&[(&eq, check_end), (&bool_ty.const_zero(), no_end)]);
+        self.b.build_return(Some(&phi.as_basic_value())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `str_find_char(ptr, len: usize, c: i32) -> i64`: the byte index of the first `c`, or -1. The char is
+    /// encoded and searched for, so the result is a byte offset that slicing can use.
+    fn str_find_char(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i64());
+        let memcmp =
+            libc(self.module, "memcmp", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let f = self.function(
+            "burdin_rt_str_find_char",
+            i64_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), i32_ty.into()], false),
+        );
+        let (ptr, len, c) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::int_param(f, 2));
+        let enc = self.buffer(4)?;
+        let n = self.utf8_encode(f, c, enc)?;
+        let start = self.b.get_insert_block().expect("positioned");
+
+        let search = self.block(f, "search");
+        let test = self.block(f, "test");
+        let after = self.block(f, "next");
+        let found = self.block(f, "found");
+        let missing = self.block(f, "missing");
+        self.b.build_unconditional_branch(search).map_err(llvm_err)?;
+
+        self.b.position_at_end(search);
+        let i = self.b.build_phi(usize_ty, "i").map_err(llvm_err)?;
+        let i_v = i.as_basic_value().into_int_value();
+        let end = self.b.build_int_add(i_v, n, "").map_err(llvm_err)?;
+        let enough = self.b.build_int_compare(IntPredicate::ULE, end, len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(enough, test, missing).map_err(llvm_err)?;
+
+        self.b.position_at_end(test);
+        let at = self.offset(ptr, i_v)?;
+        let r = self.call(memcmp, &[at.into(), enc.into(), n.into()])?.expect("memcmp returns int");
+        let eq = self
+            .b
+            .build_int_compare(IntPredicate::EQ, r.into_int_value(), i32_ty.const_zero(), "")
+            .map_err(llvm_err)?;
+        let next = self.b.build_int_add(i_v, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(eq, found, after).map_err(llvm_err)?;
+
+        self.b.position_at_end(after);
+        self.b.build_unconditional_branch(search).map_err(llvm_err)?;
+        i.add_incoming(&[(&usize_ty.const_zero(), start), (&next, after)]);
+
+        self.b.position_at_end(found);
+        let at = self.b.build_int_z_extend(i_v, i64_ty, "").map_err(llvm_err)?;
+        self.b.build_return(Some(&at)).map_err(llvm_err)?;
+
+        self.b.position_at_end(missing);
+        self.b.build_return(Some(&i64_ty.const_all_ones())).map_err(llvm_err)?;
         Ok(f)
     }
 }

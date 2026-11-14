@@ -84,7 +84,10 @@ pub enum Ty {
     Str,
     String,
     /// A shared (`&T`) or mutable (`&mut T`) reference. The value is the address of the referent.
-    Ref { mutable: bool, inner: Box<Ty> },
+    Ref {
+        mutable: bool,
+        inner: Box<Ty>,
+    },
     /// `[T]`: a slice view, a pointer and a length.
     Slice(Box<Ty>),
     Array(Box<Ty>, u64),
