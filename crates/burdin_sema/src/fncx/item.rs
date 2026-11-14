@@ -1,0 +1,112 @@
+//! The entry points of body checking: one constant, or one function.
+
+use super::FnCx;
+use crate::consts::is_const_expr;
+use crate::globals::Globals;
+use crate::session::FnItem;
+use crate::types::compatible;
+use burdin_diag::{Code, Diagnostics};
+use burdin_syntax::ast;
+use burdin_tir::{self as tir, LocalKind, Signature, Ty};
+
+/// Checks the value of a constant against its declared type.
+pub(crate) fn check_const(globals: &Globals, decl: &ast::ConstDecl, ty: &Ty, diags: &mut Diagnostics) -> tir::Const {
+    let mut cx = FnCx::new(globals, diags, Ty::Unit, None);
+    let value = cx.expr(&decl.value, Some(ty));
+    let value = cx.expect_ty(value, ty);
+    if !is_const_expr(&value) {
+        cx.diags.error(
+            Code::UNSUPPORTED,
+            decl.value.span,
+            "only literals, other constants, operators, and casts are allowed in a constant for now",
+        );
+    }
+    tir::Const { name: decl.name.name.clone(), value }
+}
+
+/// A function without code. A symbolic function is checked against its bounds and then replaced by one of these:
+/// only its diagnostics matter.
+fn stub(item: &FnItem) -> tir::Function {
+    tir::Function {
+        name: item.name.clone(),
+        span: item.decl.span,
+        params: Vec::new(),
+        ret: Ty::Unit,
+        locals: Vec::new(),
+        body: tir::Block { stmts: Vec::new(), tail: None },
+        moved: Vec::new(),
+        ret_origin: None,
+        symbolic: true,
+    }
+}
+
+/// Checks the body of one function against its signature.
+pub(crate) fn check_function(
+    globals: &Globals,
+    item: &FnItem,
+    sig: &Signature,
+    diags: &mut Diagnostics,
+) -> tir::Function {
+    if !item.check_body {
+        return stub(item);
+    }
+    let f = item.decl;
+    let ret = sig.ret.clone();
+    let mut cx = FnCx::new(globals, diags, ret.clone(), item.self_ty.clone());
+    cx.subst = item.subst.clone();
+    cx.bounds = item.bounds.clone();
+    let params = cx.declare_params(f, sig);
+    let (body, body_ty) = cx.block(&f.body, Some(&ret));
+    if !compatible(&body_ty, &ret) {
+        let span = match f.body.stmts.last() {
+            Some(ast::Stmt::Expr(e)) => e.span,
+            Some(ast::Stmt::Let { span, .. }) => *span,
+            None => f.body.span,
+        };
+        cx.diags.error(
+            Code::TYPE_MISMATCH,
+            span,
+            format!("`{}` returns `{ret}`, but its body produces `{body_ty}`", item.name),
+        );
+    }
+    if item.symbolic {
+        return stub(item);
+    }
+    tir::Function {
+        name: item.name.clone(),
+        span: f.span,
+        params,
+        ret,
+        locals: cx.locals,
+        body,
+        moved: Vec::new(),
+        ret_origin: None,
+        symbolic: false,
+    }
+}
+
+impl FnCx<'_> {
+    /// Declares the parameters of `f` as locals, with the conventions its signature gave them.
+    fn declare_params(&mut self, f: &ast::FnDecl, sig: &Signature) -> Vec<tir::LocalId> {
+        let mut params = Vec::new();
+        let mut sig_params = sig.params.iter();
+        for p in &f.params {
+            let (name, mutable) = match &p.kind {
+                ast::ParamKind::Named { name, .. } => (name.name.as_str(), p.convention == ast::Convention::Mut),
+                ast::ParamKind::SelfParam if sig.has_self && params.is_empty() => {
+                    ("self", p.convention == ast::Convention::Mut)
+                }
+                ast::ParamKind::SelfParam => continue,
+            };
+            let Some(ps) = sig_params.next() else { break };
+            let kind = if ps.own { LocalKind::OwnParam } else { LocalKind::BorrowedParam };
+            let id = self.declare(name, ps.ty.clone(), mutable, kind);
+            self.locals[id.0].by_ref = ps.by_ref;
+            if name == "self" {
+                self.self_local = Some(id);
+            }
+            params.push(id);
+        }
+        params
+    }
+}

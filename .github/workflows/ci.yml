@@ -41,4 +41,4 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: tests/run-tests.sh m01 m02 m03 m04 m05 m06
+        run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07

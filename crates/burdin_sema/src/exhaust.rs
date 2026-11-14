@@ -4,13 +4,7 @@
 //! Integers and characters use ranges as constructors. A column of ranges is split at every range boundary into
 //! segments that lie entirely inside or outside each range, and those segments are the constructors to try.
 
-use crate::tir::{EnumDef, Pat, StructDef, Ty};
-
-/// The type definitions the algorithm needs to know the fields of structs and enum variants.
-pub struct Adts<'a> {
-    pub structs: &'a [StructDef],
-    pub enums: &'a [EnumDef],
-}
+use burdin_tir::{Pat, Ty, TypeDefs};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Ctor {
@@ -47,13 +41,13 @@ fn lower(p: &Pat) -> P {
 }
 
 /// Whether the patterns together match every value of `ty`.
-pub fn exhaustive(ty: &Ty, pats: &[&Pat], adts: &Adts) -> bool {
+pub fn exhaustive(ty: &Ty, pats: &[&Pat], adts: &TypeDefs) -> bool {
     let rows: Vec<Vec<P>> = pats.iter().map(|p| vec![lower(p)]).collect();
     !missing(rows, std::slice::from_ref(ty), adts)
 }
 
 /// Whether some vector of values of types `tys` matches none of `rows`.
-fn missing(rows: Vec<Vec<P>>, tys: &[Ty], adts: &Adts) -> bool {
+fn missing(rows: Vec<Vec<P>>, tys: &[Ty], adts: &TypeDefs) -> bool {
     let Some((first, rest)) = tys.split_first() else { return rows.is_empty() };
     let rows = expand_or(rows);
     let heads: Vec<Ctor> =
@@ -114,7 +108,7 @@ fn specialize(rows: &[Vec<P>], c: Ctor, arity: usize) -> Vec<Vec<P>> {
 }
 
 /// The types of the fields of constructor `c` of `ty`.
-fn sub_tys(ty: &Ty, c: Ctor, adts: &Adts) -> Vec<Ty> {
+fn sub_tys(ty: &Ty, c: Ctor, adts: &TypeDefs) -> Vec<Ty> {
     match (ty, c) {
         (Ty::Option(inner), Ctor::Variant(1)) => vec![(**inner).clone()],
         (Ty::Tuple(elems), Ctor::Single) => elems.clone(),
@@ -126,7 +120,7 @@ fn sub_tys(ty: &Ty, c: Ctor, adts: &Adts) -> Vec<Ty> {
 
 /// If the constructors in `heads` cover every value of `ty`, the constructors to try (all of them, or the
 /// segments of the split ranges). `None` when some value is left out, so only the default matrix matters.
-fn complete_ctors(ty: &Ty, heads: &[Ctor], adts: &Adts) -> Option<Vec<Ctor>> {
+fn complete_ctors(ty: &Ty, heads: &[Ctor], adts: &TypeDefs) -> Option<Vec<Ctor>> {
     let has = |c: Ctor| heads.contains(&c);
     match ty {
         Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) => Some(vec![Ctor::Single]),

@@ -21,6 +21,7 @@ pub enum Item {
     Enum(EnumDecl),
     TypeAlias(TypeAliasDecl),
     Impl(ImplBlock),
+    Interface(InterfaceDecl),
 }
 
 #[derive(Debug)]
@@ -70,6 +71,25 @@ pub struct TypeAliasDecl {
     pub generics: Vec<GenericParam>,
     pub ty: Type,
     pub span: Span,
+}
+
+/// `interface Name requires A + B { fn ...  fn ... { default body } }`.
+#[derive(Debug)]
+pub struct InterfaceDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub requires: Vec<Type>,
+    pub methods: Vec<InterfaceFn>,
+    pub span: Span,
+}
+
+/// A method of an interface. A method with a body is a default method; otherwise `decl.body` is empty and
+/// `has_body` is false.
+#[derive(Debug)]
+pub struct InterfaceFn {
+    pub decl: FnDecl,
+    pub has_body: bool,
 }
 
 /// `Type { fn ... }` or `Type: Interface { fn ... }`.

@@ -1,0 +1,283 @@
+//! Assignment and the unary and binary operators.
+
+use super::{FnCx, error_expr, mk};
+use crate::generics::Bound;
+use crate::types::compatible;
+use burdin_diag::{Code, Span};
+use burdin_syntax::ast;
+use burdin_tir::place::{is_place_expr, place_root};
+use burdin_tir::{self as tir, BinOp, IntTy, Ty, UnOp};
+
+impl FnCx<'_> {
+    pub(super) fn assign(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> tir::Expr {
+        let place = self.expr(lhs, None);
+        let rhs = self.expr(rhs, Some(&place.ty));
+        let rhs = self.expect_ty(rhs, &place.ty);
+        if place.ty != Ty::Error {
+            if !is_place_expr(&place) {
+                self.diags.error(
+                    Code::IMMUTABLE,
+                    lhs.span,
+                    "the left side of `=` is not a variable or an element of one",
+                );
+            } else if !self.place_mutable(&place) {
+                let name = place_root(&place).map(|root| self.locals[root.0].name.clone());
+                let whose = name.unwrap_or_else(|| "this place".to_string());
+                self.diags.error(Code::IMMUTABLE, lhs.span, format!("cannot assign to `{whose}`: it is not mutable"));
+            }
+        }
+        mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)
+    }
+
+    /// Checks two operands that must have the same type. A literal on the left takes its type from the right.
+    pub(super) fn operands(&mut self, l: &ast::Expr, r: &ast::Expr, hint: Option<&Ty>) -> (tir::Expr, tir::Expr) {
+        let numeric_hint = hint.filter(|t| t.is_numeric());
+        if numeric_hint.is_none() && is_untyped_literal(l) && !is_untyped_literal(r) {
+            let r = self.expr(r, None);
+            let h = if r.ty.is_numeric() { Some(r.ty.clone()) } else { None };
+            let l = self.expr(l, h.as_ref());
+            return (l, r);
+        }
+        let l = self.expr(l, numeric_hint);
+        let h = if l.ty.is_numeric() { Some(l.ty.clone()) } else { numeric_hint.cloned() };
+        let r = self.expr(r, h.as_ref());
+        (l, r)
+    }
+
+    pub(super) fn binary(
+        &mut self,
+        op: ast::BinOp,
+        l: &ast::Expr,
+        r: &ast::Expr,
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        use ast::BinOp as B;
+        let op_name = op_text(op);
+        match op {
+            B::And | B::Or => {
+                let l = self.expr(l, Some(&Ty::Bool));
+                let l = self.expect_ty(l, &Ty::Bool);
+                let r = self.expr(r, Some(&Ty::Bool));
+                let r = self.expect_ty(r, &Ty::Bool);
+                mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), Ty::Bool, span)
+            }
+            B::Shl | B::Shr => {
+                let l = self.expr(l, expect.filter(|t| t.is_int()));
+                let r = self.expr(r, if l.ty.is_int() { Some(&l.ty) } else { None });
+                for operand in [&l, &r] {
+                    if !matches!(operand.ty, Ty::Int(_) | Ty::Error | Ty::Never) {
+                        self.diags.error(
+                            Code::TYPE_MISMATCH,
+                            operand.span,
+                            format!("`{op_name}` needs integer operands, found `{}`", operand.ty),
+                        );
+                    }
+                }
+                let ty = l.ty.clone();
+                mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), ty, span)
+            }
+            _ => {
+                let comparison = matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge);
+                let (l, r) = self.operands(l, r, if comparison { None } else { expect });
+                let ty = if l.ty == Ty::Never { r.ty.clone() } else { l.ty.clone() };
+                if !compatible(&r.ty, &ty) {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        r.span,
+                        format!("`{op_name}` needs operands of the same type, found `{}` and `{}`", l.ty, r.ty),
+                    );
+                    return error_expr(span);
+                }
+                let ok = match op {
+                    B::Add | B::Sub | B::Mul | B::Div | B::Rem => ty.is_numeric(),
+                    B::BitAnd | B::BitOr | B::BitXor => matches!(ty, Ty::Int(_) | Ty::Bool),
+                    B::Eq | B::Ne => self.globals.has_eq(&ty) || self.param_has(&ty, Bound::Eq),
+                    B::Lt | B::Gt | B::Le | B::Ge => {
+                        matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char)
+                            || self.globals.has_ord(&ty)
+                            || self.param_has(&ty, Bound::Ord)
+                    }
+                    _ => unreachable!("handled above"),
+                };
+                if !ok && !matches!(ty, Ty::Error | Ty::Never) {
+                    if matches!(ty, Ty::Str | Ty::String) && comparison {
+                        return self.unsupported(span, "comparing strings");
+                    }
+                    if let Ty::Param(_) = ty {
+                        self.diags.error(
+                            Code::BOUND_NOT_SATISFIED,
+                            span,
+                            format!("`{op_name}` is not available on `{ty}`: its bounds do not provide it"),
+                        );
+                        return error_expr(span);
+                    }
+                    self.diags.error(Code::TYPE_MISMATCH, span, format!("`{op_name}` cannot be applied to `{ty}`"));
+                    return error_expr(span);
+                }
+                let result = if comparison { Ty::Bool } else { ty };
+                mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), result, span)
+            }
+        }
+    }
+
+    pub(super) fn unary(&mut self, op: ast::UnOp, operand: &ast::Expr, expect: Option<&Ty>, span: Span) -> tir::Expr {
+        match op {
+            ast::UnOp::Neg => {
+                // A minus sign directly before a literal is part of the literal's value, so `-128` fits in `i8`.
+                match &operand.kind {
+                    ast::ExprKind::Int(v) => {
+                        if let Some(Ty::Int(i)) = expect
+                            && !i.signed()
+                        {
+                            self.diags.error(Code::TYPE_MISMATCH, span, format!("cannot negate a `{}`", i.name()));
+                            return error_expr(span);
+                        }
+                        return self.int_literal(*v, true, expect, span);
+                    }
+                    ast::ExprKind::Float(text) => return self.float_literal(text, true, expect, span),
+                    _ => {}
+                }
+                let e = self.expr(operand, expect.filter(|t| t.is_numeric()));
+                let ok = match &e.ty {
+                    Ty::Int(i) => i.signed(),
+                    Ty::Float(_) | Ty::Error | Ty::Never => true,
+                    _ => false,
+                };
+                if !ok {
+                    self.diags.error(Code::TYPE_MISMATCH, span, format!("cannot negate a `{}`", e.ty));
+                    return error_expr(span);
+                }
+                let ty = e.ty.clone();
+                mk(tir::ExprKind::Unary(UnOp::Neg, Box::new(e)), ty, span)
+            }
+            ast::UnOp::Not => {
+                let e = self.expr(operand, expect.filter(|t| t.is_int() || **t == Ty::Bool));
+                if !matches!(e.ty, Ty::Bool | Ty::Int(_) | Ty::Error | Ty::Never) {
+                    self.diags.error(Code::TYPE_MISMATCH, span, format!("`!` cannot be applied to `{}`", e.ty));
+                    return error_expr(span);
+                }
+                let ty = e.ty.clone();
+                mk(tir::ExprKind::Unary(UnOp::Not, Box::new(e)), ty, span)
+            }
+            ast::UnOp::Deref => {
+                let e = self.expr(operand, None);
+                match &e.ty {
+                    Ty::Heap(inner) => {
+                        let inner = (**inner).clone();
+                        mk(tir::ExprKind::Deref(Box::new(e)), inner, span)
+                    }
+                    Ty::Ref { inner, .. } => {
+                        let inner = (**inner).clone();
+                        mk(tir::ExprKind::DerefRef(Box::new(e)), inner, span)
+                    }
+                    Ty::Error | Ty::Never => error_expr(span),
+                    other => {
+                        self.diags.error(
+                            Code::TYPE_MISMATCH,
+                            span,
+                            format!("cannot dereference a `{other}`; `*` applies to `Heap<T>` and references"),
+                        );
+                        error_expr(span)
+                    }
+                }
+            }
+            ast::UnOp::Ref | ast::UnOp::RefMut => {
+                let mutable = op == ast::UnOp::RefMut;
+                let place = self.expr(operand, None);
+                if place.ty == Ty::Error {
+                    return error_expr(span);
+                }
+                if !is_place_expr(&place) {
+                    self.diags.error(Code::TYPE_MISMATCH, span, "`&` needs a place to borrow");
+                    return error_expr(span);
+                }
+                if mutable && !self.place_mutable(&place) {
+                    self.diags.error(
+                        Code::MUT_OF_IMMUTABLE,
+                        span,
+                        "cannot take a mutable reference to a place that is not mutable",
+                    );
+                }
+                let ty = Ty::Ref { mutable, inner: Box::new(place.ty.clone()) };
+                mk(tir::ExprKind::Ref { place: Box::new(place), mutable }, ty, span)
+            }
+        }
+    }
+}
+
+/// An expression whose type comes only from its context: a literal, or operators applied to literals.
+pub(super) fn is_untyped_literal(e: &ast::Expr) -> bool {
+    use ast::ExprKind as K;
+    match &e.kind {
+        K::Int(_) | K::Float(_) => true,
+        K::Unary(ast::UnOp::Neg | ast::UnOp::Not, a) => is_untyped_literal(a),
+        K::Binary(op, a, b) => is_arith(*op) && is_untyped_literal(a) && is_untyped_literal(b),
+        _ => false,
+    }
+}
+
+pub(super) fn is_arith(op: ast::BinOp) -> bool {
+    use ast::BinOp as B;
+    matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Rem | B::BitAnd | B::BitOr | B::BitXor)
+}
+
+pub(super) fn bin_op(op: ast::BinOp) -> BinOp {
+    use ast::BinOp as B;
+    match op {
+        B::Or => BinOp::Or,
+        B::And => BinOp::And,
+        B::Eq => BinOp::Eq,
+        B::Ne => BinOp::Ne,
+        B::Lt => BinOp::Lt,
+        B::Gt => BinOp::Gt,
+        B::Le => BinOp::Le,
+        B::Ge => BinOp::Ge,
+        B::BitOr => BinOp::BitOr,
+        B::BitXor => BinOp::BitXor,
+        B::BitAnd => BinOp::BitAnd,
+        B::Shl => BinOp::Shl,
+        B::Shr => BinOp::Shr,
+        B::Add => BinOp::Add,
+        B::Sub => BinOp::Sub,
+        B::Mul => BinOp::Mul,
+        B::Div => BinOp::Div,
+        B::Rem => BinOp::Rem,
+    }
+}
+
+pub(super) fn can_cast(from: &Ty, to: &Ty) -> bool {
+    let scalar = |t: &Ty| matches!(t, Ty::Int(_) | Ty::Float(_));
+    match (from, to) {
+        (Ty::Error | Ty::Never, _) | (_, Ty::Error) => true,
+        _ if from == to => true,
+        (f, t) if scalar(f) && scalar(t) => true,
+        (Ty::Bool | Ty::Char, Ty::Int(_)) => true,
+        (Ty::Int(IntTy::U8), Ty::Char) => true,
+        _ => false,
+    }
+}
+
+pub(super) fn op_text(op: ast::BinOp) -> &'static str {
+    use ast::BinOp as B;
+    match op {
+        B::Or => "||",
+        B::And => "&&",
+        B::Eq => "==",
+        B::Ne => "!=",
+        B::Lt => "<",
+        B::Gt => ">",
+        B::Le => "<=",
+        B::Ge => ">=",
+        B::BitOr => "|",
+        B::BitXor => "^",
+        B::BitAnd => "&",
+        B::Shl => "<<",
+        B::Shr => ">>",
+        B::Add => "+",
+        B::Sub => "-",
+        B::Mul => "*",
+        B::Div => "/",
+        B::Rem => "%",
+    }
+}

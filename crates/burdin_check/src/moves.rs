@@ -6,9 +6,9 @@
 //! `match`, and loops merge the states of their branches; a place that is moved on some paths becomes
 //! `Maybe`, which is what a runtime drop flag resolves.
 
-use crate::Globals;
-use crate::tir::{self, BindMode, LocalId, LocalKind, Pat, Ty};
+use crate::Env;
 use burdin_diag::{Code, Diagnostics, Span};
+use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Ty};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,7 +120,7 @@ enum Mode {
 }
 
 struct Checker<'a> {
-    globals: &'a Globals,
+    env: Env<'a>,
     locals: &'a [tir::Local],
     diags: &'a mut Diagnostics,
     states: Vec<LocalState>,
@@ -131,9 +131,9 @@ struct Checker<'a> {
 }
 
 /// Checks the body of `f` and returns the places it moves.
-pub fn check_function(f: &tir::Function, globals: &Globals, diags: &mut Diagnostics) -> Vec<tir::MovedPlace> {
+pub(crate) fn check_function(f: &tir::Function, env: Env, diags: &mut Diagnostics) -> Vec<tir::MovedPlace> {
     let mut cx = Checker {
-        globals,
+        env,
         locals: &f.locals,
         diags,
         states: vec![LocalState::default(); f.locals.len()],
@@ -147,7 +147,7 @@ pub fn check_function(f: &tir::Function, globals: &Globals, diags: &mut Diagnost
 
 impl<'a> Checker<'a> {
     fn is_copy(&self, ty: &Ty) -> bool {
-        self.globals.is_copy(ty)
+        self.env.defs.is_copy(ty)
     }
 
     fn error(&mut self, code: Code, span: Span, message: impl Into<String>) {
@@ -235,14 +235,14 @@ impl<'a> Checker<'a> {
         if path.is_empty() {
             return;
         }
-        if self.globals.has_drop_impl(ty) {
+        if self.env.defs.has_drop_impl(ty) {
             self.error(Code::PARTIAL_MOVE_FROM_DROP, span, "cannot move a field out of a type that implements `Drop`");
             return;
         }
         let (first, rest) = path.split_first().expect("path is not empty");
         match ty {
             Ty::Struct(a) => {
-                if let Some(f) = self.globals.structs[a.id].fields.get(*first) {
+                if let Some(f) = self.env.defs.structs[a.id].fields.get(*first) {
                     let fty = f.ty.clone();
                     self.check_partial_move(&fty, rest, span);
                 }
@@ -263,7 +263,7 @@ impl<'a> Checker<'a> {
             }
             Ty::Enum(a) => {
                 let Some((field, rest)) = rest.split_first() else { return };
-                if let Some(f) = self.globals.enums[a.id].variants.get(*first).and_then(|v| v.fields.get(*field)) {
+                if let Some(f) = self.env.defs.enums[a.id].variants.get(*first).and_then(|v| v.fields.get(*field)) {
                     let fty = f.ty.clone();
                     self.check_partial_move(&fty, rest, span);
                 }
@@ -297,7 +297,7 @@ impl<'a> Checker<'a> {
             Pat::Product(subs) => {
                 let tys: Vec<Ty> = match ty {
                     Ty::Tuple(ts) => ts.clone(),
-                    Ty::Struct(a) => self.globals.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
+                    Ty::Struct(a) => self.env.defs.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
                     _ => return,
                 };
                 for (i, sub) in subs.iter().enumerate() {
@@ -310,7 +310,7 @@ impl<'a> Checker<'a> {
             Pat::Variant(index, subs) => {
                 if let Ty::Enum(a) = ty {
                     let tys: Vec<Ty> =
-                        self.globals.enums[a.id].variants[*index].fields.iter().map(|f| f.ty.clone()).collect();
+                        self.env.defs.enums[a.id].variants[*index].fields.iter().map(|f| f.ty.clone()).collect();
                     for (i, sub) in subs.iter().enumerate() {
                         let Some(sub_ty) = tys.get(i) else { continue };
                         path.push(*index);
@@ -356,7 +356,7 @@ impl<'a> Checker<'a> {
                 self.expr(hi, Mode::Use);
             }
             K::Call(f, args) => {
-                let sig = &self.globals.sigs[f.0];
+                let sig = &self.env.sigs[f.0];
                 for (a, p) in args.iter().zip(&sig.params) {
                     let m = if p.own { Mode::Move } else { Mode::Use };
                     self.expr(a, m);
@@ -768,7 +768,7 @@ impl<'a> Checker<'a> {
             Pat::Product(subs) => {
                 let tys: Vec<Ty> = match ty {
                     Ty::Tuple(ts) => ts.clone(),
-                    Ty::Struct(a) => self.globals.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
+                    Ty::Struct(a) => self.env.defs.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
                     Ty::Unit => Vec::new(),
                     _ => return,
                 };
@@ -782,7 +782,7 @@ impl<'a> Checker<'a> {
             Pat::Variant(index, subs) => {
                 let Ty::Enum(a) = ty else { return };
                 let tys: Vec<Ty> =
-                    self.globals.enums[a.id].variants[*index].fields.iter().map(|f| f.ty.clone()).collect();
+                    self.env.defs.enums[a.id].variants[*index].fields.iter().map(|f| f.ty.clone()).collect();
                 for (i, sub) in subs.iter().enumerate() {
                     let Some(sub_ty) = tys.get(i) else { continue };
                     path.push(*index);

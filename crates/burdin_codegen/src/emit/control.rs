@@ -1,0 +1,327 @@
+//! Control flow: loops, `if`, and `match`.
+
+use super::pattern::{collect_bindings, pattern_moves};
+use super::{Codegen, GenResult, LoopTargets, Mode, llvm_err};
+use burdin_tir::{self as tir, Pat, Ty};
+use inkwell::basic_block::BasicBlock;
+use inkwell::values::BasicValueEnum;
+use inkwell::{AddressSpace, IntPredicate};
+
+impl<'ctx, 'a> Codegen<'ctx, 'a> {
+    /// Drops every scope above `depth`, from the innermost out; used by `break`, `continue`, and `return` (DR6).
+    pub(super) fn drop_scopes_above(&mut self, depth: usize) -> GenResult<()> {
+        for index in (depth..self.scopes.len()).rev() {
+            self.drop_scope(index)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn loop_body(
+        &mut self,
+        body: &'a tir::Block,
+        continue_bb: BasicBlock<'ctx>,
+        break_bb: BasicBlock<'ctx>,
+    ) -> GenResult<()> {
+        self.loops.push(LoopTargets {
+            continue_bb,
+            break_bb,
+            temp_depth: self.temps.len(),
+            scope_depth: self.scopes.len(),
+        });
+        self.block(body, Mode::Use)?;
+        self.loops.pop();
+        Ok(())
+    }
+
+    pub(super) fn for_range(
+        &mut self,
+        var: Option<tir::LocalId>,
+        lo: &'a tir::Expr,
+        hi: &'a tir::Expr,
+        inclusive: bool,
+        body: &'a tir::Block,
+    ) -> GenResult<()> {
+        let Ty::Int(ity) = lo.ty.clone() else {
+            // The range diverges (for example `return..x`); nothing after it runs.
+            self.expr_mode(lo, Mode::Use)?;
+            self.expr_mode(hi, Mode::Use)?;
+            return Ok(());
+        };
+        let signed = ity.signed();
+        let lo_v = self.expr_mode(lo, Mode::Use)?;
+        let lo_v = self.need_int(lo_v, &lo.ty);
+        let hi_v = self.expr_mode(hi, Mode::Use)?;
+        let hi_v = self.need_int(hi_v, &lo.ty);
+        let counter = self.alloca(self.int_ty(ity).into(), "for.counter")?;
+        self.builder.build_store(counter, lo_v).map_err(llvm_err)?;
+        let header = self.new_block("for.cond");
+        let body_bb = self.new_block("for.body");
+        let latch = self.new_block("for.next");
+        let exit = self.new_block("for.end");
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+
+        self.builder.position_at_end(header);
+        let cur = self.builder.build_load(self.int_ty(ity), counter, "i").map_err(llvm_err)?.into_int_value();
+        let pred = match (inclusive, signed) {
+            (true, true) => IntPredicate::SLE,
+            (true, false) => IntPredicate::ULE,
+            (false, true) => IntPredicate::SLT,
+            (false, false) => IntPredicate::ULT,
+        };
+        let go = self.builder.build_int_compare(pred, cur, hi_v, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(go, body_bb, exit).map_err(llvm_err)?;
+
+        self.builder.position_at_end(body_bb);
+        if let Some(var) = var
+            && let Some(slot) = self.slots[var.0]
+        {
+            self.builder.build_store(slot, cur).map_err(llvm_err)?;
+        }
+        self.loop_body(body, latch, exit)?;
+        self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
+
+        // `cur < hi` (or `cur != hi` for an inclusive range) holds here, so the increment cannot overflow.
+        self.builder.position_at_end(latch);
+        let cur = self.builder.build_load(self.int_ty(ity), counter, "i").map_err(llvm_err)?.into_int_value();
+        let inc = self.new_block("for.inc");
+        if inclusive {
+            let last = self.builder.build_int_compare(IntPredicate::EQ, cur, hi_v, "").map_err(llvm_err)?;
+            self.builder.build_conditional_branch(last, exit, inc).map_err(llvm_err)?;
+        } else {
+            self.builder.build_unconditional_branch(inc).map_err(llvm_err)?;
+        }
+        self.builder.position_at_end(inc);
+        let one = self.int_ty(ity).const_int(1, false);
+        let next = self.builder.build_int_add(cur, one, "").map_err(llvm_err)?;
+        self.builder.build_store(counter, next).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+
+        self.builder.position_at_end(exit);
+        Ok(())
+    }
+
+    pub(super) fn if_expr(
+        &mut self,
+        cond: &'a tir::Expr,
+        then: &'a tir::Block,
+        other: Option<&'a tir::Expr>,
+        ty: &Ty,
+        mode: Mode,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let c = self.expr_mode(cond, Mode::Use)?;
+        let c = self.need_int(c, &Ty::Bool);
+        let result = match self.llvm_ty(ty) {
+            Some(t) => Some(self.alloca(t, "if.result")?),
+            None => None,
+        };
+        let then_bb = self.new_block("if.then");
+        let else_bb = self.new_block("if.else");
+        let merge = self.new_block("if.end");
+        self.builder.build_conditional_branch(c, then_bb, else_bb).map_err(llvm_err)?;
+
+        self.builder.position_at_end(then_bb);
+        let v = self.block(then, mode)?;
+        if let (Some(slot), Some(v)) = (result, v) {
+            self.builder.build_store(slot, v).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(merge).map_err(llvm_err)?;
+
+        self.builder.position_at_end(else_bb);
+        if let Some(other) = other {
+            let v = self.expr_mode(other, mode)?;
+            if let (Some(slot), Some(v)) = (result, v) {
+                self.builder.build_store(slot, v).map_err(llvm_err)?;
+            }
+        }
+        self.builder.build_unconditional_branch(merge).map_err(llvm_err)?;
+
+        self.builder.position_at_end(merge);
+        match (result, self.llvm_ty(ty)) {
+            (Some(slot), Some(t)) => Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?)),
+            _ => Ok(None),
+        }
+    }
+
+    pub(super) fn match_expr(
+        &mut self,
+        scrutinee: &'a tir::Expr,
+        arms: &'a [tir::Arm],
+        ty: &Ty,
+        mode: Mode,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        // A place scrutinee is matched in place: moving bindings take parts out of it (MV8). A temporary is
+        // spilled; it is dropped at the end of the statement unless an arm moves parts out of it (which the
+        // generated code cannot track), in which case its ownership passes to the bindings.
+        let direct = self.direct_place_ptr(scrutinee)?;
+        let place = match direct {
+            Some(ptr) => Some(ptr),
+            None => {
+                let v = self.expr_mode(scrutinee, Mode::Use)?;
+                let slot = match self.llvm_ty(&scrutinee.ty) {
+                    Some(t) => {
+                        let slot = self.alloca(t, "match.value")?;
+                        let v = self.need(v, &scrutinee.ty);
+                        self.builder.build_store(slot, v).map_err(llvm_err)?;
+                        Some(slot)
+                    }
+                    None => None,
+                };
+                if arms.iter().all(|a| !pattern_moves(&a.pat)) {
+                    self.add_temp_slot(
+                        slot.unwrap_or_else(|| self.cx.ptr_type(AddressSpace::default()).get_undef()),
+                        &scrutinee.ty,
+                    );
+                }
+                slot
+            }
+        };
+        let base = if direct.is_some() { self.place_path(scrutinee) } else { None };
+        let result = match self.llvm_ty(ty) {
+            Some(t) => Some(self.alloca(t, "match.result")?),
+            None => None,
+        };
+        let merge = self.new_block("match.end");
+        for arm in arms {
+            let arm_bb = self.new_block("match.arm");
+            let next = self.new_block("match.next");
+            let ok = self.pat_test(&arm.pat, place, &scrutinee.ty)?;
+            self.builder.build_conditional_branch(ok, arm_bb, next).map_err(llvm_err)?;
+            self.builder.position_at_end(arm_bb);
+            self.scopes.push(Vec::new());
+            self.pat_bind(&arm.pat, place, &scrutinee.ty, base.as_ref(), &mut Vec::new())?;
+            let mut bound = Vec::new();
+            collect_bindings(&arm.pat, &mut bound);
+            for id in bound {
+                self.scopes.last_mut().expect("an arm scope is open").push(id);
+            }
+            if let Some(guard) = &arm.guard {
+                let g = self.expr_mode(guard, Mode::Use)?;
+                let g = self.need_int(g, &Ty::Bool);
+                let body_bb = self.new_block("match.body");
+                let fail_bb = self.new_block("match.guard.fail");
+                self.builder.build_conditional_branch(g, body_bb, fail_bb).map_err(llvm_err)?;
+                // A failed guard does not take the arm: the parts the pattern bound are still owned by the
+                // scrutinee, so put their drop flags back. The binding slots are discarded unread.
+                self.builder.position_at_end(fail_bb);
+                if let Some((root, base)) = &base {
+                    let mut paths = Vec::new();
+                    self.pattern_moved_paths(&arm.pat, &scrutinee.ty, &mut Vec::new(), &mut paths);
+                    for path in paths {
+                        let mut full = base.clone();
+                        full.extend(path);
+                        self.set_initialized(*root, &full);
+                    }
+                }
+                self.builder.build_unconditional_branch(next).map_err(llvm_err)?;
+                self.builder.position_at_end(body_bb);
+            }
+            let v = self.expr_mode(&arm.body, mode)?;
+            // The arm's bindings drop at the end of the arm (MV8).
+            self.drop_scope(self.scopes.len() - 1)?;
+            self.scopes.pop();
+            if let (Some(slot), Some(v)) = (result, v) {
+                self.builder.build_store(slot, v).map_err(llvm_err)?;
+            }
+            self.builder.build_unconditional_branch(merge).map_err(llvm_err)?;
+            self.builder.position_at_end(next);
+        }
+        // The checker proved the arms exhaustive.
+        self.builder.build_unreachable().map_err(llvm_err)?;
+        self.builder.position_at_end(merge);
+        match (result, self.llvm_ty(ty)) {
+            (Some(slot), Some(t)) => Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// `for pattern in array`: binds each element in order.
+    pub(super) fn for_array(&mut self, pat: &'a Pat, array: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+        let Ty::Array(elem, n) = &array.ty else {
+            // The array expression diverges; nothing after it runs.
+            self.expr_mode(array, Mode::Use)?;
+            return Ok(());
+        };
+        let base = self.place_ptr(array)?;
+        let array_t = self.llvm_ty(&array.ty);
+        let counter = self.alloca(self.usize_ty.into(), "for.index")?;
+        self.builder.build_store(counter, self.usize_ty.const_zero()).map_err(llvm_err)?;
+        let header = self.new_block("for.cond");
+        let body_bb = self.new_block("for.body");
+        let latch = self.new_block("for.next");
+        let exit = self.new_block("for.end");
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+
+        self.builder.position_at_end(header);
+        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
+        let len = self.usize_ty.const_int(*n, false);
+        let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(go, body_bb, exit).map_err(llvm_err)?;
+
+        self.builder.position_at_end(body_bb);
+        let elem_ptr = match (base, array_t) {
+            (Some(base), Some(t)) => {
+                let zero = self.usize_ty.const_zero();
+                // SAFETY (LLVM): i < n.
+                Some(unsafe { self.builder.build_in_bounds_gep(t, base, &[zero, i], "") }.map_err(llvm_err)?)
+            }
+            _ => None,
+        };
+        self.pat_bind(pat, elem_ptr, elem, None, &mut Vec::new())?;
+        self.loop_body(body, latch, exit)?;
+        self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
+
+        self.builder.position_at_end(latch);
+        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
+        let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(counter, next).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(exit);
+        Ok(())
+    }
+
+    /// `for pattern in slice`: binds each element in order; the length is known only at run time.
+    pub(super) fn for_slice(&mut self, pat: &'a Pat, slice: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+        let Ty::Slice(elem) = &slice.ty else {
+            // The slice expression diverges; nothing after it runs.
+            self.expr_mode(slice, Mode::Use)?;
+            return Ok(());
+        };
+        let elem = (**elem).clone();
+        let v = self.expr_mode(slice, Mode::Use)?;
+        let s = self.need(v, &slice.ty).into_struct_value();
+        let base = self.builder.build_extract_value(s, 0, "slice.ptr").map_err(llvm_err)?.into_pointer_value();
+        let len = self.builder.build_extract_value(s, 1, "slice.len").map_err(llvm_err)?.into_int_value();
+        let counter = self.alloca(self.usize_ty.into(), "for.index")?;
+        self.builder.build_store(counter, self.usize_ty.const_zero()).map_err(llvm_err)?;
+        let header = self.new_block("for.cond");
+        let body_bb = self.new_block("for.body");
+        let latch = self.new_block("for.next");
+        let exit = self.new_block("for.end");
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+
+        self.builder.position_at_end(header);
+        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
+        let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(go, body_bb, exit).map_err(llvm_err)?;
+
+        self.builder.position_at_end(body_bb);
+        let elem_ptr = match self.llvm_ty(&elem) {
+            Some(t) => {
+                // SAFETY (LLVM): i < len.
+                Some(unsafe { self.builder.build_in_bounds_gep(t, base, &[i], "") }.map_err(llvm_err)?)
+            }
+            None => None,
+        };
+        self.pat_bind(pat, elem_ptr, &elem, None, &mut Vec::new())?;
+        self.loop_body(body, latch, exit)?;
+        self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
+
+        self.builder.position_at_end(latch);
+        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
+        let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(counter, next).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(exit);
+        Ok(())
+    }
+}

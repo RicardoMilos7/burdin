@@ -99,6 +99,9 @@ impl Code {
     pub const RETURN_MULTIPLE_ORIGINS: Code = Code("E0121");
     pub const RETURN_LOCAL_ORIGIN: Code = Code("E0122");
     pub const DERIVE_REQUIREMENT: Code = Code("E0130");
+    pub const MISSING_INTERFACE_METHOD: Code = Code("E0140");
+    pub const BOUND_NOT_SATISFIED: Code = Code("E0141");
+    pub const ORPHAN_RULE: Code = Code("E0142");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.
     pub const UNSUPPORTED: Code = Code("E9000");
@@ -119,6 +122,17 @@ pub struct Diagnostics {
 impl Diagnostics {
     pub fn error(&mut self, code: Code, span: Span, message: impl Into<String>) {
         self.list.push(Diagnostic { code, span, message: message.into() });
+    }
+
+    /// Moves every diagnostic of `other` into this list, skipping one that has the same code and span as a
+    /// diagnostic already here. A generic body is checked once against its bounds and once per instantiation, so
+    /// the same mistake can be found more than once.
+    pub fn absorb(&mut self, other: Diagnostics) {
+        for d in other.list {
+            if !self.list.iter().any(|e| e.code == d.code && e.span == d.span) {
+                self.list.push(d);
+            }
+        }
     }
 
     pub fn has_errors(&self) -> bool {
