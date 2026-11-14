@@ -8,13 +8,15 @@ Updated at the end of the thirteenth session (2026-11-14). **Milestones 1 to 11 
 133 tests pass in the debug profile and 132 in release (one m06 test is debug-only). `burdin test` runs `test` blocks,
 and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18). The
 twelfth session deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43); `spec/stage0-subset.md` is the
-only stage 0 scope document. The thirteenth session retired the claude.ai copies of the design and stage 0 documents
-(issue #44): the repository files are canonical and now say so, and the external copies are recorded as historical. It
-also added the compiler benchmarks: `cargo bench -p burdin_bench` measures the four stages and CI runs its `--smoke`
-budgets (#41).
+only stage 0 scope document. It also documented the driver contract in a new root `README.md`, with `tests/check-docs.sh`
+checking its links and behavior in both CI jobs (issue #42). The thirteenth session retired the claude.ai copies of the
+design and stage 0 documents (issue #44): the repository files are canonical and now say so, and the external copies
+are recorded as historical. It also added the compiler benchmarks: `cargo bench -p burdin_bench` measures the four
+stages and CI runs its `--smoke` budgets (#41).
 
 | What | Where | Status |
 | --- | --- | --- |
+| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`, diagnostics, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. `tests/check-docs.sh` checks the links and the documented behavior, and both CI jobs run it |
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |

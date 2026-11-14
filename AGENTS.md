@@ -27,6 +27,7 @@ tests/run-tests.sh --release       release profile (skips debug-only tests)
 tests/check-tests.sh               validate directives and error codes (no compiler needed)
 tests/check-ci.sh                  validate the CI workflow and the pinned Rust toolchain (no compiler needed)
 tests/check-platform.sh            check the host triple and 64-bit isize/usize (needs a built driver)
+tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
@@ -108,6 +109,7 @@ Development happens in WSL Ubuntu first; the shell scripts also run from Git Bas
 ## Repository map
 
 ```
+README.md                 the entry point: building, hello world, and the driver contract
 CLAUDE.md                 Claude-specific entry point and working rules
 AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next

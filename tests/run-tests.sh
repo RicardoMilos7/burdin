@@ -15,6 +15,8 @@
 #
 # ---------------------------------------------------------------------------
 # Driver contract assumed by this script. If your driver differs, change only this section.
+# The full contract, including --emit-ir, --link-lib (and LLVM-C), and BURDIN_CC, is documented in
+# README.md at the repository root (`The driver contract`), and tests/check-docs.sh checks it.
 #
 #   burdin build <target> [--release]
 #       Compiles. Diagnostics go to stderr or stdout, one per line, in the form

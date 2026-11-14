@@ -12,7 +12,8 @@
 #   * the Rust toolchain is pinned to an exact version with clippy and rustfmt,
 #     and CI installs and verifies that pin (issue #19);
 #   * the compiler benchmarks exist and CI runs their smoke budgets (issue #41);
-#   * a conformance test still exercises --link-lib LLVM-C.
+#   * a conformance test still exercises --link-lib LLVM-C;
+#   * the documentation check (which reads the driver contract in README.md) runs in both jobs.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")
@@ -122,6 +123,7 @@ for job in linux macos; do
         'tests/check-tests.sh' \
         'tests/check-ci.sh' \
         'tests/check-platform.sh' \
+        'tests/check-docs.sh' \
         'rustup toolchain install' \
         'rustc --version' \
         'cargo fmt --all --check' \
@@ -155,8 +157,15 @@ if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"
     add_problem "tests/m11_llvm: no test uses //@ link-lib: LLVM-C"
 fi
 
+# The documentation check reads the driver contract from the root README (issue #42).
+if [ ! -f "$ROOT/README.md" ]; then
+    add_problem "README.md: missing (the driver contract lives there)"
+elif ! grep -qF 'check-docs' "$ROOT/README.md"; then
+    add_problem "README.md: does not mention tests/check-docs.sh"
+fi
+
 # Scripts CI invokes must exist, be executable, and have LF endings.
-for rel in tests/check-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh; do
+for rel in tests/check-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh tests/check-docs.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"

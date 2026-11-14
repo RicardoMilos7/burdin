@@ -56,6 +56,9 @@ jobs:
       - name: Compiler benchmarks (smoke budgets)
         run: cargo bench -p burdin_bench -- --smoke
 
+      - name: Check documentation
+        run: tests/check-docs.sh
+
       - name: Check host target
         run: tests/check-platform.sh
 
@@ -113,6 +116,9 @@ jobs:
       # accidental super-linear change fails CI (issue #41). Threshold tracking is issue #446.
       - name: Compiler benchmarks (smoke budgets)
         run: cargo bench -p burdin_bench -- --smoke
+
+      - name: Check documentation
+        run: tests/check-docs.sh
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target

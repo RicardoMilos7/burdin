@@ -50,6 +50,7 @@ If these disagree, stop and say so. Do not pick one silently.
 tests/run-tests.sh                 run the conformance tests against the compiler (BURDIN=path overrides the binary)
 tests/run-tests.sh m05 -v          only milestone 5, with diffs for failures
 tests/check-tests.sh               check test directives and error codes (no compiler needed; also check-tests.ps1)
+tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
 ```
 
 On Windows run the `.sh` scripts from Git Bash. The runner expects `burdin build`, `burdin run`, and `burdin test` as described at
@@ -58,6 +59,7 @@ the top of `tests/run-tests.sh`.
 ## Layout
 
 ```
+README.md                 the entry point: building, hello world, and the driver contract
 CLAUDE.md                 the Claude-specific entry point and working rules
 AGENTS.md                 the shared working agreement: definition of done, close-out checklist, verification policy
 HANDOFF.md                current state, decisions, and what is next
