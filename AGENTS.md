@@ -12,7 +12,8 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md` — the standard-library surface and the exact derived members.
-4. `spec/stage0-subset.md` (complete) and `spec/stage1-subset.md` (the current plan).
+4. `spec/stage0-subset.md` (complete), `spec/stage1-subset.md` (the current plan), and `spec/test-runner.md` (the
+   behavior of `burdin test`).
 5. `HANDOFF.md` for the current state; `Burdin Language Design.md` for the full rationale.
 6. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
 
@@ -34,6 +35,9 @@ tests/check-debug-info.sh          check -g's DWARF, line table, and a gdb break
 tests/check-codegen-opt.sh         check drop-flag elimination, bounds-check elision, and shared glue
 tests/check-build-flags.sh         check --version, --strip's size budget, --lto, and PGO
 tests/check-parallel.sh            check parallel parsing and deterministic diagnostics
+tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
+tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
+tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
@@ -42,6 +46,8 @@ cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs
 cargo bench -p burdin_bench -- --save FILE       record a benchmark baseline
 cargo bench -p burdin_bench -- --baseline FILE   compare with a baseline (exit 1 on a regression)
 tests/bench-regression.sh          benchmark regression check CI runs (advisory, issue #446)
+tests/fuzz.sh                      long lexer/parser fuzzing session (the scheduled CI job; issue #447)
+tests/fuzz.sh --seconds 60         a short local session; found inputs go to fuzz-out/crashes/
 ```
 
 Development happens in WSL Ubuntu first; the shell scripts also run from Git Bash on Windows.
@@ -124,9 +130,11 @@ AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
+docs/                     the user-facing error-code reference (checked against tests/README.md)
 tests/                    conformance suite, README with the format and error codes
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_codegen, burdin_driver,
-                          burdin_bench (generated inputs and `cargo bench` targets)
+                          burdin_bench (generated inputs and `cargo bench` targets),
+                          burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin
 ```

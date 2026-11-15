@@ -1,0 +1,33 @@
+// Constructs cut off at every position the parser has to recover from.
+fn
+fn (
+fn f(
+fn f()
+fn f() {
+fn f() {
+    let
+fn f() {
+    let x
+fn f() {
+    let x =
+struct
+struct S {
+enum E {
+interface I {
+impl
+type
+const
+use
+use a.
+extern
+extern "C" {
+test
+test "a"
+match
+match x {
+if
+if x
+while
+for
+for p in
+unsafe

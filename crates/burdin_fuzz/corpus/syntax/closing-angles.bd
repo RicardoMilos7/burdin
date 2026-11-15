@@ -1,0 +1,12 @@
+// `>` closing generic arguments, and the split of `>>`, `>=`, and `>>=`.
+struct Stack<T> { items: T }
+fn f(a: Stack<Stack<Stack<i32>>>) {}
+fn g(a: Stack<Stack<i32>>, b: bool) { let c = a >= b }
+fn h(a: Stack<Stack<Stack<i32>> > ) {}
+fn i(x: i32) { let y = x >> 1 }
+fn j(x: i32) { let y = x >>= 1 }
+fn k(x: i32) { let y = x > = 1 }
+fn l<T: Ord>(a: T, b: T): T { if a > b { a } else { b } }
+fn m(x: Stack<i32>) { let y = x.items }
+fn n(x: Stack<i32>) -> Stack<i32> { x }
+fn o() { let x = Stack < i32 > { items: 1 } }

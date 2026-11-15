@@ -1,0 +1,15 @@
+// String literals, escapes, and truncation.
+fn main() {
+    let a = ""
+    let b = "text"
+    let c = "\n\r\t\\\"\0"
+    let d = "a
+b"
+    let e = "\q"
+    let f = "\
+"
+    let g = "unterminated
+    let h = "\u{1F600}"
+    let i = "\\"
+    let j = "\\
+}

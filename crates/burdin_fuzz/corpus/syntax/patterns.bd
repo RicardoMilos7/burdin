@@ -1,0 +1,26 @@
+// Patterns in every position: let, if let, let-else, for, match, and function parameters.
+fn main() {
+    let (a, b) = pair
+    let (a, b,) = pair
+    let (a,) = pair
+    let (a) = pair
+    let mut a = 1
+    let _ = 2
+    let S { x, y: 0 } = s
+    let S { x, .. } = s
+    let Some(v) = o else { return }
+    let n @ 1..=9 = k
+    if let Some(a) = o { }
+    if let (a, b) = o { }
+    if let S.A(a, _) = o { }
+    while let Some(a) = o { }
+    for (i, x) in xs { }
+    for S { x } in xs { }
+    for mut x in xs { }
+    match p { (a, (b, c)) => {}, Some(S { x }) => {}, _ => {} }
+    match p { a | b | c => {}, mut d | e => {} }
+    match p { (a, b | c) => {} }
+    match p { (a, => {} }
+    match p { Some(, x) => {} }
+    match p { S { x: Some(y) } => {} }
+}

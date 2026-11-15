@@ -1,0 +1,25 @@
+// `use` items, `extern "C"` blocks, and declarations without a body.
+use std
+use std.{print, println}
+use std.io as io
+use std.{a, b}.c
+use std.{}
+use std.{a,}
+use std as
+use .a
+use a..b
+extern "C" {
+    fn puts(s: str): i32
+    priv fn hidden(): ()
+    unsafe fn danger(own p: CPtr<i32>): i32
+    fn with_body(): i32 { 1 }
+    struct NotAllowed { x: i32 }
+}
+extern {
+    fn missing_abi()
+}
+extern "C" { }
+extern "C"
+extern "not C" {
+    fn f()
+}

@@ -249,9 +249,10 @@ impl Parser<'_> {
         Ok(ImplBlock { ty, interface, where_clause, methods, span: start.to(self.prev_span()) })
     }
 
-    /// `test "name" { ... }`. The test is compiled as a function with no parameters that returns
-    /// `Result<(), AssertError>`: its body is the block followed by `Ok(())`, so `assert(...)?` in the body
-    /// propagates the failure to the runner. Tests are only declared and checked by `burdin test`.
+    /// `test "name" { ... }` or `test "name" [attrs] { ... }`. The test is compiled as a function with no
+    /// parameters that returns `Result<(), AssertError>`: its body is the block followed by `Ok(())`, so
+    /// `assert(...)?` in the body propagates the failure to the runner. Tests are only declared and checked by
+    /// `burdin test`.
     pub(super) fn test_decl(&mut self) -> PResult<TestDecl> {
         let start = self.span();
         self.bump(); // `test`
@@ -263,6 +264,7 @@ impl Parser<'_> {
             _ => return Err(self.unexpected("a test name string")),
         };
         let name_span = self.prev_span();
+        let attrs = self.test_attrs()?;
         let body = self.block()?;
         let body_span = body.span;
         let index = self.test_count;
@@ -276,8 +278,10 @@ impl Parser<'_> {
         let ret = path("Result", vec![Type { kind: TypeKind::Unit, span }, path("AssertError", Vec::new())]);
         let unit = Expr { kind: ExprKind::Unit, span };
         let ok = Expr { kind: ExprKind::Name { name: Ident { name: "Ok".to_string(), span }, args: Vec::new() }, span };
-        let tail =
-            Expr { kind: ExprKind::Call(Box::new(ok), vec![Arg { mut_marker: false, expr: unit }]), span: body_span };
+        let tail = Expr {
+            kind: ExprKind::Call(Box::new(ok), vec![Arg { mut_marker: false, mut_span: None, expr: unit }]),
+            span: body_span,
+        };
         let mut stmts = body.stmts;
         stmts.push(Stmt::Expr(tail));
         let func = FnDecl {
@@ -291,7 +295,43 @@ impl Parser<'_> {
             body: Block { stmts, span: body_span },
             span,
         };
-        Ok(TestDecl { name, name_span, func, span })
+        Ok(TestDecl { name, name_span, attrs, func, span })
+    }
+
+    /// The optional attribute list of a test item: `[ignore, timeout(500), should_panic("boom")]`. The values are
+    /// parsed but not checked here; `burdin_sema` validates the names, values, duplicates, and combinations (E0170).
+    fn test_attrs(&mut self) -> PResult<Vec<TestAttr>> {
+        let mut attrs = Vec::new();
+        if !self.at(&TokenKind::LBracket) {
+            return Ok(attrs);
+        }
+        self.open(&TokenKind::LBracket, true)?;
+        while !self.at(&TokenKind::RBracket) {
+            let name = self.ident("a test attribute")?;
+            let value = if self.eat(&TokenKind::LParen) {
+                let value = match self.kind().clone() {
+                    TokenKind::Int(n) => {
+                        self.bump();
+                        TestAttrValue::Int(n)
+                    }
+                    TokenKind::Str(s) => {
+                        self.bump();
+                        TestAttrValue::Str(s)
+                    }
+                    _ => return Err(self.unexpected("an integer or a string")),
+                };
+                self.close(&TokenKind::RParen)?;
+                Some(value)
+            } else {
+                None
+            };
+            attrs.push(TestAttr { name, value });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.close(&TokenKind::RBracket)?;
+        Ok(attrs)
     }
 
     pub(super) fn interface_decl(&mut self, is_priv: bool, start: Span) -> PResult<InterfaceDecl> {

@@ -1,0 +1,16 @@
+fn main() {}
+
+test "passes quietly" {
+    println("hidden pass output")
+}
+
+test "fails loudly" {
+    println("visible stdout")
+    eprintln("visible stderr")
+    assert(false)?
+}
+
+test "also fails" {
+    println("second failure output")
+    assert(false)?
+}

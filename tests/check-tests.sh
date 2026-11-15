@@ -6,12 +6,18 @@
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$SCRIPT_DIR
 
-# error codes registered in the README table
-KNOWN=$(tr -d '\r' < "$ROOT/README.md" | grep -oE '^\| E[0-9]{4} \|' | grep -oE 'E[0-9]{4}' | sort -u)
+README_TEXT=$(tr -d '\r' < "$ROOT/README.md")
+# The registry table, up to the documented-exception subsection that follows it.
+KNOWN=$(sed -n '/^## Error codes/,/^### Codes without a compile-fail test/p' <<< "$README_TEXT" \
+    | grep -oE '^\| E[0-9]{4} \|' | grep -oE 'E[0-9]{4}' | sort -u)
+EXCEPTIONS_HEADING='### Codes without a compile-fail test'
+# Codes that cannot have a compile-fail test, with the reason, documented in the README.
+DOCUMENTED=$(sed -n "/^$EXCEPTIONS_HEADING/,/^## /p" <<< "$README_TEXT" \
+    | grep -oE '^\| E[0-9]{4} \|' | grep -oE 'E[0-9]{4}' | sort -u)
 
 problems=()
 total=0
-n_run=0; n_abort=0; n_fail=0; n_test=0; n_undecided=0
+n_run=0; n_abort=0; n_fail=0; n_test_fail=0; n_test=0; n_undecided=0
 used=""
 
 add_problem() { problems+=("$1"); }
@@ -29,7 +35,7 @@ while IFS= read -r file; do
     while IFS= read -r d; do
         word=${d%%[ :]*}
         case "$word" in
-            run|run-abort|compile-fail|burdin-test|undecided) kinds="$kinds $word" ;;
+            run|run-abort|compile-fail|test-compile-fail|burdin-test|undecided) kinds="$kinds $word" ;;
         esac
     done <<< "$directives"
     kinds=${kinds# }
@@ -46,6 +52,7 @@ while IFS= read -r file; do
         run) n_run=$((n_run + 1)) ;;
         run-abort) n_abort=$((n_abort + 1)) ;;
         compile-fail) n_fail=$((n_fail + 1)) ;;
+        test-compile-fail) n_test_fail=$((n_test_fail + 1)) ;;
         burdin-test) n_test=$((n_test + 1)) ;;
         undecided) n_undecided=$((n_undecided + 1)) ;;
     esac
@@ -61,12 +68,12 @@ while IFS= read -r file; do
             [ "$n_markers" -gt 0 ] && add_problem "$rel: run test has //~ markers" ;;
         run-abort)
             grep -q '^stderr:' <<< "$directives" || add_problem "$rel: run-abort needs a //@ stderr: line" ;;
-        compile-fail)
-            [ "$n_markers" -eq 0 ] && add_problem "$rel: compile-fail needs at least one //~ marker"
-            [ "$n_expected" -gt 0 ] && add_problem "$rel: compile-fail must not have //> lines" ;;
+        compile-fail|test-compile-fail)
+            [ "$n_markers" -eq 0 ] && add_problem "$rel: $primary needs at least one //~ marker"
+            [ "$n_expected" -gt 0 ] && add_problem "$rel: $primary must not have //> lines" ;;
         burdin-test)
-            grep -Eq '^burdin-test passed=[0-9]+ failed=[0-9]+$' <<< "$directives" \
-                || add_problem "$rel: burdin-test needs passed=N failed=M" ;;
+            grep -Eq '^burdin-test passed=[0-9]+ failed=[0-9]+( ignored=[0-9]+)?$' <<< "$directives" \
+                || add_problem "$rel: burdin-test needs passed=N failed=M [ignored=N]" ;;
     esac
 
     while read -r line code; do
@@ -77,13 +84,36 @@ while IFS= read -r file; do
 done < <(grep -rl --include='*.bd' '^//@ ' "$ROOT" | sort)
 
 echo "Checked $total tests:"
-printf '  %-13s %s\n' compile-fail "$n_fail" burdin-test "$n_test" run "$n_run" run-abort "$n_abort" undecided "$n_undecided"
+printf '  %-17s %s\n' compile-fail "$n_fail" test-compile-fail "$n_test_fail" burdin-test "$n_test" \
+    run "$n_run" run-abort "$n_abort" undecided "$n_undecided"
 
-unused=""
-for code in $KNOWN; do
-    case " $used " in *" $code "*) ;; *) unused="$unused $code" ;; esac
+# Every registered code needs a compile-fail marker (or a test-compile-fail one) or a documented reason. A code
+# with neither fails CI, so adding a diagnostic means adding a test (issue #445).
+if ! grep -qF "$EXCEPTIONS_HEADING" <<< "$README_TEXT"; then
+    add_problem "README.md: missing the \"$EXCEPTIONS_HEADING\" section"
+fi
+for code in $DOCUMENTED; do
+    if ! grep -qx "$code" <<< "$KNOWN"; then
+        add_problem "README.md: documented exception $code is not in the registry"
+    elif case " $used " in *" $code "*) true ;; *) false ;; esac; then
+        add_problem "README.md: $code has a compile-fail test; remove it from the documented exceptions"
+    fi
 done
-[ -n "$unused" ] && echo "Error codes in the registry with no test:${unused}"
+while IFS= read -r row; do
+    code=$(grep -oE 'E[0-9]{4}' <<< "$row" | head -n 1)
+    reason=$(cut -d'|' -f3 <<< "$row" | sed 's/^ *//; s/ *$//')
+    [ -n "$reason" ] || add_problem "README.md: the exception for $code has no reason"
+done < <(sed -n "/^$EXCEPTIONS_HEADING/,/^## /p" <<< "$README_TEXT" | grep -E '^\| E[0-9]{4} \|')
+for code in $KNOWN; do
+    case " $used " in
+        *" $code "*) ;;
+        *)
+            if ! grep -qx "$code" <<< "$DOCUMENTED"; then
+                add_problem "error code $code has no compile-fail test; add one or document why it cannot have one"
+            fi
+            ;;
+    esac
+done
 
 if [ ${#problems[@]} -gt 0 ]; then
     echo

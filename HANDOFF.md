@@ -1,44 +1,58 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, and sixteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, and nineteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the seventeenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**:
-all 177 tests pass in the debug profile and 175 in release (two tests are debug-only). `burdin test` runs `test`
-blocks, and the m11 program calls the LLVM C API. The seventeenth session implemented the compiler and runtime work
-of issue #421 (sub-issues #422-#432): source-level debug information, panic backtraces, buffered output, a
-main-thread stack-overflow guard, glue deduplication, drop-flag elimination, bounds-check elision, LTO and PGO
-flags, stripping and a size budget, `--version` with build metadata, and parallel parsing. The eleventh session added the macOS CI job (issues #16, #17, #18); the
-twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a
-root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
-design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in
-CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12); the fifteenth runs
-the finished conformance milestones in the release profile in every CI job (issue #47) and adds benchmark regression
-tracking: the harness saves and compares a baseline, and each CI job keeps one in a cache and reports regressions
-advisably (issue #446); the sixteenth settled the 16
-assumptions of issue #21 (sub-issues #22-#40) in `spec/`, added `spec/stdlib.md` and `spec/derives.md`, 40 decision
-tests, and four small fixes: `Drop` now rejects a read-only or `own` receiver, `CPtr.null` rejects arguments, the
-ordering operators work on `str`/`String`, and an invalid `extern "C"` type or convention is E0162.
+Updated at the end of the nineteenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**:
+all 181 conformance tests pass in the debug profile and 179 in release (two tests are debug-only). `burdin test`
+runs `test` blocks concurrently with attributes, captured output, and per-test isolation, and the m11 program calls
+the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the twelfth deleted the stale
+`Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
+by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the design and stage 0
+documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in CI (#44, #41,
+#46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12); the fifteenth runs the finished
+conformance milestones in the release profile in every CI job (issue #47) and adds benchmark regression tracking:
+the harness saves and compares a baseline, and each CI job keeps one in a cache and reports regressions advisably
+(issue #446); the sixteenth settled the 16 assumptions of issue #21 (sub-issues #22-#40) in `spec/`, added
+`spec/stdlib.md` and `spec/derives.md`, 40 decision tests, and four small fixes: `Drop` now rejects a read-only or
+`own` receiver, `CPtr.null` rejects arguments, the ordering operators work on `str`/`String`, and an invalid
+`extern "C"` type or convention is E0162; the seventeenth added the diagnostics presentation and tooling of issue
+#433 (sub-issues #434-#437) — colors, terminal width, and `--no-color`; notes and suggestions with spans and edits;
+deterministic ordering and `--error-limit`; and the checked `docs/error-codes.md` reference with `burdin explain` —
+and deterministic lexer/parser fuzzing: a committed corpus plus a 20,000-mutation replay in every CI job, a
+scheduled `fuzz` job that runs a ten-minute session and uploads new inputs, and a watchdog for an input that stops
+returning (issues #288 and #447); the eighteenth added the test-runner ergonomics of issue #438 (sub-issues
+#439-#443, #445): test attributes (E0170), `-j` and package selection, output capture, isolation, a black-box check
+wired into every CI job, and an error-code coverage audit that fails when a registered code has no test. Issue #444
+(differential tests) waits for the comptime interpreter, milestone 20; the nineteenth implemented the compiler and
+runtime work of issue #421 (sub-issues #422-#432): source-level debug information, panic backtraces, buffered output,
+a main-thread stack-overflow guard, glue deduplication, drop-flag elimination, bounds-check elision, LTO and PGO
+flags, stripping and a size budget, `--version` with build metadata, and parallel parsing.
 
 | What | Where | Status |
 | --- | --- | --- |
-| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`, diagnostics, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The seventeenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior. `tests/check-docs.sh` checks the links and the documented behavior, and every CI job runs it and the four new scripts |
+| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`/`explain`, diagnostics and their formats, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The nineteenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior. `tests/check-docs.sh` checks the links and the documented behavior, and every CI job runs it and the four new scripts |
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
+| Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the deferred differential tests (issue #444) |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items, the permissive declaration layout, and the call-site marker rules |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 177 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
-| Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, and diagnostics in `burdin_diag`. CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
+| Conformance tests | `tests/` | 181 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check-diagnostics.sh` and `tests/check-error-docs.sh` run in every CI job |
+| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check-test-runner.sh` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
+| Error-code coverage | `tests/check-tests.sh`, `tests/check-tests.ps1`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
+| Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
-| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`; see the layout in `CLAUDE.md` |
+| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.sh --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
+| Fuzzing | `crates/burdin_fuzz/` | Dependency-free deterministic lexer/parser fuzzing. `corpus/syntax/` holds the edge cases and every input that found a panic; `tests/corpus.rs` replays it plus 20,000 mutations during `cargo test --workspace`, which is the check that fails when a panic is reintroduced. `tests/fuzz.sh` runs a longer session (the watchdog fails a stalled input) and the scheduled `fuzz` CI job uploads found inputs; a found input is committed under the corpus with its fix (issues #288, #447) |
 | LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
 
 Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21; the macOS and
@@ -164,17 +178,28 @@ how to call WSL from PowerShell.
   small runtime of C calls (`fopen`/`fread`/`fwrite`/`fclose`, `system`, `exit`, `strlen`, `memcmp`, `realloc`).
   The driver embeds `std/` with `include_str!` and adds it as a dependency of every package; `prelude.rs` copies
   its public names and module aliases into every module, keeping a module's own declarations.
-- Milestone 10 added the test runner. The parser reads `test "name" { ... }` into `ast::File.tests`, apart from the
-  other items, and builds each one as a private function `__burdin_test_N` with no parameters returning
+- Milestone 10 added the test runner. The parser reads `test "name" [attrs] { ... }` into `ast::File.tests`, apart
+  from the other items, and builds each one as a private function `__burdin_test_N` with no parameters returning
   `Result<(), AssertError>` whose body is the block followed by `Ok(())`. Normal builds never declare or check them
   (tests are stripped); with `burdin_sema::check(..., test_mode, ...)`, the entry package's tests are declared and
   checked, the prelude replaces `assert`/`assert_eq` with `std`'s `__test_assert`/`__test_assert_eq` (which return
-  `Err(())` instead of panicking), and `main` is not required. `Program.tests` carries each test's display name and
-  `FuncId`. Code generation then emits a dispatcher `main` instead of calling the program's `main`: it reads the test
-  index from `argv[1]` with `atoi`, calls that test, and returns 0 when its `Result` is `Ok` and 1 when it is `Err`.
-  `burdin test` compiles once into a temporary directory and runs the binary once per test, so a panic aborts only
-  the running test; it prints `FAIL <name>` for failures and `test result: N passed, M failed` at the end. The
-  panicking `assert` of normal builds is unchanged.
+  `Err(())` instead of panicking), and `main` is not required. `Program.tests` carries each test's display name,
+  `FuncId`, and validated attributes (`tir::TestAttrs`). Code generation then emits a dispatcher `main` instead of
+  calling the program's `main`: it reads the test index from `argv[1]` with `atoi`, calls that test, and returns 0
+  when its `Result` is `Ok` and 1 when it is `Err`.
+  Issue #438 added the runner ergonomics (`crates/burdin_driver/src/test_runner.rs`). A test item may carry
+  `[ignore]`, `[timeout(ms)]` (`0` means no limit), `[should_panic]`/`[should_panic("text")]`, and `[should_fail]`
+  in one bracket list; `burdin_sema` validates them and E0170 reports an unknown name, a repeat, a value the
+  attribute does not take, or `should_panic` with `should_fail`. `burdin test` compiles one test binary per selected
+  package (the entry package by default; `-p` selects a package of the graph and `--workspace` the entry package and
+  every path dependency), runs each test in its own process with `-j` workers (default: the CPU count), and reports
+  in declaration order. Each process gets a fresh temporary working directory, a clean environment (only `PATH`,
+  `TMPDIR`/`TMP`/`TEMP`, `BURDIN_TEST`, and the Windows CRT variables), and a captured stdout/stderr shown only on
+  failure (`--verbose` shows it always). A timeout kills the process and marks the test failed; `should_panic`
+  requires an abnormal ending and `should_fail` requires the dispatcher's error exit (1). The summary is
+  `test result: N passed, M failed`, with `, I ignored` when tests were skipped; `--filter` selects by name. The
+  panicking `assert` of normal builds is unchanged. The rules are in `spec/test-runner.md` and the black-box checks
+  in `tests/check-test-runner.sh`.
 - Milestone 11 added `CStr.to_string`: `CStr` is a `std` alias for `CPtr<CChar>`, and a `CPtr<CChar>` has an
   associated `to_string` that reads the bytes with libc `strlen` and copies them into a `String`
   (`Builtin::CStrToString`). `burdin` links `--link-lib LLVM-C` through `llvm-config`: Ubuntu installs the LLVM C API as
@@ -218,8 +243,16 @@ how to call WSL from PowerShell.
   E0004, `<`/`<=`/`>`/`>=` on `str` and `String` go through `cmp_at` instead of the integer path
   (`burdin_codegen/src/emit/ops.rs`), and an invalid `extern "C"` type or convention is E0162
   (`burdin_sema/src/resolve.rs`).
-- Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
-  were no syntax errors.
+- Diagnostics are collected, sorted by file and byte offset (ties by code, message, and discovery order), and
+  rendered once, so the output is deterministic and never streamed. The human format starts each diagnostic with
+  `path:LINE:COL: error[E0000]: message`, colors the location, severity, and code when enabled, wraps to the width,
+  and prints one line per note (`= note:`) and suggestion (`= help:`); `short` is the plain one-line format the
+  test scripts parse; `json` is one object per diagnostic plus a summary object with structured spans, notes, and
+  suggestions (a span and a replacement). `--color`, `--no-color`, `NO_COLOR`, `--width`, and `COLUMNS` control the
+  human format; `--error-limit N` truncates after sorting and reports how many were hidden, and the default prints
+  every error. `burdin explain <code>` prints the entry from `docs/error-codes.md`, which is embedded in the driver
+  and checked by compiling every snippet; `tests/check-diagnostics.sh` covers the presentation and ordering.
+  Semantic checks run only if there were no syntax errors.
 
 ### Compiler benchmarks and regression tracking (issues #41, #446)
 
@@ -732,7 +765,102 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 - **New tests.** 40 conformance tests cover the decisions; `tests/README.md` has the per-decision table. The suite is
   174 tests, 173 in release.
 
-## Decided in the seventeenth session
+## Decided in the seventeenth and eighteenth sessions
+
+- **Test attributes are one bracket list after the name.** `test "name" [ignore, timeout(500), should_panic("boom")]`
+  fits the grammar without a new token, and the names stay contextual. The accepted set is `ignore`, `timeout(ms)`,
+  `should_panic[(message)]`, and `should_fail`; anything else in the list is E0170, and so is a repeat, a value an
+  attribute does not take, or `should_panic` with `should_fail`. The grammar is in `spec/grammar.md`; the behavior
+  in `spec/test-runner.md`; the tests are `m10_test_runner/attributes_*.bd`.
+- **`should_panic` and `should_fail` are separate endings.** The dispatcher returns 0 for `Ok` and 1 for `Err`, so a
+  returned error is exit 1, a panic is any other abnormal ending, and `should_fail` accepts only exit 1. A test that
+  calls `process.exit(n)` with another value is indistinguishable from an abort; that is documented rather than
+  given a new protocol. An expected error *value* waits for milestone 16: `AssertError` is a unit alias in stage 0, so
+  `should_fail` takes no payload.
+- **Tests run in one process each, concurrently.** `-j`/`--jobs` defaults to the CPU count, `-j 1` is sequential,
+  and the report is collected and printed in declaration order. One test binary is compiled per selected package,
+  so a dependency's tests are checked against their own package.
+- **Isolation is a fresh directory and a clean environment.** Each test runs in an empty temporary directory that is
+  removed afterwards; the environment holds only `PATH`, `TMPDIR`/`TMP`/`TEMP` (the test's directory),
+  `BURDIN_TEST`, and the Windows CRT variables. `argv` stays reserved for the dispatcher index, so a test must not
+  rely on `env.args()`.
+- **`--workspace` means the build graph.** Stage 1 has no manifest-level workspace (multiple-package workspaces are
+  stage 3), so `--workspace` selects the entry package and every path dependency; `-p` selects one package of that
+  graph, and dependency tests never run by default. Names are shown as `<package>::<test>` when more than one package
+  is selected.
+- **Default timeout is 60 seconds.** `--timeout <ms>` overrides it (0 disables it) and a `[timeout(ms)]` attribute
+  overrides that per test. A timeout kills the process and is a failure; `should_panic` does not accept a timeout.
+- **The runner has a black-box check.** `tests/check-test-runner.sh` drives fixture packages in `tests/runner/`
+  through every mode, checks the deterministic order and the cleanup, and every CI job runs it. The fixtures carry no
+  `//@` directives, so the conformance runner ignores them.
+- **Every registry code needs a test.** `tests/check-tests.sh` and `.ps1` now fail on a registered code with no `//~`
+  marker; a code that cannot have a compile-fail test is listed with its reason in `tests/README.md`
+  (issue #445). The list is empty today.
+- **Differential tests wait for comptime.** Issue #444 cannot be implemented before milestone 20's interpreter;
+  `spec/test-runner.md` records the intended `[differential]` attribute and behavior, and the issue stays open.
+- **Diagnostics are sorted once, never streamed** (issue #436). The semantic and memory checks already collect the
+  whole list before the driver prints it, so the renderer sorts by file (load order), byte offset, code, message,
+  and discovery order. That makes equal spans stable and the output byte-for-byte deterministic. The "report every
+  error in a file" rule therefore holds by default; `--error-limit N` is opt-in, applies to the sorted list, and
+  only hides output (the summary counts every error). `0` means no limit.
+- **Three formats** (issues #434, #435). `human` is the default and is the only one that colors or wraps; `short`
+  is exactly one plain `path:LINE:COL: error[E0000]: message` line per diagnostic, which is what the test scripts
+  parse; `json` is one object per diagnostic plus a final summary object, with `span` (file, line, column, end,
+  byte offsets), `notes`, and `suggestions` (message, span, replacement). An insert is a span with equal ends, and
+  an empty replacement deletes. The JSON is the interface an editor uses for diagnostics and quick-fix code
+  actions; there is no LSP yet.
+- **Color precedence**: an explicit `--color always`/`never` (or `--no-color` for `never`) wins over a non-empty
+  `NO_COLOR`; `auto` is the default and requires stderr to be a terminal and `NO_COLOR` to be absent. The last
+  color option on the command line wins. The decision is a pure function unit-tested in the driver.
+- **Width precedence**: `--width`, then a positive `COLUMNS`, then 80; `--width 0` disables wrapping. Wrapping
+  only inserts breaks and a four-space hanging indent and never changes the message characters, so a hard-split
+  word can be reconstructed by removing the breaks.
+- **Notes and suggestions are part of the diagnostic model, not of rendering.** `Diagnostic` carries
+  `notes: Vec<Note>` (optional span) and `suggestions: Vec<Suggestion>` (span + replacement). E0100 now notes where
+  the value was moved from, E0110 notes the conflicting argument, and E0114/E0115 attach the `mut` insertion or
+  deletion (the parser records the marker's span in `ast::Arg.mut_span`). The human renderer prints `= note:` and
+  `= help:`; `short` omits both.
+- **The error-code reference is a checked page, embedded in the driver** (issue #437). `docs/error-codes.md` has one
+  section per registry code with a complete example and a fix. The markers `<!-- error-example: E0000 -->` delimit
+  each snippet, which `tests/check-error-docs.sh` extracts, compiles, and requires to fail with exactly the marked
+  `//~` diagnostics (a multi-file snippet uses `// --- path ---` lines and `target=`). The driver embeds the page
+  with `include_str!`, so `burdin explain <code>` and the page cannot drift; a unit test compares the page headings
+  with the registry in `tests/README.md`.
+- **CI runs two new checks in every job**: `tests/check-diagnostics.sh` (formats, color, width, notes/suggestions,
+  limit, determinism, flag syntax) and `tests/check-error-docs.sh` (registry coverage, every example compiled,
+  `burdin explain`). `tests/check-ci.sh` fails if either step, either script, or the reference page goes missing,
+  and checks that the page's code set equals the registry without compiling anything.
+- **No new diagnostic codes.** The registry is unchanged; #433 is presentation and tooling.
+- **The fuzzer is dependency-free and deterministic (issues #288, #447).** `crates/burdin_fuzz` has its own
+  SplitMix64 generator and mutation operators rather than `cargo-fuzz`/libFuzzer, so it builds on the pinned stable
+  toolchain, adds no dependency to `Cargo.lock`, and needs no backend or LLVM. A run is a function of the corpus,
+  the seed, and the iteration count: the same pair reproduces every input on every platform. The fuzzer parses
+  source text (`&str`), because that is what the driver's `read_to_string` hands the lexer; invalid UTF-8 never
+  reaches the parser.
+- **The corpus is committed, and the fast replay is the regression check.** `crates/burdin_fuzz/corpus/syntax/` holds
+  hand-written edge cases (truncated constructs, unbalanced brackets, `>>` splitting, struct-literal lookahead,
+  recovery points, unicode) plus every input that found a panic. `tests/corpus.rs` replays it and then runs 20,000
+  deterministic mutations from a fixed seed inside `cargo test --workspace`, so every CI job fails when a committed
+  input panics again. The run takes about a second; the unit tests also prove that a deliberate panic is reported and
+  a saved input is named by its content hash.
+- **The long session is scheduled.** `burdin-fuzz-syntax` replays the corpus, then mutates it for a time budget,
+  writes each failing input to `fuzz-out/crashes/`, and exits 1. A watchdog fails the run when no input finishes for
+  ten seconds and saves the input that stalled, so a recovery loop that stops consuming tokens is caught rather than
+  hanging the job. The `fuzz` job runs `tests/fuzz.sh --seconds 600` on the weekly schedule
+  (`cron: '17 4 * * 1'`) and by hand, with the run id as the generator seed so every run explores a different
+  sequence, and uploads the directory as the `fuzz-crashes` artifact. It builds only the fuzz crate and its
+  front-end dependencies, so it needs no LLVM. The script also seeds the session with the conformance tests and
+  `std`, which are structurally richer than the small edge cases.
+- **A found input is committed with its fix.** The scheduled job cannot commit by itself; the artifact holds the
+  input, and the fix commits it under `corpus/syntax/`, where the replay keeps the panic from coming back. The
+  corpus README states that rule. `tests/check-ci.sh` fails if the schedule trigger, the gated `fuzz` job, its
+  `cargo test -p burdin_fuzz` replay, `tests/fuzz.sh`, the artifact upload, or the corpus itself goes missing.
+- **Fuzzing found no panic in the current front end.** More than 20 million mutations over several seeds (corpus,
+  conformance tests, and `std` as seeds) and the deliberately broken-parser fixture used to prove the harness reports
+  findings both behaved as intended; no input is committed yet, so the corpus is the hand-written seed set. A
+  4,000-character input of nested delimiters, the mutation cap, parses on both the main and a test thread's stack.
+
+## Decided in the nineteenth session
 
 - **Debug information is opt-in (`-g`).** It is not tied to the profile: a debug build without `-g` stays small, and
   `--release -g` works when a debugger is needed for an optimized binary. The metadata is emitted in both cases, and
@@ -782,6 +910,8 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
    question (comptime), the closure representation, the iterator protocol (associated types or a generic
    `Iterator<T>`), `any`/`impl`, the error representation, and allocator parameters all shape milestones 12 to 24.
+   Issue #444 (differential tests between comptime and compiled code) is blocked on the milestone 20 interpreter;
+   `spec/test-runner.md` holds its intended shape and the issue stays open until then.
 2. Write the m12 tests before the code, the same way stage 0 was built: `tests/m12_closures` and its `//@` expectations
    are the spec for the first stage 1 milestone.
 3. Close the stage 0 correctness gaps that stage 1 inherits, each with a registry code and tests first: a view outliving
@@ -793,6 +923,8 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
    `tests/check-ci.sh` guards that the workflow keeps covering the suite in both profiles, every job, and their
    caches; `tests/check-platform.sh` guards the host triple. Every job also records and compares benchmark baselines,
    advisory until the runner numbers are stable (issue #446); when they are, drop `continue-on-error` from the step.
+   The weekly `fuzz` job runs the longer lexer/parser session and uploads a found input (issues #288, #447); the
+   corpus replay runs in every job, so no further wiring is needed for a reintroduced panic.
    Next: an Intel macOS job and another arm64 host if they are wanted.
 5. The 16 assumptions in `tests/README.md` are settled (issue #21, sixteenth session); their rules are in `spec/` and
    their tests are in the suite. A new open question still gets an `//@ undecided` test until it is decided.

@@ -1,0 +1,12 @@
+// Characters outside ASCII in every position, and bytes the lexer must report or skip.
+fn café(π: i32) {
+    let 名前 = "日本語"
+    let 🦀 = '🦀'
+    let x = π + 名前
+    let y = "é" + "\u{202e}"
+    let z = '' + 'é' + '\u{0}'
+}
+fn main() {
+    let a = 1
+    let b = 2
+}

@@ -1,0 +1,25 @@
+// Calls, fields, tuple fields, indexing, and postfix chains on every base.
+fn main() {
+    let a = f(1, 2,)
+    let b = f(mut x, mut y)
+    let c = f(,)
+    let d = f(1,,2)
+    let e = f(1 2)
+    let g = f()()
+    let h = f(1)(2)(3)
+    let i = a.b.c.d
+    let j = a.0.1.2
+    let k = a.b.0.c
+    let l = a.0()
+    let m = a[0][1][2]
+    let n = a[b[c[0]]]
+    let o = a[]
+    let p = a[0
+    let q = a.
+    let r = a.0x1
+    let s = (a + b).c
+    let t = { a }.c
+    let u = if a { b } else { c }.d
+    let v = a ? .b
+    let w = a. b
+}

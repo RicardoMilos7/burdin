@@ -1,0 +1,43 @@
+// Item-level and statement-level recovery: every broken item before a good one.
+fn broken( { }
+fn good() {}
+
+const broken: = 1
+const good_const: i32 = 1
+
+struct broken {
+struct good { x: i32 }
+
+enum broken {
+enum good { A }
+
+interface broken {
+interface good { fn f(self) }
+
+type broken =
+type good = i32
+
+use .broken
+use good
+
+extern "C" {
+    fn broken(
+}
+extern "C" {
+    fn good()
+}
+
+S {
+    fn broken( {
+}
+S {
+    fn good(self) {}
+}
+
+fn main() {
+    let = 1
+    let x = ) + (
+    g(1, 2
+    bad bad bad
+    let good = 1
+}

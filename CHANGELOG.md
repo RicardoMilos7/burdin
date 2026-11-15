@@ -18,6 +18,17 @@ close-out checklist in `AGENTS.md`).
   `burdin --version` prints the version, target, LLVM version, commit, and profile; and modules are parsed in
   parallel with byte-identical diagnostics (`BURDIN_JOBS`). Each has a CI check: `check-debug-info.sh`,
   `check-codegen-opt.sh`, `check-build-flags.sh`, and `check-parallel.sh`.
+- `burdin test` gained the runner ergonomics of issue #438 (sub-issues #439-#443, #445). Tests may carry
+  `[ignore]`, `[timeout(ms)]`, `[should_panic]`/`[should_panic("text")]`, and `[should_fail]` attributes; an invalid
+  attribute is E0170. Tests run concurrently (`-j`/`--jobs`, default: the CPU count) with a deterministic report,
+  each in its own fresh temporary working directory with a clean environment and cleaned up afterwards. Output is
+  captured and printed only for failures, with `--verbose` to show it always. `-p`, `--workspace`, and `--filter`
+  select packages and tests, and dependency tests do not run by default. The rules are in `spec/test-runner.md`;
+  `tests/m10_test_runner` adds four conformance tests and `tests/check-test-runner.sh` checks the runner black-box;
+  every CI job runs it (issues #438-#443). `tests/check-tests.sh` and `.ps1` now fail when a registered error code
+  has no compile-fail test and no documented exception, so a new diagnostic cannot ship untested (issue #445).
+  Differential tests between comptime and compiled code (issue #444) remain blocked on the comptime interpreter
+  (milestone 20); `spec/test-runner.md` records their intended shape.
 - Settle the 16 assumptions in `tests/README.md` (issue #21, sub-issues #22-#40). The decisions are now rules in
   `spec/grammar.md`, `spec/memory-rules.md`, two new spec files (`spec/stdlib.md` for the standard-library surface
   and `spec/derives.md` for the exact derived members and FNV-1a hash values), and `spec/stage0-subset.md` /
@@ -63,6 +74,15 @@ close-out checklist in `AGENTS.md`).
   code generation; tests marked `//@ debug-only` (the m02 overflow abort test) are skipped. `tests/check-ci.sh` fails
   if a job loses its release step, if the runner stops selecting the profile or skipping debug-only tests, or if no
   test is marked debug-only (issue #47).
+- Diagnostics gained presentation and tooling (issues #433-#437). The human format colors the location, severity,
+  and code when stderr is a terminal, honors `--color`, `--no-color`, and `NO_COLOR`, and wraps to `--width`,
+  `COLUMNS`, or 80; `--diagnostic-format short` is the one-line machine format and `json` is one JSON object per
+  diagnostic plus a summary object. Diagnostics carry notes and suggestions with spans and replacement edits
+  (E0100/E0110 attach notes; E0114/E0115 attach the suggested `mut` edit). Output is sorted deterministically, and
+  `--error-limit` truncates after sorting while still counting every error (unlimited by default). The new
+  `docs/error-codes.md` documents every registry code with a compiled example and a fix, `burdin explain <code>`
+  prints an entry, and every CI job runs `tests/check-diagnostics.sh` and `tests/check-error-docs.sh`. Unit tests
+  cover the formats, color decision, wrapping, JSON shape, ordering, and limit in `burdin_diag` and `burdin_driver`.
 - The compiler benchmarks gained regression tracking (issue #446): `cargo bench -p burdin_bench -- --save FILE`
   records a run's medians in a plain-text baseline, and `--baseline FILE` compares a later run with it, reporting
   every case more than `--threshold` percent slower (default 25) and exiting 1. `tests/bench-regression.sh` runs the
@@ -71,6 +91,14 @@ close-out checklist in `AGENTS.md`).
   the last main run. The comparison is advisory until the runner numbers are stable. `tests/check-ci.sh` fails if
   the step, the script, the cache, or the harness modes go missing, and `cargo test -p burdin_bench` covers the
   baseline format and the threshold arithmetic.
+- The lexer and parser are fuzzed (issues #288 and #447). `burdin_fuzz` is a dependency-free, deterministic harness
+  on the pinned stable toolchain: `burdin-fuzz-syntax` replays the committed corpus and then mutates it with a fixed
+  seed, catching panics and watching for an input that stops making progress. `crates/burdin_fuzz/corpus/syntax/`
+  holds the hand-written edge cases and every input that found a panic, and `cargo test --workspace` replays them
+  plus 20,000 deterministic mutations in every CI job, so a reintroduced panic fails. A scheduled `fuzz` job runs
+  a ten-minute session seeded by the run id (so each run explores new inputs) and uploads any found input as the
+  `fuzz-crashes` artifact; committing it with the fix keeps the regression covered. `tests/check-ci.sh` fails if
+  the schedule, the fuzz job, the long session, the artifact upload, or the corpus goes missing.
 
 ## Unreleased — Stage 1
 

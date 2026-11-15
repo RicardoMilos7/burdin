@@ -58,7 +58,7 @@ the executable form. Two decisions worth calling out here:
 | Errors | `Option`, `Result<T, E>` with explicit `E`, `?` with `From`, `orelse` with a default value, `unwrap`, `expect`; panics abort | M |
 | Modules | Files as modules, `use` with braces and `as`, `priv`, a prelude; one package with a minimal `burdin.toml` | M |
 | Unsafe and C | `unsafe`, `extern "C"` blocks, `CPtr<T>`, used for libc and the LLVM C API | M |
-| Tests | `test` blocks, `assert` and `assert_eq` returning errors, a runner that restarts after an abort | M |
+| Tests | `test` blocks with `[ignore]`, `[timeout(ms)]`, `[should_panic]`, and `[should_fail]` attributes, `assert` and `assert_eq` returning errors, a concurrent runner with captured output and per-test processes | M |
 | Diagnostics and driver | Spans, error codes (see `../tests/README.md`), `burdin build`, `run`, `test` | M |
 
 Built-in operators on primitives are compiler built-ins. Indexing is built in for `List`, arrays, slices, and `Map`.
@@ -125,7 +125,7 @@ Each milestone is a vertical slice. It is done when every test in its folder (an
 | 7 | `m07_generics` | Monomorphization, interfaces, `requires`, derives, orphan rule | Generic stack and `max_of` work; derived `Eq`, `Ord`, `Hash` behave |
 | 8 | `m08_modules` | Files as modules, `use`, `priv`, `extern "C"`, `CPtr<T>` | Multi-file program runs; `priv` across packages rejected; libc call works |
 | 9 | `m09_stdlib` | `Option`, `Result`, `?`, `String`, `List`, `Map`, file I/O, processes | Word count and tokenizer pass |
-| 10 | `m10_test_runner` | `test` blocks, assert errors, abort recovery, driver commands | The runner reports passed and failed counts correctly, including after an abort |
+| 10 | `m10_test_runner` | `test` blocks and attributes, assert errors, per-test processes, driver commands | The runner reports passed, failed, and ignored counts correctly, including after an abort |
 | 11 | `m11_llvm` | LLVM C API from Burdin (a large, real C library through `extern`) | A Burdin program builds and verifies a function returning 42. Then stage 0 is complete and stage 1 starts |
 
 ## After stage 1

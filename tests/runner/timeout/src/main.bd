@@ -1,0 +1,9 @@
+fn main() {}
+
+test "finishes" {
+    assert(true)?
+}
+
+test "hangs" [timeout(100)] {
+    while true { }
+}

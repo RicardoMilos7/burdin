@@ -42,8 +42,10 @@ Directives are line comments at any position in the root file.
 | `//@ run-abort` | Compile and run. The process must end abnormally (panic abort, non-zero exit). Stdout before the abort must equal the `//>` lines. |
 | `//@ stderr: text` | Stderr must contain `text`. May repeat; all must match. |
 | `//@ compile-fail` | Compilation must fail. The set of (line, code) diagnostics must equal the `//~` markers exactly. |
+| `//@ test-compile-fail` | Like `compile-fail`, but the package is compiled in test mode (`burdin test`), so diagnostics inside `test` items and their attributes are reported. |
 | `//~ E0000` | At the end of a line: that line must carry that diagnostic. Several markers per file are allowed. |
 | `//@ burdin-test passed=N failed=M` | Run `burdin test` on the package. Counts must match. |
+| `//@ burdin-test passed=N failed=M ignored=I` | The same, with I tests marked `[ignore]`. |
 | `//@ failed-test: name` | That test must be reported as failed. May repeat. |
 | `//@ exit-code: N` | Expected exit code with `run`. |
 | `//@ args: a b` | Command-line arguments passed after the program name. |
@@ -53,7 +55,9 @@ Directives are line comments at any position in the root file.
 
 Runner rules: run each test in a fresh empty temporary directory as the working directory; compare
 stdout after normalizing `\r\n` to `\n`; every `compile-fail` file must report all of its errors (no
-stopping at the first error) and no others.
+stopping at the first error) and no others. The `test` item's attributes (`[ignore]`, `[timeout(ms)]`,
+`[should_panic]`, `[should_fail]`) and the `burdin test` flags are specified in
+[`spec/test-runner.md`](../spec/test-runner.md).
 
 ## Running the tests
 
@@ -72,11 +76,16 @@ tests/check-debug-info.sh             # -g: DWARF, line table, and a gdb breakpo
 tests/check-codegen-opt.sh            # drop-flag elimination, bounds-check elision, shared glue
 tests/check-build-flags.sh            # --version, --strip's budget, --lto, and PGO
 tests/check-parallel.sh               # parallel parsing and deterministic diagnostics
+tests/check-diagnostics.sh            # check color, width, formats, error limits, and ordering (needs a built driver)
+tests/check-error-docs.sh             # check the error-code reference and `burdin explain` (needs a built driver)
+tests/check-test-runner.sh            # check `burdin test` attributes, parallelism, output, isolation, discovery
 pwsh tests/check-tests.ps1            # the same check in PowerShell
 ```
 
 CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and
-release. The release run skips tests marked `//@ debug-only`.
+release. The release run skips tests marked `//@ debug-only`. The `burdin test` features themselves (attributes,
+`-j`, output capture, isolation, `-p`/`--workspace`) are checked black-box by `tests/check-test-runner.sh`, with
+fixtures under `tests/runner/` that carry no `//@` directives and are therefore not conformance tests.
 
 The compiler and runtime work of issue #421 is covered in two places. The observable runtime behavior has conformance
 tests: `m02_basics/panic_backtrace.bd` (both profiles), `m02_basics/panic_backtrace_names.bd` (debug-only),
@@ -115,7 +124,9 @@ platform. `HANDOFF.md` records the first baseline and the meaning of the `--smok
 
 ## Error codes
 
-The registry the tests use. The compiler adopts these numbers (or the tests are updated).
+The registry the tests use. The compiler adopts these numbers (or the tests are updated). Every code also has a
+user-facing entry in [the error-code reference](../docs/error-codes.md), which `tests/check-error-docs.sh` checks
+against this table and whose examples it compiles; `burdin explain <code>` prints the entry.
 
 | Code | Meaning |
 | --- | --- |
@@ -146,6 +157,17 @@ The registry the tests use. The compiler adopts these numbers (or the tests are 
 | E0160 | `?` used in a function whose return type is not `Option` or `Result` |
 | E0161 | Operation that requires `unsafe` used outside `unsafe` |
 | E0162 | Type or convention not allowed in an `extern "C"` declaration (parameters and results are integers, floats, and `CPtr`) |
+| E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, or `should_panic` with `should_fail` |
+
+### Codes without a compile-fail test
+
+Every code in the registry above needs a `//~` marker in at least one conformance test. A code that cannot be
+witnessed by a compile-fail test (for example, a rule only a passing test can show) is listed here with the reason;
+`tests/check-tests.sh` and `tests/check-tests.ps1` fail when a registered code is in neither place, and when a row
+here names an unknown code, a code that already has a test, or no reason.
+
+| Code | Why it has no compile-fail test |
+| --- | --- |
 
 ## Decisions the tests encode
 

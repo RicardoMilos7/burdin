@@ -268,17 +268,28 @@ impl FnCx<'_> {
         let mut pre = pre.map(|v| v.into_iter());
         for (a, p) in args.iter().zip(params) {
             if p.mut_param && !a.mut_marker {
-                self.diags.error(
-                    Code::MISSING_MUT_MARKER,
-                    a.expr.span,
-                    format!("this parameter of `{name}` is `mut`; pass the argument as `mut ...`"),
-                );
+                let position = a.expr.span;
+                self.diags
+                    .error(
+                        Code::MISSING_MUT_MARKER,
+                        position,
+                        format!("this parameter of `{name}` is `mut`; pass the argument as `mut ...`"),
+                    )
+                    .suggest(
+                        Span::new(position.file, position.lo, position.lo),
+                        "add `mut` before this argument",
+                        "mut ",
+                    );
             } else if !p.mut_param && a.mut_marker {
-                self.diags.error(
+                let error = self.diags.error(
                     Code::UNNEEDED_MUT_MARKER,
                     a.expr.span,
                     format!("this parameter of `{name}` is not `mut`; the argument takes no `mut` marker"),
                 );
+                if let Some(mut_span) = a.mut_span {
+                    // Delete the marker and the whitespace after it, so applying the edit leaves plain `name`.
+                    error.suggest(Span::new(mut_span.file, mut_span.lo, a.expr.span.lo), "remove the `mut` marker", "");
+                }
             }
             let arg = match pre.as_mut().and_then(|it| it.next()) {
                 Some(arg) => arg,
@@ -314,28 +325,31 @@ impl FnCx<'_> {
         args: &[tir::Expr],
         span: Span,
     ) {
-        let mut entries: Vec<(bool, Vec<Place>)> = Vec::new();
+        let mut entries: Vec<(bool, Span, Vec<Place>)> = Vec::new();
         if let Some((receiver, exclusive)) = receiver {
             let mut places = Vec::new();
             place_mentions(receiver, &mut places);
-            entries.push((exclusive, places));
+            entries.push((exclusive, receiver.span, places));
         }
         for (p, a) in params.iter().zip(args) {
             let mut places = Vec::new();
             place_mentions(a, &mut places);
-            entries.push((p.mut_param, places));
+            entries.push((p.mut_param, a.span, places));
         }
         for i in 0..entries.len() {
             if !entries[i].0 {
                 continue;
             }
             for j in 0..entries.len() {
-                if i != j && entries[i].1.iter().any(|p| entries[j].1.iter().any(|q| places_overlap(p, q))) {
-                    self.diags.error(
-                        Code::EXCLUSIVITY,
-                        span,
-                        "another argument of this call touches the same value as a `mut` argument",
-                    );
+                if i != j && entries[i].2.iter().any(|p| entries[j].2.iter().any(|q| places_overlap(p, q))) {
+                    let other = entries[j].1;
+                    self.diags
+                        .error(
+                            Code::EXCLUSIVITY,
+                            span,
+                            "another argument of this call touches the same value as a `mut` argument",
+                        )
+                        .note(other, "this argument touches the same place");
                     return;
                 }
             }

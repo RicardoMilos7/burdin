@@ -3,6 +3,11 @@ name: CI
 on:
   push:
   pull_request:
+  # Continuous fuzzing (issue #447). The committed corpus is replayed by `cargo test --workspace` on every
+  # push; the longer deterministic session runs here once a week and by hand.
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
 
 jobs:
   linux:
@@ -153,6 +158,21 @@ jobs:
       - name: Check documentation
         run: tests/check-docs.sh
 
+      # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
+      # formats, the error limit, and deterministic ordering.
+      - name: Check diagnostics behavior
+        run: tests/check-diagnostics.sh
+
+      # The user-facing error-code reference (issue #437): every code, every example compiled, and
+      # `burdin explain`.
+      - name: Check the error-code reference
+        run: tests/check-error-docs.sh
+
+      # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
+      # (issues #438-#443).
+      - name: Check the test runner
+        run: tests/check-test-runner.sh
+
       - name: Check host target
         run: tests/check-platform.sh
 
@@ -285,6 +305,21 @@ jobs:
 
       - name: Check documentation
         run: tests/check-docs.sh
+
+      # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
+      # formats, the error limit, and deterministic ordering.
+      - name: Check diagnostics behavior
+        run: tests/check-diagnostics.sh
+
+      # The user-facing error-code reference (issue #437): every code, every example compiled, and
+      # `burdin explain`.
+      - name: Check the error-code reference
+        run: tests/check-error-docs.sh
+
+      # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
+      # (issues #438-#443).
+      - name: Check the test runner
+        run: tests/check-test-runner.sh
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -451,6 +486,21 @@ jobs:
       - name: Check documentation
         run: bash tests/check-docs.sh
 
+      # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
+      # formats, the error limit, and deterministic ordering.
+      - name: Check diagnostics behavior
+        run: bash tests/check-diagnostics.sh
+
+      # The user-facing error-code reference (issue #437): every code, every example compiled, and
+      # `burdin explain`.
+      - name: Check the error-code reference
+        run: bash tests/check-error-docs.sh
+
+      # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
+      # (issues #438-#443).
+      - name: Check the test runner
+        run: bash tests/check-test-runner.sh
+
       - name: Check host target
         run: bash tests/check-platform.sh
 
@@ -467,3 +517,58 @@ jobs:
       # The default linker on Windows is already `cl`; this proves the `BURDIN_CC` override takes the same path.
       - name: Conformance tests with BURDIN_CC=cl
         run: BURDIN_CC=cl bash tests/run-tests.sh m01_hello m11_llvm
+
+  # Continuous fuzzing (issue #447). Every job replays the committed corpus through
+  # `cargo test --workspace`, so a reintroduced panic fails a pull request. This job adds the longer
+  # deterministic session, which is too slow for every push; it runs on the weekly schedule or by hand.
+  # It builds only the fuzz crate and its front-end dependencies, so it needs no LLVM.
+  fuzz:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check CI workflow
+        run: tests/check-ci.sh
+
+      # rust-toolchain.toml pins the channel and the clippy/rustfmt components.
+      - name: Install Rust (pinned in rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Verify pinned Rust toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          case "$(rustc --version)" in
+            "rustc $channel "*) ;;
+            *) echo "expected rustc $channel, got $(rustc --version)"; exit 1 ;;
+          esac
+          rustup component list --installed | grep -q '^clippy-' || { echo "clippy is missing"; exit 1; }
+          rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy -p burdin_fuzz --all-targets -- -D warnings
+
+      # The same replay that `cargo test --workspace` runs in the other jobs, named here so a scheduled
+      # failure is easy to read before the long session starts.
+      - name: Fuzzing corpus replay
+        run: cargo test -p burdin_fuzz
+
+      # A panic or a stall fails this step and its input is written to fuzz-out/crashes, which the next
+      # step uploads. Commit that input under crates/burdin_fuzz/corpus/syntax/ with the fix. The seed is
+      # the run id, so each scheduled run explores a different sequence; the finding prints the seed.
+      - name: Fuzz the lexer and parser
+        run: tests/fuzz.sh --seconds 600 --seed "${{ github.run_id }}"
+
+      - name: Upload found inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz-out/crashes
+          if-no-files-found: ignore

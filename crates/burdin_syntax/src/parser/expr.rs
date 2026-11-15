@@ -166,9 +166,9 @@ impl Parser<'_> {
                     self.open(&TokenKind::LParen, false)?;
                     let mut args = Vec::new();
                     while !self.at(&TokenKind::RParen) {
-                        let mut_marker = self.eat(&TokenKind::Mut);
+                        let mut_span = self.at(&TokenKind::Mut).then(|| self.bump().span);
                         let expr = self.expr()?;
-                        args.push(Arg { mut_marker, expr });
+                        args.push(Arg { mut_marker: mut_span.is_some(), mut_span, expr });
                         if !self.eat(&TokenKind::Comma) {
                             break;
                         }

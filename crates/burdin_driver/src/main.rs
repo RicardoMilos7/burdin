@@ -2,32 +2,121 @@
 //! root (`The driver contract`) and summarized at the top of tests/run-tests.sh.
 
 mod package;
+mod test_runner;
 
-use burdin_diag::{Diagnostics, SourceMap};
+use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, SourceMap};
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "\
+pub(crate) const USAGE: &str = "\
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto]
-               [--pgo-generate | --pgo-use <profile>]
-               [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
-  burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]... [-- <program arguments>...]
-  burdin test <file.bd | package directory> [--release]
+               [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
+               [--link-lib <name>]... [diagnostics]
+  burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]... [diagnostics]
+             [-- <program arguments>...]
+  burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
+              [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
+              [diagnostics]
+  burdin explain [<error code>]
   burdin --version
+
+test options:
+  -j, --jobs <n>       tests to run at once (default: the number of CPUs)
+  -p <package>         run the tests of one package of the build; may repeat
+  --workspace          run the tests of the entry package and every path dependency
+  --filter <text>      run only tests whose name contains text
+  --ignored            run only tests marked [ignore]
+  --include-ignored    run ignored tests too
+  --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
+  -v, --verbose        print the output of passing tests too
+
+diagnostics:
+  --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
+                                          diagnostic; json prints one JSON object per line
+  --color <auto|always|never>             color (default auto: only when stderr is a terminal)
+  --no-color                              same as --color never
+  --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
+  --error-limit <n>                       print at most n errors after sorting (0 prints all)
 
 environment:
   BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
   BURDIN_COMMIT        overrides the git commit printed by `--version`
   BURDIN_JOBS          parser threads (default: the machine's parallelism; 1 is sequential)
-  LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`";
+  LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
+  COLUMNS              terminal width used when --width is not given
+  NO_COLOR             disables color unless --color=always or --color=never says otherwise";
+
+const EXPLAIN_USAGE: &str = "\
+usage:
+  burdin explain           list the error codes
+  burdin explain <code>    print the reference entry for an error code (for example E0003)";
+
+/// The user-facing error-code reference, embedded so `burdin explain` cannot disagree with the page that
+/// `tests/check-error-docs.sh` checks (issue #437).
+const ERROR_DOCS: &str = include_str!("../../../docs/error-codes.md");
+
+#[derive(Debug)]
+pub(crate) struct Args {
+    pub(crate) command: String,
+    pub(crate) target: PathBuf,
+    pub(crate) release: bool,
+    /// Emit source-level debug information (DWARF in the object and the executable).
+    pub(crate) debug: bool,
+    /// Pass the linker's strip option (Unix `-s`; with MSVC, optimize for size).
+    pub(crate) strip: bool,
+    /// Emit LLVM bitcode and link with `-flto`; needs an LLVM compiler driver.
+    pub(crate) lto: bool,
+    /// Instrument the program for profile-guided optimization.
+    pub(crate) pgo_generate: bool,
+    /// Use a profile (`*.profraw` or `*.profdata`) for profile-guided optimization.
+    pub(crate) pgo_use: Option<PathBuf>,
+    pub(crate) output: Option<PathBuf>,
+    pub(crate) emit_ir: Option<PathBuf>,
+    pub(crate) link_libs: Vec<String>,
+    pub(crate) program_args: Vec<String>,
+    pub(crate) diagnostics: DiagnosticOptions,
+    // `burdin test` only.
+    pub(crate) jobs: Option<usize>,
+    pub(crate) verbose: bool,
+    pub(crate) packages: Vec<String>,
+    pub(crate) workspace: bool,
+    pub(crate) ignored_only: bool,
+    pub(crate) include_ignored: bool,
+    pub(crate) filter: Option<String>,
+    /// Milliseconds; `Some(0)` disables the timeout. `None` keeps the default.
+    pub(crate) timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct DiagnosticOptions {
+    format: DiagnosticFormat,
+    color: ColorChoice,
+    /// `None` uses `COLUMNS`, then 80; `Some(0)` disables wrapping.
+    width: Option<usize>,
+    /// `None` prints every diagnostic; `Some(0)` also means every diagnostic.
+    error_limit: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ColorChoice {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
 
 /// The build metadata `burdin --version` prints, in a fixed order: the version, the host target, the LLVM library
 /// the compiler is linked against, the git commit, and the profile.
 fn version_text() -> String {
     format!(
-        "burdin {}\ntarget: {}\nllvm: {}\ncommit: {}\nprofile: {}",
+        "burdin {}
+target: {}
+llvm: {}
+commit: {}
+profile: {}",
         env!("CARGO_PKG_VERSION"),
         env!("BURDIN_TARGET"),
         burdin_codegen::llvm_version(),
@@ -36,30 +125,9 @@ fn version_text() -> String {
     )
 }
 
-struct Args {
-    command: String,
-    target: PathBuf,
-    release: bool,
-    /// Emit source-level debug information (DWARF in the object and the executable).
-    debug: bool,
-    /// Pass the linker's strip option (Unix `-s`; on MSVC, drop the debug directory).
-    strip: bool,
-    /// Emit LLVM bitcode and link with `-flto`; needs an LLVM compiler driver as BURDIN_CC.
-    lto: bool,
-    /// Instrument the program for profile-guided optimization.
-    pgo_generate: bool,
-    /// Use a profile (`*.profraw` or `*.profdata`) for profile-guided optimization.
-    pgo_use: Option<PathBuf>,
-    output: Option<PathBuf>,
-    emit_ir: Option<PathBuf>,
-    link_libs: Vec<String>,
-    program_args: Vec<String>,
-}
-
-fn parse_args(args: Vec<String>) -> Result<Args, String> {
-    let mut it = args.into_iter();
-    let command = it.next().ok_or("missing command")?;
-    if !matches!(command.as_str(), "build" | "run" | "test") {
+fn parse_args(argv: &[String]) -> Result<Args, String> {
+    let mut it = argv.iter();
+    let command = it.next().ok_or("missing command")?.clone();    if !matches!(command.as_str(), "build" | "run" | "test") {
         return Err(format!("unknown command `{command}`"));
     }
     let mut args = Args {
@@ -75,21 +143,73 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
         emit_ir: None,
         link_libs: Vec::new(),
         program_args: Vec::new(),
+        diagnostics: DiagnosticOptions::default(),
+        jobs: None,
+        verbose: false,
+        packages: Vec::new(),
+        workspace: false,
+        ignored_only: false,
+        include_ignored: false,
+        filter: None,
+        timeout_ms: None,
     };
     let mut target = None;
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--release" => args.release = true,
-            "-g" | "--debug-info" => args.debug = true,
-            "--strip" => args.strip = true,
-            "--lto" => args.lto = true,
-            "--pgo-generate" => args.pgo_generate = true,
-            "--pgo-use" => args.pgo_use = Some(it.next().ok_or("`--pgo-use` needs a profile path")?.into()),
-            "-o" => args.output = Some(it.next().ok_or("`-o` needs a path")?.into()),
-            "--emit-ir" => args.emit_ir = Some(it.next().ok_or("`--emit-ir` needs a path")?.into()),
-            "--link-lib" => args.link_libs.push(it.next().ok_or("`--link-lib` needs a name")?),
-            "--" => {
-                args.program_args.extend(it.by_ref());
+    while let Some(raw) = it.next() {
+        // Long options accept `--option value` and `--option=value`.
+        let (a, inline) = match raw.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            _ => (raw.as_str(), None),
+        };
+        match a {
+            "--release" => args.release = flag_without_value(a, inline)?,
+            "-g" | "--debug-info" => args.debug = flag_without_value(a, inline)?,
+            "--strip" => args.strip = flag_without_value(a, inline)?,
+            "--lto" => args.lto = flag_without_value(a, inline)?,
+            "--pgo-generate" => args.pgo_generate = flag_without_value(a, inline)?,
+            "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
+            "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
+            "--emit-ir" => args.emit_ir = Some(option_value(&mut it, inline, a, "a path")?.into()),
+            "--link-lib" => args.link_libs.push(option_value(&mut it, inline, a, "a name")?),
+            "--diagnostic-format" => {
+                args.diagnostics.format = parse_format(&option_value(&mut it, inline, a, "a value")?)?;
+            }
+            "--color" => {
+                args.diagnostics.color = parse_color(&option_value(&mut it, inline, a, "a value")?)?;
+            }
+            "--no-color" => {
+                flag_without_value(a, inline)?;
+                args.diagnostics.color = ColorChoice::Never;
+            }
+            "--width" => {
+                let value = option_value(&mut it, inline, a, "a number")?;
+                args.diagnostics.width = Some(parse_number(a, &value)?);
+            }
+            "--error-limit" => {
+                let value = option_value(&mut it, inline, a, "a number")?;
+                let limit = parse_number(a, &value)?;
+                args.diagnostics.error_limit = (limit > 0).then_some(limit);
+            }
+            "-j" | "--jobs" => {
+                let value = option_value(&mut it, inline, a, "a number of tests")?;
+                let n: usize = value.parse().map_err(|_| format!("`-j` needs a number of tests, got `{value}`"))?;
+                if n == 0 {
+                    return Err("`-j` must be at least 1".to_string());
+                }
+                args.jobs = Some(n);
+            }
+            "-v" | "--verbose" => args.verbose = flag_without_value(a, inline)?,
+            "-p" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
+            "--workspace" => args.workspace = flag_without_value(a, inline)?,
+            "--ignored" => args.ignored_only = flag_without_value(a, inline)?,
+            "--include-ignored" => args.include_ignored = flag_without_value(a, inline)?,
+            "--filter" => args.filter = Some(option_value(&mut it, inline, a, "a text")?),
+            "--timeout" => {
+                let value = option_value(&mut it, inline, a, "a number of milliseconds")?;
+                let ms: u64 =
+                    value.parse().map_err(|_| format!("`--timeout` needs a number of milliseconds, got `{value}`"))?;
+                args.timeout_ms = Some(ms);
+            }            "--" => {
+                args.program_args.extend(it.by_ref().cloned());
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ if target.is_none() => target = Some(PathBuf::from(a)),
@@ -103,29 +223,112 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
         return Err("`--lto` cannot be combined with profile-guided optimization".to_string());
     }
     args.target = target.ok_or("missing target file")?;
+    if args.command != "test" {
+        if args.jobs.is_some() {
+            return Err("`-j` is only valid for `burdin test`".to_string());
+        }
+        if args.verbose {
+            return Err("`--verbose` is only valid for `burdin test`".to_string());
+        }
+        if !args.packages.is_empty() || args.workspace {
+            return Err("`-p` and `--workspace` are only valid for `burdin test`".to_string());
+        }
+        if args.ignored_only || args.include_ignored {
+            return Err("`--ignored` and `--include-ignored` are only valid for `burdin test`".to_string());
+        }
+        if args.filter.is_some() {
+            return Err("`--filter` is only valid for `burdin test`".to_string());
+        }
+        if args.timeout_ms.is_some() {
+            return Err("`--timeout` is only valid for `burdin test`".to_string());
+        }
+    }
+    if args.ignored_only && args.include_ignored {
+        return Err("`--ignored` and `--include-ignored` cannot be used together".to_string());
+    }
+    if args.workspace && !args.packages.is_empty() {
+        return Err("`-p` and `--workspace` cannot be used together".to_string());
+    }
     Ok(args)
 }
 
+/// The value of an option: the part after `=` when written inline, otherwise the next argument.
+fn option_value(
+    it: &mut std::slice::Iter<'_, String>,
+    inline: Option<&str>,
+    option: &str,
+    what: &str,
+) -> Result<String, String> {
+    match inline {
+        Some(value) => Ok(value.to_string()),
+        None => it.next().cloned().ok_or_else(|| format!("`{option}` needs {what}")),
+    }
+}
+
+/// A flag that takes no value; `--release=yes` is a usage error rather than being ignored.
+fn flag_without_value(option: &str, inline: Option<&str>) -> Result<bool, String> {
+    match inline {
+        Some(_) => Err(format!("`{option}` takes no value")),
+        None => Ok(true),
+    }
+}
+
+fn parse_format(value: &str) -> Result<DiagnosticFormat, String> {
+    match value {
+        "human" => Ok(DiagnosticFormat::Human),
+        "short" => Ok(DiagnosticFormat::Short),
+        "json" => Ok(DiagnosticFormat::Json),
+        _ => Err(format!("unknown diagnostic format `{value}` (expected human, short, or json)")),
+    }
+}
+
+fn parse_color(value: &str) -> Result<ColorChoice, String> {
+    match value {
+        "auto" => Ok(ColorChoice::Auto),
+        "always" => Ok(ColorChoice::Always),
+        "never" => Ok(ColorChoice::Never),
+        _ => Err(format!("unknown color choice `{value}` (expected auto, always, or never)")),
+    }
+}
+
+fn parse_number(option: &str, value: &str) -> Result<usize, String> {
+    value.parse::<usize>().map_err(|_| format!("`{option}` needs a non-negative number, got `{value}`"))
+}
+
 fn main() -> ExitCode {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    if matches!(raw.as_slice(), [flag] if flag == "--version" || flag == "-V") {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(argv.as_slice(), [flag] if flag == "--version" || flag == "-V") {
         println!("{}", version_text());
         return ExitCode::SUCCESS;
     }
-    let args = match parse_args(raw) {
-        Ok(a) => a,
+    if argv.first().map(String::as_str) == Some("explain") {
+        return explain(&argv[1..]);
+    }
+    let args = match parse_args(&argv) {        Ok(a) => a,
         Err(msg) => {
             eprintln!("error: {msg}\n{USAGE}");
             return ExitCode::from(2);
         }
     };
+    let options = CompileOptions {
+        release: args.release,
+        debug: args.debug,
+        strip: args.strip,
+        lto: args.lto,
+        pgo_generate: args.pgo_generate,
+        pgo_use: args.pgo_use.as_deref(),
+        emit_ir: args.emit_ir.as_deref(),
+        link_libs: &args.link_libs,
+        test_mode: false,
+        diagnostics: &args.diagnostics,
+    };
     match args.command.as_str() {
-        "build" => match compile(&args, Path::new("."), args.output.as_deref(), false) {
+        "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
             Ok(_) => ExitCode::SUCCESS,
             Err(code) => code,
         },
-        "run" => run(&args),
-        _ => run_tests(&args),
+        "run" => run(&args, &options),
+        _ => test_runner::run(&args),
     }
 }
 
@@ -199,42 +402,71 @@ fn job_count(modules: usize, available: usize, requested: usize) -> usize {
     workers.max(1).min(modules)
 }
 
-/// `burdin test`: builds the package in test mode and runs each `test` block in its own process, so a panic only
-/// fails the test that aborted. The output format is the one `tests/run-tests.sh` reads.
-fn run_tests(args: &Args) -> ExitCode {
-    let dir = match TempDir::new() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("error: cannot create a temporary directory: {e}");
-            return ExitCode::from(2);
-        }
-    };
-    let compiled = match compile(args, &dir.path, None, true) {
-        Ok(compiled) => compiled,
-        Err(code) => return code,
-    };
-    let mut passed = 0usize;
-    let mut failed = 0usize;
-    for (index, name) in compiled.tests.iter().enumerate() {
-        let status = match Command::new(&compiled.exe).arg(index.to_string()).status() {
-            Ok(status) => status,
-            Err(e) => {
-                eprintln!("error: cannot run {}: {e}", compiled.exe.display());
-                return ExitCode::from(2);
+/// `burdin explain`: prints the reference entry for one code, or lists the codes. The text comes from the same
+/// page `tests/check-error-docs.sh` compiles examples from (issue #437).
+fn explain(args: &[String]) -> ExitCode {
+    match args {
+        [] => {
+            print!("{}", code_list());
+            ExitCode::SUCCESS        }
+        [code] => match explain_section(code) {
+            Some(section) => {
+                println!("{section}");
+                ExitCode::SUCCESS
             }
-        };
-        if status.success() {
-            passed += 1;
-        } else {
-            failed += 1;
-            println!("FAIL {name}");
+            None => {
+                eprintln!("error: unknown error code `{code}`\n{EXPLAIN_USAGE}");
+                ExitCode::from(2)
+            }
+        },
+        _ => {
+            eprintln!("error: `explain` takes one error code\n{EXPLAIN_USAGE}");
+            ExitCode::from(2)
         }
     }
-    println!("test result: {passed} passed, {failed} failed");
-    if failed == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }
 
-fn run(args: &Args) -> ExitCode {
+/// The section of the error reference for `code`, without the HTML comments the check uses to delimit examples.
+fn explain_section(code: &str) -> Option<String> {
+    let code = code.to_ascii_uppercase();
+    let heading = format!("## {code}:");
+    let start = ERROR_DOCS.find(&heading)?;
+    let rest = &ERROR_DOCS[start..];
+    let end = rest[3..].find("\n## ").map_or(rest.len(), |i| 3 + i);
+    Some(
+        rest[..end]
+            .trim_end()
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("<!--"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// Every heading in the reference, one per line, as `E0001: Syntax error`.
+fn code_list() -> String {
+    let mut out = String::new();
+    for line in ERROR_DOCS.lines() {
+        if heading_code(line).is_some() {
+            out.push_str(line.trim_start_matches("## "));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The code a reference heading names, if the line is one.
+fn heading_code(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("## ")?;
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 6 && bytes[0] == b'E' && bytes[1..5].iter().all(u8::is_ascii_digit) && bytes[5] == b':' {
+        Some(&rest[..5])
+    } else {
+        None
+    }
+}
+
+fn run(args: &Args, options: &CompileOptions) -> ExitCode {
     let dir = match TempDir::new() {
         Ok(d) => d,
         Err(e) => {
@@ -242,7 +474,7 @@ fn run(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let exe = match compile(args, &dir.path, None, false) {
+    let exe = match compile(&args.target, &dir.path, None, options) {
         Ok(compiled) => compiled.exe,
         Err(code) => return code,
     };
@@ -272,19 +504,45 @@ fn exit_code_of(status: std::process::ExitStatus) -> u8 {
     1
 }
 
-/// What a successful compilation produced: the executable and the names of its `test` blocks (empty for a normal
-/// build).
-struct Compiled {
-    exe: PathBuf,
-    tests: Vec<String>,
+/// The options of one compilation.
+pub(crate) struct CompileOptions<'a> {
+    pub(crate) release: bool,
+    /// Emit source-level debug information.
+    pub(crate) debug: bool,
+    /// Strip the executable.
+    pub(crate) strip: bool,
+    /// Emit bitcode and link with `-flto`.
+    pub(crate) lto: bool,
+    /// Instrument for PGO.
+    pub(crate) pgo_generate: bool,
+    /// Use this profile for PGO.
+    pub(crate) pgo_use: Option<&'a Path>,
+    pub(crate) emit_ir: Option<&'a Path>,
+    pub(crate) link_libs: &'a [String],
+    /// `burdin test`: declare and check the package's `test` blocks, and emit the test dispatcher instead of
+    /// `main`.
+    pub(crate) test_mode: bool,
+    /// How diagnostics are rendered (format, color, width, and limit).
+    pub(crate) diagnostics: &'a DiagnosticOptions,
 }
 
-/// Compiles `args.target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On
-/// failure the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead
-/// of its `main`.
-fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: bool) -> Result<Compiled, ExitCode> {
-    let target = &args.target;
-    let loaded = match package::load(target) {
+/// What a successful compilation produced: the executable and its `test` blocks (empty for a normal build).
+pub(crate) struct Compiled {
+    pub(crate) exe: PathBuf,
+    pub(crate) tests: Vec<burdin_tir::TestEntry>,
+}
+
+/// Compiles `target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On failure
+/// the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead of its
+/// `main`.
+pub(crate) fn compile(
+    target: &Path,
+    output_dir: &Path,
+    output: Option<&Path>,
+    options: &CompileOptions,
+) -> Result<Compiled, ExitCode> {
+    let test_mode = options.test_mode;
+    let loaded = match if test_mode { package::load_for_tests(target) } else { package::load(target) } {
         Ok(loaded) => loaded,
         Err(message) => {
             eprintln!("error: {message}");
@@ -356,13 +614,31 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: boo
         program
     });
     if diags.has_errors() {
-        eprint!("{}", diags.render(&sources));
-        let n = diags.len();
-        eprintln!("error: could not compile {} ({n} error{})", target.display(), if n == 1 { "" } else { "s" });
+        let options = render_options(options.diagnostics, std::io::stderr().is_terminal());
+        let rendered = diags.render_with(&sources, &options);
+        eprint!("{}", rendered.text);
+        let total = rendered.total;
+        let suffix = if total == 1 { "" } else { "s" };
+        match options.format {
+            DiagnosticFormat::Json => {
+                eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
+            }
+            _ => {
+                if rendered.shown < total {
+                    let hidden = total - rendered.shown;
+                    let plural = if hidden == 1 { "" } else { "s" };
+                    let limit = options.error_limit.unwrap_or(0);
+                    eprintln!("note: {hidden} more error{plural} not shown (--error-limit {limit})");
+                }
+                eprintln!("error: could not compile {} ({total} error{suffix})", target.display());
+                if options.format == DiagnosticFormat::Human {
+                    eprintln!("note: for an explanation of an error code, run `burdin explain <code>`");
+                }
+            }
+        }
         return Err(ExitCode::from(1));
     }
     let program = program.expect("no errors means checking produced a program");
-    let tests: Vec<String> = program.tests.iter().map(|t| t.name.clone()).collect();
 
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -378,41 +654,76 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: boo
         return Err(fail(format!("the output path `{}` is a directory; pass `-o <file>`", output.display())));
     }
     let dir = TempDir::new().map_err(|e| fail(format!("cannot create a temporary directory: {e}")))?;
-    let extension = if args.lto {
-        "bc"
-    } else if cfg!(windows) {
-        "obj"
-    } else {
-        "o"
-    };
+    let extension = if options.lto { "bc" } else if cfg!(windows) { "obj" } else { "o" };
     let object = dir.path.join(format!("program.{extension}"));
-    let pgo_ir = args.pgo_use.as_ref().map(|_| dir.path.join("program.pgo.ll"));
+    let pgo_ir = options.pgo_use.map(|_| dir.path.join("program.pgo.ll"));
     let opts = burdin_codegen::Options {
-        release: args.release,
-        emit_ir: args.emit_ir.clone(),
+        release: options.release,
+        emit_ir: options.emit_ir.map(Path::to_path_buf),
         pgo_ir,
-        debug: args.debug,
-        bitcode: args.lto,
-        instrument: args.pgo_generate,
+        debug: options.debug,
+        bitcode: options.lto,
+        instrument: options.pgo_generate,
     };
     burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
-    let object = match &args.pgo_use {
+    let object = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");
-            pgo_object(&dir.path, &ir, profile, args.release).map_err(fail)?;
+            pgo_object(&dir.path, &ir, profile, options.release).map_err(fail)?;
             dir.path.join(if cfg!(windows) { "program.pgo.obj" } else { "program.pgo.o" })
         }
         None => object,
     };
     let link_opts = LinkOptions {
         export_dynamic: cfg!(target_os = "linux"),
-        strip: args.strip,
-        lto: args.lto,
-        pgo_generate: args.pgo_generate,
+        strip: options.strip,
+        lto: options.lto,
+        pgo_generate: options.pgo_generate,
     };
-    link(&object, &output, &args.link_libs, &link_opts).map_err(fail)?;
-    Ok(Compiled { exe: output, tests })
+    link(&object, &output, options.link_libs, &link_opts).map_err(fail)?;
+    Ok(Compiled { exe: output, tests: program.tests })
 }
+
+/// The rendering choices for this run: the format from the command line, color from the choice, the environment,
+/// and whether stderr is a terminal, and the width from `--width`, then `COLUMNS`, then 80.
+fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
+    let columns = std::env::var("COLUMNS").ok();
+    RenderOptions {
+        format: diagnostics.format,
+        color: color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal),
+        width: terminal_width(diagnostics.width, columns.as_deref()),
+        error_limit: diagnostics.error_limit,
+    }
+}
+
+/// `--color=always` and `--color=never` are explicit and win over `NO_COLOR`; `auto` colors only a terminal
+/// whose environment does not ask for no color.
+fn color_enabled(choice: ColorChoice, no_color_env: bool, stderr_is_terminal: bool) -> bool {
+    match choice {
+        ColorChoice::Always => true,
+        ColorChoice::Never => false,
+        ColorChoice::Auto => stderr_is_terminal && !no_color_env,
+    }
+}
+
+/// The no-color.org convention: `NO_COLOR` disables color when it is present and not empty.
+fn no_color_requested() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+}
+
+/// The width in characters: `--width` when given, then a positive `COLUMNS`, then 80. Zero disables wrapping.
+fn terminal_width(explicit: Option<usize>, columns: Option<&str>) -> usize {
+    if let Some(width) = explicit {
+        return width;
+    }
+    columns.and_then(|value| value.trim().parse::<usize>().ok()).filter(|width| *width > 0).unwrap_or(80)
+}
+
+/// The final line of `--diagnostic-format=json`: one object with the counts, so a JSON consumer never has to
+/// parse the human summary.
+fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
+    let limit = limit.map_or_else(|| "null".to_string(), |limit| limit.to_string());
+    format!("{{\"type\":\"summary\",\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n")}
 
 /// Runs `--pgo-use`: merges the profile, applies `pgo-instr-use` with `opt`, and compiles the result with `llc`.
 /// `opt` is used because the LLVM C API does not expose the pass builder's profile options.
@@ -697,17 +1008,21 @@ fn llvm_config() -> Option<(PathBuf, Option<String>)> {
     None
 }
 
-/// A uniquely named temporary directory, removed when dropped.
-struct TempDir {
-    path: PathBuf,
+/// A uniquely named temporary directory, removed when dropped. The driver and the parallel test runner create
+/// these from several threads, so the name includes an atomic counter as well as the process id and the time.
+pub(crate) struct TempDir {
+    pub(crate) path: PathBuf,
 }
 
 impl TempDir {
-    fn new() -> std::io::Result<TempDir> {
+    pub(crate) fn new() -> std::io::Result<TempDir> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
         for attempt in 0..100u32 {
-            let name = format!("burdin-{}-{nanos}-{attempt}", std::process::id());
+            let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let name = format!("burdin-{}-{nanos}-{count}-{attempt}", std::process::id());
             let path = std::env::temp_dir().join(name);
             match std::fs::create_dir(&path) {
                 Ok(()) => return Ok(TempDir { path }),
@@ -879,5 +1194,156 @@ mod tests {
         let dir = LibDir::new("empty");
         assert!(llvm_c_link(&dir.0, None).is_none());
         assert!(resolve_llvm_c("m").is_none());
+    }
+
+    fn parse(words: &[&str]) -> Result<Args, String> {
+        let argv: Vec<String> = words.iter().map(|word| word.to_string()).collect();
+        parse_args(&argv)
+    }
+
+    #[test]
+    fn test_options_are_parsed() {
+        let args = parse(&[
+            "test",
+            "app",
+            "-j",
+            "3",
+            "--verbose",
+            "-p",
+            "lib",
+            "--filter",
+            "add",
+            "--timeout",
+            "250",
+            "--ignored",
+        ])
+        .unwrap();
+        assert_eq!(args.command, "test");
+        assert_eq!(args.target, PathBuf::from("app"));
+        assert_eq!(args.jobs, Some(3));
+        assert!(args.verbose);
+        assert_eq!(args.packages, ["lib"]);
+        assert_eq!(args.filter.as_deref(), Some("add"));
+        assert_eq!(args.timeout_ms, Some(250));
+        assert!(args.ignored_only);
+    }
+
+    #[test]
+    fn test_options_are_rejected_for_other_commands() {
+        assert!(parse(&["build", "app", "-j", "2"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["run", "app", "--verbose"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["build", "app", "--workspace"]).unwrap_err().contains("only valid for `burdin test`"));
+    }
+
+    #[test]
+    fn conflicting_test_options_are_rejected() {
+        assert!(parse(&["test", "app", "-j", "0"]).unwrap_err().contains("at least 1"));
+        assert!(parse(&["test", "app", "-j", "many"]).unwrap_err().contains("needs a number"));
+        assert!(
+            parse(&["test", "app", "--ignored", "--include-ignored"]).unwrap_err().contains("cannot be used together")
+        );
+        assert!(parse(&["test", "app", "-p", "lib", "--workspace"]).unwrap_err().contains("cannot be used together"));
+        assert!(parse(&["test", "app", "--timeout", "soon"]).unwrap_err().contains("milliseconds"));
+    }
+
+    #[test]
+    fn color_choice_interacts_with_no_color_and_the_terminal() {
+        assert!(color_enabled(ColorChoice::Always, true, false));
+        assert!(!color_enabled(ColorChoice::Never, false, true));
+        assert!(color_enabled(ColorChoice::Auto, false, true));
+        assert!(!color_enabled(ColorChoice::Auto, true, true));
+        assert!(!color_enabled(ColorChoice::Auto, false, false));
+    }
+
+    #[test]
+    fn width_comes_from_the_flag_then_columns_then_the_default() {
+        assert_eq!(terminal_width(Some(100), Some("40")), 100);
+        assert_eq!(terminal_width(None, Some("40")), 40);
+        assert_eq!(terminal_width(None, Some(" 100 ")), 100);
+        assert_eq!(terminal_width(None, Some("0")), 80);
+        assert_eq!(terminal_width(None, Some("wide")), 80);
+        assert_eq!(terminal_width(None, None), 80);
+        assert_eq!(terminal_width(Some(0), Some("40")), 0);
+    }
+
+    #[test]
+    fn parse_args_reads_the_diagnostic_options() {
+        let argv: Vec<String> = [
+            "build",
+            "app.bd",
+            "--diagnostic-format",
+            "json",
+            "--color",
+            "always",
+            "--width",
+            "100",
+            "--error-limit",
+            "3",
+        ]
+        .map(String::from)
+        .to_vec();
+        let args = parse_args(&argv).unwrap();
+        assert_eq!(args.diagnostics.format, DiagnosticFormat::Json);
+        assert_eq!(args.diagnostics.color, ColorChoice::Always);
+        assert_eq!(args.diagnostics.width, Some(100));
+        assert_eq!(args.diagnostics.error_limit, Some(3));
+        let argv: Vec<String> = ["run", "app.bd", "--no-color", "--error-limit", "0"].map(String::from).to_vec();
+        let args = parse_args(&argv).unwrap();
+        assert_eq!(args.diagnostics.color, ColorChoice::Never);
+        assert_eq!(args.diagnostics.error_limit, None);
+    }
+
+    #[test]
+    fn parse_args_rejects_bad_diagnostic_values() {
+        for argv in [
+            ["build", "a.bd", "--diagnostic-format", "xml"],
+            ["build", "a.bd", "--color", "sparkles"],
+            ["build", "a.bd", "--width", "wide"],
+            ["build", "a.bd", "--error-limit", "-1"],
+        ] {
+            let argv: Vec<String> = argv.map(String::from).to_vec();
+            assert!(parse_args(&argv).is_err(), "{argv:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn the_last_color_flag_wins() {
+        let argv: Vec<String> = ["build", "a.bd", "--color", "always", "--no-color"].map(String::from).to_vec();
+        assert_eq!(parse_args(&argv).unwrap().diagnostics.color, ColorChoice::Never);
+        let argv: Vec<String> = ["build", "a.bd", "--no-color", "--color", "always"].map(String::from).to_vec();
+        assert_eq!(parse_args(&argv).unwrap().diagnostics.color, ColorChoice::Always);
+    }
+
+    fn is_code(text: &str) -> bool {
+        let bytes = text.as_bytes();
+        bytes.len() == 5 && bytes[0] == b'E' && bytes[1..].iter().all(u8::is_ascii_digit)
+    }
+
+    #[test]
+    fn every_registry_code_has_a_checked_reference_section() {
+        let registry = include_str!("../../../tests/README.md");
+        let mut codes: Vec<&str> = registry
+            .lines()
+            .filter_map(|line| {
+                let rest = line.strip_prefix("| ")?;
+                let code = &rest[..rest.find(' ')?];
+                is_code(code).then_some(code)
+            })
+            .collect();
+        assert!(codes.len() > 20, "the registry has only {} codes", codes.len());
+        codes.sort_unstable();
+        codes.dedup();
+        for code in &codes {
+            let section = explain_section(code).unwrap_or_else(|| panic!("no reference section for {code}"));
+            assert!(section.contains(&format!("## {code}:")), "{code} has no heading: {section}");
+            assert!(section.contains("**How to fix:**"), "{code} has no fix");
+            assert!(section.contains(&format!("//~ {code}")), "{code} prints no checked example");
+            assert!(ERROR_DOCS.contains(&format!("error-example: {code}")), "{code} has no checked example");
+        }
+        let listing = code_list();
+        let listed: Vec<&str> = listing.lines().filter_map(|line| line.split(':').next()).collect();
+        assert_eq!(listed, codes, "the reference must list exactly the registry codes");
+        assert!(explain_section("E9999").is_none());
+        assert!(explain_section("e0003").is_some(), "codes are accepted in lower case");
     }
 }

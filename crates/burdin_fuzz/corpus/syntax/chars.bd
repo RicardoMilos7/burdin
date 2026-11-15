@@ -1,0 +1,15 @@
+// Character literals, including the ones that must not span a line.
+fn main() {
+    let a = 'a'
+    let b = '\n'
+    let c = '\\'
+    let d = '\''
+    let e = 'é'
+    let f = '🦀'
+    let g = ''
+    let h = 'ab'
+    let i = '
+    let j = '\q'
+    let k = '\0'
+    let l = ''''''
+}

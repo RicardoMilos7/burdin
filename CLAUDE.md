@@ -19,8 +19,8 @@ not updated and may disagree with the repository.
    the test format, the error-code registry, and the 16 settled language decisions.
 2. `spec/grammar.md` is the syntax of stage 0. `spec/memory-rules.md` is the exact semantics of moves, conventions,
    exclusivity, references, and drops, with rule IDs and the tests that cover each. `spec/stdlib.md` is the stage 0
-   standard-library surface (names and signatures), and `spec/derives.md` is the exact behavior of `Copy`, `Clone`,
-   `Eq`, `Ord`, `Hash`, and `Default`.
+   standard-library surface (names and signatures), `spec/derives.md` is the exact behavior of `Copy`, `Clone`,
+   `Eq`, `Ord`, `Hash`, and `Default`, and `spec/test-runner.md` is the behavior of `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what the next milestones add, the decisions they need, and the
    roadmaps for later stages.
@@ -58,6 +58,10 @@ tests/check-debug-info.sh          check -g, the line table, and a gdb breakpoin
 tests/check-codegen-opt.sh         check drop-flag elimination, bounds-check elision, and shared glue
 tests/check-build-flags.sh         check --version, --strip's size budget, --lto, and PGO
 tests/check-parallel.sh            check parallel parsing and deterministic diagnostics
+tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
+tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
+tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
+tests/fuzz.sh                      long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 ```
 
 On Windows run the `.sh` scripts from Git Bash. The runner expects `burdin build`, `burdin run`, and `burdin test` as described at
@@ -86,8 +90,12 @@ crates/
                             modules, dependencies)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, and code generation
+  burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
+                            corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
-spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
+docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh)
+spec/                     grammar, memory rules, standard-library surface, derives, test runner, stage 0 scope,
+                          stage 1 plan
 tests/                    conformance tests and scripts
 ```
 
