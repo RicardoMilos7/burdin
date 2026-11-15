@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A shared capture keeps its loan until the closure's last use, so writing the place before that is E0111.
+fn main() {
+    let mut n = 1
+    let f = |x: i32| n + x
+    n = 5 //~ E0111
+    println(f(1).to_string())
+}

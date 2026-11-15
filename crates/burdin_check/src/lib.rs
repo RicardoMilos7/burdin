@@ -27,7 +27,14 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
     for func in functions.iter_mut().filter(|f| !f.symbolic) {
         func.moved = moves::check_function(func, env, diags);
     }
+    for closure in &mut *program.closures {
+        closure.func.moved = moves::check_function(&closure.func, env, diags);
+    }
     for func in functions.iter().filter(|f| !f.symbolic) {
         borrows::check(func, env, diags);
+    }
+    for closure in &program.closures {
+        borrows::check(&closure.func, env, diags);
+        origins::check_closure(&closure.func, signatures, diags);
     }
 }

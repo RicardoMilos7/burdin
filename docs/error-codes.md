@@ -765,6 +765,31 @@ test "repeated" [ignore, ignore] { //~ E0170
 `should_panic("message")`. Use `should_fail` on its own rather than together with `should_panic`; the first expects
 a returned error and the second a panic abort.
 
+## E0171: A second-class closure escapes
+
+A closure that borrows its captures is a second-class value: it may be called in place, kept in a local, or passed
+to a generic parameter, but it cannot be returned or stored where an owned closure type (`Fn(...)`, `FnMut(...)`,
+`FnOnce(...)`) is expected, because the borrow would outlive the storage it points at. A closure that moves a view
+(`str`, `&T`, `[T]`, or an aggregate containing one) into its record is second-class for the same reason: the record
+holds a pointer to storage it does not own. The same code reports a closure whose declared return type is a view
+(`str`, `&T`, `[T]`): the result would point into the closure's capture record, which is gone once the call returns.
+
+<!-- error-example: E0171 -->
+```burdin
+fn main() {
+    let n = 1
+    let f = || n
+    let g: Fn(): i32 = f //~ E0171
+}
+```
+<!-- /error-example -->
+
+**How to fix:** make the closure own its captures by writing it where an owned closure type is expected (the
+compiler then captures by move), or move the captured value into a local first and capture that. A captured view
+counts as borrowed even when its bits are copied into the record, so convert it to an owned value (for example,
+`String.from(s)`) before capturing it. A closure passed through a generic `F` with an `Fn` bound keeps its borrow
+and needs no change.
+
 ## E0180: Type arguments on a non-generic type
 
 A type path supplies type arguments to a type that declares no type parameters, such as a plain struct or a

@@ -13,6 +13,27 @@ impl FnCx<'_> {
         if let ast::ExprKind::Field(recv, name) = &callee.kind {
             return self.method_call(recv, name, args, span, expect);
         }
+        // A bare name that resolves to a local, or to a variable captured from the enclosing function, is a
+        // closure call; only a name with no value meaning is looked up as a function.
+        if let ast::ExprKind::Name { name: id, args: type_args } = &callee.kind
+            && type_args.is_empty()
+        {
+            let local = match self.lookup(&id.name) {
+                Some(local) => Some(local),
+                None if self.capture.is_some() => {
+                    if let Some(e) = self.capture_name(&id.name, id.span) {
+                        return self.closure_call(e, args, span);
+                    }
+                    None
+                }
+                None => None,
+            };
+            if let Some(local) = local {
+                let ty = self.locals[local.0].ty.clone();
+                let value = mk(tir::ExprKind::Local(local), ty, id.span);
+                return self.closure_call(value, args, span);
+            }
+        }
         let (params, ret, target) = match &callee.kind {
             ast::ExprKind::Name { name: id, args: type_args }
                 if type_args.is_empty() && self.lookup(&id.name).is_none() =>
@@ -54,8 +75,13 @@ impl FnCx<'_> {
                 }
             }
             _ => {
-                self.unsupported(callee.span, "calling this expression"); // e9000: call-non-callable
-                return self.args_then_error(args, span);
+                // A closure value: a local, a field access other than a method, or any expression that
+                // evaluates to a closure interface.
+                let value = self.expr(callee, None);
+                if value.ty == Ty::Error {
+                    return self.args_then_error(args, span);
+                }
+                return self.closure_call(value, args, span);
             }
         };
         let name = match &callee.kind {
@@ -507,6 +533,12 @@ impl FnCx<'_> {
         if name.name == "hash" && args.is_empty() && self.globals.has_hash_in(&recv.ty, &self.bounds) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
+        // A field that holds a closure is callable: `holder.f(x)` calls the closure in `f` when no method of that
+        // name exists (CL6). The field wins only when its type is a closure interface.
+        if let Some((index, field_ty)) = self.closure_field(&recv, &name.name) {
+            let field = mk(tir::ExprKind::Field(Box::new(recv), index), field_ty, name.span);
+            return self.closure_call(field, args, span);
+        }
         let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{}`", name.name, recv.ty));
             return self.args_then_error(args, span);
@@ -565,6 +597,13 @@ impl FnCx<'_> {
         };
         checked.insert(0, recv);
         mk(tir::ExprKind::Method(m, checked), ret, span)
+    }
+
+    /// A struct field of closure type named `name`, for calling `holder.f(x)`.
+    fn closure_field(&self, recv: &tir::Expr, name: &str) -> Option<(usize, Ty)> {
+        let Ty::Struct(a) = &recv.ty else { return None };
+        let (index, field) = self.globals.structs[a.id].fields.iter().enumerate().find(|(_, f)| f.name == name)?;
+        matches!(field.ty, Ty::Fn { .. }).then(|| (index, field.ty.clone()))
     }
 
     /// A function or constant found through a module path: `math.add(...)`, `sh.area(...)`.

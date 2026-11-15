@@ -128,6 +128,8 @@ pub(crate) struct Globals {
     pub(crate) extern_symbols: HashMap<String, usize>,
     /// `Type: From<Source>` conversions, for `?`.
     pub(crate) from_impls: Vec<FromImpl>,
+    /// The signatures of `Fn(...)` bounds, by the index a [`crate::generics::Bound::Fn`] carries.
+    pub(crate) fn_bounds: RefCell<Vec<tir::FnSig>>,
     /// The methods of `Type: From<..>` blocks: their one parameter is taken by ownership even though the
     /// declaration does not write `own`, because a conversion consumes its input.
     pub(crate) from_methods: Vec<FuncId>,
@@ -223,6 +225,9 @@ impl Globals {
             | Ty::List(inner) => self.private_adt(inner),
             Ty::Result(t, e) => self.private_adt(t).or_else(|| self.private_adt(e)),
             Ty::Map(k, v) => self.private_adt(k).or_else(|| self.private_adt(v)),
+            Ty::Fn { sig, .. } => {
+                sig.params.iter().find_map(|t| self.private_adt(t)).or_else(|| self.private_adt(&sig.ret))
+            }
             Ty::Tuple(ts) => ts.iter().find_map(|t| self.private_adt(t)),
             _ => None,
         }

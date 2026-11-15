@@ -329,7 +329,88 @@ operations.
 Tests: `m08_modules/unsafe_required`, `cptr_requires_unsafe`, `cptr_operations`, `unsafe_fn`,
 `unsafe_fn_call_requires_unsafe`, `m07_generics/unsafe_interface_method`, `m07_generics/unsafe_interface_mismatch`.
 
+## 12. Closures (CL)
+
+Stage 1, milestone 12. A closure is `|a, b| body`; its type is one of the compiler-known closure interfaces
+`Fn(A, B): R`, `FnMut(A, B): R`, or `FnOnce(A, B): R` (`grammar.md` section 4). The representation is a boxed capture
+record with a code pointer; these rules are the semantics, not the layout.
+
+**CL1 Capture set.** A closure captures every local or parameter of the enclosing function that its body uses and
+that the body does not declare itself. A capture is always a *whole* variable: using `x.y` captures `x`. A nested
+closure captures from the closure that encloses it, so a capture chain is allowed. A closure body's own parameters
+and `let`/pattern bindings are not captures. Using an unknown name is E0002 as usual.
+
+**CL2 Capture mode.** A closure captures by **borrow** when it is used where it does not have to outlive its
+definition: a local binding without a written closure type, an argument to a read-only or `mut` parameter, a call's
+callee, or a temporary. It captures by **move** when the context stores or returns it: a `let`/assignment with a
+written `Fn(...)` type, a struct or enum field, an array, tuple, `List`, or `Map` element with a known element type, a
+`return` expression, an `own` parameter, or any parameter whose type is a closure interface. In short, an owned
+closure type in an expected position selects move captures; otherwise captures borrow.
+
+**CL3 Borrow captures.** A borrow capture is shared (`&T`) unless the body writes the captured place (an assignment,
+`&mut`, a `mut` argument, a mutating method, `swap`, or `replace`), in which case it is mutable (`&mut T`). Mutating
+a capture requires the captured binding to be mutable where it is declared. A closure with at least one borrow
+capture is **second-class** (SC2), and so is a closure that moves a second-class value (`str`, `&T`, a slice, or an
+aggregate containing one) into its record: that value still points at storage the closure does not own. A
+second-class closure may be a local, a parameter, a temporary, or an argument, but it cannot be stored in a field,
+variant, or collection (E0120), and it cannot be returned or assigned where an owned closure type is expected
+(E0171). Storing it in a local that outlives one of its captured locals is E0123.
+
+**CL4 Move captures.** A move capture moves the captured place into the closure; a Copy capture is copied. Moving out
+of a read-only or `mut` parameter is E0101, so a closure that must outlive the call captures `own` parameters (or
+copies them into a local first). The closure value owns its captures: dropping the closure drops them, and moving the
+closure moves them. A closure with only move captures is a first-class owned value.
+
+**CL5 Kind.** The closure's kind follows how the body uses its captures: **FnOnce** when the body moves a
+move-captured non-Copy value out of the closure; **FnMut** when the body mutates a capture but moves none; **Fn**
+otherwise. A closure value is usable where the same signature at a lower capability is expected (`Fn` as `FnMut` or
+`FnOnce`, `FnMut` as `FnOnce`), never the reverse, which is E0141 at a bound and E0003 elsewhere.
+
+**CL6 Calling.** `f(args)` calls the closure `f`: an `Fn` closure is borrowed shared for the call, an `FnMut`
+closure is borrowed exclusively and must be a mutable place (E0113), and an `FnOnce` closure is moved by the call (so
+using it again is E0100, and calling one held by a read-only parameter is E0101). The arguments are passed by value,
+as if every closure parameter were `own`: a non-Copy argument is moved. A callee of type `Ty::Param` needs an
+`Fn`-family bound; calling it without one is E0141.
+
+**CL7 Exclusivity and loans.** Creating a closure with borrow captures takes the same loans as `&`/`&mut` on each
+captured place. The loans are held by the closure value: they last until the closure's last use (RF2), so writing a
+captured place while the closure value is still used is E0111. An `FnMut` call borrows the closure exclusively for
+the call, so no other argument of that call may mention the closure place (EX1). A `Fn`/`FnMut` call does not move
+the closure value.
+
+**CL8 Returns, moves, and drops inside a closure body.** `return` inside a closure body returns from the closure, not
+from the enclosing function. `break` and `continue` cannot cross a closure boundary (E0001). The closure body is
+checked as its own function: its own parameters are owned and dropped at its end, and for a `FnOnce` closure the
+captured values that remain are dropped there (the call consumed the capture record). A `Fn`/`FnMut` value called
+where a weakened `FnOnce` type is expected (CL5) is consumed by that call as well: once the body returns, the record
+and the captures it still owns are destroyed, on the normal path and on an early `return`. A `Fn`/`FnMut` closure's
+captures are borrowed from the capture record for each ordinary call, so the body cannot move them out (E0101).
+
+**CL9 Closure types in signatures.** A closure interface written as a type is owned (`borrowed` is not part of its
+spelling and it is storable). A closure parameter that is a type parameter (`F` with an `Fn` bound) keeps the
+concrete closure type after monomorphization, including whether it borrows; the callee then cannot store the
+parameter (SC2/E0120) or return it as an owned closure. Passing a borrowing closure where an owned closure interface
+is expected is E0171.
+
+**CL10 Not derived.** A closure value is never `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`; calling `clone` is
+E0002 and putting one in a derived comparison is E0130. A closure may be stored in a `List`, `Map`, `Heap`,
+`Option`, or `Result` only when it owns its captures (CL3).
+
+**CL11 Function values.** A non-generic function name, a built-in function name (`println`, `panic`, the runtime
+helpers), or `Some` may be used where a closure type is expected. It becomes a captureless closure of kind `Fn`
+whose body forwards its arguments to the function, so CL6's rule applies: every closure parameter is owned and each
+argument is moved into the call. Forwarding uses the function's own conventions (a read-only or `mut` parameter is
+passed by address, an `own` parameter by value). The value is first-class and owns only its empty capture record. A
+function whose return type is a view (`str`, `&T`, `[T]`) cannot be used this way: the returned view would point
+into the closure's own argument, which is dropped when the call returns (E0171). An `unsafe fn` cannot be used as a
+value either, because a closure call has no `unsafe` boundary (E0161); write a closure that calls it in an `unsafe`
+block. A generic function or an `extern` function as a value is E9000 for now.
+
+Tests: `tests/m12_closures/`.
+
 ## Summary of error codes used here
 
-E0003 IC1, RT4 · E0005 MU1, MU2 · E0100 MV2, MV5, MV8 · E0101 MV7, CV1, CV2 · E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1 ·
-E0113 CV2, MU3 · E0114 CV2 · E0115 CV2 · E0120 SC2 · E0121 RT3 · E0122 RT2 · E0123 RT5 · E0130 DR8, CP · E0161 US.
+E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2 · E0100 MV2, MV5, MV8, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
+E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7 · E0113 CV2, MU3, CL6 · E0114 CV2 · E0115 CV2 ·
+E0120 SC2, CL3 · E0121 RT3 · E0122 RT2 · E0123 RT5, CL3 · E0130 DR8, CP, CL10 · E0141 CL5, CL6 · E0161 US, CL11 ·
+E0171 CL3, CL9, CL11.

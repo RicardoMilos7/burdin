@@ -77,6 +77,6 @@ pub fn check<'a>(
     sema.declare_bounds(diags);
     sema.register_impls(diags);
     sema.declare_identities(diags);
-    let (functions, consts) = sema.settle(diags);
-    sema.finish(functions, consts, diags)
+    let (functions, consts, closures) = sema.settle(diags);
+    sema.finish(functions, consts, closures, diags)
 }

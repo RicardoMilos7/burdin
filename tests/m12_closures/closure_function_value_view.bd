@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A function returning a view cannot become a closure value: the view would point into the closure's own
+// argument, which is dropped when the call returns (CL11, E0171).
+fn first(s: String): str {
+    s.as_str()
+}
+
+fn main() {
+    let f: Fn(String): str = first //~ E0171
+    println(f(String.from("x")))
+}

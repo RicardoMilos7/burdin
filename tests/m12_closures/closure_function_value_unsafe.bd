@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Using an `unsafe fn` as a value would hide the `unsafe` boundary from the call site (CL11, E0161).
+unsafe fn danger(): i32 {
+    1
+}
+
+fn main() {
+    let f: Fn(): i32 = danger //~ E0161
+    println(f().to_string())
+}

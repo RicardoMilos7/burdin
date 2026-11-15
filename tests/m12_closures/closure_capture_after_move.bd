@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Storing a closure moves its captures; using the captured local afterwards is E0100.
+fn main() {
+    let s = String.from("x")
+    let f: Fn(): String = || s.clone()
+    println(s) //~ E0100
+    let _ = f()
+    println("done")
+}

@@ -1,0 +1,28 @@
+//@ run
+//> 5
+//> 6
+//> 7
+//> 8
+
+// Every expression of a closure type is callable: a local, a struct field, a list element, and a call result.
+struct Holder {
+    f: Fn(i32): i32
+}
+
+fn make(own n: i32): Fn(i32): i32 {
+    |x| x + n
+}
+
+fn main() {
+    let f = |x: i32| x + 1
+    println(f(4).to_string())
+
+    let h = Holder { f: |x| x + 2 }
+    println(h.f(4).to_string())
+
+    let mut list: List<Fn(i32): i32> = List<Fn(i32): i32>.new()
+    list.push(|x| x + 3)
+    println(list[0](4).to_string())
+
+    println(make(4)(4).to_string())
+}

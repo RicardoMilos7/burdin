@@ -3,8 +3,10 @@
 
 mod aggregate;
 mod call;
+mod closure;
 mod control;
 mod expr;
+mod fnvalue;
 mod generic;
 mod item;
 mod literals;
@@ -22,7 +24,9 @@ use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{place_root, through_view};
 use burdin_tir::{self as tir, LocalId, LocalKind, Pat, Ty};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 struct FnCx<'a> {
     globals: &'a Globals,
@@ -44,6 +48,12 @@ struct FnCx<'a> {
     module: usize,
     /// How many `unsafe` blocks (or `unsafe fn` bodies) enclose this expression.
     unsafe_depth: usize,
+    /// The closure bodies checked so far in this pass. Nested closures share the same list, so a closure
+    /// expression's index is stable by the time the enclosing body is built.
+    closures: Rc<RefCell<Vec<tir::Closure>>>,
+    /// Set while checking a closure body: the enclosing function's visible locals, for capture-on-use, and the
+    /// captures discovered so far.
+    capture: Option<closure::CaptureCx>,
 }
 
 /// What a path in expression position can name before its last segment: a type, or a generic type whose
@@ -69,6 +79,7 @@ impl<'a> FnCx<'a> {
         self_ty: Option<Ty>,
         module: usize,
         is_unsafe: bool,
+        closures: Rc<RefCell<Vec<tir::Closure>>>,
     ) -> Self {
         FnCx {
             globals,
@@ -83,6 +94,8 @@ impl<'a> FnCx<'a> {
             bounds: Vec::new(),
             module,
             unsafe_depth: usize::from(is_unsafe),
+            closures,
+            capture: None,
         }
     }
 
@@ -351,9 +364,39 @@ impl<'a> FnCx<'a> {
     /// Reports E0003 unless `e` has type `want` (or a type that converts to nothing at run time, like `!`).
     fn expect_ty(&mut self, e: tir::Expr, want: &Ty) -> tir::Expr {
         if !compatible(&e.ty, want) {
-            self.mismatch(e.span, want, &e.ty);
+            self.report_mismatch(e.span, want, &e.ty);
         }
         e
+    }
+
+    /// The type-mismatch diagnostic for `found` where `expected` is required. A closure mismatch gets the code
+    /// that explains it: a borrowing closure where an owned one is required is E0171, and a closure whose body
+    /// needs a lower capability than the expected type gives is E0141.
+    pub(super) fn report_mismatch(&mut self, span: Span, want: &Ty, found: &Ty) {
+        if let (Ty::Fn { sig: asig, kind: ak, borrowed: true }, Ty::Fn { sig: esig, kind: ek, borrowed: false }) =
+            (found, want)
+            && asig == esig
+            && ak.at_least(*ek)
+        {
+            self.diags.error(
+                Code::CLOSURE_ESCAPES,
+                span,
+                "this closure does not own everything it captures, so it cannot be used where an owned closure type is expected",
+            );
+            return;
+        }
+        if let (Ty::Fn { sig: asig, kind: ak, .. }, Ty::Fn { sig: esig, kind: ek, .. }) = (found, want)
+            && asig == esig
+            && !ak.at_least(*ek)
+        {
+            self.diags.error(
+                Code::BOUND_NOT_SATISFIED,
+                span,
+                format!("this closure is `{}`, which is not usable where `{}` is expected", ak.name(), ek.name()),
+            );
+            return;
+        }
+        self.mismatch(span, want, found);
     }
 
     /// Like `expect_ty`, but a `String` argument is borrowed where a `str` is expected.

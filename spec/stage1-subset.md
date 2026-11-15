@@ -74,6 +74,9 @@ folder and every earlier folder pass in debug and release.
 Milestones 20 and 21 are the riskiest and may split (for example `m20a_mir`, `m20b_comptime_core`,
 `m21a_reflection`, `m21b_derives`). A split is a decision to record in `HANDOFF.md`, not a silent change.
 
+Milestone 12 is complete: `tests/m12_closures` and every earlier folder pass in debug and release, and the closure
+rules are recorded in `spec/memory-rules.md` CL1-CL11 and `spec/grammar.md` section 4.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -99,16 +102,20 @@ registry code, a test, and a spec update **before** the code, per the working ru
 These are the choices that shape the first three milestones. Settle them in the spec and the tests before writing
 code; do not invent them inside the implementation.
 
-1. **Closure representation and types.** The design shows `|a, b| a + b`, borrowing captures, move captures for
-   returned or stored closures, and passing closures to `filter`/`map`. Options:
-   - anonymous closure types with a built-in family of interfaces (`Fn`, `FnMut`, `FnOnce`) and monomorphization;
-   - closures as second-class values only (the simplest, but stored and returned closures need more);
-   - all closures boxed (`Heap`-allocated), sacrificing zero cost.
-
-   Recommendation: anonymous types, monomorphized, with `Fn`/`FnMut`/`FnOnce` as compiler-known interfaces; a
-   captured-by-move closure that is stored or returned is owned, a captured-by-borrow closure is second-class. The
-   capture rules (which variables, by what mode, and when a move is required) need a written rule like the memory
-   rules document.
+1. **Closure representation and types — settled with milestone 12.** Closures are expressions of the
+   compiler-known interface types `Fn(A, B): R`, `FnMut(A, B): R`, and `FnOnce(A, B): R`, and a type parameter may
+   carry an `Fn`-family bound (`F: Fn(i32): i32`), which is monomorphized like any generic instance. A closure value
+   is a boxed capture record with a code pointer and a destructor: first-class, storable, and returnable; the price
+   is one heap allocation per closure rather than an inline record, chosen to keep stored, returned, and
+   interface-typed closures uniform. A closure captures whole variables: by borrow when it is used in place, by move
+   when an owned closure type is expected (a written annotation, a field, a return, or a closure-interface
+   parameter). A closure with a borrow capture is second-class and cannot escape; its captures are loans held until
+   the closure's last use. The body's use of the captures decides the kind: `FnOnce` if it moves one out, `FnMut` if
+   it writes one, else `Fn`; a value may be used at a lower capability. The rules are `spec/memory-rules.md`
+   CL1-CL11, the syntax is `spec/grammar.md` section 4, and the tests are `tests/m12_closures/`.
+   A non-generic function name, a built-in function name, or `Some` may also be used where a closure type
+   is expected: it becomes a captureless `Fn` value that forwards to the function (CL11). A generic or
+   `extern` function as a value is still E9000 and belongs to the Stage 1 work.
 
 2. **Iterator protocol.** Stage 0 interfaces have no associated types. Options:
    - a generic interface `Iterator<T> { fn next(mut self): Option<T> }` with `Iterable<T> { fn iter(self): ... }`

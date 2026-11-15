@@ -1,0 +1,25 @@
+//@ run
+//> 6
+//> 60
+//> 7
+
+// `Fn` bounds work in a `where` clause and through a type alias, and a zero-argument closure may return unit.
+type Callback = Fn(i32): i32
+
+fn apply<F>(f: F, x: i32): i32 where F: Fn(i32): i32 {
+    f(x)
+}
+
+fn run<F: Fn(): ()>(f: F) {
+    f()
+}
+
+fn main() {
+    let add = |x: i32| x + 1
+    println(apply(add, 5).to_string())
+
+    let times_ten: Callback = |x| x * 10
+    println(times_ten(6).to_string())
+
+    run(|| println(7.to_string()))
+}

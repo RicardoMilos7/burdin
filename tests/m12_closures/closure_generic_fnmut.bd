@@ -1,0 +1,22 @@
+//@ run
+//> 1
+//> 4
+//> 4
+
+// `F: FnMut` is called through an exclusive borrow: the caller passes a mutable place with the `mut` marker.
+fn twice<F: FnMut(i32): i32>(mut f: F, x: i32): i32 {
+    let a = f(x)
+    f(a)
+}
+
+fn main() {
+    let mut total = 0
+    let mut add = |x: i32| {
+        total = total + x
+        total
+    }
+
+    println(add(1).to_string())
+    println(twice(mut add, 1).to_string())
+    println(total.to_string())
+}

@@ -48,6 +48,16 @@ impl Globals {
                     Ty::Error
                 }
             },
+            ast::TypeKind::Fn { kind, params, ret } => {
+                let params = params.iter().map(|p| self.resolve_type_in(p, self_ty, subst, module, diags)).collect();
+                let ret =
+                    ret.as_ref().map(|r| self.resolve_type_in(r, self_ty, subst, module, diags)).unwrap_or(Ty::Unit);
+                Ty::Fn {
+                    sig: std::rc::Rc::new(burdin_tir::FnSig { params, ret: Box::new(ret) }),
+                    kind: crate::generics::ast_kind(*kind),
+                    borrowed: false,
+                }
+            }
             ast::TypeKind::Path(segments) if segments.len() == 1 => {
                 self.resolve_path_segment(module, &segments[0], ty.span, self_ty, subst, diags)
             }
@@ -292,7 +302,14 @@ impl Globals {
                 let e = &self.enums[a.id];
                 e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq_in(&f.ty, env)))
             }
-            Ty::Array(..) | Ty::Heap(_) | Ty::CPtr(_) | Ty::CString | Ty::List(_) | Ty::Map(..) | Ty::Chars => false,
+            Ty::Array(..)
+            | Ty::Heap(_)
+            | Ty::CPtr(_)
+            | Ty::CString
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::Chars
+            | Ty::Fn { .. } => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,
         }
     }
@@ -314,7 +331,22 @@ impl Globals {
 }
 
 pub(crate) fn compatible(actual: &Ty, expected: &Ty) -> bool {
-    actual == expected || *actual == Ty::Error || *expected == Ty::Error || *actual == Ty::Never
+    actual == expected
+        || *actual == Ty::Error
+        || *expected == Ty::Error
+        || *actual == Ty::Never
+        || fn_compatible(actual, expected)
+}
+
+/// Whether a closure value fits a closure type: the same signature and capture mode, at a capability the value
+/// provides (CL5). A closure value may be used where a weaker call capability is expected.
+pub(crate) fn fn_compatible(actual: &Ty, expected: &Ty) -> bool {
+    match (actual, expected) {
+        (Ty::Fn { sig: asig, kind: ak, borrowed: ab }, Ty::Fn { sig: esig, kind: ek, borrowed: eb }) => {
+            asig == esig && ab == eb && ak.at_least(*ek)
+        }
+        _ => false,
+    }
 }
 
 /// Reports E0120 when a view type is used where a stored type is required (memory-rules.md, SC2).

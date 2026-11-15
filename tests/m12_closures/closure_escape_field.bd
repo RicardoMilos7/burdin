@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A borrowing closure cannot be stored in a field either (CL3, E0171).
+struct Holder {
+    f: Fn(): i32
+}
+
+fn main() {
+    let n = 1
+    let f = || n
+    let h = Holder { f: f } //~ E0171
+    println(h.f().to_string())
+}

@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// A closure parameter with no type and no expected closure type must be annotated (E0003).
+fn main() {
+    let f = |x| x + 1 //~ E0003
+    println(f(1).to_string())
+}

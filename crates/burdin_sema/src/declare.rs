@@ -171,7 +171,8 @@ impl<'t> Sema<'t> {
         for i in 0..self.tpl.ifaces.len() {
             let decl = self.tpl.ifaces[i];
             let module = self.globals.interfaces[i].module;
-            let requires = decl.requires.iter().filter_map(|t| self.globals.resolve_bound(t, module, diags)).collect();
+            let requires =
+                decl.requires.iter().filter_map(|t| self.globals.resolve_bound(t, &[], module, diags)).collect();
             let methods = decl
                 .methods
                 .iter()
@@ -199,9 +200,11 @@ impl<'t> Sema<'t> {
             let module = info.module;
             let generics =
                 if info.is_enum { &self.tpl.enums[info.decl].generics } else { &self.tpl.structs[info.decl].generics };
+            let subst: Vec<(String, Ty)> =
+                generics.iter().map(|g| (g.name.name.clone(), crate::generics::param_ty(&g.name.name))).collect();
             let bounds = generics
                 .iter()
-                .map(|p| p.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, module, diags)).collect())
+                .map(|p| p.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags)).collect())
                 .collect();
             self.globals.generic_adts[g].bounds = bounds;
         }
@@ -497,10 +500,12 @@ fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestA
 
 /// The bounds of each type parameter of a function: from the parameter list and from `where` clauses.
 pub(crate) fn fn_bounds(f: &ast::FnDecl, globals: &Globals, module: usize, diags: &mut Diagnostics) -> Vec<Vec<Bound>> {
+    let subst: Vec<(String, Ty)> =
+        f.generics.iter().map(|g| (g.name.name.clone(), crate::generics::param_ty(&g.name.name))).collect();
     let mut all: Vec<Vec<Bound>> = f
         .generics
         .iter()
-        .map(|p| p.bounds.iter().filter_map(|b| globals.resolve_bound(b, module, diags)).collect())
+        .map(|p| p.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect())
         .collect();
     for pred in &f.where_clause {
         let index = match &pred.ty.kind {
@@ -512,7 +517,7 @@ pub(crate) fn fn_bounds(f: &ast::FnDecl, globals: &Globals, module: usize, diags
         match index {
             Some(i) => {
                 let extra: Vec<Bound> =
-                    pred.bounds.iter().filter_map(|b| globals.resolve_bound(b, module, diags)).collect();
+                    pred.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect();
                 all[i].extend(extra);
             }
             None => {

@@ -75,6 +75,39 @@ pub enum FloatTy {
     F64,
 }
 
+/// The capability family of a closure (`spec/grammar.md` section 4, `spec/memory-rules.md` CL5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FnKind {
+    /// Can be called any number of times through a shared borrow.
+    Fn,
+    /// Can be called through an exclusive borrow: it mutates a capture.
+    FnMut,
+    /// Consumes the closure on the call: its body moves a captured value out.
+    FnOnce,
+}
+
+impl FnKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            FnKind::Fn => "Fn",
+            FnKind::FnMut => "FnMut",
+            FnKind::FnOnce => "FnOnce",
+        }
+    }
+
+    /// Whether a value of this kind may be used where `expected` is required (`Fn` as `FnMut` as `FnOnce`).
+    pub fn at_least(self, expected: FnKind) -> bool {
+        self <= expected
+    }
+}
+
+/// The signature of a closure: its parameter and return types.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FnSig {
+    pub params: Vec<Ty>,
+    pub ret: Box<Ty>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
     Unit,
@@ -84,6 +117,13 @@ pub enum Ty {
     Float(FloatTy),
     Str,
     String,
+    /// A closure interface value: `Fn(A, B): R`, `FnMut(...)`, or `FnOnce(...)`. `borrowed` marks a closure with
+    /// borrow captures, which is second-class (`spec/memory-rules.md` CL3).
+    Fn {
+        sig: Rc<FnSig>,
+        kind: FnKind,
+        borrowed: bool,
+    },
     /// A shared (`&T`) or mutable (`&mut T`) reference. The value is the address of the referent.
     Ref {
         mutable: bool,
@@ -141,6 +181,8 @@ impl Ty {
     pub fn is_second_class(&self) -> bool {
         match self {
             Ty::Str | Ty::Slice(_) | Ty::Ref { .. } => true,
+            // A closure with borrow captures points at the storage it captured (CL3).
+            Ty::Fn { borrowed, .. } => *borrowed,
             Ty::Array(t, _) | Ty::Option(t) | Ty::List(t) => t.is_second_class(),
             Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
             Ty::Map(k, v) => k.is_second_class() || v.is_second_class(),
@@ -162,6 +204,16 @@ impl fmt::Display for Ty {
             Ty::Float(FloatTy::F64) => f.write_str("f64"),
             Ty::Str => f.write_str("str"),
             Ty::String => f.write_str("String"),
+            Ty::Fn { sig, kind, .. } => {
+                write!(f, "{}(", kind.name())?;
+                for (i, p) in sig.params.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{p}")?;
+                }
+                write!(f, "): {}", sig.ret)
+            }
             Ty::Ref { mutable: false, inner } => write!(f, "&{inner}"),
             Ty::Ref { mutable: true, inner } => write!(f, "&mut {inner}"),
             Ty::Slice(t) => write!(f, "[{t}]"),
@@ -237,6 +289,32 @@ mod tests {
         assert!(!Ty::Heap(Box::new(i32_.clone())).is_second_class());
         assert!(!Ty::List(Box::new(i32_.clone())).is_second_class());
         assert!(!i32_.is_second_class());
+    }
+
+    #[test]
+    fn closure_capabilities_are_ordered() {
+        assert!(FnKind::Fn.at_least(FnKind::Fn));
+        assert!(FnKind::Fn.at_least(FnKind::FnMut));
+        assert!(FnKind::Fn.at_least(FnKind::FnOnce));
+        assert!(FnKind::FnMut.at_least(FnKind::FnMut));
+        assert!(!FnKind::FnMut.at_least(FnKind::Fn));
+        assert!(FnKind::FnOnce.at_least(FnKind::FnOnce));
+        assert!(!FnKind::FnOnce.at_least(FnKind::FnMut));
+    }
+
+    #[test]
+    fn closure_types_display_like_the_source() {
+        let sig = |params: Vec<Ty>, ret: Ty| FnSig { params, ret: Box::new(ret) };
+        let f = Ty::Fn {
+            sig: Rc::new(sig(vec![Ty::Int(IntTy::I32)], Ty::Int(IntTy::I32))),
+            kind: FnKind::Fn,
+            borrowed: false,
+        };
+        assert_eq!(f.to_string(), "Fn(i32): i32");
+        let g = Ty::Fn { sig: Rc::new(sig(vec![], Ty::Unit)), kind: FnKind::FnMut, borrowed: true };
+        assert_eq!(g.to_string(), "FnMut(): ()");
+        assert!(g.is_second_class(), "a borrowing closure is second-class");
+        assert!(!f.is_second_class());
     }
 
     #[test]

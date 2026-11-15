@@ -1,9 +1,10 @@
-# Burdin grammar (stage 0)
+# Burdin grammar (stage 0, plus stage 1 closures)
 
-This is the grammar the stage 0 compiler must accept. It covers exactly the stage 0 subset. It is derived from the
-conformance tests in `tests/`, so every construct below is used by at least one test, and every construct those tests
-use is here. Features deferred to stage 1 (closures, string interpolation, `any`/`impl` types, `error` declarations,
-comptime, derive declarations, default and named arguments, extension methods, tasks) are reserved but not parsed.
+This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures. It is
+derived from the conformance tests in `tests/`, so every construct below is used by at least one test, and every
+construct those tests use is here. Features deferred to later stage 1 milestones (string interpolation,
+`any`/`impl` types, `error` declarations, comptime, derive declarations, default and named arguments, extension
+methods, tasks) are reserved but not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).
@@ -28,7 +29,8 @@ Reserved for stage 1, rejected as identifiers now: `any  comptime  derive  impl`
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct
-name), and `pub` (immediately before `use`). The attribute names of a
+name), `pub` (immediately before `use`), and `Fn`/`FnMut`/`FnOnce` (a closure type when followed by `(`). The attribute
+names of a
 test item (`ignore`, `timeout`, `should_panic`, `should_fail`) are contextual only inside the `[...]` after the test
 name; the checker rejects an unknown name with E0170 ([`test-runner.md`](test-runner.md)).
 
@@ -174,6 +176,7 @@ package-private item, and a public signature or field naming a package-private t
 
 ```
 Type          = TypePath
+              | ClosureType                             (* stage 1, milestone 12 *)
               | "(" ")"                                 (* unit *)
               | "(" Type "," [ Type { "," Type } [ "," ] ] ")"   (* tuple of two or more, or one with a trailing comma *)
               | "[" Type ";" Expr "]"                   (* array: [i32; 4] *)
@@ -183,7 +186,17 @@ Type          = TypePath
 
 TypePath      = IDENT [ GenericArgs ] { "." IDENT [ GenericArgs ] } ;
 GenericArgs   = "<" Type { "," Type } [ "," ] ">" ;
+ClosureType   = ( "Fn" | "FnMut" | "FnOnce" ) "(" [ Type { "," Type } [ "," ] ] ")" [ ":" Type ] ;
 ```
+
+`Fn`, `FnMut`, and `FnOnce` are compiler-known when written with a parameter list; a bare identifier with that
+spelling is still an ordinary type name. A closure type with no `: Type` returns `()`. The three names form a
+capability hierarchy for calling: a value of `Fn` may be used where `FnMut` or `FnOnce` is expected, and an `FnMut`
+where `FnOnce` is expected, never the other way (`memory-rules.md` CL5). A closure type written in a signature is
+owned; only a type parameter's `Fn` bound keeps the closure's concrete capture mode and lets a borrowing closure cross
+the call (`memory-rules.md` CL9). A non-generic function name, a built-in function name, or `Some` is an expression of
+a closure type when the context expects one (`memory-rules.md` CL11); `f(args)` calls any expression of a closure
+type, including a field, an element, or a call result.
 
 `i32`, `str`, `bool`, `String`, `Range<T>`, `RangeInclusive<T>`, `Self` and the other built-in names are ordinary
 type paths resolved in the prelude. `Self` means the type of the enclosing impl block, there and in expressions and
@@ -241,10 +254,13 @@ ArgList       = Arg { "," Arg } [ "," ] ;
 Arg           = [ "mut" ] Expr ;                        (* "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)
 
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
-              | ArrayExpr | StructLiteral | Block | IfExpr | MatchExpr | LoopExpr | WhileExpr | ForExpr
-              | "unsafe" Block | "return" [ Expr ] | "break" | "continue" ;
+              | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
+              | ForExpr | "unsafe" Block | "return" [ Expr ] | "break" | "continue" ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
+ClosureExpr   = "|" [ ClosureParam { "," ClosureParam } [ "," ] ] "|" [ ":" Type ] Expr
+              | "||" [ ":" Type ] Expr ;                 (* zero parameters *)
+ClosureParam  = IDENT [ ":" Type ] ;                     (* no convention; the callee owns each argument *)
 PathExpr      = IDENT [ GenericArgs ] ;                 (* later segments are parsed as field accesses, see below *)
                                                          (* `Self` is a path for `Self.new()`, `Self.Variant`, and `Self { ... }` *)
 TupleExpr     = "(" Expr "," [ Expr { "," Expr } [ "," ] ] ")" ;
@@ -260,6 +276,16 @@ LoopExpr      = "loop" Block ;
 WhileExpr     = "while" Expr Block ;
 ForExpr       = "for" Pattern "in" Expr Block ;
 ```
+
+A closure body is a single expression; a block is one of the expressions, so `|x| { ... }` is a closure whose body is
+a block. A parameter without a type takes its type from the expected closure type (`Fn(...)`, a `Fn` bound, or a
+written annotation); when neither gives one, the parameter must be annotated (E0003). The return type is written
+after the closing `|` with the same `: Type` form as a function, and is inferred from the body when omitted. Newlines
+are allowed inside `|...|`, between the closing `|` and `:`, and before the body.
+
+A closure expression is a primary expression, so `|x| x + 1` captures the whole body and `(|x| x + 1)(2)` calls it.
+A call whose callee is a value of a closure type is the ordinary call syntax `f(args)`; there is no separate call
+operator. `||` is one token, the empty parameter list, at the start of an expression.
 
 Arms are separated by `,` or a line break, and the separator may be left out after the last arm or after an arm whose
 body is a block. `else` is the catch-all arm and must be last.

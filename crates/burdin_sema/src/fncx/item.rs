@@ -17,7 +17,10 @@ pub(crate) fn check_const(
     ty: &Ty,
     diags: &mut Diagnostics,
 ) -> tir::Const {
-    let mut cx = FnCx::new(globals, diags, Ty::Unit, None, module, false);
+    // A constant cannot hold a closure (`is_const_expr` below rejects it), so its closures are checked for
+    // diagnostics and dropped.
+    let closures = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut cx = FnCx::new(globals, diags, Ty::Unit, None, module, false, closures);
     let value = cx.expr(&decl.value, Some(ty));
     let value = cx.expect_ty(value, ty);
     if !is_const_expr(&value) {
@@ -52,6 +55,7 @@ pub(crate) fn check_function(
     globals: &Globals,
     item: &FnItem,
     sig: &Signature,
+    closures: std::rc::Rc<std::cell::RefCell<Vec<tir::Closure>>>,
     diags: &mut Diagnostics,
 ) -> tir::Function {
     if !item.check_body {
@@ -59,7 +63,7 @@ pub(crate) fn check_function(
     }
     let f = item.decl;
     let ret = sig.ret.clone();
-    let mut cx = FnCx::new(globals, diags, ret.clone(), item.self_ty.clone(), item.module, item.is_unsafe);
+    let mut cx = FnCx::new(globals, diags, ret.clone(), item.self_ty.clone(), item.module, item.is_unsafe, closures);
     cx.subst = item.subst.clone();
     cx.bounds = item.bounds.clone();
     let params = cx.declare_params(f, sig);
@@ -70,11 +74,9 @@ pub(crate) fn check_function(
             Some(ast::Stmt::Let { span, .. }) => *span,
             None => f.body.span,
         };
-        cx.diags.error(
-            Code::TYPE_MISMATCH,
-            span,
-            format!("`{}` returns `{ret}`, but its body produces `{body_ty}`", item.name),
-        );
+        // The same closure-aware codes as an annotated position: returning a borrowing closure is E0171, not a
+        // bare type mismatch.
+        cx.report_mismatch(span, &ret, &body_ty);
     }
     if item.symbolic {
         return stub(item);

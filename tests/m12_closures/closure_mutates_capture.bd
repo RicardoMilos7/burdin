@@ -1,0 +1,27 @@
+//@ run
+//> 2
+//> 2
+//> 3
+//> 3
+
+// Writing a captured place makes the capture mutable and the closure `FnMut` (CL3, CL5). The mutation is
+// visible through the borrowed place after the closure's last use.
+fn main() {
+    let mut list = List<i32>.new()
+    list.push(1)
+
+    let mut add = || {
+        list.push(2)
+        list.len()
+    }
+    println(add().to_string())
+    println(list.len().to_string())
+
+    let mut total = 1
+    let mut bump = || {
+        total = total + 2
+        total
+    }
+    println(bump().to_string())
+    println(total.to_string())
+}

@@ -8,7 +8,31 @@ impl Parser<'_> {
     pub(super) fn ty(&mut self) -> PResult<Type> {
         let start = self.span();
         match self.kind().clone() {
-            TokenKind::Ident(_) => {
+            TokenKind::Ident(name) => {
+                // `Fn(...)`, `FnMut(...)`, and `FnOnce(...)` are the compiler-known closure types. Only the
+                // parenthesized form is special, so a type named `Fn` still works.
+                let kind = match name.as_str() {
+                    "Fn" => Some(FnKind::Fn),
+                    "FnMut" => Some(FnKind::FnMut),
+                    "FnOnce" => Some(FnKind::FnOnce),
+                    _ => None,
+                };
+                if let Some(kind) = kind
+                    && self.nth_kind(1) == &TokenKind::LParen
+                {
+                    self.bump();
+                    self.open(&TokenKind::LParen, false)?;
+                    let mut params = Vec::new();
+                    while !self.at(&TokenKind::RParen) {
+                        params.push(self.ty()?);
+                        if !self.eat(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.close(&TokenKind::RParen)?;
+                    let ret = if self.eat(&TokenKind::Colon) { Some(Box::new(self.ty()?)) } else { None };
+                    return Ok(Type { kind: TypeKind::Fn { kind, params, ret }, span: start.to(self.prev_span()) });
+                }
                 let mut segments = vec![self.path_segment()?];
                 while self.at(&TokenKind::Dot) && matches!(self.nth_kind(1), TokenKind::Ident(_)) {
                     self.bump();
@@ -85,6 +109,9 @@ impl Parser<'_> {
             matches!(self.toks.get(i).map(|t| &t.kind), Some(TokenKind::Dot | TokenKind::LParen | TokenKind::LBrace))
         };
         let mut depth = 0i32;
+        // Parentheses and brackets inside a type (`Fn(i32)`, `(i32, i32)`) do not end the scan; only a closer
+        // that is not matched inside it can belong to the surrounding expression.
+        let mut parens = 0i32;
         let mut i = self.pos + 1;
         while let Some(t) = self.toks.get(i) {
             match &t.kind {
@@ -102,9 +129,14 @@ impl Parser<'_> {
                         return depth == 0 && continues(i + 1);
                     }
                 }
-                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
-                    return false;
+                TokenKind::LParen | TokenKind::LBracket => parens += 1,
+                TokenKind::RParen | TokenKind::RBracket => {
+                    if parens == 0 {
+                        return false;
+                    }
+                    parens -= 1;
                 }
+                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace if parens == 0 => return false,
                 _ => {}
             }
             i += 1;

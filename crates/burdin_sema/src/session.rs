@@ -202,7 +202,10 @@ impl<'a> FnItem<'a> {
 impl<'t> Sema<'t> {
     /// Signatures and bodies, until no pass asks for an instance that does not exist yet. Each pass starts from
     /// clean diagnostics, so only the last pass's errors are reported.
-    pub(crate) fn settle(&mut self, diags: &mut Diagnostics) -> (Vec<tir::Function>, Vec<tir::Const>) {
+    pub(crate) fn settle(
+        &mut self,
+        diags: &mut Diagnostics,
+    ) -> (Vec<tir::Function>, Vec<tir::Const>, Vec<tir::Closure>) {
         let file = self.entry_file();
         let mut sig_diags;
         let mut body_diags;
@@ -230,6 +233,7 @@ impl<'t> Sema<'t> {
         self,
         functions: Vec<tir::Function>,
         consts: Vec<tir::Const>,
+        closures: Vec<tir::Closure>,
         diags: &mut Diagnostics,
     ) -> tir::Program {
         // A test build replaces the program's entry point with the test dispatcher: the user's `main` is not run,
@@ -254,7 +258,7 @@ impl<'t> Sema<'t> {
                 vararg: e.vararg,
             })
             .collect();
-        tir::Program { functions, consts, structs, enums, signatures: sigs, externs, main, tests: self.tests }
+        tir::Program { functions, closures, consts, structs, enums, signatures: sigs, externs, main, tests: self.tests }
     }
 
     fn find_main(&self, diags: &mut Diagnostics) -> Option<FuncId> {

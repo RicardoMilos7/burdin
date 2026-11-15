@@ -66,7 +66,7 @@ impl<'t> Sema<'t> {
             let met = symbolic
                 || imp.wheres.iter().all(|(n, bounds)| {
                     let arg = isubst.iter().find(|(m, _)| m == n).map(|(_, t)| t);
-                    arg.is_none_or(|arg| bounds.iter().all(|b| self.globals.satisfies(arg, *b, &[])))
+                    arg.is_none_or(|arg| bounds.iter().all(|b| self.globals.satisfies_with(arg, *b, &[], &isubst)))
                 });
             if !met {
                 continue;

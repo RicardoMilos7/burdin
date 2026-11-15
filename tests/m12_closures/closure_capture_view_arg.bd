@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A closure that moves a view into its record is second-class even when it is only passed by value: the
+// owned parameter type erases where the record came from (CL3, E0171).
+fn call(f: Fn(): usize): usize {
+    f()
+}
+
+fn main() {
+    let s = "abc"
+    println(call(|| s.len()).to_string()) //~ E0171
+}

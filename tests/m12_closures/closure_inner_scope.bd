@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A borrowing closure stored in a binding may not outlive a captured local of an inner block (CL3, E0123).
+fn main() {
+    let f = { //~ E0123
+        let n = 1
+        let c = || n
+        c
+    }
+    println(f().to_string())
+}

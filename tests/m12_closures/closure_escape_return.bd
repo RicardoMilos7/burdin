@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A closure that borrows a local cannot be returned as an owned closure type (CL3, E0171).
+fn make(): Fn(): i32 {
+    let n = 1
+    let f = || n
+    return f //~ E0171
+}
+
+fn main() {
+    let g = make()
+    println(g().to_string())
+}

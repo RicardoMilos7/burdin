@@ -1,0 +1,19 @@
+//@ run
+//> 6
+//> 12
+
+// A nested closure captures from the closure that encloses it (CL1).
+fn main() {
+    let n = 5
+    let outer = || {
+        let inner = || n + 1
+        inner()
+    }
+    println(outer().to_string())
+
+    let add = |x: i32| {
+        let twice = || x * 2
+        twice() + x
+    }
+    println(add(4).to_string())
+}

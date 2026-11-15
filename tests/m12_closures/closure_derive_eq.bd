@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A closure supports no derives, so an `Eq` field of closure type is E0130 (CL10).
+struct Holder derives (Eq) {
+    f: Fn(): i32 //~ E0130
+}
+
+fn main() {
+    let h = Holder { f: || 1 }
+    let g = Holder { f: || 2 }
+    if h == g { //~ E0003
+        println("same")
+    }
+}

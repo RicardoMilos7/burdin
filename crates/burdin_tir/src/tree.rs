@@ -74,6 +74,39 @@ pub struct Local {
     pub kind: LocalKind,
 }
 
+/// How a closure takes a captured variable (`spec/memory-rules.md` CL2-CL4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureMode {
+    /// A shared borrow (`&T`).
+    Borrow,
+    /// A mutable borrow (`&mut T`), because the body writes the captured place.
+    BorrowMut,
+    /// The value itself: a move capture, or a copy for a Copy type.
+    Move,
+}
+
+/// One entry of a closure's capture record. In a [`Closure`] the local is the body's local for the capture; in an
+/// [`ExprKind::Closure`] it is the enclosing function's local that is captured.
+#[derive(Clone, Debug)]
+pub struct Capture {
+    pub local: LocalId,
+    pub mode: CaptureMode,
+    pub ty: Ty,
+}
+
+/// A closure body and the capture record it takes.
+pub struct Closure {
+    /// The internal function name, `burdin.closure.N`.
+    pub name: String,
+    pub span: Span,
+    pub kind: FnKind,
+    pub sig: FnSig,
+    /// The capture record layout: entry `i` is env field `i`.
+    pub captures: Vec<Capture>,
+    /// The body. Its locals include each capture (at `Capture::local`), then its parameters.
+    pub func: Function,
+}
+
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub tail: Option<Box<Expr>>,
@@ -106,6 +139,18 @@ pub enum ExprKind {
     Builtin(Builtin, Vec<Expr>),
     /// A built-in method: the receiver comes first in the arguments.
     Method(Method, Vec<Expr>),
+    /// A closure expression: the index of its body in [`crate::Program::closures`], and the enclosing places it
+    /// captures, in capture-record order. The expression's type is the closure interface it satisfies.
+    Closure {
+        closure: usize,
+        captures: Vec<Capture>,
+    },
+    /// `f(args)` where `f` is a closure value. The kind decides how the callee is used (CL6).
+    ClosureCall {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        kind: FnKind,
+    },
     /// Borrows a `String` as a `str` (the one implicit coercion, tests/README.md assumption 2).
     StringAsStr(Box<Expr>),
     Block(Block),

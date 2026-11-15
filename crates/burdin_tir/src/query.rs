@@ -65,6 +65,8 @@ impl TypeDefs<'_> {
             Ty::Range(inner, _) => self.holds(inner, prop, seen),
             // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
             Ty::CPtr(_) => true,
+            // A closure owns its capture record, so it is never copied or cloned (CL10).
+            Ty::Fn { .. } => false,
             Ty::String | Ty::Heap(_) | Ty::CString => prop == Property::Clone,
             // A list or a map owns its buffer, so it is never `Copy`; it can be deep-cloned when its elements can.
             Ty::List(t) => prop == Property::Clone && self.holds(t, prop, seen),
@@ -112,6 +114,8 @@ impl TypeDefs<'_> {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::CPtr(_) | Ty::Chars => false,
             Ty::Range(..) => false,
+            // A closure's capture record is heap-allocated and may own its captures.
+            Ty::Fn { .. } => true,
             Ty::String | Ty::Heap(_) | Ty::CString | Ty::List(_) | Ty::Map(..) => true,
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Option(t) => self.needs_drop_seen(t, seen),
@@ -189,6 +193,20 @@ mod tests {
         assert!(!defs.is_copy(&Ty::Ref { mutable: true, inner: Box::new(int()) }), "a &mut is not Copy");
         assert!(!defs.is_copy(&Ty::String));
         assert!(!defs.is_copy(&Ty::List(Box::new(int()))));
+    }
+
+    #[test]
+    fn closures_own_their_record_and_are_never_copied_or_cloned() {
+        let defs = TypeDefs { structs: &[], enums: &[] };
+        let closure = Ty::Fn {
+            sig: std::rc::Rc::new(crate::ty::FnSig { params: Vec::new(), ret: Box::new(Ty::Unit) }),
+            kind: crate::ty::FnKind::Fn,
+            borrowed: false,
+        };
+        assert!(!defs.is_copy(&closure));
+        assert!(!defs.is_clone(&closure));
+        assert!(defs.needs_drop(&closure));
+        assert!(!defs.has_drop_impl(&closure));
     }
 
     #[test]

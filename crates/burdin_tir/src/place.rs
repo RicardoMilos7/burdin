@@ -121,6 +121,16 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| place_mentions(x, out));
         }
+        // A closure mentions the places it captures; a closure call mentions its callee and arguments.
+        K::Closure { captures, .. } => {
+            for c in captures {
+                out.push((c.local, Vec::new()));
+            }
+        }
+        K::ClosureCall { callee, args, .. } => {
+            place_mentions(callee, out);
+            args.iter().for_each(|x| place_mentions(x, out));
+        }
         K::Binary(_, l, r) | K::Assign(l, r) => {
             place_mentions(l, out);
             place_mentions(r, out);

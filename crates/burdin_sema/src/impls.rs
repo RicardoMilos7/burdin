@@ -308,9 +308,10 @@ impl<'t> Sema<'t> {
                 );
                 continue;
             };
+            let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), crate::generics::param_ty(p))).collect();
             wheres.push((
                 name,
-                pred.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, module, diags)).collect(),
+                pred.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags)).collect(),
             ));
         }
         wheres

@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// The closure's parameter list must match the expected closure type (E0004).
+fn main() {
+    let f: Fn(i32): i32 = |x, y| x //~ E0004
+    println(f(1).to_string())
+}

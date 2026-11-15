@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A closure that must outlive the call captures by move, but a read-only parameter is only borrowed (CL4).
+fn make(s: String): Fn(): String {
+    || s //~ E0101
+}
+
+fn main() {
+    let g = make(String.from("x"))
+    println(g())
+}

@@ -1,0 +1,26 @@
+//@ run
+//> dropped
+//> 1
+
+// An early `return` in a `Fn` body called through a weakened `FnOnce` type must still destroy the record once
+// (CL8). The body only reads its moved-in capture, so the closure itself is `Fn`.
+struct Loud {
+    value: i32
+}
+
+Loud: Drop {
+    fn drop(mut self) {
+        println("dropped")
+    }
+}
+
+fn main() {
+    let loud = Loud { value: 1 }
+    let f: FnOnce(): i32 = || {
+        if loud.value == 1 {
+            return 1
+        }
+        0
+    }
+    println(f().to_string())
+}

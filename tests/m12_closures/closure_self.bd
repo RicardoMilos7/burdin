@@ -1,0 +1,38 @@
+//@ run
+//> 11
+//> 11
+//> 21
+
+// A closure inside a method captures `self` like any other local. A closure that is returned must own it,
+// which a read-only receiver cannot be moved from, so `make` takes `own self`.
+struct Counter {
+    n: i32
+}
+
+Counter {
+    fn show(self) {
+        let f = |x: i32| self.n + x
+        println(f(1).to_string())
+    }
+
+    fn make(own self): Fn(i32): i32 {
+        |x| self.n + x
+    }
+
+    fn nested(self) {
+        let f = || {
+            let g = || self.n + 1
+            g()
+        }
+        println(f().to_string())
+    }
+}
+
+fn main() {
+    let c = Counter { n: 10 }
+    c.show()
+    c.nested()
+
+    let g = Counter { n: 20 }.make()
+    println(g(1).to_string())
+}

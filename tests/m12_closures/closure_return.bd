@@ -1,0 +1,16 @@
+//@ run
+//> 15
+//> 12
+
+// A returned closure captures by move: `own n` is moved into the closure's record, which the caller owns.
+fn make(own n: i32): Fn(i32): i32 {
+    |x| x + n
+}
+
+fn main() {
+    let add10 = make(10)
+    println(add10(5).to_string())
+
+    let add3 = make(3)
+    println(add3(9).to_string())
+}

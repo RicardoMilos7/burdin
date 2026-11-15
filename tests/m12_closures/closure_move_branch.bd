@@ -1,0 +1,19 @@
+//@ run
+//> chosen
+//> fallback
+
+// A capture moved out through a `match` arm or an `if` branch makes the closure `FnOnce` (CL5), just like a
+// tail expression.
+fn main() {
+    let a = String.from("chosen")
+    let first: FnOnce(): String = || match 0 {
+        0 => a
+        _ => String.from("other")
+    }
+    println(first())
+
+    let b = String.from("fallback")
+    let cond = false
+    let second: FnOnce(): String = || if cond { String.from("no") } else { b }
+    println(second())
+}

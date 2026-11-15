@@ -1,0 +1,20 @@
+//@ run
+//> 5
+//> builtin
+//> 7
+
+// A named function, a built-in function, and `Some` are first-class where a closure type is expected (CL11).
+fn add(x: i32, y: i32): i32 {
+    x + y
+}
+
+fn main() {
+    let f: Fn(i32, i32): i32 = add
+    println(f(2, 3).to_string())
+
+    let p: Fn(str): () = println
+    p("builtin")
+
+    let s: Fn(i32): Option<i32> = Some
+    println(s(7).unwrap().to_string())
+}

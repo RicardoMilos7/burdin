@@ -57,6 +57,10 @@ impl FnCx<'_> {
         if let Some(local) = self.lookup(&id.name) {
             return mk(tir::ExprKind::Local(local), self.locals[local.0].ty.clone(), id.span);
         }
+        // In a closure body, a name the body does not bind is captured from the enclosing function (CL1).
+        if let Some(e) = self.capture_name(&id.name, id.span) {
+            return e;
+        }
         if id.name == "None" && self.is_prelude("None") {
             return match expect {
                 Some(t @ Ty::Option(_)) => mk(tir::ExprKind::None, t.clone(), id.span),
@@ -72,11 +76,14 @@ impl FnCx<'_> {
         }
         match self.globals.value(self.module, &id.name) {
             Some(Global::Const(c)) => mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), id.span),
-            Some(Global::Func(_) | Global::Generic(_) | Global::Extern(_)) => {
-                self.unsupported(id.span, "using a function as a value") // e9000: function-value
+            Some(Global::Func(f)) => self.function_value(f, id.span),
+            Some(Global::Generic(_) | Global::Extern(_)) => {
+                self.unsupported(id.span, "using a generic or `extern` function as a value") // e9000: function-value
             }
-            None if builtin(&id.name).is_some() => self.unsupported(id.span, "using a function as a value"), // e9000: builtin-function-value
-            None if id.name == "Some" => self.unsupported(id.span, "using `Some` as a function value"), // e9000: some-function-value
+            None if builtin(&id.name).is_some() => {
+                self.builtin_value(builtin(&id.name).expect("just matched"), id.span)
+            }
+            None if id.name == "Some" => self.some_value(expect, id.span),
             None if self.globals.type_name(self.module, &id.name).is_some() => {
                 self.diags.error(Code::TYPE_MISMATCH, id.span, format!("`{}` is a type, not a value", id.name));
                 error_expr(id.span)

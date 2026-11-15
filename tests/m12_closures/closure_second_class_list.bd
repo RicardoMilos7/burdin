@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A stored collection needs owned closures, so pushing a borrowing closure is E0171 (CL3).
+fn main() {
+    let n = 1
+    let f = || n
+    let mut list: List<Fn(): i32> = List<Fn(): i32>.new()
+    list.push(f) //~ E0171
+    println(list[0]().to_string())
+}

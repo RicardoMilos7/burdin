@@ -33,9 +33,9 @@ close-out checklist in `AGENTS.md`).
     wrapping, and a reversed inclusive range (`a[2..=1]`) still panics. `m09_stdlib/slice_inclusive`,
     `slice_inclusive_bounds`, and `slice_inclusive_reversed` witness it. A dead "comparing strings" branch was
     removed.
-  - The remaining E9000 sites are assigned to m12 (function values and calls), m13 (generic interfaces and methods),
-    m19 (hand-built built-in interfaces), m20 (constant expressions), m21 (the remaining type-system forms), or
-    Stage 1 for the cross-cutting pattern, bound, `where`, and runtime-index move forms.
+  - The remaining E9000 sites are assigned to m13 (generic interfaces and methods), m19 (hand-built built-in
+    interfaces), m20 (constant expressions), m21 (the remaining type-system forms), or Stage 1 for the cross-cutting
+    pattern, bound, `where`, function-value, and runtime-index move forms.
 - Close the stage 0 correctness gaps carried into stage 1 (issue #48, sub-issues #49, #53, #58, #64, #71, #77,
   #85, #86, #87).
   - **View lifetime (#49).** RT5 and the new E0123 reject a view stored in a `let` or an assignment that derives
@@ -227,6 +227,43 @@ close-out checklist in `AGENTS.md`).
 ## Unreleased — Stage 1
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
+
+### Milestone 12 — closures (issue #88, sub-issues #89-#97)
+
+- Closure expressions: `|a, b| expr`, `|a: i32|: bool { ... }`, and `||` (zero parameters), parsed at primary
+  precedence and callable with the ordinary `f(args)` syntax. Parameter types come from annotations or from an
+  expected closure type; the return type is written after the closing `|` or inferred from the body, and must be
+  written when the body uses `return`.
+- Closure interface types `Fn(A, B): R`, `FnMut(...)`, and `FnOnce(...)` in types, parameters, fields, containers,
+  returns, and as generic bounds (`fn apply<F: Fn(i32): i32>(f: F, x: i32)`), monomorphized per closure type. A
+  closure value may be used at a lower capability (`Fn` as `FnMut` as `FnOnce`), never the other way.
+- Capture analysis: a closure captures the whole variables it uses and does not bind. It borrows when used in place
+  and moves when an owned closure type is expected (annotation, field, element, return, or closure-interface
+  parameter); a `Fn`/`FnMut` bound keeps its concrete borrow captures. Borrow captures are shared or mutable
+  according to how the body writes them; a `FnOnce` bound or a move context captures by move. A closure that moves a
+  captured non-Copy value is `FnOnce`, one that writes a capture is `FnMut`, otherwise `Fn`.
+- Function values: a non-generic function name (including a built-in function) or `Some` used where a closure type
+  is expected becomes a captureless `Fn` closure that forwards its owned arguments to the function with the
+  function's own conventions. A function returning a view is E0171 and an `unsafe fn` is E0161; a generic or
+  `extern` function as a value stays E9000 (Stage 1). The E9000 audit rows owned by m12 are removed.
+- Memory rules CL1-CL11 in `spec/memory-rules.md`: borrowed captures are second-class, and so is a closure that
+  moves a view into its record; neither can escape (E0171, registered in `tests/README.md` and
+  `docs/error-codes.md`); their loans live until the closure's last use (E0111); `Fn` calls borrow, `FnMut` calls
+  borrow exclusively (E0113), and `FnOnce` calls move the closure (E0100); moving a read-only parameter into a
+  stored closure is E0101.
+- Representation and code generation: a closure value is `{ code, env, drop }`; the capture record is heap-allocated
+  and holds pointers for borrow captures and values for move captures. A body function takes the record and the
+  call's consumed flag first, the record's destructor drops moved-in captures, and a `FnOnce` body frees the record
+  it consumes. A `Fn`/`FnMut` value called through a weakened `FnOnce` type destroys the record after the call,
+  including on an early `return`. Calls are indirect through the code pointer; drop and clone glue, `Option`/`Result`,
+  arrays, `List`, and `Map` handle closure values. Fixed a latent array drop/clone GEP that strided by the whole
+  array instead of one element (found by an array of closures).
+- Tests: `tests/m12_closures/` adds 45 conformance tests (run, `burdin test`, and compile-fail) covering borrow and
+  move captures, view captures, stored and returned closures, generic `Fn`/`FnMut`/`FnOnce`, weakened capabilities,
+  function values, fields, arrays, lists, nesting, `self`, branches, drops, and every new diagnostic. The suite is
+  292 tests (290 in release).
+- Documentation: `spec/grammar.md` sections 1, 4, and 6, `spec/memory-rules.md` section 12, `spec/stage1-subset.md`,
+  `spec/e9000-audit.md`, `tests/README.md`, `docs/error-codes.md`, and `HANDOFF.md`.
 
 
 ## Stage 0 — 2026-11-14

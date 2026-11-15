@@ -111,6 +111,18 @@ pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], dia
     }
 }
 
+/// Runs the RT5 check (a view stored in a binding) on a closure body. A closure's return type is never
+/// second-class (sema rejects it), so the return-origin part reports nothing.
+pub(crate) fn check_closure(func: &tir::Function, sigs: &[Signature], diags: &mut Diagnostics) {
+    // A closure's return type is never second-class: sema already reported E0171, so the return-origin rules
+    // would only add a second diagnostic for the same mistake.
+    if func.symbolic || func.ret.is_second_class() {
+        return;
+    }
+    let mut analyzer = Analyzer::new(sigs, func, Some(diags));
+    analyzer.body();
+}
+
 struct Analyzer<'a> {
     sigs: &'a [Signature],
     f: &'a tir::Function,
@@ -381,6 +393,26 @@ impl<'a> Analyzer<'a> {
                     origin.join(&self.expr(x));
                 }
                 origin
+            }
+            // A closure derives from what its captures derive from: a borrowed capture from the captured
+            // place's storage, a moved capture from the value that moved in (CL3, CL4).
+            K::Closure { captures, .. } => {
+                let mut origin = Origin::default();
+                for c in captures {
+                    match c.mode {
+                        tir::CaptureMode::Move => origin.join(&self.local_value(c.local)),
+                        _ => origin.join(&self.local_storage(c.local)),
+                    }
+                }
+                origin
+            }
+            // A closure call's second-class result derives from the closure value it was called through.
+            K::ClosureCall { callee, args, .. } => {
+                let origin = self.expr(callee);
+                for arg in args {
+                    self.expr(arg);
+                }
+                if e.ty.is_second_class() { origin } else { Origin::temp() }
             }
             K::Struct(fields) | K::Variant(_, fields) => {
                 let mut origin = Origin::default();

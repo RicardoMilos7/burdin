@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A body that mutates a capture is `FnMut`, which is not usable where `Fn` is required (CL5, E0141).
+fn main() {
+    let mut n = 0
+    let f: Fn(i32): i32 = |x| { //~ E0141
+        n = n + x
+        n
+    }
+    println(f(1).to_string())
+}

@@ -344,6 +344,64 @@ mod tests {
     }
 
     #[test]
+    fn closure_expressions_parse() {
+        let (file, out) = render(
+            "fn main() {\n    let f = |a: i32, b| a + b\n    let g = || 1\n    let h = |x: i32|: i32 { x }\n}\n",
+        );
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let inits: Vec<&Expr> = main
+            .body
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Let { init, .. } => Some(init),
+                Stmt::Expr(_) => None,
+            })
+            .collect();
+        assert_eq!(inits.len(), 3);
+        let ExprKind::Closure { params, ret, .. } = &inits[0].kind else { panic!("not a closure") };
+        assert_eq!(params.len(), 2);
+        assert!(params[0].ty.is_some());
+        assert!(params[1].ty.is_none());
+        assert!(ret.is_none());
+        let ExprKind::Closure { params, .. } = &inits[1].kind else { panic!("not a closure") };
+        assert!(params.is_empty());
+        let ExprKind::Closure { ret, .. } = &inits[2].kind else { panic!("not a closure") };
+        assert!(matches!(ret.as_ref().map(|t| &t.kind), Some(TypeKind::Path(_))));
+    }
+
+    #[test]
+    fn closure_types_parse_in_signatures_and_bounds() {
+        let (file, out) = render(
+            "fn apply(f: Fn(i32): i32) {}\n\
+             fn twice<F: FnMut(i32, i32): i32>(f: F) {}\n\
+             fn zero(f: FnOnce(): ()) {}\n",
+        );
+        assert_eq!(out, "");
+        assert_eq!(fn_names(&file), ["apply", "twice", "zero"]);
+        let Item::Fn(apply) = &file.items[0] else { unreachable!() };
+        let ParamKind::Named { ty, .. } = &apply.params[0].kind else { unreachable!() };
+        assert!(
+            matches!(&ty.kind, TypeKind::Fn { kind: FnKind::Fn, params, ret } if params.len() == 1 && ret.is_some())
+        );
+        let Item::Fn(twice) = &file.items[1] else { unreachable!() };
+        assert!(matches!(
+            &twice.generics[0].bounds[0].kind,
+            TypeKind::Fn { kind: FnKind::FnMut, params, .. } if params.len() == 2
+        ));
+    }
+
+    #[test]
+    fn closure_and_parenthesized_generic_arguments_scan_ahead() {
+        let (file, out) =
+            render("fn main() {\n    let a = List<Fn(i32): i32>.new()\n    let b = List<(i32, i32)>.new()\n}\n");
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(main.body.stmts.len(), 2);
+    }
+
+    #[test]
     fn test_items_survive_recovery() {
         let (file, out) = render("fn broken( { }\ntest \"one\" { assert(true) }\nfn good() {}\n");
         assert_eq!(out.lines().count(), 1, "{out}");
@@ -414,6 +472,13 @@ mod tests {
             "fn f() { let (a, = 1 }",
             ">>=",
             "@@@",
+            "fn f() { | }",
+            "fn f() { |x }",
+            "fn f() { |x| }",
+            "fn f() { || }",
+            "fn f() { let g = |x: | 1 }",
+            "fn f() { let g = |x|: }",
+            "fn f(g: Fn(i32) {}",
         ];
         for src in snippets {
             let (_, out) = render(src);

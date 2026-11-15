@@ -33,8 +33,20 @@ impl FnCx<'_> {
         }
         let mut checked = Vec::new();
         for (a, p) in args.iter().zip(&pattern.params) {
-            let hint = if globals.ty_has_param(&p.ty) { None } else { Some(&p.ty) };
-            checked.push(self.expr(&a.expr, hint));
+            // A closure argument to a type parameter uses the parameter's `Fn` bound to type its parameters
+            // (and to choose borrow or move captures, CL9). The bound belongs to the callee.
+            let hint = if globals.ty_has_param(&p.ty) {
+                let bound_param = match &p.ty {
+                    Ty::Param(name) => info.params.iter().position(|n| n == &**name),
+                    _ => None,
+                };
+                bound_param
+                    .and_then(|k| info.bounds.get(k))
+                    .and_then(|bounds| super::closure::bound_hint(globals, bounds))
+            } else {
+                Some(p.ty.clone())
+            };
+            checked.push(self.expr(&a.expr, hint.as_ref()));
         }
         let mut bindings = Vec::new();
         for (e, p) in checked.iter().zip(&pattern.params) {
@@ -61,9 +73,10 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let mut ok = true;
+        let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(targs.iter().cloned()).collect();
         for ((pname, t), bounds) in info.params.iter().zip(&targs).zip(&info.bounds) {
             for b in bounds {
-                if !globals.satisfies(t, *b, &self.bounds) {
+                if !globals.satisfies_with(t, *b, &self.bounds, &subst) {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
                         span,
@@ -237,8 +250,18 @@ impl FnCx<'_> {
             }
             let mut checked = Vec::new();
             for (a, f) in args.iter().zip(&v.fields) {
-                let hint = if globals.ty_has_param(&f.ty) { None } else { Some(&f.ty) };
-                checked.push(self.expr(&a.expr, hint));
+                let hint = if globals.ty_has_param(&f.ty) {
+                    let bound_param = match &f.ty {
+                        Ty::Param(name) => globals.generic_adts[g].params.iter().position(|n| n == &**name),
+                        _ => None,
+                    };
+                    bound_param
+                        .and_then(|k| globals.generic_adts[g].bounds.get(k))
+                        .and_then(|bounds| super::closure::bound_hint(globals, bounds))
+                } else {
+                    Some(f.ty.clone())
+                };
+                checked.push(self.expr(&a.expr, hint.as_ref()));
             }
             let mut bindings = Vec::new();
             for (e, f) in checked.iter().zip(&v.fields) {
@@ -283,9 +306,21 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let mut checked = Vec::new();
+        let info = &globals.generic_adts[g];
         for (a, p) in args.iter().zip(&pattern.params) {
-            let hint = if globals.ty_has_param(&p.ty) { None } else { Some(&p.ty) };
-            checked.push(self.expr(&a.expr, hint));
+            // A closure argument to a type parameter uses the type's `Fn` bound (CL9).
+            let hint = if globals.ty_has_param(&p.ty) {
+                let bound_param = match &p.ty {
+                    Ty::Param(name) => info.params.iter().position(|n| n == &**name),
+                    _ => None,
+                };
+                bound_param
+                    .and_then(|k| info.bounds.get(k))
+                    .and_then(|bounds| super::closure::bound_hint(globals, bounds))
+            } else {
+                Some(p.ty.clone())
+            };
+            checked.push(self.expr(&a.expr, hint.as_ref()));
         }
         let mut bindings = Vec::new();
         for (e, p) in checked.iter().zip(&pattern.params) {
@@ -353,8 +388,18 @@ impl FnCx<'_> {
                     format!("field `{}` of `{}` is `priv` in another package", f.name.name, info.name),
                 );
             }
-            let hint = if globals.ty_has_param(&defs[index].ty) { None } else { Some(&defs[index].ty) };
-            let v = self.expr(value, hint);
+            let hint = if globals.ty_has_param(&defs[index].ty) {
+                let bound_param = match &defs[index].ty {
+                    Ty::Param(name) => info.params.iter().position(|n| n == &**name),
+                    _ => None,
+                };
+                bound_param
+                    .and_then(|k| info.bounds.get(k))
+                    .and_then(|bounds| super::closure::bound_hint(globals, bounds))
+            } else {
+                Some(defs[index].ty.clone())
+            };
+            let v = self.expr(value, hint.as_ref());
             checked.push((index, v));
         }
         let mut bindings = Vec::new();

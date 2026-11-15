@@ -272,6 +272,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8)])
             }
+            Ty::Fn { .. } => {
+                let name = Self::debug_name(ty);
+                self.debug_words(&name, &[("code", 8), ("env", 8), ("drop", 8)])
+            }
             Ty::CString => {
                 let char_ty = self.debug_basic("u8", 8, DW_ATE_UNSIGNED);
                 let db = self.debug.as_ref().expect("debug info is on");
@@ -468,6 +472,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Map(k, v) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
             Ty::Heap(inner) => format!("Heap<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
+            Ty::Fn { .. } => ty.to_string(),
             Ty::Range(inner, false) => format!("Range<{}>", Self::debug_name(inner)),
             Ty::Range(inner, true) => format!("RangeInclusive<{}>", Self::debug_name(inner)),
             Ty::Tuple(fields) => {

@@ -3,6 +3,7 @@
 
 mod aggregate;
 mod builtins;
+mod closure;
 pub(crate) use debug::DebugInfo;
 mod collections;
 mod control;
@@ -31,7 +32,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{TargetData, TargetMachine};
 use inkwell::types::{BasicTypeEnum, IntType, StructType};
-use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, StructValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue, StructValue};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) type GenResult<T> = Result<T, String>;
@@ -71,6 +72,11 @@ struct SavedContext<'ctx, 'a> {
     debug_entry: Option<BasicBlock<'ctx>>,
     dead_locals: HashSet<tir::LocalId>,
     bounds_facts: Vec<(tir::LocalId, tir::LocalId)>,
+    /// The capture record a `FnOnce` body owns and must free on an early `return` too.
+    return_env: Option<PointerValue<'ctx>>,
+    /// A `Fn`/`FnMut` body's record, its destructor, and the call's consumed flag. The body keeps the record for
+    /// `Fn`/`FnMut` calls; an `FnOnce` call through a weakened type must destroy it after the body returns.
+    return_consume: Option<(PointerValue<'ctx>, FunctionValue<'ctx>, IntValue<'ctx>)>,
 }
 
 struct LoopTargets<'ctx> {
@@ -95,8 +101,14 @@ pub(crate) struct Codegen<'ctx, 'a> {
     target_data: TargetData,
     str_ty: StructType<'ctx>,
     string_ty: StructType<'ctx>,
+    /// `{ code: ptr, env: ptr, drop: ptr }`: every closure value's layout.
+    closure_ty: StructType<'ctx>,
     rt: Runtime<'ctx>,
     functions: Vec<FunctionValue<'ctx>>,
+    /// The body function of each entry of `Program::closures`, in the same order.
+    closure_funcs: Vec<FunctionValue<'ctx>>,
+    /// The capture-record destructor of each closure, in the same order.
+    closure_drops: Vec<FunctionValue<'ctx>>,
     /// The declarations of `Program::externs`, in the same order.
     externs: Vec<FunctionValue<'ctx>>,
     str_literals: HashMap<Vec<u8>, StructValue<'ctx>>,
@@ -133,6 +145,10 @@ pub(crate) struct Codegen<'ctx, 'a> {
     /// `(loop index, collection)` pairs where the index is known to be in `0..collection.len()`: indexing that
     /// collection with that local needs no bounds check (issue #428).
     bounds_facts: Vec<(tir::LocalId, tir::LocalId)>,
+    /// The capture record owned by the `FnOnce` closure body being generated, freed on every return path.
+    return_env: Option<PointerValue<'ctx>>,
+    /// The capture record of the `Fn`/`FnMut` closure body being generated, destroyed when a call consumes it.
+    return_consume: Option<(PointerValue<'ctx>, FunctionValue<'ctx>, IntValue<'ctx>)>,
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -149,6 +165,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let usize_ty = cx.ptr_sized_int_type(&machine.get_target_data(), None);
         let str_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into()], false);
         let string_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into()], false);
+        let closure_ty = cx.struct_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false);
         let triple = machine.get_triple().as_str().to_string_lossy().to_string();
         let windows = triple.contains("windows");
         let darwin = triple.contains("darwin") || triple.contains("apple");
@@ -165,8 +182,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             target_data: machine.get_target_data(),
             str_ty,
             string_ty,
+            closure_ty,
             rt,
             functions: Vec::new(),
+            closure_funcs: Vec::new(),
+            closure_drops: Vec::new(),
             externs: Vec::new(),
             str_literals: HashMap::new(),
             glue: Vec::new(),
@@ -185,6 +205,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             debug_entry: None,
             dead_locals: HashSet::new(),
             bounds_facts: Vec::new(),
+            return_env: None,
+            return_consume: None,
         })
     }
 }
