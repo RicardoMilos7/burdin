@@ -207,7 +207,9 @@ slip past stage 1, and a package registry.
 - One milestone at a time, tests first. A milestone is done when its folder and every earlier folder pass in debug
   and release. Extend the CI milestone list in `.github/workflows/ci.yml` only when a milestone is finished.
 - Every error gets a code in the registry in `tests/README.md` before the code that reports it. Do not use E9000 for
-  a construct that a stage 1 milestone is about to implement.
+  a construct that a stage 1 milestone is about to implement. [`e9000-audit.md`](e9000-audit.md) lists every
+  remaining E9000 site with the milestone and issue that remove it; `tests/check_e9000.py` fails when the list and
+  the source disagree, or when a site names a milestone that has shipped.
 - Keep the stage 0 checks local (one body, signatures only) and keep the compiler free of LLVM before codegen. If
   comptime needs a MIR, put it between `burdin_tir` and `burdin_codegen`; do not make the other crates depend on it
   before it exists.

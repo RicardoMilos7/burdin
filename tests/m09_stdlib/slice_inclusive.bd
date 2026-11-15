@@ -1,0 +1,28 @@
+//@ run
+//> bcd
+//> 20
+//> 30
+//> 2
+//> h
+//> llo
+//> 1
+//> xy
+
+fn main() {
+    let s = "abcdef"
+    println(s[1..=3])
+
+    let a = [10, 20, 30, 40]
+    let p = a[1..=2]
+    println(p[0].to_string())
+    println(p[1].to_string())
+    println(p.len().to_string())
+
+    let mut owned = "hello".to_string()
+    println(owned[0..=0])
+    println(owned[2..=4])
+    println(owned[1..=1].len().to_string())
+
+    let t = "xyz"
+    println(t[0..=1])
+}

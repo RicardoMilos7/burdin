@@ -221,7 +221,7 @@ impl<'a> Checker<'a> {
                 self.access_place(place, if *mutable { Access::BorrowMut } else { Access::Read });
                 self.add_loan(place, *mutable);
             }
-            K::Slice { base, lo, hi } => {
+            K::Slice { base, lo, hi, .. } => {
                 self.access_place(base, Access::Read);
                 self.add_loan(base, false);
                 self.expr(lo, Mode::Use);
@@ -434,7 +434,7 @@ enum Mode {
 /// second-class type (which are copies of a reference).
 fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
         Pat::Binding(id, mode) => {
             if *mode == BindMode::View || locals[id.0].ty.is_second_class() {
                 out.push(*id);
@@ -489,7 +489,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(index, out);
         }
         K::Ref { place, .. } => locals_used(place, out),
-        K::Slice { base, lo, hi } => {
+        K::Slice { base, lo, hi, .. } => {
             locals_used(base, out);
             locals_used(lo, out);
             locals_used(hi, out);
@@ -607,7 +607,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(index, stmt, last);
         }
         K::Ref { place, .. } => uses_expr(place, stmt, last),
-        K::Slice { base, lo, hi } => {
+        K::Slice { base, lo, hi, .. } => {
             uses_expr(base, stmt, last);
             uses_expr(lo, stmt, last);
             uses_expr(hi, stmt, last);

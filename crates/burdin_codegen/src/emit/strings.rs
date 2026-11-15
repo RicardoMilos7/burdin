@@ -58,12 +58,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(self.need_int(v, &e.ty))
     }
 
-    /// `base[lo..hi]`: a view of bytes of a `str` or `String`, or of elements of a slice or array.
+    /// `base[lo..hi]` or `base[lo..=hi]`: a view of bytes of a `str` or `String`, or of elements of a slice or
+    /// array. An inclusive end is checked as `hi < len` and then advanced, so `hi + 1` cannot overflow.
     pub(super) fn slice(
         &mut self,
         base: &'a tir::Expr,
         lo: &'a tir::Expr,
         hi: &'a tir::Expr,
+        inclusive: bool,
         span: Span,
     ) -> GenResult<StructValue<'ctx>> {
         if let Ty::Array(_, n) = &base.ty {
@@ -72,7 +74,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let base_ptr = base_ptr.unwrap_or_else(|| self.cx.ptr_type(AddressSpace::default()).get_undef());
             let lo_v = self.usize_value(lo)?;
             let hi_v = self.usize_value(hi)?;
-            self.bounds_guard_ule(hi_v, self.usize_ty.const_int(n, false), span)?;
+            let hi_v = self.slice_end(lo_v, hi_v, self.usize_ty.const_int(n, false), inclusive, span)?;
             self.bounds_guard_ule(lo_v, hi_v, span)?;
             let array_t = self.llvm_ty(&base.ty).expect("an array has a type");
             let zero = self.usize_ty.const_zero();
@@ -85,12 +87,32 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let (ptr, len) = self.view_parts(base)?;
         let lo_v = self.usize_value(lo)?;
         let hi_v = self.usize_value(hi)?;
-        self.bounds_guard_ule(hi_v, len.into_int_value(), span)?;
+        let hi_v = self.slice_end(lo_v, hi_v, len.into_int_value(), inclusive, span)?;
         self.bounds_guard_ule(lo_v, hi_v, span)?;
         // SAFETY (LLVM): lo <= hi <= the base length.
         let p = unsafe { self.builder.build_in_bounds_gep(self.cx.i8_type(), ptr.into_pointer_value(), &[lo_v], "") }
             .map_err(llvm_err)?;
         let len = self.builder.build_int_sub(hi_v, lo_v, "").map_err(llvm_err)?;
         self.make_str(p.into(), len.into())
+    }
+
+    /// The exclusive end of a slice from its written end: `hi` itself, or `hi + 1` when the range is inclusive.
+    /// An inclusive end must be strictly less than `len` and at least `lo`; checking both keeps `hi + 1` from
+    /// wrapping and rejects a reversed inclusive range such as `2..=1`, which would otherwise look empty.
+    fn slice_end(
+        &mut self,
+        lo: IntValue<'ctx>,
+        hi: IntValue<'ctx>,
+        len: IntValue<'ctx>,
+        inclusive: bool,
+        span: Span,
+    ) -> GenResult<IntValue<'ctx>> {
+        if !inclusive {
+            self.bounds_guard_ule(hi, len, span)?;
+            return Ok(hi);
+        }
+        self.bounds_check(hi, len, span)?;
+        self.bounds_guard_ule(lo, hi, span)?;
+        self.builder.build_int_add(hi, self.usize_ty.const_int(1, false), "").map_err(llvm_err)
     }
 }

@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// A `Drop` implementation is exactly one method named `drop` (E0131).
+
+struct Pair {
+    a: i32
+}
+
+struct Other {
+    b: i32
+}
+
+Pair: Drop { //~ E0131
+    fn drop(mut self) {}
+    fn extra(self) {}
+}
+
+Other: Drop {
+    fn other(mut self) {} //~ E0131
+}
+
+fn main() {}

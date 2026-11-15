@@ -49,7 +49,7 @@ impl FnCx<'_> {
                     };
                 }
                 if let Some(Global::Const(_)) = self.globals.value(self.module, &name.name) {
-                    self.unsupported(p.span, "constants in patterns");
+                    self.unsupported(p.span, "constants in patterns"); // e9000: pattern-constant
                     return Pat::Wild;
                 }
                 let (id, mode) = self.declare_binding(name, ty, *mutable, owned);
@@ -125,7 +125,7 @@ impl FnCx<'_> {
                 let before = self.locals.len();
                 let alts: Vec<Pat> = alts.iter().map(|a| self.pattern(a, ty, owned)).collect();
                 if self.locals.len() != before {
-                    self.unsupported(p.span, "bindings inside `|` patterns");
+                    self.unsupported(p.span, "bindings inside `|` patterns"); // e9000: pattern-or-binding
                 }
                 Pat::Or(alts)
             }
@@ -307,10 +307,7 @@ impl FnCx<'_> {
             }
             (ast::LitPat::Bool(b), Ty::Bool) => Some(Pat::Bool(*b)),
             (ast::LitPat::Char(c), Ty::Char) => Some(Pat::Char(*c)),
-            (ast::LitPat::Str(_), Ty::Str) => {
-                self.unsupported(span, "string patterns");
-                None
-            }
+            (ast::LitPat::Str(s), Ty::Str) => Some(Pat::Str(s.clone())),
             _ => {
                 let what = match lit {
                     ast::LitPat::Int { .. } => "an integer literal",

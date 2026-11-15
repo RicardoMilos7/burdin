@@ -114,7 +114,7 @@ impl FnCx<'_> {
                 let value = self.expr(value, elem_expect);
                 let n = match count.kind {
                     K::Int(n) if n <= u128::from(u32::MAX) => n as u64,
-                    _ => return self.unsupported(count.span, "array lengths other than integer literals"),
+                    _ => return self.unsupported(count.span, "array lengths other than integer literals"), // e9000: array-repeat-length
                 };
                 let ty = Ty::Array(Box::new(value.ty.clone()), n);
                 mk(tir::ExprKind::ArrayRepeat(Box::new(value), n), ty, span)

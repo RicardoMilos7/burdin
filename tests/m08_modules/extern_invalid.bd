@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// An extern declaration may not use an ABI other than `C` (E0162), a runtime-reserved symbol, or a generic
+// function (E0163).
+
+extern "system" { //~ E0162
+    fn system_abi(): i32
+}
+
+extern "C" {
+    fn burdin_rt_panic(): i32 //~ E0163
+    fn generic<T>(): i32 //~ E0163
+}
+
+fn main() {}

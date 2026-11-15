@@ -93,6 +93,11 @@ jobs:
       - name: Check test directives
         run: python3 tests/check_tests.py
 
+      # Every E9000 site is assigned to a milestone and issue in spec/e9000-audit.md, and no site names a
+      # milestone that CI already runs (issue #84).
+      - name: Check the E9000 audit
+        run: python3 tests/check_e9000.py
+
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
       - name: Check unit tests
@@ -260,6 +265,11 @@ jobs:
 
       - name: Check test directives
         run: python3 tests/check_tests.py
+
+      # Every E9000 site is assigned to a milestone and issue in spec/e9000-audit.md, and no site names a
+      # milestone that CI already runs (issue #84).
+      - name: Check the E9000 audit
+        run: python3 tests/check_e9000.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
@@ -460,6 +470,11 @@ jobs:
 
       - name: Check test directives
         run: python tests/check_tests.py
+
+      # Every E9000 site is assigned to a milestone and issue in spec/e9000-audit.md, and no site names a
+      # milestone that CI already runs (issue #84).
+      - name: Check the E9000 audit
+        run: python tests/check_e9000.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).

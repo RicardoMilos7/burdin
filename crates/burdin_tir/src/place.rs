@@ -102,7 +102,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
                 place_mentions(place, out);
             }
         }
-        K::Slice { base, lo, hi } => {
+        K::Slice { base, lo, hi, .. } => {
             place_mentions(base, out);
             place_mentions(lo, out);
             place_mentions(hi, out);

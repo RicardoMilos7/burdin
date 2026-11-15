@@ -214,9 +214,9 @@ impl Parser<'_> {
         self.close(&TokenKind::RParen)?;
         if abi.name != "C" {
             self.diags.error(
-                Code::UNSUPPORTED,
+                Code::UNSUPPORTED_REPR,
                 abi.span,
-                format!("`repr({})` is not implemented; only `repr(C)` is", abi.name),
+                format!("`repr({})` is not supported; only `repr(C)` is", abi.name),
             );
             return Ok(false);
         }

@@ -84,7 +84,7 @@ impl Globals {
                     ast::ExprKind::Int(n) if n <= u128::from(u32::MAX) => Ty::Array(Box::new(elem), n as u64),
                     _ => {
                         diags.error(
-                            Code::UNSUPPORTED,
+                            Code::UNSUPPORTED, // e9000: type-array-length
                             len.span,
                             "array lengths other than integer literals are not implemented in this compiler yet",
                         );
@@ -122,7 +122,7 @@ impl Globals {
             return self.generic_adt_type(g, span, &seg.args, self_ty, subst, module, diags);
         }
         if !seg.args.is_empty() {
-            diags.error(Code::UNSUPPORTED, span, format!("`{name}` is not a generic type"));
+            diags.error(Code::NOT_A_GENERIC_TYPE, span, format!("`{name}` is not a generic type"));
             return Ty::Error;
         }
         if let Some(t) = self.named_type(module, name).or_else(|| builtin_type(name)) {
@@ -148,7 +148,7 @@ impl Globals {
             Some(TypeName::GenericAdt(g)) => self.generic_adt_type(g, span, &seg.args, self_ty, subst, target, diags),
             Some(TypeName::Struct(_) | TypeName::Enum(_) | TypeName::Alias(_)) => {
                 if !seg.args.is_empty() {
-                    diags.error(Code::UNSUPPORTED, span, format!("`{name}` is not a generic type"));
+                    diags.error(Code::NOT_A_GENERIC_TYPE, span, format!("`{name}` is not a generic type"));
                     return Ty::Error;
                 }
                 self.named_type(target, name).unwrap_or(Ty::Error)
@@ -207,7 +207,7 @@ impl Globals {
             return self.generic_adt_type(g, name.span, args, self_ty, subst, module, diags);
         }
         if self.type_name(module, n).is_some() {
-            diags.error(Code::UNSUPPORTED, name.span, format!("`{n}` is not a generic type"));
+            diags.error(Code::NOT_A_GENERIC_TYPE, name.span, format!("`{n}` is not a generic type"));
             return Ty::Error;
         }
         self.builtin_generic_type(n, args, self_ty, subst, module, diags).unwrap_or_else(|| {

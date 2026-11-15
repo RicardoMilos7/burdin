@@ -397,7 +397,8 @@ an empty replacement deletes the span. Together they are what an editor turns in
 code action. JSON and short output are never colored or wrapped. `--color` and `--width` only affect `human`.
 
 The error codes come from the registry in [`tests/README.md`](tests/README.md#error-codes). `E9000` is the temporary
-code for "not implemented in this compiler yet"; the conformance suite does not use it.
+code for "not implemented in this compiler yet"; the conformance suite does not use it, and
+[`spec/e9000-audit.md`](spec/e9000-audit.md) assigns every remaining site to the milestone that removes it.
 
 ### `burdin explain` and the error-code reference
 

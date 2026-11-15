@@ -130,7 +130,7 @@ Assumptions that only those implementations back:
 
 Language-level gaps and correctness issues that apply everywhere are tracked under "Known problems and risks" in
 [`HANDOFF.md`](../HANDOFF.md#known-problems-and-risks) (for example, `Map` is a linear scan and a few move forms
-are rejected with E9000). They are not repeated here.
+are rejected with E9000, assigned in [`spec/e9000-audit.md`](../spec/e9000-audit.md)). They are not repeated here.
 
 ## The checked example
 

@@ -242,9 +242,6 @@ impl FnCx<'_> {
         let base = self.expr(base, None);
         let base = self.auto_deref(base);
         if let ast::ExprKind::Range { lo, hi, inclusive } = &index.kind {
-            if *inclusive {
-                return self.unsupported(index.span, "an inclusive slice range");
-            }
             let usize_ty = Ty::Int(IntTy::Usize);
             let lo = self.expr(lo, Some(&usize_ty));
             let lo = self.expect_ty(lo, &usize_ty);
@@ -264,7 +261,12 @@ impl FnCx<'_> {
                     return error_expr(span);
                 }
             };
-            let kind = tir::ExprKind::Slice { base: Box::new(base), lo: Box::new(lo), hi: Box::new(hi) };
+            let kind = tir::ExprKind::Slice {
+                base: Box::new(base),
+                lo: Box::new(lo),
+                hi: Box::new(hi),
+                inclusive: *inclusive,
+            };
             return mk(kind, ty, span);
         }
         let index = self.expr(index, Some(&Ty::Int(IntTy::Usize)));

@@ -340,7 +340,7 @@ impl<'a> FnCx<'a> {
     }
 
     pub(super) fn unsupported(&mut self, span: Span, what: &str) -> tir::Expr {
-        self.diags.error(Code::UNSUPPORTED, span, format!("{what} is not implemented in this compiler yet"));
+        self.diags.error(Code::UNSUPPORTED, span, format!("{what} is not implemented in this compiler yet")); // e9000: unsupported-helper
         error_expr(span)
     }
 

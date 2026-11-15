@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Only `repr(C)` exists; another representation is E0164.
+
+struct Packed repr(packed) { //~ E0164
+    x: i32
+    y: i32
+}
+
+fn main() {}

@@ -100,7 +100,6 @@ impl FnCx<'_> {
     /// The type checks of a binary operator whose two operands are already checked.
     fn binary_checked(&mut self, op: ast::BinOp, l: tir::Expr, r: tir::Expr, span: Span, op_name: &str) -> tir::Expr {
         use ast::BinOp as B;
-        let comparison = matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge);
         {
             {
                 let ty = if l.ty == Ty::Never { r.ty.clone() } else { l.ty.clone() };
@@ -123,9 +122,6 @@ impl FnCx<'_> {
                     _ => unreachable!("handled above"),
                 };
                 if !ok && !matches!(ty, Ty::Error | Ty::Never) {
-                    if matches!(ty, Ty::Str | Ty::String) && comparison {
-                        return self.unsupported(span, "comparing strings");
-                    }
                     if let Ty::Param(_) = ty {
                         self.diags.error(
                             Code::BOUND_NOT_SATISFIED,

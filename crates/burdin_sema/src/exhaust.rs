@@ -6,7 +6,7 @@
 
 use burdin_tir::{Pat, Ty, TypeDefs};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Ctor {
     Bool(bool),
     /// An enum variant, or `None` (0) and `Some` (1) of `Option`.
@@ -15,6 +15,8 @@ enum Ctor {
     Single,
     /// An inclusive range of integers or character code points.
     Range(i128, i128),
+    /// One string literal. The `str` domain is open, so its presence never makes a match exhaustive.
+    Str(String),
 }
 
 #[derive(Clone, Debug)]
@@ -31,6 +33,7 @@ fn lower(p: &Pat) -> P {
         Pat::Bool(b) => P::Ctor(Ctor::Bool(*b), Vec::new()),
         Pat::Int(v) => P::Ctor(Ctor::Range(*v, *v), Vec::new()),
         Pat::Char(c) => P::Ctor(Ctor::Range(*c as i128, *c as i128), Vec::new()),
+        Pat::Str(s) => P::Ctor(Ctor::Str(s.clone()), Vec::new()),
         Pat::Range(lo, hi) => P::Ctor(Ctor::Range(*lo, *hi), Vec::new()),
         Pat::Or(alts) => P::Or(alts.iter().map(lower).collect()),
         Pat::None => P::Ctor(Ctor::Variant(0), Vec::new()),
@@ -53,10 +56,10 @@ fn missing(rows: Vec<Vec<P>>, tys: &[Ty], adts: &TypeDefs) -> bool {
     let Some((first, rest)) = tys.split_first() else { return rows.is_empty() };
     let rows = expand_or(rows);
     let heads: Vec<Ctor> =
-        rows.iter().filter_map(|r| if let P::Ctor(c, _) = &r[0] { Some(*c) } else { None }).collect();
+        rows.iter().filter_map(|r| if let P::Ctor(c, _) = &r[0] { Some(c.clone()) } else { None }).collect();
     match complete_ctors(first, &heads, adts) {
         Some(ctors) => ctors.into_iter().any(|c| {
-            let mut sub = sub_tys(first, c, adts);
+            let mut sub = sub_tys(first, c.clone(), adts);
             let arity = sub.len();
             sub.extend_from_slice(rest);
             missing(specialize(&rows, c, arity), &sub, adts)
@@ -88,7 +91,7 @@ fn expand_or(rows: Vec<Vec<P>>) -> Vec<Vec<P>> {
     out
 }
 
-fn covers(outer: Ctor, inner: Ctor) -> bool {
+fn covers(outer: &Ctor, inner: &Ctor) -> bool {
     match (outer, inner) {
         (Ctor::Range(a, b), Ctor::Range(x, y)) => a <= x && y <= b,
         _ => outer == inner,
@@ -100,7 +103,7 @@ fn specialize(rows: &[Vec<P>], c: Ctor, arity: usize) -> Vec<Vec<P>> {
     for row in rows {
         let mut new_row = match &row[0] {
             P::Wild => vec![P::Wild; arity],
-            P::Ctor(rc, subs) if covers(*rc, c) => subs.clone(),
+            P::Ctor(rc, subs) if covers(rc, &c) => subs.clone(),
             _ => continue,
         };
         new_row.extend_from_slice(&row[1..]);
@@ -351,6 +354,13 @@ mod tests {
         assert!(exhaustive_with(&i8_, &[Pat::Or(vec![Pat::Range(-128, -1), Pat::Range(0, 127)])]));
         assert!(!exhaustive_with(&i8_, &[Pat::Or(vec![Pat::Int(1), Pat::Int(2)])]));
         assert!(exhaustive_with(&Ty::Bool, &[Pat::Or(vec![Pat::Bool(true), Pat::Bool(false)])]));
+    }
+
+    #[test]
+    fn strings_need_a_wildcard() {
+        assert!(!exhaustive_with(&Ty::Str, &[Pat::Str("a".into())]));
+        assert!(!exhaustive_with(&Ty::Str, &[Pat::Str("a".into()), Pat::Str("b".into())]));
+        assert!(exhaustive_with(&Ty::Str, &[Pat::Str("a".into()), Pat::Wild]));
     }
 
     #[test]

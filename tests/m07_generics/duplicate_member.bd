@@ -1,0 +1,30 @@
+//@ compile-fail
+
+// A method may not repeat another method's name, or an enum variant's name, on the same type (E0007).
+
+struct Counter {
+    n: i32
+}
+
+Counter {
+    fn bump(self): i32 {
+        self.n + 1
+    }
+
+    fn bump(self): i32 { //~ E0007
+        self.n + 2
+    }
+}
+
+enum State {
+    Ready
+    Done
+}
+
+State {
+    fn Ready(self): bool { //~ E0007
+        true
+    }
+}
+
+fn main() {}

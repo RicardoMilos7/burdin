@@ -240,7 +240,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Area | Tests |
 | --- | --- |
 | Output, numbers, parsing | `m02_basics/arithmetic`, `casts_and_numeric_methods`, `m09_stdlib/string_ops` |
-| `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `m06_conventions/str_views`, `slice_views` |
+| `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
 | `Map` | `m09_stdlib/map_ops`, `word_count` |
 | `Heap` | `m05_ownership/heap_tree_eval` |

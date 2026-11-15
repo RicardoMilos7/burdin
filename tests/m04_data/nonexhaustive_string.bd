@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// The `str` domain is open, so a set of string patterns never covers it by itself; an `else` or `_` arm is
+// required (E0006).
+
+fn main() {
+    let s = "abc"
+    match s { //~ E0006
+        "abc" => println("a"),
+    }
+}

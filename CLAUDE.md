@@ -52,6 +52,7 @@ If these disagree, stop and say so. Do not pick one silently.
 python3 tests/run_tests.py               run the conformance tests against the compiler (Python 3; BURDIN=path overrides the binary)
 python3 tests/run_tests.py m05 -v        only milestone 5, with diffs for failures
 python3 tests/check_tests.py             check test directives and error codes (Python 3; no compiler needed)
+python3 tests/check_e9000.py             check the E9000 audit against the compiler (no compiler needed)
 python3 tests/check_unit_tests.py        check the front-end unit tests and their CI coverage (no compiler needed)
 python3 tests/check_deps.py              audit the dependency pins and licenses (no compiler needed)
 python3 tests/check_docs.py              check documentation links and the driver contract (needs a built driver)
@@ -144,4 +145,6 @@ and run from a Visual Studio Developer Command Prompt so `cl` is on `PATH` (or s
 runs with Python 3 from any shell, Git Bash included.
 
 Diagnostics that are not in the registry: `E9000` means "not implemented in this compiler yet". After stage 0 it marks
-constructs that belong to stage 1 or later; each one gets a real diagnostic when its milestone arrives.
+constructs that belong to stage 1 or later; each one gets a real diagnostic when its milestone arrives. Every site is
+listed with its owning milestone and issue in [`spec/e9000-audit.md`](spec/e9000-audit.md), and
+`tests/check_e9000.py` fails when a site is unassigned or belongs to a milestone that has shipped.
