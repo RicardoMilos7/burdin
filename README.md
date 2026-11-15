@@ -14,6 +14,7 @@ conformance suite and the specs, not by this file; see the index below.
 | --- | --- |
 | [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the settled language decisions. Read this first. |
 | [`docs/error-codes.md`](docs/error-codes.md) | The user-facing reference for every error code, with a checked example and a fix for each. `burdin explain <code>` prints one entry. |
+| [`docs/dependencies.md`](docs/dependencies.md) | The dependency and license policy, the review of every crate, and how to add one. `tests/check-deps.sh` enforces it. |
 | [`spec/grammar.md`](spec/grammar.md) | The syntax of stage 0. |
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
@@ -46,6 +47,28 @@ $ cargo build
 
 The driver is then `target/debug/burdin` (or `target\debug\burdin.exe`). The examples below use that path; if the binary
 is on `PATH`, drop the prefix.
+
+### Dependencies and licenses
+
+The compiler has one direct external Rust dependency, `inkwell` 0.11 (Apache-2.0), which binds LLVM 21
+through `llvm-sys` (MIT). Every other crate in [`Cargo.lock`](Cargo.lock) is transitively required by
+those two and is reviewed in [`tests/dependencies.txt`](tests/dependencies.txt); the policy and the
+review are in [`docs/dependencies.md`](docs/dependencies.md).
+
+- External requirements are exact (`=x.y.z`), and the committed `Cargo.lock` records the resolved
+  version, source, and checksum of every crate, so builds are reproducible.
+- Only permissive licenses are accepted (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode-3.0, and similar);
+  a copyleft identifier fails the check.
+- LLVM itself is supplied by the host toolchain under Apache-2.0 WITH LLVM-exception and is not
+  vendored.
+
+`tests/check-deps.sh` checks all of this without a compiler and re-verifies each license through
+`cargo metadata --locked --offline` after a build. Every CI job runs it:
+
+```console
+$ tests/check-deps.sh
+No problems.
+```
 
 ## Hello, world
 
@@ -467,3 +490,7 @@ Two checks cover the diagnostics themselves, and every CI job runs them after th
   `--width`, notes and suggestions, `--error-limit`, and deterministic ordering.
 - `tests/check-error-docs.sh` checks that [`docs/error-codes.md`](docs/error-codes.md) mirrors the registry, that
   every snippet fails with exactly the marked diagnostics, and that `burdin explain` prints every entry.
+
+The dependency audit needs no built compiler: `tests/check-deps.sh` reads `Cargo.lock`, the manifests, and
+[`tests/dependencies.txt`](tests/dependencies.txt), and re-verifies the licenses through `cargo metadata` when it can.
+Every CI job runs it after `cargo build` with `BURDIN_DEPS_REQUIRE_METADATA=1`.

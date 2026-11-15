@@ -33,7 +33,9 @@
 #   * the documentation check (which reads the driver contract in README.md) runs in every job;
 #   * every job runs the diagnostics presentation check and the error-code reference check, and the reference
 #     exists, is the registry's mirror image, and is linked from README.md (issues #434-#437);
-#   * every job runs the black-box check of the test runner (issues #438-#443).
+#   * every job runs the black-box check of the test runner (issues #438-#443);
+#   * every job runs the dependency and license audit after `cargo build`, with the license metadata
+#     verification required, and the reviewed inventory and its policy are in place (issue #449).
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")
@@ -211,6 +213,20 @@ check_fuzz() {   # $1 block
         || add_problem "ci.yml: fuzz job: does not upload the directory that holds found inputs"
 }
 
+# Dependency and license audit (issue #449). The audit must run after the build, so `cargo metadata
+# --locked --offline` can read the crates' own license fields, and it must require that verification
+# rather than accepting the reviewed inventory on trust.
+check_deps_audit() {   # $1 job, $2 block
+    local job=$1 block=$2 build_line deps_line
+    build_line=$(grep -nF 'run: cargo build' <<< "$block" | head -n 1 | cut -d: -f1)
+    deps_line=$(grep -nF 'tests/check-deps.sh' <<< "$block" | head -n 1 | cut -d: -f1)
+    if [ -n "$build_line" ] && [ -n "$deps_line" ] && [ "$deps_line" -lt "$build_line" ]; then
+        add_problem "ci.yml: $job job: the dependency audit runs before cargo build (cargo metadata needs the registry)"
+    fi
+    grep -qF 'BURDIN_DEPS_REQUIRE_METADATA: 1' <<< "$block" \
+        || add_problem "ci.yml: $job job: the dependency audit does not require cargo metadata (BURDIN_DEPS_REQUIRE_METADATA=1)"
+}
+
 linux=$(job_block linux)
 macos=$(job_block macos)
 windows=$(job_block windows)
@@ -270,6 +286,7 @@ for job in linux macos windows; do
         'tests/check-tests.sh' \
         'tests/check-unit-tests.sh' \
         'tests/check-ci.sh' \
+        'tests/check-deps.sh' \
         'tests/check-platform.sh' \
         'tests/check-docs.sh' \
         'tests/check-debug-info.sh' \
@@ -294,6 +311,7 @@ for job in linux macos windows; do
     check_conformance "$job" "$block" release
     check_caches "$job" "$block"
     check_bench_regression "$job" "$block"
+    check_deps_audit "$job" "$block"
 done
 
 check_fuzz "$fuzz"
@@ -370,6 +388,29 @@ check_script tests/check-codegen-opt.sh "alloca i1" "bounds.fail" "burdin.drop" 
 check_script tests/check-build-flags.sh "burdin --version" "--strip" "--lto" "--pgo-use" "131072"
 check_script tests/check-parallel.sh "BURDIN_JOBS" "diff -u"
 
+# The dependency and license audit (issue #449): the reviewed inventory must cover the direct
+# dependency and its LLVM bindings, the policy must stay stated, the script must keep checking the
+# lockfile, the pins, and the licenses through cargo metadata, and the review page must exist and be
+# linked from the documentation index.
+deps_inventory=$SCRIPT_DIR/dependencies.txt
+[ -f "$deps_inventory" ] || add_problem "tests/dependencies.txt: missing (the reviewed dependency inventory)"
+check_script tests/check-deps.sh "Cargo.lock" "dependencies.txt" "cargo metadata" \
+    "BURDIN_DEPS_REQUIRE_METADATA" "checksum" "permissive" "exact"
+if [ -f "$deps_inventory" ]; then
+    for crate in inkwell llvm-sys; do
+        grep -qE "^$crate[[:space:]]" "$deps_inventory" \
+            || add_problem "tests/dependencies.txt: no $crate entry"
+    done
+    grep -qi 'permissive' "$deps_inventory" \
+        || add_problem "tests/dependencies.txt: the license policy is no longer stated"
+fi
+if [ ! -f "$ROOT/docs/dependencies.md" ]; then
+    add_problem "docs/dependencies.md: missing (the dependency and license review)"
+else
+    grep -qF 'docs/dependencies.md' "$ROOT/README.md" \
+        || add_problem "README.md: does not link docs/dependencies.md"
+fi
+
 # The m11 test is the one that proves --link-lib LLVM-C resolves in CI.
 if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"; then
     add_problem "tests/m11_llvm: no test uses //@ link-lib: LLVM-C"
@@ -397,7 +438,7 @@ fi
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
-    tests/check-docs.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/check-test-runner.sh \
+    tests/check-docs.sh tests/check-deps.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/check-test-runner.sh \
     tests/check-debug-info.sh tests/check-codegen-opt.sh tests/check-build-flags.sh tests/check-parallel.sh \
     tests/bench-regression.sh tests/fuzz.sh; do
     path=$ROOT/$rel

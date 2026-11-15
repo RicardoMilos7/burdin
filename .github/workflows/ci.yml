@@ -110,6 +110,16 @@ jobs:
       - name: Build
         run: cargo build
 
+      # The dependency audit (issue #449): every crate in Cargo.lock is reviewed in
+      # tests/dependencies.txt, every license is permissive, every direct requirement is an exact
+      # pin, and the lockfile is current. It runs after the build so `cargo metadata --locked
+      # --offline` can re-verify the license fields from the crates themselves; the verification is
+      # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
+      - name: Audit dependencies and licenses
+        env:
+          BURDIN_DEPS_REQUIRE_METADATA: 1
+        run: bash tests/check-deps.sh
+
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
       - name: Check debug information
@@ -257,6 +267,16 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # The dependency audit (issue #449): every crate in Cargo.lock is reviewed in
+      # tests/dependencies.txt, every license is permissive, every direct requirement is an exact
+      # pin, and the lockfile is current. It runs after the build so `cargo metadata --locked
+      # --offline` can re-verify the license fields from the crates themselves; the verification is
+      # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
+      - name: Audit dependencies and licenses
+        env:
+          BURDIN_DEPS_REQUIRE_METADATA: 1
+        run: bash tests/check-deps.sh
 
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
@@ -437,6 +457,16 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # The dependency audit (issue #449): every crate in Cargo.lock is reviewed in
+      # tests/dependencies.txt, every license is permissive, every direct requirement is an exact
+      # pin, and the lockfile is current. It runs after the build so `cargo metadata --locked
+      # --offline` can re-verify the license fields from the crates themselves; the verification is
+      # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
+      - name: Audit dependencies and licenses
+        env:
+          BURDIN_DEPS_REQUIRE_METADATA: 1
+        run: bash tests/check-deps.sh
 
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).

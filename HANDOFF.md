@@ -1,6 +1,6 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, and nineteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, and twentieth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
@@ -28,7 +28,11 @@ wired into every CI job, and an error-code coverage audit that fails when a regi
 (differential tests) waits for the comptime interpreter, milestone 20; the nineteenth implemented the compiler and
 runtime work of issue #421 (sub-issues #422-#432): source-level debug information, panic backtraces, buffered output,
 a main-thread stack-overflow guard, glue deduplication, drop-flag elimination, bounds-check elision, LTO and PGO
-flags, stripping and a size budget, `--version` with build metadata, and parallel parsing.
+flags, stripping and a size budget, `--version` with build metadata, and parallel parsing. The twentieth session
+added the dependency and license audit of issue #449: `Cargo.lock` is committed with exact pins and checksums,
+`tests/dependencies.txt` records every external crate with its license and role, and `tests/check-deps.sh` fails on
+an unreviewed crate, a changed version, a non-permissive license, a non-exact direct requirement, or a stale
+lockfile; every CI job runs it after `cargo build` and requires the crates' own `cargo metadata` license fields.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -49,6 +53,7 @@ flags, stripping and a size budget, `--version` with build metadata, and paralle
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
+| Dependencies and licenses | `Cargo.lock`, `tests/dependencies.txt`, `tests/check-deps.sh`, `docs/dependencies.md` | 18 external crates (`inkwell` plus everything it pulls in through `llvm-sys` 211); all licenses permissive (mostly MIT OR Apache-2.0; `inkwell` is Apache-2.0); exact `=x.y.z` pins with crates.io source and checksum; `tests/check-deps.sh` checks all of it offline and re-verifies the licenses through `cargo metadata` after the build. Every CI job runs it (issue #449) |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
 | CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.sh --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
@@ -907,6 +912,25 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   worker keeps its own diagnostics and the driver merges them in file order, so output is byte-identical. Parallel
   checking waits for the query-based library the issue names as its prerequisite; the current `Sema` is one shared
   mutable state.
+
+## Decided in the twentieth session
+
+- **The dependency audit is a checked inventory, not a third-party scanner (issue #449).** `tests/dependencies.txt`
+  lists every external crate with its exact version, license, and role, and `tests/check-deps.sh` compares it with
+  `Cargo.lock` and the manifests. It is offline and deterministic, so it runs in every job without network or an
+  unpinned tool. A vulnerability scan (`cargo audit` and the RustSec advisory database) is a manual extra, not a CI
+  dependency; `docs/dependencies.md` says so.
+- **External requirements are exact `=x.y.z` pins, and `Cargo.lock` is committed.** The lockfile records the
+  crates.io source and checksum of every crate, so a changed dependency cannot slip in with a matching inventory
+  line; CI's `cargo metadata --locked --offline` also proves the lockfile is current with the manifests.
+- **The policy is permissive-only, and every identifier in an expression must be allowed.** An `OR` with one
+  copyleft branch is rejected rather than accepted through the permissive side. The accepted set is stated in
+  `tests/dependencies.txt` and enforced by the script; only `Apache-2.0 WITH LLVM-exception` is accepted as a
+  `WITH` term (for LLVM itself, which is host-provided and not vendored).
+- **The crates' own metadata is the source of truth in CI.** After `cargo build`, every job runs the audit with
+  `BURDIN_DEPS_REQUIRE_METADATA=1`, so each license is re-read from the crate's metadata and a failure to do so is
+  an error. Locally, before a build populates the registry cache, the same failure is a note, so the offline checks
+  still run on an unpacked tree.
 
 ## What is left to do, in order
 
