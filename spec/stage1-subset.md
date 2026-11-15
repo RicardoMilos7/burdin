@@ -142,7 +142,10 @@ code; do not invent them inside the implementation.
    - evaluate only the subset of expression forms the tests need, rejecting the rest with E9000.
 
    Recommendation: decide before milestone 20, not in it. Whatever is chosen, the interpreter must share the memory
-   rules with compiled code, so comptime `Drop`/move behavior matches.
+   rules with compiled code, so comptime `Drop`/move behavior matches. Differential tests between comptime and
+   compiled code (issue #444) run the same test both ways and compare the results; their intended `[differential]`
+   attribute and runner behavior are recorded in [`test-runner.md`](test-runner.md#deferred-differential-tests-issue-444),
+   and they can be built only after the interpreter exists.
 
 7. **Default and named arguments.** Evaluation order, interaction with `mut`/`own` conventions and exclusivity, and
    the rule that interface signatures cannot declare defaults.

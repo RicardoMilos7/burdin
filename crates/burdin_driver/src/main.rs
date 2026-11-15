@@ -2,34 +2,61 @@
 //! root (`The driver contract`) and summarized at the top of tests/run-tests.sh.
 
 mod package;
+mod test_runner;
 
 use burdin_diag::{Diagnostics, SourceMap};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "\
+pub(crate) const USAGE: &str = "\
 usage:
   burdin build <file.bd | package directory> [--release] [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
   burdin run <file.bd | package directory> [--release] [--link-lib <name>]... [-- <program arguments>...]
-  burdin test <file.bd | package directory> [--release]
+  burdin test <file.bd | package directory> [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
+              [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
+
+test options:
+  -j, --jobs <n>       tests to run at once (default: the number of CPUs)
+  -p <package>         run the tests of one package of the build; may repeat
+  --workspace          run the tests of the entry package and every path dependency
+  --filter <text>      run only tests whose name contains text
+  --ignored            run only tests marked [ignore]
+  --include-ignored    run ignored tests too
+  --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
+  -v, --verbose        print the output of passing tests too
 
 environment:
   BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
   LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`";
 
-struct Args {
-    command: String,
-    target: PathBuf,
-    release: bool,
-    output: Option<PathBuf>,
-    emit_ir: Option<PathBuf>,
-    link_libs: Vec<String>,
-    program_args: Vec<String>,
+#[derive(Debug)]
+pub(crate) struct Args {
+    pub(crate) command: String,
+    pub(crate) target: PathBuf,
+    pub(crate) release: bool,
+    pub(crate) output: Option<PathBuf>,
+    pub(crate) emit_ir: Option<PathBuf>,
+    pub(crate) link_libs: Vec<String>,
+    pub(crate) program_args: Vec<String>,
+    // `burdin test` only.
+    pub(crate) jobs: Option<usize>,
+    pub(crate) verbose: bool,
+    pub(crate) packages: Vec<String>,
+    pub(crate) workspace: bool,
+    pub(crate) ignored_only: bool,
+    pub(crate) include_ignored: bool,
+    pub(crate) filter: Option<String>,
+    /// Milliseconds; `Some(0)` disables the timeout. `None` keeps the default.
+    pub(crate) timeout_ms: Option<u64>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut it = std::env::args().skip(1);
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I: Iterator<Item = String>>(it: I) -> Result<Args, String> {
+    let mut it = it;
     let command = it.next().ok_or("missing command")?;
     if !matches!(command.as_str(), "build" | "run" | "test") {
         return Err(format!("unknown command `{command}`"));
@@ -42,6 +69,14 @@ fn parse_args() -> Result<Args, String> {
         emit_ir: None,
         link_libs: Vec::new(),
         program_args: Vec::new(),
+        jobs: None,
+        verbose: false,
+        packages: Vec::new(),
+        workspace: false,
+        ignored_only: false,
+        include_ignored: false,
+        filter: None,
+        timeout_ms: None,
     };
     let mut target = None;
     while let Some(a) = it.next() {
@@ -50,6 +85,26 @@ fn parse_args() -> Result<Args, String> {
             "-o" => args.output = Some(it.next().ok_or("`-o` needs a path")?.into()),
             "--emit-ir" => args.emit_ir = Some(it.next().ok_or("`--emit-ir` needs a path")?.into()),
             "--link-lib" => args.link_libs.push(it.next().ok_or("`--link-lib` needs a name")?),
+            "-j" | "--jobs" => {
+                let value = it.next().ok_or("`-j` needs a number")?;
+                let n: usize = value.parse().map_err(|_| format!("`-j` needs a number of tests, got `{value}`"))?;
+                if n == 0 {
+                    return Err("`-j` must be at least 1".to_string());
+                }
+                args.jobs = Some(n);
+            }
+            "-v" | "--verbose" => args.verbose = true,
+            "-p" => args.packages.push(it.next().ok_or("`-p` needs a package name")?),
+            "--workspace" => args.workspace = true,
+            "--ignored" => args.ignored_only = true,
+            "--include-ignored" => args.include_ignored = true,
+            "--filter" => args.filter = Some(it.next().ok_or("`--filter` needs a text")?),
+            "--timeout" => {
+                let value = it.next().ok_or("`--timeout` needs a number of milliseconds")?;
+                let ms: u64 =
+                    value.parse().map_err(|_| format!("`--timeout` needs a number of milliseconds, got `{value}`"))?;
+                args.timeout_ms = Some(ms);
+            }
             "--" => {
                 args.program_args.extend(it.by_ref());
             }
@@ -59,6 +114,32 @@ fn parse_args() -> Result<Args, String> {
         }
     }
     args.target = target.ok_or("missing target file")?;
+    if args.command != "test" {
+        if args.jobs.is_some() {
+            return Err("`-j` is only valid for `burdin test`".to_string());
+        }
+        if args.verbose {
+            return Err("`--verbose` is only valid for `burdin test`".to_string());
+        }
+        if !args.packages.is_empty() || args.workspace {
+            return Err("`-p` and `--workspace` are only valid for `burdin test`".to_string());
+        }
+        if args.ignored_only || args.include_ignored {
+            return Err("`--ignored` and `--include-ignored` are only valid for `burdin test`".to_string());
+        }
+        if args.filter.is_some() {
+            return Err("`--filter` is only valid for `burdin test`".to_string());
+        }
+        if args.timeout_ms.is_some() {
+            return Err("`--timeout` is only valid for `burdin test`".to_string());
+        }
+    }
+    if args.ignored_only && args.include_ignored {
+        return Err("`--ignored` and `--include-ignored` cannot be used together".to_string());
+    }
+    if args.workspace && !args.packages.is_empty() {
+        return Err("`-p` and `--workspace` cannot be used together".to_string());
+    }
     Ok(args)
 }
 
@@ -70,19 +151,23 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let options = CompileOptions {
+        release: args.release,
+        emit_ir: args.emit_ir.as_deref(),
+        link_libs: &args.link_libs,
+        test_mode: false,
+    };
     match args.command.as_str() {
-        "build" => match compile(&args, Path::new("."), args.output.as_deref(), false) {
+        "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
             Ok(_) => ExitCode::SUCCESS,
             Err(code) => code,
         },
-        "run" => run(&args),
-        _ => run_tests(&args),
+        "run" => run(&args, &options),
+        _ => test_runner::run(&args),
     }
 }
 
-/// `burdin test`: builds the package in test mode and runs each `test` block in its own process, so a panic only
-/// fails the test that aborted. The output format is the one `tests/run-tests.sh` reads.
-fn run_tests(args: &Args) -> ExitCode {
+fn run(args: &Args, options: &CompileOptions) -> ExitCode {
     let dir = match TempDir::new() {
         Ok(d) => d,
         Err(e) => {
@@ -90,40 +175,7 @@ fn run_tests(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let compiled = match compile(args, &dir.path, None, true) {
-        Ok(compiled) => compiled,
-        Err(code) => return code,
-    };
-    let mut passed = 0usize;
-    let mut failed = 0usize;
-    for (index, name) in compiled.tests.iter().enumerate() {
-        let status = match Command::new(&compiled.exe).arg(index.to_string()).status() {
-            Ok(status) => status,
-            Err(e) => {
-                eprintln!("error: cannot run {}: {e}", compiled.exe.display());
-                return ExitCode::from(2);
-            }
-        };
-        if status.success() {
-            passed += 1;
-        } else {
-            failed += 1;
-            println!("FAIL {name}");
-        }
-    }
-    println!("test result: {passed} passed, {failed} failed");
-    if failed == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) }
-}
-
-fn run(args: &Args) -> ExitCode {
-    let dir = match TempDir::new() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("error: cannot create a temporary directory: {e}");
-            return ExitCode::from(2);
-        }
-    };
-    let exe = match compile(args, &dir.path, None, false) {
+    let exe = match compile(&args.target, &dir.path, None, options) {
         Ok(compiled) => compiled.exe,
         Err(code) => return code,
     };
@@ -153,19 +205,33 @@ fn exit_code_of(status: std::process::ExitStatus) -> u8 {
     1
 }
 
-/// What a successful compilation produced: the executable and the names of its `test` blocks (empty for a normal
-/// build).
-struct Compiled {
-    exe: PathBuf,
-    tests: Vec<String>,
+/// The options of one compilation.
+pub(crate) struct CompileOptions<'a> {
+    pub(crate) release: bool,
+    pub(crate) emit_ir: Option<&'a Path>,
+    pub(crate) link_libs: &'a [String],
+    /// `burdin test`: declare and check the package's `test` blocks, and emit the test dispatcher instead of
+    /// `main`.
+    pub(crate) test_mode: bool,
 }
 
-/// Compiles `args.target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On
-/// failure the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead
-/// of its `main`.
-fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: bool) -> Result<Compiled, ExitCode> {
-    let target = &args.target;
-    let loaded = match package::load(target) {
+/// What a successful compilation produced: the executable and its `test` blocks (empty for a normal build).
+pub(crate) struct Compiled {
+    pub(crate) exe: PathBuf,
+    pub(crate) tests: Vec<burdin_tir::TestEntry>,
+}
+
+/// Compiles `target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On failure
+/// the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead of its
+/// `main`.
+pub(crate) fn compile(
+    target: &Path,
+    output_dir: &Path,
+    output: Option<&Path>,
+    options: &CompileOptions,
+) -> Result<Compiled, ExitCode> {
+    let test_mode = options.test_mode;
+    let loaded = match if test_mode { package::load_for_tests(target) } else { package::load(target) } {
         Ok(loaded) => loaded,
         Err(message) => {
             eprintln!("error: {message}");
@@ -230,7 +296,6 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: boo
         return Err(ExitCode::from(1));
     }
     let program = program.expect("no errors means checking produced a program");
-    let tests: Vec<String> = program.tests.iter().map(|t| t.name.clone()).collect();
 
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -247,10 +312,10 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: boo
     }
     let dir = TempDir::new().map_err(|e| fail(format!("cannot create a temporary directory: {e}")))?;
     let object = dir.path.join(if cfg!(windows) { "program.obj" } else { "program.o" });
-    let opts = burdin_codegen::Options { release: args.release, emit_ir: args.emit_ir.clone() };
+    let opts = burdin_codegen::Options { release: options.release, emit_ir: options.emit_ir.map(Path::to_path_buf) };
     burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
-    link(&object, &output, &args.link_libs).map_err(fail)?;
-    Ok(Compiled { exe: output, tests })
+    link(&object, &output, options.link_libs).map_err(fail)?;
+    Ok(Compiled { exe: output, tests: program.tests })
 }
 
 /// Links the object file (which defines `main` and the runtime) with libc into the executable `output`.
@@ -426,17 +491,21 @@ fn llvm_config() -> Option<(PathBuf, Option<String>)> {
     None
 }
 
-/// A uniquely named temporary directory, removed when dropped.
-struct TempDir {
-    path: PathBuf,
+/// A uniquely named temporary directory, removed when dropped. The driver and the parallel test runner create
+/// these from several threads, so the name includes an atomic counter as well as the process id and the time.
+pub(crate) struct TempDir {
+    pub(crate) path: PathBuf,
 }
 
 impl TempDir {
-    fn new() -> std::io::Result<TempDir> {
+    pub(crate) fn new() -> std::io::Result<TempDir> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
         for attempt in 0..100u32 {
-            let name = format!("burdin-{}-{nanos}-{attempt}", std::process::id());
+            let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let name = format!("burdin-{}-{nanos}-{count}-{attempt}", std::process::id());
             let path = std::env::temp_dir().join(name);
             match std::fs::create_dir(&path) {
                 Ok(()) => return Ok(TempDir { path }),
@@ -572,5 +641,54 @@ mod tests {
         let dir = LibDir::new("empty");
         assert!(llvm_c_link(&dir.0, None).is_none());
         assert!(resolve_llvm_c("m").is_none());
+    }
+
+    fn parse(words: &[&str]) -> Result<Args, String> {
+        parse_args_from(words.iter().map(|word| word.to_string()))
+    }
+
+    #[test]
+    fn test_options_are_parsed() {
+        let args = parse(&[
+            "test",
+            "app",
+            "-j",
+            "3",
+            "--verbose",
+            "-p",
+            "lib",
+            "--filter",
+            "add",
+            "--timeout",
+            "250",
+            "--ignored",
+        ])
+        .unwrap();
+        assert_eq!(args.command, "test");
+        assert_eq!(args.target, PathBuf::from("app"));
+        assert_eq!(args.jobs, Some(3));
+        assert!(args.verbose);
+        assert_eq!(args.packages, ["lib"]);
+        assert_eq!(args.filter.as_deref(), Some("add"));
+        assert_eq!(args.timeout_ms, Some(250));
+        assert!(args.ignored_only);
+    }
+
+    #[test]
+    fn test_options_are_rejected_for_other_commands() {
+        assert!(parse(&["build", "app", "-j", "2"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["run", "app", "--verbose"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["build", "app", "--workspace"]).unwrap_err().contains("only valid for `burdin test`"));
+    }
+
+    #[test]
+    fn conflicting_test_options_are_rejected() {
+        assert!(parse(&["test", "app", "-j", "0"]).unwrap_err().contains("at least 1"));
+        assert!(parse(&["test", "app", "-j", "many"]).unwrap_err().contains("needs a number"));
+        assert!(
+            parse(&["test", "app", "--ignored", "--include-ignored"]).unwrap_err().contains("cannot be used together")
+        );
+        assert!(parse(&["test", "app", "-p", "lib", "--workspace"]).unwrap_err().contains("cannot be used together"));
+        assert!(parse(&["test", "app", "--timeout", "soon"]).unwrap_err().contains("milliseconds"));
     }
 }

@@ -12,7 +12,8 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md` — the standard-library surface and the exact derived members.
-4. `spec/stage0-subset.md` (complete) and `spec/stage1-subset.md` (the current plan).
+4. `spec/stage0-subset.md` (complete), `spec/stage1-subset.md` (the current plan), and `spec/test-runner.md` (the
+   behavior of `burdin test`).
 5. `HANDOFF.md` for the current state; `Burdin Language Design.md` for the full rationale.
 6. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
 
@@ -30,6 +31,7 @@ tests/check-unit-tests.sh          check the front-end unit tests and their CI c
 tests/check-ci.sh                  validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
 tests/check-platform.sh            check the host triple and 64-bit isize/usize (needs a built driver)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
+tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests

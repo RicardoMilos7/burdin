@@ -24,7 +24,8 @@
 #     the runner, the pinned toolchain, and Cargo.lock, and records a new baseline on a push to main
 #     (issue #446);
 #   * a conformance test still exercises --link-lib LLVM-C;
-#   * the documentation check (which reads the driver contract in README.md) runs in both jobs.
+#   * the documentation check (which reads the driver contract in README.md) runs in both jobs;
+#   * every job runs the black-box check of the test runner (issues #438-#443).
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")
@@ -239,6 +240,7 @@ for job in linux macos windows; do
         'tests/check-ci.sh' \
         'tests/check-platform.sh' \
         'tests/check-docs.sh' \
+        'tests/check-test-runner.sh' \
         'tests/bench-regression.sh' \
         'rustup toolchain install' \
         'rustc --version' \
@@ -315,7 +317,7 @@ fi
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
-    tests/check-docs.sh tests/bench-regression.sh; do
+    tests/check-docs.sh tests/check-test-runner.sh tests/bench-regression.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"

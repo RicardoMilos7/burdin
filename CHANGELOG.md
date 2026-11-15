@@ -6,6 +6,17 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- `burdin test` gained the runner ergonomics of issue #438 (sub-issues #439-#443, #445). Tests may carry
+  `[ignore]`, `[timeout(ms)]`, `[should_panic]`/`[should_panic("text")]`, and `[should_fail]` attributes; an invalid
+  attribute is E0170. Tests run concurrently (`-j`/`--jobs`, default: the CPU count) with a deterministic report,
+  each in its own fresh temporary working directory with a clean environment and cleaned up afterwards. Output is
+  captured and printed only for failures, with `--verbose` to show it always. `-p`, `--workspace`, and `--filter`
+  select packages and tests, and dependency tests do not run by default. The rules are in `spec/test-runner.md`;
+  `tests/m10_test_runner` adds four conformance tests and `tests/check-test-runner.sh` checks the runner black-box;
+  every CI job runs it (issues #438-#443). `tests/check-tests.sh` and `.ps1` now fail when a registered error code
+  has no compile-fail test and no documented exception, so a new diagnostic cannot ship untested (issue #445).
+  Differential tests between comptime and compiled code (issue #444) remain blocked on the comptime interpreter
+  (milestone 20); `spec/test-runner.md` records their intended shape.
 - Settle the 16 assumptions in `tests/README.md` (issue #21, sub-issues #22-#40). The decisions are now rules in
   `spec/grammar.md`, `spec/memory-rules.md`, two new spec files (`spec/stdlib.md` for the standard-library surface
   and `spec/derives.md` for the exact derived members and FNV-1a hash values), and `spec/stage0-subset.md` /

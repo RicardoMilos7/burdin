@@ -4,9 +4,10 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the sixteenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**: all
-174 tests pass in the debug profile and 173 in release (one m02 test is debug-only). `burdin test` runs `test` blocks,
-and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
+Updated at the end of the seventeenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**:
+all 178 tests pass in the debug profile and 177 in release (one m02 test is debug-only). `burdin test` runs `test`
+blocks concurrently with attributes, captured output, and per-test isolation, and the m11 program calls the LLVM C
+API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
 twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a
 root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
 design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in
@@ -16,7 +17,11 @@ tracking: the harness saves and compares a baseline, and each CI job keeps one i
 advisably (issue #446); the sixteenth settled the 16
 assumptions of issue #21 (sub-issues #22-#40) in `spec/`, added `spec/stdlib.md` and `spec/derives.md`, 40 decision
 tests, and four small fixes: `Drop` now rejects a read-only or `own` receiver, `CPtr.null` rejects arguments, the
-ordering operators work on `str`/`String`, and an invalid `extern "C"` type or convention is E0162.
+ordering operators work on `str`/`String`, and an invalid `extern "C"` type or convention is E0162. The seventeenth
+session added the test-runner ergonomics of issue #438 (sub-issues #439-#443): test attributes, `-j` and package
+selection, output capture, isolation, and a black-box check wired into every CI job; `tests/check-tests.sh` now
+enforces that every registered error code has a test (issue #445). Issue #444 (differential tests) waits for the
+comptime interpreter, milestone 20.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -24,12 +29,15 @@ ordering operators work on `str`/`String`, and an invalid `extern "C"` type or c
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
+| Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the deferred differential tests (issue #444) |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items, the permissive declaration layout, and the call-site marker rules |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 174 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
-| Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, and diagnostics in `burdin_diag`. CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
+| Conformance tests | `tests/` | 178 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check-test-runner.sh` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
+| Error-code coverage | `tests/check-tests.sh`, `tests/check-tests.ps1`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
+| Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, and isolation logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`; see the layout in `CLAUDE.md` |
@@ -161,17 +169,28 @@ how to call WSL from PowerShell.
   small runtime of C calls (`fopen`/`fread`/`fwrite`/`fclose`, `system`, `exit`, `strlen`, `memcmp`, `realloc`).
   The driver embeds `std/` with `include_str!` and adds it as a dependency of every package; `prelude.rs` copies
   its public names and module aliases into every module, keeping a module's own declarations.
-- Milestone 10 added the test runner. The parser reads `test "name" { ... }` into `ast::File.tests`, apart from the
-  other items, and builds each one as a private function `__burdin_test_N` with no parameters returning
+- Milestone 10 added the test runner. The parser reads `test "name" [attrs] { ... }` into `ast::File.tests`, apart
+  from the other items, and builds each one as a private function `__burdin_test_N` with no parameters returning
   `Result<(), AssertError>` whose body is the block followed by `Ok(())`. Normal builds never declare or check them
   (tests are stripped); with `burdin_sema::check(..., test_mode, ...)`, the entry package's tests are declared and
   checked, the prelude replaces `assert`/`assert_eq` with `std`'s `__test_assert`/`__test_assert_eq` (which return
-  `Err(())` instead of panicking), and `main` is not required. `Program.tests` carries each test's display name and
-  `FuncId`. Code generation then emits a dispatcher `main` instead of calling the program's `main`: it reads the test
-  index from `argv[1]` with `atoi`, calls that test, and returns 0 when its `Result` is `Ok` and 1 when it is `Err`.
-  `burdin test` compiles once into a temporary directory and runs the binary once per test, so a panic aborts only
-  the running test; it prints `FAIL <name>` for failures and `test result: N passed, M failed` at the end. The
-  panicking `assert` of normal builds is unchanged.
+  `Err(())` instead of panicking), and `main` is not required. `Program.tests` carries each test's display name,
+  `FuncId`, and validated attributes (`tir::TestAttrs`). Code generation then emits a dispatcher `main` instead of
+  calling the program's `main`: it reads the test index from `argv[1]` with `atoi`, calls that test, and returns 0
+  when its `Result` is `Ok` and 1 when it is `Err`.
+  Issue #438 added the runner ergonomics (`crates/burdin_driver/src/test_runner.rs`). A test item may carry
+  `[ignore]`, `[timeout(ms)]` (`0` means no limit), `[should_panic]`/`[should_panic("text")]`, and `[should_fail]`
+  in one bracket list; `burdin_sema` validates them and E0170 reports an unknown name, a repeat, a value the
+  attribute does not take, or `should_panic` with `should_fail`. `burdin test` compiles one test binary per selected
+  package (the entry package by default; `-p` selects a package of the graph and `--workspace` the entry package and
+  every path dependency), runs each test in its own process with `-j` workers (default: the CPU count), and reports
+  in declaration order. Each process gets a fresh temporary working directory, a clean environment (only `PATH`,
+  `TMPDIR`/`TMP`/`TEMP`, `BURDIN_TEST`, and the Windows CRT variables), and a captured stdout/stderr shown only on
+  failure (`--verbose` shows it always). A timeout kills the process and marks the test failed; `should_panic`
+  requires an abnormal ending and `should_fail` requires the dispatcher's error exit (1). The summary is
+  `test result: N passed, M failed`, with `, I ignored` when tests were skipped; `--filter` selects by name. The
+  panicking `assert` of normal builds is unchanged. The rules are in `spec/test-runner.md` and the black-box checks
+  in `tests/check-test-runner.sh`.
 - Milestone 11 added `CStr.to_string`: `CStr` is a `std` alias for `CPtr<CChar>`, and a `CPtr<CChar>` has an
   associated `to_string` that reads the bytes with libc `strlen` and copies them into a `String`
   (`Builtin::CStrToString`). `burdin` links `--link-lib LLVM-C` through `llvm-config`: Ubuntu installs the LLVM C API as
@@ -654,11 +673,47 @@ failing the job. A missing baseline (including one evicted after seven days with
 - **New tests.** 40 conformance tests cover the decisions; `tests/README.md` has the per-decision table. The suite is
   174 tests, 173 in release.
 
+## Decided in the seventeenth session
+
+- **Test attributes are one bracket list after the name.** `test "name" [ignore, timeout(500), should_panic("boom")]`
+  fits the grammar without a new token, and the names stay contextual. The accepted set is `ignore`, `timeout(ms)`,
+  `should_panic[(message)]`, and `should_fail`; anything else in the list is E0170, and so is a repeat, a value an
+  attribute does not take, or `should_panic` with `should_fail`. The grammar is in `spec/grammar.md`; the behavior
+  in `spec/test-runner.md`; the tests are `m10_test_runner/attributes_*.bd`.
+- **`should_panic` and `should_fail` are separate endings.** The dispatcher returns 0 for `Ok` and 1 for `Err`, so a
+  returned error is exit 1, a panic is any other abnormal ending, and `should_fail` accepts only exit 1. A test that
+  calls `process.exit(n)` with another value is indistinguishable from an abort; that is documented rather than
+  given a new protocol. An expected error *value* waits for milestone 16: `AssertError` is a unit alias in stage 0, so
+  `should_fail` takes no payload.
+- **Tests run in one process each, concurrently.** `-j`/`--jobs` defaults to the CPU count, `-j 1` is sequential,
+  and the report is collected and printed in declaration order. One test binary is compiled per selected package,
+  so a dependency's tests are checked against their own package.
+- **Isolation is a fresh directory and a clean environment.** Each test runs in an empty temporary directory that is
+  removed afterwards; the environment holds only `PATH`, `TMPDIR`/`TMP`/`TEMP` (the test's directory),
+  `BURDIN_TEST`, and the Windows CRT variables. `argv` stays reserved for the dispatcher index, so a test must not
+  rely on `env.args()`.
+- **`--workspace` means the build graph.** Stage 1 has no manifest-level workspace (multiple-package workspaces are
+  stage 3), so `--workspace` selects the entry package and every path dependency; `-p` selects one package of that
+  graph, and dependency tests never run by default. Names are shown as `<package>::<test>` when more than one package
+  is selected.
+- **Default timeout is 60 seconds.** `--timeout <ms>` overrides it (0 disables it) and a `[timeout(ms)]` attribute
+  overrides that per test. A timeout kills the process and is a failure; `should_panic` does not accept a timeout.
+- **The runner has a black-box check.** `tests/check-test-runner.sh` drives fixture packages in `tests/runner/`
+  through every mode, checks the deterministic order and the cleanup, and every CI job runs it. The fixtures carry no
+  `//@` directives, so the conformance runner ignores them.
+- **Every registry code needs a test.** `tests/check-tests.sh` and `.ps1` now fail on a registered code with no `//~`
+  marker; a code that cannot have a compile-fail test is listed with its reason in `tests/README.md`
+  (issue #445). The list is empty today.
+- **Differential tests wait for comptime.** Issue #444 cannot be implemented before milestone 20's interpreter;
+  `spec/test-runner.md` records the intended `[differential]` attribute and behavior, and the issue stays open.
+
 ## What is left to do, in order
 
 1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
    question (comptime), the closure representation, the iterator protocol (associated types or a generic
    `Iterator<T>`), `any`/`impl`, the error representation, and allocator parameters all shape milestones 12 to 24.
+   Issue #444 (differential tests between comptime and compiled code) is blocked on the milestone 20 interpreter;
+   `spec/test-runner.md` holds its intended shape and the issue stays open until then.
 2. Write the m12 tests before the code, the same way stage 0 was built: `tests/m12_closures` and its `//@` expectations
    are the spec for the first stage 1 milestone.
 3. Close the stage 0 correctness gaps that stage 1 inherits, each with a registry code and tests first: a view outliving

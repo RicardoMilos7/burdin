@@ -280,7 +280,8 @@ impl<'t> Sema<'t> {
 
     /// Declares the `test` blocks of the entry package as ordinary functions named by the parser
     /// (`__burdin_test_N`), each returning `Result<(), AssertError>`. Tests of dependency packages are not run, so
-    /// they are not declared. A normal build ignores them entirely: they are stripped from the program.
+    /// they are not declared. A normal build ignores them entirely: they are stripped from the program. The
+    /// attributes are validated here, before the bodies, so a bad attribute is reported even if the body is fine.
     fn declare_tests(&mut self, diags: &mut Diagnostics) {
         let root = self.globals.modules[self.entry].package;
         for module in 0..self.module_asts.len() {
@@ -290,6 +291,7 @@ impl<'t> Sema<'t> {
             let ast = self.module_asts[module];
             for test in &ast.tests {
                 let name = test.func.name.name.clone();
+                let attrs = check_test_attrs(test, diags);
                 if self.globals.modules[module].values.contains_key(&name) || builtin(&name).is_some() {
                     diags.error(Code::UNSUPPORTED, test.name_span, format!("`{name}` is defined more than once"));
                     continue;
@@ -298,7 +300,7 @@ impl<'t> Sema<'t> {
                 let id = self.push_fn(FnItem::plain(&test.func, full, module, None));
                 self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
                 self.globals.modules[module].value_priv.insert(name, true);
-                self.tests.push(tir::TestEntry { name: test.name.clone(), func: id });
+                self.tests.push(tir::TestEntry { name: test.name.clone(), func: id, attrs });
             }
         }
     }
@@ -378,6 +380,84 @@ impl<'t> Sema<'t> {
             }
         }
     }
+}
+
+/// Validates the attributes of a `test` item and returns the runner-visible form. The accepted attributes are
+/// `ignore`, `timeout(ms)`, `should_panic`, `should_panic("text")`, and `should_fail` (spec/test-runner.md). An
+/// unknown name, a repeated attribute, a value an attribute does not take, or `should_panic` together with
+/// `should_fail` is E0170. A bad attribute never removes the test from the program, so one report does not turn
+/// into follow-on diagnostics.
+fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestAttrs {
+    let mut attrs = tir::TestAttrs::default();
+    let mut seen: Vec<&str> = Vec::new();
+    let mut should_fail_span = None;
+    let mut should_panic_span = None;
+    for attr in &test.attrs {
+        let name = attr.name.name.as_str();
+        if seen.contains(&name) {
+            diags.error(Code::TEST_ATTRIBUTE, attr.name.span, format!("the test attribute `{name}` is repeated"));
+            continue;
+        }
+        seen.push(name);
+        let error = |diags: &mut Diagnostics, message: String| {
+            diags.error(Code::TEST_ATTRIBUTE, attr.name.span, message);
+        };
+        match name {
+            "ignore" => match attr.value {
+                None => attrs.ignore = true,
+                Some(_) => error(diags, "`ignore` takes no value; write `ignore`".to_string()),
+            },
+            "should_fail" => {
+                should_fail_span = Some(attr.name.span);
+                match attr.value {
+                    None => attrs.should_fail = true,
+                    Some(_) => error(diags, "`should_fail` takes no value; write `should_fail`".to_string()),
+                }
+            }
+            "timeout" => match &attr.value {
+                Some(ast::TestAttrValue::Int(ms)) if *ms > u64::MAX as u128 => error(
+                    diags,
+                    "the `timeout` value is too large; it is a number of milliseconds that must fit in 64 bits"
+                        .to_string(),
+                ),
+                Some(ast::TestAttrValue::Int(ms)) => attrs.timeout_ms = Some(*ms as u64),
+                Some(ast::TestAttrValue::Str(_)) => {
+                    error(diags, "`timeout` takes a number of milliseconds, as in `timeout(500)`".to_string())
+                }
+                None => error(diags, "`timeout` needs a number of milliseconds, as in `timeout(500)`".to_string()),
+            },
+            "should_panic" => {
+                should_panic_span = Some(attr.name.span);
+                match &attr.value {
+                    None => attrs.should_panic = true,
+                    Some(ast::TestAttrValue::Str(text)) => {
+                        attrs.should_panic = true;
+                        attrs.should_panic_message = Some(text.clone());
+                    }
+                    Some(ast::TestAttrValue::Int(_)) => error(
+                        diags,
+                        "`should_panic` takes an optional message string, as in `should_panic(\"boom\")`".to_string(),
+                    ),
+                }
+            }
+            _ => error(
+                diags,
+                format!(
+                    "unknown test attribute `{name}`; expected `ignore`, `timeout`, `should_panic`, or `should_fail`"
+                ),
+            ),
+        }
+    }
+    if attrs.should_panic && attrs.should_fail {
+        let span = match (should_panic_span, should_fail_span) {
+            (Some(p), Some(f)) if p.lo > f.lo => p,
+            (_, Some(f)) => f,
+            (Some(p), None) => p,
+            (None, None) => test.name_span,
+        };
+        diags.error(Code::TEST_ATTRIBUTE, span, "`should_panic` and `should_fail` cannot be combined");
+    }
+    attrs
 }
 
 /// The bounds of each type parameter of a function: from the parameter list and from `where` clauses.

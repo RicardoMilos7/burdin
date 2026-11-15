@@ -17,16 +17,33 @@ pub struct File {
     pub tests: Vec<TestDecl>,
 }
 
-/// `test "name" { ... }`: a test block. The checker compiles it as an ordinary function with no parameters that
-/// returns `Result<(), AssertError>`, whose body is the block's statements followed by `Ok(())`.
+/// `test "name" [attrs] { ... }`: a test block. The checker compiles it as an ordinary function with no parameters
+/// that returns `Result<(), AssertError>`, whose body is the block's statements followed by `Ok(())`.
 #[derive(Debug)]
 pub struct TestDecl {
     /// The text of the string after `test`.
     pub name: String,
     pub name_span: Span,
+    /// The attributes in `[...]`, as written. The checker validates the names, values, and combinations.
+    pub attrs: Vec<TestAttr>,
     /// The function the test is compiled as.
     pub func: FnDecl,
     pub span: Span,
+}
+
+/// One attribute of a test item: `ignore`, `timeout(500)`, `should_panic`, `should_panic("text")`, or
+/// `should_fail`. The parser accepts any identifier with an optional integer or string value; names,
+/// values, duplicates, and combinations are checked in `burdin_sema` (E0170).
+#[derive(Debug)]
+pub struct TestAttr {
+    pub name: Ident,
+    pub value: Option<TestAttrValue>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TestAttrValue {
+    Int(u128),
+    Str(String),
 }
 
 #[derive(Debug)]

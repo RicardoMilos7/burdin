@@ -3,8 +3,18 @@
 param([string]$Root = $PSScriptRoot)
 
 $readme = Get-Content -Raw (Join-Path $Root 'README.md')
-$known = [regex]::Matches($readme, '\| (E\d{4}) \|') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-$kinds = 'run', 'run-abort', 'compile-fail', 'burdin-test', 'undecided'
+$exceptionsHeading = '### Codes without a compile-fail test'
+# The registry table stops at the documented-exception subsection; a row in that subsection is not a registry
+# entry.
+$registry = if ($readme -match "(?s)(## Error codes.*?)$([regex]::Escape($exceptionsHeading))") {
+    $Matches[1]
+} else { $readme }
+$known = [regex]::Matches($registry, '\| (E\d{4}) \|') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+$exceptions = if ($readme -match "(?s)$([regex]::Escape($exceptionsHeading))(.*?)(\r?\n## |\z)") {
+    [regex]::Matches($Matches[1], '(?m)^\| (E\d{4}) \|([^|]*)\|') |
+        ForEach-Object { [pscustomobject]@{ Code = $_.Groups[1].Value; Reason = $_.Groups[2].Value.Trim() } }
+} else { @() }
+$kinds = 'run', 'run-abort', 'compile-fail', 'test-compile-fail', 'burdin-test', 'undecided'
 
 $problems = New-Object System.Collections.Generic.List[string]
 $counts = @{}
@@ -48,22 +58,45 @@ foreach ($f in $files) {
             if ($markers.Count -eq 0) { $problems.Add("${rel}: compile-fail needs at least one //~ marker") }
             if ($expected.Count -gt 0) { $problems.Add("${rel}: compile-fail must not have //> lines") }
         }
+        'test-compile-fail' {
+            if ($markers.Count -eq 0) { $problems.Add("${rel}: test-compile-fail needs at least one //~ marker") }
+            if ($expected.Count -gt 0) { $problems.Add("${rel}: test-compile-fail must not have //> lines") }
+        }
         'burdin-test' {
-            if (-not ($directives -match '^burdin-test passed=\d+ failed=\d+$')) { $problems.Add("${rel}: burdin-test needs passed=N failed=M") }
+            if (-not ($directives -match '^burdin-test passed=\d+ failed=\d+( ignored=\d+)?$')) { $problems.Add("${rel}: burdin-test needs passed=N failed=M [ignored=N]") }
         }
     }
     foreach ($m in $markers) {
         if ($known -notcontains $m.Code) { $problems.Add("${rel}:$($m.Line): unknown error code $($m.Code)") }
     }
-    if ($primary -ne 'compile-fail' -and $primary -ne 'undecided' -and $markers.Count -gt 0) { }
 }
 
 "Checked $total tests:"
 $counts.GetEnumerator() | Sort-Object Name | ForEach-Object { "  {0,-13} {1}" -f $_.Name, $_.Value }
 
 $used = $files | ForEach-Object { [regex]::Matches((Get-Content -Raw $_.FullName), '//~ (E\d{4})') | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique
+
+# Every registered code needs a compile-fail marker (or a test-compile-fail one) or a documented reason
+# (issue #445).
+if ($readme -notmatch [regex]::Escape($exceptionsHeading)) {
+    $problems.Add("README.md: missing the `$exceptionsHeading` section")
+}
+foreach ($e in $exceptions) {
+    if ($known -notcontains $e.Code) {
+        $problems.Add("README.md: documented exception $($e.Code) is not in the registry")
+    } elseif ($used -contains $e.Code) {
+        $problems.Add("README.md: $($e.Code) has a compile-fail test; remove it from the documented exceptions")
+    }
+    if ([string]::IsNullOrWhiteSpace($e.Reason)) {
+        $problems.Add("README.md: the exception for $($e.Code) has no reason")
+    }
+}
 $unused = $known | Where-Object { $used -notcontains $_ }
-if ($unused) { "Error codes in the registry with no test: $($unused -join ', ')" }
+foreach ($code in $unused) {
+    if (-not ($exceptions | Where-Object { $_.Code -eq $code })) {
+        $problems.Add("error code $code has no compile-fail test; add one or document why it cannot have one")
+    }
+}
 
 if ($problems.Count -gt 0) {
     ""

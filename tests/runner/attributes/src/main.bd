@@ -1,0 +1,21 @@
+fn main() {}
+
+test "passes" {
+    assert(true)?
+}
+
+test "ignored" [ignore] {
+    assert(true)?
+}
+
+test "panics" [should_panic] {
+    panic("boom")
+}
+
+test "panics with message" [should_panic("boom")] {
+    panic("boom")
+}
+
+test "fails as expected" [should_fail] {
+    assert(false)?
+}

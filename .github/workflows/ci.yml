@@ -139,6 +139,11 @@ jobs:
       - name: Check documentation
         run: tests/check-docs.sh
 
+      # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
+      # (issues #438-#443).
+      - name: Check the test runner
+        run: tests/check-test-runner.sh
+
       - name: Check host target
         run: tests/check-platform.sh
 
@@ -257,6 +262,11 @@ jobs:
 
       - name: Check documentation
         run: tests/check-docs.sh
+
+      # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
+      # (issues #438-#443).
+      - name: Check the test runner
+        run: tests/check-test-runner.sh
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -408,6 +418,11 @@ jobs:
 
       - name: Check documentation
         run: bash tests/check-docs.sh
+
+      # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
+      # (issues #438-#443).
+      - name: Check the test runner
+        run: bash tests/check-test-runner.sh
 
       - name: Check host target
         run: bash tests/check-platform.sh

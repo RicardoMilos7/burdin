@@ -22,10 +22,26 @@ pub struct Program {
     pub tests: Vec<TestEntry>,
 }
 
-/// One `test "name" { ... }` block, compiled as the function `func`.
+/// One `test "name" [attrs] { ... }` block, compiled as the function `func`.
 pub struct TestEntry {
     pub name: String,
     pub func: FuncId,
+    /// The validated attributes of the test item (spec/test-runner.md).
+    pub attrs: TestAttrs,
+}
+
+/// The runner-visible attributes of a test item. `burdin_sema` validates them; the driver reads them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TestAttrs {
+    /// `ignore`: do not run the test unless `--ignored` or `--include-ignored` is passed.
+    pub ignore: bool,
+    /// `timeout(ms)`: override the runner's per-test timeout; `0` means no limit.
+    pub timeout_ms: Option<u64>,
+    /// `should_panic[(message)]`: the test must abort with a panic, and `message` must appear on stderr.
+    pub should_panic: bool,
+    pub should_panic_message: Option<String>,
+    /// `should_fail`: the test must return an error instead of passing.
+    pub should_fail: bool,
 }
 
 /// One `extern "C"` declaration. Its parameters are passed by value, as the C ABI expects.

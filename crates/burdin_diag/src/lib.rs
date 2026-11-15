@@ -107,6 +107,8 @@ impl Code {
     pub const UNSAFE_REQUIRED: Code = Code("E0161");
     /// A type or convention that cannot cross the `extern "C"` boundary.
     pub const C_ABI: Code = Code("E0162");
+    /// A `test` attribute that is unknown, repeated, has a value it does not take, or conflicts with another.
+    pub const TEST_ATTRIBUTE: Code = Code("E0170");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.
     pub const UNSUPPORTED: Code = Code("E9000");

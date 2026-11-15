@@ -1,0 +1,11 @@
+//@ test-compile-fail
+
+// A test attribute must be one of `ignore`, `timeout`, `should_panic`, or `should_fail`, written once, with the
+// value it takes. Every mistake is E0170 and every one is reported.
+test "unknown" [fast] { } //~ E0170
+test "repeated" [ignore, ignore] { } //~ E0170
+test "no value" [timeout] { } //~ E0170
+test "wrong timeout" [timeout("soon")] { } //~ E0170
+test "wrong panic value" [should_panic(1)] { } //~ E0170
+test "ignore takes no value" [ignore("yes")] { } //~ E0170
+test "conflict" [should_panic, should_fail] { } //~ E0170

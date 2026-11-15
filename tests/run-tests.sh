@@ -26,7 +26,8 @@
 #       Compiles and runs. The program's stdout and stderr pass through, and its exit code
 #       is the command's exit code. A panic abort must give a non-zero exit code.
 #   burdin test <target> [--release]
-#       Prints "test result: N passed, M failed" and one "FAIL <test name>" line per failed test.
+#       Prints "test result: N passed, M failed" (with ", I ignored" when any test is marked [ignore]) and
+#       one "FAIL <test name>" line per failed test.
 #
 # <target> is the test's .bd file, or the package directory (the nearest folder with a burdin.toml).
 # ---------------------------------------------------------------------------
@@ -36,7 +37,7 @@ burdin_run()   { run_limited "$BURDIN" run "$@"; }
 burdin_test()  { run_limited "$BURDIN" test "$@"; }
 
 DIAGNOSTIC_REGEX=':[0-9]+:[0-9]+: error\[E[0-9]{4}\]'
-TEST_SUMMARY_REGEX='test result: ([0-9]+) passed, ([0-9]+) failed'
+TEST_SUMMARY_REGEX='test result: ([0-9]+) passed, ([0-9]+) failed(, ([0-9]+) ignored)?'
 FAILED_TEST_PREFIX='FAIL '
 # ---------------------------------------------------------------------------
 
@@ -103,7 +104,7 @@ directive_values() { directives_of "$1" | grep -E "^$2:" | sed -E "s/^$2: ?//"; 
 kind_of() {
     local f=$1 k
     if has_directive "$f" undecided; then echo undecided; return; fi
-    for k in run-abort run compile-fail burdin-test; do
+    for k in run-abort run test-compile-fail compile-fail burdin-test; do
         if has_directive "$f" "$k"; then echo "$k"; return; fi
     done
     echo unknown
@@ -181,11 +182,15 @@ test_run() {   # $1 root, $2 target, $3 logs, $4 workdir, $5 kind
     return 0
 }
 
-test_compile_fail() {
-    local root=$1 target=$2 logs=$3 work=$4 code base
+test_compile_fail() {   # $1 root, $2 target, $3 logs, $4 work, $5 build|test
+    local root=$1 target=$2 logs=$3 work=$4 mode=${5:-build} code base
     base=$(basename "$root")
 
-    ( cd "$work" && burdin_build "$target" $PROFILE_FLAG ) >"$logs/out" 2>&1
+    if [ "$mode" = "test" ]; then
+        ( cd "$work" && burdin_test "$target" $PROFILE_FLAG ) >"$logs/out" 2>&1
+    else
+        ( cd "$work" && burdin_build "$target" $PROFILE_FLAG ) >"$logs/out" 2>&1
+    fi
     code=$?
     tr -d '\r' < "$logs/out" > "$logs/out.norm"
 
@@ -206,19 +211,25 @@ test_compile_fail() {
 
 test_burdin_test() {
     local root=$1 target=$2 logs=$3 work=$4
-    local want_p want_f got_p got_f name
+    local want_p want_f want_i got_p got_f got_i name directive
 
     ( cd "$work" && burdin_test "$target" $PROFILE_FLAG ) >"$logs/out" 2>&1
     tr -d '\r' < "$logs/out" > "$logs/out.norm"
 
-    want_p=$(directives_of "$root" | sed -nE 's/^burdin-test passed=([0-9]+) failed=([0-9]+).*/\1/p' | head -n 1)
-    want_f=$(directives_of "$root" | sed -nE 's/^burdin-test passed=([0-9]+) failed=([0-9]+).*/\2/p' | head -n 1)
+    directive=$(directives_of "$root" | grep -E '^burdin-test passed=[0-9]+ failed=[0-9]+' | head -n 1)
+    want_p=$(sed -nE 's/.*passed=([0-9]+).*/\1/p' <<< "$directive")
+    want_f=$(sed -nE 's/.*failed=([0-9]+).*/\1/p' <<< "$directive")
+    want_i=$(sed -nE 's/.*ignored=([0-9]+).*/\1/p' <<< "$directive")
+    want_i=${want_i:-0}
     got_p=$(sed -nE "s/.*$TEST_SUMMARY_REGEX.*/\1/p" "$logs/out.norm" | tail -n 1)
     got_f=$(sed -nE "s/.*$TEST_SUMMARY_REGEX.*/\2/p" "$logs/out.norm" | tail -n 1)
+    got_i=$(sed -nE "s/.*$TEST_SUMMARY_REGEX.*/\4/p" "$logs/out.norm" | tail -n 1)
+    got_i=${got_i:-0}
 
     if [ -z "$got_p" ]; then fail "no test summary line in the output" "$(head -c 2000 "$logs/out.norm")"; return 1; fi
-    if [ "$got_p" != "$want_p" ] || [ "$got_f" != "$want_f" ]; then
-        fail "got $got_p passed, $got_f failed; expected $want_p passed, $want_f failed" "$(head -c 2000 "$logs/out.norm")"
+    if [ "$got_p" != "$want_p" ] || [ "$got_f" != "$want_f" ] || [ "$got_i" != "$want_i" ]; then
+        fail "got $got_p passed, $got_f failed, $got_i ignored; expected $want_p passed, $want_f failed, $want_i ignored" \
+             "$(head -c 2000 "$logs/out.norm")"
         return 1
     fi
     while IFS= read -r name; do
@@ -272,9 +283,10 @@ while IFS= read -r root; do
     REASON=""; DETAIL=""
 
     case "$kind" in
-        run|run-abort) test_run "$root" "$target" "$logs" "$work" "$kind" ;;
-        compile-fail)  test_compile_fail "$root" "$target" "$logs" "$work" ;;
-        burdin-test)     test_burdin_test "$root" "$target" "$logs" "$work" ;;
+        run|run-abort)    test_run "$root" "$target" "$logs" "$work" "$kind" ;;
+        compile-fail)     test_compile_fail "$root" "$target" "$logs" "$work" build ;;
+        test-compile-fail) test_compile_fail "$root" "$target" "$logs" "$work" test ;;
+        burdin-test)      test_burdin_test "$root" "$target" "$logs" "$work" ;;
     esac
     result=$?
 

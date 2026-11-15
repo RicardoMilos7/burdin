@@ -1,0 +1,19 @@
+//@ burdin-test passed=4 failed=0
+
+// `[should_panic]` expects a panic abort, `[should_panic("text")]` also checks the message printed to stderr,
+// and `[should_fail]` expects the test to return an error (a failed `assert`).
+test "plain test" {
+    assert(true)?
+}
+
+test "panics" [should_panic] {
+    panic("boom")
+}
+
+test "panics with message" [should_panic("boom")] {
+    panic("boom")
+}
+
+test "fails as expected" [should_fail] {
+    assert(false)?
+}

@@ -20,6 +20,9 @@ pub struct ModuleFile {
 pub struct PackageFiles {
     /// The name in the package's own `[package]` section.
     pub name: String,
+    /// The package directory, for a package on disk. `None` for a one-file target and for the embedded standard
+    /// library, which have no manifest to load as a workspace member.
+    pub dir: Option<PathBuf>,
     pub modules: Vec<ModuleFile>,
     /// `(name used by `use`, package index)`.
     pub deps: Vec<(String, usize)>,
@@ -35,20 +38,37 @@ pub struct Workspace {
     pub stem: String,
 }
 
-/// Loads the target: a `.bd` file, or a directory containing `burdin.toml`.
+/// Loads the target: a `.bd` file, or a directory containing `burdin.toml`. A package directory must have a
+/// `src/main.bd` entry point, because `build` and `run` need one.
 pub fn load(target: &Path) -> Result<Workspace, String> {
+    load_impl(target, true)
+}
+
+/// Loads the target for `burdin test`, which does not need a `main` function: a library package's tests live in
+/// its own modules. The entry module falls back to `src/<package>.bd` or `src/lib.bd`, then the first module.
+pub fn load_for_tests(target: &Path) -> Result<Workspace, String> {
+    load_impl(target, false)
+}
+
+fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
     if target.is_dir() {
         let dir = target.canonicalize().map_err(|e| format!("cannot open {}: {e}", target.display()))?;
         let mut loader =
             Loader { packages: Vec::new(), loaded: HashMap::new(), names: HashMap::new(), loading: Vec::new() };
         let root = loader.load_package(&dir)?;
         let package = &loader.packages[root];
-        let Some(entry_module) = package.modules.iter().position(|m| m.path == ["main"]) else {
-            return Err(format!(
-                "package `{}` has no entry point: expected {}",
-                package.name,
-                dir.join("src/main.bd").display()
-            ));
+        let main = package.modules.iter().position(|m| m.path == ["main"]);
+        let entry_module = match main {
+            Some(module) => module,
+            None if require_entry => {
+                return Err(format!(
+                    "package `{}` has no entry point: expected {}",
+                    package.name,
+                    dir.join("src/main.bd").display()
+                ));
+            }
+            // A library package tested on its own starts from the module other packages import, or any module.
+            None => package.root_module.unwrap_or(0),
         };
         let stem = package.name.clone();
         let mut packages = loader.packages;
@@ -58,6 +78,7 @@ pub fn load(target: &Path) -> Result<Workspace, String> {
         let stem = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "a".into());
         let package = PackageFiles {
             name: stem.clone(),
+            dir: None,
             modules: vec![ModuleFile { path: Vec::new(), file: target.to_path_buf(), text: None }],
             deps: Vec::new(),
             root_module: Some(0),
@@ -89,7 +110,7 @@ fn std_package() -> PackageFiles {
         })
         .collect();
     let root_module = modules.iter().position(|m| m.path == ["std"]);
-    PackageFiles { name: "std".to_string(), modules, deps: Vec::new(), root_module }
+    PackageFiles { name: "std".to_string(), dir: None, modules, deps: Vec::new(), root_module }
 }
 
 /// Adds the embedded standard library as a dependency of every package, unless a package already uses the
@@ -148,7 +169,13 @@ impl Loader {
             .position(|m| m.path.len() == 1 && m.path[0] == manifest.name)
             .or_else(|| modules.iter().position(|m| m.path.len() == 1 && m.path[0] == "lib"));
         let id = self.packages.len();
-        self.packages.push(PackageFiles { name: manifest.name, modules, deps: Vec::new(), root_module });
+        self.packages.push(PackageFiles {
+            name: manifest.name,
+            dir: Some(dir.to_path_buf()),
+            modules,
+            deps: Vec::new(),
+            root_module,
+        });
         self.loaded.insert(dir.to_path_buf(), id);
         self.loading.push(dir.to_path_buf());
         let mut deps = Vec::new();
