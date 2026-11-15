@@ -304,6 +304,59 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   `spec/stage1-subset.md`, `spec/e9000-audit.md`, `tests/README.md` decision 18, `CLAUDE.md`, and `HANDOFF.md`.
 
 
+### Milestone 14 — formatting (issue #109, sub-issues #110-#116)
+
+- The decision (`spec/format.md`, issue #110): format strings are a compile-time construct. A string literal's
+  placeholders are checked against the call's arguments and each value's type when the program is compiled, and the
+  whole string lowers to ordinary `Formatter` calls; nothing is parsed at run time. The page fixes the forms
+  (`{expr}`, `{name}`, `{}`, `{n}`, `{expr:spec}`), the escapes (`{{`, `}}`), raw strings (`r"..."`, `r#"..."#`),
+  multi-line literals, the specifier grammar, the output format of `Display` and `Debug`, floats, and the radixes.
+- Lexer and parser (issue #111): a string literal lexes to a `Str` or an `Interp` token whose pieces are literal
+  text and holes; each hole carries its own token stream and the raw specifier with its span, so a diagnostic points
+  inside the placeholder. A placeholder's expression may hold brackets, character literals, and string literals, and
+  the specifier starts at the first `:` outside brackets. An unterminated `{` or a stray `}` is E0001, reported once
+  the string is known to end, and `r"..."` / `r#"..."#` are raw. The AST keeps each placeholder's parsed expression,
+  the parsed `FormatSpec`, and spans; `crates/burdin_syntax/src/parser/format.rs` parses the specifier.
+- `Display` and `Debug` (issue #112): `std/src/fmt.bd` declares the two interfaces, the `Formatter`, the built-in
+  helpers (`__fmt_i64`, `__fmt_u64`, `__fmt_float`, `__fmt_str`, `__fmt_char`, `__fmt_bool`, `__fmt_*` debug forms,
+  and the generic `__debug_option`/`__debug_result`/`__debug_list`/`__debug_heap`/`__debug_tuple2..4`), and the
+  `__float_str` runtime binding. The compiler implements `Display`/`Debug` for integers, floats, `bool`, `char`,
+  `str`, `String`, and `Debug` for `()`, tuples of 2 to 4, `Option`, `Result`, `List`, `Heap`, and `&T`, without an
+  impl block. `derives (Debug)` generates the impl block as Burdin source at parse time
+  (`crates/burdin_syntax/src/derive.rs`), so a derived `Debug` and a written one are the same; its diagnostics are
+  suppressed in favor of E0130 at the offending field, and `Debug` joins the derive requirement table.
+- Lowering (issue #113): an interpolated literal, `format(...)`, and `print`/`println`/`eprint`/`eprintln` with more
+  than one argument lower to one block that builds the text in a `Formatter`. A user type writes to the formatter
+  with `x.fmt(mut f)` / `x.debug(mut f)`; a specifier becomes `set_spec(...)` before the value and `reset_spec()`
+  after it. `x.to_string()` formats any type that implements `Display` through the same path (floats included).
+  A single-argument `println(text)` is unchanged, so `String`-to-`str` and existing programs behave as before.
+- Specifiers (issue #114): width, fill, alignment (`<`, `^`, `>`), `+`, `#`, `0`, precision, and the `x`/`X`/`b`/`o`
+  radixes, with `Formatter::pad`, `pad_plain`, and `pad_number` applying them. A signed value in a radix shows its
+  two's complement in its own width. Floats are the shortest round-trip text (`snprintf("%.*e")` read back with
+  `strtod`, in a new runtime function), or `snprintf("%.*f")` with a precision; `NaN`, `inf`, and `-inf` print as
+  such. Precision counts characters for text and digits for floats.
+- Compile-time checking (issue #115): every placeholder in a string is reported, not just the first. A missing
+  argument, an argument no placeholder uses, a value that does not implement the interface, a specifier that does
+  not apply, and a call with arguments whose format string is not a literal are the new codes E0191, E0192, E0193,
+  E0190, and E0194. An argument used by more than one placeholder is evaluated once: a place is borrowed and a
+  `Copy` value is copied; anything else is E0191. The code that resolves an ordinary method call was split so that
+  an already-checked receiver can be used (`method_call_on`), which the lowering needs.
+- Code generation emits only reachable functions (`crates/burdin_codegen/src/emit/reach.rs`): the embedded
+  standard library used to be generated into every program, so new `std` code (as `fmt.bd` is) added drop flags and
+  bounds checks to unrelated programs and made the IR proportional to the library rather than the program. A
+  function nothing reaches now gets a two-line `unreachable` body; the roots are `main`, the tests, exported
+  functions, `Drop` implementations, and closure bodies. Fixed with it: a function's prologue parameter stores used
+  to inherit the previous function's debug location, which LLVM's verifier rejects under `-g`; the location is now
+  cleared at each function start.
+- Tests (issue #116): `tests/m14_format/` adds 17 conformance tests — interpolation with expressions, escapes, raw
+  and multi-line strings, closures that capture into a placeholder, positional arguments and the shared-argument
+  rule, every specifier for integers, floats, and text, a user `Display` (including one that honors `pad`), a
+  derived `Debug` (structs, enums, generics, `Heap`), a hand-written `Debug` next to a `Display`, and compile-fail
+  tests for every new code and for an unterminated brace. The suite is 330 tests (328 in release). The specs are
+  `spec/format.md` (new), `spec/grammar.md`, `spec/stdlib.md`, `spec/derives.md`, and `spec/stage1-subset.md`; the
+  registry, `docs/error-codes.md`, CI's milestone list, `tests/README.md`, `CLAUDE.md`, `HANDOFF.md`, and this file
+  are updated with them.
+
 ## Stage 0 — 2026-11-14
 
 - Milestones 1-11 complete: lexer and parser, primitives and control flow, type checking, structs/enums/match,

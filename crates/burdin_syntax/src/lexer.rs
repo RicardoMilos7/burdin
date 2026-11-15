@@ -1,6 +1,6 @@
 //! The lexer (spec/grammar.md, section 1).
 
-use crate::token::{Token, TokenKind};
+use crate::token::{HoleTokens, InterpPiece, Token, TokenKind};
 use burdin_diag::{Code, Diagnostics, FileId, Span};
 
 pub struct LexResult {
@@ -26,6 +26,14 @@ struct Lexer<'a> {
     diags: &'a mut Diagnostics,
     tokens: Vec<Token>,
     nl_before: bool,
+}
+
+/// Where a placeholder's parts are, as byte offsets into the source.
+struct HoleScan {
+    expr_lo: usize,
+    expr_hi: usize,
+    spec: Option<(usize, usize)>,
+    close: usize,
 }
 
 /// Stop lexing: the rest of the file belongs to an unterminated literal or comment.
@@ -108,6 +116,9 @@ impl Lexer<'_> {
     fn token(&mut self) -> Result<(), Fatal> {
         let lo = self.pos;
         let c = self.peek(0);
+        if c == b'r' && self.raw_string(lo)? {
+            return Ok(());
+        }
         if c.is_ascii_alphabetic() || c == b'_' {
             self.ident(lo);
             return Ok(());
@@ -259,6 +270,9 @@ impl Lexer<'_> {
     fn string(&mut self, lo: usize) -> Result<(), Fatal> {
         self.pos += 1;
         let mut bytes = Vec::new();
+        let mut pieces: Vec<InterpPiece> = Vec::new();
+        // Brace errors are reported once the string is known to end, so an unterminated string reports only itself.
+        let mut brace_errors: Vec<(usize, &'static str)> = Vec::new();
         loop {
             if self.pos >= self.src.len() {
                 self.error(lo, lo + 1, "unterminated string literal");
@@ -280,6 +294,41 @@ impl Lexer<'_> {
                         bytes.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
                     }
                 }
+                b'{' if self.peek(1) == b'{' => {
+                    bytes.push(b'{');
+                    self.pos += 2;
+                }
+                b'}' if self.peek(1) == b'}' => {
+                    bytes.push(b'}');
+                    self.pos += 2;
+                }
+                b'}' => {
+                    brace_errors.push((self.pos, "unmatched `}` in a string literal; write `}}` for a literal brace"));
+                    bytes.push(b'}');
+                    self.pos += 1;
+                }
+                b'{' => match self.scan_hole(self.pos) {
+                    Some(scan) => {
+                        if !bytes.is_empty() {
+                            let lit = String::from_utf8(std::mem::take(&mut bytes)).unwrap_or_default();
+                            pieces.push(InterpPiece::Lit(lit));
+                        }
+                        let tokens = self.lex_range(scan.expr_lo, scan.expr_hi);
+                        let spec = scan.spec.map(|(slo, shi)| {
+                            let text = String::from_utf8_lossy(&self.src[slo..shi]).into_owned();
+                            (text, Span::new(self.file, slo as u32, shi as u32))
+                        });
+                        let span = Span::new(self.file, self.pos as u32, (scan.close + 1) as u32);
+                        pieces.push(InterpPiece::Hole(Box::new(HoleTokens { tokens, spec, span })));
+                        self.pos = scan.close + 1;
+                    }
+                    None => {
+                        brace_errors
+                            .push((self.pos, "unterminated `{` in a string literal; write `{{` for a literal brace"));
+                        bytes.push(b'{');
+                        self.pos += 1;
+                    }
+                },
                 b'\r' if self.peek(1) == b'\n' => {
                     // Normalize CRLF inside string literals so programs behave the same on every system.
                     self.pos += 1;
@@ -290,10 +339,122 @@ impl Lexer<'_> {
                 }
             }
         }
+        for (at, message) in brace_errors {
+            self.error(at, at + 1, message);
+        }
         // The source text is valid UTF-8 and escapes produce whole characters, so this cannot fail.
         let text = String::from_utf8(bytes).unwrap_or_default();
-        self.push(TokenKind::Str(text), lo);
+        if pieces.is_empty() {
+            self.push(TokenKind::Str(text), lo);
+        } else {
+            if !text.is_empty() {
+                pieces.push(InterpPiece::Lit(text));
+            }
+            self.push(TokenKind::Interp(pieces), lo);
+        }
         Ok(())
+    }
+
+    /// Finds the end of the placeholder that starts with the `{` at `open`. A placeholder stays on one line; its
+    /// expression may contain brackets, character literals, and string literals, and the specifier starts at the
+    /// first `:` outside any bracket. `None` when no closing `}` is found.
+    fn scan_hole(&self, open: usize) -> Option<HoleScan> {
+        let mut i = open + 1;
+        let mut depth = 0usize;
+        let mut colon: Option<usize> = None;
+        while i < self.src.len() {
+            match self.src[i] {
+                b'\n' => return None,
+                b'"' if colon.is_none() => {
+                    i += 1;
+                    loop {
+                        match self.src.get(i) {
+                            None | Some(b'\n') => return None,
+                            Some(b'\\') => i += 2,
+                            Some(b'"') => break,
+                            Some(_) => i += 1,
+                        }
+                    }
+                }
+                b'\'' if colon.is_none() => {
+                    // A character literal; a quote that does not start one is an ordinary byte.
+                    let end = self.src.len().min(i + 9);
+                    let rest = match std::str::from_utf8(&self.src[i + 1..end]) {
+                        Ok(text) => text,
+                        Err(e) => std::str::from_utf8(&self.src[i + 1..i + 1 + e.valid_up_to()]).unwrap_or(""),
+                    };
+                    let mut chars = rest.chars();
+                    let len = match chars.next() {
+                        Some('\\') => chars.next().map(|c| 1 + c.len_utf8()),
+                        Some(c) => Some(c.len_utf8()),
+                        None => None,
+                    };
+                    if let Some(len) = len
+                        && self.src.get(i + 1 + len) == Some(&b'\'')
+                    {
+                        i += len + 1;
+                    }
+                }
+                b'(' | b'[' | b'{' if colon.is_none() => depth += 1,
+                b')' | b']' if colon.is_none() => depth = depth.saturating_sub(1),
+                b'}' if colon.is_none() && depth > 0 => depth -= 1,
+                b'}' => {
+                    let (expr_hi, spec) = match colon {
+                        Some(c) => (c, Some((c + 1, i))),
+                        None => (i, None),
+                    };
+                    return Some(HoleScan { expr_lo: open + 1, expr_hi, spec, close: i });
+                }
+                b':' if colon.is_none() && depth == 0 => colon = Some(i),
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Lexes `src[lo..hi]` as the tokens of a placeholder's expression, ending with `Eof`.
+    fn lex_range(&mut self, lo: usize, hi: usize) -> Vec<Token> {
+        let mut sub = Lexer {
+            file: self.file,
+            src: &self.src[..hi],
+            pos: lo,
+            diags: &mut *self.diags,
+            tokens: Vec::new(),
+            nl_before: false,
+        };
+        sub.run();
+        let mut tokens = sub.tokens;
+        tokens.push(Token { kind: TokenKind::Eof, span: Span::new(self.file, hi as u32, hi as u32), nl_before: false });
+        tokens
+    }
+
+    /// `r"..."` or `r#"..."#`: a string with no escapes and no placeholders. Returns false when the `r` starts an
+    /// ordinary identifier.
+    fn raw_string(&mut self, lo: usize) -> Result<bool, Fatal> {
+        let mut hashes = 0;
+        while self.peek(1 + hashes) == b'#' {
+            hashes += 1;
+        }
+        if self.peek(1 + hashes) != b'"' {
+            return Ok(false);
+        }
+        self.pos += 2 + hashes;
+        let start = self.pos;
+        loop {
+            if self.pos >= self.src.len() {
+                self.error(lo, lo + 1, "unterminated raw string literal");
+                return Err(Fatal);
+            }
+            if self.src[self.pos] == b'"' && (0..hashes).all(|k| self.peek(1 + k) == b'#') {
+                break;
+            }
+            self.pos += 1;
+        }
+        let text = String::from_utf8_lossy(&self.src[start..self.pos]).replace("\r\n", "\n");
+        self.pos += 1 + hashes;
+        self.push(TokenKind::Str(text), lo);
+        Ok(true)
     }
 
     fn char_lit(&mut self, lo: usize) -> Result<(), Fatal> {
@@ -719,6 +880,68 @@ mod tests {
         let mut d = Diagnostics::default();
         let r = lex(FileId(0), "f(\"abc)\n}\n", &mut d);
         assert!(r.truncated);
+        assert_eq!(d.len(), 1);
+    }
+
+    /// The literal text and holes of one interpolated string, with each hole's expression tokens and specifier.
+    fn interp(src: &str) -> Vec<(String, Option<String>)> {
+        let tokens = kinds(src);
+        let Interp(pieces) = &tokens[0] else { panic!("not an interpolated string: {tokens:?}") };
+        pieces
+            .iter()
+            .map(|piece| match piece {
+                InterpPiece::Lit(text) => (format!("lit {text}"), None),
+                InterpPiece::Hole(hole) => {
+                    let expr: Vec<String> = hole.tokens.iter().map(|t| format!("{:?}", t.kind)).collect();
+                    (expr.join(" "), hole.spec.as_ref().map(|(text, _)| text.clone()))
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn interpolated_strings_split_into_text_and_holes() {
+        let pieces = interp(r#""a {name} b""#);
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(pieces[0], ("lit a ".to_string(), None));
+        assert_eq!(pieces[1].0, r#"Ident("name") Eof"#);
+        assert_eq!(pieces[2], ("lit  b".to_string(), None));
+
+        // `{{` and `}}` are text, a hole holds any expression, and a nested string is one token of it.
+        assert_eq!(kinds(r#""{{x}} and {{y}}""#)[0], Str("{x} and {y}".into()));
+        let pieces = interp(r#""{a + b:>8}|{"x"}""#);
+        assert_eq!(pieces[0].0, r#"Ident("a") Plus Ident("b") Eof"#);
+        assert_eq!(pieces[0].1, Some(">8".to_string()));
+        assert_eq!(pieces[1], ("lit |".to_string(), None));
+        assert_eq!(pieces[2].0, r#"Str("x") Eof"#);
+
+        // A colon inside brackets belongs to the expression; the first one outside starts the specifier.
+        let pieces = interp(r#""{m[0]:?}""#);
+        assert_eq!(pieces[0].0, r#"Ident("m") LBracket Int(0) RBracket Eof"#);
+        assert_eq!(pieces[0].1, Some("?".to_string()));
+    }
+
+    #[test]
+    fn raw_strings_have_no_escapes_or_holes() {
+        assert_eq!(kinds(r#"r"a\n{x}""#)[0], Str(r"a\n{x}".into()));
+        assert_eq!(kinds(r##"r#"a "q" {x}"#"##)[0], Str(r#"a "q" {x}"#.into()));
+        // `r` followed by anything but `#`s and a quote is an ordinary identifier.
+        assert_eq!(kinds("r + x"), vec![Ident("r".into()), Plus, Ident("x".into()), Eof]);
+    }
+
+    #[test]
+    fn brace_errors_are_reported_once_the_string_ends() {
+        let mut d = Diagnostics::default();
+        let r = lex(FileId(0), r#""a {x""#, &mut d);
+        assert!(!r.truncated);
+        let rendered = d.render(&{
+            let mut map = burdin_diag::SourceMap::default();
+            map.add("t".into(), r#""a {x""#.into());
+            map
+        });
+        assert!(rendered.contains("unterminated `{`"), "{rendered}");
+        let mut d = Diagnostics::default();
+        lex(FileId(0), r#""a } b""#, &mut d);
         assert_eq!(d.len(), 1);
     }
 }

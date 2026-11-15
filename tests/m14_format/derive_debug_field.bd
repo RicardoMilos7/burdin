@@ -1,0 +1,24 @@
+//@ compile-fail
+
+struct Opaque {
+    id: i32
+}
+
+struct Holder derives (Debug) {
+    fine: i32
+    opaque: Opaque //~ E0130
+    list: List<Opaque> //~ E0130
+}
+
+enum Choice derives (Debug) {
+    A(i32)
+    B { inner: Opaque } //~ E0130
+}
+
+struct Generic<T> derives (Debug) {
+    value: T
+    other: Opaque //~ E0130
+}
+
+fn main() {
+}

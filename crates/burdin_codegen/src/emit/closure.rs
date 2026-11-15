@@ -89,6 +89,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let body = self.cx.append_basic_block(value, "body");
         self.entry_builder.position_at_end(entry);
         self.builder.position_at_end(body);
+        // The prologue stores the parameters before the subprogram exists; without this, those stores would carry
+        // the previous function's source location, which LLVM's verifier rejects.
+        if self.debug.is_some() {
+            self.builder.unset_current_debug_location();
+        }
         self.function = Some(value);
         self.locals = &clos.func.locals;
         self.ret = &clos.func.ret;

@@ -369,6 +369,8 @@ pub enum ExprKind {
     Float(String),
     Char(char),
     Str(String),
+    /// A string literal with `{...}` placeholders (spec/format.md).
+    Interp(Vec<InterpPart>),
     Bool(bool),
     Unit,
     /// `name`, or a type path with generic arguments (`List<i32>`), which only means something as the left side
@@ -432,6 +434,94 @@ pub enum ExprKind {
         then_block: Block,
         else_expr: Option<Box<Expr>>,
     },
+}
+
+/// One piece of an interpolated string literal.
+#[derive(Debug)]
+pub enum InterpPart {
+    Lit(String),
+    Hole(Hole),
+}
+
+/// A `{arg:spec}` placeholder.
+#[derive(Debug)]
+pub struct Hole {
+    pub arg: HoleArg,
+    pub spec: FormatSpec,
+    /// The placeholder including its braces.
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub enum HoleArg {
+    /// `{}`: the next positional argument of a format call.
+    Next,
+    /// `{0}`: the positional argument at this index.
+    Index(usize),
+    /// `{name}`, `{a + b}`: any expression, evaluated where the string is.
+    Expr(Box<Expr>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    /// Not written: left for text, right for numbers.
+    Default,
+    Left,
+    Center,
+    Right,
+}
+
+/// The type letter of a specifier: which interface formats the value, and the radix for integers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpecKind {
+    Display,
+    Debug,
+    LowerHex,
+    UpperHex,
+    Binary,
+    Octal,
+}
+
+/// The parsed specifier after the `:` of a placeholder: `[[fill]align][+][#][0][width][.precision][type]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FormatSpec {
+    pub fill: char,
+    pub align: Align,
+    pub plus: bool,
+    pub alt: bool,
+    pub zero: bool,
+    pub width: Option<usize>,
+    pub precision: Option<usize>,
+    pub kind: SpecKind,
+    pub span: Span,
+}
+
+impl FormatSpec {
+    pub fn plain(span: Span) -> FormatSpec {
+        FormatSpec {
+            fill: ' ',
+            align: Align::Default,
+            plus: false,
+            alt: false,
+            zero: false,
+            width: None,
+            precision: None,
+            kind: SpecKind::Display,
+            span,
+        }
+    }
+
+    /// Whether nothing but the interface is chosen, so the formatter keeps its default settings.
+    pub fn is_default(&self) -> bool {
+        self.fill == ' '
+            && self.align == Align::Default
+            && !self.plus
+            && !self.alt
+            && !self.zero
+            && self.width.is_none()
+            && self.precision.is_none()
+            && matches!(self.kind, SpecKind::Display | SpecKind::Debug)
+    }
 }
 
 /// One parameter of a closure: a name and an optional type (`|x: i32, y|`).

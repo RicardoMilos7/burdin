@@ -1,10 +1,10 @@
-# Burdin grammar (stage 0, plus stage 1 closures and iterators)
+# Burdin grammar (stage 0, plus stage 1 closures, iterators, and formatting)
 
-This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures and
-milestone 13's member names. It is derived from the conformance tests in `tests/`, so every construct below is used
-by at least one test, and every construct those tests use is here. Features deferred to later stage 1 milestones (string interpolation,
-`any`/`impl` types, `error` declarations, comptime, derive declarations, default and named arguments, extension
-methods, tasks) are reserved but not parsed.
+This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures,
+milestone 13's member names, and milestone 14's string interpolation (the details are in `format.md`). It is derived
+from the conformance tests in `tests/`, so every construct below is used by at least one test, and every construct
+those tests use is here. Features deferred to later stage 1 milestones (`any`/`impl` types, `error` declarations,
+comptime, derive declarations, default and named arguments, extension methods, tasks) are reserved but not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).

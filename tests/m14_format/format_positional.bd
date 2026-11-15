@@ -1,0 +1,39 @@
+//@ run
+//@ stderr: to stderr 1
+//@ stderr: also 2
+//> 1 + 2 = 3
+//> b a b
+//> 7 ana 8
+//> ana-ana
+//> ana:42
+//> no newline, args
+//> just text
+//> owned 3
+//> deep
+//> evaluated once
+//> once: 1 1
+//> owned twice: owned owned, then owned again
+fn side(): i32 {
+    println("evaluated once")
+    1
+}
+
+fn main() {
+    let name = "ana"
+    println("{} + {} = {}", 1, 2, 3)
+    println("{1} {0} {1}", "a", "b")
+    println("{} {name} {}", 7, 8)
+    println("{0}-{0}", name)
+    let s = format("{}:{}", name, 42)
+    println(s)
+    print("no newline, ")
+    print("{}\n", "args")
+    println("just text")
+    eprintln("to stderr {}", 1)
+    eprint("also {}\n", 2)
+    println("{} {}", String.from("owned"), name.len())
+    println("{}", format("{}", format("{}", "deep")))
+    println("once: {0} {0}", side())
+    let owned = String.from("owned")
+    println("owned twice: {0} {0}, then {0} again", owned)
+}

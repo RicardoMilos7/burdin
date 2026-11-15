@@ -20,7 +20,8 @@ not updated and may disagree with the repository.
 2. `spec/grammar.md` is the syntax of stage 0. `spec/memory-rules.md` is the exact semantics of moves, conventions,
    exclusivity, references, and drops, with rule IDs and the tests that cover each. `spec/stdlib.md` is the standard
    library surface (names and signatures), `spec/iterators.md` is the iteration protocol (`Iterator<T>`/
-   `Iterable<T>`, `iter()`/`into_iter()`, user `for`, the adapters, and ranges), `spec/derives.md` is the exact
+   `Iterable<T>`, `iter()`/`into_iter()`, user `for`, the adapters, and ranges), `spec/format.md` is interpolation,
+   `Display`/`Debug`, the format specifiers, and the output functions, `spec/derives.md` is the exact
    behavior of `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`, and `spec/test-runner.md` is the behavior of
    `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).

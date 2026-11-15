@@ -45,6 +45,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
             }
+            Builtin::FloatStr => {
+                let v = self.expr_mode(&args[0], Mode::Use)?.expect("a float has a value").into_float_value();
+                let prec = self.expr_mode(&args[1], Mode::Use)?.expect("an integer has a value").into_int_value();
+                let single = self.expr_mode(&args[2], Mode::Use)?.expect("a bool has a value").into_int_value();
+                let out = self.alloca(self.string_ty.into(), "string")?;
+                self.builder
+                    .build_call(self.rt.f64_to_string, &[v.into(), prec.into(), single.into(), out.into()], "")
+                    .map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
             Builtin::StringNew => {
                 let out = self.alloca(self.string_ty.into(), "string")?;
                 self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;

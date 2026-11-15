@@ -1,0 +1,103 @@
+//@ run
+//> p = (1, -2)
+//> p again: (1, -2) and (1, -2)
+//> [burdin] [burdin    ] [    burdin] [  burdin  ] [burdin***] [bur]
+//> [low] [  high] [  low  ]
+//> [[7]]
+//> show: (1, -2)
+//> show: 5
+//> show: text
+//> show: high
+//> show: 2.5
+//> (1, -2)
+//> (1, -2)
+//> [[7]]
+//> 1.25
+//> (1, -2) has 7 bytes
+//> (1, -2) / low
+struct Point {
+    x: i32
+    y: i32
+}
+
+Point: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str("(")
+        self.x.fmt(mut f)
+        f.write_str(", ")
+        self.y.fmt(mut f)
+        f.write_str(")")
+    }
+}
+
+struct Name {
+    text: String
+}
+
+// A type that honors the placeholder's width, fill, alignment, and precision through `pad`.
+Name: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.pad(self.text)
+    }
+}
+
+enum Level {
+    Low
+    High
+}
+
+Level: Display {
+    fn fmt(self, mut f: Formatter) {
+        match self {
+            Level.Low => {
+                f.pad("low")
+            }
+            Level.High => {
+                f.pad("high")
+            }
+        }
+    }
+}
+
+struct Wrapper<T> {
+    inner: T
+}
+
+Wrapper<T>: Display where T: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str("[")
+        self.inner.fmt(mut f)
+        f.write_str("]")
+    }
+}
+
+fn show<T: Display>(value: T) {
+    println("show: {value}")
+}
+
+fn describe<T: Display>(value: T): String {
+    value.to_string()
+}
+
+fn main() {
+    let p = Point { x: 1, y: -2 }
+    println("p = {p}")
+    println("p again: {p} and {p}")
+    let n = Name { text: String.from("burdin") }
+    println("[{n}] [{n:10}] [{n:>10}] [{n:^10}] [{n:*<9}] [{n:.3}]")
+    println("[{Level.Low}] [{Level.High:>6}] [{Level.Low:^7}]")
+    let w = Wrapper { inner: Wrapper { inner: 7 } }
+    println("{w}")
+    show(p)
+    show(5)
+    show("text")
+    show(Level.High)
+    show(2.5)
+    println(p.to_string())
+    println(describe(p))
+    println(describe(w))
+    println(describe(1.25))
+    let text = p.to_string()
+    println("{text} has {text.len()} bytes")
+    println("{} / {}", p, Level.Low)
+}

@@ -555,6 +555,11 @@ impl Globals {
     /// Whether a struct or enum has a `Type: Interface<Args> { ... }` block for a user interface, with its `where`
     /// clauses met. A built-in collection satisfies the standard iterator protocol without an impl block.
     fn implements(&self, ty: &Ty, iface: usize, args: &[Ty], env: &Env) -> bool {
+        if (Some(iface) == self.display_iface || Some(iface) == self.debug_iface)
+            && let Some(answer) = self.builtin_formattable(ty, Some(iface) == self.debug_iface, iface, env)
+        {
+            return answer;
+        }
         if let Some(have) = self.builtin_iface_args(ty, iface, env) {
             return self.bound_args_match(&have, args);
         }
@@ -589,6 +594,22 @@ impl Globals {
         })
     }
 
+    /// Whether a built-in type implements `Display` or (`debug`) `Debug` without an impl block, or `None` for a
+    /// struct or enum, which implements them with a block or a derive (spec/format.md).
+    fn builtin_formattable(&self, ty: &Ty, debug: bool, iface: usize, env: &Env) -> Option<bool> {
+        let part = |t: &Ty| self.satisfies_with(t, &Bound::User(iface, Vec::new()), env, &[]);
+        Some(match ty {
+            Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char | Ty::Str | Ty::String | Ty::Error | Ty::Never => true,
+            Ty::Ref { inner, .. } => part(inner),
+            Ty::Unit => debug,
+            Ty::Option(t) | Ty::List(t) | Ty::Heap(t) => debug && part(t),
+            Ty::Result(t, e) => debug && part(t) && part(e),
+            Ty::Tuple(ts) => debug && (2..=4).contains(&ts.len()) && ts.iter().all(part),
+            Ty::Struct(_) | Ty::Enum(_) => return None,
+            _ => false,
+        })
+    }
+
     /// Whether `<`, `>`, `<=`, and `>=` apply to values of `ty` through `Ord`.
     pub(crate) fn has_ord(&self, ty: &Ty) -> bool {
         self.has_ord_in(ty, &[])
@@ -611,6 +632,14 @@ impl Globals {
                 e.derives.ord && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_ord_in(&f.ty, env)))
             }
             _ => false,
+        }
+    }
+
+    /// Whether values of `ty` implement `Debug`, for the derive requirement.
+    pub(crate) fn has_debug(&self, ty: &Ty) -> bool {
+        match self.debug_iface {
+            Some(iface) => self.satisfies(ty, &Bound::User(iface, Vec::new()), &[]),
+            None => true,
         }
     }
 

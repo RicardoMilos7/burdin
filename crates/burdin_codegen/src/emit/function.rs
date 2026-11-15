@@ -72,8 +72,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // may create a closure value.
         self.declare_closures()?;
         self.define_closure_drops()?;
+        // A function nothing reaches is not emitted (see `reach.rs`): its declaration is enough.
+        let reachable = self.reachable_functions();
         for (i, f) in program.functions.iter().enumerate() {
-            self.function(self.functions[i], f)?;
+            if reachable[i] {
+                self.function(self.functions[i], f)?;
+            } else {
+                self.dead_function(self.functions[i])?;
+            }
         }
         for (i, clos) in program.closures.iter().enumerate() {
             self.closure_body(self.closure_funcs[i], i, clos)?;
@@ -102,6 +108,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let body = self.cx.append_basic_block(value, "body");
         self.entry_builder.position_at_end(entry);
         self.builder.position_at_end(body);
+        // The prologue stores the parameters before the subprogram exists; without this, those stores would carry
+        // the previous function's source location, which LLVM's verifier rejects.
+        if self.debug.is_some() {
+            self.builder.unset_current_debug_location();
+        }
         self.function = Some(value);
         self.locals = &f.locals;
         self.ret = &f.ret;
@@ -168,6 +179,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None => self.builder.build_return(None).map_err(llvm_err)?,
         };
         self.entry_builder.build_unconditional_branch(body).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// The body of a function nothing reaches: `unreachable`, so the declaration stays defined and the IR of an
+    /// unused standard-library function costs two lines.
+    fn dead_function(&mut self, value: FunctionValue<'ctx>) -> GenResult<()> {
+        let block = self.cx.append_basic_block(value, "dead");
+        self.builder.position_at_end(block);
+        self.builder.build_unreachable().map_err(llvm_err)?;
         Ok(())
     }
 

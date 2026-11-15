@@ -1,0 +1,11 @@
+//@ compile-fail
+
+fn main() {
+    let k = 3
+    println("{k:q}") //~ E0190
+    println("{k:.}") //~ E0190
+    println("{k:99999}") //~ E0190
+    println("{k:>5x?}") //~ E0190
+    println("{k:5} {k:q} {k:>}") //~ E0190
+    println("{k:>6.2}")
+}

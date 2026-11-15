@@ -1,0 +1,41 @@
+//@ compile-fail
+
+struct Plain {
+    id: i32
+}
+
+struct Shown {
+    id: i32
+}
+
+Shown: Display {
+    fn fmt(self, mut f: Formatter) {
+        self.id.fmt(mut f)
+    }
+}
+
+fn generic<T>(value: T) {
+    println("{value}") //~ E0193
+    println("{value:?}") //~ E0193
+}
+
+fn bounded<T: Display>(value: T) {
+    println("{value:?}") //~ E0193
+    println("{value}")
+}
+
+fn main() {
+    let plain = Plain { id: 1 }
+    let shown = Shown { id: 2 }
+    let items: List<i32> = List<i32>.new()
+    println("{plain}") //~ E0193
+    println("{plain:?}") //~ E0193
+    println("{shown}")
+    println("{shown:?}") //~ E0193
+    println("{Some(1)}") //~ E0193
+    println("{items}") //~ E0193
+    println("{(1, 2)}") //~ E0193
+    println("{plain} {shown} {plain:?}") //~ E0193
+    println("{():?} {items:?} {Some(1):?}")
+    let text = plain.to_string() //~ E0002
+}

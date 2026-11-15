@@ -61,6 +61,9 @@ pub(crate) struct Runtime<'ctx> {
     pub str_to_string: FunctionValue<'ctx>,
     /// `(v: i64, out: *String)`
     pub i64_to_string: FunctionValue<'ctx>,
+    /// `(v: f64, prec: i32, single: bool, out: *String)`: the text of a float, fixed with `prec` digits after the
+    /// point, or (`prec < 0`) the shortest scientific text that reads back as the same number.
+    pub f64_to_string: FunctionValue<'ctx>,
     /// `(v: i64, out: *String)`
     pub u64_to_string: FunctionValue<'ctx>,
     /// `(c: i32, out: *String)`
@@ -337,6 +340,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             free,
             str_to_string: self.str_to_string(&h)?,
             i64_to_string: self.int_to_string(&h, true)?,
+            f64_to_string: self.f64_to_string(&h)?,
             u64_to_string: self.int_to_string(&h, false)?,
             char_to_string: self.char_to_string(&h)?,
             str_starts_with: self.str_starts_with()?,
@@ -1474,6 +1478,81 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         }
         let len = self.distance(start, end)?;
         self.call(h.alloc_string, &[Self::ptr_param(f, 1).into(), start.into(), len.into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `f64_to_string(v: f64, prec: i32, single: bool, out: *String)`. With `prec >= 0` the text is `%.{prec}f`.
+    /// Otherwise it is the shortest `%.{p}e` text that `strtod` reads back as the same value (compared as an
+    /// `f32` when `single`), which `std`'s formatter turns into positional notation.
+    fn f64_to_string(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let f64_ty = self.cx.f64_type();
+        let void = self.cx.void_type();
+        let snprintf =
+            libc(self.module, "snprintf", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], true));
+        let strtod = libc(self.module, "strtod", f64_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let f = self.function(
+            "burdin_rt_f64_to_string",
+            void.fn_type(&[f64_ty.into(), i32_ty.into(), self.cx.bool_type().into(), ptr_ty.into()], false),
+        );
+        let v = f.get_nth_param(0).expect("a value").into_float_value();
+        let (prec, single, out) = (Self::int_param(f, 1), Self::int_param(f, 2), Self::ptr_param(f, 3));
+        const CAP: u32 = 640;
+        let buf = self.buffer(CAP)?;
+        let cap = usize_ty.const_int(u64::from(CAP), false);
+        let fixed_fmt = self.bytes(b"%.*f ");
+        let sci_fmt = self.bytes(b"%.*e ");
+        let fixed = self.block(f, "fixed");
+        let shortest = self.block(f, "shortest");
+        let search = self.block(f, "search");
+        let again = self.block(f, "again");
+        let done = self.block(f, "done");
+        let is_fixed = self.b.build_int_compare(IntPredicate::SGE, prec, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(is_fixed, fixed, shortest).map_err(llvm_err)?;
+
+        self.b.position_at_end(fixed);
+        let n_fixed = self
+            .call(snprintf, &[buf.into(), cap.into(), fixed_fmt.into(), prec.into(), v.into()])?
+            .expect("snprintf returns a length")
+            .into_int_value();
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(shortest);
+        self.b.build_unconditional_branch(search).map_err(llvm_err)?;
+
+        self.b.position_at_end(search);
+        let p = self.b.build_phi(i32_ty, "p").map_err(llvm_err)?;
+        let p_v = p.as_basic_value().into_int_value();
+        let n_sci = self
+            .call(snprintf, &[buf.into(), cap.into(), sci_fmt.into(), p_v.into(), v.into()])?
+            .expect("snprintf returns a length")
+            .into_int_value();
+        let parsed = self
+            .call(strtod, &[buf.into(), ptr_ty.const_null().into()])?
+            .expect("strtod returns a double")
+            .into_float_value();
+        let same_f64 = self.b.build_float_compare(inkwell::FloatPredicate::OEQ, parsed, v, "").map_err(llvm_err)?;
+        let f32_ty = self.cx.f32_type();
+        let v32 = self.b.build_float_trunc(v, f32_ty, "").map_err(llvm_err)?;
+        let parsed32 = self.b.build_float_trunc(parsed, f32_ty, "").map_err(llvm_err)?;
+        let same_f32 = self.b.build_float_compare(inkwell::FloatPredicate::OEQ, parsed32, v32, "").map_err(llvm_err)?;
+        let same = self.b.build_select(single, same_f32, same_f64, "").map_err(llvm_err)?.into_int_value();
+        let last =
+            self.b.build_int_compare(IntPredicate::SGE, p_v, i32_ty.const_int(17, false), "").map_err(llvm_err)?;
+        let stop = self.b.build_or(same, last, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(stop, done, again).map_err(llvm_err)?;
+
+        self.b.position_at_end(again);
+        let next = self.b.build_int_add(p_v, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_unconditional_branch(search).map_err(llvm_err)?;
+        p.add_incoming(&[(&i32_ty.const_zero(), shortest), (&next, again)]);
+
+        self.b.position_at_end(done);
+        let n = self.b.build_phi(i32_ty, "n").map_err(llvm_err)?;
+        n.add_incoming(&[(&n_fixed, fixed), (&n_sci, search)]);
+        let len = self.b.build_int_z_extend(n.as_basic_value().into_int_value(), usize_ty, "").map_err(llvm_err)?;
+        self.call(h.alloc_string, &[out.into(), buf.into(), len.into()])?;
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(f)
     }

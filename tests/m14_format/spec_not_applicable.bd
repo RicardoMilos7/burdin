@@ -1,0 +1,27 @@
+//@ compile-fail
+
+struct Item {
+    id: i32
+}
+
+Item: Display {
+    fn fmt(self, mut f: Formatter) {
+        self.id.fmt(mut f)
+    }
+}
+
+fn main() {
+    let s = "text"
+    let n = 5
+    let x = 2.5
+    let item = Item { id: 1 }
+    println("{s:x}") //~ E0190
+    println("{x:b}") //~ E0190
+    println("{n:.2}") //~ E0190
+    println("{s:+}") //~ E0190
+    println("{s:05}") //~ E0190
+    println("{n:#}") //~ E0190
+    println("{x:#?}") //~ E0190
+    println("{item:x}") //~ E0190
+    println("{n:x} {x:.1} {s:.2} {item:>5} {item:+} {x:+} {n:#x}")
+}

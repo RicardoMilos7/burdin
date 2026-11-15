@@ -58,8 +58,18 @@ impl FnCx<'_> {
                     None if id.name == "replace" || id.name == "__replace" => {
                         return self.replace_call(args, span);
                     }
+                    None if id.name == "format" && self.lookup("format").is_none() => {
+                        return self.format_call(args, span);
+                    }
                     None => match builtin(&id.name) {
                         Some(Builtin::AssertEq) => return self.assert_eq(args, span),
+                        Some(b @ (Builtin::Print | Builtin::Println | Builtin::Eprint | Builtin::Eprintln))
+                            if args.len() > 1 =>
+                        {
+                            let text = self.format_call(args, span);
+                            let text = self.coerce_arg(text, &Ty::Str);
+                            return mk(tir::ExprKind::Builtin(b, vec![text]), Ty::Unit, span);
+                        }
                         Some(b) => {
                             let sig = builtin_sig(b);
                             (sig.params, sig.ret, Callee::Builtin(b))
@@ -483,6 +493,17 @@ impl FnCx<'_> {
             return self.module_call(target, &item, args, span, expect);
         }
         let recv = self.expr(recv, None);
+        self.method_call_on(recv, name, args, span)
+    }
+
+    /// `recv.name(args)` for a receiver that is already checked.
+    pub(super) fn method_call_on(
+        &mut self,
+        recv: tir::Expr,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
         if recv.ty == Ty::Error {
             return self.args_then_error(args, span);
         }
@@ -494,6 +515,14 @@ impl FnCx<'_> {
         }
         // Field access and method calls see through references (RF1).
         let recv = self.auto_deref(recv);
+        // `x.to_string()` on a value whose type implements `Display` (spec/format.md).
+        if name.name == "to_string"
+            && args.is_empty()
+            && self.to_string_via_display(&recv.ty)
+            && !adt_key(&recv.ty).is_some_and(|key| self.globals.methods.contains_key(&(key, "to_string".to_string())))
+        {
+            return self.display_to_string(recv, span);
+        }
         if let Ty::Param(_) = recv.ty {
             return self.param_method_call(recv, name, args, span);
         }
@@ -542,6 +571,10 @@ impl FnCx<'_> {
         if let Some((index, field_ty)) = self.closure_field(&recv, &name.name) {
             let field = mk(tir::ExprKind::Field(Box::new(recv), index), field_ty, name.span);
             return self.closure_call(field, args, span);
+        }
+        // `fmt` and `debug` of the built-in types, which the formatting helpers of `std` implement.
+        if let Some(e) = self.builtin_format_method(recv.clone(), name, args, span) {
+            return e;
         }
         // The iteration protocol: `next`, `sum`, the eager `List` helpers, and the `Iterator` default methods.
         if let Some(e) = self.iterator_method(recv.clone(), name, args, span) {

@@ -80,6 +80,10 @@ rules are recorded in `spec/memory-rules.md` CL1-CL11 and `spec/grammar.md` sect
 Milestone 13 is complete: `tests/m13_iterators` and every earlier folder pass in debug and release, the protocol is
 recorded in `spec/iterators.md` IT4-IT12, and the surface is in `spec/stdlib.md`.
 
+Milestone 14 is complete: `tests/m14_format` and every earlier folder pass in debug and release, and the rules are
+recorded in `spec/format.md` FM1-FM10 (with the decision that format strings are checked and lowered at compile
+time), `spec/derives.md` for `Debug`, and `spec/stdlib.md` for the output functions.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -99,6 +103,12 @@ registry code, a test, and a spec update **before** the code, per the working ru
 4. **C ABI aggregates by value.** Passing or returning a `repr(C)` struct by value is E0162 because the platform
    coercions (register packing, `sret`) are not implemented. A bindgen target that must call such a C function
    would need that lowering.
+
+## Decisions needed before milestone 15
+
+Milestone 14's decision is settled in `spec/format.md`: format strings are a compile-time construct, `Display` and
+`Debug` are ordinary `std` interfaces with compiler-known implementations, and `print`/`println` take a format
+string only when they have more than one argument.
 
 ## Decisions needed before milestone 12
 

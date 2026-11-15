@@ -199,6 +199,7 @@ impl Parser<'_> {
                 | Float(_)
                 | Char(_)
                 | Str(_)
+                | Interp(_)
                 | True
                 | False
                 | SelfValue
@@ -269,6 +270,11 @@ impl Parser<'_> {
             TokenKind::Str(s) => {
                 self.bump();
                 lit(ExprKind::Str(s))
+            }
+            TokenKind::Interp(pieces) => {
+                self.bump();
+                let parts = self.interp_parts(pieces);
+                lit(ExprKind::Interp(parts))
             }
             TokenKind::True => {
                 self.bump();

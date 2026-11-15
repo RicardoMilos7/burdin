@@ -5,6 +5,7 @@
 //! `Code::UNSUPPORTED`; `spec/e9000-audit.md` tracks the remaining sites.
 
 mod expr;
+mod format;
 mod items;
 mod pattern;
 mod stmt;

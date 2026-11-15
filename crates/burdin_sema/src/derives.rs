@@ -19,11 +19,12 @@ pub(crate) fn parse_derives(list: &[ast::Type], diags: &mut Diagnostics) -> tir:
             "Ord" => &mut d.ord,
             "Hash" => &mut d.hash,
             "Default" => &mut d.default,
+            "Debug" => &mut d.debug,
             _ => {
                 diags.error(
                     Code::UNKNOWN_NAME,
                     t.span,
-                    "only `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default` can be derived",
+                    "only `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug` can be derived",
                 );
                 continue;
             }
@@ -101,12 +102,13 @@ pub(crate) fn check_derives(
         }
     }
     type Requirement = (bool, &'static str, fn(&Globals, &Ty) -> bool);
-    let requirements: [Requirement; 5] = [
+    let requirements: [Requirement; 6] = [
         (derives.clone, "Clone", Globals::is_clone),
         (derives.eq, "Eq", Globals::has_eq),
         (derives.ord, "Ord", Globals::has_ord),
         (derives.hash, "Hash", Globals::has_hash),
         (derives.default, "Default", Globals::has_default),
+        (derives.debug, "Debug", Globals::has_debug),
     ];
     for (derived, name, holds) in requirements {
         if !derived {

@@ -1,0 +1,40 @@
+//@ run
+//> sum: 7
+//> call: 8
+//> index: 20
+//> method: 6
+//> string in a hole: burdin!
+//> nested: inner 3
+//> cast: 3000000000000
+//> tuple field: 2
+//> if: big
+//> 34
+//> burdin/3
+//> burdin still usable: burdin
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn twice(n: i32): i32 {
+    n * 2
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 }
+    let xs = [10, 20, 30]
+    let name = String.from("burdin")
+    println("sum: {p.x + p.y}")
+    println("call: {twice(p.y)}")
+    println("index: {xs[1]}")
+    println("method: {name.len()}")
+    println("string in a hole: {name}!")
+    println("nested: {"inner {p.x}"}")
+    println("cast: {p.x as i64 * 1000000000000}")
+    println("tuple field: {(1, 2).1}")
+    println("if: {if p.x > 2 { "big" } else { "small" }}")
+    println("{p.x}{p.y}")
+    let owned = format("{name}/{p.x}")
+    println(owned)
+    println("{name} still usable: {name}")
+}

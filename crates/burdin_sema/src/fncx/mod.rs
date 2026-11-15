@@ -7,6 +7,7 @@ mod closure;
 mod control;
 mod expr;
 mod fnvalue;
+mod format;
 mod generic;
 mod item;
 mod iterate;

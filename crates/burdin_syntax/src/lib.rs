@@ -1,6 +1,7 @@
 //! Lexer, parser, and syntax tree for Burdin stage 0 (spec/grammar.md).
 
 pub mod ast;
+pub mod derive;
 pub mod lexer;
 pub mod parser;
 pub mod token;
@@ -10,7 +11,9 @@ use burdin_diag::{Diagnostics, FileId};
 /// Lexes and parses one source file. Errors go to `diags`; the returned tree holds whatever parsed.
 pub fn parse(file: FileId, text: &str, diags: &mut Diagnostics) -> ast::File {
     let lexed = lexer::lex(file, text, diags);
-    parser::parse_file(file, lexed, diags)
+    let mut parsed = parser::parse_file(file, lexed, diags);
+    derive::expand_derives(&mut parsed, file, diags);
+    parsed
 }
 
 #[cfg(test)]
