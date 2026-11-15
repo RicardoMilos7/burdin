@@ -60,6 +60,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "burdin_fuzz"
+version = "0.0.0"
+dependencies = [
+ "burdin_diag",
+ "burdin_syntax",
+]
+
+[[package]]
 name = "burdin_sema"
 version = "0.0.0"
 dependencies = [

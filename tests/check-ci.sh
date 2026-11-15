@@ -23,8 +23,11 @@
 #   * every job runs the advisory benchmark regression check, keeps its baseline in a cache scoped to
 #     the runner, the pinned toolchain, and Cargo.lock, and records a new baseline on a push to main
 #     (issue #446);
+#   * the workflow runs the lexer/parser fuzzer: the committed corpus replays through
+#     `cargo test --workspace` in every job, a scheduled `fuzz` job runs the longer session through
+#     tests/fuzz.sh, and it uploads the failing inputs so they can be committed with the fix (issue #447);
 #   * a conformance test still exercises --link-lib LLVM-C;
-#   * the documentation check (which reads the driver contract in README.md) runs in both jobs;
+#   * the documentation check (which reads the driver contract in README.md) runs in every job;
 #   * every job runs the diagnostics presentation check and the error-code reference check, and the reference
 #     exists, is the registry's mirror image, and is linked from README.md (issues #434-#437).
 
@@ -185,18 +188,42 @@ check_bench_regression() {   # $1 job, $2 block
         || add_problem "ci.yml: $job job: the benchmark baseline is saved outside main"
 }
 
+# Continuous fuzzing (issue #447). The fuzz job is limited to the schedule and manual runs, replays the
+# committed corpus through cargo test, runs the longer session, and uploads every failing input. The
+# corpus itself is in the repository, so the replay in every job fails when a committed input panics again.
+check_fuzz() {   # $1 block
+    local block=$1
+    grep -qE '^    if:.*(schedule|workflow_dispatch)' <<< "$block" \
+        || add_problem "ci.yml: fuzz job: not limited to the schedule or a manual run"
+    grep -qF 'cargo test -p burdin_fuzz' <<< "$block" \
+        || add_problem "ci.yml: fuzz job: does not replay the corpus with cargo test -p burdin_fuzz"
+    grep -qF 'tests/fuzz.sh' <<< "$block" \
+        || add_problem "ci.yml: fuzz job: does not run tests/fuzz.sh"
+    grep -qF 'github.run_id' <<< "$block" \
+        || add_problem "ci.yml: fuzz job: uses the same generator seed every run (no github.run_id)"
+    grep -qF 'actions/upload-artifact@v4' <<< "$block" \
+        || add_problem "ci.yml: fuzz job: does not upload the found inputs"
+    grep -qF 'fuzz-out/crashes' <<< "$block" \
+        || add_problem "ci.yml: fuzz job: does not upload the directory that holds found inputs"
+}
+
 linux=$(job_block linux)
 macos=$(job_block macos)
 windows=$(job_block windows)
+fuzz=$(job_block fuzz)
 [ -n "$linux" ] || add_problem "ci.yml: no linux job"
 [ -n "$macos" ] || add_problem "ci.yml: no macos job"
 [ -n "$windows" ] || add_problem "ci.yml: no windows job"
+[ -n "$fuzz" ] || add_problem "ci.yml: no fuzz job"
 
 grep -qx '    runs-on: ubuntu-24.04' <<< "$linux" || add_problem "ci.yml: linux does not run on ubuntu-24.04"
 grep -qx '    runs-on: macos-latest' <<< "$macos" || add_problem "ci.yml: macos does not run on macos-latest"
 grep -qx '    runs-on: windows-latest' <<< "$windows" || add_problem "ci.yml: windows does not run on windows-latest"
 grep -qx '  push:' <<< "$text" || add_problem "ci.yml: does not run on push"
 grep -qx '  pull_request:' <<< "$text" || add_problem "ci.yml: does not run on pull_request"
+grep -qx '  schedule:' <<< "$text" || add_problem "ci.yml: does not run on a schedule (continuous fuzzing)"
+grep -qE "^    - cron: '[^']+'" <<< "$text" || add_problem "ci.yml: the schedule has no cron entry"
+grep -qx '  workflow_dispatch:' <<< "$text" || add_problem "ci.yml: does not allow a manual fuzz run"
 
 # Linux: LLVM 21 from apt.llvm.org.
 grep -qF 'LLVM_SYS_211_PREFIX: /usr/lib/llvm-21' <<< "$linux" \
@@ -259,6 +286,21 @@ for job in linux macos windows; do
     check_caches "$job" "$block"
     check_bench_regression "$job" "$block"
 done
+
+check_fuzz "$fuzz"
+
+# The fuzz corpus is committed and replayed by `cargo test --workspace`, which is the check that fails
+# when a panic is reintroduced (issue #447). Losing the corpus or the replay test would silently disable it.
+fuzz_crate=$ROOT/crates/burdin_fuzz
+[ -f "$fuzz_crate/Cargo.toml" ] || add_problem "crates/burdin_fuzz/Cargo.toml: missing"
+[ -f "$fuzz_crate/tests/corpus.rs" ] || add_problem "crates/burdin_fuzz/tests/corpus.rs: missing"
+[ -f "$fuzz_crate/src/bin/syntax.rs" ] || add_problem "crates/burdin_fuzz/src/bin/syntax.rs: missing"
+if [ -d "$fuzz_crate/corpus/syntax" ]; then
+    find "$fuzz_crate/corpus/syntax" -name '*.bd' -print -quit | grep -q . \
+        || add_problem "crates/burdin_fuzz/corpus/syntax: no .bd corpus files"
+else
+    add_problem "crates/burdin_fuzz/corpus/syntax: missing"
+fi
 
 # The release run (issue #47) is only meaningful when the runner selects the profile and skips
 # debug-only tests, and the suite must contain one so that skip path stays exercised.
@@ -331,7 +373,8 @@ fi
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
-    tests/check-docs.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/bench-regression.sh; do
+    tests/check-docs.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/bench-regression.sh \
+    tests/fuzz.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"

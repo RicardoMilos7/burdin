@@ -68,6 +68,14 @@ close-out checklist in `AGENTS.md`).
   the last main run. The comparison is advisory until the runner numbers are stable. `tests/check-ci.sh` fails if
   the step, the script, the cache, or the harness modes go missing, and `cargo test -p burdin_bench` covers the
   baseline format and the threshold arithmetic.
+- The lexer and parser are fuzzed (issues #288 and #447). `burdin_fuzz` is a dependency-free, deterministic harness
+  on the pinned stable toolchain: `burdin-fuzz-syntax` replays the committed corpus and then mutates it with a fixed
+  seed, catching panics and watching for an input that stops making progress. `crates/burdin_fuzz/corpus/syntax/`
+  holds the hand-written edge cases and every input that found a panic, and `cargo test --workspace` replays them
+  plus 20,000 deterministic mutations in every CI job, so a reintroduced panic fails. A scheduled `fuzz` job runs
+  a ten-minute session seeded by the run id (so each run explores new inputs) and uploads any found input as the
+  `fuzz-crashes` artifact; committing it with the fix keeps the regression covered. `tests/check-ci.sh` fails if
+  the schedule, the fuzz job, the long session, the artifact upload, or the corpus goes missing.
 
 ## Unreleased — Stage 1
 

@@ -22,6 +22,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Shipped milestones. |
+| [`crates/burdin_fuzz/`](crates/burdin_fuzz/) | The lexer/parser fuzzer and its committed corpus. |
 | [`std/README.md`](std/README.md) | The stage 0 standard library. |
 | [`Burdin Language Design.md`](Burdin%20Language%20Design.md) | The full language design, including features after stage 0. |
 
@@ -328,6 +329,18 @@ error: cannot run the linker `cc`: No such file or directory (os error 2) (set B
 | program status | `run` exits with the program's status; 128+signal on Unix. |
 
 Usage errors print `error: <message>` followed by the usage block.
+
+## Fuzzing the lexer and parser
+
+`crates/burdin_fuzz` lexes and parses a committed corpus and deterministic mutations of it. `cargo test --workspace`
+replays the corpus in every CI job, so a panic reintroduced by a change fails CI. The scheduled `fuzz` job runs a
+longer session through `tests/fuzz.sh`; a found input is written under `fuzz-out/crashes` and is committed under
+`crates/burdin_fuzz/corpus/syntax/` together with its fix. See
+[`crates/burdin_fuzz/corpus/syntax/README.md`](crates/burdin_fuzz/corpus/syntax/README.md).
+
+```console
+$ tests/fuzz.sh --seconds 60
+```
 
 ## Checking the documentation
 

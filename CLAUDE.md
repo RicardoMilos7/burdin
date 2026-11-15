@@ -56,6 +56,7 @@ tests/check-unit-tests.sh          check the front-end unit tests and their CI c
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
 tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
 tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
+tests/fuzz.sh                      long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 ```
 
 On Windows run the `.sh` scripts from Git Bash. The runner expects `burdin build`, `burdin run`, and `burdin test` as described at
@@ -84,6 +85,8 @@ crates/
                             modules, dependencies)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, and code generation
+  burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
+                            corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
 docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh)
 spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan

@@ -1,0 +1,15 @@
+// `test` items, including the contextual-keyword lookahead and malformed ones.
+test "one" { assert(true) }
+test "two" {
+    let x = 1
+    assert_eq(x, 1)
+}
+test { }
+test "unterminated { }
+test "closed" {
+fn after() {}
+test "" { }
+test "with a brace in the name" { assert(1 == 1) }
+fn test() {}
+fn f() { let test = 1; test(test) }
+test "nested" { test "inner" { } }

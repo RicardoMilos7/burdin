@@ -1,0 +1,26 @@
+// impl blocks, interfaces, methods, receivers, and every way they can be malformed.
+struct S { x: i32 }
+enum E { A, B(i32) }
+interface I { fn get(self): i32; fn put(mut self, v: i32) }
+S: I {
+    fn get(self): i32 { self.x }
+    fn put(mut self, v: i32) { self.x = v }
+}
+S {
+    fn new(): S { S { x: 0 } }
+    priv fn hidden(self): i32 { self.x }
+    unsafe fn danger(self): i32 { self.x }
+}
+S: Unknown {
+    fn other(self) {}
+}
+S { }
+S: I { }
+S: I { fn }
+S { fn bad( }
+E {
+    fn on_enum(self): i32 { 1 }
+}
+impl S {
+    fn reserved(self) {}
+}
