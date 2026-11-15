@@ -7,7 +7,7 @@
 //! `Maybe`, which is what a runtime drop flag resolves.
 
 use crate::Env;
-use burdin_diag::{Code, Diagnostics, Span};
+use burdin_diag::{Code, Diagnostic, Diagnostics, Span};
 use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Ty};
 use std::collections::HashMap;
 
@@ -150,8 +150,8 @@ impl<'a> Checker<'a> {
         self.env.defs.is_copy(ty)
     }
 
-    fn error(&mut self, code: Code, span: Span, message: impl Into<String>) {
-        self.diags.error(code, span, message);
+    fn error(&mut self, code: Code, span: Span, message: impl Into<String>) -> &mut Diagnostic {
+        self.diags.error(code, span, message)
     }
 
     /// The local and field path of a place expression. Field selections on any base extend the path; indexing
@@ -182,7 +182,11 @@ impl<'a> Checker<'a> {
         match status {
             Status::Moved => {
                 let name = name.clone();
-                self.error(Code::MOVED, span, format!("use of moved value `{name}`"));
+                let moved_at = self.states[root.0].moved_span(path);
+                let error = self.error(Code::MOVED, span, format!("use of moved value `{name}`"));
+                if let Some(moved_at) = moved_at {
+                    error.note(moved_at, "value moved here");
+                }
             }
             Status::Maybe => {
                 let name = name.clone();
@@ -204,7 +208,11 @@ impl<'a> Checker<'a> {
             let name = self.locals[root.0].name.clone();
             match status {
                 Status::Moved => {
-                    self.error(Code::MOVED, span, format!("use of moved value `{name}`"));
+                    let moved_at = self.states[root.0].moved_span(&path[..len]);
+                    let error = self.error(Code::MOVED, span, format!("use of moved value `{name}`"));
+                    if let Some(moved_at) = moved_at {
+                        error.note(moved_at, "value moved here");
+                    }
                     return;
                 }
                 Status::Maybe => {

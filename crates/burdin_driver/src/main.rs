@@ -3,20 +3,43 @@
 
 mod package;
 
-use burdin_diag::{Diagnostics, SourceMap};
+use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, SourceMap};
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "\
 usage:
-  burdin build <file.bd | package directory> [--release] [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
-  burdin run <file.bd | package directory> [--release] [--link-lib <name>]... [-- <program arguments>...]
-  burdin test <file.bd | package directory> [--release]
+  burdin build <file.bd | package directory> [--release] [-o <output>] [--emit-ir <file.ll>]
+               [--link-lib <name>]... [diagnostics]
+  burdin run <file.bd | package directory> [--release] [--link-lib <name>]... [diagnostics]
+             [-- <program arguments>...]
+  burdin test <file.bd | package directory> [--release] [diagnostics]
+  burdin explain [<error code>]
+
+diagnostics:
+  --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
+                                          diagnostic; json prints one JSON object per line
+  --color <auto|always|never>             color (default auto: only when stderr is a terminal)
+  --no-color                              same as --color never
+  --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
+  --error-limit <n>                       print at most n errors after sorting (0 prints all)
 
 environment:
   BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
-  LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`";
+  LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
+  COLUMNS              terminal width used when --width is not given
+  NO_COLOR             disables color unless --color=always or --color=never says otherwise";
+
+const EXPLAIN_USAGE: &str = "\
+usage:
+  burdin explain           list the error codes
+  burdin explain <code>    print the reference entry for an error code (for example E0003)";
+
+/// The user-facing error-code reference, embedded so `burdin explain` cannot disagree with the page that
+/// `tests/check-error-docs.sh` checks (issue #437).
+const ERROR_DOCS: &str = include_str!("../../../docs/error-codes.md");
 
 struct Args {
     command: String,
@@ -26,11 +49,30 @@ struct Args {
     emit_ir: Option<PathBuf>,
     link_libs: Vec<String>,
     program_args: Vec<String>,
+    diagnostics: DiagnosticOptions,
 }
 
-fn parse_args() -> Result<Args, String> {
-    let mut it = std::env::args().skip(1);
-    let command = it.next().ok_or("missing command")?;
+#[derive(Default)]
+struct DiagnosticOptions {
+    format: DiagnosticFormat,
+    color: ColorChoice,
+    /// `None` uses `COLUMNS`, then 80; `Some(0)` disables wrapping.
+    width: Option<usize>,
+    /// `None` prints every diagnostic; `Some(0)` also means every diagnostic.
+    error_limit: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ColorChoice {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+fn parse_args(argv: &[String]) -> Result<Args, String> {
+    let mut it = argv.iter();
+    let command = it.next().ok_or("missing command")?.clone();
     if !matches!(command.as_str(), "build" | "run" | "test") {
         return Err(format!("unknown command `{command}`"));
     }
@@ -42,16 +84,41 @@ fn parse_args() -> Result<Args, String> {
         emit_ir: None,
         link_libs: Vec::new(),
         program_args: Vec::new(),
+        diagnostics: DiagnosticOptions::default(),
     };
     let mut target = None;
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--release" => args.release = true,
-            "-o" => args.output = Some(it.next().ok_or("`-o` needs a path")?.into()),
-            "--emit-ir" => args.emit_ir = Some(it.next().ok_or("`--emit-ir` needs a path")?.into()),
-            "--link-lib" => args.link_libs.push(it.next().ok_or("`--link-lib` needs a name")?),
+    while let Some(raw) = it.next() {
+        // Long options accept `--option value` and `--option=value`.
+        let (a, inline) = match raw.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            _ => (raw.as_str(), None),
+        };
+        match a {
+            "--release" => args.release = flag_without_value(a, inline)?,
+            "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
+            "--emit-ir" => args.emit_ir = Some(option_value(&mut it, inline, a, "a path")?.into()),
+            "--link-lib" => args.link_libs.push(option_value(&mut it, inline, a, "a name")?),
+            "--diagnostic-format" => {
+                args.diagnostics.format = parse_format(&option_value(&mut it, inline, a, "a value")?)?;
+            }
+            "--color" => {
+                args.diagnostics.color = parse_color(&option_value(&mut it, inline, a, "a value")?)?;
+            }
+            "--no-color" => {
+                flag_without_value(a, inline)?;
+                args.diagnostics.color = ColorChoice::Never;
+            }
+            "--width" => {
+                let value = option_value(&mut it, inline, a, "a number")?;
+                args.diagnostics.width = Some(parse_number(a, &value)?);
+            }
+            "--error-limit" => {
+                let value = option_value(&mut it, inline, a, "a number")?;
+                let limit = parse_number(a, &value)?;
+                args.diagnostics.error_limit = (limit > 0).then_some(limit);
+            }
             "--" => {
-                args.program_args.extend(it.by_ref());
+                args.program_args.extend(it.by_ref().cloned());
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ if target.is_none() => target = Some(PathBuf::from(a)),
@@ -62,8 +129,55 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
+/// The value of an option: the part after `=` when written inline, otherwise the next argument.
+fn option_value(
+    it: &mut std::slice::Iter<'_, String>,
+    inline: Option<&str>,
+    option: &str,
+    what: &str,
+) -> Result<String, String> {
+    match inline {
+        Some(value) => Ok(value.to_string()),
+        None => it.next().cloned().ok_or_else(|| format!("`{option}` needs {what}")),
+    }
+}
+
+/// A flag that takes no value; `--release=yes` is a usage error rather than being ignored.
+fn flag_without_value(option: &str, inline: Option<&str>) -> Result<bool, String> {
+    match inline {
+        Some(_) => Err(format!("`{option}` takes no value")),
+        None => Ok(true),
+    }
+}
+
+fn parse_format(value: &str) -> Result<DiagnosticFormat, String> {
+    match value {
+        "human" => Ok(DiagnosticFormat::Human),
+        "short" => Ok(DiagnosticFormat::Short),
+        "json" => Ok(DiagnosticFormat::Json),
+        _ => Err(format!("unknown diagnostic format `{value}` (expected human, short, or json)")),
+    }
+}
+
+fn parse_color(value: &str) -> Result<ColorChoice, String> {
+    match value {
+        "auto" => Ok(ColorChoice::Auto),
+        "always" => Ok(ColorChoice::Always),
+        "never" => Ok(ColorChoice::Never),
+        _ => Err(format!("unknown color choice `{value}` (expected auto, always, or never)")),
+    }
+}
+
+fn parse_number(option: &str, value: &str) -> Result<usize, String> {
+    value.parse::<usize>().map_err(|_| format!("`{option}` needs a non-negative number, got `{value}`"))
+}
+
 fn main() -> ExitCode {
-    let args = match parse_args() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().map(String::as_str) == Some("explain") {
+        return explain(&argv[1..]);
+    }
+    let args = match parse_args(&argv) {
         Ok(a) => a,
         Err(msg) => {
             eprintln!("error: {msg}\n{USAGE}");
@@ -77,6 +191,71 @@ fn main() -> ExitCode {
         },
         "run" => run(&args),
         _ => run_tests(&args),
+    }
+}
+
+/// `burdin explain`: prints the reference entry for one code, or lists the codes. The text comes from the same
+/// page `tests/check-error-docs.sh` compiles examples from (issue #437).
+fn explain(args: &[String]) -> ExitCode {
+    match args {
+        [] => {
+            print!("{}", code_list());
+            ExitCode::SUCCESS
+        }
+        [code] => match explain_section(code) {
+            Some(section) => {
+                println!("{section}");
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("error: unknown error code `{code}`\n{EXPLAIN_USAGE}");
+                ExitCode::from(2)
+            }
+        },
+        _ => {
+            eprintln!("error: `explain` takes one error code\n{EXPLAIN_USAGE}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// The section of the error reference for `code`, without the HTML comments the check uses to delimit examples.
+fn explain_section(code: &str) -> Option<String> {
+    let code = code.to_ascii_uppercase();
+    let heading = format!("## {code}:");
+    let start = ERROR_DOCS.find(&heading)?;
+    let rest = &ERROR_DOCS[start..];
+    let end = rest[3..].find("\n## ").map_or(rest.len(), |i| 3 + i);
+    Some(
+        rest[..end]
+            .trim_end()
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("<!--"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// Every heading in the reference, one per line, as `E0001: Syntax error`.
+fn code_list() -> String {
+    let mut out = String::new();
+    for line in ERROR_DOCS.lines() {
+        if heading_code(line).is_some() {
+            out.push_str(line.trim_start_matches("## "));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The code a reference heading names, if the line is one.
+fn heading_code(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("## ")?;
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 6 && bytes[0] == b'E' && bytes[1..5].iter().all(u8::is_ascii_digit) && bytes[5] == b':' {
+        Some(&rest[..5])
+    } else {
+        None
     }
 }
 
@@ -224,9 +403,28 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: boo
         program
     });
     if diags.has_errors() {
-        eprint!("{}", diags.render(&sources));
-        let n = diags.len();
-        eprintln!("error: could not compile {} ({n} error{})", target.display(), if n == 1 { "" } else { "s" });
+        let options = render_options(&args.diagnostics, std::io::stderr().is_terminal());
+        let rendered = diags.render_with(&sources, &options);
+        eprint!("{}", rendered.text);
+        let total = rendered.total;
+        let suffix = if total == 1 { "" } else { "s" };
+        match options.format {
+            DiagnosticFormat::Json => {
+                eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
+            }
+            _ => {
+                if rendered.shown < total {
+                    let hidden = total - rendered.shown;
+                    let plural = if hidden == 1 { "" } else { "s" };
+                    let limit = options.error_limit.unwrap_or(0);
+                    eprintln!("note: {hidden} more error{plural} not shown (--error-limit {limit})");
+                }
+                eprintln!("error: could not compile {} ({total} error{suffix})", target.display());
+                if options.format == DiagnosticFormat::Human {
+                    eprintln!("note: for an explanation of an error code, run `burdin explain <code>`");
+                }
+            }
+        }
         return Err(ExitCode::from(1));
     }
     let program = program.expect("no errors means checking produced a program");
@@ -251,6 +449,48 @@ fn compile(args: &Args, output_dir: &Path, output: Option<&Path>, test_mode: boo
     burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
     link(&object, &output, &args.link_libs).map_err(fail)?;
     Ok(Compiled { exe: output, tests })
+}
+
+/// The rendering choices for this run: the format from the command line, color from the choice, the environment,
+/// and whether stderr is a terminal, and the width from `--width`, then `COLUMNS`, then 80.
+fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
+    let columns = std::env::var("COLUMNS").ok();
+    RenderOptions {
+        format: diagnostics.format,
+        color: color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal),
+        width: terminal_width(diagnostics.width, columns.as_deref()),
+        error_limit: diagnostics.error_limit,
+    }
+}
+
+/// `--color=always` and `--color=never` are explicit and win over `NO_COLOR`; `auto` colors only a terminal
+/// whose environment does not ask for no color.
+fn color_enabled(choice: ColorChoice, no_color_env: bool, stderr_is_terminal: bool) -> bool {
+    match choice {
+        ColorChoice::Always => true,
+        ColorChoice::Never => false,
+        ColorChoice::Auto => stderr_is_terminal && !no_color_env,
+    }
+}
+
+/// The no-color.org convention: `NO_COLOR` disables color when it is present and not empty.
+fn no_color_requested() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+}
+
+/// The width in characters: `--width` when given, then a positive `COLUMNS`, then 80. Zero disables wrapping.
+fn terminal_width(explicit: Option<usize>, columns: Option<&str>) -> usize {
+    if let Some(width) = explicit {
+        return width;
+    }
+    columns.and_then(|value| value.trim().parse::<usize>().ok()).filter(|width| *width > 0).unwrap_or(80)
+}
+
+/// The final line of `--diagnostic-format=json`: one object with the counts, so a JSON consumer never has to
+/// parse the human summary.
+fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
+    let limit = limit.map_or_else(|| "null".to_string(), |limit| limit.to_string());
+    format!("{{\"type\":\"summary\",\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n")
 }
 
 /// Links the object file (which defines `main` and the runtime) with libc into the executable `output`.
@@ -572,5 +812,106 @@ mod tests {
         let dir = LibDir::new("empty");
         assert!(llvm_c_link(&dir.0, None).is_none());
         assert!(resolve_llvm_c("m").is_none());
+    }
+
+    #[test]
+    fn color_choice_interacts_with_no_color_and_the_terminal() {
+        assert!(color_enabled(ColorChoice::Always, true, false));
+        assert!(!color_enabled(ColorChoice::Never, false, true));
+        assert!(color_enabled(ColorChoice::Auto, false, true));
+        assert!(!color_enabled(ColorChoice::Auto, true, true));
+        assert!(!color_enabled(ColorChoice::Auto, false, false));
+    }
+
+    #[test]
+    fn width_comes_from_the_flag_then_columns_then_the_default() {
+        assert_eq!(terminal_width(Some(100), Some("40")), 100);
+        assert_eq!(terminal_width(None, Some("40")), 40);
+        assert_eq!(terminal_width(None, Some(" 100 ")), 100);
+        assert_eq!(terminal_width(None, Some("0")), 80);
+        assert_eq!(terminal_width(None, Some("wide")), 80);
+        assert_eq!(terminal_width(None, None), 80);
+        assert_eq!(terminal_width(Some(0), Some("40")), 0);
+    }
+
+    #[test]
+    fn parse_args_reads_the_diagnostic_options() {
+        let argv: Vec<String> = [
+            "build",
+            "app.bd",
+            "--diagnostic-format",
+            "json",
+            "--color",
+            "always",
+            "--width",
+            "100",
+            "--error-limit",
+            "3",
+        ]
+        .map(String::from)
+        .to_vec();
+        let args = parse_args(&argv).unwrap();
+        assert_eq!(args.diagnostics.format, DiagnosticFormat::Json);
+        assert_eq!(args.diagnostics.color, ColorChoice::Always);
+        assert_eq!(args.diagnostics.width, Some(100));
+        assert_eq!(args.diagnostics.error_limit, Some(3));
+        let argv: Vec<String> = ["run", "app.bd", "--no-color", "--error-limit", "0"].map(String::from).to_vec();
+        let args = parse_args(&argv).unwrap();
+        assert_eq!(args.diagnostics.color, ColorChoice::Never);
+        assert_eq!(args.diagnostics.error_limit, None);
+    }
+
+    #[test]
+    fn parse_args_rejects_bad_diagnostic_values() {
+        for argv in [
+            ["build", "a.bd", "--diagnostic-format", "xml"],
+            ["build", "a.bd", "--color", "sparkles"],
+            ["build", "a.bd", "--width", "wide"],
+            ["build", "a.bd", "--error-limit", "-1"],
+        ] {
+            let argv: Vec<String> = argv.map(String::from).to_vec();
+            assert!(parse_args(&argv).is_err(), "{argv:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn the_last_color_flag_wins() {
+        let argv: Vec<String> = ["build", "a.bd", "--color", "always", "--no-color"].map(String::from).to_vec();
+        assert_eq!(parse_args(&argv).unwrap().diagnostics.color, ColorChoice::Never);
+        let argv: Vec<String> = ["build", "a.bd", "--no-color", "--color", "always"].map(String::from).to_vec();
+        assert_eq!(parse_args(&argv).unwrap().diagnostics.color, ColorChoice::Always);
+    }
+
+    fn is_code(text: &str) -> bool {
+        let bytes = text.as_bytes();
+        bytes.len() == 5 && bytes[0] == b'E' && bytes[1..].iter().all(u8::is_ascii_digit)
+    }
+
+    #[test]
+    fn every_registry_code_has_a_checked_reference_section() {
+        let registry = include_str!("../../../tests/README.md");
+        let mut codes: Vec<&str> = registry
+            .lines()
+            .filter_map(|line| {
+                let rest = line.strip_prefix("| ")?;
+                let code = &rest[..rest.find(' ')?];
+                is_code(code).then_some(code)
+            })
+            .collect();
+        assert!(codes.len() > 20, "the registry has only {} codes", codes.len());
+        codes.sort_unstable();
+        codes.dedup();
+        for code in &codes {
+            let section = explain_section(code).unwrap_or_else(|| panic!("no reference section for {code}"));
+            assert!(section.contains(&format!("## {code}:")), "{code} has no heading: {section}");
+            assert!(section.contains("**How to fix:**"), "{code} has no fix");
+            assert!(section.contains(&format!("//~ {code}")), "{code} prints no checked example");
+            assert!(ERROR_DOCS.contains(&format!("error-example: {code}")), "{code} has no checked example");
+        }
+        let listing = code_list();
+        let listed: Vec<&str> = listing.lines().filter_map(|line| line.split(':').next()).collect();
+        assert_eq!(listed, codes, "the reference must list exactly the registry codes");
+        assert!(explain_section("E9999").is_none());
+        assert!(explain_section("e0003").is_some(), "codes are accepted in lower case");
     }
 }

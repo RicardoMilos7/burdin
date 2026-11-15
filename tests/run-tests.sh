@@ -19,9 +19,10 @@
 # README.md at the repository root (`The driver contract`), and tests/check-docs.sh checks it.
 #
 #   burdin build <target> [--release]
-#       Compiles. Diagnostics go to stderr or stdout, one per line, in the form
+#       Compiles. Diagnostics go to stderr; each starts with a line in the form
 #           path:LINE:COL: error[E0000]: message
-#       and the exit code is non-zero when compilation fails.
+#       (notes and suggestions may follow; --diagnostic-format=short gives exactly that line and nothing
+#       else). The exit code is non-zero when compilation fails.
 #   burdin run <target> [--release] [--link-lib NAME]... [-- args...]
 #       Compiles and runs. The program's stdout and stderr pass through, and its exit code
 #       is the command's exit code. A panic abort must give a non-zero exit code.

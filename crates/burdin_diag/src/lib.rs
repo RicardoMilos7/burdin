@@ -1,7 +1,22 @@
 //! Source files, spans, and diagnostics.
 //!
-//! Every diagnostic carries an error code from the registry in `tests/README.md` and a span. Rendering produces
-//! one line per diagnostic in the form `path:LINE:COL: error[E0000]: message`, which the test runner reads.
+//! Every diagnostic carries an error code from the registry in `tests/README.md`, a severity, and a primary span.
+//! It may also carry related notes (with their own spans) and suggestions (a replacement edit for one span), which
+//! the JSON format exposes for an editor's code actions (issue #435).
+//!
+//! Three formats are rendered from the same data (issue #434):
+//!
+//! - `human`: the default. It colors the location, the severity, and the code when asked to, and wraps long
+//!   messages to a fixed width. Its first line is always
+//!   `path:LINE:COL: error[E0000]: message`, which the conformance runner reads.
+//! - `short`: exactly one plain line per diagnostic, with no notes, suggestions, or color. This is the
+//!   machine-readable format the test scripts parse.
+//! - `json`: one JSON object per diagnostic on one line, with the primary span, notes, and suggestions. Colors
+//!   and wrapping never apply to it.
+//!
+//! Diagnostics are sorted by file and byte offset (then by code, message, and insertion order, so equal spans are
+//! stable), and the optional error limit is applied after sorting, which keeps the output deterministic
+//! (issue #436).
 
 use std::fmt::Write as _;
 
@@ -112,11 +127,73 @@ impl Code {
     pub const UNSUPPORTED: Code = Code("E9000");
 }
 
+/// How serious a diagnostic is. Only errors are produced today; the data model carries the severity so the
+/// JSON output and the human header do not have to assume it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        }
+    }
+}
+
+/// A related piece of information. A note with a span points at another place in the source (for example where a
+/// value was moved); a note without one is free-standing.
+#[derive(Clone, Debug)]
+pub struct Note {
+    pub span: Option<Span>,
+    pub message: String,
+}
+
+/// A fix for one span. `span.lo == span.hi` inserts `replacement`; an empty replacement deletes the span. This is
+/// the shape an editor needs for a quick-fix code action.
+#[derive(Clone, Debug)]
+pub struct Suggestion {
+    pub message: String,
+    pub span: Span,
+    pub replacement: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub code: Code,
+    pub severity: Severity,
     pub span: Span,
     pub message: String,
+    pub notes: Vec<Note>,
+    pub suggestions: Vec<Suggestion>,
+}
+
+impl Diagnostic {
+    /// Attaches a note that points at `span`.
+    pub fn note(&mut self, span: Span, message: impl Into<String>) -> &mut Diagnostic {
+        self.notes.push(Note { span: Some(span), message: message.into() });
+        self
+    }
+
+    /// Attaches a note that does not point at a particular span.
+    pub fn note_without_span(&mut self, message: impl Into<String>) -> &mut Diagnostic {
+        self.notes.push(Note { span: None, message: message.into() });
+        self
+    }
+
+    /// Attaches a suggested edit: replace `span` with `replacement`.
+    pub fn suggest(
+        &mut self,
+        span: Span,
+        message: impl Into<String>,
+        replacement: impl Into<String>,
+    ) -> &mut Diagnostic {
+        self.suggestions.push(Suggestion { message: message.into(), span, replacement: replacement.into() });
+        self
+    }
 }
 
 #[derive(Default)]
@@ -125,8 +202,18 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
-    pub fn error(&mut self, code: Code, span: Span, message: impl Into<String>) {
-        self.list.push(Diagnostic { code, span, message: message.into() });
+    /// Records an error and returns it, so notes and suggestions can be attached in the same expression:
+    /// `diags.error(code, span, "message").suggest(...);`
+    pub fn error(&mut self, code: Code, span: Span, message: impl Into<String>) -> &mut Diagnostic {
+        self.list.push(Diagnostic {
+            code,
+            severity: Severity::Error,
+            span,
+            message: message.into(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
+        self.list.last_mut().expect("a diagnostic was just pushed")
     }
 
     /// Moves every diagnostic of `other` into this list, skipping one that has the same code and span as a
@@ -141,7 +228,7 @@ impl Diagnostics {
     }
 
     pub fn has_errors(&self) -> bool {
-        !self.list.is_empty()
+        self.list.iter().any(|d| d.severity == Severity::Error)
     }
 
     pub fn len(&self) -> usize {
@@ -156,23 +243,302 @@ impl Diagnostics {
         self.list.iter()
     }
 
-    /// All diagnostics in source order, one per line.
+    /// All diagnostics in source order, one plain line each. This is [`DiagnosticFormat::Short`] with no limit;
+    /// the benchmark harness and older callers use it, and the driver uses [`Diagnostics::render_with`].
     pub fn render(&self, sources: &SourceMap) -> String {
-        let mut sorted: Vec<&Diagnostic> = self.list.iter().collect();
-        sorted.sort_by_key(|d| (d.span.file, d.span.lo));
-        let mut out = String::new();
-        for d in sorted {
-            let file = sources.get(d.span.file);
-            let (line, col) = file.line_col(d.span.lo);
-            let _ = writeln!(out, "{}:{}:{}: error[{}]: {}", file.path, line, col, d.code.0, d.message);
-        }
-        out
+        let options = RenderOptions { format: DiagnosticFormat::Short, ..RenderOptions::default() };
+        self.render_with(sources, &options).text
     }
+
+    /// Renders the diagnostics in the format and options asked for. The diagnostics are sorted first, so equal
+    /// spans have a stable order, and the error limit is applied after sorting (issue #436).
+    pub fn render_with(&self, sources: &SourceMap, options: &RenderOptions) -> Rendered {
+        let sorted = self.sorted();
+        let total = sorted.len();
+        let shown = options.error_limit.unwrap_or(total).min(total);
+        let mut text = String::new();
+        for d in &sorted[..shown] {
+            match options.format {
+                DiagnosticFormat::Human => render_human(&mut text, d, sources, options),
+                DiagnosticFormat::Short => render_short(&mut text, d, sources),
+                DiagnosticFormat::Json => render_json(&mut text, d, sources),
+            }
+        }
+        Rendered { text, shown, total }
+    }
+
+    /// Sorted by file, then byte offset, then code, message, and insertion order. The insertion index makes ties
+    /// deterministic even when the message and code are equal.
+    fn sorted(&self) -> Vec<&Diagnostic> {
+        let mut sorted: Vec<(usize, &Diagnostic)> = self.list.iter().enumerate().collect();
+        sorted.sort_by(|(ia, a), (ib, b)| {
+            (a.span.file.0, a.span.lo, a.span.hi, a.code.0, a.message.as_str(), *ia).cmp(&(
+                b.span.file.0,
+                b.span.lo,
+                b.span.hi,
+                b.code.0,
+                b.message.as_str(),
+                *ib,
+            ))
+        });
+        sorted.into_iter().map(|(_, d)| d).collect()
+    }
+}
+
+/// The presentation format of a rendered diagnostic.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DiagnosticFormat {
+    /// Colored (when enabled) and wrapped, with one line for each note and suggestion.
+    #[default]
+    Human,
+    /// One plain line per diagnostic, in the form `path:LINE:COL: error[E0000]: message`.
+    Short,
+    /// One JSON object per line, with structured spans, notes, and suggestions.
+    Json,
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderOptions {
+    pub format: DiagnosticFormat,
+    /// Color the location, the severity, and the code. Only [`DiagnosticFormat::Human`] uses it.
+    pub color: bool,
+    /// Maximum line width in characters for the human format; 0 disables wrapping.
+    pub width: usize,
+    /// Print at most this many diagnostics after sorting; `None` prints all of them.
+    pub error_limit: Option<usize>,
+}
+
+impl Default for RenderOptions {
+    fn default() -> RenderOptions {
+        RenderOptions { format: DiagnosticFormat::Human, color: false, width: 80, error_limit: None }
+    }
+}
+
+/// What a render produced: the text and the counts the driver needs for its summary line.
+pub struct Rendered {
+    pub text: String,
+    pub shown: usize,
+    pub total: usize,
+}
+
+// The ANSI styles. They are applied only in the human format and only when color is enabled, and they never
+// change the visible text.
+const RESET: &str = "\x1b[0m";
+const LOCATION: &str = "\x1b[36m";
+const SEVERITY: &str = "\x1b[1;31m";
+const CODE: &str = "\x1b[33m";
+const NOTE: &str = "\x1b[1;36m";
+const HELP: &str = "\x1b[1;32m";
+
+fn render_short(out: &mut String, d: &Diagnostic, sources: &SourceMap) {
+    let file = sources.get(d.span.file);
+    let (line, column) = file.line_col(d.span.lo);
+    let _ = writeln!(out, "{}:{}:{}: {}[{}]: {}", file.path, line, column, d.severity.as_str(), d.code.0, d.message);
+}
+
+fn render_human(out: &mut String, d: &Diagnostic, sources: &SourceMap, options: &RenderOptions) {
+    let file = sources.get(d.span.file);
+    let (line, column) = file.line_col(d.span.lo);
+    let location = format!("{}:{}:{}", file.path, line, column);
+    let severity = d.severity.as_str();
+    let code = d.code.0;
+    let plain_prefix = format!("{location}: {severity}[{code}]: ");
+    let prefix = if options.color {
+        format!("{LOCATION}{location}{RESET}: {SEVERITY}{severity}{RESET}[{CODE}{code}{RESET}]: ")
+    } else {
+        plain_prefix.clone()
+    };
+    push_wrapped(out, &prefix, plain_prefix.chars().count(), &d.message, options.width, HEADER_INDENT);
+
+    for note in &d.notes {
+        let mut plain = String::from("  = note: ");
+        let mut prefix = if options.color { format!("  = {NOTE}note{RESET}: ") } else { plain.clone() };
+        if let Some(span) = note.span {
+            let file = sources.get(span.file);
+            let (line, column) = file.line_col(span.lo);
+            let location = format!("{}:{}:{}: ", file.path, line, column);
+            plain.push_str(&location);
+            if options.color {
+                let _ = write!(prefix, "{LOCATION}{location}{RESET}");
+            } else {
+                prefix.push_str(&location);
+            }
+        }
+        push_wrapped(out, &prefix, plain.chars().count(), &note.message, options.width, DETAIL_INDENT);
+    }
+    for suggestion in &d.suggestions {
+        let plain = String::from("  = help: ");
+        let prefix = if options.color { format!("  = {HELP}help{RESET}: ") } else { plain.clone() };
+        push_wrapped(out, &prefix, plain.chars().count(), &suggestion.message, options.width, DETAIL_INDENT);
+    }
+}
+
+const HEADER_INDENT: &str = "    ";
+const DETAIL_INDENT: &str = "          ";
+
+/// Writes `text` after `prefix`, wrapping it so that no line is wider than `width` characters. `prefix_width` is
+/// the visible width of `prefix` (without the ANSI styles), and `indent` starts every continuation line.
+fn push_wrapped(out: &mut String, prefix: &str, prefix_width: usize, text: &str, width: usize, indent: &str) {
+    if text.is_empty() {
+        let _ = writeln!(out, "{}", prefix.trim_end());
+        return;
+    }
+    if width == 0 {
+        let _ = writeln!(out, "{prefix}{text}");
+        return;
+    }
+    let indent_width = indent.chars().count();
+    let rest = width.saturating_sub(indent_width).max(1);
+    if prefix_width + 1 >= width {
+        // The prefix alone uses the line; put the message underneath rather than splitting it a character at a
+        // time after the prefix.
+        let _ = writeln!(out, "{}", prefix.trim_end());
+        for line in wrap_text(text, rest, rest) {
+            let _ = writeln!(out, "{indent}{line}");
+        }
+        return;
+    }
+    let first = width - prefix_width;
+    for (i, line) in wrap_text(text, first, rest).iter().enumerate() {
+        if i == 0 {
+            let _ = writeln!(out, "{prefix}{line}");
+        } else {
+            let _ = writeln!(out, "{indent}{line}");
+        }
+    }
+}
+
+/// Breaks `text` into lines of at most `first` characters for the first line and `rest` for the others. Words are
+/// kept whole when they fit; a word longer than its line is split at a character boundary.
+fn wrap_text(text: &str, first: usize, rest: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut limit = first.max(1);
+    for word in text.split_whitespace() {
+        let mut remaining: Vec<char> = word.chars().collect();
+        loop {
+            let space = usize::from(!current.is_empty());
+            if current.chars().count() + space + remaining.len() <= limit {
+                if space == 1 {
+                    current.push(' ');
+                }
+                current.extend(remaining.iter());
+                break;
+            }
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                limit = rest.max(1);
+                continue;
+            }
+            let take = limit.min(remaining.len());
+            lines.push(remaining.drain(..take).collect());
+            limit = rest.max(1);
+            if remaining.is_empty() {
+                break;
+            }
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn render_json(out: &mut String, d: &Diagnostic, sources: &SourceMap) {
+    let _ = write!(
+        out,
+        "{{\"type\":\"diagnostic\",\"severity\":\"{}\",\"code\":\"{}\",\"span\":{},\"message\":\"{}\"",
+        d.severity.as_str(),
+        d.code.0,
+        json_span(sources, d.span),
+        json_escape(&d.message)
+    );
+    out.push_str(",\"notes\":[");
+    for (i, note) in d.notes.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let _ = write!(out, "{{\"message\":\"{}\",\"span\":", json_escape(&note.message));
+        match note.span {
+            Some(span) => out.push_str(&json_span(sources, span)),
+            None => out.push_str("null"),
+        }
+        out.push('}');
+    }
+    out.push_str("],\"suggestions\":[");
+    for (i, suggestion) in d.suggestions.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"message\":\"{}\",\"span\":{},\"replacement\":\"{}\"}}",
+            json_escape(&suggestion.message),
+            json_span(sources, suggestion.span),
+            json_escape(&suggestion.replacement)
+        );
+    }
+    out.push_str("]}\n");
+}
+
+fn json_span(sources: &SourceMap, span: Span) -> String {
+    let file = sources.get(span.file);
+    let (line, column) = file.line_col(span.lo);
+    let (end_line, end_column) = file.line_col(span.hi);
+    format!(
+        "{{\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{},\"byte_start\":{},\"byte_end\":{}}}",
+        json_escape(&file.path),
+        line,
+        column,
+        end_line,
+        end_column,
+        span.lo,
+        span.hi
+    )
+}
+
+/// Escapes a string for a JSON document. The JSON format is a stable interface for editors, so control
+/// characters and quotes must never leak into it.
+pub fn json_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            ch if (ch as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", ch as u32);
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn strip_ansi(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                for ch in chars.by_ref() {
+                    if ch == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
 
     #[test]
     fn line_and_column() {
@@ -212,6 +578,31 @@ mod tests {
     }
 
     #[test]
+    fn equal_spans_are_ordered_by_code_message_and_insertion() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "x\n".into());
+        let span = Span::new(file, 0, 1);
+        let mut d = Diagnostics::default();
+        d.error(Code::TYPE_MISMATCH, span, "b");
+        d.error(Code::SYNTAX, span, "z");
+        d.error(Code::SYNTAX, span, "a");
+        let first = d.render(&sources);
+        assert_eq!(
+            first,
+            "a.bd:1:1: error[E0001]: a\n\
+             a.bd:1:1: error[E0001]: z\n\
+             a.bd:1:1: error[E0003]: b\n"
+        );
+        // Reversing the insertion order gives the same text: the order is a property of the data, not of the
+        // order the checks happened to run in.
+        let mut e = Diagnostics::default();
+        e.error(Code::SYNTAX, span, "a");
+        e.error(Code::TYPE_MISMATCH, span, "b");
+        e.error(Code::SYNTAX, span, "z");
+        assert_eq!(e.render(&sources), first);
+    }
+
+    #[test]
     fn absorb_skips_duplicates_but_keeps_other_codes() {
         let span = Span::new(FileId(0), 0, 1);
         let mut d = Diagnostics::default();
@@ -222,5 +613,153 @@ mod tests {
         d.absorb(other);
         assert_eq!(d.len(), 2);
         assert_eq!(d.iter().map(|x| x.message.as_str()).collect::<Vec<_>>(), ["first", "different code"]);
+    }
+
+    #[test]
+    fn short_is_one_plain_line_without_notes_or_suggestions() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "mut x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::MISSING_MUT_MARKER, Span::new(file, 0, 3), "pass the argument as `mut ...`")
+            .note(Span::new(file, 0, 1), "declared here")
+            .suggest(Span::new(file, 0, 0), "add `mut` before this argument", "mut ");
+        let rendered = d.render_with(
+            &sources,
+            &RenderOptions { format: DiagnosticFormat::Short, color: true, ..RenderOptions::default() },
+        );
+        assert_eq!(rendered.text, "a.bd:1:1: error[E0114]: pass the argument as `mut ...`\n");
+        assert_eq!(d.render(&sources), rendered.text);
+    }
+
+    #[test]
+    fn human_renders_notes_and_suggestions() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "mut x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::MISSING_MUT_MARKER, Span::new(file, 0, 3), "pass the argument as `mut ...`")
+            .note(Span::new(file, 0, 1), "declared here")
+            .suggest(Span::new(file, 0, 0), "add `mut` before this argument", "mut ");
+        let rendered = d.render_with(&sources, &RenderOptions { width: 0, ..RenderOptions::default() });
+        assert_eq!(
+            rendered.text,
+            "a.bd:1:1: error[E0114]: pass the argument as `mut ...`\n\
+             \x20 = note: a.bd:1:1: declared here\n\
+             \x20 = help: add `mut` before this argument\n"
+        );
+    }
+
+    #[test]
+    fn human_colorizes_location_severity_and_code_without_changing_the_text() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::TYPE_MISMATCH, Span::new(file, 0, 1), "expected `i32`, found `str`");
+        let plain = d.render_with(&sources, &RenderOptions { color: false, width: 0, ..RenderOptions::default() });
+        let colored = d.render_with(&sources, &RenderOptions { color: true, width: 0, ..RenderOptions::default() });
+        assert!(colored.text.contains("\x1b[36ma.bd:1:1\x1b[0m"), "{}", colored.text);
+        assert!(colored.text.contains("\x1b[1;31merror\x1b[0m"), "{}", colored.text);
+        assert!(colored.text.contains("\x1b[33mE0003\x1b[0m"), "{}", colored.text);
+        assert_eq!(strip_ansi(&colored.text), plain.text);
+    }
+
+    #[test]
+    fn human_wraps_long_messages_to_the_width() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::UNKNOWN_NAME, Span::new(file, 0, 1), "unknown name `a_very_long_identifier_that_does_not_fit`");
+        let rendered = d.render_with(&sources, &RenderOptions { width: 40, ..RenderOptions::default() });
+        let lines: Vec<&str> = rendered.text.lines().collect();
+        assert!(lines.len() > 1, "{}", rendered.text);
+        for line in &lines {
+            assert!(line.chars().count() <= 40, "line is too long: {line:?}");
+        }
+        assert!(lines[1].starts_with(HEADER_INDENT), "{:?}", rendered.text);
+        // Wrapping never inserts a character: the message is the lines with the break and indentation removed.
+        let joined = rendered.text.lines().map(str::trim_start).collect::<Vec<_>>().join("");
+        assert!(joined.contains("`a_very_long_identifier_that_does_not_fit`"), "{joined}");
+    }
+
+    #[test]
+    fn wrapping_ignores_a_zero_width_and_keeps_utf8_whole() {
+        let lines = wrap_text("alpha béta gamma", 12, 8);
+        assert_eq!(lines, ["alpha béta", "gamma"]);
+        let split = wrap_text("ééééé", 2, 2);
+        assert_eq!(split, ["éé", "éé", "é"]);
+    }
+
+    #[test]
+    fn json_contains_structured_spans_notes_and_suggestions() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "mut x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::MISSING_MUT_MARKER, Span::new(file, 4, 5), "pass the argument as `mut ...`")
+            .note(Span::new(file, 0, 3), "declared here")
+            .suggest(Span::new(file, 4, 4), "add `mut` before this argument", "mut ");
+        let rendered = d.render_with(
+            &sources,
+            &RenderOptions { format: DiagnosticFormat::Json, color: true, ..RenderOptions::default() },
+        );
+        assert_eq!(
+            rendered.text,
+            "{\"type\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0114\",\
+             \"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":5,\"end_line\":1,\"end_column\":6,\
+             \"byte_start\":4,\"byte_end\":5},\"message\":\"pass the argument as `mut ...`\",\
+             \"notes\":[{\"message\":\"declared here\",\"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":1,\
+             \"end_line\":1,\"end_column\":4,\"byte_start\":0,\"byte_end\":3}}],\
+             \"suggestions\":[{\"message\":\"add `mut` before this argument\",\"span\":{\"file\":\"a.bd\",\
+             \"line\":1,\"column\":5,\"end_line\":1,\"end_column\":5,\"byte_start\":4,\"byte_end\":4},\
+             \"replacement\":\"mut \"}]}\n"
+        );
+        assert!(!rendered.text.contains('\x1b'));
+    }
+
+    #[test]
+    fn json_represents_spanless_notes_and_deletions() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "mut x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::UNNEEDED_MUT_MARKER, Span::new(file, 4, 5), "no marker")
+            .note_without_span("see the guide")
+            .suggest(Span::new(file, 0, 4), "remove the `mut` marker", "");
+        let rendered =
+            d.render_with(&sources, &RenderOptions { format: DiagnosticFormat::Json, ..RenderOptions::default() });
+        assert_eq!(
+            rendered.text,
+            "{\"type\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0115\",\
+             \"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":5,\"end_line\":1,\"end_column\":6,\
+             \"byte_start\":4,\"byte_end\":5},\"message\":\"no marker\",\
+             \"notes\":[{\"message\":\"see the guide\",\"span\":null}],\
+             \"suggestions\":[{\"message\":\"remove the `mut` marker\",\"span\":{\"file\":\"a.bd\",\
+             \"line\":1,\"column\":1,\"end_line\":1,\"end_column\":5,\"byte_start\":0,\"byte_end\":4},\
+             \"replacement\":\"\"}]}\n"
+        );
+    }
+
+    #[test]
+    fn json_escapes_quotes_backslashes_and_control_characters() {
+        assert_eq!(json_escape("a\"b\\c\nd\te\u{1}"), "a\\\"b\\\\c\\nd\\te\\u0001");
+        assert_eq!(json_escape("héllo"), "héllo");
+    }
+
+    #[test]
+    fn error_limit_applies_after_sorting_and_reports_the_total() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "abcdefgh\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::TYPE_MISMATCH, Span::new(file, 6, 7), "third");
+        d.error(Code::SYNTAX, Span::new(file, 0, 1), "first");
+        d.error(Code::UNKNOWN_NAME, Span::new(file, 3, 4), "second");
+        let rendered = d.render_with(
+            &sources,
+            &RenderOptions { format: DiagnosticFormat::Short, error_limit: Some(2), ..RenderOptions::default() },
+        );
+        assert_eq!(rendered.total, 3);
+        assert_eq!(rendered.shown, 2);
+        assert_eq!(rendered.text, "a.bd:1:1: error[E0001]: first\na.bd:1:4: error[E0002]: second\n");
+        let all =
+            d.render_with(&sources, &RenderOptions { format: DiagnosticFormat::Short, ..RenderOptions::default() });
+        assert_eq!(all.shown, 3);
+        assert_eq!(all.text.lines().count(), 3);
     }
 }

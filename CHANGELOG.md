@@ -51,6 +51,15 @@ close-out checklist in `AGENTS.md`).
   code generation; tests marked `//@ debug-only` (the m02 overflow abort test) are skipped. `tests/check-ci.sh` fails
   if a job loses its release step, if the runner stops selecting the profile or skipping debug-only tests, or if no
   test is marked debug-only (issue #47).
+- Diagnostics gained presentation and tooling (issues #433-#437). The human format colors the location, severity,
+  and code when stderr is a terminal, honors `--color`, `--no-color`, and `NO_COLOR`, and wraps to `--width`,
+  `COLUMNS`, or 80; `--diagnostic-format short` is the one-line machine format and `json` is one JSON object per
+  diagnostic plus a summary object. Diagnostics carry notes and suggestions with spans and replacement edits
+  (E0100/E0110 attach notes; E0114/E0115 attach the suggested `mut` edit). Output is sorted deterministically, and
+  `--error-limit` truncates after sorting while still counting every error (unlimited by default). The new
+  `docs/error-codes.md` documents every registry code with a compiled example and a fix, `burdin explain <code>`
+  prints an entry, and every CI job runs `tests/check-diagnostics.sh` and `tests/check-error-docs.sh`. Unit tests
+  cover the formats, color decision, wrapping, JSON shape, ordering, and limit in `burdin_diag` and `burdin_driver`.
 - The compiler benchmarks gained regression tracking (issue #446): `cargo bench -p burdin_bench -- --save FILE`
   records a run's medians in a plain-text baseline, and `--baseline FILE` compares a later run with it, reporting
   every case more than `--threshold` percent slower (default 25) and exiting 1. `tests/bench-regression.sh` runs the
