@@ -327,13 +327,13 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: tests/run-tests.sh -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: tests/run-tests.sh --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: tests/run-tests.sh -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
   windows:
     runs-on: windows-latest
