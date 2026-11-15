@@ -76,6 +76,8 @@ impl TypeDefs<'_> {
             Ty::List(t) => prop == Property::Clone && self.holds(t, prop, seen),
             Ty::Map(k, v) => prop == Property::Clone && self.holds(k, prop, seen) && self.holds(v, prop, seen),
             Ty::Param(_) => false,
+            // An `any` box owns a heap allocation and cannot be copied or cloned (AN1).
+            Ty::Any(_) => false,
             Ty::Result(t, e) => self.holds(t, prop, seen) && self.holds(e, prop, seen),
             Ty::Array(t, _) | Ty::Option(t) => self.holds(t, prop, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.holds(t, prop, seen)),
@@ -120,6 +122,8 @@ impl TypeDefs<'_> {
             Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) => false,
             // A closure's capture record is heap-allocated and may own its captures.
             Ty::Fn { .. } => true,
+            // A box owns its heap allocation and the value inside it (AN1/AN7).
+            Ty::Any(_) => true,
             // An owning iterator frees its buffer (or drops the elements it has not handed out).
             Ty::String
             | Ty::Heap(_)
@@ -205,6 +209,17 @@ mod tests {
         assert!(!defs.is_copy(&Ty::Ref { mutable: true, inner: Box::new(int()) }), "a &mut is not Copy");
         assert!(!defs.is_copy(&Ty::String));
         assert!(!defs.is_copy(&Ty::List(Box::new(int()))));
+    }
+
+    #[test]
+    fn an_any_box_is_owned_droppable_and_not_copy_or_clone() {
+        let defs = TypeDefs { structs: &[], enums: &[] };
+        let any = Ty::Any(crate::ty::AnyRef { id: 0, name: "Shape".into(), iface: 0, args: Vec::new() });
+        assert!(!defs.is_copy(&any));
+        assert!(!defs.is_clone(&any));
+        assert!(defs.needs_drop(&any));
+        assert!(!defs.has_drop_impl(&any));
+        assert!(!any.is_second_class(), "a box owns its value");
     }
 
     #[test]

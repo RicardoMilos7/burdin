@@ -5,7 +5,9 @@
 //! are LLVM arrays, and `Option<T>` is `{ i1 is_some, T }`. Tuples and structs are LLVM structs with one member per
 //! field, in declaration order (a field without a value, such as `()`, is an empty struct, so member indices are
 //! field indices). An enum is `{ i32 tag, [N x iA] payload }`, where the payload is sized and aligned for the largest
-//! variant and is read through a pointer as the variant's own struct of fields. `()` and `!` have no value.
+//! variant and is read through a pointer as the variant's own struct of fields. An `any I` box is
+//! `{ ptr data, ptr vtable }`, where `data` is a `malloc`ed concrete value and `vtable` points at a private constant
+//! `{ i64 type_id, ptr drop, ptr method... }` table (`spec/existentials.md`). `()` and `!` have no value.
 //!
 //! **Ownership.** Values are owned by exactly one place: a local, a parameter, a field, or a temporary. A move reads
 //! the value and leaves the source uninitialized. The move checker records every place a function reads in a move

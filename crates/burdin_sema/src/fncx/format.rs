@@ -382,7 +382,7 @@ impl FnCx<'_> {
     pub(super) fn to_string_via_display(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Float(_) => true,
-            Ty::Struct(_) | Ty::Enum(_) | Ty::Param(_) => self.formattable(ty, false),
+            Ty::Struct(_) | Ty::Enum(_) | Ty::Param(_) | Ty::Any(_) => self.formattable(ty, false),
             _ => false,
         }
     }

@@ -161,6 +161,15 @@ impl Code {
     pub const NOT_FORMATTABLE: Code = Code("E0193");
     /// A format call with arguments whose format string is not a string literal.
     pub const FORMAT_NOT_LITERAL: Code = Code("E0194");
+    /// `any` or `impl` applied to something that is not an interface.
+    pub const NOT_AN_INTERFACE: Code = Code("E0200");
+    /// `impl Interface` outside a parameter list.
+    pub const IMPL_NOT_PARAMETER: Code = Code("E0201");
+    /// An interface that cannot be used as `any` because it is not object-safe.
+    pub const NOT_OBJECT_SAFE: Code = Code("E0202");
+    /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
+    /// therefore cannot dispatch through a vtable.
+    pub const BUILT_IN_IMPL: Code = Code("E0204");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// Every remaining site is assigned to a milestone in `spec/e9000-audit.md`, and `tests/check_e9000.py`
     /// fails when a site is unassigned, stale, or belongs to a milestone that has shipped.

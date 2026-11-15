@@ -289,6 +289,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_indirect_call(drop_ty, drop, &[env.into()], "").map_err(llvm_err)?;
                 Ok(())
             }
+            // A box owns its heap allocation: run the concrete type's drop through the vtable, then free it.
+            Ty::Any(a) => {
+                // `AnyRef::id` is the vtable layout's index; `iface` is the checker's interface index.
+                let vtable_ty = self.vtable_struct_ty(a.id);
+                let v = self.builder.build_load(self.any_ty, addr, "any").map_err(llvm_err)?.into_struct_value();
+                let data = self.builder.build_extract_value(v, 0, "any.data").map_err(llvm_err)?.into_pointer_value();
+                let vtable =
+                    self.builder.build_extract_value(v, 1, "any.vtable").map_err(llvm_err)?.into_pointer_value();
+                let drop_ptr = self.builder.build_struct_gep(vtable_ty, vtable, 1, "any.drop").map_err(llvm_err)?;
+                let drop =
+                    self.builder.build_load(ptr_ty, drop_ptr, "any.drop").map_err(llvm_err)?.into_pointer_value();
+                let drop_ty = self.cx.void_type().fn_type(&[ptr_ty.into()], false);
+                self.builder.build_indirect_call(drop_ty, drop, &[data.into()], "").map_err(llvm_err)?;
+                self.builder.build_call(self.rt.free, &[data.into()], "").map_err(llvm_err)?;
+                Ok(())
+            }
             Ty::CString => {
                 let p = self.builder.build_load(ptr_ty, addr, "cstring").map_err(llvm_err)?.into_pointer_value();
                 self.builder.build_call(self.rt.free, &[p.into()], "").map_err(llvm_err)?;

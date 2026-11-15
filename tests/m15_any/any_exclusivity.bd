@@ -1,0 +1,32 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+    fn grow(mut self, by: i32)
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+    fn grow(mut self, by: i32) {
+        self.w = self.w + by
+    }
+}
+
+fn combine(mut first: any Shape, second: any Shape) {
+    let _ = first.area()
+    let _ = second.area()
+}
+
+fn main() {
+    let mut shape: any Shape = Rect { w: 1, h: 1 }
+    combine(mut shape, shape) //~ E0110
+    let fixed: any Shape = Rect { w: 1, h: 1 }
+    fixed.grow(1) //~ E0113
+}

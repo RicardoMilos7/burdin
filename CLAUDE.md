@@ -22,10 +22,11 @@ not updated and may disagree with the repository.
    library surface (names and signatures), `spec/iterators.md` is the iteration protocol (`Iterator<T>`/
    `Iterable<T>`, `iter()`/`into_iter()`, user `for`, the adapters, and ranges), `spec/format.md` is interpolation,
    `Display`/`Debug`, the format specifiers, and the output functions, `spec/derives.md` is the exact
-   behavior of `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`, and `spec/test-runner.md` is the behavior of
+   behavior of `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`, `spec/existentials.md` is the behavior of `any`
+   and `impl` existential types, object safety, boxing, and downcasts, and `spec/test-runner.md` is the behavior of
    `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
-   `spec/stage1-subset.md` is the stage 1 plan: what the next milestones add, the decisions they need, and the
+   `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
 4. `Burdin Language Design.md` is the full language design, including features that come after stage 0.
 

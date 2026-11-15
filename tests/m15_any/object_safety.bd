@@ -1,0 +1,32 @@
+//@ compile-fail
+
+interface Generic {
+    fn map<U>(self, value: U)
+}
+
+interface WithSelf {
+    fn duplicate(self): Self
+}
+
+interface Owned {
+    fn consume(own self)
+}
+
+interface Needs requires Generic {
+    fn draw(self)
+}
+
+fn takes_generic(value: any Generic) { //~ E0202
+}
+
+fn takes_self(value: any WithSelf) { //~ E0202
+}
+
+fn takes_owned(value: any Owned) { //~ E0202
+}
+
+fn takes_needs(value: any Needs) { //~ E0202
+}
+
+fn main() {
+}

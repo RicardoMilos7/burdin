@@ -1,0 +1,27 @@
+//@ run
+//> [p]
+
+interface Greeter {
+    fn name(self): String
+    fn greet(self): String {
+        let mut out = String.from("[")
+        out.push_str(self.name().as_str())
+        out.push_str("]")
+        out
+    }
+}
+
+struct Person {
+    id: i32
+}
+
+Person: Greeter {
+    fn name(self): String {
+        String.from("p")
+    }
+}
+
+fn main() {
+    let greeter: any Greeter = Person { id: 1 }
+    println(greeter.greet())
+}

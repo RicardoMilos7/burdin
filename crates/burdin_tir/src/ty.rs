@@ -13,6 +13,19 @@ pub struct AdtRef {
     pub second_class: bool,
 }
 
+/// `any I` (spec/existentials.md, AN1): an owned box of one value of a concrete type behind a vtable.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AnyRef {
+    /// The index into `Program::any_ifaces`: the interface instance's vtable layout.
+    pub id: usize,
+    /// The display name, such as `Shape` or `Store<i32>`.
+    pub name: Rc<str>,
+    /// The interface the box was built as, and its type arguments. Substituting a generic signature maps these
+    /// (`spec/existentials.md`, AN6).
+    pub iface: usize,
+    pub args: Vec<Ty>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IntTy {
     I8,
@@ -144,6 +157,8 @@ pub enum Ty {
     Chars,
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
     Heap(Box<Ty>),
+    /// `any I`: an owned value boxed behind the interface's vtable (spec/existentials.md, AN1).
+    Any(AnyRef),
     /// `CPtr<T>`: a raw C pointer. It has no destructor and is copied like a number.
     CPtr(Box<Ty>),
     /// `CString`: an owned, NUL-terminated C string in the C heap.
@@ -203,6 +218,8 @@ impl Ty {
             Ty::Map(k, v) | Ty::MapIntoIter(k, v) => k.is_second_class() || v.is_second_class(),
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
             Ty::Struct(a) | Ty::Enum(a) => a.second_class,
+            // A box owns its heaped value; an `any I` type argument is never a view of the box (AN1, AN3).
+            Ty::Any(_) => false,
             _ => false,
         }
     }
@@ -239,6 +256,7 @@ impl fmt::Display for Ty {
             Ty::Map(k, v) => write!(f, "Map<{k}, {v}>"),
             Ty::Chars => f.write_str("Chars"),
             Ty::Heap(t) => write!(f, "Heap<{t}>"),
+            Ty::Any(a) => write!(f, "any {}", a.name),
             Ty::CPtr(t) => write!(f, "CPtr<{t}>"),
             Ty::CString => f.write_str("CString"),
             Ty::Range(t, false) => write!(f, "Range<{t}>"),
@@ -360,6 +378,7 @@ mod tests {
             (Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone())), "Map<str, i32>"),
             (Ty::Chars, "Chars"),
             (Ty::Heap(Box::new(i32_.clone())), "Heap<i32>"),
+            (Ty::Any(AnyRef { id: 0, name: "Shape".into(), iface: 0, args: Vec::new() }), "any Shape"),
             (Ty::CPtr(Box::new(i32_.clone())), "CPtr<i32>"),
             (Ty::CString, "CString"),
             (Ty::Range(Box::new(i32_.clone()), false), "Range<i32>"),

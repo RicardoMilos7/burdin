@@ -1,0 +1,60 @@
+//@ run
+//> rect 6
+//> circle 9
+//> grown 24
+
+interface Shape {
+    fn area(self): i32
+    fn name(self): String
+    fn grow(mut self, by: i32)
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+    fn name(self): String {
+        String.from("rect")
+    }
+    fn grow(mut self, by: i32) {
+        self.w = self.w + by
+        self.h = self.h + by
+    }
+}
+
+struct Circle {
+    r: i32
+}
+
+Circle: Shape {
+    fn area(self): i32 {
+        self.r * self.r
+    }
+    fn name(self): String {
+        String.from("circle")
+    }
+    fn grow(mut self, by: i32) {
+        self.r = self.r + by
+    }
+}
+
+fn show(shape: impl Shape) {
+    println("{shape.name()} {shape.area()}")
+}
+
+fn consume(own shape: impl Shape): i32 {
+    shape.area()
+}
+
+fn main() {
+    show(Rect { w: 2, h: 3 })
+    show(Circle { r: 3 })
+    let mut r = Rect { w: 4, h: 2 }
+    r.grow(2)
+    println("grown {consume(r)}")
+}

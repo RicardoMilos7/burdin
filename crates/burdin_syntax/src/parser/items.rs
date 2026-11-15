@@ -413,7 +413,7 @@ impl Parser<'_> {
         let is_unsafe = self.eat(&TokenKind::Unsafe);
         self.expect(&TokenKind::Fn)?;
         let name = self.ident("a function name")?;
-        let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        let mut generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
         self.open(&TokenKind::LParen, false)?;
         let mut params = Vec::new();
         let mut is_vararg = false;
@@ -429,6 +429,7 @@ impl Parser<'_> {
             }
         }
         self.close(&TokenKind::RParen)?;
+        generics = self.desugar_impl_params(generics, &mut params);
         let ret = if self.eat(&TokenKind::Colon) { Some(self.ty()?) } else { None };
         let where_clause = if self.at(&TokenKind::Where) { self.where_clause()? } else { Vec::new() };
         if body_optional && !self.at(&TokenKind::LBrace) {
@@ -471,6 +472,35 @@ impl Parser<'_> {
         self.expect(&TokenKind::Colon)?;
         let ty = self.ty()?;
         Ok(Param { convention, kind: ParamKind::Named { name, ty }, span: start.to(self.prev_span()) })
+    }
+
+    /// `impl Interface` in a parameter is sugar for one hidden type parameter with that interface as its bound
+    /// (spec/existentials.md, AN4). The parameter's type becomes a path to the hidden parameter, so inference,
+    /// monomorphization, and the bound checks are the ordinary generic ones. A hidden name never collides with a
+    /// written type parameter. An `impl` outside a parameter is left for the checker (E0201).
+    fn desugar_impl_params(&mut self, mut generics: Vec<GenericParam>, params: &mut [Param]) -> Vec<GenericParam> {
+        for p in params {
+            let ParamKind::Named { ty, .. } = &mut p.kind else { continue };
+            if !matches!(ty.kind, TypeKind::Impl(_)) {
+                continue;
+            }
+            let span = ty.span;
+            let TypeKind::Impl(inner) = std::mem::replace(&mut ty.kind, TypeKind::Unit) else {
+                unreachable!("just matched")
+            };
+            let mut index = 0;
+            let name = loop {
+                let candidate = format!("impl{index}");
+                if !generics.iter().any(|g| g.name.name == candidate) {
+                    break candidate;
+                }
+                index += 1;
+            };
+            let name = Ident { name, span };
+            ty.kind = TypeKind::Path(vec![PathSegment { name: name.clone(), args: Vec::new() }]);
+            generics.push(GenericParam { name, bounds: vec![*inner] });
+        }
+        generics
     }
 
     pub(super) fn generic_params(&mut self) -> PResult<Vec<GenericParam>> {

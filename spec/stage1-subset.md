@@ -84,6 +84,13 @@ Milestone 14 is complete: `tests/m14_format` and every earlier folder pass in de
 recorded in `spec/format.md` FM1-FM10 (with the decision that format strings are checked and lowered at compile
 time), `spec/derives.md` for `Debug`, and `spec/stdlib.md` for the output functions.
 
+Milestone 15 is complete: `tests/m15_any` and every earlier folder pass in debug and release, and the rules are
+recorded in `spec/existentials.md` AN1-AN12 (the decision that `any Interface` is an owned heap box with a vtable,
+`impl Interface` is a hidden generic parameter, and `is`/`downcast` are compiler-known). The new diagnostics are
+E0200 (not an interface), E0201 (`impl` outside a parameter list), E0202 (not object-safe), and E0204 (a
+compiler-provided implementation has no function to dispatch to); `tests/README.md`, `docs/error-codes.md`, and
+`spec/grammar.md` are updated with them.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -106,9 +113,13 @@ registry code, a test, and a spec update **before** the code, per the working ru
 
 ## Decisions needed before milestone 15
 
-Milestone 14's decision is settled in `spec/format.md`: format strings are a compile-time construct, `Display` and
-`Debug` are ordinary `std` interfaces with compiler-known implementations, and `print`/`println` take a format
-string only when they have more than one argument.
+**`any` and `impl` — settled with milestone 15.** The decision is `spec/existentials.md` AN1-AN12: `any Interface` is
+an owned two-word heap box `{data, vtable}`, a concrete value is boxed implicitly wherever an expected type is known,
+`any I` requires an object-safe `I` (E0202), `impl Interface` in a parameter list is sugar for a hidden generic
+parameter with the interface as its bound, and `x.is<T>()`/`x.downcast<T>()` are compiler-known (the downcast
+consumes the box). A primitive's compiler-provided `Display`/`Debug` implementation has no function to dispatch to,
+so boxing it is E0204. The tests are `tests/m15_any/`; milestone 14's formatting decision remains in
+`spec/format.md`.
 
 ## Decisions needed before milestone 12
 
@@ -139,8 +150,9 @@ code; do not invent them inside the implementation.
    list. Write down whether `next` consumes, mutates, or borrows the iterator and how a lazy chain stays
    second-class.
 
-3. **`any` and `impl`.** Boxed or inline, object-safety rules, downcast syntax, and whether `impl Interface` in a
-   parameter is sugar for a generic. Dynamic `Error` in milestone 16 depends on this answer.
+3. **`any` and `impl` — settled with milestone 15.** The decision is `spec/existentials.md` AN1-AN12: the value is
+   boxed, object safety is AN2, `impl Interface` in a parameter is a hidden generic, and `is`/`downcast` are the
+   downcast spelling. Dynamic `Error` in milestone 16 builds on it.
 
 4. **Error representation.** How `error enum` lowers (enum with payload fields and a generated message method), how
    `from` is registered (like `Type: From<Source>`), what a trace costs in debug, and the representation of the

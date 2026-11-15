@@ -1,0 +1,16 @@
+//@ run
+//> true
+//> 3
+
+fn main() {
+    let mut list: List<i32> = List<i32>.new()
+    list.push(1)
+    list.push(2)
+    list.push(3)
+    let boxed: any Iterable<i32> = list
+    println(boxed.is<List<i32>>().to_string())
+    match boxed.downcast<List<i32>>() {
+        Some(values) => println(values.len().to_string()),
+        None => println("none"),
+    }
+}

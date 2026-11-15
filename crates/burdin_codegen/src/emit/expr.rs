@@ -84,6 +84,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
             K::Closure { closure, captures } => self.closure_value(*closure, captures, e.span)?,
             K::ClosureCall { callee, args, kind } => self.closure_call(callee, args, *kind)?,
+            K::BoxAny { value, vtable } => self.box_any(value, *vtable)?,
+            K::AnyCall { recv, iface, slot, params, args } => {
+                self.any_call(recv, *iface, *slot, params, args, &e.ty)?
+            }
+            K::AnyIs { value, type_id, .. } => self.any_is(value, *type_id)?,
+            K::AnyDowncast { value, target, type_id } => self.any_downcast(value, target, *type_id)?,
             K::StringAsStr(inner) => {
                 let (ptr, len) = self.view_parts(inner)?;
                 Some(self.make_str(ptr, len)?.into())

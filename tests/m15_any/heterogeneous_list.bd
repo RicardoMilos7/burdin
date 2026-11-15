@@ -1,0 +1,46 @@
+//@ run
+//> rect 6
+//> circle 9
+//> 2
+
+interface Shape {
+    fn area(self): i32
+    fn name(self): String
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+    fn name(self): String {
+        String.from("rect")
+    }
+}
+
+struct Circle {
+    r: i32
+}
+
+Circle: Shape {
+    fn area(self): i32 {
+        self.r * self.r
+    }
+    fn name(self): String {
+        String.from("circle")
+    }
+}
+
+fn main() {
+    let mut shapes: List<any Shape> = List<any Shape>.new()
+    shapes.push(Rect { w: 2, h: 3 })
+    shapes.push(Circle { r: 3 })
+    for shape in shapes {
+        println("{shape.name()} {shape.area()}")
+    }
+    println(shapes.len().to_string())
+}

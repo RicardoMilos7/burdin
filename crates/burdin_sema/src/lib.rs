@@ -14,6 +14,7 @@
 //!    `instances` until no generic instance is missing.
 //! 4. `validate` and `derives`: checks that need the whole program.
 
+mod any;
 mod bodies;
 mod builtins;
 mod consts;

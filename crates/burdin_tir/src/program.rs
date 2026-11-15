@@ -22,6 +22,41 @@ pub struct Program {
     /// The program's `test` blocks, in declaration order. Only `burdin test` fills this in; a normal build has
     /// none, because test items are stripped before checking.
     pub tests: Vec<TestEntry>,
+    /// The interface instances an `any` type names, indexed by [`AnyRef::id`].
+    pub any_ifaces: Vec<AnyIface>,
+    /// One vtable per (concrete type, interface instance) the program boxes, indexed by `ExprKind::BoxAny`.
+    pub any_vtables: Vec<AnyVTable>,
+    /// The types with a runtime identity (boxed concrete types and downcast targets), indexed by their id.
+    pub any_type_ids: Vec<Ty>,
+}
+
+/// The vtable layout of one interface instance (`any I`), in the order of `spec/existentials.md`, AN2/AN11.
+pub struct AnyIface {
+    /// The display name, such as `Shape` or `Store<i32>`.
+    pub name: String,
+    /// One slot per method, in vtable order. The receiver is `sig.params[0]`.
+    pub methods: Vec<AnyMethod>,
+}
+
+/// One vtable slot: the interface method's substituted signature. Every object-safe implementation matches it, so
+/// one signature describes the slot for every boxed type.
+#[derive(Clone)]
+pub struct AnyMethod {
+    pub name: String,
+    pub sig: Signature,
+    pub is_unsafe: bool,
+}
+
+/// One `(T, I)` vtable: the concrete type, its identity, and one function per interface method.
+#[derive(Clone)]
+pub struct AnyVTable {
+    pub concrete: Ty,
+    /// The concrete type's identity: an index into [`Program::any_type_ids`], shared by every interface.
+    pub type_id: usize,
+    /// The interface instance (an index into [`Program::any_ifaces`]).
+    pub iface: usize,
+    /// The concrete implementation of each slot of `iface`, in order.
+    pub entries: Vec<FuncId>,
 }
 
 /// One `test "name" [attrs] { ... }` block, compiled as the function `func`.

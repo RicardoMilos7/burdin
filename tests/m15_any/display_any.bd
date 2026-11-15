@@ -1,0 +1,26 @@
+//@ run
+//> tag 7
+//> tag 8
+//> tag 9
+
+struct Tag {
+    v: i32
+}
+
+Tag: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str("tag ")
+        self.v.fmt(mut f)
+    }
+}
+
+fn main() {
+    let mut items: List<any Display> = List<any Display>.new()
+    items.push(Tag { v: 7 })
+    items.push(Tag { v: 8 })
+    for item in items {
+        println("{item}")
+    }
+    let one: any Display = Tag { v: 9 }
+    println(one.to_string())
+}

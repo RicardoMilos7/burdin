@@ -932,3 +932,91 @@ fn main() {
 
 **How to fix:** write the format string out at the call (`println("n = {n}")`), or format into a `String` first
 (`let text = format("n = {n}")`) and print the value.
+
+## E0200: `any` or `impl` applied to something that is not an interface
+
+`any` and `impl` take an interface name (with optional type arguments), because the value is reached through a
+vtable and implemented by types that satisfy that interface. A type (`any P`), a type parameter, or a built-in bound
+(`any Copy`) cannot be used this way.
+
+<!-- error-example: E0200 -->
+```burdin
+struct P {
+    x: i32
+}
+
+fn main() {
+    let p: any P = P { x: 1 } //~ E0200
+}
+```
+<!-- /error-example -->
+
+**How to fix:** name an interface after `any` or `impl`, or use the type directly if no dynamic dispatch is wanted.
+A stored boxed value is `any Interface`; a parameter that accepts any implementation statically is `impl Interface`.
+
+## E0201: `impl Interface` outside a parameter list
+
+`impl Interface` is sugar for one hidden generic parameter with that interface as its bound, so it needs a call site
+to infer the concrete type from. A return type, a local annotation, a field, a container element, a bound, or an
+`extern` signature has no such parameter.
+
+<!-- error-example: E0201 -->
+```burdin
+interface Shape {
+    fn area(self): f64
+}
+
+struct C {
+    r: f64
+}
+
+fn main() {
+    let s: impl Shape = C { r: 1.0 } //~ E0201
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write `impl Interface` only in a parameter list (`fn draw(shape: impl Shape)`). For a value that is
+stored, returned, or put in a field and still needs dynamic dispatch, use `any Interface`; otherwise name the
+concrete type.
+
+## E0202: An interface that cannot be used as `any`
+
+An interface used as `any Interface` must be object-safe, because its methods are reached through a fixed vtable:
+no method may have its own type parameters, every method needs a `self` receiver, `own self` is not allowed (the
+boxed value is reached through a pointer), no method may mention `Self` outside its receiver, no method may return
+a view, and every interface it `requires` must itself be object-safe.
+
+<!-- error-example: E0202 -->
+```burdin
+interface Bad {
+    fn map<U>(self, value: U)
+}
+
+fn take(x: any Bad) {} //~ E0202
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** make the interface object-safe: remove the type parameters from the method or move the operation to
+a `where`-bounded generic function, give every method a `self` or `mut self` receiver, return an owned value instead
+of a view, and make the `requires` interfaces object-safe too. When a vtable is not needed, `impl Interface` or a
+generic bound dispatches statically and does not require object safety.
+
+## E0204: Boxing a type whose implementation is compiler-provided
+
+The compiler implements `Display` and `Debug` for the primitive types and the built-in containers directly, without
+a method, so there is no function for an `any Display`/`any Debug` vtable to dispatch to. A user type with a
+`Type: Display` block or `derives (Debug)` can be boxed, because it has callable methods.
+
+<!-- error-example: E0204 -->
+```burdin
+fn main() {
+    let x: any Display = 3 //~ E0204
+}
+```
+<!-- /error-example -->
+
+**How to fix:** format the value directly (`println("{}", 3)`), or wrap it in a user type that implements the
+interface with a method and box that. `any Interface` needs a callable implementation for every vtable slot.

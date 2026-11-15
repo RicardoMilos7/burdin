@@ -13,6 +13,19 @@ impl FnCx<'_> {
         if let ast::ExprKind::Field(recv, name) = &callee.kind {
             return self.method_call(recv, name, args, span, expect);
         }
+        // `x.downcast<T>()`: type arguments on a member name (AN6).
+        if let ast::ExprKind::TypeArgs(base, type_args) = &callee.kind {
+            if let ast::ExprKind::Field(recv, name) = &base.kind {
+                let recv = self.expr(recv, None);
+                return self.member_type_args_call(recv, name, type_args, args, span);
+            }
+            self.diags.error(
+                Code::UNKNOWN_NAME,
+                span,
+                "type arguments on a call are only allowed on the methods `is` and `downcast`",
+            );
+            return self.args_then_error(args, span);
+        }
         // A bare name that resolves to a local, or to a variable captured from the enclosing function, is a
         // closure call; only a name with no value meaning is looked up as a function.
         if let ast::ExprKind::Name { name: id, args: type_args } = &callee.kind
@@ -522,6 +535,9 @@ impl FnCx<'_> {
             && !adt_key(&recv.ty).is_some_and(|key| self.globals.methods.contains_key(&(key, "to_string".to_string())))
         {
             return self.display_to_string(recv, span);
+        }
+        if let Ty::Any(any) = recv.ty.clone() {
+            return self.any_method_call(recv, &any, name, args, span);
         }
         if let Ty::Param(_) = recv.ty {
             return self.param_method_call(recv, name, args, span);

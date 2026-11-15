@@ -13,7 +13,7 @@
 use crate::globals::{Globals, adt_key};
 use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
-use burdin_tir::{self as tir, FnKind, FnSig, FuncId, ParamSig, Signature, Ty};
+use burdin_tir::{self as tir, AnyRef, FnKind, FnSig, FuncId, ParamSig, Signature, Ty};
 use std::rc::Rc;
 
 /// A requirement on a type parameter: a built-in interface, a user interface, or an `Fn`-family closure bound.
@@ -204,6 +204,7 @@ impl Globals {
             Ty::Result(ok, err) => self.ty_has_param(ok) || self.ty_has_param(err),
             Ty::Map(k, v) => self.ty_has_param(k) || self.ty_has_param(v),
             Ty::Fn { sig, .. } => sig.params.iter().any(|t| self.ty_has_param(t)) || self.ty_has_param(&sig.ret),
+            Ty::Any(a) => a.args.iter().any(|t| self.ty_has_param(t)),
             Ty::Tuple(ts) => ts.iter().any(|t| self.ty_has_param(t)),
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((_, args)) => args.iter().any(|a| self.ty_has_param(a)),
@@ -252,6 +253,12 @@ impl Globals {
                     self.unify(p, a, bindings);
                 }
             }
+            // `any I` instances unify when they name the same interface with the same arguments.
+            (Ty::Any(p), Ty::Any(a)) if p.iface == a.iface && p.args.len() == a.args.len() => {
+                for (p, a) in p.args.iter().zip(&a.args) {
+                    self.unify(p, a, bindings);
+                }
+            }
             (Ty::Struct(_), Ty::Struct(_)) | (Ty::Enum(_), Ty::Enum(_)) => {
                 if let (Some((pt, pargs)), Some((at, aargs))) = (self.origin_of(pat), self.origin_of(act))
                     && pt == at
@@ -289,6 +296,10 @@ impl Globals {
                 borrowed: *borrowed,
             },
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
+            Ty::Any(a) => {
+                let args: Vec<Ty> = a.args.iter().map(|t| self.subst_ty(t, env)).collect();
+                if args == a.args { ty.clone() } else { Ty::Any(self.any_iface(a.iface, args)) }
+            }
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((template, args)) => {
                     let args = args.iter().map(|a| self.subst_ty(a, env)).collect();
@@ -430,6 +441,19 @@ impl Globals {
             });
             return Some(Bound::Fn(index, ast_kind(*kind)));
         }
+        // `any`/`impl` are types, not interfaces, and a bound names an interface.
+        if let ast::TypeKind::Any(_) = &ty.kind {
+            diags.error(
+                Code::NOT_AN_INTERFACE,
+                ty.span,
+                "`any Interface` cannot be used as a bound; write the interface itself",
+            );
+            return None;
+        }
+        if let ast::TypeKind::Impl(_) = &ty.kind {
+            diags.error(Code::IMPL_NOT_PARAMETER, ty.span, "`impl Interface` is only allowed on a parameter");
+            return None;
+        }
         let ast::TypeKind::Path(segs) = &ty.kind else {
             diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-non-path
             return None;
@@ -519,6 +543,98 @@ impl Globals {
         Some(Bound::User(iface, args))
     }
 
+    /// Resolves `any Interface` (spec/existentials.md, AN2/AN12). The written interface is a type path with
+    /// optional type arguments; anything that is not an interface is E0200, object safety is checked later by
+    /// [`Globals::check_any_uses`], and the instance is interned so `Ty::Any` has a stable identity.
+    pub(crate) fn resolve_any(
+        &self,
+        inner: &ast::Type,
+        span: Span,
+        subst: &[(String, Ty)],
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Ty {
+        let ast::TypeKind::Path(segs) = &inner.kind else {
+            diags.error(Code::NOT_AN_INTERFACE, span, "`any` needs an interface name, not this type");
+            return Ty::Error;
+        };
+        let Some(first) = segs.first() else {
+            diags.error(Code::NOT_AN_INTERFACE, span, "`any` needs an interface name");
+            return Ty::Error;
+        };
+        if segs.len() == 1 {
+            let name = first.name.name.as_str();
+            if BUILTIN_INTERFACES.contains(&name) {
+                diags.error(
+                    Code::NOT_AN_INTERFACE,
+                    span,
+                    format!("`{name}` is a built-in bound, not an interface; `any` needs an interface"),
+                );
+                return Ty::Error;
+            }
+            if subst.iter().any(|(n, _)| n == name)
+                || self.type_name(module, name).is_some()
+                || crate::builtins::builtin_type(name).is_some()
+                || matches!(name, "Option" | "Result" | "List" | "Map" | "Heap" | "CPtr" | "Range" | "RangeInclusive")
+            {
+                diags.error(Code::NOT_AN_INTERFACE, span, format!("`{name}` is a type, not an interface"));
+                return Ty::Error;
+            }
+            let Some(iface) = self.iface_name(module, name) else {
+                diags.error(Code::UNKNOWN_NAME, span, format!("unknown interface `{name}`"));
+                return Ty::Error;
+            };
+            return self.any_type_of(iface, &first.args, subst, module, span, diags);
+        }
+        let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
+        let Some(target) = self.resolve_module_path(module, &names) else {
+            diags.error(Code::UNKNOWN_NAME, span, format!("unknown module `{}`", names.join(".")));
+            return Ty::Error;
+        };
+        let last = segs.last().expect("the path has a last segment");
+        let name = last.name.name.as_str();
+        if self.package_of(target) != self.package_of(module)
+            && self.modules[target].iface_priv.get(name).copied().unwrap_or(false)
+        {
+            diags.error(Code::PRIVATE_ITEM, span, format!("interface `{name}` is `priv` in another package"));
+        }
+        match self.exported_iface(target, name) {
+            Some(iface) => self.any_type_of(iface, &last.args, subst, target, span, diags),
+            None => {
+                if self.exported_type(target, name).is_some() {
+                    diags.error(Code::NOT_AN_INTERFACE, span, format!("`{name}` is a type, not an interface"));
+                } else {
+                    diags.error(Code::UNKNOWN_NAME, span, format!("unknown interface `{name}`"));
+                }
+                Ty::Error
+            }
+        }
+    }
+
+    /// The `Ty::Any` for interface `iface` with the written arguments, after interning the instance.
+    fn any_type_of(
+        &self,
+        iface: usize,
+        args: &[ast::Type],
+        subst: &[(String, Ty)],
+        module: usize,
+        span: Span,
+        diags: &mut Diagnostics,
+    ) -> Ty {
+        match self.check_generic_bound(iface, args, subst, module, span, diags) {
+            Some(Bound::User(iface, args)) => {
+                let any = self.any_iface(iface, args);
+                self.record_any_use(&any, span);
+                Ty::Any(any)
+            }
+            Some(_) => {
+                diags.error(Code::NOT_AN_INTERFACE, span, "`any` needs an interface");
+                Ty::Error
+            }
+            None => Ty::Error,
+        }
+    }
+
     /// Whether values of `ty` meet `bound`. `env` gives the bounds of the type parameters in scope.
     pub(crate) fn satisfies(&self, ty: &Ty, bound: &Bound, env: &Env) -> bool {
         self.satisfies_with(ty, bound, env, &[])
@@ -555,6 +671,10 @@ impl Globals {
     /// Whether a struct or enum has a `Type: Interface<Args> { ... }` block for a user interface, with its `where`
     /// clauses met. A built-in collection satisfies the standard iterator protocol without an impl block.
     fn implements(&self, ty: &Ty, iface: usize, args: &[Ty], env: &Env) -> bool {
+        // An `any I` satisfies `I` itself and every interface `I` requires, through its vtable (AN8).
+        if let Ty::Any(a) = ty {
+            return self.any_satisfies(a, iface, args);
+        }
         if (Some(iface) == self.display_iface || Some(iface) == self.debug_iface)
             && let Some(answer) = self.builtin_formattable(ty, Some(iface) == self.debug_iface, iface, env)
         {
@@ -592,6 +712,17 @@ impl Globals {
                 None => true,
             })
         })
+    }
+
+    /// Whether the box's interface is `iface`, or requires it with matching arguments (AN2, AN8).
+    fn any_satisfies(&self, any: &AnyRef, iface: usize, args: &[Ty]) -> bool {
+        let Some((stored_iface, stored_args)) = self.any.borrow().ifaces.get(any.id).cloned() else {
+            return false;
+        };
+        let want = Bound::User(iface, args.to_vec());
+        self.bound_closure(&Bound::User(stored_iface, stored_args))
+            .iter()
+            .any(|have| self.bound_provides(have, &want, &[]))
     }
 
     /// Whether a built-in type implements `Display` or (`debug`) `Debug` without an impl block, or `None` for a

@@ -2,6 +2,7 @@
 //! scopes, loops, module, and `unsafe` depth); its methods are split by what they check, one file per theme.
 
 mod aggregate;
+mod any;
 mod call;
 mod closure;
 mod control;
@@ -50,6 +51,9 @@ struct FnCx<'a> {
     module: usize,
     /// How many `unsafe` blocks (or `unsafe fn` bodies) enclose this expression.
     unsafe_depth: usize,
+    /// The body is checked against bounds only and is discarded: it has no code, so it registers no vtable and
+    /// no type identity (AN3, AN6).
+    symbolic: bool,
     /// The closure bodies checked so far in this pass. Nested closures share the same list, so a closure
     /// expression's index is stable by the time the enclosing body is built.
     closures: Rc<RefCell<Vec<tir::Closure>>>,
@@ -74,6 +78,9 @@ pub(super) fn error_expr(span: Span) -> tir::Expr {
 }
 
 impl<'a> FnCx<'a> {
+    // The arguments are the whole context of one body (the program, diagnostics, the signature, the enclosing
+    // method type, the module, the flags, and the closure list); a struct would only move them around.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         globals: &'a Globals,
         diags: &'a mut Diagnostics,
@@ -81,6 +88,7 @@ impl<'a> FnCx<'a> {
         self_ty: Option<Ty>,
         module: usize,
         is_unsafe: bool,
+        symbolic: bool,
         closures: Rc<RefCell<Vec<tir::Closure>>>,
     ) -> Self {
         FnCx {
@@ -96,6 +104,7 @@ impl<'a> FnCx<'a> {
             bounds: Vec::new(),
             module,
             unsafe_depth: usize::from(is_unsafe),
+            symbolic,
             closures,
             capture: None,
         }
@@ -399,6 +408,57 @@ impl<'a> FnCx<'a> {
             return;
         }
         self.mismatch(span, want, found);
+    }
+
+    /// Boxes `e` when it is used where `any I` is expected (AN3). Boxing produces an owned value, so unlike the
+    /// `String`-to-`str` borrow it applies at every position with a known expected type. A view cannot be boxed
+    /// (E0120), and the value must implement the interface (E0141).
+    pub(super) fn coerce_any(&mut self, e: tir::Expr, want: &Ty) -> tir::Expr {
+        let Ty::Any(any) = want else { return e };
+        if matches!(e.ty, Ty::Error | Ty::Never) {
+            return e;
+        }
+        if let Ty::Any(have) = &e.ty {
+            if have == any {
+                return e;
+            }
+            self.mismatch(e.span, want, &e.ty);
+            // Type the value as the expected type: the program is rejected, and this avoids an E0003 cascade at
+            // the enclosing position.
+            return tir::Expr { ty: want.clone(), ..e };
+        }
+        let span = e.span;
+        if e.ty.is_second_class() {
+            self.diags.error(
+                Code::SECOND_CLASS_POSITION,
+                span,
+                format!(
+                    "`{}` is a view of other storage, so it cannot be boxed as `any {}`; the box would outlive \
+                     the borrow",
+                    e.ty, any.name
+                ),
+            );
+            return tir::Expr { ty: want.clone(), ..e };
+        }
+        if !self.globals.satisfies(&e.ty, &Bound::User(any.iface, any.args.clone()), &self.bounds) {
+            self.diags.error(
+                Code::BOUND_NOT_SATISFIED,
+                span,
+                format!("`{}` does not implement `{}`, so it cannot be boxed as `any {}`", e.ty, any.name, any.name),
+            );
+            return tir::Expr { ty: want.clone(), ..e };
+        }
+        // A symbolic body has no code, so it registers neither a vtable nor a type identity.
+        let vtable = if self.symbolic || self.globals.ty_has_param(&e.ty) {
+            usize::MAX
+        } else {
+            match self.globals.any_vtable(&e.ty, any, span, self.diags) {
+                Some(vtable) => vtable,
+                None => return tir::Expr { ty: want.clone(), ..e },
+            }
+        };
+        let ty = want.clone();
+        mk(tir::ExprKind::BoxAny { value: Box::new(e), vtable }, ty, span)
     }
 
     /// Like `expect_ty`, but a `String` argument is borrowed where a `str` is expected.

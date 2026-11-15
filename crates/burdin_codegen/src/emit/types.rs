@@ -28,6 +28,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Str => self.str_ty.into(),
             // A closure value is a code pointer, a capture-record pointer, and its destructor.
             Ty::Fn { .. } => self.closure_ty.into(),
+            // An `any I` box is the data pointer and the vtable pointer.
+            Ty::Any(_) => self.any_ty.into(),
             Ty::Chars => self.str_ty.into(),
             // A list and a map have the same three-word shape as a `String`: pointer, length, capacity.
             Ty::String | Ty::List(_) | Ty::Map(..) => self.string_ty.into(),

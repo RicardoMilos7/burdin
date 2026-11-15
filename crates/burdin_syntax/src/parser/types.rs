@@ -44,6 +44,16 @@ impl Parser<'_> {
                 self.bump();
                 Ok(Type { kind: TypeKind::SelfType, span: start })
             }
+            // `any Interface` and `impl Interface`: the interface is written after the keyword, as a type so
+            // that a wrong form gets a semantic diagnostic rather than a parse error.
+            TokenKind::Any | TokenKind::Impl => {
+                let any = self.at(&TokenKind::Any);
+                self.bump();
+                let inner = self.ty()?;
+                let span = start.to(inner.span);
+                let kind = if any { TypeKind::Any(Box::new(inner)) } else { TypeKind::Impl(Box::new(inner)) };
+                Ok(Type { kind, span })
+            }
             TokenKind::LParen => {
                 self.open(&TokenKind::LParen, false)?;
                 if self.at(&TokenKind::RParen) {

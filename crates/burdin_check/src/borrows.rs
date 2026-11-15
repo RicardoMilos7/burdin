@@ -287,6 +287,35 @@ impl<'a> Checker<'a> {
                     }
                 }
             },
+            // Boxing moves (or copies) the value into the box; `downcast` consumes the box; `is` only reads it.
+            K::BoxAny { value, .. } => self.expr(value, Mode::Move),
+            K::AnyIs { value, .. } => self.expr(value, Mode::Use),
+            K::AnyDowncast { value, .. } => self.expr(value, Mode::Move),
+            // A dynamic call borrows the box: shared for `self`, exclusive for `mut self`. Its result is always
+            // an owned type (object safety), so it holds no loan after the call.
+            K::AnyCall { recv, iface, slot, params, args } => {
+                let exclusive = self
+                    .env
+                    .any_ifaces
+                    .get(*iface)
+                    .and_then(|i| i.methods.get(*slot))
+                    .and_then(|m| m.sig.params.first())
+                    .is_some_and(|p| p.exclusive);
+                if exclusive {
+                    self.access_place(recv, Access::BorrowMut);
+                } else {
+                    self.access_place(recv, Access::Read);
+                }
+                for (a, p) in args.iter().zip(params) {
+                    if p.own {
+                        self.expr(a, Mode::Move);
+                    } else if p.exclusive {
+                        self.access_place(a, Access::BorrowMut);
+                    } else {
+                        self.expr(a, Mode::Use);
+                    }
+                }
+            }
             K::Method(m, args) => {
                 if m.mutates_receiver() {
                     self.access_place(&args[0], Access::BorrowMut);
@@ -532,10 +561,17 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Ok(inner)
         | K::Err(inner)
         | K::Return(Some(inner))
-        | K::ArrayRepeat(inner, _) => locals_used(inner, out),
+        | K::ArrayRepeat(inner, _)
+        | K::BoxAny { value: inner, .. }
+        | K::AnyIs { value: inner, .. }
+        | K::AnyDowncast { value: inner, .. } => locals_used(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| locals_used(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| locals_used(x, out)),
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+            args.iter().for_each(|x| locals_used(x, out));
+        }
+        K::AnyCall { recv, args, .. } => {
+            locals_used(recv, out);
             args.iter().for_each(|x| locals_used(x, out));
         }
         K::Closure { captures, .. } => out.extend(captures.iter().map(|c| c.local)),
@@ -655,10 +691,17 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Ok(inner)
         | K::Err(inner)
         | K::Return(Some(inner))
-        | K::ArrayRepeat(inner, _) => uses_expr(inner, stmt, last),
+        | K::ArrayRepeat(inner, _)
+        | K::BoxAny { value: inner, .. }
+        | K::AnyIs { value: inner, .. }
+        | K::AnyDowncast { value: inner, .. } => uses_expr(inner, stmt, last),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| uses_expr(x, stmt, last)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| uses_expr(x, stmt, last)),
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+            args.iter().for_each(|x| uses_expr(x, stmt, last));
+        }
+        K::AnyCall { recv, args, .. } => {
+            uses_expr(recv, stmt, last);
             args.iter().for_each(|x| uses_expr(x, stmt, last));
         }
         K::Closure { captures, .. } => {

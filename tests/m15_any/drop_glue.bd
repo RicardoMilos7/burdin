@@ -1,0 +1,61 @@
+//@ run
+//> boxed
+//> drop 1
+//> moved out 2
+//> drop 2
+//> drop 3
+//> none
+
+interface Thing {
+    fn touch(self): i32
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+Noisy: Thing {
+    fn touch(self): i32 {
+        println("boxed")
+        self.id
+    }
+}
+
+struct Other {
+    id: i32
+}
+
+Other: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+Other: Thing {
+    fn touch(self): i32 {
+        self.id
+    }
+}
+
+fn main() {
+    {
+        let a: any Thing = Noisy { id: 1 }
+        let _ = a.touch()
+    }
+    let b: any Thing = Noisy { id: 2 }
+    match b.downcast<Noisy>() {
+        Some(noisy) => println("moved out {noisy.id}"),
+        None => println("none"),
+    }
+    let c: any Thing = Other { id: 3 }
+    match c.downcast<Noisy>() {
+        Some(noisy) => println("moved out {noisy.id}"),
+        None => println("none"),
+    }
+}

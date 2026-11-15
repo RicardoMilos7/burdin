@@ -1,0 +1,44 @@
+//@ run
+//> made 4
+//> 4
+//> held 9
+
+interface Number {
+    fn value(self): i32
+}
+
+struct Four {
+    v: i32
+}
+
+Four: Number {
+    fn value(self): i32 {
+        self.v
+    }
+}
+
+struct Nine {
+    v: i32
+}
+
+Nine: Number {
+    fn value(self): i32 {
+        self.v
+    }
+}
+
+struct Holder {
+    item: any Number
+}
+
+fn make(): any Number {
+    println("made 4")
+    Four { v: 4 }
+}
+
+fn main() {
+    let made = make()
+    println(made.value().to_string())
+    let holder = Holder { item: Nine { v: 9 } }
+    println("held {holder.item.value()}")
+}

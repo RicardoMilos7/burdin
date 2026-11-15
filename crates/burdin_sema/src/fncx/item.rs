@@ -20,7 +20,7 @@ pub(crate) fn check_const(
     // A constant cannot hold a closure (`is_const_expr` below rejects it), so its closures are checked for
     // diagnostics and dropped.
     let closures = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let mut cx = FnCx::new(globals, diags, Ty::Unit, None, module, false, closures);
+    let mut cx = FnCx::new(globals, diags, Ty::Unit, None, module, false, false, closures);
     let value = cx.expr(&decl.value, Some(ty));
     let value = cx.expect_ty(value, ty);
     if !is_const_expr(&value) {
@@ -67,7 +67,16 @@ pub(crate) fn check_function(
     let derived = f.name.span == f.body.span;
     let before = diags.len();
     let ret = sig.ret.clone();
-    let mut cx = FnCx::new(globals, diags, ret.clone(), item.self_ty.clone(), item.module, item.is_unsafe, closures);
+    let mut cx = FnCx::new(
+        globals,
+        diags,
+        ret.clone(),
+        item.self_ty.clone(),
+        item.module,
+        item.is_unsafe,
+        item.symbolic,
+        closures,
+    );
     cx.subst = item.subst.clone();
     cx.bounds = item.bounds.clone();
     let params = cx.declare_params(f, sig);

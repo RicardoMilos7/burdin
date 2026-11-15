@@ -1,0 +1,20 @@
+//@ compile-fail
+
+struct Plain {
+    x: i32
+}
+
+fn takes_struct(value: any Plain) { //~ E0200
+}
+
+fn takes_int(value: any i32) { //~ E0200
+}
+
+fn takes_bound(value: any Copy) { //~ E0200
+}
+
+fn bound_is_not_a_type<T: any Plain>(value: T) { //~ E0200
+}
+
+fn main() {
+}
