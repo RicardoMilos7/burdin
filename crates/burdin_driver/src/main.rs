@@ -43,8 +43,10 @@ diagnostics:
 
 environment:
   BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
+  BURDIN_CHANNEL       release channel printed by `--version` (dev, nightly, or stable; default: dev)
   BURDIN_COMMIT        overrides the git commit printed by `--version`
   BURDIN_JOBS          parser threads (default: the machine's parallelism; 1 is sequential)
+  BURDIN_VERSION       overrides the version printed by `--version` (nightly builds)
   LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
   COLUMNS              terminal width used when --width is not given
   NO_COLOR             disables color unless --color=always or --color=never says otherwise";
@@ -108,16 +110,18 @@ pub(crate) enum ColorChoice {
     Never,
 }
 
-/// The build metadata `burdin --version` prints, in a fixed order: the version, the host target, the LLVM library
-/// the compiler is linked against, the git commit, and the profile.
+/// The build metadata `burdin --version` prints, in a fixed order: the version and release channel, the host target,
+/// the LLVM library the compiler is linked against, the git commit, and the profile.
 fn version_text() -> String {
     format!(
         "burdin {}
+channel: {}
 target: {}
 llvm: {}
 commit: {}
 profile: {}",
-        env!("CARGO_PKG_VERSION"),
+        env!("BURDIN_VERSION"),
+        env!("BURDIN_CHANNEL"),
         env!("BURDIN_TARGET"),
         burdin_codegen::llvm_version(),
         env!("BURDIN_GIT_COMMIT"),
@@ -1110,11 +1114,13 @@ mod tests {
     fn version_metadata_has_the_documented_fields() {
         let text = version_text();
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 5, "{text}");
+        assert_eq!(lines.len(), 6, "{text}");
         assert!(lines[0].starts_with("burdin "), "{text}");
-        for prefix in ["target: ", "llvm: ", "commit: ", "profile: "] {
+        for prefix in ["channel: ", "target: ", "llvm: ", "commit: ", "profile: "] {
             assert!(lines.iter().any(|line| line.starts_with(prefix)), "missing {prefix}: {text}");
         }
+        let channel = lines.iter().find(|line| line.starts_with("channel: ")).unwrap();
+        assert!(matches!(&channel["channel: ".len()..], "dev" | "nightly" | "stable"), "unexpected channel: {channel}");
         let llvm = lines.iter().find(|line| line.starts_with("llvm: ")).unwrap();
         assert!(llvm["llvm: ".len()..].split('.').count() == 3, "{llvm}");
     }

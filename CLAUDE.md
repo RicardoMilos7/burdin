@@ -62,6 +62,9 @@ tests/check-parallel.sh            check parallel parsing and deterministic diag
 tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
 tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
 tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
+tests/check-release.sh             check the release workflow, archives, checksums, installers, and version policy
+tests/build-release.sh             build, smoke-test, and package one release target (--verify-reproducible)
+tests/release-notes.sh             generate release notes from CHANGELOG.md and check their links
 tests/check-platform-support.sh    check the platform support page against CI and binary-safe output (needs a built driver)
 tests/fuzz.sh                      long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 ```
@@ -95,8 +98,11 @@ crates/
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
-docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh) and the
-                          platform support matrix and known limitations (checked by tests/check-platform-support.sh)
+install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
+docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh), the platform
+                          support matrix and known limitations (checked by tests/check-platform-support.sh), and the
+                          version/release policy (docs/releasing.md)
+.github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
 spec/                     grammar, memory rules, standard-library surface, derives, test runner, stage 0 scope,
                           stage 1 plan
 tests/                    conformance tests and scripts
