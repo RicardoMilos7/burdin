@@ -3,7 +3,7 @@
 use super::{Codegen, GenResult, llvm_err};
 use burdin_diag::Span;
 use inkwell::IntPredicate;
-use inkwell::values::{BasicValueEnum, IntValue};
+use inkwell::values::{BasicValueEnum, IntValue, LLVMTailCallKind};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The file path (as a `str` pointer and length), line, and column of `span`, for the panic functions.
@@ -29,7 +29,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<()> {
         let (file, line, col) = self.location(span);
         let args = [msg_ptr.into(), msg_len.into(), file.0.into(), file.1.into(), line.into(), col.into()];
-        self.builder.build_call(self.rt.panic, &args, "").map_err(llvm_err)?;
+        // `notail`: a tail call would erase the panicking function's frame from the backtrace, and the panic
+        // function never returns, so LLVM would otherwise make it a jump.
+        self.builder
+            .build_call(self.rt.panic, &args, "")
+            .map_err(llvm_err)?
+            .set_tail_call_kind(LLVMTailCallKind::LLVMTailCallKindNoTail);
         self.builder.build_unreachable().map_err(llvm_err)?;
         Ok(())
     }
@@ -77,7 +82,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let index = self.builder.build_int_z_extend_or_bit_cast(index, i64_ty, "").map_err(llvm_err)?;
         let len = self.builder.build_int_z_extend_or_bit_cast(len, i64_ty, "").map_err(llvm_err)?;
         let args = [index.into(), len.into(), file.0.into(), file.1.into(), line.into(), col.into()];
-        self.builder.build_call(self.rt.panic_bounds, &args, "").map_err(llvm_err)?;
+        self.builder
+            .build_call(self.rt.panic_bounds, &args, "")
+            .map_err(llvm_err)?
+            .set_tail_call_kind(LLVMTailCallKind::LLVMTailCallKindNoTail);
         self.builder.build_unreachable().map_err(llvm_err)?;
         self.builder.position_at_end(pass);
         Ok(())

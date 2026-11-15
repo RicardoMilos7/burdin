@@ -33,7 +33,9 @@ use burdin_diag::SourceMap;
 use burdin_tir::Program;
 use emit::Codegen;
 use inkwell::OptimizationLevel;
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::Context;
+use inkwell::module::Module;
 use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine};
 use std::path::Path;
 
@@ -41,6 +43,22 @@ pub struct Options {
     pub release: bool,
     /// Also write the LLVM IR as text to this path.
     pub emit_ir: Option<std::path::PathBuf>,
+    /// Write the unoptimized IR to this path for the driver's `--pgo-use` pipeline.
+    pub pgo_ir: Option<std::path::PathBuf>,
+    /// Emit source-level debug information (`-g`).
+    pub debug: bool,
+    /// Write LLVM bitcode instead of an object file, for link-time optimization.
+    pub bitcode: bool,
+    /// Add profile instrumentation (`instrprof`) so the program writes a profile when it runs.
+    pub instrument: bool,
+}
+
+/// The version of the LLVM library the compiler was linked against, as `major.minor.patch`.
+pub fn llvm_version() -> String {
+    let (mut major, mut minor, mut patch) = (0u32, 0u32, 0u32);
+    // SAFETY: `LLVMGetVersion` only writes the three out-parameters.
+    unsafe { inkwell::llvm_sys::core::LLVMGetVersion(&mut major, &mut minor, &mut patch) };
+    format!("{major}.{minor}.{patch}")
 }
 
 /// Compiles the program to a native object file for the host. `sources` gives panic messages their file and line.
@@ -67,10 +85,24 @@ pub fn emit_object(
     module.set_triple(&triple);
     module.set_data_layout(&machine.get_target_data().get_data_layout());
 
-    let mut cg = Codegen::new(&context, &module, &machine, program, sources, opts.release)?;
+    let debug = opts.debug.then(|| {
+        let first = sources.first().map(|(_, source)| match source.path.rfind(['/', '\\']) {
+            Some(i) => (source.path[i + 1..].to_string(), source.path[..i].to_string()),
+            None => (source.path.clone(), ".".to_string()),
+        });
+        emit::DebugInfo::new(&module, opts.release, first)
+    });
+    let mut cg = Codegen::new(&context, &module, &machine, program, sources, opts.release, debug)?;
     cg.program()?;
+    cg.finish_debug();
+    // Panic backtraces unwind through the generated frames: every definition needs an unwind table, in both
+    // profiles, or `backtrace` stops at the first optimized function.
+    add_unwind_tables(&module);
 
     if let Some(path) = &opts.emit_ir {
+        module.print_to_file(path).map_err(|e| e.to_string())?;
+    }
+    if let Some(path) = &opts.pgo_ir {
         module.print_to_file(path).map_err(|e| e.to_string())?;
     }
     module.verify().map_err(|e| format!("LLVM module verification failed:\n{}", e.to_string_lossy()))?;
@@ -79,5 +111,38 @@ pub fn emit_object(
             .run_passes("default<O2>", &machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
-    machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())
+    if opts.instrument {
+        // `pgo-instr-gen` adds the IR-level counters and `instrprof` lowers them to the profile data structures;
+        // the result is what `pgo-instr-use` reads.
+        module
+            .run_passes("pgo-instr-gen,instrprof", &machine, inkwell::passes::PassBuilderOptions::create())
+            .map_err(|e| e.to_string_lossy().to_string())?;
+    }
+    if opts.bitcode {
+        // Link-time optimization consumes bitcode; the driver links it with an LLVM compiler driver.
+        if !module.write_bitcode_to_path(object) {
+            return Err(format!("cannot write LLVM bitcode to {}", object.display()));
+        }
+        Ok(())
+    } else {
+        machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())
+    }
+}
+
+/// Marks every defined function `uwtable`: without it LLVM emits no `.eh_frame` entry for a generated function, and
+/// a panic backtrace would stop at the first Burdin frame. On Darwin it also keeps the frame pointer, which
+/// libSystem's `backtrace` needs; the target machine is not created with clang's debug-build frame-pointer policy.
+fn add_unwind_tables(module: &Module<'_>) {
+    let context = module.get_context();
+    let uwtable = context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 1);
+    let darwin = module.get_triple().as_str().to_string_lossy().contains("darwin");
+    let frame_pointer = context.create_string_attribute("frame-pointer", "all");
+    for function in module.get_functions() {
+        if function.count_basic_blocks() > 0 {
+            function.add_attribute(AttributeLoc::Function, uwtable);
+            if darwin {
+                function.add_attribute(AttributeLoc::Function, frame_pointer);
+            }
+        }
+    }
 }

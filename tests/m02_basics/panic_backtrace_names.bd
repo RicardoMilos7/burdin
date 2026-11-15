@@ -1,0 +1,24 @@
+//@ run-abort
+//@ debug-only
+//@ skip-platform: windows
+//@ stderr: stack backtrace:
+//@ stderr: burdin.innermost
+//@ stderr: burdin.outer
+
+// In the unoptimized profile every Burdin function keeps its frame and its symbol, so the backtrace names the
+// function that panicked (`notail`) and its callers. The runtime's own frames are hidden.
+
+fn innermost(x: i32) {
+    if x > 0 {
+        panic("boom")
+    }
+    println("not reached")
+}
+
+fn outer() {
+    innermost(1)
+}
+
+fn main() {
+    outer()
+}

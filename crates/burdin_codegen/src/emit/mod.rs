@@ -3,8 +3,10 @@
 
 mod aggregate;
 mod builtins;
+pub(crate) use debug::DebugInfo;
 mod collections;
 mod control;
+mod debug;
 mod expr;
 mod function;
 mod glue;
@@ -30,7 +32,7 @@ use inkwell::module::Module;
 use inkwell::targets::{TargetData, TargetMachine};
 use inkwell::types::{BasicTypeEnum, IntType, StructType};
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, StructValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) type GenResult<T> = Result<T, String>;
 
@@ -64,6 +66,11 @@ struct SavedContext<'ctx, 'a> {
     temps: Vec<Vec<(PointerValue<'ctx>, Ty)>>,
     flags: Vec<(tir::MovedPlace, PointerValue<'ctx>)>,
     loops: Vec<LoopTargets<'ctx>>,
+    debug_scope: Option<inkwell::debug_info::DISubprogram<'ctx>>,
+    debug_file: Option<inkwell::debug_info::DIFile<'ctx>>,
+    debug_entry: Option<BasicBlock<'ctx>>,
+    dead_locals: HashSet<tir::LocalId>,
+    bounds_facts: Vec<(tir::LocalId, tir::LocalId)>,
 }
 
 struct LoopTargets<'ctx> {
@@ -94,7 +101,9 @@ pub(crate) struct Codegen<'ctx, 'a> {
     externs: Vec<FunctionValue<'ctx>>,
     str_literals: HashMap<Vec<u8>, StructValue<'ctx>>,
     /// Drop and clone glue functions generated so far, and the ones still to generate.
-    glue: Vec<(Glue, Ty, FunctionValue<'ctx>)>,
+    /// Drop and clone glue functions generated so far: the kind, the structural key that decides sharing, the
+    /// representative type its body is generated for, and the function.
+    glue: Vec<(Glue, String, Ty, FunctionValue<'ctx>)>,
     pending_glue: Vec<(Glue, Ty, FunctionValue<'ctx>)>,
     /// Set while generating a glue body; restored when the body is done.
     context: Option<SavedContext<'ctx, 'a>>,
@@ -114,6 +123,16 @@ pub(crate) struct Codegen<'ctx, 'a> {
     temps: Vec<Vec<(PointerValue<'ctx>, Ty)>>,
     /// The target is Windows (the runtime uses the Windows CRT).
     windows: bool,
+    /// `-g`: the module's debug metadata, or `None`.
+    debug: Option<DebugInfo<'ctx>>,
+    /// The entry block of the function being generated, where debug variables are declared.
+    debug_entry: Option<BasicBlock<'ctx>>,
+    /// Locals the move checker proved are uninitialized at every drop site: no flag and no drop is generated
+    /// for them (issue #427).
+    dead_locals: HashSet<tir::LocalId>,
+    /// `(loop index, collection)` pairs where the index is known to be in `0..collection.len()`: indexing that
+    /// collection with that local needs no bounds check (issue #428).
+    bounds_facts: Vec<(tir::LocalId, tir::LocalId)>,
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -124,13 +143,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         program: &'a Program,
         sources: &'a SourceMap,
         release: bool,
+        debug: Option<DebugInfo<'ctx>>,
     ) -> GenResult<Self> {
         let ptr_ty = cx.ptr_type(AddressSpace::default());
         let usize_ty = cx.ptr_sized_int_type(&machine.get_target_data(), None);
         let str_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into()], false);
         let string_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into()], false);
-        let windows = machine.get_triple().as_str().to_string_lossy().contains("windows");
-        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows)?;
+        let triple = machine.get_triple().as_str().to_string_lossy().to_string();
+        let windows = triple.contains("windows");
+        let darwin = triple.contains("darwin") || triple.contains("apple");
+        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin)?;
         Ok(Codegen {
             cx,
             module,
@@ -159,6 +181,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             flags: Vec::new(),
             temps: Vec::new(),
             windows,
+            debug,
+            debug_entry: None,
+            dead_locals: HashSet::new(),
+            bounds_facts: Vec::new(),
         })
     }
 }

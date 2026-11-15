@@ -8,8 +8,8 @@
 #   * every relative link in the repository's Markdown files points at a file, and every `#anchor`
 #     matches a heading;
 #   * the `burdin` program marked `check-docs` in README.md compiles and prints the documented output;
-#   * `build` output naming, `-o`, `--emit-ir`, `--release`, and `--link-lib` (including LLVM-C when
-#     llvm-config is available);
+#   * `build` output naming, `-o`, `--emit-ir`, `--release`, `-g`, `--strip`, and `--link-lib` (including
+#     LLVM-C when llvm-config is available), and `--version`'s five metadata lines;
 #   * `run` passes arguments after `--` and the program's exit status through;
 #   * `test` prints the documented `FAIL` lines and summary and exits 1 on a failure;
 #   * diagnostics have the documented `path:LINE:COL: error[CODE]: message` shape;
@@ -167,6 +167,32 @@ else
         expect_status "burdin build --emit-ir" 0
         expect_file "burdin build --emit-ir" hello.ll
         expect_contains "burdin build --emit-ir" "define" "$(cat hello.ll 2>/dev/null)"
+
+        # --version: the build metadata the README documents.
+        run_driver "$BURDIN" --version
+        expect_status "burdin --version" 0
+        for prefix in "burdin " "target: " "llvm: " "commit: " "profile: "; do
+            expect_contains "burdin --version" "$prefix" "$stdout"
+        done
+
+        # -g and --strip: the documented build flags keep the program's behavior.
+        run_driver "$BURDIN" build hello.bd -g -o hello_debug
+        expect_status "burdin build -g" 0
+        debug_exe=hello_debug
+        [ -f "$debug_exe" ] || debug_exe=hello_debug.exe
+        run_driver "./$debug_exe"
+        expect_status "burdin build -g executable" 0
+        checks=$((checks + 1))
+        [ "$stdout" = "$expected" ] || add_problem "burdin build -g executable: wrong output"
+
+        run_driver "$BURDIN" build hello.bd --strip -o hello_stripped
+        expect_status "burdin build --strip" 0
+        stripped_exe=hello_stripped
+        [ -f "$stripped_exe" ] || stripped_exe=hello_stripped.exe
+        run_driver "./$stripped_exe"
+        expect_status "burdin build --strip executable" 0
+        checks=$((checks + 1))
+        [ "$stdout" = "$expected" ] || add_problem "burdin build --strip executable: wrong output"
 
         run_driver "$BURDIN" build hello.bd --release -o hello_release
         expect_status "burdin build --release" 0

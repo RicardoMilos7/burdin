@@ -1,7 +1,21 @@
 //! The runtime, generated as LLVM IR into every program: the process entry point (`main`), output, `String`
 //! allocation and conversions, `Heap` allocation, and the panic path. It calls libc directly: `write`, `malloc`,
-//! `realloc`, `free`, and `abort`, and on Windows the CRT's `_write`, `_setmode`, and `_set_abort_behavior`. Output
-//! is unbuffered, so there is nothing to flush when a panic aborts.
+//! `realloc`, `free`, and `abort`, and on Windows the CRT's `_write`, `_setmode`, and `_set_abort_behavior`.
+//!
+//! **Output.** Standard output is block buffered in an 8 KiB buffer (`burdin_rt_out_write`), and flushed through the
+//! last newline of a write when fd 1 is a terminal (line buffering, `isatty`). Standard error stays unbuffered. The
+//! buffer is flushed by `burdin_rt_flush`, which is registered with `atexit`, called by `process.exit` through it,
+//! and called by the panic path, the stack-overflow handler, and `burdin_rt_die` before the process ends.
+//!
+//! **Panics.** A panic prints `path:LINE:COL: panic: message` and then a symbolized `stack backtrace:` section, so
+//! the message line keeps its stage 0 format. The runtime frames above the panicking function are skipped. On Unix
+//! the trace uses libc's `backtrace`/`backtrace_symbols_fd` and needs the `.eh_frame` unwind tables the code
+//! generator adds to every function; on Windows it uses `RtlCaptureStackBackTrace` (addresses only, because symbolizing
+//! needs a PDB the driver does not produce).
+//!
+//! **Stack overflow.** The main thread gets an alternate signal stack and a `SIGSEGV` handler on Unix (an
+//! `AddVectoredExceptionHandler` filter for `EXCEPTION_STACK_OVERFLOW` on Windows), so a deep recursion ends with
+//! `panic: stack overflow` instead of a raw fault.
 //!
 //! The functions are internal to the module and keep the names they had as C functions (`burdin_rt_*`).
 
@@ -14,6 +28,14 @@ use inkwell::module::{Linkage, Module};
 use inkwell::types::{BasicMetadataTypeEnum, FunctionType, IntType, PointerType, StructType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
+
+/// The standard-output buffer size. A terminal is line buffered, so the size only matters for pipes and files,
+/// where larger writes are what make printing a lot of output cheap.
+const OUT_BUF: u32 = 8192;
+/// The number of frames a panic backtrace captures.
+const BACKTRACE_FRAMES: u32 = 64;
+/// The size of the alternate signal stack, so a `SIGSEGV` handler still runs after the main stack is gone.
+const ALT_STACK: u32 = 64 * 1024;
 
 /// The runtime functions the generated code calls.
 pub(crate) struct Runtime<'ctx> {
@@ -77,15 +99,17 @@ pub(crate) struct Runtime<'ctx> {
     pub run: FunctionValue<'ctx>,
 }
 
-/// Generates the runtime into `module`. `windows` selects the Windows CRT functions.
+/// Generates the runtime into `module`. `windows` selects the Windows CRT functions and `darwin` the macOS signal
+/// structures.
 pub(crate) fn generate<'ctx>(
     cx: &'ctx Context,
     module: &Module<'ctx>,
     usize_ty: IntType<'ctx>,
     string_ty: StructType<'ctx>,
     windows: bool,
+    darwin: bool,
 ) -> GenResult<Runtime<'ctx>> {
-    let mut g = Gen::new(cx, module, usize_ty, string_ty, windows);
+    let mut g = Gen::new(cx, module, usize_ty, string_ty, windows, darwin);
     g.generate()
 }
 
@@ -180,7 +204,9 @@ fn prepare_main<'ctx>(
     f: FunctionValue<'ctx>,
     windows: bool,
 ) -> GenResult<()> {
-    let i32_ty = b.get_insert_block().expect("positioned").get_context().i32_type();
+    let cx = b.get_insert_block().expect("positioned").get_context();
+    let i32_ty = cx.i32_type();
+    let ptr_ty = cx.ptr_type(AddressSpace::default());
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
     if let Some(global) = module.get_global("burdin_rt_argc") {
@@ -198,6 +224,32 @@ fn prepare_main<'ctx>(
             b.build_call(setmode, &args, "").map_err(llvm_err)?;
         }
     }
+    // A terminal gets line buffering, so interactive programs see each prompt; a pipe or file is block buffered.
+    let isatty = if windows {
+        libc(module, "_isatty", i32_ty.fn_type(&[i32_ty.into()], false))
+    } else {
+        libc(module, "isatty", i32_ty.fn_type(&[i32_ty.into()], false))
+    };
+    let tty = b
+        .build_call(isatty, &[i32_ty.const_int(1, false).into()], "isatty")
+        .map_err(llvm_err)?
+        .try_as_basic_value()
+        .basic()
+        .expect("isatty returns an int")
+        .into_int_value();
+    let line_buffered =
+        b.build_int_compare(IntPredicate::NE, tty, i32_ty.const_zero(), "line_buffered").map_err(llvm_err)?;
+    if let Some(global) = module.get_global("burdin_rt_out_line_buffered") {
+        b.build_store(global.as_pointer_value(), line_buffered).map_err(llvm_err)?;
+    }
+    // `atexit` flushes the standard-output buffer on a normal return or `process.exit`.
+    if let Some(flush) = module.get_function("burdin_rt_flush") {
+        let atexit = libc(module, "atexit", i32_ty.fn_type(&[ptr_ty.into()], false));
+        b.build_call(atexit, &[flush.as_global_value().as_pointer_value().into()], "").map_err(llvm_err)?;
+    }
+    if let Some(guard) = module.get_function("burdin_rt_install_stack_guard") {
+        b.build_call(guard, &[], "").map_err(llvm_err)?;
+    }
     Ok(())
 }
 
@@ -211,6 +263,7 @@ struct Gen<'ctx, 'a> {
     module: &'a Module<'ctx>,
     b: Builder<'ctx>,
     windows: bool,
+    darwin: bool,
     usize_ty: IntType<'ctx>,
     ptr_ty: PointerType<'ctx>,
     string_ty: StructType<'ctx>,
@@ -221,11 +274,13 @@ struct Gen<'ctx, 'a> {
 /// Helpers used while generating the other functions.
 struct Helpers<'ctx> {
     write_all: FunctionValue<'ctx>,
+    flush: FunctionValue<'ctx>,
     die: FunctionValue<'ctx>,
     write_u64: FunctionValue<'ctx>,
     digits: FunctionValue<'ctx>,
     alloc_string: FunctionValue<'ctx>,
     panic_start: FunctionValue<'ctx>,
+    print_backtrace: FunctionValue<'ctx>,
 }
 
 impl<'ctx, 'a> Gen<'ctx, 'a> {
@@ -235,12 +290,14 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         usize_ty: IntType<'ctx>,
         string_ty: StructType<'ctx>,
         windows: bool,
+        darwin: bool,
     ) -> Self {
         Gen {
             cx,
             module,
             b: cx.create_builder(),
             windows,
+            darwin,
             usize_ty,
             ptr_ty: cx.ptr_type(AddressSpace::default()),
             string_ty,
@@ -298,12 +355,43 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
     fn helpers(&mut self) -> GenResult<Helpers<'ctx>> {
         let write_all = self.write_all()?;
-        let die = self.die()?;
+        let globals = self.output_globals();
+        let flush = self.flush(write_all, globals)?;
+        let _out_write = self.out_write(flush, globals)?;
+        let die = self.die(flush)?;
+        self.install_stack_guard(flush)?;
         let digits = self.digits()?;
         let write_u64 = self.write_u64(write_all, digits)?;
-        let alloc_string = self.alloc_string(write_all, die)?;
-        let panic_start = self.panic_start(write_all, write_u64)?;
-        Ok(Helpers { write_all, die, write_u64, digits, alloc_string, panic_start })
+        let hex_digits = self.hex_digits()?;
+        self.write_hex(write_all, hex_digits)?;
+        let print_backtrace = self.print_backtrace()?;
+        let alloc_string = self.alloc_string(write_all, die, print_backtrace)?;
+        let panic_start = self.panic_start(write_all, write_u64, flush)?;
+        Ok(Helpers { write_all, flush, die, write_u64, digits, alloc_string, panic_start, print_backtrace })
+    }
+
+    /// The globals behind the standard-output buffer, created on first use.
+    fn output_globals(&mut self) -> (PointerValue<'ctx>, PointerValue<'ctx>, PointerValue<'ctx>) {
+        let buf_ty = self.cx.i8_type().array_type(OUT_BUF);
+        let buf = self.module.get_global("burdin_rt_out_buf").unwrap_or_else(|| {
+            let g = self.module.add_global(buf_ty, None, "burdin_rt_out_buf");
+            g.set_initializer(&buf_ty.const_zero());
+            g.set_linkage(Linkage::Internal);
+            g
+        });
+        let len = self.module.get_global("burdin_rt_out_len").unwrap_or_else(|| {
+            let g = self.module.add_global(self.usize_ty, None, "burdin_rt_out_len");
+            g.set_initializer(&self.usize_ty.const_zero());
+            g.set_linkage(Linkage::Internal);
+            g
+        });
+        let line = self.module.get_global("burdin_rt_out_line_buffered").unwrap_or_else(|| {
+            let g = self.module.add_global(self.cx.bool_type(), None, "burdin_rt_out_line_buffered");
+            g.set_initializer(&self.cx.bool_type().const_zero());
+            g.set_linkage(Linkage::Internal);
+            g
+        });
+        (buf.as_pointer_value(), len.as_pointer_value(), line.as_pointer_value())
     }
 
     // ----- small helpers ---------------------------------------------------------------
@@ -445,25 +533,138 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `print(fd: i32, ptr, len: usize, newline: i32)`
+    /// `flush()`: writes the standard-output buffer to fd 1 and empties it. Called by `atexit`, `process.exit`,
+    /// the panic path, and the stack-overflow handler.
+    fn flush(
+        &mut self,
+        write_all: FunctionValue<'ctx>,
+        globals: (PointerValue<'ctx>, PointerValue<'ctx>, PointerValue<'ctx>),
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let (buf, len_global, _line) = globals;
+        let (i32_ty, usize_ty) = (self.i32(), self.usize_ty);
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_flush", void.fn_type(&[], false));
+        let empty = self.block(f, "flush.empty");
+        let write = self.block(f, "flush.write");
+        let len = self.b.build_load(usize_ty, len_global, "len").map_err(llvm_err)?.into_int_value();
+        let none = self.b.build_int_compare(IntPredicate::EQ, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(none, empty, write).map_err(llvm_err)?;
+        self.b.position_at_end(write);
+        self.call(write_all, &[i32_ty.const_int(1, false).into(), buf.into(), len.into()])?;
+        self.b.build_store(len_global, usize_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(empty).map_err(llvm_err)?;
+        self.b.position_at_end(empty);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `out_write(ptr, len: usize)`: appends to the standard-output buffer, flushing it when it is full.
+    fn out_write(
+        &mut self,
+        flush: FunctionValue<'ctx>,
+        globals: (PointerValue<'ctx>, PointerValue<'ctx>, PointerValue<'ctx>),
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let (buf, len_global, _line) = globals;
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let void = self.cx.void_type();
+        let ty = void.fn_type(&[ptr_ty.into(), usize_ty.into()], false);
+        let f = self.function("burdin_rt_out_write", ty);
+        let entry = self.b.get_insert_block().expect("positioned");
+        let lp = self.block(f, "loop");
+        let check = self.block(f, "check");
+        let copy = self.block(f, "copy");
+        let full = self.block(f, "full");
+        let done = self.block(f, "done");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(lp);
+        let ptr = self.b.build_phi(ptr_ty, "ptr").map_err(llvm_err)?;
+        let len = self.b.build_phi(usize_ty, "len").map_err(llvm_err)?;
+        let ptr_v = ptr.as_basic_value().into_pointer_value();
+        let len_v = len.as_basic_value().into_int_value();
+        let empty = self.b.build_int_compare(IntPredicate::EQ, len_v, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(empty, done, check).map_err(llvm_err)?;
+
+        self.b.position_at_end(check);
+        let old = self.b.build_load(usize_ty, len_global, "old_len").map_err(llvm_err)?.into_int_value();
+        let space = self.b.build_int_sub(usize_ty.const_int(u64::from(OUT_BUF), false), old, "").map_err(llvm_err)?;
+        let is_full = self.b.build_int_compare(IntPredicate::EQ, space, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(is_full, full, copy).map_err(llvm_err)?;
+
+        self.b.position_at_end(full);
+        self.call(flush, &[])?;
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(copy);
+        let old = self.b.build_load(usize_ty, len_global, "old_len").map_err(llvm_err)?.into_int_value();
+        let space = self.b.build_int_sub(usize_ty.const_int(u64::from(OUT_BUF), false), old, "").map_err(llvm_err)?;
+        let take_less = self.b.build_int_compare(IntPredicate::ULT, space, len_v, "").map_err(llvm_err)?;
+        let space_bv: BasicValueEnum<'ctx> = space.into();
+        let len_bv: BasicValueEnum<'ctx> = len_v.into();
+        let take = self.b.build_select(take_less, space_bv, len_bv, "take").map_err(llvm_err)?.into_int_value();
+        let dst = self.offset(buf, old)?;
+        self.b.build_memcpy(dst, 1, ptr_v, 1, take).map_err(|e| format!("LLVM builder error: {e}"))?;
+        let new_len = self.b.build_int_add(old, take, "").map_err(llvm_err)?;
+        self.b.build_store(len_global, new_len).map_err(llvm_err)?;
+        let next_ptr = self.offset(ptr_v, take)?;
+        let next_len = self.b.build_int_sub(len_v, take, "").map_err(llvm_err)?;
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        ptr.add_incoming(&[(&Self::ptr_param(f, 0), entry), (&next_ptr, copy), (&ptr_v, full)]);
+        len.add_incoming(&[(&Self::int_param(f, 1), entry), (&next_len, copy), (&len_v, full)]);
+
+        self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `print(fd: i32, ptr, len: usize, newline: i32)`: standard output goes through the buffer (and is flushed
+    /// after a newline when the output is a terminal); standard error is written directly.
     fn print(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (i32_ty, usize_ty, ptr_ty) = (self.i32(), self.usize_ty, self.ptr_ty);
         let void = self.cx.void_type();
         let ty = void.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into(), i32_ty.into()], false);
         let f = self.function("burdin_rt_print", ty);
         let fd = Self::int_param(f, 0);
-        self.call(h.write_all, &[fd.into(), Self::ptr_param(f, 1).into(), Self::int_param(f, 2).into()])?;
-        let newline = self.block(f, "newline");
+        let out_write = self.module.get_function("burdin_rt_out_write").expect("out_write exists");
+        let stdout = self.block(f, "stdout");
+        let stderr = self.block(f, "stderr");
         let done = self.block(f, "done");
+        let is_stdout =
+            self.b.build_int_compare(IntPredicate::EQ, fd, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(is_stdout, stdout, stderr).map_err(llvm_err)?;
+
+        self.b.position_at_end(stdout);
+        self.call(out_write, &[Self::ptr_param(f, 1).into(), Self::int_param(f, 2).into()])?;
+        let out_nl = self.block(f, "stdout.newline");
+        let out_flush = self.block(f, "stdout.flush");
         let nl = self
             .b
             .build_int_compare(IntPredicate::NE, Self::int_param(f, 3), i32_ty.const_zero(), "")
             .map_err(llvm_err)?;
-        self.b.build_conditional_branch(nl, newline, done).map_err(llvm_err)?;
-        self.b.position_at_end(newline);
-        let ptr = self.bytes(b"\n");
-        self.call(h.write_all, &[fd.into(), ptr.into(), usize_ty.const_int(1, false).into()])?;
+        self.b.build_conditional_branch(nl, out_nl, done).map_err(llvm_err)?;
+        self.b.position_at_end(out_nl);
+        let nl_ptr = self.bytes(b"\n");
+        self.call(out_write, &[nl_ptr.into(), usize_ty.const_int(1, false).into()])?;
+        let (_, _, line_global) = self.output_globals();
+        let line = self.b.build_load(self.cx.bool_type(), line_global, "line").map_err(llvm_err)?.into_int_value();
+        self.b.build_conditional_branch(line, out_flush, done).map_err(llvm_err)?;
+        self.b.position_at_end(out_flush);
+        self.call(h.flush, &[])?;
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(stderr);
+        self.call(h.write_all, &[fd.into(), Self::ptr_param(f, 1).into(), Self::int_param(f, 2).into()])?;
+        let err_nl = self.block(f, "stderr.newline");
+        let nl = self
+            .b
+            .build_int_compare(IntPredicate::NE, Self::int_param(f, 3), i32_ty.const_zero(), "")
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(nl, err_nl, done).map_err(llvm_err)?;
+        self.b.position_at_end(err_nl);
+        let nl_ptr = self.bytes(b"\n");
+        self.call(h.write_all, &[fd.into(), nl_ptr.into(), usize_ty.const_int(1, false).into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
         self.b.position_at_end(done);
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(f)
@@ -518,15 +719,70 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
+    /// `hex_digits(v: i64, end) -> ptr`: writes the hexadecimal digits of `v` backwards, ending just before `end`,
+    /// and returns the first digit. Writes at most 16 bytes.
+    fn hex_digits(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i64_ty, ptr_ty, i8_ty) = (self.i64(), self.ptr_ty, self.i8());
+        let f = self.function("burdin_rt_hex_digits", ptr_ty.fn_type(&[i64_ty.into(), ptr_ty.into()], false));
+        let entry = self.b.get_insert_block().expect("positioned");
+        let lp = self.block(f, "loop");
+        let done = self.block(f, "done");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        self.b.position_at_end(lp);
+        let v = self.b.build_phi(i64_ty, "v").map_err(llvm_err)?;
+        let end = self.b.build_phi(ptr_ty, "end").map_err(llvm_err)?;
+        let v_v = v.as_basic_value().into_int_value();
+        let at = self.offset(end.as_basic_value().into_pointer_value(), self.usize_ty.const_all_ones())?;
+        let digit = self.b.build_and(v_v, i64_ty.const_int(15, false), "").map_err(llvm_err)?;
+        let digit = self.b.build_int_truncate(digit, i8_ty, "").map_err(llvm_err)?;
+        let ten = i8_ty.const_int(10, false);
+        let below = self.b.build_int_compare(IntPredicate::ULT, digit, ten, "").map_err(llvm_err)?;
+        let number = self.b.build_int_add(digit, i8_ty.const_int(u64::from(b'0'), false), "").map_err(llvm_err)?;
+        let letter = self.b.build_int_add(digit, i8_ty.const_int(u64::from(b'a') - 10, false), "").map_err(llvm_err)?;
+        let number_bv: BasicValueEnum<'ctx> = number.into();
+        let letter_bv: BasicValueEnum<'ctx> = letter.into();
+        let ch = self.b.build_select(below, number_bv, letter_bv, "ch").map_err(llvm_err)?.into_int_value();
+        self.b.build_store(at, ch).map_err(llvm_err)?;
+        let rest = self.b.build_right_shift(v_v, i64_ty.const_int(4, false), false, "").map_err(llvm_err)?;
+        let more = self.b.build_int_compare(IntPredicate::NE, rest, i64_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, lp, done).map_err(llvm_err)?;
+        v.add_incoming(&[(&Self::int_param(f, 0), entry), (&rest, lp)]);
+        end.add_incoming(&[(&Self::ptr_param(f, 1), entry), (&at, lp)]);
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&at)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `write_hex(fd: i32, v: i64)`: writes `v` (unsigned) in hexadecimal, on Windows only.
+    fn write_hex(
+        &mut self,
+        write_all: FunctionValue<'ctx>,
+        hex_digits: FunctionValue<'ctx>,
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_write_hex", void.fn_type(&[self.i32().into(), self.i64().into()], false));
+        let buf = self.buffer(20)?;
+        let end = self.offset(buf, self.usize_ty.const_int(20, false))?;
+        let start =
+            self.call(hex_digits, &[Self::int_param(f, 1).into(), end.into()])?.expect("hex_digits returns a pointer");
+        let start = start.into_pointer_value();
+        let len = self.distance(start, end)?;
+        self.call(write_all, &[Self::int_param(f, 0).into(), start.into(), len.into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
     // ----- panics ----------------------------------------------------------------------
 
-    /// `die()`: aborts the process, without the Windows "abnormal program termination" message.
-    fn die(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    /// `die()`: flushes standard output, then aborts the process, without the Windows "abnormal program
+    /// termination" message.
+    fn die(&mut self, flush: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let void = self.cx.void_type();
         let abort = libc(self.module, "abort", void.fn_type(&[], false));
         self.mark_noreturn(abort);
         let f = self.function("burdin_rt_die", void.fn_type(&[], false));
         self.mark_noreturn(f);
+        self.call(flush, &[])?;
         if self.windows {
             let i32_ty = self.i32();
             let set = libc(self.module, "_set_abort_behavior", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], false));
@@ -540,16 +796,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `panic_start(file, file_len: usize, line: i32, col: i32)`: writes `path:LINE:COL: panic: ` to stderr.
+    /// `panic_start(file, file_len: usize, line: i32, col: i32)`: flushes standard output, then writes
+    /// `path:LINE:COL: panic: ` to stderr.
     fn panic_start(
         &mut self,
         write_all: FunctionValue<'ctx>,
         write_u64: FunctionValue<'ctx>,
+        flush: FunctionValue<'ctx>,
     ) -> GenResult<FunctionValue<'ctx>> {
         let void = self.cx.void_type();
         let (i32_ty, i64_ty) = (self.i32(), self.i64());
         let ty = void.fn_type(&[self.ptr_ty.into(), self.usize_ty.into(), i32_ty.into(), i32_ty.into()], false);
         let f = self.function("burdin_rt_panic_start", ty);
+        self.call(flush, &[])?;
         let stderr = i32_ty.const_int(2, false);
         self.call(write_all, &[stderr.into(), Self::ptr_param(f, 0).into(), Self::int_param(f, 1).into()])?;
         self.write_const(write_all, 2, b":")?;
@@ -585,6 +844,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let stderr = self.i32().const_int(2, false);
         self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 0).into(), Self::int_param(f, 1).into()])?;
         self.write_const(h.write_all, 2, b"\n")?;
+        self.call(h.print_backtrace, &[])?;
         self.call(h.die, &[])?;
         self.b.build_unreachable().map_err(llvm_err)?;
         Ok(f)
@@ -602,9 +862,313 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.write_const(h.write_all, 2, b" but the length is ")?;
         self.call(h.write_u64, &[stderr.into(), Self::int_param(f, 1).into()])?;
         self.write_const(h.write_all, 2, b"\n")?;
+        self.call(h.print_backtrace, &[])?;
         self.call(h.die, &[])?;
         self.b.build_unreachable().map_err(llvm_err)?;
         Ok(f)
+    }
+
+    // ----- backtraces and the stack guard ----------------------------------------------
+
+    /// `print_backtrace()`: writes `stack backtrace:` and the frames above the panic runtime to stderr. The first
+    /// two frames (this function and `burdin_rt_panic`) are hidden.
+    fn print_backtrace(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_print_backtrace", void.fn_type(&[], false));
+        if self.windows {
+            self.print_backtrace_windows(f)?;
+        } else {
+            self.print_backtrace_unix(f)?;
+        }
+        Ok(f)
+    }
+
+    fn print_backtrace_unix(&mut self, f: FunctionValue<'ctx>) -> GenResult<()> {
+        let (i32_ty, ptr_ty) = (self.i32(), self.ptr_ty);
+        let backtrace = libc(self.module, "backtrace", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into()], false));
+        let symbols = libc(
+            self.module,
+            "backtrace_symbols_fd",
+            self.cx.void_type().fn_type(&[ptr_ty.into(), i32_ty.into(), i32_ty.into()], false),
+        );
+        let buf = self.b.build_alloca(ptr_ty.array_type(BACKTRACE_FRAMES), "frames").map_err(llvm_err)?;
+        let n = self
+            .call(backtrace, &[buf.into(), i32_ty.const_int(u64::from(BACKTRACE_FRAMES), false).into()])?
+            .expect("backtrace returns a count")
+            .into_int_value();
+        let hidden = i32_ty.const_int(2, false);
+        let enough = self.b.build_int_compare(IntPredicate::SGT, n, hidden, "enough").map_err(llvm_err)?;
+        let show = self.block(f, "show");
+        let done = self.block(f, "done");
+        self.b.build_conditional_branch(enough, show, done).map_err(llvm_err)?;
+        self.b.position_at_end(show);
+        self.write_const(
+            self.module.get_function("burdin_rt_write_all").expect("write_all exists"),
+            2,
+            b"stack backtrace:\n",
+        )?;
+        let start = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[hidden], "start") }.map_err(llvm_err)?;
+        let count = self.b.build_int_sub(n, hidden, "count").map_err(llvm_err)?;
+        self.call(symbols, &[start.into(), count.into(), i32_ty.const_int(2, false).into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn print_backtrace_windows(&mut self, f: FunctionValue<'ctx>) -> GenResult<()> {
+        let (i32_ty, ptr_ty, i64_ty) = (self.i32(), self.ptr_ty, self.i64());
+        let capture = libc(
+            self.module,
+            "RtlCaptureStackBackTrace",
+            self.cx.i16_type().fn_type(&[i32_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false),
+        );
+        let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
+        let buf = self.b.build_alloca(ptr_ty.array_type(BACKTRACE_FRAMES), "frames").map_err(llvm_err)?;
+        // Skip `RtlCaptureStackBackTrace`, this function, and `burdin_rt_panic`; the runtime frames are hidden
+        // like on Unix.
+        let hidden = i32_ty.const_int(3, false);
+        let n = self
+            .call(
+                capture,
+                &[
+                    hidden.into(),
+                    i32_ty.const_int(u64::from(BACKTRACE_FRAMES), false).into(),
+                    buf.into(),
+                    ptr_ty.const_null().into(),
+                ],
+            )?
+            .expect("RtlCaptureStackBackTrace returns a count")
+            .into_int_value();
+        let n = self.b.build_int_z_extend(n, i32_ty, "n").map_err(llvm_err)?;
+        let enough = self.b.build_int_compare(IntPredicate::SGT, n, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let show = self.block(f, "show");
+        let done = self.block(f, "done");
+        self.b.build_conditional_branch(enough, show, done).map_err(llvm_err)?;
+        self.b.position_at_end(show);
+        self.write_const(write_all, 2, b"stack backtrace:\n")?;
+        let index = self.b.build_alloca(i32_ty, "index").map_err(llvm_err)?;
+        self.b.build_store(index, i32_ty.const_zero()).map_err(llvm_err)?;
+        let header = self.block(f, "frame.header");
+        let body = self.block(f, "frame.body");
+        self.b.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.b.position_at_end(header);
+        let i = self.b.build_load(i32_ty, index, "i").map_err(llvm_err)?.into_int_value();
+        let more = self.b.build_int_compare(IntPredicate::SLT, i, n, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, body, done).map_err(llvm_err)?;
+        self.b.position_at_end(body);
+        let address = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[i], "frame") }.map_err(llvm_err)?;
+        let address = self.b.build_load(ptr_ty, address, "").map_err(llvm_err)?.into_pointer_value();
+        let address = self.b.build_ptr_to_int(address, i64_ty, "address").map_err(llvm_err)?;
+        self.write_const(write_all, 2, b"  #")?;
+        let i64_i = self.b.build_int_s_extend(i, i64_ty, "").map_err(llvm_err)?;
+        let write_u64 = self.module.get_function("burdin_rt_write_u64").expect("write_u64 exists");
+        self.call(write_u64, &[i32_ty.const_int(2, false).into(), i64_i.into()])?;
+        self.write_const(write_all, 2, b" 0x")?;
+        let write_hex = self.module.get_function("burdin_rt_write_hex").expect("write_hex exists");
+        self.call(write_hex, &[i32_ty.const_int(2, false).into(), address.into()])?;
+        self.write_const(write_all, 2, b"\n")?;
+        let next = self.b.build_int_add(i, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, next).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// `install_stack_guard()`: makes the main thread's stack overflow a clear panic instead of a raw fault.
+    fn install_stack_guard(&mut self, flush: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let void = self.cx.void_type();
+        let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
+        let in_handler = self.module.add_global(self.i32(), None, "burdin_rt_in_handler");
+        in_handler.set_initializer(&self.i32().const_zero());
+        in_handler.set_linkage(Linkage::Internal);
+        let handler_ty = if self.windows {
+            self.i32().fn_type(&[self.ptr_ty.into()], false)
+        } else {
+            // A `SA_SIGINFO` handler: the fault address in `siginfo_t` tells a stack overflow from another fault.
+            void.fn_type(&[self.i32().into(), self.ptr_ty.into(), self.ptr_ty.into()], false)
+        };
+        let handler = self.module.add_function("burdin_rt_stack_overflow", handler_ty, Some(Linkage::Internal));
+        let f = self.function("burdin_rt_install_stack_guard", void.fn_type(&[], false));
+        if self.windows {
+            self.install_stack_guard_windows(handler)?;
+        } else {
+            self.install_stack_guard_unix(handler)?;
+        }
+        // The handler itself: print a stable message and leave without running any drops, like a panic. The
+        // Windows filter sees every exception, so it first makes sure this is a stack overflow.
+        self.b.position_at_end(self.cx.append_basic_block(handler, "entry"));
+        let overflow = if self.windows {
+            let record = self
+                .b
+                .build_load(self.ptr_ty, Self::ptr_param(handler, 0), "record")
+                .map_err(llvm_err)?
+                .into_pointer_value();
+            let code = self.b.build_load(self.i32(), record, "code").map_err(llvm_err)?.into_int_value();
+            Some(
+                self.b
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        code,
+                        self.i32().const_int(0xC000_00FD, false),
+                        "stack_overflow",
+                    )
+                    .map_err(llvm_err)?,
+            )
+        } else {
+            // A fault inside the guard region below the main thread's stack is a stack overflow; anything else
+            // (a null `CPtr`, a bug) gets its own message.
+            let info = Self::ptr_param(handler, 1);
+            let offset = if self.darwin { 24 } else { 16 };
+            let addr_ptr = self.offset(info, self.usize_ty.const_int(offset, false))?;
+            let addr = self.b.build_load(self.ptr_ty, addr_ptr, "fault").map_err(llvm_err)?.into_pointer_value();
+            let addr = self.b.build_ptr_to_int(addr, self.usize_ty, "addr").map_err(llvm_err)?;
+            let lo = self
+                .module
+                .get_global("burdin_rt_stack_lo")
+                .map(|g| g.as_pointer_value())
+                .expect("the guard installs the stack bounds");
+            let lo = self.b.build_load(self.usize_ty, lo, "stack_lo").map_err(llvm_err)?.into_int_value();
+            let margin = self.usize_ty.const_int(1 << 20, false);
+            let low = self.b.build_int_sub(lo, margin, "low").map_err(llvm_err)?;
+            let above = self.b.build_int_compare(IntPredicate::UGE, addr, low, "").map_err(llvm_err)?;
+            let below = self.b.build_int_compare(IntPredicate::ULT, addr, lo, "").map_err(llvm_err)?;
+            Some(self.b.build_and(above, below, "stack_overflow").map_err(llvm_err)?)
+        };
+        let guard = in_handler.as_pointer_value();
+        let check = self.block(handler, "check");
+        let first = self.block(handler, "first");
+        let nested = self.block(handler, "nested");
+        let exit = self.exit_function();
+        match overflow {
+            Some(overflow) if self.windows => {
+                // A vectored filter sees every exception: anything that is not a stack overflow goes on to the
+                // operating system's own handling.
+                let pass = self.block(handler, "pass");
+                self.b.build_conditional_branch(overflow, check, pass).map_err(llvm_err)?;
+                self.b.position_at_end(pass);
+                self.b.build_return(Some(&self.i32().const_zero())).map_err(llvm_err)?;
+            }
+            Some(overflow) => {
+                let other = self.block(handler, "other");
+                self.b.build_conditional_branch(overflow, check, other).map_err(llvm_err)?;
+                self.b.position_at_end(other);
+                self.call(flush, &[])?;
+                self.write_const(write_all, 2, b"panic: invalid memory access\n")?;
+                self.call(exit, &[self.i32().const_int(134, false).into()])?;
+                self.b.build_unreachable().map_err(llvm_err)?;
+            }
+            None => {
+                self.b.build_unconditional_branch(check).map_err(llvm_err)?;
+            }
+        }
+        self.b.position_at_end(check);
+        let seen = self.b.build_load(self.i32(), guard, "seen").map_err(llvm_err)?.into_int_value();
+        let again = self
+            .b
+            .build_int_compare(IntPredicate::NE, seen, self.i32().const_zero(), "in_handler")
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(again, nested, first).map_err(llvm_err)?;
+        self.b.position_at_end(first);
+        self.b.build_store(guard, self.i32().const_int(1, false)).map_err(llvm_err)?;
+        self.call(flush, &[])?;
+        self.write_const(write_all, 2, b"panic: stack overflow\n")?;
+        self.call(exit, &[self.i32().const_int(134, false).into()])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        // Reentered because the handler itself faulted: leave without trying to print again.
+        self.b.position_at_end(nested);
+        self.call(exit, &[self.i32().const_int(134, false).into()])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    fn install_stack_guard_unix(&mut self, handler: FunctionValue<'ctx>) -> GenResult<()> {
+        let (i32_ty, usize_ty, ptr_ty) = (self.i32(), self.usize_ty, self.ptr_ty);
+        let memset =
+            libc(self.module, "memset", ptr_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), usize_ty.into()], false));
+        let lo_global = self.module.add_global(usize_ty, None, "burdin_rt_stack_lo");
+        lo_global.set_initializer(&usize_ty.const_zero());
+        lo_global.set_linkage(Linkage::Internal);
+        // The bounds of the main thread's stack tell the handler whether a fault is a stack overflow.
+        let pthread_self = libc(self.module, "pthread_self", ptr_ty.fn_type(&[], false));
+        let thread = self.call(pthread_self, &[])?.expect("pthread_self returns a thread").into_pointer_value();
+        if self.darwin {
+            let top_of = libc(self.module, "pthread_get_stackaddr_np", ptr_ty.fn_type(&[ptr_ty.into()], false));
+            let size_of = libc(self.module, "pthread_get_stacksize_np", usize_ty.fn_type(&[ptr_ty.into()], false));
+            let top = self.call(top_of, &[thread.into()])?.expect("a stack address").into_pointer_value();
+            let size = self.call(size_of, &[thread.into()])?.expect("a stack size").into_int_value();
+            let top = self.b.build_ptr_to_int(top, usize_ty, "stack_top").map_err(llvm_err)?;
+            let lo = self.b.build_int_sub(top, size, "stack_lo").map_err(llvm_err)?;
+            self.b.build_store(lo_global.as_pointer_value(), lo).map_err(llvm_err)?;
+        } else {
+            let getattr =
+                libc(self.module, "pthread_getattr_np", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+            let attr = self.b.build_alloca(usize_ty.array_type(16), "attr").map_err(llvm_err)?;
+            self.call(memset, &[attr.into(), i32_ty.const_zero().into(), usize_ty.const_int(128, false).into()])?;
+            self.call(getattr, &[thread.into(), attr.into()])?;
+            let lo_slot = self.b.build_alloca(usize_ty, "lo_slot").map_err(llvm_err)?;
+            let size_slot = self.b.build_alloca(usize_ty, "size_slot").map_err(llvm_err)?;
+            let getstack = libc(
+                self.module,
+                "pthread_attr_getstack",
+                i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false),
+            );
+            self.call(getstack, &[attr.into(), lo_slot.into(), size_slot.into()])?;
+            let destroy = libc(self.module, "pthread_attr_destroy", i32_ty.fn_type(&[ptr_ty.into()], false));
+            self.call(destroy, &[attr.into()])?;
+            let lo = self.b.build_load(usize_ty, lo_slot, "stack_lo").map_err(llvm_err)?.into_int_value();
+            let size = self.b.build_load(usize_ty, size_slot, "stack_size").map_err(llvm_err)?.into_int_value();
+            self.b.build_store(lo_global.as_pointer_value(), lo).map_err(llvm_err)?;
+            let _ = size;
+        }
+        let sigaltstack = libc(self.module, "sigaltstack", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let sigaction =
+            libc(self.module, "sigaction", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false));
+        let alt = self.module.add_global(self.cx.i8_type().array_type(ALT_STACK), None, "burdin_rt_altstack");
+        alt.set_initializer(&self.cx.i8_type().array_type(ALT_STACK).const_zero());
+        alt.set_linkage(Linkage::Internal);
+        let (sp_offset, flags_offset, size_offset) = if self.darwin { (0u64, 16u64, 8u64) } else { (0, 8, 16) };
+        // stack_t: three pointer-sized fields, in the platform's order.
+        let st = self.b.build_alloca(self.usize_ty.array_type(3), "stack_t").map_err(llvm_err)?;
+        self.call(memset, &[st.into(), i32_ty.const_zero().into(), usize_ty.const_int(24, false).into()])?;
+        let sp = self.offset(st, usize_ty.const_int(sp_offset, false))?;
+        self.b.build_store(sp, alt.as_pointer_value()).map_err(llvm_err)?;
+        let size = self.offset(st, usize_ty.const_int(size_offset, false))?;
+        self.b.build_store(size, usize_ty.const_int(u64::from(ALT_STACK), false)).map_err(llvm_err)?;
+        let flags = self.offset(st, usize_ty.const_int(flags_offset, false))?;
+        self.b.build_store(flags, i32_ty.const_zero()).map_err(llvm_err)?;
+        self.call(sigaltstack, &[st.into(), ptr_ty.const_null().into()])?;
+
+        let (sa_flags_offset, onstack, reset, siginfo) =
+            if self.darwin { (12u64, 0x0001u64, 0x0004u64, 0x0040u64) } else { (136, 0x0800_0000, 0x8000_0000, 0x4) };
+        // struct sigaction: zeroed, with the handler and SA_ONSTACK | SA_RESETHAND set at the platform's offsets.
+        let act = self.b.build_alloca(self.usize_ty.array_type(19), "sigaction").map_err(llvm_err)?;
+        self.call(memset, &[act.into(), i32_ty.const_zero().into(), usize_ty.const_int(152, false).into()])?;
+        self.b.build_store(act, handler.as_global_value().as_pointer_value()).map_err(llvm_err)?;
+        let sa_flags = self.offset(act, usize_ty.const_int(sa_flags_offset, false))?;
+        self.b.build_store(sa_flags, i32_ty.const_int(onstack | reset | siginfo, false)).map_err(llvm_err)?;
+        const SIGSEGV: u64 = 11;
+        self.call(sigaction, &[i32_ty.const_int(SIGSEGV, false).into(), act.into(), ptr_ty.const_null().into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn install_stack_guard_windows(&mut self, handler: FunctionValue<'ctx>) -> GenResult<()> {
+        let (i32_ty, ptr_ty) = (self.i32(), self.ptr_ty);
+        let add =
+            libc(self.module, "AddVectoredExceptionHandler", ptr_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false));
+        self.call(add, &[i32_ty.const_int(1, false).into(), handler.as_global_value().as_pointer_value().into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// `_exit(code)`, shared by the signal and exception handlers: it does not run `atexit` hooks, so the handler's
+    /// own flush is the only one.
+    fn exit_function(&mut self) -> FunctionValue<'ctx> {
+        let exit = libc(self.module, "_exit", self.cx.void_type().fn_type(&[self.i32().into()], false));
+        self.mark_noreturn(exit);
+        exit
     }
 
     // ----- strings ---------------------------------------------------------------------
@@ -615,6 +1179,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         &mut self,
         write_all: FunctionValue<'ctx>,
         die: FunctionValue<'ctx>,
+        print_backtrace: FunctionValue<'ctx>,
     ) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
@@ -641,6 +1206,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(oom);
         self.write_const(write_all, 2, b"panic: out of memory\n")?;
+        self.call(print_backtrace, &[])?;
         self.call(die, &[])?;
         self.b.build_unreachable().map_err(llvm_err)?;
 
@@ -757,6 +1323,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(oom);
         self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.print_backtrace, &[])?;
         self.call(h.die, &[])?;
         self.b.build_unreachable().map_err(llvm_err)?;
 
@@ -788,6 +1355,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_conditional_branch(null, oom, done).map_err(llvm_err)?;
         self.b.position_at_end(oom);
         self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.print_backtrace, &[])?;
         self.call(h.die, &[])?;
         self.b.build_unreachable().map_err(llvm_err)?;
         self.b.position_at_end(done);
@@ -828,6 +1396,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(oom);
         self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.print_backtrace, &[])?;
         self.call(h.die, &[])?;
         self.b.build_unreachable().map_err(llvm_err)?;
 
@@ -1064,6 +1633,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_conditional_branch(null, oom, done).map_err(llvm_err)?;
         self.b.position_at_end(oom);
         self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+        self.call(h.print_backtrace, &[])?;
         self.call(h.die, &[])?;
         self.b.build_unreachable().map_err(llvm_err)?;
         self.b.position_at_end(done);

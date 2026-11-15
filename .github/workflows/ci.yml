@@ -33,15 +33,15 @@ jobs:
 
       # LLVM 21 is the slowest download in this job. actions/cache restores as the runner
       # user and cannot write under /usr, so the installed tree is kept in $HOME and copied
-      # into place with sudo. A distribution that splits libLLVM into the multiarch
-      # directory leaves /usr/lib/llvm-21/lib/libLLVM*.so pointing outside the tree, so the
-      # resolved real files are cached under their absolute paths too (issue #46).
+      # into place with sudo. A distribution that splits libLLVM or libclang-cpp into the
+      # multiarch directory leaves /usr/lib/llvm-21/lib/*.so pointing outside the tree, so
+      # the resolved real files are cached under their absolute paths too (issue #46).
       - name: Cache LLVM 21
         id: cache-llvm
         uses: actions/cache@v4
         with:
           path: ~/.cache/burdin/llvm-21
-          key: ${{ runner.os }}-llvm-21
+          key: ${{ runner.os }}-llvm-21-v2
 
       - name: Install LLVM 21
         run: |
@@ -66,7 +66,7 @@ jobs:
             for extra in /usr/include/llvm-21 /usr/include/llvm-c-21; do
               if [ -e "$extra" ]; then sudo cp -a --parents "$extra" "$cache/root"; fi
             done
-            for link in /usr/lib/llvm-21/lib/libLLVM*.so*; do
+            for link in /usr/lib/llvm-21/lib/libLLVM*.so* /usr/lib/llvm-21/lib/libclang-cpp*.so*; do
               if [ -L "$link" ]; then readlink -f "$link"; fi
             done | sort -u | while read -r target; do
               case "$target" in
@@ -109,6 +109,20 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
+      # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
+      - name: Check debug information
+        run: tests/check-debug-info.sh
+
+      - name: Check code-generation optimizations
+        run: tests/check-codegen-opt.sh
+
+      - name: Check build flags and metadata
+        run: tests/check-build-flags.sh
+
+      - name: Check parallel analysis
+        run: tests/check-parallel.sh
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).
@@ -244,6 +258,20 @@ jobs:
       - name: Build
         run: cargo build
 
+      # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
+      # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
+      - name: Check debug information
+        run: tests/check-debug-info.sh
+
+      - name: Check code-generation optimizations
+        run: tests/check-codegen-opt.sh
+
+      - name: Check build flags and metadata
+        run: tests/check-build-flags.sh
+
+      - name: Check parallel analysis
+        run: tests/check-parallel.sh
+
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
@@ -299,13 +327,13 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: tests/run-tests.sh -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: tests/run-tests.sh --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: tests/run-tests.sh -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
   windows:
     runs-on: windows-latest
@@ -409,6 +437,20 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
+      # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
+      - name: Check debug information
+        run: tests/check-debug-info.sh
+
+      - name: Check code-generation optimizations
+        run: tests/check-codegen-opt.sh
+
+      - name: Check build flags and metadata
+        run: tests/check-build-flags.sh
+
+      - name: Check parallel analysis
+        run: tests/check-parallel.sh
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).

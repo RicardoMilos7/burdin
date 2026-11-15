@@ -20,6 +20,9 @@
 #     Homebrew bottle downloads on macOS (issue #46);
 #   * the compiler benchmarks exist and CI runs their smoke budgets (issue #41);
 #   * every job runs the workspace unit tests and the front-end unit-test guard (issue #45);
+#   * every job runs the checks for debug information (#422), the code-generation optimizations (#426-#428),
+#     the build flags and metadata (#429-#431), and parallel parsing (#432), and each script still tests what
+#     its issue requires;
 #   * every job runs the advisory benchmark regression check, keeps its baseline in a cache scoped to
 #     the runner, the pinned toolchain, and Cargo.lock, and records a new baseline on a push to main
 #     (issue #446);
@@ -269,6 +272,10 @@ for job in linux macos windows; do
         'tests/check-ci.sh' \
         'tests/check-platform.sh' \
         'tests/check-docs.sh' \
+        'tests/check-debug-info.sh' \
+        'tests/check-codegen-opt.sh' \
+        'tests/check-build-flags.sh' \
+        'tests/check-parallel.sh' \
         'tests/check-diagnostics.sh' \
         'tests/check-error-docs.sh' \
         'tests/check-test-runner.sh' \
@@ -348,6 +355,21 @@ if [ -f "$bench_script" ]; then
     done
 fi
 
+# The new checks must keep testing what their issues require, so a rewritten script cannot silently weaken CI.
+check_script() {   # $1 relative path, then the strings it must contain
+    local rel=$1 path pattern
+    path=$ROOT/$rel
+    [ -f "$path" ] || return 0   # reported by the existence loop below
+    shift
+    for pattern in "$@"; do
+        grep -qF -- "$pattern" "$path" || add_problem "$rel: no longer contains: $pattern"
+    done
+}
+check_script tests/check-debug-info.sh "llvm-dwarfdump" "gdb" "-g" "DW_TAG_subprogram" "DW_TAG_variable"
+check_script tests/check-codegen-opt.sh "alloca i1" "bounds.fail" "burdin.drop" "index out of bounds"
+check_script tests/check-build-flags.sh "burdin --version" "--strip" "--lto" "--pgo-use" "131072"
+check_script tests/check-parallel.sh "BURDIN_JOBS" "diff -u"
+
 # The m11 test is the one that proves --link-lib LLVM-C resolves in CI.
 if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"; then
     add_problem "tests/m11_llvm: no test uses //@ link-lib: LLVM-C"
@@ -376,6 +398,7 @@ fi
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
     tests/check-docs.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/check-test-runner.sh \
+    tests/check-debug-info.sh tests/check-codegen-opt.sh tests/check-build-flags.sh tests/check-parallel.sh \
     tests/bench-regression.sh tests/fuzz.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then

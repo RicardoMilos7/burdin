@@ -77,7 +77,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         {
             self.builder.build_store(slot, cur).map_err(llvm_err)?;
         }
+        // `for i in 0..xs.len()` gives `i` a range that proves `xs[i]` in bounds for the whole body (issue #428).
+        let fact = match (&lo.kind, &hi.kind, var, inclusive) {
+            (tir::ExprKind::Int(0), tir::ExprKind::Method(tir::Method::Len, args), Some(var), false) => {
+                match args.as_slice() {
+                    [base] => match &base.kind {
+                        tir::ExprKind::Local(collection) => Some((var, *collection)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(fact) = fact {
+            self.bounds_facts.push(fact);
+        }
         self.loop_body(body, latch, exit)?;
+        if fact.is_some() {
+            self.bounds_facts.pop();
+        }
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         // `cur < hi` (or `cur != hi` for an inclusive range) holds here, so the increment cannot overflow.

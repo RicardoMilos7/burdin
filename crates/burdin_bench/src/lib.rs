@@ -172,7 +172,14 @@ pub fn check_memory(program: &mut Program) -> Diagnostics {
 /// Emits a native object file for a checked program. This is the debug-profile path of `burdin build` (LLVM
 /// optimization level `None`).
 pub fn emit(program: &Program, sources: &SourceMap, object: &std::path::Path) -> Result<(), String> {
-    let opts = burdin_codegen::Options { release: false, emit_ir: None };
+    let opts = burdin_codegen::Options {
+        release: false,
+        emit_ir: None,
+        pgo_ir: None,
+        debug: false,
+        bitcode: false,
+        instrument: false,
+    };
     burdin_codegen::emit_object(program, sources, "bench", object, &opts)
 }
 

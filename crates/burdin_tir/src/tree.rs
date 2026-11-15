@@ -35,6 +35,10 @@ pub struct Function {
 pub struct MovedPlace {
     pub local: LocalId,
     pub path: Vec<usize>,
+    /// The move checker proved that the whole local is uninitialized at every point where it could be dropped:
+    /// every path that leaves its scope, or an early `return`/`break`/`continue`, happens after the move. Code
+    /// generation then needs neither a drop flag nor a drop for this local (issue #427).
+    pub always_dead: bool,
 }
 
 /// How a local came to be, which decides whether and when it is dropped.

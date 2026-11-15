@@ -8,6 +8,7 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn expr_mode(&mut self, e: &'a tir::Expr, mode: Mode) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         use tir::ExprKind as K;
+        self.debug_at(e.span);
         let v: Option<BasicValueEnum<'ctx>> = match &e.kind {
             K::Unit => None,
             K::Bool(b) => Some(self.cx.bool_type().const_int(u64::from(*b), false).into()),

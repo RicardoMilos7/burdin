@@ -9,20 +9,26 @@ use inkwell::{AddressSpace, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn drop_glue(&mut self, ty: &Ty) -> FunctionValue<'ctx> {
-        if let Some(f) = self.glue.iter().find(|(k, t, _)| *k == Glue::Drop && t == ty).map(|(_, _, f)| *f) {
+        let key = self.drop_key(ty);
+        if let Some(f) =
+            self.glue.iter().find(|(k, key2, _, _)| *k == Glue::Drop && *key2 == key).map(|(_, _, _, f)| *f)
+        {
             return f;
         }
         let void = self.cx.void_type();
         let ptr = self.cx.ptr_type(AddressSpace::default());
         let name = format!("burdin.drop.{}", self.glue.len());
         let f = self.module.add_function(&name, void.fn_type(&[ptr.into()], false), Some(Linkage::Internal));
-        self.glue.push((Glue::Drop, ty.clone(), f));
+        self.glue.push((Glue::Drop, key, ty.clone(), f));
         self.pending_glue.push((Glue::Drop, ty.clone(), f));
         f
     }
 
     pub(super) fn clone_glue(&mut self, ty: &Ty) -> FunctionValue<'ctx> {
-        if let Some(f) = self.glue.iter().find(|(k, t, _)| *k == Glue::Clone && t == ty).map(|(_, _, f)| *f) {
+        let key = self.structural_key(ty);
+        if let Some(f) =
+            self.glue.iter().find(|(k, key2, _, _)| *k == Glue::Clone && *key2 == key).map(|(_, _, _, f)| *f)
+        {
             return f;
         }
         let void = self.cx.void_type();
@@ -30,9 +36,78 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let name = format!("burdin.clone.{}", self.glue.len());
         let f =
             self.module.add_function(&name, void.fn_type(&[ptr.into(), ptr.into()], false), Some(Linkage::Internal));
-        self.glue.push((Glue::Clone, ty.clone(), f));
+        self.glue.push((Glue::Clone, key, ty.clone(), f));
         self.pending_glue.push((Glue::Clone, ty.clone(), f));
         f
+    }
+
+    /// The identity of a type's drop glue: a user `Drop` method belongs to one type, and a type without one drops
+    /// exactly what its (recursively keyed) fields drop, so identical shapes share their glue (issue #426).
+    fn drop_key(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::Struct(a) if self.program.structs[a.id].drop_method.is_some() => format!("drop.{}", a.name),
+            Ty::Enum(a) if self.program.enums[a.id].drop_method.is_some() => format!("drop.{}", a.name),
+            _ => self.structural_key(ty),
+        }
+    }
+
+    /// A type's shape, ignoring the names of structs and enums: two types with the same key clone field by field
+    /// the same way and have the same generated layout. A type that contains itself (through `Heap`) is cut off
+    /// with `rec`, so the key terminates and still distinguishes the non-recursive parts.
+    fn structural_key(&self, ty: &Ty) -> String {
+        self.structural_key_in(ty, &mut Vec::new())
+    }
+
+    fn structural_key_in(&self, ty: &Ty, seen: &mut Vec<String>) -> String {
+        let identity = format!("{ty:?}");
+        if seen.contains(&identity) {
+            return "rec".to_string();
+        }
+        seen.push(identity);
+        let key = self.structural_key_uncached(ty, seen);
+        seen.pop();
+        key
+    }
+
+    fn structural_key_uncached(&self, ty: &Ty, seen: &mut Vec<String>) -> String {
+        match ty {
+            Ty::Tuple(fields) => {
+                let parts: Vec<String> = fields.iter().map(|f| self.structural_key_in(f, seen)).collect();
+                format!("({})", parts.join(","))
+            }
+            Ty::Array(inner, n) => format!("[{},{}]", self.structural_key_in(inner, seen), n),
+            Ty::Option(inner) => format!("Option<{}>", self.structural_key_in(inner, seen)),
+            Ty::Result(ok, err) => {
+                format!("Result<{},{}>", self.structural_key_in(ok, seen), self.structural_key_in(err, seen))
+            }
+            Ty::List(inner) => format!("List<{}>", self.structural_key_in(inner, seen)),
+            Ty::Map(k, v) => {
+                format!("Map<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
+            }
+            Ty::Heap(inner) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
+            Ty::Ref { mutable, inner } => {
+                format!("&{}{}", if *mutable { "mut " } else { "" }, self.structural_key_in(inner, seen))
+            }
+            Ty::Struct(a) => {
+                let mut parts = Vec::new();
+                for field in &self.program.structs[a.id].fields {
+                    parts.push(self.structural_key_in(&field.ty, seen));
+                }
+                format!("struct({})", parts.join(","))
+            }
+            Ty::Enum(a) => {
+                let mut variants = Vec::new();
+                for variant in &self.program.enums[a.id].variants {
+                    let mut fields = Vec::new();
+                    for field in &variant.fields {
+                        fields.push(self.structural_key_in(&field.ty, seen));
+                    }
+                    variants.push(fields.join(","));
+                }
+                format!("enum({})", variants.join("|"))
+            }
+            other => format!("{other:?}"),
+        }
     }
 
     pub(super) fn drop_glue_body(&mut self, value: FunctionValue<'ctx>, ty: &Ty) -> GenResult<()> {
@@ -65,11 +140,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             temps: std::mem::take(&mut self.temps),
             flags: std::mem::take(&mut self.flags),
             loops: std::mem::take(&mut self.loops),
+            debug_scope: self.debug.as_ref().and_then(|db| db.scope),
+            debug_file: self.debug.as_ref().and_then(|db| db.file),
+            debug_entry: self.debug_entry,
+            dead_locals: std::mem::take(&mut self.dead_locals),
+            bounds_facts: std::mem::take(&mut self.bounds_facts),
         });
         let entry = self.cx.append_basic_block(value, "entry");
         let body = self.cx.append_basic_block(value, "body");
         self.entry_builder.position_at_end(entry);
         self.builder.position_at_end(body);
+        // Glue is compiler-generated: it has no source locations and no debug variables.
+        if let Some(db) = self.debug.as_mut() {
+            db.scope = None;
+            db.file = None;
+        }
+        self.debug_entry = None;
+        self.builder.unset_current_debug_location();
         self.function = Some(value);
         self.locals = &[];
         self.ret = &Ty::Unit;
@@ -95,6 +182,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.temps = ctx.temps;
         self.flags = ctx.flags;
         self.loops = ctx.loops;
+        if let Some(db) = self.debug.as_mut() {
+            db.scope = ctx.debug_scope;
+            db.file = ctx.debug_file;
+        }
+        self.debug_entry = ctx.debug_entry;
+        self.dead_locals = ctx.dead_locals;
+        self.bounds_facts = ctx.bounds_facts;
         if let Some(position) = ctx.position {
             self.builder.position_at_end(position);
         }

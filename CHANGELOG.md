@@ -6,6 +6,18 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- Compiler and runtime debug/observability/performance work (issue #421, sub-issues #422-#432):
+  `-g` emits source-level DWARF for functions, parameters, locals, and every expression's line and column
+  (`tests/check-debug-info.sh`, which also proves a gdb breakpoint and local read); panics print a symbolized
+  `stack backtrace:` after the unchanged message line in both profiles; standard output is block buffered (line
+  buffered on a terminal) and flushed by `atexit`, `process.exit`, panics, and the stack-overflow handler; the main
+  thread has an alternate-signal-stack guard that turns unbounded recursion into `panic: stack overflow`; generic
+  glue is shared by structural type shape; drop flags are omitted for locals the move checker proves dead at every
+  exit; constant and `0..len` loop indices skip their bounds checks; `--lto`, `--pgo-generate`, and `--pgo-use`
+  expose LLVM LTO and PGO; `--strip` and size budgets (128 KiB hello, 512 KiB std-heavy) cover release binaries;
+  `burdin --version` prints the version, target, LLVM version, commit, and profile; and modules are parsed in
+  parallel with byte-identical diagnostics (`BURDIN_JOBS`). Each has a CI check: `check-debug-info.sh`,
+  `check-codegen-opt.sh`, `check-build-flags.sh`, and `check-parallel.sh`.
 - `burdin test` gained the runner ergonomics of issue #438 (sub-issues #439-#443, #445). Tests may carry
   `[ignore]`, `[timeout(ms)]`, `[should_panic]`/`[should_panic("text")]`, and `[should_fail]` attributes; an invalid
   attribute is E0170. Tests run concurrently (`-j`/`--jobs`, default: the CPU count) with a deterministic report,

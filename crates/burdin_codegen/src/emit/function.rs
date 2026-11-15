@@ -55,7 +55,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Some(t) => t.fn_type(&params, false),
                 None => self.cx.void_type().fn_type(&params, false),
             };
-            let value = self.module.add_function(&format!("burdin.{}", f.name), fn_ty, Some(Linkage::Internal));
+            // Burdin functions keep their symbol (`burdin.<name>`) in the executable's symbol table, so a panic
+            // backtrace can name them. The `burdin.` prefix keeps them apart from C symbols.
+            let value = self.module.add_function(&format!("burdin.{}", f.name), fn_ty, Some(Linkage::External));
             self.functions.push(value);
         }
         for (i, f) in program.functions.iter().enumerate() {
@@ -95,7 +97,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // The function scope holds the `own` parameters; the body block's locals drop before them (DR3).
         self.scopes.push(f.params.iter().copied().filter(|p| f.locals[p.0].kind == LocalKind::OwnParam).collect());
         self.flags.clear();
+        self.dead_locals.clear();
+        // A place the move checker proved uninitialized at every drop site never needs a flag, and its scope drop
+        // is skipped (issue #427). Other places keep a runtime flag.
         for moved in &f.moved {
+            if moved.always_dead {
+                self.dead_locals.insert(moved.local);
+            }
+        }
+        for moved in &f.moved {
+            if self.dead_locals.contains(&moved.local) {
+                continue;
+            }
             let flag = self.entry_builder.build_alloca(self.cx.bool_type(), "moved").map_err(llvm_err)?;
             let one = self.cx.bool_type().const_int(1, false);
             self.entry_builder.build_store(flag, one).map_err(llvm_err)?;
@@ -120,6 +133,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 arg_index += 1;
             }
         }
+        self.debug_entry = Some(entry);
+        self.debug_function(value, f);
+        // A function with no expressions (a generic stub, for instance) would otherwise inherit the previous
+        // function's location for its return.
+        self.debug_at(f.span);
         let result = self.block(&f.body, Mode::Move)?;
         self.free_temps_from(0)?;
         // The body block dropped its own locals; only the parameters are left in their scope.
