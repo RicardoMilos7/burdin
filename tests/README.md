@@ -72,6 +72,8 @@ tests/check-tests.sh                  # check directives and error codes (no com
 tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
 tests/check-platform.sh               # check the host triple and 64-bit isize/usize (needs a built driver)
 tests/check-docs.sh                   # check documentation links and the driver contract (needs a built driver)
+tests/check-diagnostics.sh            # check color, width, formats, error limits, and ordering (needs a built driver)
+tests/check-error-docs.sh             # check the error-code reference and `burdin explain` (needs a built driver)
 tests/check-test-runner.sh            # check `burdin test` attributes, parallelism, output, isolation, discovery
 pwsh tests/check-tests.ps1            # the same check in PowerShell
 ```
@@ -110,7 +112,9 @@ platform. `HANDOFF.md` records the first baseline and the meaning of the `--smok
 
 ## Error codes
 
-The registry the tests use. The compiler adopts these numbers (or the tests are updated).
+The registry the tests use. The compiler adopts these numbers (or the tests are updated). Every code also has a
+user-facing entry in [the error-code reference](../docs/error-codes.md), which `tests/check-error-docs.sh` checks
+against this table and whose examples it compiles; `burdin explain <code>` prints the entry.
 
 | Code | Meaning |
 | --- | --- |

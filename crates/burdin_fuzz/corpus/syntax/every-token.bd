@@ -1,0 +1,4 @@
+// Every keyword, reserved word, and punctuation token on one line.
+as break const continue else enum extern false fn for if in interface let loop match mut orelse own priv
+return self Self struct true type unsafe use where while any comptime derive impl
+_ ( ) [ ] { } , : ; . .. ..= => @ ? = + - * / % & | ^ ! < > <= >= == != << >> && ||

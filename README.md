@@ -13,6 +13,7 @@ conformance suite and the specs, not by this file; see the index below.
 | Document | Contents |
 | --- | --- |
 | [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the settled language decisions. Read this first. |
+| [`docs/error-codes.md`](docs/error-codes.md) | The user-facing reference for every error code, with a checked example and a fix for each. `burdin explain <code>` prints one entry. |
 | [`spec/grammar.md`](spec/grammar.md) | The syntax of stage 0. |
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
@@ -22,6 +23,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Shipped milestones. |
+| [`crates/burdin_fuzz/`](crates/burdin_fuzz/) | The lexer/parser fuzzer and its committed corpus. |
 | [`std/README.md`](std/README.md) | The stage 0 standard library. |
 | [`Burdin Language Design.md`](Burdin%20Language%20Design.md) | The full language design, including features after stage 0. |
 
@@ -69,19 +71,41 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has three subcommands, `build`, `run`, and `test`. This section is the contract they implement; the
-conformance runner (`tests/run-tests.sh`) and the documentation check depend on it.
+The `burdin` command has the subcommands `build`, `run`, `test`, and `explain`. This section is the contract they
+implement; the conformance runner (`tests/run-tests.sh`) and the documentation check depend on it.
 
 ```
 usage:
-  burdin build <file.bd | package directory> [--release] [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
-  burdin run <file.bd | package directory> [--release] [--link-lib <name>]... [-- <program arguments>...]
+  burdin build <file.bd | package directory> [--release] [-o <output>] [--emit-ir <file.ll>]
+               [--link-lib <name>]... [diagnostics]
+  burdin run <file.bd | package directory> [--release] [--link-lib <name>]... [diagnostics]
+             [-- <program arguments>...]
   burdin test <file.bd | package directory> [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
-              [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
+              [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>] [diagnostics]
+  burdin explain [<error code>]
+
+test options:
+  -j, --jobs <n>       tests to run at once (default: the number of CPUs)
+  -p <package>         run the tests of one package of the build; may repeat
+  --workspace          run the tests of the entry package and every path dependency
+  --filter <text>      run only tests whose name contains text
+  --ignored            run only tests marked [ignore]
+  --include-ignored    run ignored tests too
+  --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
+  -v, --verbose        print the output of passing tests too
+
+diagnostics:
+  --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
+                                          diagnostic; json prints one JSON object per line
+  --color <auto|always|never>             color (default auto: only when stderr is a terminal)
+  --no-color                              same as --color never
+  --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
+  --error-limit <n>                       print at most n errors after sorting (0 prints all)
 ```
 
-`-j`/`--jobs`, `-p`, `--workspace`, `--filter`, `--ignored`/`--include-ignored`, `--timeout`, and `--verbose` are
-options of `burdin test`; any other command rejects them.
+Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `--filter`,
+`--ignored`/`--include-ignored`, `--timeout`, and `--verbose` are options of `burdin test`; any other command
+rejects them.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
 
@@ -111,7 +135,7 @@ A single `.bd` file is a package with one module (its module path is empty) and 
 ### `burdin build`
 
 ```
-burdin build <target> [--release] [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
+burdin build <target> [--release] [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]... [diagnostics]
 ```
 
 Compiles the target to a native executable. On success it prints nothing and exits 0.
@@ -138,7 +162,7 @@ $ head -1 hello.ll
 ### `burdin run`
 
 ```
-burdin run <target> [--release] [--link-lib <name>]... [-- <program arguments>...]
+burdin run <target> [--release] [--link-lib <name>]... [diagnostics] [-- <program arguments>...]
 ```
 
 Compiles into a temporary directory and runs the program. The program's stdout and stderr pass through unchanged, and
@@ -156,7 +180,7 @@ $ ./target/debug/burdin run args.bd -- x y
 
 ```
 burdin test <target> [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
-            [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
+            [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>] [diagnostics]
 ```
 
 Builds the selected packages in test mode and runs every `test "name" [attrs] { ... }` block, each in its own
@@ -197,14 +221,31 @@ conflicting flags) or a driver failure after loading. `tests/run-tests.sh` reads
 
 ### Diagnostics
 
-Compilation diagnostics go to stderr, one per line, grouped by file and in source order within each file:
+Compilation diagnostics go to stderr. The default (`human`) format starts each diagnostic on its own line:
 
 ```
 path:LINE:COL: error[E0003]: expected `i32`, found `str`
 ```
 
-`LINE` and `COL` are 1-based; `COL` counts characters, not bytes. Every error is reported, not only the first. After
-the diagnostics the driver prints a summary line and exits with status 1:
+`LINE` and `COL` are 1-based; `COL` counts characters, not bytes. A diagnostic may add related notes that point at
+another span and a suggested fix:
+
+```
+bad.bd:10:9: error[E0114]: this parameter of `bump` is `mut`; pass the argument as `mut ...`
+  = help: add `mut` before this argument
+bad.bd:12:9: error[E0100]: use of moved value `t`
+  = note: bad.bd:11:10: value moved here
+```
+
+**Ordering and completeness.** Diagnostics are collected while checking and printed once, sorted by file (in
+package load order) and byte offset; ties are broken by code, message, and the order the checks found them. The
+output is byte-for-byte deterministic, and it is never streamed: sorting needs the whole list. Every error is
+reported by default; the semantic and memory checks keep going after a failure so one run shows as many errors as
+they can find. `--error-limit <n>` prints the first `n` diagnostics after sorting and adds a
+`note: <hidden> more errors not shown (--error-limit <n>)` line; the summary still counts every error. `0` (the
+default) means no limit, so the "report every error" rule is unchanged unless a limit is asked for.
+
+After the diagnostics the driver prints a summary line and exits with status 1:
 
 ```
 error: could not compile bad.bd (1 error)
@@ -215,8 +256,43 @@ with a syntax error may report fewer later diagnostics. Errors before or outside
 manifest, a missing dependency, a dependency cycle, a missing target) are printed as `error: <message>` without an
 error code.
 
+**Color and width.** `--color auto|always|never` (and `--no-color`, the same as `never`) colors the location, the
+severity, and the code. `auto` is the default and colors only when stderr is a terminal; a non-empty `NO_COLOR`
+disables color for `auto`, while an explicit `always` or `never` wins over it, and the last color option wins.
+`--width <n>` wraps the human format to `n` columns (`0` disables wrapping); without it the driver uses `COLUMNS`,
+then 80. Wrapping only inserts line breaks and indentation, and the first line always keeps the
+`path:LINE:COL: error[E0000]: message` shape.
+
+**Formats.** `--diagnostic-format short` prints exactly one plain line per diagnostic, with no notes,
+suggestions, color, or wrapping; it is the stable format the test scripts parse. `--diagnostic-format json` prints
+one JSON object per line, and the last line is a summary object:
+
+```json
+{"type":"diagnostic","severity":"error","code":"E0114","span":{"file":"bad.bd","line":10,"column":9,"end_line":10,"end_column":10,"byte_start":140,"byte_end":141},"message":"this parameter of `bump` is `mut`; pass the argument as `mut ...`","notes":[],"suggestions":[{"message":"add `mut` before this argument","span":{"file":"bad.bd","line":10,"column":9,"end_line":10,"end_column":9,"byte_start":140,"byte_end":140},"replacement":"mut "}]}
+{"type":"summary","errors":1,"shown":1,"limit":null}
+```
+
+Each diagnostic carries its primary `span`, `notes` (a message and an optional span), and `suggestions` (a
+message, a span, and the replacement text). A suggestion with `byte_start == byte_end` inserts its replacement;
+an empty replacement deletes the span. Together they are what an editor turns into a diagnostic and a quick-fix
+code action. JSON and short output are never colored or wrapped. `--color` and `--width` only affect `human`.
+
 The error codes come from the registry in [`tests/README.md`](tests/README.md#error-codes). `E9000` is the temporary
 code for "not implemented in this compiler yet"; the conformance suite does not use it.
+
+### `burdin explain` and the error-code reference
+
+[`docs/error-codes.md`](docs/error-codes.md) explains every registry code, with a program that triggers it and how
+to fix it. The page is checked in CI: `tests/check-error-docs.sh` compiles every snippet and requires exactly the
+marked diagnostics, and the driver embeds the page, so the two cannot drift.
+
+```
+burdin explain E0003      print the reference entry for E0003
+burdin explain            list every code
+```
+
+`burdin explain` writes to stdout and exits 0; an unknown code exits 2. The human diagnostics end with a note
+pointing at the command.
 
 ### Emitting LLVM IR
 
@@ -288,6 +364,18 @@ error: cannot run the linker `cc`: No such file or directory (os error 2) (set B
 
 Usage errors print `error: <message>` followed by the usage block.
 
+## Fuzzing the lexer and parser
+
+`crates/burdin_fuzz` lexes and parses a committed corpus and deterministic mutations of it. `cargo test --workspace`
+replays the corpus in every CI job, so a panic reintroduced by a change fails CI. The scheduled `fuzz` job runs a
+longer session through `tests/fuzz.sh`; a found input is written under `fuzz-out/crashes` and is committed under
+`crates/burdin_fuzz/corpus/syntax/` together with its fix. See
+[`crates/burdin_fuzz/corpus/syntax/README.md`](crates/burdin_fuzz/corpus/syntax/README.md).
+
+```console
+$ tests/fuzz.sh --seconds 60
+```
+
 ## Checking the documentation
 
 `tests/check-docs.sh` verifies that the links in the repository's Markdown files resolve (files and heading anchors),
@@ -299,3 +387,10 @@ building the driver:
 ```console
 $ tests/check-docs.sh
 ```
+
+Two checks cover the diagnostics themselves, and every CI job runs them after the build:
+
+- `tests/check-diagnostics.sh` checks the default and short and JSON formats, color and `NO_COLOR`, wrapping and
+  `--width`, notes and suggestions, `--error-limit`, and deterministic ordering.
+- `tests/check-error-docs.sh` checks that [`docs/error-codes.md`](docs/error-codes.md) mirrors the registry, that
+  every snippet fails with exactly the marked diagnostics, and that `burdin explain` prints every entry.

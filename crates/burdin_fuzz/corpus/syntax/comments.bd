@@ -1,0 +1,17 @@
+// Comments and trivia: line comments, nestable-looking block comments, doc comments, and unterminated ones.
+// one
+/// doc
+//// two slashes then more
+/* block */
+/**/
+/* * / */
+/* /* nested-looking */ still */
+/* multi
+   line */
+fn main() { // after
+    let a = /* in the middle */ 1
+} // end
+/* unterminated
+fn main() {}
+/* * /
+// line without a newline at the end

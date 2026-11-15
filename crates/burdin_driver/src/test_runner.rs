@@ -87,6 +87,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         emit_ir: args.emit_ir.as_deref(),
         link_libs: &args.link_libs,
         test_mode: true,
+        diagnostics: &args.diagnostics,
     };
     let mut compiled = Vec::new();
     for &index in &selected {
@@ -426,6 +427,7 @@ mod tests {
             emit_ir: None,
             link_libs: Vec::new(),
             program_args: Vec::new(),
+            diagnostics: crate::DiagnosticOptions::default(),
             jobs: None,
             verbose: false,
             packages: Vec::new(),
@@ -614,6 +616,7 @@ mod tests {
                 emit_ir: self.emit_ir.clone(),
                 link_libs: self.link_libs.clone(),
                 program_args: self.program_args.clone(),
+                diagnostics: crate::DiagnosticOptions::default(),
                 jobs: self.jobs,
                 verbose: self.verbose,
                 packages: self.packages.clone(),

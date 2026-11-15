@@ -1,0 +1,30 @@
+// Match arms, guards, separators, and the `else` arm.
+fn main() {
+    let a = match x {
+        1 => 2,
+        1 | 2 => 3
+        -1 => 4,
+        3..=9 => 5,
+        n @ 10..=20 => 6,
+        Some(v) if v > 0 => 7,
+        Shape.Rect { w, h: 0 } => 8,
+        Some((a, b)) => 9,
+        _ => 10,
+        else => 11,
+    }
+    let b = match y { 1 => {}, 2 => {}, else => {} }
+    let c = match z {
+        1 => if a { 2 } else { 3 },
+        _ => match w { 1 => 2, _ => 3 }
+    }
+    let d = match x {
+        1 =>
+            2,
+        _ =>
+            3,
+    }
+    let e = match x { 1 => 2 3 => 4 }
+    let f = match x { => 1 }
+    let g = match x { 1 => }
+    let h = match { }
+}

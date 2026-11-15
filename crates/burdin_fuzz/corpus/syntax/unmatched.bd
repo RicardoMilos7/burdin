@@ -1,0 +1,11 @@
+// Brackets that do not match: a stray closer must not unbalance the recovery counts.
+) ] } ( [ { ))) ]]] }}}
+fn a() { g(] }
+fn b() { g(1, 2 }
+fn c() { let x = ([{] }
+fn d() { match x { Some(v => {} } }
+fn e() { if (a { } else { } }
+fn f() { ( } x
+fn g() { [ ( { ) ] } ) ] }
+struct S { f: i32
+fn h() {}

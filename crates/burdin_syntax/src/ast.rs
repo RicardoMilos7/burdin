@@ -327,6 +327,8 @@ pub enum UnOp {
 pub struct Arg {
     /// The call-site `mut` marker.
     pub mut_marker: bool,
+    /// The `mut` token, when the marker is written; diagnostics suggest removing it (E0115).
+    pub mut_span: Option<Span>,
     pub expr: Expr,
 }
 
