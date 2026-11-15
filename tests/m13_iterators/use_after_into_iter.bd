@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `into_iter` consumes the list, so the list cannot be used afterwards.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let it = xs.into_iter()
+    println(xs.len().to_string()) //~ E0100
+}

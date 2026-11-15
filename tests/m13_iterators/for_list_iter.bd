@@ -1,0 +1,25 @@
+//@ run
+//> 1
+//> 2
+//> 3
+//> 3
+//> 4
+//> 5
+
+// `List.iter()` returns a slice view, and that view follows the `Iterator` protocol.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    for x in xs.iter() {
+        println(x.to_string())
+    }
+    let mut it = xs.iter()
+    loop {
+        match it.next() {
+            Some(x) => println((x + 2).to_string()),
+            None => break,
+        }
+    }
+}

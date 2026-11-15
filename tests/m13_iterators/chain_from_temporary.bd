@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A chain over a temporary list outlives the storage it borrows.
+fn make(): List<i32> {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs
+}
+
+fn main() {
+    let mut it = make().iter().map(|x| x * 2) //~ E0123
+    println(it.count().to_string())
+}

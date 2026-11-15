@@ -35,13 +35,6 @@ impl<'t> Sema<'t> {
 
     fn declare_type_item(&mut self, module: usize, item: &'t ast::Item, diags: &mut Diagnostics) {
         if let ast::Item::Interface(i) = item {
-            if !i.generics.is_empty() {
-                diags.error(
-                    Code::UNSUPPORTED, // e9000: declare-generic-interface
-                    i.name.span,
-                    "generic interfaces are not implemented in this compiler yet",
-                );
-            }
             let name = &i.name.name;
             let module_info = &self.globals.modules[module];
             if module_info.ifaces.contains_key(name)
@@ -52,6 +45,16 @@ impl<'t> Sema<'t> {
                 diags.error(Code::DUPLICATE_NAME, i.name.span, format!("`{name}` is defined more than once"));
                 return;
             }
+            let params: Vec<String> = i.generics.iter().map(|g| g.name.name.clone()).collect();
+            for (k, p) in params.iter().enumerate() {
+                if params[..k].contains(p) {
+                    diags.error(
+                        Code::DUPLICATE_NAME,
+                        i.generics[k].name.span,
+                        format!("type parameter `{p}` is declared twice"),
+                    );
+                }
+            }
             let full = self.globals.qualified(module, name);
             let index = self.globals.interfaces.len();
             self.globals.modules[module].ifaces.insert(name.clone(), index);
@@ -59,6 +62,8 @@ impl<'t> Sema<'t> {
             self.globals.interfaces.push(InterfaceInfo {
                 name: full,
                 module,
+                params,
+                bounds: Vec::new(),
                 requires: Vec::new(),
                 methods: Vec::new(),
             });
@@ -171,8 +176,15 @@ impl<'t> Sema<'t> {
         for i in 0..self.tpl.ifaces.len() {
             let decl = self.tpl.ifaces[i];
             let module = self.globals.interfaces[i].module;
+            let params = self.globals.interfaces[i].params.clone();
+            let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
+            let bounds: Vec<Vec<Bound>> = decl
+                .generics
+                .iter()
+                .map(|p| p.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags)).collect())
+                .collect();
             let requires =
-                decl.requires.iter().filter_map(|t| self.globals.resolve_bound(t, &[], module, diags)).collect();
+                decl.requires.iter().filter_map(|t| self.globals.resolve_bound(t, &subst, module, diags)).collect();
             let methods = decl
                 .methods
                 .iter()
@@ -181,8 +193,10 @@ impl<'t> Sema<'t> {
                     sig: Signature::placeholder(),
                     has_default: m.has_body,
                     is_unsafe: m.decl.is_unsafe,
+                    generic: !m.decl.generics.is_empty(),
                 })
                 .collect();
+            self.globals.interfaces[i].bounds = bounds;
             self.globals.interfaces[i].requires = requires;
             self.globals.interfaces[i].methods = methods;
         }
@@ -397,18 +411,38 @@ impl<'t> Sema<'t> {
             self.allocate_adt(g, args.clone(), diags);
             self.globals.generic_adts[g].identity = self.globals.adt_instances[&(g, args)];
         }
-        // Default methods of interfaces are checked once with `Self` as a type parameter.
+        // Default methods of interfaces are checked once with `Self` as a type parameter and the interface's own
+        // parameters as opaque types.
         for (i, decl) in self.tpl.ifaces.clone().into_iter().enumerate() {
             let module = self.globals.interfaces[i].module;
             let iface_name = self.globals.interfaces[i].name.clone();
+            let params = self.globals.interfaces[i].params.clone();
+            let iface_bounds = self.globals.interfaces[i].bounds.clone();
+            let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
+            let self_args: Vec<Ty> = params.iter().map(|p| param_ty(p)).collect();
+            let mut base_bounds: Vec<(String, Vec<Bound>)> =
+                vec![("Self".to_string(), vec![Bound::User(i, self_args)])];
+            base_bounds.extend(params.iter().cloned().zip(iface_bounds));
             for m in decl.methods.iter().filter(|m| m.has_body) {
+                let mut item_subst: Vec<(String, Ty)> = Vec::new();
+                let mut item_bounds: Vec<(String, Vec<Bound>)> = Vec::new();
+                for g in &m.decl.generics {
+                    item_subst.push((g.name.name.clone(), param_ty(&g.name.name)));
+                }
+                item_subst.extend(subst.iter().cloned());
+                for (g, bounds) in
+                    m.decl.generics.iter().zip(method_bounds(&m.decl, &subst, &self.globals, module, diags))
+                {
+                    item_bounds.push((g.name.name.clone(), bounds));
+                }
+                item_bounds.extend(base_bounds.iter().cloned());
                 let item = FnItem {
                     decl: &m.decl,
                     name: format!("{iface_name}.{}", m.decl.name.name),
                     module,
                     self_ty: Some(param_ty("Self")),
-                    subst: Vec::new(),
-                    bounds: vec![("Self".to_string(), vec![Bound::User(i)])],
+                    subst: item_subst,
+                    bounds: item_bounds,
                     symbolic: true,
                     check_body: true,
                     is_unsafe: m.decl.is_unsafe,
@@ -418,6 +452,48 @@ impl<'t> Sema<'t> {
             }
         }
     }
+}
+
+/// The bounds of each method-level type parameter, resolved with the declaration's enclosing substitution
+/// (`base`) and the method's own parameters as opaque types.
+pub(crate) fn method_bounds(
+    f: &ast::FnDecl,
+    base: &[(String, Ty)],
+    globals: &Globals,
+    module: usize,
+    diags: &mut Diagnostics,
+) -> Vec<Vec<Bound>> {
+    let mut subst: Vec<(String, Ty)> =
+        f.generics.iter().map(|g| (g.name.name.clone(), param_ty(&g.name.name))).collect();
+    subst.extend(base.iter().cloned());
+    let mut all: Vec<Vec<Bound>> = f
+        .generics
+        .iter()
+        .map(|p| p.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect())
+        .collect();
+    for pred in &f.where_clause {
+        let index = match &pred.ty.kind {
+            ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => {
+                f.generics.iter().position(|g| g.name.name == segs[0].name.name)
+            }
+            _ => None,
+        };
+        match index {
+            Some(i) => {
+                let extra: Vec<Bound> =
+                    pred.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect();
+                all[i].extend(extra);
+            }
+            None => {
+                diags.error(
+                    Code::UNSUPPORTED, // e9000: declare-where-non-param
+                    pred.ty.span,
+                    "a `where` clause on something other than a type parameter is not implemented in this compiler yet",
+                );
+            }
+        }
+    }
+    all
 }
 
 /// Validates the attributes of a `test` item and returns the runner-visible form. The accepted attributes are
@@ -500,34 +576,5 @@ fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestA
 
 /// The bounds of each type parameter of a function: from the parameter list and from `where` clauses.
 pub(crate) fn fn_bounds(f: &ast::FnDecl, globals: &Globals, module: usize, diags: &mut Diagnostics) -> Vec<Vec<Bound>> {
-    let subst: Vec<(String, Ty)> =
-        f.generics.iter().map(|g| (g.name.name.clone(), crate::generics::param_ty(&g.name.name))).collect();
-    let mut all: Vec<Vec<Bound>> = f
-        .generics
-        .iter()
-        .map(|p| p.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect())
-        .collect();
-    for pred in &f.where_clause {
-        let index = match &pred.ty.kind {
-            ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => {
-                f.generics.iter().position(|g| g.name.name == segs[0].name.name)
-            }
-            _ => None,
-        };
-        match index {
-            Some(i) => {
-                let extra: Vec<Bound> =
-                    pred.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect();
-                all[i].extend(extra);
-            }
-            None => {
-                diags.error(
-                    Code::UNSUPPORTED, // e9000: declare-where-non-param
-                    pred.ty.span,
-                    "a `where` clause on something other than a type parameter is not implemented in this compiler yet",
-                );
-            }
-        }
-    }
-    all
+    method_bounds(f, &[], globals, module, diags)
 }

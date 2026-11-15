@@ -284,6 +284,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        if matches!(m, Method::Iter | Method::IntoIter) {
+            return self.iter_value(args, m == Method::IntoIter);
+        }
+        if m == Method::IterNext {
+            return self.iter_next(args, ty);
+        }
         if m == Method::AsPtr {
             // A `CString` receiver that is not a place is a temporary of the statement: keep it in a slot so its
             // buffer is freed at the end of the statement, like `view_parts` does for a temporary `String`.

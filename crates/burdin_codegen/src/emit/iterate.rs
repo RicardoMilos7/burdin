@@ -1,0 +1,589 @@
+//! The iteration protocol's built-in methods: `iter`, `into_iter`, and `next` on the compiler-known iterators.
+
+use super::{Codegen, GenResult, Mode, llvm_err, undef};
+use burdin_tir::Ty;
+use inkwell::IntPredicate;
+use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
+
+impl<'ctx, 'a> Codegen<'ctx, 'a> {
+    /// `xs.iter()` and `xs.into_iter()`: builds the iterator value of the receiver's type.
+    pub(super) fn iter_value(
+        &mut self,
+        args: &'a [burdin_tir::Expr],
+        into: bool,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let recv = &args[0];
+        let recv_ty = recv.ty.clone();
+        match (&recv_ty, into) {
+            // A slice view is its own iterator; `Chars` is a `str` view.
+            (Ty::Slice(_) | Ty::Chars, _) => self.expr_mode(recv, Mode::Use),
+            (Ty::Array(_, n), false) => {
+                let n = *n;
+                match self.place_ptr(recv)? {
+                    Some(ptr) => Ok(Some(self.make_str(ptr.into(), self.usize_ty.const_int(n, false).into())?.into())),
+                    None => Ok(None),
+                }
+            }
+            (Ty::Array(elem, n), true) => {
+                let elem = (**elem).clone();
+                let n = *n;
+                let v = self.expr_mode(recv, Mode::Move)?;
+                let array = self.need(v, &recv_ty);
+                let tt = self.iter_array_ty(&elem, n);
+                let mut agg = undef(tt.into()).into_struct_value();
+                agg = self.builder.build_insert_value(agg, array, 0, "").map_err(llvm_err)?.into_struct_value();
+                agg = self
+                    .builder
+                    .build_insert_value(agg, self.usize_ty.const_zero(), 1, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                Ok(Some(agg.into()))
+            }
+            (Ty::List(_), _) => {
+                // `into_iter` takes the list, so the collection is moved and its drop flag cleared; `iter` only
+                // borrows it.
+                let v = self.expr_mode(recv, if into { Mode::Move } else { Mode::Use })?;
+                let s = self.need(v, &recv_ty).into_struct_value();
+                let base = self.builder.build_extract_value(s, 0, "iter.ptr").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(s, 1, "iter.len").map_err(llvm_err)?;
+                if into {
+                    let cap = self.builder.build_extract_value(s, 2, "iter.cap").map_err(llvm_err)?;
+                    let zero = self.usize_ty.const_zero().into();
+                    Ok(Some(self.seq_value(&[(0, base), (1, len), (2, cap), (3, zero)])?.into()))
+                } else {
+                    Ok(Some(self.make_str(base, len)?.into()))
+                }
+            }
+            (Ty::Map(..), _) => {
+                let v = self.expr_mode(recv, if into { Mode::Move } else { Mode::Use })?;
+                let s = self.need(v, &recv_ty).into_struct_value();
+                let base = self.builder.build_extract_value(s, 0, "iter.ptr").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(s, 1, "iter.len").map_err(llvm_err)?;
+                let cap = self.builder.build_extract_value(s, 2, "iter.cap").map_err(llvm_err)?;
+                let zero = self.usize_ty.const_zero().into();
+                Ok(Some(self.seq_value(&[(0, base), (1, len), (2, cap), (3, zero)])?.into()))
+            }
+            (Ty::Range(elem, _), _) => {
+                let v = self.expr_mode(recv, Mode::Use)?;
+                let s = self.need(v, &recv_ty).into_struct_value();
+                let lo = self.builder.build_extract_value(s, 0, "range.lo").map_err(llvm_err)?;
+                let hi = self.builder.build_extract_value(s, 1, "range.hi").map_err(llvm_err)?;
+                let tt = self.product_ty(&[elem.as_ref().clone(), elem.as_ref().clone(), Ty::Bool]);
+                let mut agg = undef(tt.into()).into_struct_value();
+                agg = self.builder.build_insert_value(agg, lo, 0, "").map_err(llvm_err)?.into_struct_value();
+                agg = self.builder.build_insert_value(agg, hi, 1, "").map_err(llvm_err)?.into_struct_value();
+                agg = self
+                    .builder
+                    .build_insert_value(agg, self.cx.bool_type().const_zero(), 2, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                Ok(Some(agg.into()))
+            }
+            (other, _) => Err(format!("unsupported iterator source `{other}`")),
+        }
+    }
+
+    /// A `{ ptr, len, cap, index }` value of the list and map iterators.
+    fn seq_value(&mut self, fields: &[(u32, BasicValueEnum<'ctx>)]) -> GenResult<StructValue<'ctx>> {
+        let mut agg = undef(self.iter_seq_ty().into()).into_struct_value();
+        for (i, v) in fields {
+            agg = self.builder.build_insert_value(agg, *v, *i, "").map_err(llvm_err)?.into_struct_value();
+        }
+        Ok(agg)
+    }
+
+    /// `it.next()` on a compiler-known iterator. `ty` is the call's `Option<Item>` type.
+    pub(super) fn iter_next(
+        &mut self,
+        args: &'a [burdin_tir::Expr],
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Ty::Option(item) = ty else { return Err("an iterator's `next` returns an `Option`".into()) };
+        let item = item.as_ref().clone();
+        let recv_ty = args[0].ty.clone();
+        match &recv_ty {
+            Ty::Slice(elem) => {
+                let elem = (**elem).clone();
+                self.next_slice(&args[0], &elem, &item, ty)
+            }
+            Ty::Chars => self.next_chars(&args[0], ty),
+            Ty::ListIntoIter(elem) => {
+                let elem = (**elem).clone();
+                self.next_list_into(&args[0], &elem, ty)
+            }
+            Ty::ArrayIntoIter(elem, n) => {
+                let elem = (**elem).clone();
+                self.next_array_into(&args[0], &elem, *n, ty)
+            }
+            Ty::MapIter(k, v) => {
+                let (k, v) = ((**k).clone(), (**v).clone());
+                self.next_map(&args[0], &k, &v, &item, ty, false)
+            }
+            Ty::MapIntoIter(k, v) => {
+                let (k, v) = ((**k).clone(), (**v).clone());
+                self.next_map(&args[0], &k, &v, &item, ty, true)
+            }
+            Ty::RangeIter(elem, inclusive) => {
+                let elem = (**elem).clone();
+                self.next_range(&args[0], &elem, *inclusive, ty)
+            }
+            other => Err(format!("`next` on `{other}` has no built-in implementation")),
+        }
+    }
+
+    /// The `Option<Item>` slot a `next` implementation fills in its branches.
+    fn option_slot(&mut self, ty: &Ty, name: &str) -> GenResult<Option<PointerValue<'ctx>>> {
+        Ok(match self.llvm_ty(ty) {
+            Some(t) => Some(self.alloca(t, name)?),
+            None => None,
+        })
+    }
+
+    fn load_option(&mut self, slot: Option<PointerValue<'ctx>>, ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        match (slot, self.llvm_ty(ty)) {
+            (Some(slot), Some(t)) => Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// `[T].next()`: yields the first element (a copy for a `Copy` element, a view otherwise) and advances.
+    fn next_slice(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        elem: &Ty,
+        item: &Ty,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let s = self.builder.build_load(self.str_ty, slot, "slice.iter").map_err(llvm_err)?.into_struct_value();
+        let base = self.builder.build_extract_value(s, 0, "slice.ptr").map_err(llvm_err)?.into_pointer_value();
+        let len = self.builder.build_extract_value(s, 1, "slice.len").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "next.out")?;
+        let empty =
+            self.builder.build_int_compare(IntPredicate::EQ, len, self.usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let none_bb = self.new_block("next.none");
+        let some_bb = self.new_block("next.some");
+        let end = self.new_block("next.end");
+        self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let none = self.option_ty(item).const_zero();
+            self.builder.build_store(out, none).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        // A non-`Copy` element is yielded as a shared view of the buffer.
+        let payload = if matches!(item, Ty::Ref { .. }) {
+            Some(base.into())
+        } else {
+            match self.llvm_ty(elem) {
+                Some(t) => Some(self.builder.build_load(t, base, "item").map_err(llvm_err)?),
+                None => None,
+            }
+        };
+        let one = self.usize_ty.const_int(1, false);
+        let next_ptr = match self.llvm_ty(elem) {
+            Some(t) => {
+                // SAFETY (LLVM): one element was available.
+                unsafe { self.builder.build_in_bounds_gep(t, base, &[one], "iter.ptr") }.map_err(llvm_err)?.into()
+            }
+            None => base.into(),
+        };
+        let next_len = self.builder.build_int_sub(len, one, "").map_err(llvm_err)?;
+        let advanced = self.make_str(next_ptr, next_len.into())?;
+        self.builder.build_store(slot, advanced).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(item, payload);
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// The scalar value of the character that starts at byte `at`, and the number of bytes it takes.
+    pub(super) fn decode_char_at(
+        &mut self,
+        base: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+        at: IntValue<'ctx>,
+    ) -> GenResult<(IntValue<'ctx>, IntValue<'ctx>)> {
+        let i32_ty = self.cx.i32_type();
+        // SAFETY (LLVM): `at < len`, checked by the caller.
+        let b0_ptr =
+            unsafe { self.builder.build_in_bounds_gep(self.cx.i8_type(), base, &[at], "") }.map_err(llvm_err)?;
+        let b0 = self.builder.build_load(self.cx.i8_type(), b0_ptr, "b0").map_err(llvm_err)?.into_int_value();
+        let b0_wide = self.builder.build_int_z_extend(b0, i32_ty, "").map_err(llvm_err)?;
+        let cont = |cg: &mut Self, index: u64| -> GenResult<IntValue<'ctx>> {
+            let off = cg.usize_ty.const_int(index, false);
+            let at_k = cg.builder.build_int_add(at, off, "").map_err(llvm_err)?;
+            let avail = cg.builder.build_int_compare(IntPredicate::ULT, at_k, len, "").map_err(llvm_err)?;
+            let more = cg.new_block("char.more");
+            let done = cg.new_block("char.done");
+            let slot = cg.alloca(i32_ty.into(), "char.byte")?;
+            cg.builder.build_store(slot, i32_ty.const_zero()).map_err(llvm_err)?;
+            cg.builder.build_conditional_branch(avail, more, done).map_err(llvm_err)?;
+            cg.builder.position_at_end(more);
+            // SAFETY (LLVM): `at + index < len`.
+            let p = unsafe { cg.builder.build_in_bounds_gep(cg.cx.i8_type(), base, &[at_k], "") }.map_err(llvm_err)?;
+            let b = cg.builder.build_load(cg.cx.i8_type(), p, "").map_err(llvm_err)?.into_int_value();
+            let wide = cg.builder.build_int_z_extend(b, i32_ty, "").map_err(llvm_err)?;
+            cg.builder.build_store(slot, wide).map_err(llvm_err)?;
+            cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+            cg.builder.position_at_end(done);
+            Ok(cg.builder.build_load(i32_ty, slot, "").map_err(llvm_err)?.into_int_value())
+        };
+        let cont1 = cont(self, 1)?;
+        let cont2 = cont(self, 2)?;
+        let cont3 = cont(self, 3)?;
+        let mask = |cg: &mut Self, v: IntValue<'ctx>, m: u64, want: u64| -> GenResult<IntValue<'ctx>> {
+            let a = cg.builder.build_and(v, i32_ty.const_int(m, false), "").map_err(llvm_err)?;
+            cg.builder.build_int_compare(IntPredicate::EQ, a, i32_ty.const_int(want, false), "").map_err(llvm_err)
+        };
+        let is_1 = self
+            .builder
+            .build_int_compare(IntPredicate::ULT, b0_wide, i32_ty.const_int(0x80, false), "")
+            .map_err(llvm_err)?;
+        let is_2 = mask(self, b0_wide, 0xE0, 0xC0)?;
+        let is_3 = mask(self, b0_wide, 0xF0, 0xE0)?;
+        let is_4 = mask(self, b0_wide, 0xF8, 0xF0)?;
+        let low = |cg: &mut Self, v: IntValue<'ctx>, m: u64, shift: u64| -> GenResult<IntValue<'ctx>> {
+            let a = cg.builder.build_and(v, i32_ty.const_int(m, false), "").map_err(llvm_err)?;
+            cg.builder.build_left_shift(a, i32_ty.const_int(shift, false), "").map_err(llvm_err)
+        };
+        let cont_mask =
+            |cg: &mut Self, v: IntValue<'ctx>, shift: u64| -> GenResult<IntValue<'ctx>> { low(cg, v, 0x3F, shift) };
+        let four = low(self, b0_wide, 0x07, 18)?;
+        let three = low(self, b0_wide, 0x0F, 12)?;
+        let two = low(self, b0_wide, 0x1F, 6)?;
+        let m1_12 = cont_mask(self, cont1, 12)?;
+        let m1_6 = cont_mask(self, cont1, 6)?;
+        let m1_0 = cont_mask(self, cont1, 0)?;
+        let m2_6 = cont_mask(self, cont2, 6)?;
+        let m2_0 = cont_mask(self, cont2, 0)?;
+        let m3_0 = cont_mask(self, cont3, 0)?;
+        let cp4 = self.builder.build_or(four, m1_12, "").map_err(llvm_err)?;
+        let cp4 = self.builder.build_or(cp4, m2_6, "").map_err(llvm_err)?;
+        let cp4 = self.builder.build_or(cp4, m3_0, "").map_err(llvm_err)?;
+        let cp3 = self.builder.build_or(three, m1_6, "").map_err(llvm_err)?;
+        let cp3 = self.builder.build_or(cp3, m2_0, "").map_err(llvm_err)?;
+        let cp2 = self.builder.build_or(two, m1_0, "").map_err(llvm_err)?;
+        let cp = self.builder.build_select(is_2, cp2, cp4, "").map_err(llvm_err)?.into_int_value();
+        let cp = self.builder.build_select(is_3, cp3, cp, "").map_err(llvm_err)?.into_int_value();
+        let cp = self.builder.build_select(is_1, b0_wide, cp, "").map_err(llvm_err)?.into_int_value();
+        let cp = self.builder.build_int_truncate(cp, i32_ty, "").map_err(llvm_err)?;
+        let w2 = self
+            .builder
+            .build_select(is_2, self.usize_ty.const_int(2, false), self.usize_ty.const_int(1, false), "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let w3 = self
+            .builder
+            .build_select(is_3, self.usize_ty.const_int(3, false), w2, "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let w4 = self
+            .builder
+            .build_select(is_4, self.usize_ty.const_int(4, false), w3, "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let width = self
+            .builder
+            .build_select(is_1, self.usize_ty.const_int(1, false), w4, "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        Ok((cp, width))
+    }
+
+    /// `Chars.next()`: decodes the first character and advances by its width.
+    fn next_chars(&mut self, recv: &'a burdin_tir::Expr, ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let s = self.builder.build_load(self.str_ty, slot, "chars.iter").map_err(llvm_err)?.into_struct_value();
+        let base = self.builder.build_extract_value(s, 0, "chars.ptr").map_err(llvm_err)?.into_pointer_value();
+        let len = self.builder.build_extract_value(s, 1, "chars.len").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "char.out")?;
+        let empty =
+            self.builder.build_int_compare(IntPredicate::EQ, len, self.usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let none_bb = self.new_block("char.none");
+        let some_bb = self.new_block("char.some");
+        let end = self.new_block("char.end");
+        self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(&Ty::Char).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let (cp, width) = self.decode_char_at(base, len, self.usize_ty.const_zero())?;
+        let next_ptr = unsafe { self.builder.build_in_bounds_gep(self.cx.i8_type(), base, &[width], "") }
+            .map_err(llvm_err)?
+            .into();
+        let next_len = self.builder.build_int_sub(len, width, "").map_err(llvm_err)?;
+        let advanced = self.make_str(next_ptr, next_len.into())?;
+        self.builder.build_store(slot, advanced).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(&Ty::Char, Some(cp.into()));
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `ListIntoIter<T>.next()`: moves the element at the cursor out of the buffer.
+    fn next_list_into(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        elem: &Ty,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let seq_ty = self.iter_seq_ty();
+        let data_field = self.builder.build_struct_gep(seq_ty, slot, 0, "iter.ptr").map_err(llvm_err)?;
+        let base = self.builder.build_load(self.ptr_ty(), data_field, "").map_err(llvm_err)?.into_pointer_value();
+        let len_field = self.builder.build_struct_gep(seq_ty, slot, 1, "iter.len").map_err(llvm_err)?;
+        let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let index_ptr = self.builder.build_struct_gep(seq_ty, slot, 3, "iter.index").map_err(llvm_err)?;
+        let index = self.builder.build_load(self.usize_ty, index_ptr, "").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "next.out")?;
+        let done = self.builder.build_int_compare(IntPredicate::UGE, index, len, "").map_err(llvm_err)?;
+        let none_bb = self.new_block("next.none");
+        let some_bb = self.new_block("next.some");
+        let end = self.new_block("next.end");
+        self.builder.build_conditional_branch(done, none_bb, some_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(elem).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let value = match self.llvm_ty(elem) {
+            Some(t) => {
+                // SAFETY (LLVM): index < len.
+                let p = unsafe { self.builder.build_in_bounds_gep(t, base, &[index], "item") }.map_err(llvm_err)?;
+                Some(self.builder.build_load(t, p, "item.value").map_err(llvm_err)?)
+            }
+            None => None,
+        };
+        let next = self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(index_ptr, next).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(elem, value);
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `ArrayIntoIter<T, N>.next()`: moves the element at the cursor out of the inline array.
+    fn next_array_into(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        elem: &Ty,
+        n: u64,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let tt = self.iter_array_ty(elem, n);
+        let index_ptr = self.builder.build_struct_gep(tt, slot, 1, "iter.index").map_err(llvm_err)?;
+        let index = self.builder.build_load(self.usize_ty, index_ptr, "").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "next.out")?;
+        let done = self
+            .builder
+            .build_int_compare(IntPredicate::UGE, index, self.usize_ty.const_int(n, false), "")
+            .map_err(llvm_err)?;
+        let none_bb = self.new_block("next.none");
+        let some_bb = self.new_block("next.some");
+        let end = self.new_block("next.end");
+        self.builder.build_conditional_branch(done, none_bb, some_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(elem).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let value = match self.llvm_ty(elem) {
+            Some(t) => {
+                let array_ptr = self.builder.build_struct_gep(tt, slot, 0, "iter.array").map_err(llvm_err)?;
+                let array_t = t.array_type(n as u32);
+                let zero = self.usize_ty.const_zero();
+                // SAFETY (LLVM): index < n.
+                let p = unsafe { self.builder.build_in_bounds_gep(array_t, array_ptr, &[zero, index], "item") }
+                    .map_err(llvm_err)?;
+                Some(self.builder.build_load(t, p, "item.value").map_err(llvm_err)?)
+            }
+            None => None,
+        };
+        let next = self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(index_ptr, next).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(elem, value);
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `MapIter` and `MapIntoIter`: scans for the next live slot. The borrowing form yields `(&K, &V)`; the
+    /// owning form moves the key and value out and zeroes the slot's hash word.
+    fn next_map(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        key: &Ty,
+        value: &Ty,
+        item: &Ty,
+        ty: &Ty,
+        owning: bool,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let seq_ty = self.iter_seq_ty();
+        let data_field = self.builder.build_struct_gep(seq_ty, slot, 0, "iter.ptr").map_err(llvm_err)?;
+        let base = self.builder.build_load(self.ptr_ty(), data_field, "").map_err(llvm_err)?.into_pointer_value();
+        let cap_field = self.builder.build_struct_gep(seq_ty, slot, 2, "iter.cap").map_err(llvm_err)?;
+        let cap = self.builder.build_load(self.usize_ty, cap_field, "").map_err(llvm_err)?.into_int_value();
+        let index_ptr = self.builder.build_struct_gep(seq_ty, slot, 3, "iter.index").map_err(llvm_err)?;
+        let entry = Self::map_entry_ty(key, value);
+        let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();
+        let out = self.option_slot(ty, "next.out")?;
+        let header = self.new_block("map.next.cond");
+        let body = self.new_block("map.next.body");
+        let found = self.new_block("map.next.found");
+        let advance = self.new_block("map.next.advance");
+        let none_bb = self.new_block("map.next.none");
+        let end = self.new_block("map.next.end");
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(header);
+        let index = self.builder.build_load(self.usize_ty, index_ptr, "").map_err(llvm_err)?.into_int_value();
+        let more = self.builder.build_int_compare(IntPredicate::ULT, index, cap, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(more, body, none_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(body);
+        // SAFETY (LLVM): index < cap.
+        let ent = unsafe { self.builder.build_in_bounds_gep(entry_t, base, &[index], "map.slot") }.map_err(llvm_err)?;
+        let hash_field = self.builder.build_struct_gep(entry_t, ent, 2, "map.hash").map_err(llvm_err)?;
+        let hash = self.builder.build_load(self.cx.i64_type(), hash_field, "").map_err(llvm_err)?.into_int_value();
+        let live = self
+            .builder
+            .build_int_compare(IntPredicate::NE, hash, self.cx.i64_type().const_zero(), "")
+            .map_err(llvm_err)?;
+        self.builder.build_conditional_branch(live, found, advance).map_err(llvm_err)?;
+        self.builder.position_at_end(advance);
+        let next = self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(index_ptr, next).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(found);
+        let key_ptr = self.builder.build_struct_gep(entry_t, ent, 0, "map.key").map_err(llvm_err)?;
+        let value_ptr = self.builder.build_struct_gep(entry_t, ent, 1, "map.value").map_err(llvm_err)?;
+        let mut payload = Vec::new();
+        if owning {
+            let kt = self.llvm_ty(key).expect("a map key has a type");
+            let vt = self.llvm_ty(value).expect("a map value has a type");
+            payload.push(self.builder.build_load(kt, key_ptr, "key").map_err(llvm_err)?);
+            payload.push(self.builder.build_load(vt, value_ptr, "value").map_err(llvm_err)?);
+            // A moved entry is no longer live: its drop glue must skip it.
+            self.builder.build_store(hash_field, self.cx.i64_type().const_zero()).map_err(llvm_err)?;
+        } else {
+            payload.push(BasicValueEnum::from(key_ptr));
+            payload.push(BasicValueEnum::from(value_ptr));
+        }
+        let next = self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(index_ptr, next).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let mut tuple = undef(self.llvm_ty(item).expect("a map item has a type")).into_struct_value();
+            for (i, v) in payload.iter().enumerate() {
+                tuple = self.builder.build_insert_value(tuple, *v, i as u32, "").map_err(llvm_err)?.into_struct_value();
+            }
+            let some = self.some_value(item, Some(tuple.into()));
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(item).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `RangeIter.next()`: yields the endpoints in order and stops after the inclusive last value without
+    /// overflowing its type.
+    fn next_range(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        elem: &Ty,
+        inclusive: bool,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let tt = self.product_ty(&[elem.clone(), elem.clone(), Ty::Bool]);
+        let lo_ptr = self.builder.build_struct_gep(tt, slot, 0, "range.lo").map_err(llvm_err)?;
+        let hi_ptr = self.builder.build_struct_gep(tt, slot, 1, "range.hi").map_err(llvm_err)?;
+        let done_ptr = self.builder.build_struct_gep(tt, slot, 2, "range.done").map_err(llvm_err)?;
+        let Ty::Int(ity) = elem else { return Err("a range iterator needs an integer element".into()) };
+        let int_t = self.int_ty(*ity);
+        let t: BasicTypeEnum<'ctx> = int_t.into();
+        let lo = self.builder.build_load(t, lo_ptr, "lo").map_err(llvm_err)?.into_int_value();
+        let hi = self.builder.build_load(t, hi_ptr, "hi").map_err(llvm_err)?.into_int_value();
+        let done = self.builder.build_load(self.cx.bool_type(), done_ptr, "done").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "next.out")?;
+        let signed = ity.signed();
+        let valid_pred = match (inclusive, signed) {
+            (true, true) => IntPredicate::SLE,
+            (true, false) => IntPredicate::ULE,
+            (false, true) => IntPredicate::SLT,
+            (false, false) => IntPredicate::ULT,
+        };
+        let in_range = self.builder.build_int_compare(valid_pred, lo, hi, "").map_err(llvm_err)?;
+        let not_done = self.builder.build_not(done, "").map_err(llvm_err)?;
+        let valid = self.builder.build_and(not_done, in_range, "").map_err(llvm_err)?;
+        let none_bb = self.new_block("range.none");
+        let some_bb = self.new_block("range.some");
+        let end = self.new_block("range.end");
+        self.builder.build_conditional_branch(valid, some_bb, none_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        self.builder.build_store(done_ptr, self.cx.bool_type().const_int(1, false)).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(elem).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let last = if inclusive {
+            self.builder.build_int_compare(IntPredicate::EQ, lo, hi, "").map_err(llvm_err)?
+        } else {
+            self.cx.bool_type().const_zero()
+        };
+        let one = int_t.const_int(1, false);
+        let advanced = self.builder.build_int_add(lo, one, "").map_err(llvm_err)?;
+        let next_lo = self.builder.build_select(last, lo, advanced, "").map_err(llvm_err)?.into_int_value();
+        self.builder.build_store(lo_ptr, next_lo).map_err(llvm_err)?;
+        self.builder.build_store(done_ptr, last).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(elem, Some(lo.into()));
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+}

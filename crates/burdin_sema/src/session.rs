@@ -6,7 +6,7 @@ use crate::consts::check_const_cycles;
 use crate::derives::validate_derives;
 use crate::generics::Bound;
 use crate::globals::{Global, Globals, ModuleInfo, PackageInfo};
-use crate::validate::{check_impl_requirements, check_impl_signatures, check_public_signatures};
+use crate::validate::check_public_signatures;
 use burdin_diag::{Code, Diagnostics, FileId, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, FuncId, Signature, Ty};
@@ -40,6 +40,24 @@ pub(crate) struct Templates<'t> {
     pub(crate) fns: Vec<&'t ast::FnDecl>,
     pub(crate) ifaces: Vec<&'t ast::InterfaceDecl>,
     pub(crate) impls: Vec<ImplTemplate<'t>>,
+    /// Every generic method, by the template index [`crate::globals::Globals::method_templates`] stores.
+    pub(crate) methods: Vec<MethodTemplate<'t>>,
+}
+
+/// A method with its own type parameters. Its identity function is checked with the method's parameters as
+/// opaque types; each call instantiates it for the inferred arguments.
+pub(crate) struct MethodTemplate<'t> {
+    pub(crate) decl: &'t ast::FnDecl,
+    /// The internal name (`List<i32>.map`), for instance names and diagnostics.
+    pub(crate) name: String,
+    pub(crate) module: usize,
+    pub(crate) self_ty: Option<Ty>,
+    /// What the enclosing impl or interface stands for, method parameters excluded.
+    pub(crate) base_subst: Vec<(String, Ty)>,
+    pub(crate) base_bounds: Vec<(String, Vec<Bound>)>,
+    pub(crate) params: Vec<String>,
+    pub(crate) bounds: Vec<Vec<Bound>>,
+    pub(crate) is_unsafe: bool,
 }
 
 /// An impl block whose type is generic: its methods are instantiated with every instance of the type.
@@ -53,6 +71,8 @@ pub(crate) struct ImplTemplate<'t> {
     pub(crate) params: Vec<String>,
     pub(crate) wheres: Vec<(String, Vec<Bound>)>,
     pub(crate) iface: Option<usize>,
+    /// The interface's type arguments, resolved with the impl's parameter names.
+    pub(crate) iface_args: Vec<Ty>,
 }
 
 /// A struct or enum declaration, with what its type parameters stand for and the module it was written in.
@@ -219,6 +239,10 @@ impl<'t> Sema<'t> {
             }
             body_diags = Diagnostics::default();
             let checked = self.check_bodies(&mut body_diags);
+            // Impl signatures and requirements may substitute generic instances, so they run inside the loop:
+            // what they request is allocated by the drain below and checked again on the next pass.
+            crate::validate::check_impl_requirements(&self.globals, &mut body_diags);
+            crate::validate::check_impl_signatures(&self.globals, &mut body_diags);
             if !self.drain(file, &mut body_diags) {
                 break checked;
             }
@@ -243,8 +267,6 @@ impl<'t> Sema<'t> {
         let mut checks = Diagnostics::default();
         self.check_drop_signatures(&mut checks);
         self.check_export_signatures(&mut checks);
-        check_impl_requirements(&self.globals, &mut checks);
-        check_impl_signatures(&self.globals, &mut checks);
         check_public_signatures(&self.globals, &self.fn_items, &mut checks);
         validate_derives(&self.globals, &mut checks);
         diags.absorb(checks);

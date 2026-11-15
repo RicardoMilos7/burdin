@@ -226,8 +226,8 @@ E0123).
 **IT1 Borrow.** `for pattern in C { ... }` borrows `C` shared for the whole loop, from the start of the loop to the
 end of its body. The borrow ends after the loop, so `C` is usable afterwards. It is the same loan RF2/RF3 describe:
 writing, moving, `&mut`-borrowing, or passing `C` (or an overlapping place) as `mut` inside the body is E0111. There
-is no way to consume or mutate the collection through the `for` header; stage 1's iteration protocol adds `iter()` and
-`into_iter()` (m13).
+is no way to consume or mutate the collection through the `for` header; to consume a collection, write
+`C.into_iter()` explicitly (IT4-IT12).
 
 **IT2 Bindings.** The loop binding is a read-only place used like a plain value, with no `&` written. Assigning to it
 is E0005; moving a non-Copy element out of it is E0101.
@@ -238,6 +238,13 @@ yields the integers of the range. A range is an ordinary `Copy` value, so `for i
 evaluates `r` once and does not borrow it.
 Tests: `m09_stdlib/for_borrows_list`, `for_borrow_forms`, `range_forms`; errors: `for_mutate_array`, `for_mutate_map`
 (E0111), `for_binding_readonly` (E0005).
+
+**IT4-IT12 The protocol.** Stage 1 adds `Iterator<T>` and `Iterable<T>` in `std`, compiler-known `iter`, `into_iter`,
+and `next` for arrays, slices, `List`, `Map`, `Chars`, and ranges, user-defined `for` loops, the lazy adapters, and
+the eager `List` methods. The rules are in [`iterators.md`](iterators.md). The protocol preserves IT1-IT3: `for`
+borrows its source and prefers `iter()` when a type is both an `Iterable` and an `Iterator`; `next` needs a mutable
+place (E0113) and `into_iter` moves the collection (E0100); a chain is second-class (SC2/SC3, E0120/E0123); and a
+`for` pattern that does not match every item is E0006. Tests: `tests/m13_iterators/`.
 
 ## 8. Second-class types (SC)
 

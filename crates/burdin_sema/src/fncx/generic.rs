@@ -1,10 +1,12 @@
 //! Calls, constructors, and literals of generic functions and types, where the type arguments are inferred.
 
 use super::{FnCx, error_expr, mk};
-use crate::generics::{Bound, Request, SYMBOLIC_CALL};
+use crate::generics::{Bound, GenericMethod, Request, SYMBOLIC_CALL};
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
-use burdin_tir::{self as tir, Builtin, IntTy, Method, ParamSig, Ty};
+use burdin_tir::place::{is_place_expr, place_root};
+use burdin_tir::{self as tir, Builtin, FnKind, IntTy, Method, ParamSig, Ty};
+use std::rc::Rc;
 
 impl FnCx<'_> {
     /// A call to a generic function: the arguments are checked first, the type arguments are inferred from
@@ -31,27 +33,20 @@ impl FnCx<'_> {
             let _ = self.args(&id.name, &pattern.params, args, None, span);
             return error_expr(span);
         }
+        // Arguments are checked in order: what an earlier argument binds (`max_of(3, 9)` gives `T = i32`)
+        // specializes the hint for the later ones, which is what lets a closure see `Fn(&i32): U` instead of
+        // `Fn(&T): U`.
         let mut checked = Vec::new();
-        for (a, p) in args.iter().zip(&pattern.params) {
-            // A closure argument to a type parameter uses the parameter's `Fn` bound to type its parameters
-            // (and to choose borrow or move captures, CL9). The bound belongs to the callee.
-            let hint = if globals.ty_has_param(&p.ty) {
-                let bound_param = match &p.ty {
-                    Ty::Param(name) => info.params.iter().position(|n| n == &**name),
-                    _ => None,
-                };
-                bound_param
-                    .and_then(|k| info.bounds.get(k))
-                    .and_then(|bounds| super::closure::bound_hint(globals, bounds))
-            } else {
-                Some(p.ty.clone())
-            };
-            checked.push(self.expr(&a.expr, hint.as_ref()));
-        }
         let mut bindings = Vec::new();
-        for (e, p) in checked.iter().zip(&pattern.params) {
+        for (a, p) in args.iter().zip(&pattern.params) {
+            let hint = generic_hint(globals, &p.ty, &info.params, &info.bounds, &bindings);
+            let e = self.expr(&a.expr, hint.as_ref());
             globals.unify(&p.ty, &e.ty, &mut bindings);
+            checked.push(e);
         }
+        // A type parameter that only appears in another parameter's `Fn` bound (`fn map<U, F: Fn(T): U>`) is
+        // bound by matching that bound's signature with the closure it received.
+        bound_fn_inference(globals, &info.params, &info.bounds, &pattern.params, &checked, &mut bindings);
         if let Some(expected) = expect {
             globals.unify(&pattern.ret, expected, &mut bindings);
         }
@@ -76,13 +71,13 @@ impl FnCx<'_> {
         let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(targs.iter().cloned()).collect();
         for ((pname, t), bounds) in info.params.iter().zip(&targs).zip(&info.bounds) {
             for b in bounds {
-                if !globals.satisfies_with(t, *b, &self.bounds, &subst) {
+                if !globals.satisfies_with(t, b, &self.bounds, &subst) {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
                         span,
                         format!(
                             "`{t}` does not implement `{}`, which `{pname}` of `{}` requires",
-                            globals.bound_name(*b),
+                            globals.bound_name(b),
                             id.name
                         ),
                     );
@@ -452,5 +447,300 @@ impl FnCx<'_> {
             _ => return error_expr(span),
         };
         mk(kind, ty.clone(), span)
+    }
+
+    /// A call to a generic method (`it.map(|x| ...)`): infer its type arguments, check its bounds, and call the
+    /// instance for them. `info` is the registered template; `recv` is the already-checked receiver.
+    pub(super) fn generic_method_call(
+        &mut self,
+        info: GenericMethod,
+        recv: tir::Expr,
+        name: &str,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        let globals = self.globals;
+        let pattern = globals.sigs[info.identity.0].clone();
+        let params = info.params.clone();
+        let bounds = info.bounds.clone();
+        if pattern.params.len() != args.len() + 1 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{name}` takes {} argument(s), but {} were given", pattern.params.len() - 1, args.len()),
+            );
+            return error_expr(span);
+        }
+        let receiver = pattern.params[0].clone();
+        if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
+            let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+            let whose = local.unwrap_or_else(|| "this receiver".to_string());
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
+            );
+        }
+        let mut bindings = Vec::new();
+        globals.unify(&receiver.ty, &recv.ty, &mut bindings);
+        let mut checked = Vec::new();
+        for (a, p) in args.iter().zip(&pattern.params[1..]) {
+            let hint = generic_hint(globals, &p.ty, &params, &bounds, &bindings);
+            let e = self.expr(&a.expr, hint.as_ref());
+            globals.unify(&p.ty, &e.ty, &mut bindings);
+            checked.push(e);
+        }
+        bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &checked, &mut bindings);
+        let mut targs = Vec::new();
+        for pname in &params {
+            match bindings.iter().find(|(n, _)| n == pname) {
+                Some((_, t)) => targs.push(t.clone()),
+                None => {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        span,
+                        format!("cannot tell what `{pname}` stands for in this call to `{name}`"),
+                    );
+                    return error_expr(span);
+                }
+            }
+        }
+        if targs.contains(&Ty::Error) {
+            return error_expr(span);
+        }
+        let mut subst = bindings.clone();
+        subst.extend(params.iter().cloned().zip(targs.iter().cloned()));
+        let mut ok = true;
+        for (k, t) in targs.iter().enumerate() {
+            for b in &bounds[k] {
+                if !globals.satisfies_with(t, b, &self.bounds, &subst) {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!(
+                            "`{t}` does not implement `{}`, which `{}` of `{name}` requires",
+                            globals.bound_name(b),
+                            params[k]
+                        ),
+                    );
+                    ok = false;
+                }
+            }
+        }
+        if !ok {
+            return error_expr(span);
+        }
+        // Only the substituted signature decides: the identity's parameters are `Ty::Param` in every template.
+        let symbolic = targs.iter().any(|t| globals.ty_has_param(t))
+            || globals.ty_has_param(&recv.ty)
+            || globals.ty_has_param(&globals.subst_ty(&pattern.ret, &subst));
+        if symbolic {
+            let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
+            let ret = globals.subst_ty(&pattern.ret, &subst);
+            let receiver_place = Some((&recv, receiver.exclusive));
+            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+                return error_expr(span);
+            };
+            checked.insert(0, recv);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span);
+        }
+        let Some(&f) = globals.method_instances.get(&(info.template, targs.clone())) else {
+            globals.requests.borrow_mut().push(Request::Method(info.template, targs));
+            return error_expr(span);
+        };
+        let sig = globals.sigs[f.0].clone();
+        let rest = sig.params[1..].to_vec();
+        let receiver_place = Some((&recv, receiver.exclusive));
+        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+            return error_expr(span);
+        };
+        checked.insert(0, recv);
+        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+    }
+
+    /// A call to a generic function whose first argument is an already-checked receiver (`xs.map(f)` calls the
+    /// eager `List` helper `__list_map(xs, f)`).
+    pub(super) fn generic_call_with_receiver(
+        &mut self,
+        g: usize,
+        recv: tir::Expr,
+        name: &str,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        let globals = self.globals;
+        let info = &globals.generic_fns[g];
+        let pattern = globals.sigs[info.identity.0].clone();
+        let params = info.params.clone();
+        let bounds = info.bounds.clone();
+        if info.is_unsafe && self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                format!("calling the unsafe function `{name}` requires an `unsafe` block"),
+            );
+        }
+        if pattern.params.len() != args.len() + 1 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{name}` takes {} argument(s), but {} were given", pattern.params.len() - 1, args.len()),
+            );
+            return error_expr(span);
+        }
+        let receiver = pattern.params[0].clone();
+        if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
+            let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+            let whose = local.unwrap_or_else(|| "this receiver".to_string());
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
+            );
+        }
+        let mut bindings = Vec::new();
+        globals.unify(&receiver.ty, &recv.ty, &mut bindings);
+        let mut checked = Vec::new();
+        for (a, p) in args.iter().zip(&pattern.params[1..]) {
+            let hint = generic_hint(globals, &p.ty, &params, &bounds, &bindings);
+            let e = self.expr(&a.expr, hint.as_ref());
+            globals.unify(&p.ty, &e.ty, &mut bindings);
+            checked.push(e);
+        }
+        bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &checked, &mut bindings);
+        let mut targs = Vec::new();
+        for pname in &params {
+            match bindings.iter().find(|(n, _)| n == pname) {
+                Some((_, t)) => targs.push(t.clone()),
+                None => {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        span,
+                        format!("cannot tell what `{pname}` stands for in this call to `{name}`"),
+                    );
+                    return error_expr(span);
+                }
+            }
+        }
+        if targs.contains(&Ty::Error) {
+            return error_expr(span);
+        }
+        let mut subst = bindings.clone();
+        subst.extend(params.iter().cloned().zip(targs.iter().cloned()));
+        let mut ok = true;
+        for (k, t) in targs.iter().enumerate() {
+            for b in &bounds[k] {
+                if !globals.satisfies_with(t, b, &self.bounds, &subst) {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!(
+                            "`{t}` does not implement `{}`, which `{}` of `{name}` requires",
+                            globals.bound_name(b),
+                            params[k]
+                        ),
+                    );
+                    ok = false;
+                }
+            }
+        }
+        if !ok {
+            return error_expr(span);
+        }
+        // Only the substituted signature decides: the identity's parameters are `Ty::Param` in every template.
+        let symbolic = targs.iter().any(|t| globals.ty_has_param(t))
+            || globals.ty_has_param(&recv.ty)
+            || globals.ty_has_param(&globals.subst_ty(&pattern.ret, &subst));
+        let receiver_place = Some((&recv, receiver.exclusive));
+        if symbolic {
+            let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
+            let ret = globals.subst_ty(&pattern.ret, &subst);
+            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+                return error_expr(span);
+            };
+            checked.insert(0, recv);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span);
+        }
+        let Some(&f) = globals.fn_instances.get(&(g, targs.clone())) else {
+            globals.requests.borrow_mut().push(Request::Func(g, targs));
+            return error_expr(span);
+        };
+        let sig = globals.sigs[f.0].clone();
+        let rest = sig.params[1..].to_vec();
+        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+            return error_expr(span);
+        };
+        checked.insert(0, recv);
+        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+    }
+}
+
+/// The hint for one argument of a generic call: a `Fn` bound on a type parameter supplies the closure's
+/// signature, and everything the earlier arguments bound is substituted in.
+fn generic_hint(
+    globals: &crate::globals::Globals,
+    param: &Ty,
+    params: &[String],
+    bounds: &[Vec<Bound>],
+    bindings: &[(String, Ty)],
+) -> Option<Ty> {
+    if let Ty::Param(name) = param
+        && let Some(k) = params.iter().position(|p| p.as_str() == name.as_ref())
+        && let Some((index, kind)) = bounds.get(k).and_then(|bs| {
+            bs.iter().find_map(|b| match b {
+                Bound::Fn(i, kind) => Some((*i, *kind)),
+                _ => None,
+            })
+        })
+    {
+        return Some(Ty::Fn {
+            sig: Rc::new(globals.bound_fn_sig(index, bindings)),
+            kind,
+            borrowed: kind != FnKind::FnOnce,
+        });
+    }
+    if globals.ty_has_param(param) {
+        return Some(globals.subst_ty(param, bindings));
+    }
+    Some(param.clone())
+}
+
+/// Infers the method type parameters that appear only in a closure bound (`fn map<U, F: Fn(T): U>`) by matching
+/// that bound against the closure the call received. The parameter that owns the bound (`F`) is already bound to
+/// the closure's type, so only the parameters inside the bound (`U`) are still open.
+fn bound_fn_inference(
+    globals: &crate::globals::Globals,
+    params: &[String],
+    bounds: &[Vec<Bound>],
+    pattern: &[ParamSig],
+    checked: &[tir::Expr],
+    bindings: &mut Vec<(String, Ty)>,
+) {
+    for (k, pname) in params.iter().enumerate() {
+        let Some(index) = bounds.get(k).and_then(|bs| {
+            bs.iter().find_map(|b| match b {
+                Bound::Fn(i, _) => Some(*i),
+                _ => None,
+            })
+        }) else {
+            continue;
+        };
+        for (e, p) in checked.iter().zip(pattern) {
+            if !matches!(&p.ty, Ty::Param(n) if n.as_ref() == pname.as_str()) {
+                continue;
+            }
+            let Ty::Fn { sig: actual, .. } = &e.ty else { continue };
+            let want = globals.bound_fn_sig(index, bindings);
+            for (wp, ap) in want.params.iter().zip(&actual.params) {
+                globals.unify(wp, ap, bindings);
+            }
+            globals.unify(&want.ret, &actual.ret, bindings);
+        }
     }
 }

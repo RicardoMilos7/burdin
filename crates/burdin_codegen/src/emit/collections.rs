@@ -10,6 +10,7 @@
 use super::{Codegen, GenResult, Mode, llvm_err};
 use burdin_diag::Span;
 use burdin_tir::{self as tir, Method, Ty};
+use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -22,7 +23,7 @@ struct Seq<'ctx> {
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
-    fn ptr_ty(&self) -> inkwell::types::PointerType<'ctx> {
+    pub(super) fn ptr_ty(&self) -> inkwell::types::PointerType<'ctx> {
         self.cx.ptr_type(AddressSpace::default())
     }
 
@@ -1009,6 +1010,82 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
         self.builder.position_at_end(end);
         Ok(())
+    }
+
+    /// Drops a `ListIntoIter<T>`: the elements it has not handed out, then the buffer. The iterator's layout is
+    /// `{ ptr, len, cap, index }`; the first three fields share the `{ ptr, len, cap }` offsets.
+    pub(super) fn drop_list_into_iter(&mut self, addr: PointerValue<'ctx>, elem: &Ty) -> GenResult<()> {
+        let ptr_ty = self.ptr_ty();
+        let data = {
+            let p = self.seq_field(addr, 0, "iter.ptr")?;
+            self.builder.build_load(ptr_ty, p, "").map_err(llvm_err)?.into_pointer_value()
+        };
+        let len = {
+            let p = self.seq_field(addr, 1, "iter.len")?;
+            self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
+        };
+        let index = {
+            let p = self.builder.build_struct_gep(self.iter_seq_ty(), addr, 3, "iter.index").map_err(llvm_err)?;
+            self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
+        };
+        if self.needs_drop(elem) && self.llvm_ty(elem).is_some() {
+            let elem = elem.clone();
+            let elem_t = self.llvm_ty(&elem).expect("checked above");
+            let i_slot = self.alloca(self.usize_ty.into(), "iter.drop.i")?;
+            self.builder.build_store(i_slot, index).map_err(llvm_err)?;
+            let header = self.new_block("iter.drop.cond");
+            let body = self.new_block("iter.drop.body");
+            let end = self.new_block("iter.drop.end");
+            self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+            self.builder.position_at_end(header);
+            let i = self.builder.build_load(self.usize_ty, i_slot, "").map_err(llvm_err)?.into_int_value();
+            let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+            self.builder.build_conditional_branch(go, body, end).map_err(llvm_err)?;
+            self.builder.position_at_end(body);
+            // SAFETY (LLVM): index <= i < len.
+            let p = unsafe { self.builder.build_in_bounds_gep(elem_t, data, &[i], "") }.map_err(llvm_err)?;
+            self.drop_value(p, &elem)?;
+            let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+            self.builder.build_store(i_slot, next).map_err(llvm_err)?;
+            self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+            self.builder.position_at_end(end);
+        }
+        self.builder.build_call(self.rt.free, &[data.into()], "").map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// Drops a `MapIntoIter<K, V>`: the entries it has not handed out (a handed-out entry has a zeroed hash
+    /// word), then the slot table.
+    pub(super) fn drop_map_into_iter(&mut self, addr: PointerValue<'ctx>, key: &Ty, value: &Ty) -> GenResult<()> {
+        let ptr_ty = self.ptr_ty();
+        let data = {
+            let p = self.seq_field(addr, 0, "iter.ptr")?;
+            self.builder.build_load(ptr_ty, p, "").map_err(llvm_err)?.into_pointer_value()
+        };
+        let len = {
+            let p = self.seq_field(addr, 1, "iter.len")?;
+            self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
+        };
+        let cap = {
+            let p = self.seq_field(addr, 2, "iter.cap")?;
+            self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
+        };
+        let seq = Seq { addr, data, len, cap };
+        self.map_drop_entries(&seq, key, value)?;
+        self.builder.build_call(self.rt.free, &[data.into()], "").map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// The four-word layout of the list and map iterators.
+    pub(super) fn iter_seq_ty(&self) -> inkwell::types::StructType<'ctx> {
+        let ptr = self.ptr_ty();
+        self.cx.struct_type(&[ptr.into(), self.usize_ty.into(), self.usize_ty.into(), self.usize_ty.into()], false)
+    }
+
+    /// The layout of an `ArrayIntoIter<T, N>`: the array itself and the next index.
+    pub(super) fn iter_array_ty(&self, elem: &Ty, n: u64) -> inkwell::types::StructType<'ctx> {
+        let array = self.storage_ty(elem).array_type(n as u32);
+        self.cx.struct_type(&[array.into(), self.usize_ty.into()], false)
     }
 
     /// Drops a map: every live entry, then the slot table.

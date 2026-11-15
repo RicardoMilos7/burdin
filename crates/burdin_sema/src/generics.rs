@@ -17,9 +17,10 @@ use burdin_tir::{self as tir, FnKind, FnSig, FuncId, ParamSig, Signature, Ty};
 use std::rc::Rc;
 
 /// A requirement on a type parameter: a built-in interface, a user interface, or an `Fn`-family closure bound.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Bound {
-    User(usize),
+    /// A user interface with its type arguments (`Iterator<i32>`). `Copy`-style bounds below carry no arguments.
+    User(usize, Vec<Ty>),
     Copy,
     Clone,
     Eq,
@@ -43,12 +44,17 @@ pub(crate) struct IfaceMethod {
     pub has_default: bool,
     /// An `unsafe fn` of the interface: calling it requires an `unsafe` context.
     pub is_unsafe: bool,
+    /// A method with its own type parameters; its signature is compared only structurally.
+    pub generic: bool,
 }
 
 pub(crate) struct InterfaceInfo {
     pub name: String,
     /// The module that declares the interface, whose names its bounds and default bodies use.
     pub module: usize,
+    /// The interface's own type parameters (`iterator<T>` has one named `T`), as `Ty::Param` in its signatures.
+    pub params: Vec<String>,
+    pub bounds: Vec<Vec<Bound>>,
     pub requires: Vec<Bound>,
     pub methods: Vec<IfaceMethod>,
 }
@@ -91,19 +97,45 @@ pub(crate) enum Head {
 pub(crate) struct ImplInfo {
     pub head: Head,
     pub iface: usize,
+    /// The interface's type arguments, resolved in the impl's scope (`T` in `Wrapper<T>: Iterator<T>`).
+    pub iface_args: Vec<Ty>,
     /// The names the impl gives the type's arguments (`T` in `Wrapper<T>: Describe where T: Describe`).
     pub params: Vec<String>,
     pub wheres: Vec<(String, Vec<Bound>)>,
     pub span: Span,
 }
 
+/// A generic method, as the checker needs it: which template instantiates it, its identity function (whose
+/// signature is the inference pattern), and its own type parameters and bounds.
+#[derive(Clone)]
+pub(crate) struct GenericMethod {
+    pub(crate) template: usize,
+    pub(crate) identity: FuncId,
+    pub(crate) params: Vec<String>,
+    pub(crate) bounds: Vec<Vec<Bound>>,
+}
+
 pub(crate) enum Request {
     Adt(usize, Vec<Ty>),
     Func(usize, Vec<Ty>),
+    /// An instance of the generic method whose template is [`crate::session::Templates::methods`] entry `usize`,
+    /// for these method-level type arguments.
+    Method(usize, Vec<Ty>),
+    /// The default method of an interface for a built-in receiver type that has no impl block; the next pass
+    /// creates its template from the interface declaration.
+    BuiltinMethodTemplate {
+        iface: usize,
+        method: usize,
+        self_ty: Ty,
+        iface_args: Vec<Ty>,
+    },
 }
 
 /// The function id that stands for a call inside symbolic code, which has no code to call.
 pub(crate) const SYMBOLIC_CALL: FuncId = FuncId(usize::MAX);
+
+/// The `where` clauses of one impl block: each parameter name and the bounds it must meet.
+type Wheres<'a> = [(String, Vec<Bound>)];
 
 impl Globals {
     /// E0141: the arguments of a generic type instantiation must meet the bounds on its parameters. An argument
@@ -116,13 +148,13 @@ impl Globals {
                 continue;
             }
             for bound in bounds {
-                if !self.satisfies_with(arg, *bound, &[], &subst) {
+                if !self.satisfies_with(arg, bound, &[], &subst) {
                     diags.error(
                         Code::BOUND_NOT_SATISFIED,
                         span,
                         format!(
                             "`{arg}` does not implement `{}`, which `{pname}` of `{}` requires",
-                            self.bound_name(*bound),
+                            self.bound_name(bound),
                             info.name
                         ),
                     );
@@ -275,36 +307,76 @@ impl Globals {
     // ----- bounds ---------------------------------------------------------------------------
 
     /// Everything a bound brings with it: `Ord` brings `Eq`, `Copy` brings `Clone`, and an interface brings what
-    /// it requires.
-    pub(crate) fn bound_closure(&self, bound: Bound) -> Vec<Bound> {
+    /// it requires, with the interface's type parameters replaced by the bound's arguments.
+    pub(crate) fn bound_closure(&self, bound: &Bound) -> Vec<Bound> {
         let mut out = Vec::new();
-        let mut stack = vec![bound];
+        let mut stack = vec![bound.clone()];
         while let Some(b) = stack.pop() {
             if out.contains(&b) {
                 continue;
             }
-            out.push(b);
-            match b {
+            match &b {
                 Bound::Ord => stack.push(Bound::Eq),
                 Bound::Copy => stack.push(Bound::Clone),
-                Bound::User(i) => stack.extend(self.interfaces[i].requires.iter().copied()),
+                Bound::User(i, args) => {
+                    let iface = &self.interfaces[*i];
+                    let subst: Vec<(String, Ty)> = iface.params.iter().cloned().zip(args.iter().cloned()).collect();
+                    for r in &iface.requires {
+                        stack.push(self.subst_bound(r, &subst));
+                    }
+                }
                 _ => {}
             }
+            out.push(b);
         }
         out
     }
 
-    pub(crate) fn bound_name(&self, bound: Bound) -> String {
+    /// A bound with the type parameters in `subst` replaced (a user interface's arguments).
+    pub(crate) fn subst_bound(&self, bound: &Bound, subst: &[(String, Ty)]) -> Bound {
         match bound {
-            Bound::User(i) => self.interfaces[i].name.clone(),
+            Bound::User(i, args) => Bound::User(*i, args.iter().map(|a| self.subst_ty(a, subst)).collect()),
+            other => other.clone(),
+        }
+    }
+
+    pub(crate) fn bound_name(&self, bound: &Bound) -> String {
+        match bound {
+            Bound::User(i, args) => {
+                let name = &self.interfaces[*i].name;
+                if args.is_empty() {
+                    name.clone()
+                } else {
+                    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                    format!("{name}<{}>", args.join(", "))
+                }
+            }
             Bound::Copy => "Copy".into(),
             Bound::Clone => "Clone".into(),
             Bound::Eq => "Eq".into(),
             Bound::Ord => "Ord".into(),
             Bound::Hash => "Hash".into(),
             Bound::Default => "Default".into(),
-            Bound::Fn(i, kind) => self.fn_sig_name(i, kind),
+            Bound::Fn(i, kind) => self.fn_sig_name(*i, *kind),
         }
+    }
+
+    /// Whether a bound in scope (`have`) provides the required bound (`want`). User interfaces compare their
+    /// type arguments; closure bounds compare their signatures after `subst`.
+    fn bound_provides(&self, have: &Bound, want: &Bound, subst: &[(String, Ty)]) -> bool {
+        match (have, want) {
+            (Bound::User(i, a), Bound::User(j, b)) => i == j && self.bound_args_match(a, b),
+            (Bound::Fn(hi, hk), Bound::Fn(wi, wk)) => {
+                hk.at_least(*wk) && self.bound_fn_sig(*hi, subst) == self.bound_fn_sig(*wi, subst)
+            }
+            (h, w) => h == w,
+        }
+    }
+
+    /// Whether two interface argument lists describe the same types. An unresolved `Error` matches anything so a
+    /// reported mistake does not cascade.
+    pub(crate) fn bound_args_match(&self, a: &[Ty], b: &[Ty]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x == y || *x == Ty::Error || *y == Ty::Error)
     }
 
     /// `Fn(A, B): R` for a closure bound signature.
@@ -369,17 +441,13 @@ impl Globals {
         // A plain name: a built-in interface, or one in scope.
         if segs.len() == 1 {
             let name = first.name.name.as_str();
-            if !first.args.is_empty() {
-                diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-generic-args
-                return None;
-            }
-            return Some(match name {
-                "Copy" => Bound::Copy,
-                "Clone" => Bound::Clone,
-                "Eq" => Bound::Eq,
-                "Ord" => Bound::Ord,
-                "Hash" => Bound::Hash,
-                "Default" => Bound::Default,
+            let builtin = match name {
+                "Copy" => Some(Bound::Copy),
+                "Clone" => Some(Bound::Clone),
+                "Eq" => Some(Bound::Eq),
+                "Ord" => Some(Bound::Ord),
+                "Hash" => Some(Bound::Hash),
+                "Default" => Some(Bound::Default),
                 "Drop" | "From" => {
                     diags.error(
                         Code::UNSUPPORTED, // e9000: bound-drop-from
@@ -388,14 +456,23 @@ impl Globals {
                     );
                     return None;
                 }
-                _ => match self.iface_name(module, name) {
-                    Some(i) => Bound::User(i),
-                    None => {
-                        diags.error(Code::UNKNOWN_NAME, ty.span, format!("unknown interface `{name}`"));
-                        return None;
-                    }
-                },
-            });
+                _ => None,
+            };
+            if let Some(bound) = builtin {
+                if !first.args.is_empty() {
+                    diags.error(Code::TYPE_MISMATCH, ty.span, format!("`{name}` takes no type arguments"));
+                    return None;
+                }
+                return Some(bound);
+            }
+            let found = match self.iface_name(module, name) {
+                Some(i) => i,
+                None => {
+                    diags.error(Code::UNKNOWN_NAME, ty.span, format!("unknown interface `{name}`"));
+                    return None;
+                }
+            };
+            return self.check_generic_bound(found, &first.args, subst, module, ty.span, diags);
         }
         let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
         let Some(target) = self.resolve_module_path(module, &names) else {
@@ -404,17 +481,13 @@ impl Globals {
         };
         let last = segs.last().expect("the path has a last segment");
         let name = last.name.name.as_str();
-        if !last.args.is_empty() {
-            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-qualified-generic
-            return None;
-        }
         if self.package_of(target) != self.package_of(module)
             && self.modules[target].iface_priv.get(name).copied().unwrap_or(false)
         {
             diags.error(Code::PRIVATE_ITEM, last.name.span, format!("interface `{name}` is `priv` in another package"));
         }
         match self.exported_iface(target, name) {
-            Some(i) => Some(Bound::User(i)),
+            Some(i) => self.check_generic_bound(i, &last.args, subst, target, ty.span, diags),
             None => {
                 diags.error(Code::UNKNOWN_NAME, last.name.span, format!("unknown interface `{name}`"));
                 None
@@ -422,42 +495,55 @@ impl Globals {
         }
     }
 
+    /// Resolves the type arguments of a generic bound (`Iterator<i32>`) and checks their number. An interface
+    /// without parameters takes no arguments.
+    fn check_generic_bound(
+        &self,
+        iface: usize,
+        args: &[ast::Type],
+        subst: &[(String, Ty)],
+        module: usize,
+        span: Span,
+        diags: &mut Diagnostics,
+    ) -> Option<Bound> {
+        let info = &self.interfaces[iface];
+        if args.len() != info.params.len() {
+            diags.error(
+                Code::TYPE_MISMATCH,
+                span,
+                format!("`{}` takes {} type argument(s), but {} were given", info.name, info.params.len(), args.len()),
+            );
+            return None;
+        }
+        let args: Vec<Ty> = args.iter().map(|a| self.resolve_type_in(a, None, subst, module, diags)).collect();
+        Some(Bound::User(iface, args))
+    }
+
     /// Whether values of `ty` meet `bound`. `env` gives the bounds of the type parameters in scope.
-    pub(crate) fn satisfies(&self, ty: &Ty, bound: Bound, env: &Env) -> bool {
+    pub(crate) fn satisfies(&self, ty: &Ty, bound: &Bound, env: &Env) -> bool {
         self.satisfies_with(ty, bound, env, &[])
     }
 
     /// `satisfies`, with the type parameters of the enclosing declaration replaced by `subst`. A closure bound's
     /// signature may name other type parameters (`F: Fn(T): T`), so a call checks the substituted signature.
-    pub(crate) fn satisfies_with(&self, ty: &Ty, bound: Bound, env: &Env, subst: &[(String, Ty)]) -> bool {
+    pub(crate) fn satisfies_with(&self, ty: &Ty, bound: &Bound, env: &Env, subst: &[(String, Ty)]) -> bool {
+        let want = self.subst_bound(bound, subst);
         match ty {
             Ty::Error | Ty::Never => true,
-            Ty::Param(name) => {
-                env.iter().any(|(n, bs)| n == &**name && bs.iter().any(|b| self.bound_closure(*b).contains(&bound)))
-                    // A type parameter whose own bound is an `Fn` bound satisfies that bound directly.
-                    || match bound {
-                        Bound::Fn(i, kind) => env.iter().any(|(n, bs)| {
-                            n == &**name
-                                && bs.iter().any(|b| match b {
-                                    Bound::Fn(other, other_kind) => {
-                                        self.bound_fn_sig(*other, subst)
-                                            == self.bound_fn_sig(i, subst)
-                                            && other_kind.at_least(kind)
-                                    }
-                                    _ => false,
-                                })
-                        }),
-                        _ => false,
-                    }
-            }
-            _ => match bound {
+            Ty::Param(name) => env.iter().any(|(n, bs)| {
+                n == &**name
+                    && bs
+                        .iter()
+                        .any(|b| self.bound_closure(b).iter().any(|have| self.bound_provides(have, &want, subst)))
+            }),
+            _ => match want {
                 Bound::Copy => self.is_copy(ty),
                 Bound::Clone => self.is_clone(ty),
                 Bound::Eq => self.has_eq_in(ty, env),
                 Bound::Ord => self.has_ord_in(ty, env),
                 Bound::Hash => self.has_hash_in(ty, env),
                 Bound::Default => self.has_default(ty),
-                Bound::User(i) => self.implements(ty, i, env),
+                Bound::User(i, args) => self.implements(ty, i, &args, env),
                 Bound::Fn(i, kind) => match ty {
                     Ty::Fn { sig, kind: actual, .. } => **sig == self.bound_fn_sig(i, subst) && actual.at_least(kind),
                     _ => false,
@@ -466,26 +552,40 @@ impl Globals {
         }
     }
 
-    /// Whether a struct or enum has a `Type: Interface { ... }` block for a user interface, with its `where`
-    /// clauses met.
-    fn implements(&self, ty: &Ty, iface: usize, env: &Env) -> bool {
+    /// Whether a struct or enum has a `Type: Interface<Args> { ... }` block for a user interface, with its `where`
+    /// clauses met. A built-in collection satisfies the standard iterator protocol without an impl block.
+    fn implements(&self, ty: &Ty, iface: usize, args: &[Ty], env: &Env) -> bool {
+        if let Some(have) = self.builtin_iface_args(ty, iface, env) {
+            return self.bound_args_match(&have, args);
+        }
         let Some(key) = adt_key(ty) else { return false };
         self.impls.iter().any(|info| {
             if info.iface != iface {
                 return false;
             }
-            match info.head {
-                Head::Plain(k) => k == key,
+            let (subst, wheres): (Vec<(String, Ty)>, &Wheres<'_>) = match info.head {
+                Head::Plain(k) => {
+                    if k != key {
+                        return false;
+                    }
+                    (Vec::new(), &info.wheres)
+                }
                 Head::Generic(template) => match self.adt_origin.get(&key) {
-                    Some((t, args)) if *t == template => info.wheres.iter().all(|(n, bounds)| {
-                        match info.params.iter().position(|p| p == n).and_then(|i| args.get(i)) {
-                            Some(arg) => bounds.iter().all(|b| self.satisfies(arg, *b, env)),
-                            None => true,
-                        }
-                    }),
-                    _ => false,
+                    Some((t, cargs)) if *t == template => {
+                        (info.params.iter().cloned().zip(cargs.iter().cloned()).collect(), &info.wheres)
+                    }
+                    _ => return false,
                 },
+            };
+            let have: Vec<Ty> = info.iface_args.iter().map(|a| self.subst_ty(a, &subst)).collect();
+            if !self.bound_args_match(&have, args) {
+                return false;
             }
+            wheres.iter().all(|(n, bounds)| match info.params.iter().position(|p| p == n).and_then(|i| subst.get(i)) {
+                // A `where` bound may name the impl's other parameters (`F: Fn(T): U`), so the check uses them.
+                Some((_, arg)) => bounds.iter().all(|b| self.satisfies_with(arg, b, env, &subst)),
+                None => true,
+            })
         })
     }
 
@@ -499,7 +599,7 @@ impl Globals {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Str | Ty::String => true,
-            Ty::Param(name) => self.bound_in_env(name, Bound::Ord, env),
+            Ty::Param(name) => self.bound_in_env(name, &Bound::Ord, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
             Ty::Range(t, _) => self.has_ord_in(t, env),
             Ty::Struct(a) => {
@@ -523,7 +623,7 @@ impl Globals {
     pub(crate) fn has_hash_in(&self, ty: &Ty, env: &Env) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
-            Ty::Param(name) => self.bound_in_env(name, Bound::Hash, env),
+            Ty::Param(name) => self.bound_in_env(name, &Bound::Hash, env),
             Ty::Option(t) => self.has_hash_in(t, env),
             Ty::Range(t, _) => self.has_hash_in(t, env),
             Ty::Result(t, e) => self.has_hash_in(t, env) && self.has_hash_in(e, env),
@@ -541,8 +641,11 @@ impl Globals {
     }
 
     /// Whether a type parameter's bounds provide `bound`.
-    pub(crate) fn bound_in_env(&self, name: &str, bound: Bound, env: &Env) -> bool {
-        env.iter().any(|(n, bounds)| n == name && bounds.iter().any(|b| self.bound_closure(*b).contains(&bound)))
+    pub(crate) fn bound_in_env(&self, name: &str, bound: &Bound, env: &Env) -> bool {
+        env.iter().any(|(n, bounds)| {
+            n == name
+                && bounds.iter().any(|b| self.bound_closure(b).iter().any(|have| self.bound_provides(have, bound, &[])))
+        })
     }
 
     /// Whether `Type.default()` applies.
@@ -572,18 +675,21 @@ impl Globals {
     /// `unsafe`.
     pub(crate) fn bound_method(&self, recv: &Ty, name: &str, env: &Env) -> Option<(Signature, bool, bool)> {
         let Ty::Param(pname) = recv else { return None };
-        let self_env = [("Self".to_string(), recv.clone())];
         for (n, bounds) in env {
             if n != &**pname {
                 continue;
             }
             for bound in bounds {
-                for b in self.bound_closure(*bound) {
-                    let Bound::User(i) = b else { continue };
-                    if let Some(m) = self.interfaces[i].methods.iter().find(|m| m.name == name) {
+                for b in self.bound_closure(bound) {
+                    let Bound::User(i, args) = b else { continue };
+                    let iface = &self.interfaces[i];
+                    if let Some(m) = iface.methods.iter().find(|m| m.name == name) {
+                        // `Self` is the receiver and the interface's parameters are the bound's arguments.
+                        let mut subst: Vec<(String, Ty)> = vec![("Self".to_string(), recv.clone())];
+                        subst.extend(iface.params.iter().cloned().zip(args.iter().cloned()));
                         let sig = &m.sig;
-                        let params = sig.params.iter().map(|p| self.subst_param(p, &self_env)).collect();
-                        let ret = self.subst_ty(&sig.ret, &self_env);
+                        let params = sig.params.iter().map(|p| self.subst_param(p, &subst)).collect();
+                        let ret = self.subst_ty(&sig.ret, &subst);
                         return Some((
                             Signature { params, ret, has_self: sig.has_self, ret_origin: None },
                             sig.has_self,
@@ -796,34 +902,36 @@ mod tests {
     #[test]
     fn bounds_carry_what_they_imply() {
         let mut g = Globals::default();
-        assert_eq!(g.bound_closure(Bound::Ord), vec![Bound::Ord, Bound::Eq]);
-        assert_eq!(g.bound_closure(Bound::Copy), vec![Bound::Copy, Bound::Clone]);
-        assert_eq!(g.bound_closure(Bound::Hash), vec![Bound::Hash]);
+        assert_eq!(g.bound_closure(&Bound::Ord), vec![Bound::Ord, Bound::Eq]);
+        assert_eq!(g.bound_closure(&Bound::Copy), vec![Bound::Copy, Bound::Clone]);
+        assert_eq!(g.bound_closure(&Bound::Hash), vec![Bound::Hash]);
 
         // A user interface brings what its `requires` clause lists.
         g.interfaces.push(InterfaceInfo {
             name: "Show".into(),
             module: 0,
+            params: Vec::new(),
+            bounds: Vec::new(),
             requires: vec![Bound::Eq],
             methods: Vec::new(),
         });
-        assert_eq!(g.bound_closure(Bound::User(0)), vec![Bound::User(0), Bound::Eq]);
+        assert_eq!(g.bound_closure(&Bound::User(0, Vec::new())), vec![Bound::User(0, Vec::new()), Bound::Eq]);
     }
 
     #[test]
     fn satisfies_reads_the_bounds_of_a_type_parameter() {
         let g = Globals::default();
         let env: &[(String, Vec<Bound>)] = &[("T".to_string(), vec![Bound::Ord])];
-        assert!(g.satisfies(&param("T"), Bound::Ord, env));
-        assert!(g.satisfies(&param("T"), Bound::Eq, env), "Ord implies Eq");
-        assert!(!g.satisfies(&param("T"), Bound::Hash, env));
-        assert!(!g.satisfies(&param("U"), Bound::Copy, env));
+        assert!(g.satisfies(&param("T"), &Bound::Ord, env));
+        assert!(g.satisfies(&param("T"), &Bound::Eq, env), "Ord implies Eq");
+        assert!(!g.satisfies(&param("T"), &Bound::Hash, env));
+        assert!(!g.satisfies(&param("U"), &Bound::Copy, env));
 
         // Concrete types answer from their own rules; `Error` and `Never` satisfy everything.
-        assert!(g.satisfies(&i32_(), Bound::Copy, &[]));
-        assert!(g.satisfies(&opt(i32_()), Bound::Hash, &[]));
-        assert!(!g.satisfies(&Ty::String, Bound::Copy, &[]));
-        assert!(g.satisfies(&Ty::Error, Bound::Hash, &[]));
-        assert!(g.satisfies(&Ty::Never, Bound::Copy, &[]));
+        assert!(g.satisfies(&i32_(), &Bound::Copy, &[]));
+        assert!(g.satisfies(&opt(i32_()), &Bound::Hash, &[]));
+        assert!(!g.satisfies(&Ty::String, &Bound::Copy, &[]));
+        assert!(g.satisfies(&Ty::Error, &Bound::Hash, &[]));
+        assert!(g.satisfies(&Ty::Never, &Bound::Copy, &[]));
     }
 }

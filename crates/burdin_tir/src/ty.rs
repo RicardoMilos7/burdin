@@ -151,6 +151,18 @@ pub enum Ty {
     /// `Range<T>` (exclusive) or `RangeInclusive<T>` (inclusive): the two integer endpoints. The flag is true for
     /// the inclusive form.
     Range(Box<Ty>, bool),
+    /// The owning iterator of a `List<T>`: the buffer, its length and capacity, and the next index.
+    ListIntoIter(Box<Ty>),
+    /// The owning iterator of an array `[T; N]`: the array value and the next index.
+    ArrayIntoIter(Box<Ty>, u64),
+    /// A borrowing iterator over a `Map<K, V>`: a copy of the map's three words and the next slot. It yields
+    /// `(&K, &V)` and holds a loan on the map for its whole life.
+    MapIter(Box<Ty>, Box<Ty>),
+    /// The owning iterator of a `Map<K, V>`: the map's buffer, moved entry by entry.
+    MapIntoIter(Box<Ty>, Box<Ty>),
+    /// The iterator of a range: the two endpoints and whether the range is exhausted. The flag is true for the
+    /// inclusive form.
+    RangeIter(Box<Ty>, bool),
     /// A tuple of two or more elements (or one, written with a trailing comma).
     Tuple(Vec<Ty>),
     Struct(AdtRef),
@@ -184,8 +196,11 @@ impl Ty {
             // A closure with borrow captures points at the storage it captured (CL3).
             Ty::Fn { borrowed, .. } => *borrowed,
             Ty::Array(t, _) | Ty::Option(t) | Ty::List(t) => t.is_second_class(),
+            // An owning iterator holds its elements; a borrowing one points at its source.
+            Ty::MapIter(..) => true,
+            Ty::ListIntoIter(t) | Ty::ArrayIntoIter(t, _) | Ty::RangeIter(t, _) => t.is_second_class(),
             Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
-            Ty::Map(k, v) => k.is_second_class() || v.is_second_class(),
+            Ty::Map(k, v) | Ty::MapIntoIter(k, v) => k.is_second_class() || v.is_second_class(),
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
             Ty::Struct(a) | Ty::Enum(a) => a.second_class,
             _ => false,
@@ -228,6 +243,12 @@ impl fmt::Display for Ty {
             Ty::CString => f.write_str("CString"),
             Ty::Range(t, false) => write!(f, "Range<{t}>"),
             Ty::Range(t, true) => write!(f, "RangeInclusive<{t}>"),
+            Ty::ListIntoIter(t) => write!(f, "ListIntoIter<{t}>"),
+            Ty::ArrayIntoIter(t, n) => write!(f, "ArrayIntoIter<{t}, {n}>"),
+            Ty::MapIter(k, v) => write!(f, "MapIter<{k}, {v}>"),
+            Ty::MapIntoIter(k, v) => write!(f, "MapIntoIter<{k}, {v}>"),
+            Ty::RangeIter(t, false) => write!(f, "RangeIter<{t}>"),
+            Ty::RangeIter(t, true) => write!(f, "RangeIterInclusive<{t}>"),
             Ty::Tuple(elems) => {
                 f.write_str("(")?;
                 for (i, t) in elems.iter().enumerate() {

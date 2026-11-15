@@ -1,0 +1,39 @@
+//@ run
+//> 3
+//> 2
+//> 4
+//> 6
+//> 2
+//> 6
+//> true
+//> true
+//> 3
+
+// The eager `List` methods borrow the list, hand the closure a view of each element, and return owned
+// results.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+
+    let doubled = xs.map(|x| *x * 2)
+    println(doubled.len().to_string())
+    let mut it = doubled.iter()
+    loop {
+        match it.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+
+    let kept = xs.filter(|x| *x > 1)
+    println(kept.len().to_string())
+    println(xs.fold(0, |acc, x| acc + *x).to_string())
+    println(xs.any(|x| *x == 2).to_string())
+    println(xs.all(|x| *x > 0).to_string())
+    match xs.find(|x| *x == 3) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+}

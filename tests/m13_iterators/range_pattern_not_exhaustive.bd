@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A `for` binding must match every item; a literal pattern over a range does not.
+fn main() {
+    for 2 in 0..4 { //~ E0006
+        println("two")
+    }
+}

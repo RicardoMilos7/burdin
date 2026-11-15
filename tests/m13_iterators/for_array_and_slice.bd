@@ -1,0 +1,28 @@
+//@ run
+//> 10
+//> 20
+//> 30
+//> 10
+//> 20
+//> 30
+//> 10
+//> 20
+
+// Arrays and slices implement the protocol, and the built-in `for` forms keep working.
+fn main() {
+    let xs = [10, 20, 30]
+    for x in xs {
+        println(x.to_string())
+    }
+    for x in xs.iter() {
+        println(x.to_string())
+    }
+    let view = xs[0..2]
+    let mut it = view.iter()
+    loop {
+        match it.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+}

@@ -107,23 +107,27 @@ pub struct Closure {
     pub func: Function,
 }
 
+#[derive(Clone)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub tail: Option<Box<Expr>>,
 }
 
+#[derive(Clone)]
 pub enum Stmt {
     /// `let pattern = init`, with the `else` block of `let ... else` (which diverges).
     Let(Pat, Expr, Option<Block>),
     Expr(Expr),
 }
 
+#[derive(Clone)]
 pub struct Expr {
     pub kind: ExprKind,
     pub ty: Ty,
     pub span: Span,
 }
 
+#[derive(Clone)]
 pub enum ExprKind {
     Unit,
     Bool(bool),
@@ -260,6 +264,7 @@ pub enum ExprKind {
     Field(Box<Expr>, usize),
 }
 
+#[derive(Clone)]
 pub struct Arm {
     pub pat: Pat,
     pub guard: Option<Expr>,
@@ -277,6 +282,7 @@ pub enum BindMode {
     View,
 }
 
+#[derive(Clone)]
 pub enum Pat {
     Wild,
     Binding(LocalId, BindMode),

@@ -18,9 +18,11 @@ not updated and may disagree with the repository.
 1. `tests/` is the conformance suite and the most precise statement of behavior. Read `tests/README.md` first: it defines
    the test format, the error-code registry, and the 16 settled language decisions.
 2. `spec/grammar.md` is the syntax of stage 0. `spec/memory-rules.md` is the exact semantics of moves, conventions,
-   exclusivity, references, and drops, with rule IDs and the tests that cover each. `spec/stdlib.md` is the stage 0
-   standard-library surface (names and signatures), `spec/derives.md` is the exact behavior of `Copy`, `Clone`,
-   `Eq`, `Ord`, `Hash`, and `Default`, and `spec/test-runner.md` is the behavior of `burdin test`.
+   exclusivity, references, and drops, with rule IDs and the tests that cover each. `spec/stdlib.md` is the standard
+   library surface (names and signatures), `spec/iterators.md` is the iteration protocol (`Iterator<T>`/
+   `Iterable<T>`, `iter()`/`into_iter()`, user `for`, the adapters, and ranges), `spec/derives.md` is the exact
+   behavior of `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`, and `spec/test-runner.md` is the behavior of
+   `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what the next milestones add, the decisions they need, and the
    roadmaps for later stages.
@@ -106,8 +108,8 @@ docs/                     the user-facing error-code reference (checked by tests
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)
 .github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
-spec/                     grammar, memory rules, standard-library surface, derives, test runner, stage 0 scope,
-                          stage 1 plan
+spec/                     grammar, memory rules, standard-library surface, iteration protocol, derives, test
+                          runner, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts
 ```
 

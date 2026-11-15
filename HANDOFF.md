@@ -1,12 +1,12 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, and twenty-fifth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, and twenty-sixth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the twenty-fifth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed; milestone 12 (closures) is done**: all 292 conformance tests pass in
-the debug profile and 290 in release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
+Updated at the end of the twenty-sixth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
+and the stage 0 gaps of issue #48 are closed; milestones 12 (closures) and 13 (iterators) are done**: all 313
+conformance tests pass in the debug profile and 311 in release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
 by `tests/check_docs.py` (issue #42); the thirteenth retired the claude.ai copies of the design and stage 0
@@ -52,13 +52,21 @@ with an open-addressing hash table (issue #82): lookup, insert, and remove are e
 `// e9000:` id, and `tests/check_e9000.py` keeps the table and the compiler in agreement. The stage 0 diagnostics
 that had no future milestone got permanent codes (E0007, E0009, E0131, E0163, E0164, E0180) with compile-fail
 tests; string literal patterns and inclusive slice ranges are implemented, and a dead "comparing strings" branch was
-removed. The remaining E9000 sites are assigned to m13, m19, m20, m21, or the cross-cutting Stage 1 work.
+removed. The remaining E9000 sites are assigned to m19, m20, m21, or the cross-cutting Stage 1 work.
 
 The twenty-fifth session implemented milestone 12, closures (issue #88, sub-issues #89-#97): `|a, b| ...` and `||`
 expressions, the `Fn`/`FnMut`/`FnOnce` interface types and generic `Fn` bounds with monomorphization, borrow and
 move capture analysis, calls that borrow or move the closure, storing, returning, and passing closures, function
 values (`add`, builtins, and `Some` used where a closure type is expected), drop and clone glue for closure values,
-the rules CL1-CL11, and `tests/m12_closures` with 45 tests. The suite is now 292 tests (290 in release).
+the rules CL1-CL11, and `tests/m12_closures` with 45 tests.
+
+The twenty-sixth session implemented milestone 13, iterators (issue #98, sub-issues #99-#108): generic interfaces
+and generic methods in sema (`interface Iterator<T>`, `fn map<U, F: FnMut(T): U>` default methods, monomorphized per
+instantiation), the protocol for arrays, slices, `List`, `Map`, `Chars`, and ranges in the compiler, `iter()`,
+`into_iter()`, and `next()`, user-defined `for` loops lowered to `next` calls, the lazy adapters in `std`, the eager
+`List` methods, compiler-known `sum`, ranges through the protocol with no overflow at an inclusive upper bound, the
+rules IT4-IT12 in `spec/iterators.md`, and `tests/m13_iterators` with 21 tests. The E9000 rows owned by m13 (generic
+interfaces, generic methods, generic `From`, and the two range-pattern sites) are removed with their sites.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -1167,15 +1175,15 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 ## What is left to do, in order
 
-1. Read `spec/stage1-subset.md` and settle the decisions for milestone 13 (the iterator protocol: associated types
-   or a generic `Iterator<T>`, how `next` borrows, mutates, or consumes, and how a lazy chain stays second-class).
+1. Read `spec/stage1-subset.md` and settle the decisions for milestone 14 (formatting: interpolation syntax,
+   `Display`/`Debug`, format specifiers, and how `print`/`println` generalize without breaking stage 0 calls).
    The MIR interpreter question (comptime), `any`/`impl`, the error representation, and allocator parameters shape
    later milestones and can wait for theirs. Issue #444 (differential tests between comptime and compiled code) is
    blocked on the milestone 20 interpreter; `spec/test-runner.md` holds its intended shape and the issue stays open
    until then.
-2. Write the m13 tests before the code, the same way stage 0 and m12 were built: `tests/m13_iterators` and its `//@`
-   expectations are the spec for the next stage 1 milestone. Closures are ready for `filter`/`map`, but the standard
-   library methods themselves belong to m13.
+2. Write the m14 tests before the code, the same way stage 0, m12, and m13 were built: `tests/m14_format` and its
+   `//@` expectations are the spec for the next stage 1 milestone. The iteration protocol is in place, so the
+   formatting work can use `.iter()`/`.map()` freely.
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,

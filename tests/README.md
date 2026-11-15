@@ -5,7 +5,7 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (iterators, interpolation, `any`, `error`
+Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (interpolation, `any`, `error`
 declarations, comptime, tasks, leak detection, allocator parameters) has **no tests here** yet.
 
 ## Layout
@@ -24,6 +24,7 @@ tests/
   m10_test_runner/     `test` blocks and `burdin test`
   m11_llvm/            calling the LLVM C API from Burdin
   m12_closures/        closures, captures, closure types and bounds
+  m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -275,6 +276,18 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     closure values are never `Copy`, `Clone`, or derived. A non-generic function, a built-in function, or `Some` is
     a value of a closure type when the context expects one: it becomes a captureless `Fn` closure (CL11).
     `spec/grammar.md` section 4, `spec/memory-rules.md` CL1-CL11, `tests/m12_closures/`.
+
+18. **Iteration.** `std` declares `interface Iterator<T> { fn next(mut self): Option<T> }` and the marker
+    `interface Iterable<T> { }`. The compiler knows the protocol for arrays, slices, `List`, `Map`, `Chars`, and
+    ranges: `iter()` borrows and yields `T` when it is `Copy` and `&T` otherwise (a map yields `(&K, &V)`), while
+    `into_iter()` consumes and yields owned items (a map yields `(K, V)`). `for` over a user type uses `iter()` when
+    the type is `Iterable<T>` and the iterator value directly when it is an `Iterator<T>`; a type that is both is
+    iterated through `iter()`, because `for` borrows its source. The loop lowers to `let mut __iter = e; loop { match
+    __iter.next() { Some(pattern) => body, None => break } }`, keeps the stage 0 binding/drop/`break` semantics, and
+    requires the pattern to match every item. The lazy adapters (`map`, `filter`, `take`, `skip`, `fold`, `count`,
+    `any`, `all`, `find`, `to_list`) are default methods that allocate nothing, and the eager `List` methods borrow
+    the list and return owned results. A chain is second-class and may not be stored (E0120) or kept past a
+    temporary's statement (E0123). `spec/iterators.md` IT4-IT12, `tests/m13_iterators/`.
 
 ## Review of the expected outputs
 

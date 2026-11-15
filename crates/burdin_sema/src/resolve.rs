@@ -91,9 +91,17 @@ impl Sema<'_> {
         check_infinite_size(&self.globals, &self.src, diags);
         for i in 0..self.globals.interfaces.len() {
             let module = self.globals.interfaces[i].module;
+            let params = self.globals.interfaces[i].params.clone();
+            let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
             for k in 0..self.globals.interfaces[i].methods.len() {
                 let decl = &self.tpl.ifaces[i].methods[k].decl;
-                let sig = fn_signature(decl, Some(&param_ty("Self")), &[], module, &self.globals, false, diags);
+                // A method-level type parameter is opaque in the interface's own signature.
+                let mut method_subst = subst.clone();
+                for g in &decl.generics {
+                    method_subst.push((g.name.name.clone(), param_ty(&g.name.name)));
+                }
+                let sig =
+                    fn_signature(decl, Some(&param_ty("Self")), &method_subst, module, &self.globals, false, diags);
                 self.globals.interfaces[i].methods[k].sig = sig;
             }
         }

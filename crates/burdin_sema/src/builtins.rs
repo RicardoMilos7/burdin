@@ -157,6 +157,21 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("chars", Ty::Str | Ty::String) => (Method::Chars, vec![], Ty::Chars),
         ("as_ptr", Ty::CString) => (Method::AsPtr, vec![], Ty::CPtr(Box::new(Ty::Int(IntTy::I8)))),
         ("is_null", Ty::CPtr(_)) => (Method::IsNull, vec![], Ty::Bool),
+        // The iteration protocol's entry points (spec/iterators.md). `next` is checked separately because a
+        // slice yields its element by value when it is `Copy`.
+        ("iter", Ty::Array(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
+        ("iter", Ty::Slice(_)) => (Method::Iter, vec![], recv.clone()),
+        ("iter", Ty::List(elem)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
+        ("iter", Ty::Map(k, v)) => (Method::Iter, vec![], Ty::MapIter(k.clone(), v.clone())),
+        ("iter", Ty::Chars) => (Method::Iter, vec![], Ty::Chars),
+        ("iter", Ty::Range(elem, inclusive)) => (Method::Iter, vec![], Ty::RangeIter(elem.clone(), *inclusive)),
+        ("into_iter", Ty::List(elem)) => (Method::IntoIter, vec![], Ty::ListIntoIter(elem.clone())),
+        ("into_iter", Ty::Map(k, v)) => (Method::IntoIter, vec![], Ty::MapIntoIter(k.clone(), v.clone())),
+        ("into_iter", Ty::Array(elem, n)) => (Method::IntoIter, vec![], Ty::ArrayIntoIter(elem.clone(), *n)),
+        ("into_iter", Ty::Chars) => (Method::IntoIter, vec![], Ty::Chars),
+        ("into_iter", Ty::Range(elem, inclusive)) => {
+            (Method::IntoIter, vec![], Ty::RangeIter(elem.clone(), *inclusive))
+        }
         _ => return None,
     })
 }

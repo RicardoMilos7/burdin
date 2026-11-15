@@ -16,6 +16,17 @@ impl Sema<'_> {
         if std_modules.is_empty() {
             return;
         }
+        // Where the compiler finds the standard library's internal names: the iterator protocol's interfaces and
+        // the eager `List` helpers, which are `priv` and therefore not copied into other modules.
+        self.globals.std_modules = std_modules.clone();
+        let find_iface = |globals: &crate::globals::Globals, name: &str| {
+            (0..globals.interfaces.len()).find(|&i| {
+                globals.modules[globals.interfaces[i].module].package == std_id
+                    && globals.interfaces[i].name == globals.qualified(globals.interfaces[i].module, name)
+            })
+        };
+        self.globals.iterator_iface = find_iface(&self.globals, "Iterator");
+        self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
         // The one-segment standard modules are usable as modules: `env.args()`, `mem.swap(...)`.
         let aliases: Vec<(String, usize)> = std_modules
             .iter()

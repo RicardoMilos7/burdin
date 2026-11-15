@@ -1,8 +1,8 @@
-# Burdin grammar (stage 0, plus stage 1 closures)
+# Burdin grammar (stage 0, plus stage 1 closures and iterators)
 
-This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures. It is
-derived from the conformance tests in `tests/`, so every construct below is used by at least one test, and every
-construct those tests use is here. Features deferred to later stage 1 milestones (string interpolation,
+This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures and
+milestone 13's member names. It is derived from the conformance tests in `tests/`, so every construct below is used
+by at least one test, and every construct those tests use is here. Features deferred to later stage 1 milestones (string interpolation,
 `any`/`impl` types, `error` declarations, comptime, derive declarations, default and named arguments, extension
 methods, tasks) are reserved but not parsed.
 
@@ -25,7 +25,9 @@ as  break  const  continue  else  enum  extern  false  fn  for  if  in  interfac
 mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
 ```
 
-Reserved for stage 1, rejected as identifiers now: `any  comptime  derive  impl`.
+Reserved for stage 1, rejected as identifiers now: `any  comptime  derive  impl`. A reserved word is not an
+identifier, except immediately after a `.` in a member position, where it is a member name: that is how
+`.any(...)` reaches the `Iterator` default method declared as `any_item` (`iterators.md`, IT9).
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct

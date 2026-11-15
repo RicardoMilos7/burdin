@@ -1,0 +1,70 @@
+//@ run
+//> 2
+//> 4
+//> 6
+//> 8
+//> 3
+//> 4
+//> 1
+//> 2
+//> 3
+//> 4
+//> 10
+//> 4
+//> true
+//> true
+//> 3
+//> 4
+//> 10
+
+// The lazy adapters build a chain over the source and allocate nothing until an item is asked for.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    xs.push(4)
+
+    let mut it = xs.iter().map(|x| x * 2)
+    loop {
+        match it.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+
+    let mut filtered = xs.iter().filter(|x| *x > 2)
+    loop {
+        match filtered.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+
+    let mut first_two = xs.iter().take(2)
+    loop {
+        match first_two.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+
+    let mut after_two = xs.iter().skip(2)
+    loop {
+        match after_two.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+
+    println(xs.iter().fold(0, |acc, x| acc + x).to_string())
+    println(xs.iter().count().to_string())
+    println(xs.iter().any(|x| x > 3).to_string())
+    println(xs.iter().all(|x| x > 0).to_string())
+    match xs.iter().find(|x| *x > 2) {
+        Some(x) => println(x.to_string()),
+        None => println("none"),
+    }
+    println(xs.iter().to_list().len().to_string())
+    println(xs.iter().sum().to_string())
+}

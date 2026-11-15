@@ -2,7 +2,7 @@
 
 use crate::ty::IntTy;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FuncId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -127,6 +127,12 @@ pub enum Method {
     AsPtr,
     /// `CPtr<T>.is_null(): bool`: whether the raw pointer is null.
     IsNull,
+    /// `xs.iter()`: the borrowing iterator of a collection, a range, or `Chars` (IT4).
+    Iter,
+    /// `xs.into_iter()`: the owning iterator of a `List`, a `Map`, an array, a range, or `Chars` (IT5).
+    IntoIter,
+    /// `it.next()`: advances an iterator and returns its next item (IT6).
+    IterNext,
     /// `x.clone()`: a deep copy derived by the compiler.
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.
@@ -142,6 +148,8 @@ impl Method {
             Method::MapInsert => index == 1 || index == 2,
             // Unwrapping consumes the `Option` or `Result`.
             Method::Unwrap | Method::Expect => index == 0,
+            // `into_iter` takes the collection, the array, the map, or the range by value.
+            Method::IntoIter => index == 0,
             _ => false,
         }
     }
@@ -160,12 +168,13 @@ impl Method {
                 | Method::Clear
                 | Method::MapInsert
                 | Method::MapRemove
+                | Method::IterNext
         )
     }
 
     /// Whether the result is a view derived from the receiver.
     pub fn result_borrows_receiver(self) -> bool {
-        matches!(self, Method::ListLast | Method::MapGet | Method::Chars)
+        matches!(self, Method::ListLast | Method::MapGet | Method::Chars | Method::Iter | Method::IterNext)
     }
 }
 

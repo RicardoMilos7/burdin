@@ -64,6 +64,23 @@ impl FnCx<'_> {
             if !matches!(ty, Ty::Int(_) | Ty::Error) {
                 self.diags.error(Code::TYPE_MISMATCH, iter.span, format!("cannot iterate over a range of `{ty}`"));
             }
+            // A full pattern (a tuple or a literal) matches through the iteration protocol, like `.iter()`.
+            if matches!(ty, Ty::Int(_))
+                && !matches!(pattern.kind, ast::PatternKind::Binding { .. } | ast::PatternKind::Wild)
+            {
+                let range_ty = Ty::Range(Box::new(ty.clone()), *inclusive);
+                let value = mk(
+                    tir::ExprKind::Range { lo: Box::new(lo), hi: Box::new(hi), inclusive: *inclusive },
+                    range_ty,
+                    span,
+                );
+                let iterator = mk(
+                    tir::ExprKind::Method(tir::Method::Iter, vec![value]),
+                    Ty::RangeIter(Box::new(ty.clone()), *inclusive),
+                    span,
+                );
+                return self.protocol_for(pattern, iterator, ty, body, span);
+            }
             self.scopes.push(HashMap::new());
             let var = match &pattern.kind {
                 ast::PatternKind::Binding { name, mutable } => {
@@ -72,7 +89,12 @@ impl FnCx<'_> {
                 ast::PatternKind::Wild => None,
                 _ => {
                     self.scopes.pop();
-                    return self.unsupported(pattern.span, "this `for` pattern"); // e9000: for-range-literal-pattern
+                    // The endpoints did not produce an integer type, so no element exists to match; the body is
+                    // still checked for its own errors.
+                    self.loops.push(false);
+                    let _ = self.block(body, None);
+                    self.loops.pop();
+                    return error_expr(span);
                 }
             };
             self.loops.push(false);
@@ -83,6 +105,54 @@ impl FnCx<'_> {
             return mk(kind, Ty::Unit, span);
         }
         let iterable = self.expr(iter, None);
+        // A user type (or a type parameter) iterates through the protocol: an iterator value directly, an
+        // `Iterable` through `iter()` (spec/iterators.md, IT4).
+        let builtin = matches!(
+            iterable.ty,
+            Ty::Array(..)
+                | Ty::Slice(_)
+                | Ty::List(_)
+                | Ty::Map(..)
+                | Ty::Chars
+                | Ty::Range(..)
+                | Ty::Error
+                | Ty::Never
+        );
+        if !builtin {
+            // `for` borrows its source (IT1), so a type that is both an `Iterable` and an `Iterator` is iterated
+            // through `iter()`, not consumed as an iterator value.
+            if let Some(item) = self.globals.iterable_item(&iterable.ty, &self.bounds) {
+                let iterator = self.for_iterator(iter, iterable.clone(), &item, span);
+                if iterator.ty == Ty::Error {
+                    return iterator;
+                }
+                match self.globals.iterator_item(&iterator.ty, &self.bounds) {
+                    Some(got) if got == item => {}
+                    _ => {
+                        let got = iterator.ty.clone();
+                        self.diags.error(
+                            Code::BOUND_NOT_SATISFIED,
+                            span,
+                            format!(
+                                "`iter()` of `{}` returns `{got}`, which is not an `Iterator<{item}>`",
+                                iterable.ty
+                            ),
+                        );
+                        return error_expr(span);
+                    }
+                }
+                return self.protocol_for(pattern, iterator, item, body, span);
+            }
+            if let Some(item) = self.globals.iterator_item(&iterable.ty, &self.bounds) {
+                return self.protocol_for(pattern, iterable, item, body, span);
+            }
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                iter.span,
+                format!("cannot iterate over a value of type `{}`", iterable.ty),
+            );
+            return error_expr(span);
+        }
         let (elem, kind) = match &iterable.ty {
             Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
             Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
@@ -102,6 +172,19 @@ impl FnCx<'_> {
         };
         self.scopes.push(HashMap::new());
         if matches!(kind, ForKind::Range) {
+            // A full pattern matches through the iteration protocol, like `.iter()` on the range value.
+            if matches!(elem, Ty::Int(_))
+                && !matches!(pattern.kind, ast::PatternKind::Binding { .. } | ast::PatternKind::Wild)
+            {
+                self.scopes.pop();
+                let inclusive = matches!(iterable.ty, Ty::Range(_, true));
+                let iterator = mk(
+                    tir::ExprKind::Method(tir::Method::Iter, vec![iterable]),
+                    Ty::RangeIter(Box::new(elem.clone()), inclusive),
+                    span,
+                );
+                return self.protocol_for(pattern, iterator, elem, body, span);
+            }
             // A range value's endpoints are integers, so the loop binding is a plain owned integer like the
             // literal form.
             let var = match &pattern.kind {
@@ -111,7 +194,11 @@ impl FnCx<'_> {
                 ast::PatternKind::Wild => None,
                 _ => {
                     self.scopes.pop();
-                    return self.unsupported(pattern.span, "this `for` pattern"); // e9000: for-range-value-pattern
+                    // An invalid range type was already reported; check the body for its own errors.
+                    self.loops.push(false);
+                    let _ = self.block(body, None);
+                    self.loops.pop();
+                    return error_expr(span);
                 }
             };
             self.loops.push(false);

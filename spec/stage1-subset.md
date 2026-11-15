@@ -77,6 +77,9 @@ Milestones 20 and 21 are the riskiest and may split (for example `m20a_mir`, `m2
 Milestone 12 is complete: `tests/m12_closures` and every earlier folder pass in debug and release, and the closure
 rules are recorded in `spec/memory-rules.md` CL1-CL11 and `spec/grammar.md` section 4.
 
+Milestone 13 is complete: `tests/m13_iterators` and every earlier folder pass in debug and release, the protocol is
+recorded in `spec/iterators.md` IT4-IT12, and the surface is in `spec/stdlib.md`.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,

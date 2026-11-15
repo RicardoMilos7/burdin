@@ -1,10 +1,10 @@
 //! Impl blocks: `Type { ... }`, `Type: Drop { ... }`, and `Type: Interface { ... }`.
 
 use crate::builtins::builtin_type;
-use crate::generics::{BUILTIN_INTERFACES, Bound, Head, ImplInfo};
+use crate::generics::{BUILTIN_INTERFACES, Bound, Head, ImplInfo, param_ty};
 use crate::globals::{FromImpl, Globals, TypeName, adt_key};
 use crate::session::{FnItem, ImplTemplate, Sema};
-use burdin_diag::{Code, Diagnostics};
+use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
 use burdin_tir::Ty;
 
@@ -25,7 +25,7 @@ impl<'t> Sema<'t> {
     /// Registers an impl block. Methods of an impl on a generic type are registered when each instance of the
     /// type is allocated.
     fn register_impl(&mut self, imp: &'t ast::ImplBlock, module: usize, diags: &mut Diagnostics) {
-        let Some(kind) = self.impl_kind(imp, module, diags) else { return };
+        let Some((kind, iface_seg)) = self.impl_kind(imp, module, diags) else { return };
 
         // An impl on a generic type, written plainly or through a module: `Stack<T> { ... }`,
         // `sh.Stack<T>: Describe where T: Describe { ... }`.
@@ -50,7 +50,7 @@ impl<'t> Sema<'t> {
                 if !self.check_impl_coherence(&kind, type_pkg, imp, module, diags) {
                     return;
                 }
-                self.register_generic_impl(imp, module, g, seg, kind, diags);
+                self.register_generic_impl(imp, module, g, seg, kind, iface_seg, diags);
                 return;
             }
         }
@@ -60,7 +60,7 @@ impl<'t> Sema<'t> {
         }
         let self_ty = self.globals.resolve_type(&imp.ty, None, module, diags);
         let Some(key) = adt_key(&self_ty) else {
-            if matches!(kind, ImplKind::Builtin | ImplKind::From(_)) && self_ty != Ty::Error {
+            if matches!(kind, ImplKind::Builtin | ImplKind::From) && self_ty != Ty::Error {
                 diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
@@ -79,6 +79,10 @@ impl<'t> Sema<'t> {
         if !self.check_impl_coherence(&kind, type_pkg, imp, module, diags) {
             return;
         }
+        let iface = match &kind {
+            ImplKind::User(i) => Some((*i, self.resolve_iface_args(*i, iface_seg, &[], &[], module, imp.span, diags))),
+            _ => None,
+        };
         match kind {
             ImplKind::Builtin => {
                 diags.error(
@@ -87,20 +91,28 @@ impl<'t> Sema<'t> {
                     "implementing a built-in interface by hand is not implemented in this compiler yet; use `derives`",
                 );
             }
-            ImplKind::From(source) => self.register_from_impl(imp, module, &self_ty, key, source, diags),
+            ImplKind::From => {
+                let source = iface_seg
+                    .and_then(|s| s.args.first())
+                    .map(|t| self.globals.resolve_type_in(t, None, &[], module, diags))
+                    .unwrap_or(Ty::Error);
+                self.register_from_impl(imp, module, &self_ty, key, source, diags);
+            }
             ImplKind::Drop => self.register_drop_impl(imp, module, &self_ty, key, diags),
             ImplKind::Inherent | ImplKind::User(_) => {
-                let iface = kind.user_interface();
-                if let Some(i) = iface {
+                let iface_args = iface.as_ref().map(|(_, args)| args.clone()).unwrap_or_default();
+                if let Some((i, args)) = iface {
                     check_missing_methods(&self.globals, imp, i, diags);
                     self.globals.impls.push(ImplInfo {
                         head: Head::Plain(key),
                         iface: i,
+                        iface_args: args,
                         params: Vec::new(),
                         wheres: Vec::new(),
                         span: imp.span,
                     });
                 }
+                let iface = kind.user_interface().map(|i| (i, iface_args));
                 self.register_methods(imp, module, iface, &self_ty, MethodScope::plain(), diags);
             }
         }
@@ -135,7 +147,7 @@ impl<'t> Sema<'t> {
                 );
                 false
             }
-            ImplKind::From(_) if !local_type => {
+            ImplKind::From if !local_type => {
                 diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
@@ -153,10 +165,15 @@ impl<'t> Sema<'t> {
         }
     }
 
-    /// What kind of impl block this is, from the interface it names. `None` after reporting an unknown or
-    /// unsupported interface.
-    fn impl_kind(&self, imp: &ast::ImplBlock, module: usize, diags: &mut Diagnostics) -> Option<ImplKind> {
-        let Some(t) = &imp.interface else { return Some(ImplKind::Inherent) };
+    /// What kind of impl block this is, from the interface it names, and the interface segment that carries its
+    /// type arguments. `None` after reporting an unknown or unsupported interface.
+    fn impl_kind<'a>(
+        &self,
+        imp: &'a ast::ImplBlock,
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Option<(ImplKind, Option<&'a ast::PathSegment>)> {
+        let Some(t) = &imp.interface else { return Some((ImplKind::Inherent, None)) };
         let ast::TypeKind::Path(segs) = &t.kind else {
             diags.error(
                 Code::UNSUPPORTED, // e9000: impl-interface-path-kind
@@ -178,7 +195,7 @@ impl<'t> Sema<'t> {
         let name = &seg.name.name;
         if !qualified {
             if name == "Drop" {
-                return Some(ImplKind::Drop);
+                return Some((ImplKind::Drop, None));
             }
             if name == "From" {
                 if seg.args.len() != 1 {
@@ -189,11 +206,14 @@ impl<'t> Sema<'t> {
                     );
                     return None;
                 }
-                let source = self.globals.resolve_type(&seg.args[0], None, module, diags);
-                return Some(ImplKind::From(source));
+                return Some((ImplKind::From, Some(seg)));
             }
             if BUILTIN_INTERFACES.contains(&name.as_str()) {
-                return Some(ImplKind::Builtin);
+                if !seg.args.is_empty() {
+                    diags.error(Code::TYPE_MISMATCH, t.span, format!("`{name}` takes no type arguments"));
+                    return None;
+                }
+                return Some((ImplKind::Builtin, None));
             }
         }
         let found =
@@ -208,15 +228,56 @@ impl<'t> Sema<'t> {
         {
             diags.error(Code::PRIVATE_ITEM, seg.name.span, format!("interface `{name}` is `priv` in another package"));
         }
-        if !seg.args.is_empty() {
-            diags.error(Code::UNSUPPORTED, t.span, "generic interfaces are not implemented in this compiler yet"); // e9000: impl-generic-interface
-            return None;
+        Some((ImplKind::User(i), Some(seg)))
+    }
+
+    /// Resolves a generic interface's type arguments for an impl (`Type: Iterator<i32>`), checks their number and
+    /// the interface's bounds on its parameters, and returns them. `env` holds the impl's `where` bounds.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_iface_args(
+        &self,
+        iface: usize,
+        seg: Option<&ast::PathSegment>,
+        subst: &[(String, Ty)],
+        env: &[(String, Vec<Bound>)],
+        module: usize,
+        span: Span,
+        diags: &mut Diagnostics,
+    ) -> Vec<Ty> {
+        let info = &self.globals.interfaces[iface];
+        let args = seg.map(|s| s.args.as_slice()).unwrap_or(&[]);
+        if args.len() != info.params.len() {
+            diags.error(
+                Code::TYPE_MISMATCH,
+                span,
+                format!("`{}` takes {} type argument(s), but {} were given", info.name, info.params.len(), args.len()),
+            );
+            return vec![Ty::Error; info.params.len()];
         }
-        Some(ImplKind::User(i))
+        let resolved: Vec<Ty> =
+            args.iter().map(|a| self.globals.resolve_type_in(a, None, subst, module, diags)).collect();
+        for (k, arg) in resolved.iter().enumerate() {
+            for bound in info.bounds.get(k).into_iter().flatten() {
+                if !self.globals.satisfies_with(arg, bound, env, subst) {
+                    let span = args[k].span;
+                    diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!(
+                            "`{arg}` does not implement `{}`, which the parameter of `{}` requires",
+                            self.globals.bound_name(bound),
+                            info.name
+                        ),
+                    );
+                }
+            }
+        }
+        resolved
     }
 
     /// An impl on a generic type, written with the names it gives the type's arguments: it becomes a template that
     /// is instantiated with every instance of the type.
+    #[allow(clippy::too_many_arguments)]
     fn register_generic_impl(
         &mut self,
         imp: &'t ast::ImplBlock,
@@ -224,6 +285,7 @@ impl<'t> Sema<'t> {
         g: usize,
         seg: &ast::PathSegment,
         kind: ImplKind,
+        iface_seg: Option<&ast::PathSegment>,
         diags: &mut Diagnostics,
     ) {
         let mut params = Vec::new();
@@ -270,18 +332,25 @@ impl<'t> Sema<'t> {
             return;
         }
         let wheres = self.impl_wheres(imp, module, &params, diags);
+        let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
         let iface = kind.user_interface();
-        if let Some(i) = iface {
-            check_missing_methods(&self.globals, imp, i, diags);
-            self.globals.impls.push(ImplInfo {
-                head: Head::Generic(g),
-                iface: i,
-                params: params.clone(),
-                wheres: wheres.clone(),
-                span: imp.span,
-            });
-        }
-        self.tpl.impls.push(ImplTemplate { decl: imp, module, template: g, params, wheres, iface });
+        let iface_args = match iface {
+            Some(i) => {
+                check_missing_methods(&self.globals, imp, i, diags);
+                let args = self.resolve_iface_args(i, iface_seg, &subst, &wheres, module, imp.span, diags);
+                self.globals.impls.push(ImplInfo {
+                    head: Head::Generic(g),
+                    iface: i,
+                    iface_args: args.clone(),
+                    params: params.clone(),
+                    wheres: wheres.clone(),
+                    span: imp.span,
+                });
+                args
+            }
+            None => Vec::new(),
+        };
+        self.tpl.impls.push(ImplTemplate { decl: imp, module, template: g, params, wheres, iface, iface_args });
     }
 
     /// The bounds an impl block's `where` clause puts on the names it gives the type's arguments.
@@ -335,8 +404,12 @@ impl<'t> Sema<'t> {
             );
             return;
         };
-        if !m.generics.is_empty() {
-            diags.error(Code::UNSUPPORTED, m.name.span, "generic methods are not implemented in this compiler yet"); // e9000: impl-from-generic-method
+        if !m.generics.is_empty() || !m.where_clause.is_empty() {
+            diags.error(
+                Code::TYPE_MISMATCH,
+                m.name.span,
+                "a `From` conversion cannot be generic: `?` calls it with exactly one argument",
+            );
             return;
         }
         self.register_methods(imp, module, None, self_ty, MethodScope::plain(), diags);
@@ -400,7 +473,7 @@ enum ImplKind {
     /// `Type: Drop { ... }`.
     Drop,
     /// `Type: From<Source> { fn from(value: Source): Type }`.
-    From(Ty),
+    From,
     /// A built-in interface other than `Drop`, which is only derived for now.
     Builtin,
     /// `Type: Interface { ... }` for an interface declared in the program (an index into the interfaces).
@@ -454,7 +527,7 @@ impl<'t> Sema<'t> {
         &mut self,
         imp: &'t ast::ImplBlock,
         module: usize,
-        iface: Option<usize>,
+        iface: Option<(usize, Vec<Ty>)>,
         self_ty: &Ty,
         scope: MethodScope,
         diags: &mut Diagnostics,
@@ -463,13 +536,41 @@ impl<'t> Sema<'t> {
         for m in &imp.methods {
             self.add_method(key, self_ty, m, module, &scope, diags);
         }
-        if let Some(i) = iface {
+        if let Some((i, args)) = iface {
+            // A symbolic instance exists only while a generic body is checked against its bounds; its calls go
+            // through the bound's methods, not through copies of the interface's defaults.
+            if scope.symbolic {
+                return;
+            }
+            // The iteration protocol's defaults are instantiated on demand at each call (fncx::iterate): a
+            // default that returns an adapter of `Self` would otherwise instantiate adapters without end.
+            if Some(i) == self.globals.iterator_iface {
+                return;
+            }
             let interface: &'t ast::InterfaceDecl = self.tpl.ifaces[i];
             let iface_module = self.globals.interfaces[i].module;
-            for im in &interface.methods {
-                if im.has_body && !imp.methods.iter().any(|m| m.name.name == im.decl.name.name) {
-                    self.add_method(key, self_ty, &im.decl, iface_module, &scope, diags);
-                }
+            let params = self.globals.interfaces[i].params.clone();
+            let iface_bounds = self.globals.interfaces[i].bounds.clone();
+            // A default method is written in the interface's module: only `Self`, the interface's parameters,
+            // and the method's own parameters are names in it. The impl's parameters are not, so they cannot
+            // shadow them; their bounds still join the environment last, for the types the impl substituted.
+            let subst: Vec<(String, Ty)> = params.iter().cloned().zip(args.iter().cloned()).collect();
+            let mut bounds: Vec<(String, Vec<Bound>)> = Vec::new();
+            for (p, bs) in params.iter().zip(&iface_bounds) {
+                let bs: Vec<Bound> = bs.iter().map(|b| self.globals.subst_bound(b, &subst)).collect();
+                bounds.push((p.clone(), bs));
+            }
+            bounds.extend(scope.bounds.iter().cloned());
+            let defaults: Vec<&'t ast::FnDecl> = interface
+                .methods
+                .iter()
+                .filter(|im| im.has_body && !imp.methods.iter().any(|m| m.name.name == im.decl.name.name))
+                .map(|im| &im.decl)
+                .collect();
+            let default_scope =
+                MethodScope { subst: &subst, bounds: &bounds, symbolic: scope.symbolic, check_body: scope.check_body };
+            for decl in defaults {
+                self.add_method(key, self_ty, decl, iface_module, &default_scope, diags);
             }
         }
     }
@@ -483,10 +584,6 @@ impl<'t> Sema<'t> {
         scope: &MethodScope,
         diags: &mut Diagnostics,
     ) {
-        if !decl.generics.is_empty() || !decl.where_clause.is_empty() {
-            diags.error(Code::UNSUPPORTED, decl.name.span, "generic methods are not implemented in this compiler yet"); // e9000: impl-method-generic
-            return;
-        }
         let clashes_with_variant = match self_ty {
             Ty::Enum(a) => self.src.enums[a.id].decl.variants.iter().any(|v| v.name.name == decl.name.name),
             _ => false,
@@ -500,14 +597,28 @@ impl<'t> Sema<'t> {
             );
             return;
         }
+        // A method-level type parameter is opaque in the identity function; each call instantiates it. It comes
+        // first so that the method's own `F` wins over an impl parameter with the same name in a default method.
+        let mut subst: Vec<(String, Ty)> = Vec::new();
+        for g in &decl.generics {
+            subst.push((g.name.name.clone(), param_ty(&g.name.name)));
+        }
+        subst.extend(scope.subst.iter().cloned());
+        let method_bounds = crate::declare::method_bounds(decl, scope.subst, &self.globals, module, diags);
+        let mut bounds: Vec<(String, Vec<Bound>)> = Vec::new();
+        for (g, bs) in decl.generics.iter().zip(&method_bounds) {
+            bounds.push((g.name.name.clone(), bs.clone()));
+        }
+        bounds.extend(scope.bounds.iter().cloned());
+        let generics: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         let item = FnItem {
             decl,
             name: format!("{self_ty}.{}", decl.name.name),
             module,
             self_ty: Some(self_ty.clone()),
-            subst: scope.subst.to_vec(),
-            bounds: scope.bounds.to_vec(),
-            symbolic: scope.symbolic,
+            subst,
+            bounds,
+            symbolic: scope.symbolic || !generics.is_empty(),
             check_body: scope.check_body,
             is_unsafe: decl.is_unsafe,
             is_exported: false,
@@ -517,5 +628,29 @@ impl<'t> Sema<'t> {
         self.globals.method_priv.insert(method_key.clone(), decl.is_priv);
         self.globals.method_spans.insert(method_key.clone(), decl.name.span);
         self.globals.method_pkg.insert(method_key, self.globals.package_of(module));
+        if !generics.is_empty() {
+            let template = crate::session::MethodTemplate {
+                decl,
+                name: format!("{self_ty}.{}", decl.name.name),
+                module,
+                self_ty: Some(self_ty.clone()),
+                base_subst: scope.subst.to_vec(),
+                base_bounds: scope.bounds.to_vec(),
+                params: generics,
+                bounds: method_bounds,
+                is_unsafe: decl.is_unsafe,
+            };
+            let index = self.tpl.methods.len();
+            self.tpl.methods.push(template);
+            self.globals.method_templates.insert(
+                id,
+                crate::generics::GenericMethod {
+                    template: index,
+                    identity: id,
+                    params: self.tpl.methods[index].params.clone(),
+                    bounds: self.tpl.methods[index].bounds.clone(),
+                },
+            );
+        }
     }
 }

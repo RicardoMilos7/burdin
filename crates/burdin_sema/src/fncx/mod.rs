@@ -9,6 +9,7 @@ mod expr;
 mod fnvalue;
 mod generic;
 mod item;
+mod iterate;
 mod literals;
 mod operators;
 mod pattern;
@@ -109,7 +110,7 @@ impl<'a> FnCx<'a> {
 
     /// Whether a type parameter's bounds provide `bound`.
     pub(super) fn param_has(&self, ty: &Ty, bound: Bound) -> bool {
-        matches!(ty, Ty::Param(_)) && self.globals.satisfies(ty, bound, &self.bounds)
+        matches!(ty, Ty::Param(_)) && self.globals.satisfies(ty, &bound, &self.bounds)
     }
 
     pub(super) fn exhaustive(&self, ty: &Ty, pats: &[&Pat]) -> bool {

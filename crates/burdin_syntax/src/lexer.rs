@@ -144,7 +144,13 @@ impl Lexer<'_> {
         let kind = if word == "_" {
             TokenKind::Underscore
         } else {
-            TokenKind::keyword(word).unwrap_or_else(|| TokenKind::Ident(word.to_string()))
+            match TokenKind::keyword(word) {
+                // A member name after `.` is its own namespace: `.any()` stays spellable even while `any` is
+                // reserved as an identifier (spec/grammar.md, "Keywords").
+                Some(TokenKind::Reserved(_)) if self.after_dot() => TokenKind::Ident(word.to_string()),
+                Some(keyword) => keyword,
+                None => TokenKind::Ident(word.to_string()),
+            }
         };
         self.push(kind, lo);
     }
@@ -513,6 +519,14 @@ mod tests {
                 Eof
             ]
         );
+    }
+
+    #[test]
+    fn a_reserved_word_after_a_dot_is_a_member_name() {
+        assert_eq!(kinds("x.any"), vec![Ident("x".into()), Dot, Ident("any".into()), Eof]);
+        // Everywhere else the word stays reserved.
+        assert_eq!(kinds("any"), vec![Reserved("any".into()), Eof]);
+        assert_eq!(kinds("any.x"), vec![Reserved("any".into()), Dot, Ident("x".into()), Eof]);
     }
 
     #[test]

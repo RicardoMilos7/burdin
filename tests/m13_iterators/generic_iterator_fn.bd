@@ -1,0 +1,58 @@
+//@ run
+//> 3
+//> 30
+//> 6
+//> 2
+//> 1
+
+// A generic function can require `Iterator<T>` or `Iterable<T>` from its type parameter.
+struct Countdown {
+    from: i32
+}
+
+Countdown: Iterable<i32> {
+    fn iter(self): Countdown {
+        Countdown { from: self.from }
+    }
+}
+
+Countdown: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.from <= 0 {
+            return None
+        }
+        let v = self.from
+        self.from = v - 1
+        Some(v)
+    }
+}
+
+fn total<I: Iterator<i32>>(mut it: I): i32 {
+    let mut sum = 0
+    loop {
+        match it.next() {
+            Some(x) => sum = sum + x,
+            None => return sum,
+        }
+    }
+}
+
+fn show<I: Iterable<i32>>(c: I) {
+    for x in c {
+        println(x.to_string())
+    }
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    let mut it = xs.iter()
+    println(total(mut it).to_string())
+    let mut mapped = xs.iter().map(|x| x * 10)
+    println(total(mut mapped).to_string())
+    let mut c = Countdown { from: 3 }
+    let mut from_c = c.iter()
+    println(total(mut from_c).to_string())
+    show((Countdown { from: 2 }).iter())
+}

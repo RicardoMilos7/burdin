@@ -20,12 +20,9 @@ page.
 | --- | --- | --- | --- | --- |
 | `move-runtime-index-match` | `crates/burdin_check/src/moves.rs` | Matching a pattern that moves out of a non-`Copy` element through a runtime index (`match xs[i] { ... }`, non-constant `i`) | Stage 1 | #493 |
 | `move-runtime-index-place` | `crates/burdin_check/src/moves.rs` | Moving a non-`Copy` value through a runtime index (`let x = xs[i]`, non-constant `i`) | Stage 1 | #493 |
-| `declare-generic-interface` | `crates/burdin_sema/src/declare.rs` | A generic interface (`interface Iterator<T> { ... }`) | m13 | #390 |
 | `declare-generic-alias` | `crates/burdin_sema/src/declare.rs` | A generic type alias (`type Pair<T> = (T, T)`) | m21 | #392 |
 | `declare-where-non-param` | `crates/burdin_sema/src/declare.rs` | A `where` predicate on something other than a type parameter, such as an associated-type projection | Stage 1 | #394 |
 | `function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using a generic or `extern` function as a value | Stage 1 | #493 |
-| `for-range-literal-pattern` | `crates/burdin_sema/src/fncx/control.rs` | A `for` pattern other than a binding or `_` over a literal range (`for (a, b) in 0..n`) | m13 | #102 |
-| `for-range-value-pattern` | `crates/burdin_sema/src/fncx/control.rs` | The same over a stored range value | m13 | #102 |
 | `array-repeat-length` | `crates/burdin_sema/src/fncx/expr.rs` | `[value; count]` where `count` is not an integer literal | m21 | #403 |
 | `const-expression` | `crates/burdin_sema/src/fncx/item.rs` | A `const` initializer beyond literals, other constants, operators, and casts | m20 | #163 |
 | `unsupported-helper` | `crates/burdin_sema/src/fncx/mod.rs` | The shared `unsupported()` helper that reports the `E9000` sites in expression checking; not a construct | helper | - |
@@ -33,18 +30,13 @@ page.
 | `pattern-or-binding` | `crates/burdin_sema/src/fncx/pattern.rs` | A binding inside an alternative of an or-pattern | Stage 1 | #493 |
 | `bound-non-path` | `crates/burdin_sema/src/generics.rs` | A bound that is not a type path (a tuple, reference, array, or other type form) | Stage 1 | #399 |
 | `bound-empty` | `crates/burdin_sema/src/generics.rs` | An empty bound path (a defensive branch; the parser cannot produce one today) | Stage 1 | #399 |
-| `bound-generic-args` | `crates/burdin_sema/src/generics.rs` | A bound with type arguments (`T: Iface<U>`) | m13 | #390 |
 | `bound-drop-from` | `crates/burdin_sema/src/generics.rs` | `Drop` or `From` used as a bound | Stage 1 | #399 |
-| `bound-qualified-generic` | `crates/burdin_sema/src/generics.rs` | A qualified bound with type arguments (`T: api.Iface<U>`) | m13 | #390 |
 | `impl-where-concrete` | `crates/burdin_sema/src/impls.rs` | A `where` clause on a non-generic impl block | Stage 1 | #394 |
 | `impl-builtin-hand` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented by hand (`Type: Eq { ... }`) | m19 | #402 |
 | `impl-interface-path-kind` | `crates/burdin_sema/src/impls.rs` | An interface path that is not a type path | Stage 1 | #400 |
-| `impl-generic-interface` | `crates/burdin_sema/src/impls.rs` | Implementing a generic interface | m13 | #390 |
 | `impl-specific-args` | `crates/burdin_sema/src/impls.rs` | An impl block for specific type arguments (`Stack<i32> { ... }`) | m21 | #395 |
 | `impl-builtin-generic` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented for a generic type | m21 | #401 |
 | `impl-where-non-param` | `crates/burdin_sema/src/impls.rs` | A `where` predicate on something other than a type parameter in an impl block | Stage 1 | #394 |
-| `impl-from-generic-method` | `crates/burdin_sema/src/impls.rs` | A generic `from` method in a `From` implementation | m13 | #391 |
-| `impl-method-generic` | `crates/burdin_sema/src/impls.rs` | A generic method (`fn map<U>(...)`) | m13 | #391 |
 | `instances-limit` | `crates/burdin_sema/src/instances.rs` | The monomorphization limit (the diagnostic fires when a generic type or function instantiates itself without end). This is a compiler safety limit, not a language construct, so it has no feature issue; the limit should get a permanent code when it is next reworked | Stage 1 | #493 |
 | `type-array-length` | `crates/burdin_sema/src/types.rs` | An array type length that is not an integer literal (`[i32; N]`, `[i32; R * C]`) | m21 | #403 |
 
@@ -53,8 +45,6 @@ page.
 - `m12` (closures) owned calls and the first-class function surface; calls, named functions, built-in functions, and
   `Some` as a value are implemented with closures. Using a generic or `extern` function as a value is the remaining
   Stage 1 work, because it needs the callee's type arguments or the C calling convention.
-- `m13` (iterators) owns generic interfaces and generic methods, because `Iterator<T>`, `Iterable<T>`, and their
-  adapters are the first user-written `interface Name<T>` uses.
 - `m19` (operators) owns a built-in interface implemented by hand: the operator interfaces are the first built-in
   interfaces a program implements itself, and #402 decides the rule for all of them.
 - `m20` (comptime) owns arbitrary constant expressions; #163 unifies `const` evaluation with comptime.
