@@ -53,6 +53,7 @@ tests/run-tests.sh                 run the conformance tests against the compile
 tests/run-tests.sh m05 -v          only milestone 5, with diffs for failures
 tests/check-tests.sh               check test directives and error codes (no compiler needed; also check-tests.ps1)
 tests/check-unit-tests.sh          check the front-end unit tests and their CI coverage (no compiler needed)
+tests/check-deps.sh                audit the dependency pins and licenses (no compiler needed)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
 tests/check-debug-info.sh          check -g, the line table, and a gdb breakpoint (needs a built driver)
 tests/check-codegen-opt.sh         check drop-flag elimination, bounds-check elision, and shared glue
@@ -118,6 +119,9 @@ crash when linked into the Rust binary, which uses the dynamic CRT. On Windows/M
 There is no C runtime: `burdin_codegen/src/runtime.rs` generates `main`, output, panics, string allocation and
 conversions, and heap allocation as LLVM IR that calls libc directly.
 Platforms: Linux, macOS, Windows; x86-64 and arm64.
+
+External Rust crates are exact-pinned, committed in `Cargo.lock`, and reviewed in `tests/dependencies.txt`:
+`tests/check-deps.sh` enforces the permissive-license policy and the pins (see `docs/dependencies.md`).
 
 **Development happens in WSL Ubuntu 26.04 first** (decided). The repository stays on `F:`; build and test from WSL at
 `/mnt/f/projects/burdin-lang`. Packages: `build-essential llvm-21-dev libpolly-21-dev clang-21 libzstd-dev zlib1g-dev`, and
