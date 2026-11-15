@@ -130,13 +130,19 @@ pub fn emit_object(
 }
 
 /// Marks every defined function `uwtable`: without it LLVM emits no `.eh_frame` entry for a generated function, and
-/// a panic backtrace would stop at the first Burdin frame.
+/// a panic backtrace would stop at the first Burdin frame. On Darwin it also keeps the frame pointer, which
+/// libSystem's `backtrace` needs; the target machine is not created with clang's debug-build frame-pointer policy.
 fn add_unwind_tables(module: &Module<'_>) {
     let context = module.get_context();
     let uwtable = context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 1);
+    let darwin = module.get_triple().as_str().to_string_lossy().contains("darwin");
+    let frame_pointer = context.create_string_attribute("frame-pointer", "all");
     for function in module.get_functions() {
         if function.count_basic_blocks() > 0 {
             function.add_attribute(AttributeLoc::Function, uwtable);
+            if darwin {
+                function.add_attribute(AttributeLoc::Function, frame_pointer);
+            }
         }
     }
 }
