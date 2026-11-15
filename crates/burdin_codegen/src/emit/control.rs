@@ -385,35 +385,50 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
-    /// `for pattern in map`: binds each `(key, value)` pair in order; the map is borrowed.
+    /// `for pattern in map`: binds each live `(key, value)` pair; the map is borrowed. The hash table's slots are
+    /// scanned in order and empty ones are skipped, so the iteration order is unspecified.
     pub(super) fn for_map(&mut self, pat: &'a Pat, map: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
         let Ty::Map(key, value) = &map.ty else {
             self.expr_mode(map, Mode::Use)?;
             return Ok(());
         };
         let pair = Ty::Tuple(vec![(**key).clone(), (**value).clone()]);
+        let entry = Self::map_entry_ty(key, value);
+        let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();
         let v = self.expr_mode(map, Mode::Use)?;
         let s = self.need(v, &map.ty).into_struct_value();
         let base = self.builder.build_extract_value(s, 0, "map.ptr").map_err(llvm_err)?.into_pointer_value();
-        let len = self.builder.build_extract_value(s, 1, "map.len").map_err(llvm_err)?.into_int_value();
+        let cap = self.builder.build_extract_value(s, 2, "map.cap").map_err(llvm_err)?.into_int_value();
         let counter = self.alloca(self.usize_ty.into(), "for.index")?;
         self.builder.build_store(counter, self.usize_ty.const_zero()).map_err(llvm_err)?;
         let header = self.new_block("for.cond");
         let body_bb = self.new_block("for.body");
+        let bind = self.new_block("for.bind");
         let latch = self.new_block("for.next");
         let exit = self.new_block("for.end");
         self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
 
         self.builder.position_at_end(header);
         let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
-        let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+        let go = self.builder.build_int_compare(IntPredicate::ULT, i, cap, "").map_err(llvm_err)?;
         self.builder.build_conditional_branch(go, body_bb, exit).map_err(llvm_err)?;
 
         self.builder.position_at_end(body_bb);
-        let pair_t = self.llvm_ty(&pair).expect("a map entry has a type");
-        // SAFETY (LLVM): i < len.
-        let entry = unsafe { self.builder.build_in_bounds_gep(pair_t, base, &[i], "") }.map_err(llvm_err)?;
-        self.pat_bind(pat, Some(entry), &pair, None, &mut Vec::new())?;
+        // SAFETY (LLVM): i < cap.
+        let slot = unsafe { self.builder.build_in_bounds_gep(entry_t, base, &[i], "") }.map_err(llvm_err)?;
+        let hash_field = self.builder.build_struct_gep(entry_t, slot, 2, "").map_err(llvm_err)?;
+        let hash =
+            self.builder.build_load(self.cx.i64_type(), hash_field, "map.hash").map_err(llvm_err)?.into_int_value();
+        let occupied = self
+            .builder
+            .build_int_compare(IntPredicate::NE, hash, self.cx.i64_type().const_zero(), "")
+            .map_err(llvm_err)?;
+        self.builder.build_conditional_branch(occupied, bind, latch).map_err(llvm_err)?;
+
+        self.builder.position_at_end(bind);
+        // The entry is `(key, value, hash)`; a `(key, value)` tuple shares the first two fields' layout, so the
+        // pattern binds views into the map at the same addresses the key and value occupy.
+        self.pat_bind(pat, Some(slot), &pair, None, &mut Vec::new())?;
         self.loop_body(body, latch, exit)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 

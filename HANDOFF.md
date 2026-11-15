@@ -5,15 +5,9 @@ Written at the end of the first session, updated at the end of the second, third
 ## State
 
 Updated at the end of the twenty-fourth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed**: 240 conformance tests pass in the debug profile and 239 in release
-(two tests are debug-only or platform-specific; one is skipped on Windows). The twenty-fourth session audited every
-`Code::UNSUPPORTED` site (issue #84):
-`spec/e9000-audit.md` assigns each remaining E9000 to a milestone and an issue, each site carries a `// e9000:` id,
-and `tests/check_e9000.py` keeps the table and the compiler in agreement. The stage 0 diagnostics that had no future
-milestone got permanent codes (E0007, E0009, E0131, E0163, E0164, E0180) with compile-fail tests, string literal
-patterns and inclusive slice ranges are implemented, and a dead "comparing strings" branch was removed. The remaining
-E9000 sites are assigned to m12, m13, m19, m20, m21, or the cross-cutting Stage 1 work. `burdin test` runs `test` blocks concurrently with attributes, captured output,
-and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
+and the stage 0 gaps of issue #48 are closed**: all 246 conformance tests pass in the debug profile and 245 in
+release (two tests are debug-only; one is skipped on Windows). `burdin test` runs `test` blocks concurrently with
+attributes, captured output, and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
 by `tests/check_docs.py` (issue #42); the thirteenth retired the claude.ai copies of the design and stage 0
@@ -49,7 +43,17 @@ implemented the stage 0 correctness gaps of issue #48 (sub-issues #49, #53, #58,
 the view-lifetime rule (E0123), ranges as values, the tracked move forms, the generic inference/bounds/signature
 gaps, `pub use` and the module visibility rule, the C bridge (`CPtr` operations, `unsafe` for every `CPtr` value,
 `CString.clone`, out-parameters, `repr(C)` layout, variadic declarations, exported `extern "C" fn`), conformance
-tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage audit.
+tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage audit. The twenty-fourth session
+settled issue #83: `CStr` stays a `std` alias for `CPtr<CChar>` and is not a second-class view type; the rule is in
+`spec/stdlib.md` and `spec/memory-rules.md` SC1, and `m08_modules/cstr_is_an_alias.bd`,
+`cstr_no_implicit_conversion.bd`, and `cstr_is_not_a_str.bd` witness it. It also replaced the linear-scan `Map`
+with an open-addressing hash table (issue #82): lookup, insert, and remove are expected O(1), keys still need only
+`==`, and the unspecified iteration order is unchanged. The same session audited every `Code::UNSUPPORTED` site
+(issue #84): `spec/e9000-audit.md` assigns each remaining E9000 to a milestone and an issue, each site carries a
+`// e9000:` id, and `tests/check_e9000.py` keeps the table and the compiler in agreement. The stage 0 diagnostics
+that had no future milestone got permanent codes (E0007, E0009, E0131, E0163, E0164, E0180) with compile-fail
+tests; string literal patterns and inclusive slice ranges are implemented, and a dead "comparing strings" branch was
+removed. The remaining E9000 sites are assigned to m12, m13, m19, m20, m21, or the cross-cutting Stage 1 work.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -62,11 +66,11 @@ tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage a
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, and `...` in an `extern` signature |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 224 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Conformance tests | `tests/` | 247 tests. All pass: m01 to m11 on Linux, macOS, and Windows (245 in release; two are debug-only) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
-| E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; inclusive slicing is implemented (issue #84) |
+| E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check_unit_tests.py` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
@@ -198,8 +202,9 @@ how to call WSL from PowerShell.
   with `==`), the integer `parse` associated function, and the containers (`List`: `new`, `push`, `pop`, `last`,
   `insert`, `remove`, `clear`, `contains`, `sort`, `len`, indexing, `for`; `Map`: `new`, `insert`, `get`, `remove`,
   `contains_key`, `clear`, `len`, `for` over `(k, v)`). `List` and `Map` use the three-word `String` layout in
-  the C heap; `Map` is a linear-scan map, not a hash table. Drop and clone glue, `==`, `Ord`, and the move,
-  borrow, and origin checkers understand the new types. `Chars` is only an iterable: `for c in s.chars()` decodes
+  the C heap; `Map` is an open-addressing hash table (twenty-fourth session, issue #82), not a linear scan.
+  Drop and clone glue, `==`, `Ord`, and the move, borrow, and origin checkers understand the new types. `Chars`
+  is only an iterable: `for c in s.chars()` decodes
   UTF-8 in code generation. The prelude also provides file I/O (`read_to_string`, `write_file`), `env.args()`,
   `process.exit`, `process.run`, `assert`, `assert_eq`, `unreachable`, `mem.swap`, and `mem.replace`. The
   `IoError`, `ParseIntError`, and `AssertError` names are aliases for unit in `std`; the `error` declarations of
@@ -515,9 +520,11 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     `_Bool` is declared `u8`, since a Burdin `bool` is one bit, and C `char` is `CChar`. The manifest parser is
     deliberately minimal (path dependencies, no versions, no lockfile). A user `extern` whose symbol collides with a
     runtime libc declaration of a different type is a backend error printed without an error code or source span.
-14. **`Map` is a linear-scan map**, not the hash map the stage 0 table names: the observable API and ordering are
-    the same, but lookup is O(n) and keys only need `Eq`. A hash table can replace the implementation without
-    changing the type or its methods; `Hash` and `hash()` already exist.
+14. **`Map` is a hash table now (#82).** Stage 0 shipped a linear scan; the twenty-fourth session replaced the
+    implementation with open addressing (linear probing, a 3/4 load factor, backward-shift deletion, and structural
+    hashing of keys) without changing the type, its methods, or the unspecified iteration order. Lookup, insert, and
+    remove are expected O(1); a key still needs only `==`, not `Hash`. `spec/stdlib.md` states the implementation and
+    `m09_stdlib/map_key_types`, `map_remove_and_clear`, and `map_many_keys` witness it.
 15. **The error types are aliases for unit.** `std` declares `IoError`, `ParseIntError`, and `AssertError` as
     `type ... = ()`; `read_to_string`, `write_file`, `process.run`, and the integer parsers return
     `Result<T, ()>` under those names. Tests only match `Err(_)`, and the `error` declarations of stage 1 are the
@@ -706,7 +713,10 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   in `Program.tests`.
 - `CStr` is a `std` type alias for `CPtr<CChar>`, not a new view type: `CStr.to_string(ptr)` is the associated
   function `to_string` of a `CPtr<CChar>`, implemented with libc `strlen` plus the existing string allocator. This
-  avoids a second implicit conversion while giving the m11 test its name.
+  avoids a second implicit conversion while giving the m11 test its name. Issue #83 confirmed the decision and
+  wrote it down: the rule is in `spec/stdlib.md` ("`CStr` is an alias, not a view type") and `spec/memory-rules.md`
+  SC1, and `m08_modules/cstr_is_an_alias.bd` (run), `cstr_no_implicit_conversion.bd`, and `cstr_is_not_a_str.bd`
+  (E0003, E0002) are its witnesses.
 - `--link-lib LLVM-C` is resolved by the driver through `llvm-config` because Ubuntu ships the C API inside
   `libLLVM-21.so`, not as `libLLVM-C.so`. The driver adds the libdir and an rpath; other library names still go to the
   linker unchanged. This is the one platform-specific exception in the driver.

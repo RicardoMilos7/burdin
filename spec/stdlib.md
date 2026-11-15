@@ -118,7 +118,11 @@ struct Map<K, V> {
 ```
 
 Keys need `==` (`Eq`). `for (k, v) in map` borrows the map for the loop; iteration order is not specified, so a
-program must not depend on it. The stage 0 implementation is a linear scan, but that is not part of the interface.
+program must not depend on it. The implementation is an open-addressing hash table: lookup, insert, and remove are
+expected O(1), the table keeps a 3/4 load factor and rehashes as it grows, and removing a key shifts the rest of its
+probe cluster back instead of leaving tombstones. Keys are hashed structurally — integers, `bool`, `char`, floats,
+`String` by its bytes, tuples, structs, enums, `Option`, `Result`, and ranges — so a key needs only `==`, not
+`Hash`.
 
 ## `Heap<T>`
 
@@ -220,6 +224,26 @@ declaration: a C function pointer can only be stored and passed as `CPtr<CVoid>`
 for the bindgen target, and a union is handled through a `repr(C)` struct over the same bytes or a `CPtr<u8>`.
 `CString` owns its buffer, has `Drop`, and `clone` deep-copies the NUL-terminated buffer.
 
+**`CStr` is an alias, not a view type (issue #83).** `CStr` is a `std` type alias for `CPtr<CChar>`: one type
+under two names, with no length, no origin, and no conversion rules of its own. A `CPtr<T>` is a plain
+first-class `Copy` value (`memory-rules.md`, RF4 and SC1), so a `CStr` may be a local, a parameter, a return
+value, a struct field, or a type argument, and no lifetime rule applies to it, unlike `str` and `[T]`.
+
+- There is no implicit conversion between text and a C string in either direction: a `str`, `String`, or
+  `CString` is not a `CStr` (E0003), and a `CStr` is not a `str` or a `String` (E0003). `CString.from(s)`
+  copies the bytes and appends the NUL, `.as_ptr()` gives the `CStr`, and `CStr.to_string(p)` copies the
+  NUL-terminated bytes back. The `CString` must stay alive while its pointer is used; the compiler does not
+  track that lifetime, because a raw pointer is not a view.
+- `CStr.to_string` is the associated function `to_string` of `CPtr<CChar>`, not a method: `CStr.to_string(p)`
+  is the spelling, and `p.to_string()` is E0002, as are `p.len()` and every other string method.
+- Every operation on a `CStr` value is a raw-pointer operation and requires `unsafe` (E0161, US); the alias
+  adds no safety. A `CStr` promises neither NUL termination nor validity.
+
+The alternative, a second-class `CStr` view with its own conversions, was rejected: it would add a second
+implicit conversion (IC1 admits only `String` to `str`), need its own origin and lifetime rules, and present a
+C string as a safe borrowed string whose termination and lifetime the compiler cannot check. The alias keeps
+the C bridge honest: unvalidated bytes are a pointer (`CStr`), and `CString` is the owning buffer.
+
 `extern "C" { fn name(params): ret }` declares a C function. Parameters are passed by value and may be integers,
 floats, or `CPtr<T>`; the result may be one of those or unit. Aggregates cross the ABI through `CPtr<T>` only: a
 struct declared `repr(C)` has C field order and alignment (`Type.size()` and `Type.align()` report them), but passing
@@ -242,10 +266,10 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Output, numbers, parsing | `m02_basics/arithmetic`, `casts_and_numeric_methods`, `m09_stdlib/string_ops` |
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
-| `Map` | `m09_stdlib/map_ops`, `word_count` |
+| `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*` |
-| C bridge | `m08_modules/extern_libc`, `cstr_roundtrip`, `cptr_operations`, `cptr_null_arguments`, `c_out_parameter`, `c_abi_structs`, `cstring_clone`, `export_c_abi`, `m11_llvm/llvm_return_42` |
-| Rejected names, arities, and C ABI types | `m09_stdlib/unknown_stdlib_names` (E0002, E0004), `m08_modules/cptr_null_arguments` (E0004), `extern_signature` (E0162), `export_c_abi_invalid` (E0162) |
+| C bridge | `m08_modules/extern_libc`, `cstr_roundtrip`, `cptr_operations`, `cptr_null_arguments`, `c_out_parameter`, `c_abi_structs`, `cstring_clone`, `cstr_is_an_alias`, `export_c_abi`, `m11_llvm/llvm_return_42` |
+| Rejected names, arities, and C ABI types | `m09_stdlib/unknown_stdlib_names` (E0002, E0004), `m08_modules/cptr_null_arguments` (E0004), `extern_signature` (E0162), `export_c_abi_invalid` (E0162), `cstr_no_implicit_conversion` (E0003), `cstr_is_not_a_str` (E0002, E0003) |

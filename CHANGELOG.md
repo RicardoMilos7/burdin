@@ -76,14 +76,29 @@ close-out checklist in `AGENTS.md`).
     (`spec/stdlib.md`). Tests: `cptr_operations`, `cptr_requires_unsafe`, `c_out_parameter`, `c_abi_structs`,
     `cstring_clone`, `export_c_abi`, `export_c_abi_invalid`, `export_c_abi_panics`; docs in `spec/stdlib.md`,
     `spec/grammar.md`, and `docs/error-codes.md`.
+  - **`CStr` is an alias, not a view type (#83).** `CStr` remains a `std` alias for `CPtr<CChar>`: one type
+    under two names, first-class and `Copy`, with no length, origin, or conversion rules of its own. There is no
+    implicit conversion between text and a C string in either direction (E0003), `p.to_string()` and every other
+    string method are E0002, and the only conversions are the explicit `CString.from(s).as_ptr()` and the
+    associated `CStr.to_string(p)`. Every use keeps requiring `unsafe`. The rule and its rationale are in
+    `spec/stdlib.md`; `m08_modules/cstr_is_an_alias` (run), `cstr_no_implicit_conversion`, and
+    `cstr_is_not_a_str` witness it.
   - **Coverage (#85, #86, #87).** Run and compile-fail tests for `unsafe fn` declarations and unsafe interface
     methods (`unsafe_fn`, `unsafe_fn_call_requires_unsafe`, `unsafe_interface_method`,
     `unsafe_interface_mismatch`), and an audit of the `spec/memory-rules.md` test matrix against the suite, with US
     extended to the new pointer and unsafe-function tests.
-  - The suite is 224 tests (222 in release); `tests/check-tests.sh`, `check-unit-tests.sh`, `check-docs.sh`,
-    `check-error-docs.sh`, `check-diagnostics.sh`, `check-codegen-opt.sh`, `check-build-flags.sh`,
-    `check-parallel.sh`, `check-test-runner.sh`, and `check-debug-info.sh` are green, and `cargo fmt --check`,
+  - The suite is 247 tests (245 in release); `tests/check_tests.py`, `check_unit_tests.py`, `check_docs.py`,
+    `check_error_docs.py`, `check_diagnostics.py`, `check_codegen_opt.py`, `check_build_flags.py`,
+    `check_parallel.py`, `check_test_runner.py`, and `check_debug_info.py` are green, and `cargo fmt --check`,
     `cargo clippy -- -D warnings`, and `cargo test` pass.
+- `Map` is an open-addressing hash table (issue #82). The linear scan became linear probing in the map's existing
+  three-word buffer: a zero hash marks an empty slot, the table doubles and rehashes at a 3/4 load factor, and a
+  removal shifts the rest of the probe cluster back instead of leaving tombstones. Keys still need only `==`: they
+  are hashed structurally (integers, floats, text by its bytes, tuples, structs, enums, `Option`, `Result`, and
+  ranges), so `Hash` is not required. The API, the unspecified iteration order, and the iteration, drop, and clone
+  behavior are unchanged. A 200,000-key insert-and-lookup program drops from 9.8 s to 0.01 s in a release build, and
+  the million-key `m09_stdlib/map_many_keys` witness takes 0.07 s; `map_key_types` and `map_remove_and_clear` cover
+  aggregate keys, deletion, reinsertion, and `clear`. The implementation is described in `spec/stdlib.md`.
 - The release pipeline (issue #452, sub-issues #453-#456): a `Release` workflow builds the six supported targets
   natively (`x86_64`/`aarch64` Linux, macOS, and Windows), smoke-tests `build`, `run`, and `test`, writes
   `burdin-<version>-<target>.tar.gz` archives and SHA-256 checksums, verifies that two checkout paths produce the

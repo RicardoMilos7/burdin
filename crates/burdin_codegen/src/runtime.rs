@@ -83,6 +83,8 @@ pub(crate) struct Runtime<'ctx> {
     pub str_eq: FunctionValue<'ctx>,
     /// `(ptr, len, ptr2, len2) -> i32`: -1, 0, or 1.
     pub str_cmp: FunctionValue<'ctx>,
+    /// `(acc: i64, ptr, len: usize) -> i64`: FNV-1a over `len` bytes, continuing from `acc`.
+    pub str_hash: FunctionValue<'ctx>,
     /// `(ptr, len, needle, needle_len) -> i64`: the first byte index, or -1.
     pub str_find_str: FunctionValue<'ctx>,
     /// `(ptr, len, out: *i64) -> i1`: parses a signed decimal integer.
@@ -346,6 +348,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             string_push_char: self.string_push_char(string_push_str)?,
             str_eq: self.str_eq()?,
             str_cmp: self.str_cmp()?,
+            str_hash: self.str_hash()?,
             str_find_str: self.str_find_str()?,
             parse_i64: self.parse_int(&h, true)?,
             parse_u64: self.parse_int(&h, false)?,
@@ -1737,6 +1740,46 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .into_int_value();
         let order = self.b.build_select(eq, i32_ty.const_zero(), less, "").map_err(llvm_err)?;
         self.b.build_return(Some(&order)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `str_hash(acc: i64, ptr, len: usize) -> i64`: FNV-1a over `len` bytes, continuing from `acc`.
+    ///
+    /// A map needs to hash its keys, and `String` keys hash by their bytes. Starting from the caller's accumulator
+    /// lets a `String` field fold into a struct's hash in field order.
+    fn str_hash(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i64());
+        let params = [i64_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_str_hash", i64_ty.fn_type(&params, false));
+        let (start, ptr, len) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
+        let cond = self.block(f, "cond");
+        let body = self.block(f, "body");
+        let done = self.block(f, "done");
+        self.b.build_unconditional_branch(cond).map_err(llvm_err)?;
+
+        self.b.position_at_end(cond);
+        let i = self.b.build_phi(usize_ty, "i").map_err(llvm_err)?;
+        let acc = self.b.build_phi(i64_ty, "acc").map_err(llvm_err)?;
+        let i_v = i.as_basic_value().into_int_value();
+        let acc_v = acc.as_basic_value().into_int_value();
+        let go = self.b.build_int_compare(IntPredicate::ULT, i_v, len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(go, body, done).map_err(llvm_err)?;
+
+        self.b.position_at_end(body);
+        let at = self.offset(ptr, i_v)?;
+        let byte = self.b.build_load(self.i8(), at, "").map_err(llvm_err)?.into_int_value();
+        let word = self.b.build_int_z_extend(byte, i64_ty, "").map_err(llvm_err)?;
+        let mixed = self.b.build_xor(acc_v, word, "").map_err(llvm_err)?;
+        let prime = i64_ty.const_int(0x0000_0100_0000_01b3, false);
+        let next_acc = self.b.build_int_mul(mixed, prime, "").map_err(llvm_err)?;
+        let next_i = self.b.build_int_add(i_v, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_unconditional_branch(cond).map_err(llvm_err)?;
+        let entry = f.get_first_basic_block().expect("a function has an entry block");
+        i.add_incoming(&[(&usize_ty.const_zero(), entry), (&next_i, body)]);
+        acc.add_incoming(&[(&start, entry), (&next_acc, body)]);
+
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&acc_v)).map_err(llvm_err)?;
         Ok(f)
     }
 

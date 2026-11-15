@@ -313,8 +313,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.drop_sequence(addr, &elem, "list")
             }
             Ty::Map(key, value) => {
-                let entry = Ty::Tuple(vec![(**key).clone(), (**value).clone()]);
-                self.drop_sequence(addr, &entry, "map")
+                let (key, value) = ((**key).clone(), (**value).clone());
+                self.drop_map(addr, &key, &value)
             }
             Ty::Array(elem, n) => {
                 let n = *n;
@@ -529,8 +529,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.clone_sequence(dst, src, &elem)
             }
             Ty::Map(key, value) => {
-                let entry = Ty::Tuple(vec![(**key).clone(), (**value).clone()]);
-                self.clone_sequence(dst, src, &entry)
+                let (key, value) = ((**key).clone(), (**value).clone());
+                self.clone_map(dst, src, &key, &value)
             }
             Ty::Chars => self.copy_bits(dst, src, ty),
             Ty::Array(elem, n) => {

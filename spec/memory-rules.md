@@ -242,6 +242,8 @@ Tests: `m09_stdlib/for_borrows_list`, `for_borrow_forms`, `range_forms`; errors:
 ## 8. Second-class types (SC)
 
 **SC1** A second-class value may be a local, a parameter, a return value, or a temporary. It cannot be stored.
+`CPtr<T>` is not second-class: it is a plain `Copy` value that may be stored, with `unsafe` (US) making every
+use of it unsafe; `CStr` is an alias for `CPtr<CChar>` (`stdlib.md`, issue #83).
 
 **SC2 Forbidden positions (E0120).** A second-class type may not appear as: a struct field type, an enum payload type, a type argument
 of a stored-container type (`List`, `Map`, `Heap`, `Shared`, and the user generics that need a first-class parameter), a `const`
