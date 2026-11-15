@@ -47,11 +47,66 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.expr_mode(hi, Mode::Use)?;
             return Ok(());
         };
-        let signed = ity.signed();
         let lo_v = self.expr_mode(lo, Mode::Use)?;
         let lo_v = self.need_int(lo_v, &lo.ty);
         let hi_v = self.expr_mode(hi, Mode::Use)?;
         let hi_v = self.need_int(hi_v, &lo.ty);
+        // `for i in 0..xs.len()` gives `i` a range that proves `xs[i]` in bounds for the whole body (issue #428).
+        let fact = match (&lo.kind, &hi.kind, var, inclusive) {
+            (tir::ExprKind::Int(0), tir::ExprKind::Method(tir::Method::Len, args), Some(var), false) => {
+                match args.as_slice() {
+                    [base] => match &base.kind {
+                        tir::ExprKind::Local(collection) => Some((var, *collection)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        self.range_loop(var, ity, inclusive, lo_v, hi_v, fact, body)
+    }
+
+    /// `for i in range`: evaluates the range value once and iterates its endpoints.
+    pub(super) fn for_range_value(
+        &mut self,
+        var: Option<tir::LocalId>,
+        range: &'a tir::Expr,
+        body: &'a tir::Block,
+    ) -> GenResult<()> {
+        let (elem, inclusive) = match &range.ty {
+            Ty::Range(inner, inclusive) => ((**inner).clone(), *inclusive),
+            // The range already failed to type-check; evaluate it for its side effects and stop.
+            _ => {
+                self.expr_mode(range, Mode::Use)?;
+                return Ok(());
+            }
+        };
+        let Ty::Int(ity) = elem else {
+            self.expr_mode(range, Mode::Use)?;
+            return Ok(());
+        };
+        let value = self.expr_mode(range, Mode::Use)?;
+        let value = self.need(value, &range.ty);
+        let value = value.into_struct_value();
+        let lo_v = self.builder.build_extract_value(value, 0, "range.lo").map_err(llvm_err)?.into_int_value();
+        let hi_v = self.builder.build_extract_value(value, 1, "range.hi").map_err(llvm_err)?.into_int_value();
+        self.range_loop(var, ity, inclusive, lo_v, hi_v, None, body)
+    }
+
+    /// The shared loop for both range forms. `fact` is a bounds-check fact the body may use.
+    #[allow(clippy::too_many_arguments)]
+    fn range_loop(
+        &mut self,
+        var: Option<tir::LocalId>,
+        ity: burdin_tir::IntTy,
+        inclusive: bool,
+        lo_v: inkwell::values::IntValue<'ctx>,
+        hi_v: inkwell::values::IntValue<'ctx>,
+        fact: Option<(tir::LocalId, tir::LocalId)>,
+        body: &'a tir::Block,
+    ) -> GenResult<()> {
+        let signed = ity.signed();
         let counter = self.alloca(self.int_ty(ity).into(), "for.counter")?;
         self.builder.build_store(counter, lo_v).map_err(llvm_err)?;
         let header = self.new_block("for.cond");
@@ -77,19 +132,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         {
             self.builder.build_store(slot, cur).map_err(llvm_err)?;
         }
-        // `for i in 0..xs.len()` gives `i` a range that proves `xs[i]` in bounds for the whole body (issue #428).
-        let fact = match (&lo.kind, &hi.kind, var, inclusive) {
-            (tir::ExprKind::Int(0), tir::ExprKind::Method(tir::Method::Len, args), Some(var), false) => {
-                match args.as_slice() {
-                    [base] => match &base.kind {
-                        tir::ExprKind::Local(collection) => Some((var, *collection)),
-                        _ => None,
-                    },
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
         if let Some(fact) = fact {
             self.bounds_facts.push(fact);
         }

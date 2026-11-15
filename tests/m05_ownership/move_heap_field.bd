@@ -1,0 +1,37 @@
+//@ run
+//> 1
+//> 2
+//> end of main
+//> drop 1
+//> drop 2
+
+// A field of a Heap pointee can move out; the rest of the pointee drops when the Heap does.
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let h = Heap.new(Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } })
+    let a = (*h).a
+    println(a.id.to_string())
+    println((*h).b.id.to_string())
+    println("end of main")
+}

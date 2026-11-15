@@ -1,0 +1,33 @@
+//@ run
+//> 2
+//> end of main
+//> drop 1
+//> drop 2
+
+// Moving an element out of a List leaves the other elements owned by the list, which drops them.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let empty = List<Noisy>.new()
+    let mut xs = empty
+    xs.push(Noisy { id: 1 })
+    xs.push(Noisy { id: 2 })
+    let first = xs[0]
+    println(xs[1].id.to_string())
+    println("end of main")
+}

@@ -1,0 +1,66 @@
+//@ run
+//> 0
+//> 1
+//> 2
+//> 3
+//> 3
+//> 4
+//> 5
+//> 10
+//> 0
+//> 1
+//> 2
+//> true
+//> true
+//> 6
+// A range is an ordinary value: storable, passable, returnable, comparable, hashable, and iterable.
+
+struct Bounds {
+    span: Range<i32>
+    count: i32
+}
+
+fn sum(r: Range<i32>): i32 {
+    let mut total = 0
+    for i in r {
+        total = total + i
+    }
+    total
+}
+
+fn make(n: i32): Range<i32> {
+    let r: Range<i32> = 0..n
+    r
+}
+
+fn main() {
+    let r = 0..4
+    for i in r {
+        println(i.to_string())
+    }
+    for i in 3..=5 {
+        println(i.to_string())
+    }
+    println(sum(1..5).to_string())
+
+    let b = Bounds { span: 0..3, count: 2 }
+    for i in b.span {
+        println(i.to_string())
+    }
+
+    let inclusive: RangeInclusive<i32> = 4..=6
+    println((inclusive == (4..=6)).to_string())
+    println((inclusive.hash() == (4..=6).hash()).to_string())
+
+    let empty = List<Range<i32>>.new()
+    let mut list = empty
+    list.push(make(2))
+    list.push(2..4)
+    let mut total = 0
+    for span in list {
+        for i in span {
+            total = total + i
+        }
+    }
+    println(total.to_string())
+}

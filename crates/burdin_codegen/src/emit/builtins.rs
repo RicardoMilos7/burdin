@@ -323,6 +323,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.builder.build_call(glue, &[dst.into(), src.into()], "").map_err(llvm_err)?;
             return Ok(Some(self.builder.build_load(t, dst, "").map_err(llvm_err)?));
         }
+        if m == Method::IsNull {
+            let v = self.expr_mode(&args[0], Mode::Use)?;
+            let p = self.need(v, &args[0].ty).into_pointer_value();
+            let is = self.builder.build_is_null(p, "").map_err(llvm_err)?;
+            return Ok(Some(is.into()));
+        }
         if m == Method::Hash {
             let recv_ty = args[0].ty.clone();
             let v = self.expr_mode(&args[0], Mode::Use)?;

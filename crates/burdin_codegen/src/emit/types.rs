@@ -39,6 +39,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
             Ty::Option(inner) => self.option_ty(inner).into(),
             Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
+            // A range is two copied endpoints.
+            Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
             Ty::Enum(a) => self.enum_ty(a.id).into(),
         })
     }
@@ -110,6 +112,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     fn defs(&self) -> TypeDefs<'a> {
         TypeDefs { structs: &self.program.structs, enums: &self.program.enums }
+    }
+
+    /// The C layout size or alignment of `ty` in bytes, for `Type.size()` and `Type.align()`.
+    pub(super) fn layout_size(&self, ty: &Ty, alignment: bool) -> u64 {
+        match self.llvm_ty(ty) {
+            Some(t) if alignment => u64::from(self.target_data.get_abi_alignment(&t)),
+            Some(t) => self.target_data.get_abi_size(&t),
+            None => u64::from(alignment),
+        }
     }
 
     /// Whether values of `ty` are copied instead of moved.

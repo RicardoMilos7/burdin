@@ -175,14 +175,32 @@ impl<'a> Checker<'a> {
             tir::ExprKind::Local(id) => Some((*id, Vec::new())),
             tir::ExprKind::Field(base, i) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_direct_place(base) {
+                if is_tracked_place(base) {
                     path.push(*i);
                 }
                 Some((root, path))
             }
-            tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) | tir::ExprKind::DerefRef(base) => {
-                self.place_of(base)
+            tir::ExprKind::Index(base, index) => {
+                let (root, mut path) = self.place_of(base)?;
+                if is_tracked_place(base)
+                    && matches!(base.ty, Ty::Array(..) | Ty::List(_))
+                    && let Some(index) = constant_index(index)
+                {
+                    path.push(index);
+                }
+                Some((root, path))
             }
+            tir::ExprKind::Deref(base) => {
+                let (root, mut path) = self.place_of(base)?;
+                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)) {
+                    path.push(tir::MOVED_DEREF);
+                }
+                Some((root, path))
+            }
+            tir::ExprKind::DerefRef(base) => self.place_of(base),
+            // A raw pointer's pointee belongs to C memory, not to the local's value, so `*p` is a view of the
+            // pointer itself and adds no path step.
+            tir::ExprKind::PtrDeref(base) => self.place_of(base),
             _ => None,
         }
     }
@@ -272,6 +290,17 @@ impl<'a> Checker<'a> {
                 if let Some(t) = ts.get(*first) {
                     let t = t.clone();
                     self.check_partial_move(&t, rest, span);
+                }
+            }
+            // A constant array or `List` index selects one element.
+            Ty::Array(elem, _) | Ty::List(elem) => {
+                let elem = (**elem).clone();
+                self.check_partial_move(&elem, rest, span);
+            }
+            Ty::Heap(inner) => {
+                if *first == tir::MOVED_DEREF {
+                    let inner = (**inner).clone();
+                    self.check_partial_move(&inner, rest, span);
                 }
             }
             // `[0]` is the payload of an `Option`; `[variant, field]` selects an enum field. The variant selector
@@ -403,8 +432,9 @@ impl<'a> Checker<'a> {
         use tir::ExprKind as K;
         match &e.kind {
             K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::None | K::Const(_) => {}
+            K::LayoutOf { .. } => {}
             K::Local(id) => self.use_local(*id, &[], e.span, mode),
-            K::Field(..) | K::Index(..) | K::Deref(_) | K::DerefRef(_) => self.place_expr(e, mode),
+            K::Field(..) | K::Index(..) | K::Deref(_) | K::PtrDeref(_) | K::DerefRef(_) => self.place_expr(e, mode),
             K::Ref { place, .. } => self.expr(place, Mode::Use),
             K::Slice { base, lo, hi } => {
                 self.expr(base, Mode::Use);
@@ -462,6 +492,19 @@ impl<'a> Checker<'a> {
                 let outer = self.outer_locals();
                 self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
                 let body_falls = self.block(body, Mode::Use);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForRangeValue { var, range, body } => {
+                self.expr(range, Mode::Use);
+                let entry = self.states.clone();
+                let outer = self.outer_locals();
+                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
+                self.scopes.push(Vec::new());
+                if let Some(var) = var {
+                    self.scopes.last_mut().expect("a scope is open").push(*var);
+                }
+                let body_falls = self.block(body, Mode::Use);
+                self.scopes.pop();
                 self.finish_loop(entry, body_falls);
             }
             K::ForRange { var, lo, hi, body, .. } => {
@@ -563,36 +606,24 @@ impl<'a> Checker<'a> {
                 self.expr(scrutinee, Mode::Use);
                 let entry = self.states.clone();
                 let root = self.place_of(scrutinee);
-                // Indexing and `Heap` dereferences are not places, so matching through them cannot track the
-                // parts an arm moves. Matching on the whole of `*h` would also have to free the allocation.
-                let crossing = root.is_some() && !is_direct_place(scrutinee) && !is_whole_deref(scrutinee);
-                let whole_deref = root.is_some() && is_whole_deref(scrutinee);
+                // A pattern can move parts of a tracked place: fields, constant array or `List` indices, and the
+                // fields of a `Heap` pointee. A runtime index or a slice element is not tracked.
+                let crossing = root.is_some() && !is_tracked_place(scrutinee);
                 let mut reported = false;
                 let mut result: Option<Vec<LocalState>> = None;
                 for arm in arms {
                     let moves = pattern_moves(&arm.pat);
-                    if moves && (crossing || whole_deref) && !reported {
-                        let what = if crossing {
-                            "matching through indexing or a `Heap` dereference"
+                    if moves && crossing && !reported {
+                        let (code, what) = if is_view_place(scrutinee) {
+                            (Code::MOVE_FROM_BORROW, "cannot move out of a slice element")
                         } else {
-                            "moving the value behind a `Heap` out of a `match`"
+                            (
+                                Code::UNSUPPORTED,
+                                "matching through a runtime index is not implemented in this compiler yet",
+                            )
                         };
-                        self.error(
-                            Code::UNSUPPORTED,
-                            scrutinee.span,
-                            format!("{what} is not implemented in this compiler yet"),
-                        );
+                        self.error(code, scrutinee.span, what);
                         reported = true;
-                    }
-                    if moves
-                        && root.is_none()
-                        && let Some(guard) = &arm.guard
-                    {
-                        self.error(
-                            Code::UNSUPPORTED,
-                            guard.span,
-                            "a guard on an arm that moves out of a temporary is not implemented in this compiler yet",
-                        );
                     }
                     self.states.clone_from(&entry);
                     self.scopes.push(Vec::new());
@@ -648,13 +679,12 @@ impl<'a> Checker<'a> {
                 self.expr(value, Mode::Move);
                 if let Some((root, path)) = self.place_of(place) {
                     self.place_subexpr(place);
-                    if is_direct_place(place) {
+                    if is_tracked_place(place) {
                         // Assigning to a field uses the values above it, but not its sibling fields (MV5).
                         self.read_ancestors(root, &path, place.span);
                         self.init_place(root, &path);
                     } else {
-                        // Assigning through an index or a `Heap` dereference uses the base place (MV2); the
-                        // element or pointee itself is not a tracked place.
+                        // Assigning through a runtime index is not tracked; using the place only reads the base.
                         self.read_place(root, &path, place.span);
                     }
                 } else {
@@ -664,6 +694,10 @@ impl<'a> Checker<'a> {
             K::Binary(_, l, r) => {
                 self.expr(l, Mode::Use);
                 self.expr(r, Mode::Use);
+            }
+            K::Range { lo, hi, .. } => {
+                self.expr(lo, Mode::Move);
+                self.expr(hi, Mode::Move);
             }
             K::Unary(_, operand) | K::Cast(operand) => self.expr(operand, Mode::Use),
             K::Array(elems) => {
@@ -693,16 +727,15 @@ impl<'a> Checker<'a> {
         // The expression's own type is the place's type: an indexed element, a dereferenced pointee, or a field.
         let ty = e.ty.clone();
         if mode == Mode::Move && !self.is_copy(&ty) {
-            // Only a local/field place or a whole `*h` can be moved: indexing and `Heap` dereferences are not
-            // places, so a field behind them has no drop flag.
-            if !is_direct_place(e) && !is_whole_deref(e) {
+            // A move is tracked through fields, constant array and `List` indices, and `Heap` pointee fields.
+            if !is_tracked_place(e) {
                 if is_view_place(e) {
                     self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content");
                 } else {
                     self.error(
                         Code::UNSUPPORTED,
                         e.span,
-                        "moving a non-Copy value through indexing or a `Heap` dereference is not implemented in this compiler yet",
+                        "moving a non-Copy value through a runtime index is not implemented in this compiler yet",
                     );
                 }
                 return;
@@ -717,7 +750,9 @@ impl<'a> Checker<'a> {
     fn place_subexpr(&mut self, e: &tir::Expr) {
         use tir::ExprKind as K;
         match &e.kind {
-            K::Field(base, _) | K::Deref(base) | K::DerefRef(base) => self.place_subexpr(base),
+            K::Field(base, _) | K::Deref(base) | K::PtrDeref(base) | K::DerefRef(base) => {
+                self.place_subexpr(base);
+            }
             K::Index(base, index) => {
                 self.place_subexpr(base);
                 self.expr(index, Mode::Use);
@@ -956,25 +991,32 @@ impl<'a> Checker<'a> {
     }
 }
 
-/// A place made only of a local and field selections: the analysis can track it as a path in the local's type.
-/// Indexing and `Heap` dereferences are not places, so a field selection beyond one does not extend the path.
-fn is_direct_place(e: &tir::Expr) -> bool {
+/// A place the analysis can follow as a path in the local's type: a local, its fields, constant array and
+/// `List` indices, and the fields of a `Heap` pointee.
+fn is_tracked_place(e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _) => is_direct_place(base),
+        tir::ExprKind::Field(base, _) => is_tracked_place(base),
+        tir::ExprKind::Index(base, index) => {
+            is_tracked_place(base) && matches!(base.ty, Ty::Array(..) | Ty::List(_)) && constant_index(index).is_some()
+        }
+        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)),
         _ => false,
     }
 }
 
-/// Whether `e` is the whole-pointee move of MV6: `*h` on a direct place.
-fn is_whole_deref(e: &tir::Expr) -> bool {
-    matches!(&e.kind, tir::ExprKind::Deref(base) if is_direct_place(base))
+/// An index written as a non-negative integer literal.
+fn constant_index(e: &tir::Expr) -> Option<usize> {
+    match e.kind {
+        tir::ExprKind::Int(v) if v >= 0 => usize::try_from(v).ok(),
+        _ => None,
+    }
 }
 
 /// Whether a place expression goes through a reference or a slice, so its storage belongs to someone else.
 fn is_view_place(e: &tir::Expr) -> bool {
     match &e.kind {
-        tir::ExprKind::DerefRef(_) => true,
+        tir::ExprKind::DerefRef(_) | tir::ExprKind::PtrDeref(_) => true,
         tir::ExprKind::Index(base, _) => is_view_place(base) || matches!(base.ty, Ty::Slice(_)),
         tir::ExprKind::Field(base, _) => is_view_place(base),
         _ => false,

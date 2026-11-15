@@ -301,6 +301,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.debug_product(&name, &members)
             }
             Ty::Enum(adt) => self.debug_unspecified(&adt.name),
+            Ty::Range(inner, _) => {
+                let members = vec![("lo".to_string(), (**inner).clone()), ("hi".to_string(), (**inner).clone())];
+                let name = Self::debug_name(ty);
+                self.debug_product(&name, &members)
+            }
             Ty::Option(inner) => {
                 let members = vec![("is_some".to_string(), Ty::Bool), ("value".to_string(), (**inner).clone())];
                 let name = Self::debug_name(ty);
@@ -463,6 +468,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Map(k, v) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
             Ty::Heap(inner) => format!("Heap<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
+            Ty::Range(inner, false) => format!("Range<{}>", Self::debug_name(inner)),
+            Ty::Range(inner, true) => format!("RangeInclusive<{}>", Self::debug_name(inner)),
             Ty::Tuple(fields) => {
                 format!("({})", fields.iter().map(Self::debug_name).collect::<Vec<_>>().join(", "))
             }

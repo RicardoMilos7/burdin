@@ -505,10 +505,12 @@ impl<'t> Sema<'t> {
             symbolic: scope.symbolic,
             check_body: scope.check_body,
             is_unsafe: decl.is_unsafe,
+            is_exported: false,
         };
         let id = self.push_fn(item);
         self.globals.methods.insert(method_key.clone(), id);
         self.globals.method_priv.insert(method_key.clone(), decl.is_priv);
+        self.globals.method_spans.insert(method_key.clone(), decl.name.span);
         self.globals.method_pkg.insert(method_key, self.globals.package_of(module));
     }
 }

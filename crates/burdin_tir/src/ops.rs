@@ -125,6 +125,8 @@ pub enum Method {
     Find,
     /// `CString.as_ptr(): CPtr<CChar>`: the address of the NUL-terminated bytes.
     AsPtr,
+    /// `CPtr<T>.is_null(): bool`: whether the raw pointer is null.
+    IsNull,
     /// `x.clone()`: a deep copy derived by the compiler.
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.

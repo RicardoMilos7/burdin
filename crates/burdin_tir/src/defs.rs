@@ -30,6 +30,9 @@ pub struct FieldDef {
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
+    /// `repr(C)`: the fields keep declaration order and the C ABI's natural padding and alignment, and the struct
+    /// may cross an `extern "C"` boundary by value (issues #73 and #490).
+    pub repr_c: bool,
     pub derives: Derives,
     /// The `Drop::drop` method of `Type: Drop { ... }`, called by the drop glue.
     pub drop_method: Option<FuncId>,

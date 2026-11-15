@@ -1,11 +1,20 @@
 //@ compile-fail
 
 // Only integers, floats, and `CPtr` may cross the C ABI, and an extern declaration
-// takes no `mut`, `own`, or `self`.
+// takes no `mut`, `own`, or `self`. A `repr(C)` struct goes through `CPtr<T>`, and C `_Bool`
+// is a one-byte integer, declared `u8` (issues #73 and #490).
+
+struct Point repr(C) {
+    x: i32
+    y: i32
+}
 
 extern "C" {
     fn takes_string(s: String): usize //~ E0162
     fn returns_string(): String //~ E0162
+    fn takes_point(p: Point): i32 //~ E0162
+    fn returns_point(): Point //~ E0162
+    fn takes_bool(b: bool): bool //~ E0162
     fn mut_param(mut x: i32) //~ E0162
     fn has_self(self) //~ E0162
 }

@@ -1,0 +1,12 @@
+//@ compile-fail
+// Reading an array element again after it was moved out is E0100.
+
+struct Thing {
+    s: String
+}
+
+fn main() {
+    let xs = [Thing { s: String.from("x") }]
+    let a = xs[0]
+    let b = xs[0] //~ E0100
+}

@@ -123,6 +123,7 @@ impl Code {
     pub const SECOND_CLASS_POSITION: Code = Code("E0120");
     pub const RETURN_MULTIPLE_ORIGINS: Code = Code("E0121");
     pub const RETURN_LOCAL_ORIGIN: Code = Code("E0122");
+    pub const VIEW_OUTLIVES_SOURCE: Code = Code("E0123");
     pub const DERIVE_REQUIREMENT: Code = Code("E0130");
     pub const MISSING_INTERFACE_METHOD: Code = Code("E0140");
     pub const BOUND_NOT_SATISFIED: Code = Code("E0141");

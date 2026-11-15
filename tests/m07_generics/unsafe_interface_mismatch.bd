@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// The implementation of an interface method must repeat its `unsafe` marker (issue #86).
+
+interface Reader {
+    unsafe fn read_raw(self): i32
+}
+
+struct Buffer {
+    n: i32
+}
+
+Buffer: Reader {
+    fn read_raw(self): i32 { //~ E0003
+        self.n
+    }
+}
+
+fn main() {}

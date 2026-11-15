@@ -1,0 +1,19 @@
+//@ run
+//> 123
+//> abc
+
+// An out-parameter through `CPtr<CPtr<CChar>>`: `strtoll` writes the end of the parsed number (issue #76).
+
+extern "C" {
+    fn strtoll(s: CPtr<CChar>, end: CPtr<CPtr<CChar>>, base: i32): i64
+}
+
+fn main() {
+    let text = CString.from("123abc")
+    unsafe {
+        let mut end: CPtr<CChar> = CPtr.null()
+        let n = strtoll(text.as_ptr(), &mut end as CPtr<CPtr<CChar>>, 10)
+        println(n.to_string())
+        println(CStr.to_string(end))
+    }
+}

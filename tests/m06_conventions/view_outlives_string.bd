@@ -1,0 +1,7 @@
+//@ compile-fail
+// `as_str` on a temporary `String` produces a view of storage that dies at the end of the statement.
+
+fn main() {
+    let t = "x".to_string().as_str() //~ E0123
+    println(t)
+}

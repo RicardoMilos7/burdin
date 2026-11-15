@@ -1,0 +1,11 @@
+fn answer(): i32 {
+    42
+}
+
+fn helper(): i32 {
+    7
+}
+
+fn extra(): i32 {
+    5
+}

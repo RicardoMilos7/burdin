@@ -54,6 +54,8 @@ pub(crate) struct GenericAdt {
     pub name: String,
     /// The module that declares the type.
     pub module: usize,
+    /// Package-private: other packages cannot name it.
+    pub is_priv: bool,
     pub is_enum: bool,
     pub params: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
@@ -101,6 +103,30 @@ pub(crate) enum Request {
 pub(crate) const SYMBOLIC_CALL: FuncId = FuncId(usize::MAX);
 
 impl Globals {
+    /// E0141: the arguments of a generic type instantiation must meet the bounds on its parameters. An argument
+    /// that still mentions a type parameter is left to the symbolic check of the enclosing body.
+    pub(crate) fn check_adt_bounds(&self, template: usize, args: &[Ty], span: Span, diags: &mut Diagnostics) {
+        let info = &self.generic_adts[template];
+        for ((pname, bounds), arg) in info.params.iter().zip(&info.bounds).zip(args) {
+            if self.ty_has_param(arg) {
+                continue;
+            }
+            for bound in bounds {
+                if !self.satisfies(arg, *bound, &[]) {
+                    diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!(
+                            "`{arg}` does not implement `{}`, which `{pname}` of `{}` requires",
+                            self.bound_name(*bound),
+                            info.name
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     /// The instance of a generic type for these arguments. If there is none yet, asks for it and gives `Error`
     /// for now.
     pub(crate) fn adt_instance_ty(&self, template: usize, args: Vec<Ty>) -> Ty {
@@ -137,6 +163,7 @@ impl Globals {
             | Ty::Option(inner)
             | Ty::Heap(inner)
             | Ty::CPtr(inner)
+            | Ty::Range(inner, _)
             | Ty::List(inner) => self.ty_has_param(inner),
             Ty::Result(ok, err) => self.ty_has_param(ok) || self.ty_has_param(err),
             Ty::Map(k, v) => self.ty_has_param(k) || self.ty_has_param(v),
@@ -165,6 +192,7 @@ impl Globals {
             | (Ty::Option(p), Ty::Option(a))
             | (Ty::Heap(p), Ty::Heap(a))
             | (Ty::CPtr(p), Ty::CPtr(a))
+            | (Ty::Range(p, _), Ty::Range(a, _))
             | (Ty::List(p), Ty::List(a)) => self.unify(p, a, bindings),
             (Ty::Result(po, pe), Ty::Result(ao, ae)) => {
                 self.unify(po, ao, bindings);
@@ -206,6 +234,7 @@ impl Globals {
             Ty::Map(k, v) => Ty::Map(go(k), go(v)),
             Ty::Heap(t) => Ty::Heap(go(t)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),
+            Ty::Range(t, inclusive) => Ty::Range(go(t), *inclusive),
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((template, args)) => {
@@ -333,9 +362,9 @@ impl Globals {
             _ => match bound {
                 Bound::Copy => self.is_copy(ty),
                 Bound::Clone => self.is_clone(ty),
-                Bound::Eq => self.has_eq(ty),
-                Bound::Ord => self.has_ord(ty),
-                Bound::Hash => self.has_hash(ty),
+                Bound::Eq => self.has_eq_in(ty, env),
+                Bound::Ord => self.has_ord_in(ty, env),
+                Bound::Hash => self.has_hash_in(ty, env),
                 Bound::Default => self.has_default(ty),
                 Bound::User(i) => self.implements(ty, i, env),
             },
@@ -367,17 +396,24 @@ impl Globals {
 
     /// Whether `<`, `>`, `<=`, and `>=` apply to values of `ty` through `Ord`.
     pub(crate) fn has_ord(&self, ty: &Ty) -> bool {
+        self.has_ord_in(ty, &[])
+    }
+
+    /// `has_ord` with the bounds of the type parameters in scope (issue #69).
+    pub(crate) fn has_ord_in(&self, ty: &Ty, env: &Env) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Str | Ty::String => true,
-            Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord(t)),
+            Ty::Param(name) => self.bound_in_env(name, Bound::Ord, env),
+            Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
+            Ty::Range(t, _) => self.has_ord_in(t, env),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
-                s.derives.ord && s.fields.iter().all(|f| self.has_ord(&f.ty))
+                s.derives.ord && s.fields.iter().all(|f| self.has_ord_in(&f.ty, env))
             }
             Ty::Enum(a) => {
                 let e = &self.enums[a.id];
-                e.derives.ord && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_ord(&f.ty)))
+                e.derives.ord && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_ord_in(&f.ty, env)))
             }
             _ => false,
         }
@@ -385,21 +421,33 @@ impl Globals {
 
     /// Whether `x.hash()` applies to values of `ty`.
     pub(crate) fn has_hash(&self, ty: &Ty) -> bool {
+        self.has_hash_in(ty, &[])
+    }
+
+    /// `has_hash` with the bounds of the type parameters in scope (issue #69).
+    pub(crate) fn has_hash_in(&self, ty: &Ty, env: &Env) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
-            Ty::Option(t) => self.has_hash(t),
-            Ty::Result(t, e) => self.has_hash(t) && self.has_hash(e),
-            Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash(t)),
+            Ty::Param(name) => self.bound_in_env(name, Bound::Hash, env),
+            Ty::Option(t) => self.has_hash_in(t, env),
+            Ty::Range(t, _) => self.has_hash_in(t, env),
+            Ty::Result(t, e) => self.has_hash_in(t, env) && self.has_hash_in(e, env),
+            Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
-                s.derives.hash && s.fields.iter().all(|f| self.has_hash(&f.ty))
+                s.derives.hash && s.fields.iter().all(|f| self.has_hash_in(&f.ty, env))
             }
             Ty::Enum(a) => {
                 let e = &self.enums[a.id];
-                e.derives.hash && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_hash(&f.ty)))
+                e.derives.hash && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_hash_in(&f.ty, env)))
             }
             _ => false,
         }
+    }
+
+    /// Whether a type parameter's bounds provide `bound`.
+    pub(crate) fn bound_in_env(&self, name: &str, bound: Bound, env: &Env) -> bool {
+        env.iter().any(|(n, bounds)| n == name && bounds.iter().any(|b| self.bound_closure(*b).contains(&bound)))
     }
 
     /// Whether `Type.default()` applies.
@@ -573,8 +621,8 @@ mod tests {
     #[test]
     fn struct_and_enum_instances_unify_through_their_template() {
         let mut g = Globals::default();
-        let pattern = Ty::Struct(AdtRef { id: 0, name: Rc::from("Pair<T>") });
-        let actual = Ty::Struct(AdtRef { id: 1, name: Rc::from("Pair<i32>") });
+        let pattern = Ty::Struct(AdtRef { id: 0, name: Rc::from("Pair<T>"), second_class: false });
+        let actual = Ty::Struct(AdtRef { id: 1, name: Rc::from("Pair<i32>"), second_class: false });
         g.adt_origin.insert((false, 0), (7, vec![param("T")]));
         g.adt_origin.insert((false, 1), (7, vec![i32_()]));
         let mut out = Vec::new();
@@ -582,14 +630,14 @@ mod tests {
         assert_eq!(out, vec![("T".to_string(), i32_())]);
 
         // A different template never unifies, even when both sides are structs.
-        let other = Ty::Struct(AdtRef { id: 2, name: Rc::from("Other<i32>") });
+        let other = Ty::Struct(AdtRef { id: 2, name: Rc::from("Other<i32>"), second_class: false });
         g.adt_origin.insert((false, 2), (8, vec![i32_()]));
         let mut out = Vec::new();
         g.unify(&pattern, &other, &mut out);
         assert!(out.is_empty());
 
-        let enum_pattern = Ty::Enum(AdtRef { id: 0, name: Rc::from("Opt<T>") });
-        let enum_actual = Ty::Enum(AdtRef { id: 1, name: Rc::from("Opt<bool>") });
+        let enum_pattern = Ty::Enum(AdtRef { id: 0, name: Rc::from("Opt<T>"), second_class: false });
+        let enum_actual = Ty::Enum(AdtRef { id: 1, name: Rc::from("Opt<bool>"), second_class: false });
         g.adt_origin.insert((true, 0), (9, vec![param("T")]));
         g.adt_origin.insert((true, 1), (9, vec![bool_()]));
         let mut out = Vec::new();
@@ -628,7 +676,7 @@ mod tests {
         assert!(!g.ty_has_param(&opt(i32_())));
         assert!(!g.ty_has_param(&Ty::Str));
 
-        let instance = Ty::Struct(AdtRef { id: 0, name: Rc::from("Box<T>") });
+        let instance = Ty::Struct(AdtRef { id: 0, name: Rc::from("Box<T>"), second_class: false });
         g.adt_origin.insert((false, 0), (7, vec![param("T")]));
         assert!(g.ty_has_param(&instance));
         g.adt_origin.insert((false, 0), (7, vec![i32_()]));

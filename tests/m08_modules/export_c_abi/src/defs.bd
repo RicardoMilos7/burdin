@@ -1,0 +1,5 @@
+// A Burdin function exported with the C ABI under its plain symbol (issue #489).
+
+extern "C" fn add_one(own x: i32): i32 {
+    x + 1
+}

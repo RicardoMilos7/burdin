@@ -1,0 +1,46 @@
+//@ run
+//> 10
+//> 3
+//> 8
+//> 4
+//> 6
+//> 42-abc
+//> 5
+
+// A `repr(C)` struct has the C field order, size, and alignment, and crosses the C ABI through `CPtr<T>`; a
+// variadic C function takes its extra arguments (issues #73 and #490).
+
+struct DivResult repr(C) {
+    quot: i32
+    rem: i32
+}
+
+extern "C" {
+    fn snprintf(buf: CPtr<CChar>, size: CSize, fmt: CPtr<CChar>, ...): i32
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn main() {
+    let format = CString.from("%d-%s")
+    let name = CString.from("abc")
+    let r = DivResult { quot: 10, rem: 3 }
+    println(r.quot.to_string())
+    println(r.rem.to_string())
+    println(DivResult.size().to_string())
+    println(DivResult.align().to_string())
+    unsafe {
+        let buf = malloc(64) as CPtr<CChar>
+        let n = snprintf(buf, 64, format.as_ptr(), 42, name.as_ptr())
+        println(n.to_string())
+        println(CStr.to_string(buf))
+
+        // A struct in C memory, written and read through `CPtr<DivResult>`.
+        let out = malloc(DivResult.size()) as CPtr<DivResult>
+        (*out).quot = 7
+        (*out).rem = 2
+        println(((*out).quot - (*out).rem).to_string())
+        free(out as CPtr<CVoid>)
+        free(buf as CPtr<CVoid>)
+    }
+}

@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// An exported function uses the C ABI: the "C" ABI only, no generics or variadic arguments, `own` parameters,
+// and only integers, floats, and `CPtr`; a `repr(C)` struct goes through `CPtr<T>` (issues #489 and #490).
+
+struct Point repr(C) {
+    x: i32
+    y: i32
+}
+
+extern "C" fn generic<T>(x: i32) {} //~ E0162
+extern "C" fn variadic(x: i32, ...) {} //~ E0162
+extern "C" fn takes_ref(r: &i32) {} //~ E0162
+extern "C" fn takes_point(own p: Point) {} //~ E0162
+extern "C" fn returns_point(): Point { Point { x: 1, y: 2 } } //~ E0162
+extern "Rust" fn wrong_abi() {} //~ E0162
+
+fn main() {
+}

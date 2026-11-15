@@ -21,10 +21,10 @@ the whole expression's base (`xs`, `h`, `r`).
 **Initialization state.** At each program point a place is *initialized*, *moved*, *partially moved* (some field moved
 out), or *uninitialized*. Joining paths gives *maybe moved* when the states differ.
 
-**Copy types.** Integers, floats, `bool`, `char`, `&T`, `str`, `[T]`, `CPtr<T>`, `()`, and tuples, arrays, structs and
-enums that are all-Copy and derive `Copy`. `&T`, `str`, `[T]`, and `CPtr<T>` are Copy without a derive (RF4).
-Everything else (`String`, `List`, `Map`, `Heap`, any type with `Drop`, `&mut T`) is non-Copy. A type that implements
-`Drop` can never be Copy.
+**Copy types.** Integers, floats, `bool`, `char`, `&T`, `str`, `[T]`, `CPtr<T>`, `Range<T>`/`RangeInclusive<T>`, `()`,
+and tuples, arrays, structs and enums that are all-Copy and derive `Copy`. `&T`, `str`, `[T]`, and `CPtr<T>` are Copy
+without a derive (RF4). Everything else (`String`, `List`, `Map`, `Heap`, any type with `Drop`, `&mut T`) is
+non-Copy. A type that implements `Drop` can never be Copy.
 
 **Second-class types.** `&T`, `&mut T`, `str`, `[T]`, and any type that contains one (`Option<&i32>`, `(str, i32)`, a
 generic instantiated with one). They may live in locals, parameters, return values, and temporaries only (SC rules).
@@ -54,11 +54,14 @@ usable, and the parent as a whole can no longer be used (E0100). If the parent's
 is E0103.
 Tests: `m05_ownership/partial_move_ok`, `m05_ownership/partial_move_from_drop`.
 
-**MV6 Heap.** `Heap.new(v)` moves `v`. `*h` on an owned `Heap<T>` binding moves the pointee out, frees the allocation, and
-leaves `h` moved. Reading or assigning through `*h` does not move. Only the whole pointee can move: moving a field of
-the pointee through `*h` (or a field of an array element through indexing) is not supported in stage 0 and is reported
-as E9000; move the whole pointee into a local first (stage 1 extends the checker, `stage1-subset.md`).
-Tests: `m05_ownership/heap_tree_eval`, `heap_move_whole_then_field`, `m07_generics/generic_stack`, `m05_ownership/copy_and_clone`.
+**MV6 Heap.** `Heap.new(v)` moves `v`. `*h` on an owned `Heap<T>` binding moves the pointee out; the allocation is
+freed when the `Heap` is dropped (its flag records that the pointee is gone). Reading or assigning through `*h` does not
+move. A field of the pointee moves like any field: `(*h).a` leaves the other fields initialized, and the `Heap`'s drop
+drops them and frees the allocation. A constant array or `List` index is tracked the same way, as a partial move of the
+collection; moving through a runtime index is still E9000 (the checker cannot tell which element it is).
+Tests: `m05_ownership/heap_tree_eval`, `heap_move_whole_then_field`, `move_heap_field`, `move_heap_field_after_move`
+(E0100), `match_heap_pointee`, `move_index_array`, `move_index_list`, `move_index_after_move` (E0100),
+`m07_generics/generic_stack`, `m05_ownership/copy_and_clone`.
 
 **MV7 Move out of borrowed content.** Moving a non-Copy value out of a place that is only borrowed (a read-only or `mut`
 parameter, anything behind a reference, an element of a collection) is E0101.
@@ -71,8 +74,11 @@ parameter, a `mut` parameter, behind a reference), bindings are views of the par
 mutable for a `mut` place; nothing moves. A binding from a borrowed scrutinee is a read-only place used like a plain
 value, with no `&` written: reading it, passing it to a read-only parameter, and taking fields of it work; assigning
 to it is E0005 and moving out of it is E0101. A binding is dropped at the end of its arm.
-Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_then_use`, `m06_conventions/match_borrowed_binding`,
-`match_borrowed_binding_readonly`, `m07_generics/generic_stack`.
+A temporary scrutinee is moved into a compiler-made local of the same statement, so its untouched parts still drop
+once and a failed guard restores the parts an earlier arm bound.
+Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_then_use`, `match_temporary_fields_drop`,
+`match_guard_temporary`, `m06_conventions/match_borrowed_binding`, `match_borrowed_binding_readonly`,
+`m07_generics/generic_stack`.
 
 ## 2. Mutability (MU)
 
@@ -166,8 +172,11 @@ Tests: `m06_conventions/references_basic`, `views_are_copy`, `mut_ref_move_then_
 
 **RF5 Borrows through a call.** An argument is borrowed for the duration of the call (shared for a read-only parameter,
 mutable for a `mut` parameter). If the result type is second-class and the callee's signature derives it from that parameter (RT),
-the borrow lasts until the last use of the result.
-Tests: `m06_conventions/return_ref_single_source` (`*first_mut(mut p) = 9`), `derived_borrow_keeps_arg_borrowed`.
+the borrow lasts until the last use of the result. Converting a reference to a raw pointer (`&mut x as CPtr<T>`) ends
+the loan at the conversion: the pointer is only usable inside `unsafe`, where the programmer is responsible for its
+validity (US).
+Tests: `m06_conventions/return_ref_single_source` (`*first_mut(mut p) = 9`), `derived_borrow_keeps_arg_borrowed`,
+`m08_modules/c_out_parameter`.
 
 **RF6 Reference parameters.** A parameter of type `&T` or `&mut T` is allowed. The call site passes `&x` or `&mut x`, with no `mut` marker. Inside the
 callee it is a reference like any other.
@@ -198,6 +207,17 @@ Tests: `m06_conventions/return_literal_ok`, `static_literals`, `const_is_not_a_p
 errors: `return_ref_two_sources`, `return_str_two_sources` (E0121), `return_ref_to_local`, `return_view_of_local_string`,
 `return_ref_from_own_param` (E0122).
 
+**RT5 View lifetime in a local.** A value of a second-class type stored in a local (`let`, an assignment, or a
+pattern binding of a `let`) may derive only from static data (RT4), from a parameter, or from a local that is
+declared in the same block or in an enclosing block. It may not derive from a temporary, which is dropped at the
+end of the statement that created it, or from a local of an inner block, which is dropped before the binding
+escapes. Violation: E0123, reported at the stored value. Bindings of a `match`, `if let`, or `for` pattern are
+not subject to RT5: their scrutinee's temporaries live until the end of the same statement, and the binding lives
+no longer than the arm or loop body.
+Tests: `m06_conventions/view_lifetime_ok`, `view_of_earlier_local_ok`;
+errors: `view_outlives_temporary`, `view_outlives_inner_local`, `view_outlives_string` (all in `m06_conventions`,
+E0123).
+
 ## 7. Iteration (IT)
 
 **IT1 Borrow.** `for pattern in C { ... }` borrows `C` shared for the whole loop, from the start of the loop to the
@@ -211,7 +231,8 @@ is E0005; moving a non-Copy element out of it is E0101.
 
 **IT3 Forms.** `for x in xs` yields each element of an array, slice, or `List`. `for (k, v) in map` yields each entry
 of a `Map` (order unspecified). `for c in s.chars()` yields `char` scalar values, and `for i in a..b` / `a..=b`
-yields the integers of the range. Ranges are only iterable in stage 0; storing one is stage 1 (m13).
+yields the integers of the range. A range is an ordinary `Copy` value, so `for i in r` over a stored range
+evaluates `r` once and does not borrow it.
 Tests: `m09_stdlib/for_borrows_list`, `for_borrow_forms`, `range_forms`; errors: `for_mutate_array`, `for_mutate_map`
 (E0111), `for_binding_readonly` (E0005).
 
@@ -224,9 +245,11 @@ of a stored-container type (`List`, `Map`, `Heap`, `Shared`, and the user generi
 type. Tuples, arrays, `Option`, and `Result` inherit second-class-ness from their parts and may hold them as locals.
 
 **SC3 Propagation.** A generic type instantiated with a second-class type is second-class. The check is applied
-at the forbidden positions above, so `Option<&i32>` is accepted as a local and rejected as a field.
+at the forbidden positions above, so `Option<&i32>` is accepted as a local and rejected as a field. The same holds
+for a user generic (`Wrapper<&i32>`), and its own field may hold the view: the instance is what becomes second-class,
+so the field declaration is not itself E0120.
 Tests: `ref_in_struct_field`, `ref_in_enum_variant`, `ref_in_collection`, `str_in_struct_field`, `option_ref_in_struct_field`
-(E0120); `option_of_reference_ok`.
+(E0120); `option_of_reference_ok`, `m07_generics/view_instance_in_field` (E0120), `view_instance_local`.
 
 ## 9. Drop (DR)
 
@@ -255,7 +278,8 @@ Tests: `m05_ownership/drop_temporaries`, `drop_block_tail`, `drop_params_and_let
 order, before control transfers. A returned value is computed before the drops run.
 Tests: `m05_ownership/drop_early_return`, `m09_stdlib/question_and_from`.
 
-**DR7 Partial and conditional moves.** Remaining fields of a partially moved owner are dropped at its scope end (in field order).
+**DR7 Partial and conditional moves.** Remaining fields of a partially moved owner are dropped at its scope end (in field order;
+an array or `List` drops its remaining elements in index order, and a `Heap` drops the remaining pointee fields and frees).
 When a place is moved on only some paths, the compiler tracks it with a runtime drop flag and drops it only when the flag says it is
 initialized.
 Tests: `m05_ownership/partial_move_ok`, `m05_ownership/drop_conditional_move`.
@@ -292,11 +316,15 @@ Tests: `m05_ownership/copy_with_drop`, `m07_generics/derive_field_not_eq`, `m07_
 
 ## 11. Unsafe (US)
 
-Calling an `extern` function and any raw-pointer operation require an `unsafe` block or `unsafe fn` (E0161). Inside `unsafe` all
-the rules above still apply; `unsafe` only enables those operations.
-Test: `m08_modules/unsafe_required`.
+Calling an `extern` function, calling an `unsafe fn` or an `unsafe` interface method, and any raw-pointer operation
+(holding, passing, dereferencing, or casting a `CPtr`) require an `unsafe` block or an `unsafe fn` body (E0161). The
+body of an `unsafe fn` is an unsafe context; the caller still needs one. An implementation of an `unsafe` interface
+method must repeat the marker (E0003). Inside `unsafe` all the rules above still apply; `unsafe` only enables those
+operations.
+Tests: `m08_modules/unsafe_required`, `cptr_requires_unsafe`, `cptr_operations`, `unsafe_fn`,
+`unsafe_fn_call_requires_unsafe`, `m07_generics/unsafe_interface_method`, `m07_generics/unsafe_interface_mismatch`.
 
 ## Summary of error codes used here
 
 E0003 IC1, RT4 · E0005 MU1, MU2 · E0100 MV2, MV5, MV8 · E0101 MV7, CV1, CV2 · E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1 ·
-E0113 CV2, MU3 · E0114 CV2 · E0115 CV2 · E0120 SC2 · E0121 RT3 · E0122 RT2 · E0130 DR8, CP · E0161 US.
+E0113 CV2, MU3 · E0114 CV2 · E0115 CV2 · E0120 SC2 · E0121 RT3 · E0122 RT2 · E0123 RT5 · E0130 DR8, CP · E0161 US.

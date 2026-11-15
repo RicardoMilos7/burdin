@@ -1,0 +1,38 @@
+//@ run
+//> 7
+//> 8
+//> false
+//> false
+//> 1
+//> false
+//> 9
+
+// Raw pointer load/store, null test, equality, element offsets, difference, and casts (issue #72).
+
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn main() {
+    unsafe {
+        let raw = malloc(12)
+        let p = raw as CPtr<i32>
+        *p = 7
+        *(p + 1) = 8
+        println((*p).to_string())
+        println((*(p + 1)).to_string())
+
+        let q = p + 1
+        println((p == q).to_string())
+        println(p.is_null().to_string())
+        println((q - p).to_string())
+
+        let address = p as usize
+        println((address == 0).to_string())
+
+        *p = 9
+        println((*p).to_string())
+        free(raw)
+    }
+}

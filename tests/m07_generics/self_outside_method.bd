@@ -1,0 +1,10 @@
+//@ compile-fail
+// `Self` names the enclosing impl's type and is not available in a free function (issue #70).
+
+struct Counter {
+    n: i32
+}
+
+fn main() {
+    let c: Self = Self { n: 1 } //~ E0002
+}

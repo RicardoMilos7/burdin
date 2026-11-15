@@ -28,9 +28,16 @@ pub struct Function {
     /// A generic function or method checked against its bounds, with type parameters still in its types. It has
     /// no code: every use calls an instantiation, which is an ordinary function.
     pub symbolic: bool,
+    /// An `extern "C" fn`: the function is exported under its plain name with the C ABI (issue #489).
+    pub exported: bool,
 }
 
-/// A place that is moved somewhere in a function: `local` followed by struct or tuple field indices.
+/// A path step that walks through the allocation of a `Heap<T>`: `(*h).field` is `[MOVED_DEREF, field]`.
+/// Constant array and `List` indices are ordinary numeric steps.
+pub const MOVED_DEREF: usize = usize::MAX;
+
+/// A place that is moved somewhere in a function: `local` followed by struct or tuple field indices, constant
+/// array or `List` indices, and [`MOVED_DEREF`] steps for the fields of a `Heap` pointee.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MovedPlace {
     pub local: LocalId,
@@ -52,6 +59,10 @@ pub enum LocalKind {
     Owned,
     /// A pattern binding that is a view of a borrowed scrutinee: not dropped.
     View,
+    /// The compiler-made local a `match` scrutinee is moved into when an arm's pattern moves parts of it. It owns
+    /// its value and is dropped like an ordinary local, but a view it holds may borrow from a temporary, because
+    /// the local lives no longer than the `match` statement.
+    Scrutinee,
 }
 
 pub struct Local {
@@ -101,12 +112,20 @@ pub enum ExprKind {
     If(Box<Expr>, Block, Option<Box<Expr>>),
     While(Box<Expr>, Block),
     Loop(Block),
-    /// `for var in lo..hi` (or `lo..=hi`). `var` is `None` for the `_` pattern.
+    /// `for var in lo..hi` (or `lo..=hi`), with the endpoints written directly in the loop header. `var` is
+    /// `None` for the `_` pattern.
     ForRange {
         var: Option<LocalId>,
         lo: Box<Expr>,
         hi: Box<Expr>,
         inclusive: bool,
+        body: Block,
+    },
+    /// `for var in range`, where `range` is an ordinary `Range<T>` or `RangeInclusive<T>` value, evaluated once.
+    /// The inclusive flag comes from the range's type.
+    ForRangeValue {
+        var: Option<LocalId>,
+        range: Box<Expr>,
         body: Block,
     },
     /// `for pattern in array`: the array is evaluated once and its elements are bound in order.
@@ -149,8 +168,21 @@ pub enum ExprKind {
     Unary(UnOp, Box<Expr>),
     /// Converts the operand to this expression's type.
     Cast(Box<Expr>),
+    /// `Type.size()` or `Type.align()`: the C layout size or alignment of the type in bytes.
+    LayoutOf {
+        ty: Ty,
+        alignment: bool,
+    },
+    /// `lo..hi` or `lo..=hi`: a `Range<T>` or `RangeInclusive<T>` value.
+    Range {
+        lo: Box<Expr>,
+        hi: Box<Expr>,
+        inclusive: bool,
+    },
     /// `*h` on a `Heap<T>`: the pointee.
     Deref(Box<Expr>),
+    /// `*p` on a `CPtr<T>`: the value at the raw address. It is a place, so `*p = v` stores through it.
+    PtrDeref(Box<Expr>),
     /// `&place` or `&mut place`: the address of the place (a temporary gets a slot of its own).
     Ref {
         place: Box<Expr>,

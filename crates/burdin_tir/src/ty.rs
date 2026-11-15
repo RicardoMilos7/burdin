@@ -8,6 +8,9 @@ use std::rc::Rc;
 pub struct AdtRef {
     pub id: usize,
     pub name: Rc<str>,
+    /// An instance of a generic type with a second-class type argument (`Wrapper<&i32>`) is second-class itself
+    /// (SC3). A non-generic type is never second-class: a view cannot be stored in its fields.
+    pub second_class: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -105,6 +108,9 @@ pub enum Ty {
     CPtr(Box<Ty>),
     /// `CString`: an owned, NUL-terminated C string in the C heap.
     CString,
+    /// `Range<T>` (exclusive) or `RangeInclusive<T>` (inclusive): the two integer endpoints. The flag is true for
+    /// the inclusive form.
+    Range(Box<Ty>, bool),
     /// A tuple of two or more elements (or one, written with a trailing comma).
     Tuple(Vec<Ty>),
     Struct(AdtRef),
@@ -139,6 +145,7 @@ impl Ty {
             Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
             Ty::Map(k, v) => k.is_second_class() || v.is_second_class(),
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
+            Ty::Struct(a) | Ty::Enum(a) => a.second_class,
             _ => false,
         }
     }
@@ -167,6 +174,8 @@ impl fmt::Display for Ty {
             Ty::Heap(t) => write!(f, "Heap<{t}>"),
             Ty::CPtr(t) => write!(f, "CPtr<{t}>"),
             Ty::CString => f.write_str("CString"),
+            Ty::Range(t, false) => write!(f, "Range<{t}>"),
+            Ty::Range(t, true) => write!(f, "RangeInclusive<{t}>"),
             Ty::Tuple(elems) => {
                 f.write_str("(")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -254,10 +263,12 @@ mod tests {
             (Ty::Heap(Box::new(i32_.clone())), "Heap<i32>"),
             (Ty::CPtr(Box::new(i32_.clone())), "CPtr<i32>"),
             (Ty::CString, "CString"),
+            (Ty::Range(Box::new(i32_.clone()), false), "Range<i32>"),
+            (Ty::Range(Box::new(i32_.clone()), true), "RangeInclusive<i32>"),
             (Ty::Tuple(vec![i32_.clone()]), "(i32,)"),
             (Ty::Tuple(vec![i32_.clone(), Ty::Bool]), "(i32, bool)"),
-            (Ty::Struct(AdtRef { id: 0, name: "P".into() }), "P"),
-            (Ty::Enum(AdtRef { id: 0, name: "E".into() }), "E"),
+            (Ty::Struct(AdtRef { id: 0, name: "P".into(), second_class: false }), "P"),
+            (Ty::Enum(AdtRef { id: 0, name: "E".into(), second_class: false }), "E"),
             (Ty::Never, "!"),
             (Ty::Param("T".into()), "T"),
             (Ty::Error, "{error}"),

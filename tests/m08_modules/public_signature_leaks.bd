@@ -1,0 +1,30 @@
+//@ compile-fail
+// A public signature or field may not name a package-private type (issue #78).
+
+priv struct Hidden {
+    v: i32
+}
+
+fn reveal(): Hidden { //~ E0150
+    Hidden { v: 1 }
+}
+
+fn take(h: Hidden) { //~ E0150
+}
+
+struct Public {
+    h: Hidden //~ E0150
+}
+
+priv struct Secret {
+    v: i32
+}
+
+struct Public2 {
+    s: Secret //~ E0150
+}
+
+fn main() {
+    let h = Hidden { v: 1 }
+    println(h.v.to_string())
+}

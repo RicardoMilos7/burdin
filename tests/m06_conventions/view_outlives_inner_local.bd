@@ -1,0 +1,19 @@
+//@ compile-fail
+// A view of a local of an inner block may not escape that block in a binding.
+
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+fn main() {
+    let r = { //~ E0123
+        let p = Pair { a: 1, b: 2 }
+        first_of(p)
+    }
+    println(r.to_string())
+}

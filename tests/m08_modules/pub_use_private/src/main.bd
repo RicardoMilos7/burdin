@@ -1,0 +1,6 @@
+//@ compile-fail
+// `pub use` cannot widen a package-private item (issue #79).
+
+pub use helpers.secret //~ E0150
+
+fn main() {}

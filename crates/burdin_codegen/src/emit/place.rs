@@ -11,14 +11,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let Some(ptr) = self.place_ptr(e)? else { return Ok(None) };
         let Some(t) = self.llvm_ty(&e.ty) else { return Ok(None) };
         let v = self.builder.build_load(t, ptr, "").map_err(llvm_err)?;
-        if mode == Mode::Move && !self.is_copy(&e.ty) {
-            if let Some((root, path)) = self.place_path(e) {
-                self.mark_moved(root, &path);
-            }
-            if matches!(e.kind, tir::ExprKind::Deref(_)) {
-                // The pointee was moved out of the allocation: free it (MV6).
-                self.builder.build_call(self.rt.free, &[ptr.into()], "").map_err(llvm_err)?;
-            }
+        // A whole `*h` move leaves the `Heap`'s drop to free the allocation (MV6): the flag for the pointee says
+        // it holds no value, so the drop skips it and frees the buffer exactly once.
+        if mode == Mode::Move
+            && !self.is_copy(&e.ty)
+            && let Some((root, path)) = self.place_path(e)
+        {
+            self.mark_moved(root, &path);
         }
         Ok(Some(v))
     }
@@ -30,7 +29,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let Some(ptr) = self.place_ptr(place)? else { return Ok(()) };
         let Some(_t) = self.llvm_ty(&place.ty) else { return Ok(()) };
         let root = self.place_path(place);
-        let crossing = !is_direct_place(place);
+        let crossing = !is_tracked_place(place);
         if self.needs_drop(&place.ty) {
             match (&root, crossing) {
                 (_, true) | (None, false) => self.drop_value(ptr, &place.ty)?,
@@ -162,7 +161,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     None => Ok(None),
                 }
             }
-            tir::ExprKind::Deref(base) => {
+            tir::ExprKind::Deref(base) | tir::ExprKind::PtrDeref(base) => {
                 let v = self.expr_mode(base, Mode::Use)?;
                 match v {
                     Some(v) => Ok(Some(v.into_pointer_value())),
@@ -194,17 +193,30 @@ pub(super) fn is_place(e: &tir::Expr) -> bool {
         tir::ExprKind::Field(base, _)
         | tir::ExprKind::Index(base, _)
         | tir::ExprKind::Deref(base)
+        | tir::ExprKind::PtrDeref(base)
         | tir::ExprKind::DerefRef(base) => is_place(base),
         _ => false,
     }
 }
 
-/// A place made only of a local and field selections. Indexing and `Heap` dereferences are not places, so a
-/// field selection beyond one of them does not extend the drop-flag path.
-pub(super) fn is_direct_place(e: &tir::Expr) -> bool {
+/// A place whose path the drop flags follow: a local, its fields, constant array and `List` indices, and the
+/// fields of a `Heap` pointee.
+pub(super) fn is_tracked_place(e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _) => is_direct_place(base),
+        tir::ExprKind::Field(base, _) => is_tracked_place(base),
+        tir::ExprKind::Index(base, index) => {
+            is_tracked_place(base) && matches!(base.ty, Ty::Array(..) | Ty::List(_)) && constant_index(index).is_some()
+        }
+        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)),
         _ => false,
+    }
+}
+
+/// An index written as a non-negative integer literal.
+pub(super) fn constant_index(e: &tir::Expr) -> Option<usize> {
+    match e.kind {
+        tir::ExprKind::Int(v) if v >= 0 => usize::try_from(v).ok(),
+        _ => None,
     }
 }
