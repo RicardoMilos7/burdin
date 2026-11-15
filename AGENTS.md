@@ -31,6 +31,7 @@ tests/check-unit-tests.sh          check the front-end unit tests and their CI c
 tests/check-ci.sh                  validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
 tests/check-deps.sh                audit the dependency pins and licenses (no compiler needed)
 tests/check-platform.sh            check the host triple and 64-bit isize/usize (needs a built driver)
+tests/check-platform-support.sh    check the platform support page against CI and binary-safe output (needs a built driver)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
 tests/check-debug-info.sh          check -g's DWARF, line table, and a gdb breakpoint (needs a built driver)
 tests/check-codegen-opt.sh         check drop-flag elimination, bounds-check elision, and shared glue
@@ -131,7 +132,8 @@ AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
-docs/                     the user-facing error-code reference (checked against tests/README.md)
+docs/                     the user-facing error-code reference (checked against tests/README.md) and the
+                          platform support matrix and known limitations
 tests/                    conformance suite, README with the format and error codes
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_codegen, burdin_driver,

@@ -35,7 +35,9 @@
 #     exists, is the registry's mirror image, and is linked from README.md (issues #434-#437);
 #   * every job runs the black-box check of the test runner (issues #438-#443);
 #   * every job runs the dependency and license audit after `cargo build`, with the license metadata
-#     verification required, and the reviewed inventory and its policy are in place (issue #449).
+#     verification required, and the reviewed inventory and its policy are in place (issue #449);
+#   * every job runs the platform support check, and docs/platform-support.md (the matrix and its known
+#     limitations) exists and is linked from README.md and CHANGELOG.md (issue #457).
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")
@@ -296,6 +298,7 @@ for job in linux macos windows; do
         'tests/check-diagnostics.sh' \
         'tests/check-error-docs.sh' \
         'tests/check-test-runner.sh' \
+        'tests/check-platform-support.sh' \
         'tests/bench-regression.sh' \
         'rustup toolchain install' \
         'rustc --version' \
@@ -387,6 +390,7 @@ check_script tests/check-debug-info.sh "llvm-dwarfdump" "gdb" "-g" "DW_TAG_subpr
 check_script tests/check-codegen-opt.sh "alloca i1" "bounds.fail" "burdin.drop" "index out of bounds"
 check_script tests/check-build-flags.sh "burdin --version" "--strip" "--lto" "--pgo-use" "131072"
 check_script tests/check-parallel.sh "BURDIN_JOBS" "diff -u"
+check_script tests/check-platform-support.sh "docs/platform-support.md" "Untested" "check-docs" "wc -c"
 
 # The dependency and license audit (issue #449): the reviewed inventory must cover the direct
 # dependency and its LLVM bindings, the policy must stay stated, the script must keep checking the
@@ -435,12 +439,23 @@ else
         || add_problem "docs/error-codes.md: codes do not match the tests/README.md registry"
 fi
 
+# The platform support matrix (issue #457) must exist and be reachable from the documentation index and the
+# release notes; the script that checks it is required in every job above.
+if [ ! -f "$ROOT/docs/platform-support.md" ]; then
+    add_problem "docs/platform-support.md: missing (the platform support matrix and known limitations)"
+else
+    grep -qF 'docs/platform-support.md' "$ROOT/README.md" \
+        || add_problem "README.md: does not link docs/platform-support.md"
+    grep -qF 'platform-support.md' "$ROOT/CHANGELOG.md" \
+        || add_problem "CHANGELOG.md: the release notes do not link docs/platform-support.md"
+fi
+
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
-    tests/check-docs.sh tests/check-deps.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/check-test-runner.sh \
-    tests/check-debug-info.sh tests/check-codegen-opt.sh tests/check-build-flags.sh tests/check-parallel.sh \
-    tests/bench-regression.sh tests/fuzz.sh; do
+    tests/check-platform-support.sh tests/check-docs.sh tests/check-deps.sh tests/check-diagnostics.sh \
+    tests/check-error-docs.sh tests/check-test-runner.sh tests/check-debug-info.sh tests/check-codegen-opt.sh \
+    tests/check-build-flags.sh tests/check-parallel.sh tests/bench-regression.sh tests/fuzz.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"

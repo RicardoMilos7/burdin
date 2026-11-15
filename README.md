@@ -15,6 +15,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the settled language decisions. Read this first. |
 | [`docs/error-codes.md`](docs/error-codes.md) | The user-facing reference for every error code, with a checked example and a fix for each. `burdin explain <code>` prints one entry. |
 | [`docs/dependencies.md`](docs/dependencies.md) | The dependency and license policy, the review of every crate, and how to add one. `tests/check-deps.sh` enforces it. |
+| [`docs/platform-support.md`](docs/platform-support.md) | The tested OS/architecture pairs, the runtime features each CI job proves, and the known limitations. |
 | [`spec/grammar.md`](spec/grammar.md) | The syntax of stage 0. |
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
@@ -39,7 +40,9 @@ Requirements:
 - a system C compiler driver to link against libc: `cc` on Linux and macOS, MSVC `cl` on Windows.
 
 On Ubuntu, the packages are `build-essential llvm-21-dev libpolly-21-dev clang-21 libzstd-dev zlib1g-dev`. Development
-happens in WSL Ubuntu first; `CLAUDE.md` has the exact setup and the PowerShell wrapper. Build from the repository root:
+happens in WSL Ubuntu first; `CLAUDE.md` has the exact setup and the PowerShell wrapper.
+[`docs/platform-support.md`](docs/platform-support.md) records which configurations CI tests, which are untested, and
+the known gaps. Build from the repository root:
 
 ```console
 $ cargo build

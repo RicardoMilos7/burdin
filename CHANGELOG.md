@@ -16,6 +16,14 @@ close-out checklist in `AGENTS.md`).
   inventory. `docs/dependencies.md` records the policy and the review, including LLVM's host-supplied
   Apache-2.0 WITH LLVM-exception license.
 
+- The platform support matrix and its known limitations are documented in
+  [`docs/platform-support.md`](docs/platform-support.md) (issue #457): the tested and untested OS/architecture pairs,
+  the runtime features each CI job proves, and the gaps (no PDB and no symbolized backtraces on Windows, the untested
+  Linux and Windows arm64 hosts, the untested libc assumptions, and the terminal-only output path). The page is linked
+  from this file and the documentation index. `tests/check-platform-support.sh` checks the matrix against
+  `ci.yml`, compiles and runs the page's example, and proves binary-safe standard output and file I/O byte-for-byte;
+  every CI job runs it.
+
 - Compiler and runtime debug/observability/performance work (issue #421, sub-issues #422-#432):
   `-g` emits source-level DWARF for functions, parameters, locals, and every expression's line and column
   (`tests/check-debug-info.sh`, which also proves a gdb breakpoint and local read); panics print a symbolized

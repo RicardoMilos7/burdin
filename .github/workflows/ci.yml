@@ -186,6 +186,11 @@ jobs:
       - name: Check host target
         run: tests/check-platform.sh
 
+      # The platform support matrix and its known limitations (issue #457): the page must agree with this
+      # workflow, its example must run, and standard output and file I/O must stay binary-safe.
+      - name: Check platform support matrix
+        run: tests/check-platform-support.sh
+
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
         run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
@@ -344,6 +349,11 @@ jobs:
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
         run: tests/check-platform.sh
+
+      # The platform support matrix and its known limitations (issue #457): the page must agree with this
+      # workflow, its example must run, and standard output and file I/O must stay binary-safe.
+      - name: Check platform support matrix
+        run: tests/check-platform-support.sh
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
@@ -533,6 +543,11 @@ jobs:
 
       - name: Check host target
         run: bash tests/check-platform.sh
+
+      # The platform support matrix and its known limitations (issue #457): the page must agree with this
+      # workflow, its example must run, and standard output and file I/O must stay binary-safe.
+      - name: Check platform support matrix
+        run: bash tests/check-platform-support.sh
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
