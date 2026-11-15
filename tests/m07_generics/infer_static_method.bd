@@ -1,0 +1,27 @@
+//@ run
+//> 7
+//> 42
+
+// A static method of a generic type infers its type arguments from its own parameters (issue #65).
+
+struct Holder<T> {
+    value: T
+}
+
+Holder<T> {
+    fn make(own value: T): Holder<T> {
+        Holder { value }
+    }
+
+    fn get(own self): T {
+        self.value
+    }
+}
+
+fn main() {
+    let h = Holder.make(7)
+    println(h.get().to_string())
+
+    let h2: Holder<i32> = Holder.make(42)
+    println(h2.get().to_string())
+}

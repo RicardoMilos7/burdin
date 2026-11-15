@@ -1,0 +1,35 @@
+//@ run
+//> 1
+//> drop 1
+//> end of main
+
+// A guard may fail on an arm that moves out of a temporary: the next arm still owns the value, which drops once.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    match Some(Noisy { id: 1 }) {
+        Some(n) if n.id > 5 => {
+            println(n.id.to_string())
+        }
+        Some(n) => {
+            println(n.id.to_string())
+        }
+        None => {}
+    }
+    println("end of main")
+}

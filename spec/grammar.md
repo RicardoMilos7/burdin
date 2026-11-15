@@ -27,7 +27,8 @@ mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  whe
 Reserved for stage 1, rejected as identifiers now: `any  comptime  derive  impl`.
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
-by a string), `derives` (after a struct or enum name), `requires` (after an interface name). The attribute names of a
+by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct
+name), and `pub` (immediately before `use`). The attribute names of a
 test item (`ignore`, `timeout`, `should_panic`, `should_fail`) are contextual only inside the `[...]` after the test
 name; the checker rejects an unknown name with E0170 ([`test-runner.md`](test-runner.md)).
 
@@ -86,7 +87,7 @@ foo()
 File          = { Item } ;
 
 Item          = TestItem | UseItem | ImplBlock
-              | [ "priv" ] ( FnItem | StructItem | EnumItem | InterfaceItem | TypeAlias | ConstItem | ExternBlock ) ;
+              | [ "priv" ] ( FnItem | StructItem | EnumItem | InterfaceItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
 FnItem        = FnSig Block ;
@@ -101,7 +102,7 @@ Bounds        = TypePath { "+" TypePath } ;
 WhereClause   = "where" WherePred { "," WherePred } ;
 WherePred     = Type ":" Bounds ;
 
-StructItem    = "struct" IDENT [ GenericParams ] [ Derives ] "{" [ FieldList ] "}" ;
+StructItem    = "struct" IDENT [ GenericParams ] [ "repr(C)" ] [ Derives ] "{" [ FieldList ] "}" ;
 FieldList     = Field { Sep Field } [ Sep ] ;
 Field         = [ "priv" ] IDENT ":" Type ;
 Derives       = "derives" "(" TypePath { "," TypePath } [ "," ] ")" ;
@@ -119,9 +120,11 @@ ImplFn        = [ "priv" ] FnItem ;
 TypeAlias     = "type" IDENT [ GenericParams ] "=" Type ;
 ConstItem     = "const" IDENT ":" Type "=" Expr ;
 
-UseItem       = "use" IDENT { "." IDENT } [ "." "{" IDENT { "," IDENT } [ "," ] "}" | "as" IDENT ] ;
+UseItem       = [ "pub" ] "use" IDENT { "." IDENT } [ "." "{" IDENT { "," IDENT } [ "," ] "}" | "as" IDENT ] ;   (* `pub` re-exports *)
 
-ExternBlock   = "extern" STRING "{" { [ "priv" ] FnSig } "}" ;   (* each FnSig on its own line, no body *)
+ExternItem    = "extern" STRING ( "{" { [ "priv" ] ExternFnSig } "}" | ExternFnSig Block ) ;
+ExternFnSig   = [ "unsafe" ] "fn" IDENT "(" [ ExternParams ] ")" [ ":" Type ] ;   (* no generics, no `where` *)
+ExternParams  = Param { "," Param } [ "," [ "..." ] ] ;   (* `...` only in a declaration *)
 
 TestItem      = "test" STRING [ TestAttrs ] Block ;
 TestAttrs     = "[" TestAttr { "," TestAttr } [ "," ] "]" ;
@@ -147,6 +150,19 @@ is E0003. `Drop` is not derivable (E0002) and cannot be combined with `Copy` (E0
 An item that starts with an identifier (not a keyword) is an impl block. `Type: Interface { ... }` implements an interface,
 `Type { ... }` adds methods with no interface, and generics and `where` bounds go on either.
 
+**`repr(C)`.** `struct Name repr(C) { ... }` gives a struct the C layout: fields in declaration order with C padding
+and alignment, reported by `Type.size()` and `Type.align()`. It may be used behind `CPtr<T>` in the C bridge; passing
+or returning it by value across the C ABI is E0162 (`stdlib.md`). `repr(...)` with another ABI is E9000.
+
+**`extern "C"`.** A block declares C functions; a single `extern "C" fn` with a body exports a Burdin function under
+its plain C symbol. The signature rules are in `stdlib.md`; `...` is only allowed in a declaration, and a variadic
+parameter list on any other function is E0001.
+
+**`pub use` and module visibility.** `pub use` adds the imported names to the exporting module's exported names, so
+another module or package can import them. `use <package>` names a dependency's root module (`src/<package>.bd` or
+`src/lib.bd`); the dependency's other modules are hidden unless the root re-exports them. `pub use` of a
+package-private item, and a public signature or field naming a package-private type, are E0150.
+
 ## 4. Types
 
 ```
@@ -162,7 +178,9 @@ TypePath      = IDENT [ GenericArgs ] { "." IDENT [ GenericArgs ] } ;
 GenericArgs   = "<" Type { "," Type } [ "," ] ">" ;
 ```
 
-`i32`, `str`, `bool`, `String`, `Self` and the other built-in names are ordinary type paths resolved in the prelude.
+`i32`, `str`, `bool`, `String`, `Range<T>`, `RangeInclusive<T>`, `Self` and the other built-in names are ordinary
+type paths resolved in the prelude. `Self` means the type of the enclosing impl block, there and in expressions and
+patterns (`Self.new()`, `Self { ... }`, `Self.Variant`).
 
 ## 5. Statements and blocks
 
@@ -214,12 +232,13 @@ PostfixExpr   = Primary { "?" | "." IDENT | "." INT | "(" [ ArgList ] ")" | "[" 
 ArgList       = Arg { "," Arg } [ "," ] ;
 Arg           = [ "mut" ] Expr ;                        (* "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)
 
-Primary       = Literal | PathExpr | "self" | "(" ")" | "(" Expr ")" | TupleExpr
+Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | IfExpr | MatchExpr | LoopExpr | WhileExpr | ForExpr
               | "unsafe" Block | "return" [ Expr ] | "break" | "continue" ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
 PathExpr      = IDENT [ GenericArgs ] ;                 (* later segments are parsed as field accesses, see below *)
+                                                         (* `Self` is a path for `Self.new()`, `Self.Variant`, and `Self { ... }` *)
 TupleExpr     = "(" Expr "," [ Expr { "," Expr } [ "," ] ] ")" ;
 ArrayExpr     = "[" [ Expr { "," Expr } [ "," ] ] "]" | "[" Expr ";" Expr "]" ;
 StructLiteral = PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
@@ -237,8 +256,11 @@ ForExpr       = "for" Pattern "in" Expr Block ;
 Arms are separated by `,` or a line break, and the separator may be left out after the last arm or after an arm whose
 body is a block. `else` is the catch-all arm and must be last.
 
-A range is `a..b` (exclusive) or `a..=b` (inclusive). In stage 0 a range is only iterable by `for`; storing one in a
-binding, field, or collection is stage 1 (m13).
+A range is `a..b` (exclusive) or `a..=b` (inclusive): an ordinary value of type `Range<T>` or `RangeInclusive<T>`.
+Both are first-class, `Copy`, and iterable by `for`, and may be stored in a binding, field, or collection. The
+endpoints must be integers, and both take their type from context, from the other endpoint, or default to `i32`.
+The range operators bind looser than comparison, so `r == (0..4)` needs the parentheses. Both endpoints are
+required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are a syntax error.
 
 ## 7. Patterns
 
@@ -253,7 +275,7 @@ PrimaryPat    = "_"
               | PatPath "(" [ Pattern { "," Pattern } [ "," ] ] ")"
               | PatPath "{" [ FieldPat { Sep FieldPat } [ Sep ] ] "}"
               | "(" [ Pattern { "," Pattern } [ "," ] ] ")" ;    (* tuple; `(p)` is just p *)
-PatPath       = IDENT { "." IDENT } ;                            (* Some, Shape.Circle, Token.Num *)
+PatPath       = ( IDENT | "Self" ) { "." IDENT } ;               (* Some, Shape.Circle, Token.Num, Self.Variant *)
 FieldPat      = IDENT [ ":" Pattern ] ;                          (* `w` alone is shorthand for `w: w` *)
 ```
 

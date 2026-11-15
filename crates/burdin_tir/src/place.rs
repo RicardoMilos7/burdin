@@ -8,9 +8,11 @@ use crate::ty::Ty;
 pub fn place_root(e: &Expr) -> Option<LocalId> {
     match &e.kind {
         ExprKind::Local(id) => Some(*id),
-        ExprKind::Index(base, _) | ExprKind::Field(base, _) | ExprKind::Deref(base) | ExprKind::DerefRef(base) => {
-            place_root(base)
-        }
+        ExprKind::Index(base, _)
+        | ExprKind::Field(base, _)
+        | ExprKind::Deref(base)
+        | ExprKind::PtrDeref(base)
+        | ExprKind::DerefRef(base) => place_root(base),
         _ => None,
     }
 }
@@ -18,7 +20,7 @@ pub fn place_root(e: &Expr) -> Option<LocalId> {
 /// Whether a place expression reaches through a reference or a slice, so its storage belongs to another value.
 pub fn through_view(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::DerefRef(_) => true,
+        ExprKind::DerefRef(_) | ExprKind::PtrDeref(_) => true,
         ExprKind::Index(base, _) => through_view(base) || matches!(base.ty, Ty::Slice(_)),
         ExprKind::Field(base, _) => through_view(base),
         _ => false,
@@ -29,7 +31,7 @@ pub fn through_view(e: &Expr) -> bool {
 /// dereference is always a place: it names the referent, whatever expression produced the reference.
 pub fn is_place_expr(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Local(_) | ExprKind::DerefRef(_) => true,
+        ExprKind::Local(_) | ExprKind::DerefRef(_) | ExprKind::PtrDeref(_) => true,
         ExprKind::Field(base, _) | ExprKind::Index(base, _) | ExprKind::Deref(base) => is_place_expr(base),
         _ => false,
     }
@@ -51,7 +53,7 @@ pub fn tir_place(e: &Expr) -> Option<(LocalId, Vec<usize>, bool)> {
             }
             Some((root, path, direct))
         }
-        ExprKind::Index(base, _) | ExprKind::Deref(base) | ExprKind::DerefRef(base) => {
+        ExprKind::Index(base, _) | ExprKind::Deref(base) | ExprKind::PtrDeref(base) | ExprKind::DerefRef(base) => {
             let (root, _, _) = tir_place(base)?;
             Some((root, Vec::new(), false))
         }
@@ -78,9 +80,10 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::Const(_)
         | K::None
         | K::Break
-        | K::Continue => {}
+        | K::Continue
+        | K::LayoutOf { .. } => {}
         K::Local(_) => record(e, out),
-        K::Field(base, _) | K::Deref(base) | K::DerefRef(base) => {
+        K::Field(base, _) | K::Deref(base) | K::PtrDeref(base) | K::DerefRef(base) => {
             record(e, out);
             if tir_place(base).is_none() {
                 place_mentions(base, out);
@@ -122,6 +125,10 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
             place_mentions(l, out);
             place_mentions(r, out);
         }
+        K::Range { lo, hi, .. } => {
+            place_mentions(lo, out);
+            place_mentions(hi, out);
+        }
         K::Block(b) => {
             for s in &b.stmts {
                 match s {
@@ -148,6 +155,10 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         K::ForRange { lo, hi, body, .. } => {
             place_mentions(lo, out);
             place_mentions(hi, out);
+            place_mentions_block(body, out);
+        }
+        K::ForRangeValue { range, body, .. } => {
+            place_mentions(range, out);
             place_mentions_block(body, out);
         }
         K::ForArray { array, body, .. } => {

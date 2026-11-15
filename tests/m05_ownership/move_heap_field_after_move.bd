@@ -1,0 +1,13 @@
+//@ compile-fail
+// Reading a field of a Heap pointee again after it was moved out is E0100.
+
+struct Pair {
+    a: String
+    b: String
+}
+
+fn main() {
+    let h = Heap.new(Pair { a: String.from("a"), b: String.from("b") })
+    let a = (*h).a
+    let b = (*h).a //~ E0100
+}

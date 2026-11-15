@@ -114,7 +114,19 @@ impl FnCx<'_> {
         let text = text.join(".");
         // `(type, variant, package that declares the type)`.
         let mut target: Option<(Ty, Option<usize>, usize)> = None;
-        if path.len() == 1 {
+        if path.len() == 1 && path[0].name == "Self" {
+            let name = &path[0];
+            match self.self_ty.clone() {
+                Some(Ty::Struct(a)) => target = Some((Ty::Struct(a.clone()), None, self.globals.struct_pkg[a.id])),
+                Some(Ty::Error) => {}
+                Some(other) => {
+                    self.diags.error(Code::TYPE_MISMATCH, name.span, format!("`{other}` is not a struct"));
+                }
+                None => {
+                    self.diags.error(Code::UNKNOWN_NAME, name.span, "`Self` is only available inside a method block");
+                }
+            }
+        } else if path.len() == 1 {
             let name = &path[0];
             match self.globals.named_type(self.module, &name.name) {
                 Some(ty) => match ty {

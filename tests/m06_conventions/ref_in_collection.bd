@@ -1,5 +1,11 @@
 //@ compile-fail
 
+// A view cannot be a stored container's element or key, whether the container is a local or a field (SC2/SC3,
+// issue #67).
+
 fn main() {
+    let n = 1
     let v: List<&i32> = List<&i32>.new() //~ E0120
+    let h: Heap<&i32> = Heap.new(&n) //~ E0120
+    let m: Map<&i32, i32> = Map<&i32, i32>.new() //~ E0120
 }

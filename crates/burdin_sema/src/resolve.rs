@@ -28,7 +28,11 @@ impl Sema<'_> {
                 .iter()
                 .map(|f| {
                     let ty = self.globals.resolve_type_in(&f.ty, None, &entry.subst, module, diags);
-                    check_storable(&ty, f.ty.span, "a struct field", diags);
+                    // An instance of a generic type is second-class when an argument is (SC3), so its own field
+                    // may hold the view; the check applies where the instance is stored instead.
+                    if entry.subst.is_empty() {
+                        check_storable(&ty, f.ty.span, "a struct field", diags);
+                    }
                     tir::FieldDef { name: f.name.name.clone(), ty, span: f.name.span, is_priv: f.is_priv }
                 })
                 .collect();
@@ -52,7 +56,10 @@ impl Sema<'_> {
                 }
                 let field = |ty: &ast::Type, name: String, span: Span, is_priv: bool, diags: &mut Diagnostics| {
                     let resolved = self.globals.resolve_type_in(ty, None, &entry.subst, module, diags);
-                    check_storable(&resolved, ty.span, "an enum variant field", diags);
+                    // See the struct field case above (SC3).
+                    if entry.subst.is_empty() {
+                        check_storable(&resolved, ty.span, "an enum variant field", diags);
+                    }
                     tir::FieldDef { name, ty: resolved, span, is_priv }
                 };
                 let (shape, fields) = match &v.kind {
@@ -86,13 +93,20 @@ impl Sema<'_> {
             let module = self.globals.interfaces[i].module;
             for k in 0..self.globals.interfaces[i].methods.len() {
                 let decl = &self.tpl.ifaces[i].methods[k].decl;
-                let sig = fn_signature(decl, Some(&param_ty("Self")), &[], module, &self.globals, diags);
+                let sig = fn_signature(decl, Some(&param_ty("Self")), &[], module, &self.globals, false, diags);
                 self.globals.interfaces[i].methods[k].sig = sig;
             }
         }
         for (i, item) in self.fn_items.iter().enumerate() {
-            let mut sig =
-                fn_signature(item.decl, item.self_ty.as_ref(), &item.subst, item.module, &self.globals, diags);
+            let mut sig = fn_signature(
+                item.decl,
+                item.self_ty.as_ref(),
+                &item.subst,
+                item.module,
+                &self.globals,
+                item.is_exported,
+                diags,
+            );
             if self.globals.from_methods.contains(&tir::FuncId(i))
                 && let Some(p) = sig.params.first_mut()
             {
@@ -212,8 +226,13 @@ pub(crate) fn fn_signature(
     subst: &[(String, Ty)],
     module: usize,
     globals: &Globals,
+    is_exported: bool,
     diags: &mut Diagnostics,
 ) -> Signature {
+    // An exported function is checked against the C ABI by `check_export_signatures`, which rejects `...`.
+    if f.is_vararg && !is_exported {
+        diags.error(Code::SYNTAX, f.name.span, "variadic parameters are only allowed in `extern` declarations");
+    }
     let mut params = Vec::new();
     let mut has_self = false;
     for (i, p) in f.params.iter().enumerate() {
@@ -274,11 +293,7 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
         let ast::ParamKind::Named { ty, .. } = &p.kind else { continue };
         let resolved = globals.resolve_type_in(ty, None, &[], module, diags);
         if resolved != Ty::Error && !is_c_abi_value(&resolved) {
-            diags.error(
-                Code::C_ABI,
-                ty.span,
-                format!("`{resolved}` cannot be passed to a C function; only integers, floats, and `CPtr` can"),
-            );
+            diags.error(Code::C_ABI, ty.span, c_abi_rejection(&resolved, "passed to a C function"));
         }
         // The parameter stays in the signature so that calls are still checked for arity, even though this
         // declaration already failed.
@@ -286,14 +301,30 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
     }
     let ret = f.ret.as_ref().map(|t| globals.resolve_type_in(t, None, &[], module, diags)).unwrap_or(Ty::Unit);
     if ret != Ty::Unit && ret != Ty::Error && !is_c_abi_value(&ret) {
-        diags.error(Code::C_ABI, f.name.span, format!("`{ret}` cannot be returned by a C function"));
+        diags.error(Code::C_ABI, f.name.span, c_abi_rejection(&ret, "returned by a C function"));
     }
     Signature { params, ret, has_self: false, ret_origin: None }
 }
 
-/// Whether a type has the same representation in Burdin and in C: integers, floats, and raw pointers.
-fn is_c_abi_value(ty: &Ty) -> bool {
-    matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::CPtr(_))
+/// Whether a type has the same representation in Burdin and in C: integers, floats, and raw pointers. A Burdin
+/// `bool` is a one-bit value, while C `_Bool` is a one-byte integer, so it is passed as `u8` instead. Aggregates
+/// cross the C ABI through `CPtr<T>` only: the platform by-value ABI coercions (packing a small struct into a
+/// register, `sret`, and so on) are not implemented (issues #73 and #490).
+pub(crate) fn is_c_abi_value(ty: &Ty) -> bool {
+    matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::CPtr(_) | Ty::Unit | Ty::Never | Ty::Error)
+}
+
+/// The E0162 text for a type that cannot cross the C ABI.
+pub(crate) fn c_abi_rejection(ty: &Ty, direction: &str) -> String {
+    match ty {
+        Ty::Bool => {
+            format!("`bool` cannot be {direction}; C `_Bool` is a one-byte integer, so declare it `u8` (0 or 1)")
+        }
+        Ty::Struct(_) | Ty::Enum(_) | Ty::Tuple(_) | Ty::Array(..) => {
+            format!("`{ty}` cannot be {direction} by value; an aggregate crosses the C ABI through `CPtr<{ty}>`")
+        }
+        _ => format!("`{ty}` cannot be {direction}; only integers, floats, and `CPtr` can"),
+    }
 }
 
 /// Whether two `extern` declarations describe the same C function.

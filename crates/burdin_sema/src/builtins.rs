@@ -156,6 +156,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         }
         ("chars", Ty::Str | Ty::String) => (Method::Chars, vec![], Ty::Chars),
         ("as_ptr", Ty::CString) => (Method::AsPtr, vec![], Ty::CPtr(Box::new(Ty::Int(IntTy::I8)))),
+        ("is_null", Ty::CPtr(_)) => (Method::IsNull, vec![], Ty::Bool),
         _ => return None,
     })
 }

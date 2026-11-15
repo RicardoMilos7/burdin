@@ -1,0 +1,14 @@
+//@ run
+//> hello
+//> hello
+
+// `CString.clone` copies the NUL-terminated buffer (issue #75).
+
+fn main() {
+    let a = CString.from("hello")
+    let b = a.clone()
+    unsafe {
+        println(CStr.to_string(a.as_ptr()))
+        println(CStr.to_string(b.as_ptr()))
+    }
+}

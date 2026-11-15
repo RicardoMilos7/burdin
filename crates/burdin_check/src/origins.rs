@@ -1,9 +1,13 @@
-//! Origin inference for returned views (memory-rules.md, RT).
+//! Origin inference for returned views and for views stored in locals (memory-rules.md, RT).
 //!
 //! A function whose return type is second-class (`&T`, `&mut T`, `str`, `[T]`, or an aggregate containing one)
 //! must return a view of exactly one of its parameters, or a static view. The origin set of an expression is
 //! inferred by data flow through the body; a call with a second-class result maps the callee's signature origin
 //! back to the argument. The check stays local: a body is analyzed against signatures only.
+//!
+//! The same walk enforces RT5: a second-class value stored in a local may only derive from static data, from a
+//! parameter, or from a local of the same or an enclosing block. A temporary, or a local of an inner block, dies
+//! too early, which is E0123.
 //!
 //! The signature summaries are computed first, to a fixpoint, because a call needs its callee's origin. The
 //! errors are reported on a final pass over the stable summaries.
@@ -12,39 +16,54 @@ use burdin_diag::{Code, Diagnostics, Span};
 use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Signature};
 use std::collections::BTreeSet;
 
-/// The parameters whose storage a value may borrow from, and whether it borrows from something that does not
-/// live past the return (a local, an owned parameter, or a temporary).
+/// Where a value may borrow from, and whether it borrows from storage that does not live long enough for a
+/// binding or a return: a temporary, or a local of this function.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Origin {
+    /// The parameters whose storage the value may borrow from.
     params: BTreeSet<usize>,
-    local: bool,
+    /// The locals whose storage the value may borrow from (an owned parameter included).
+    locals: BTreeSet<usize>,
+    /// The value borrows from a temporary, which dies at the end of its statement.
+    temp: bool,
 }
 
 impl Origin {
     fn param(index: usize) -> Origin {
-        Origin { params: BTreeSet::from([index]), local: false }
+        Origin { params: BTreeSet::from([index]), ..Origin::default() }
     }
 
-    /// A value that lives only in this function: a local, an owned parameter, or a temporary.
-    fn local() -> Origin {
-        Origin { params: BTreeSet::new(), local: true }
+    /// A value that lives in the storage of a local, an owned parameter, or a temporary.
+    fn local(id: LocalId) -> Origin {
+        Origin { locals: BTreeSet::from([id.0]), ..Origin::default() }
+    }
+
+    /// A value computed by this statement, whose storage dies at its end.
+    fn temp() -> Origin {
+        Origin { temp: true, ..Origin::default() }
     }
 
     fn join(&mut self, other: &Origin) {
         self.params.extend(other.params.iter().copied());
-        self.local |= other.local;
+        self.locals.extend(other.locals.iter().copied());
+        self.temp |= other.temp;
     }
 
     /// The parameter a second-class result derives from, if the signature can say it.
     fn summary(&self) -> Option<usize> {
-        if self.local || self.params.len() != 1 {
+        if self.temp || !self.locals.is_empty() || self.params.len() != 1 {
             return None;
         }
         self.params.iter().next().copied()
     }
+
+    /// Whether returning this value would return storage of the function itself (RT2).
+    fn escapes(&self) -> bool {
+        self.temp || !self.locals.is_empty()
+    }
 }
 
-/// Computes every signature's return origin and reports E0121 and E0122.
+/// Computes every signature's return origin and reports E0121, E0122, and E0123.
 pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], diags: &mut Diagnostics) {
     // The summary of one function can feed the next, so iterate until nothing changes.
     for _ in 0..=functions.len() {
@@ -102,16 +121,39 @@ struct Analyzer<'a> {
     returns: Origin,
     /// `Some` on the reporting pass.
     report: Option<&'a mut Diagnostics>,
+    /// The block tree: `block_parent[id]` is the block that encloses block `id`, or `None` for the function body.
+    block_parent: Vec<Option<usize>>,
+    /// The block whose statements are being analyzed.
+    current_block: usize,
+    /// The block each local is declared in. Borrowed parameters have none (they live for the whole call).
+    local_block: Vec<Option<usize>>,
 }
 
 impl<'a> Analyzer<'a> {
     fn new(sigs: &'a [Signature], f: &'a tir::Function, report: Option<&'a mut Diagnostics>) -> Self {
-        Analyzer { sigs, f, bindings: vec![None; f.locals.len()], returns: Origin::default(), report }
+        let mut local_block = vec![None; f.locals.len()];
+        for (i, local) in f.locals.iter().enumerate() {
+            // An owned parameter lives until the function returns; a view of it kept in a local is fine, but
+            // returning one is E0122 through the origin.
+            if local.kind == LocalKind::OwnParam {
+                local_block[i] = Some(0);
+            }
+        }
+        Analyzer {
+            sigs,
+            f,
+            bindings: vec![None; f.locals.len()],
+            returns: Origin::default(),
+            report,
+            block_parent: vec![None],
+            current_block: 0,
+            local_block,
+        }
     }
 
     /// Analyzes the body and returns the union of the origins of all returned expressions.
     fn body(&mut self) -> Origin {
-        let tail = self.block(&self.f.body);
+        let tail = self.block_body(&self.f.body);
         let span = self.f.body.tail.as_ref().map(|e| e.span);
         if let Some(span) = span {
             self.record_return(&tail, span);
@@ -121,27 +163,28 @@ impl<'a> Analyzer<'a> {
         self.returns.clone()
     }
 
-    /// The origin of a local's value: a borrowed parameter stands for its position in the signature.
-    fn local_origin(&self, id: LocalId) -> Origin {
+    /// The origin of a local's storage: a borrowed parameter stands for its position in the signature.
+    fn local_storage(&self, id: LocalId) -> Origin {
         match self.f.locals[id.0].kind {
             LocalKind::BorrowedParam => {
                 let index = self.f.params.iter().position(|p| *p == id).unwrap_or(0);
                 Origin::param(index)
             }
-            _ => Origin::local(),
+            _ => Origin::local(id),
         }
     }
 
+    /// The origin of a local's value: a view binding stands for the storage it views.
     fn local_value(&self, id: LocalId) -> Origin {
         match &self.bindings[id.0] {
             Some(origin) => origin.clone(),
-            None => self.local_origin(id),
+            None => self.local_storage(id),
         }
     }
 
     fn record_return(&mut self, origin: &Origin, span: Span) {
         self.returns.join(origin);
-        if !self.f.ret.is_second_class() || !origin.local {
+        if !self.f.ret.is_second_class() || !origin.escapes() {
             return;
         }
         if let Some(diags) = self.report.as_deref_mut() {
@@ -153,37 +196,94 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn set_binding(&mut self, id: LocalId, mode: BindMode, origin: &Origin) {
-        let ty = &self.f.locals[id.0].ty;
-        // A view binding, or any value of a view type, borrows from the same storage as the scrutinee.
-        let origin = if mode == BindMode::View || ty.is_second_class() { origin.clone() } else { Origin::local() };
-        self.bindings[id.0] = Some(origin);
+    /// Whether `source` lives at least as long as a binding in `target_block`: it is declared in the same block,
+    /// or in one that encloses it.
+    fn outlives(&self, source: LocalId, target_block: usize) -> bool {
+        let Some(declared) = self.local_block[source.0] else {
+            // A borrowed parameter lives for the whole call, and a synthetic local with no recorded block
+            // (a loop binding the analysis introduced) is treated the same way.
+            return true;
+        };
+        let mut block = Some(target_block);
+        while let Some(b) = block {
+            if b == declared {
+                return true;
+            }
+            block = self.block_parent[b];
+        }
+        false
     }
 
-    fn bind_pattern(&mut self, pat: &Pat, origin: &Origin) {
+    /// Enforces RT5 on a value of a second-class type stored in a binding of `target_block`.
+    fn check_stored_view(&mut self, origin: &Origin, target_block: usize, allow_temp: bool, span: Span) {
+        let local_dies_early = origin.locals.iter().any(|id| !self.outlives(LocalId(*id), target_block));
+        let temporary_dies_early = origin.temp && !allow_temp;
+        if !local_dies_early && !temporary_dies_early {
+            return;
+        }
+        if let Some(diags) = self.report.as_deref_mut() {
+            diags.error(
+                Code::VIEW_OUTLIVES_SOURCE,
+                span,
+                if local_dies_early {
+                    "this view borrows from a local of an inner block, which does not live as long as the binding"
+                } else {
+                    "this view borrows from a temporary, which is dropped at the end of this statement"
+                },
+            );
+        }
+    }
+
+    fn set_binding(&mut self, id: LocalId, mode: BindMode, origin: &Origin, allow_temp: bool, span: Span) {
+        self.local_block[id.0] = Some(self.current_block);
+        let local = &self.f.locals[id.0];
+        let ty = &local.ty;
+        // The `match` scrutinee local lives only until the end of the statement that evaluates the match, so a
+        // view of a temporary in it is valid (RT5's arm-binding exception).
+        let allow_temp = allow_temp || local.kind == LocalKind::Scrutinee;
+        // A view binding, or any value of a view type, borrows from the same storage as the scrutinee.
+        if mode == BindMode::View || ty.is_second_class() {
+            self.check_stored_view(origin, self.current_block, allow_temp, span);
+            self.bindings[id.0] = Some(origin.clone());
+        }
+    }
+
+    fn bind_pattern(&mut self, pat: &Pat, origin: &Origin, allow_temp: bool, span: Span) {
         match pat {
             Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Range(..) | Pat::None => {}
-            Pat::Binding(id, mode) => self.set_binding(*id, *mode, origin),
+            Pat::Binding(id, mode) => self.set_binding(*id, *mode, origin, allow_temp, span),
             Pat::At(id, mode, inner) => {
-                self.set_binding(*id, *mode, origin);
-                self.bind_pattern(inner, origin);
+                self.set_binding(*id, *mode, origin, allow_temp, span);
+                self.bind_pattern(inner, origin, allow_temp, span);
             }
             Pat::Or(alts) => {
                 if let Some(first) = alts.first() {
-                    self.bind_pattern(first, origin);
+                    self.bind_pattern(first, origin, allow_temp, span);
                 }
             }
-            Pat::Some(inner) => self.bind_pattern(inner, origin),
-            Pat::Ok(inner) | Pat::Err(inner) => self.bind_pattern(inner, origin),
+            Pat::Some(inner) => self.bind_pattern(inner, origin, allow_temp, span),
+            Pat::Ok(inner) | Pat::Err(inner) => self.bind_pattern(inner, origin, allow_temp, span),
             Pat::Product(subs) | Pat::Variant(_, subs) => {
                 for sub in subs {
-                    self.bind_pattern(sub, origin);
+                    self.bind_pattern(sub, origin, allow_temp, span);
                 }
             }
         }
     }
 
+    /// Analyzes a block in a new scope.
     fn block(&mut self, b: &tir::Block) -> Origin {
+        let parent = self.current_block;
+        let id = self.block_parent.len();
+        self.block_parent.push(Some(parent));
+        self.current_block = id;
+        let origin = self.block_body(b);
+        self.current_block = parent;
+        origin
+    }
+
+    /// Analyzes a block's statements and value in the current scope.
+    fn block_body(&mut self, b: &tir::Block) -> Origin {
         for stmt in &b.stmts {
             match stmt {
                 tir::Stmt::Let(pat, init, else_block) => {
@@ -191,7 +291,9 @@ impl<'a> Analyzer<'a> {
                     if let Some(else_block) = else_block {
                         self.block(else_block);
                     }
-                    self.bind_pattern(pat, &origin);
+                    // The binding outlives this statement, so a temporary source is too short-lived (RT5);
+                    // the binding dies with the block, so a local of an inner block is fine.
+                    self.bind_pattern(pat, &origin, false, init.span);
                 }
                 tir::Stmt::Expr(e) => {
                     self.expr(e);
@@ -204,16 +306,63 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    /// The origin of the storage a place expression names. A reference to a local borrows the local's slot, not
+    /// whatever view that local holds, so this is separate from the value's origin.
+    fn place_origin(&mut self, e: &tir::Expr) -> Origin {
+        use tir::ExprKind as K;
+        match &e.kind {
+            K::Local(id) => self.local_storage(*id),
+            K::Field(base, _) => self.place_origin(base),
+            // Indexing a slice looks through to whatever the slice views; indexing an array or a list names the
+            // collection's own storage.
+            K::Index(base, index) => {
+                self.expr(index);
+                if matches!(base.ty, tir::Ty::Slice(_)) { self.expr(base) } else { self.place_origin(base) }
+            }
+            // A `Heap` owns its pointee; a reference points at someone else's storage.
+            K::Deref(base) => self.place_origin(base),
+            K::PtrDeref(base) => {
+                self.expr(base);
+                Origin::temp()
+            }
+            K::DerefRef(base) => self.expr(base),
+            _ => {
+                self.expr(e);
+                Origin::temp()
+            }
+        }
+    }
+
+    /// The origin of the storage an argument hands to a call. A value of a second-class type carries a view, so
+    /// its own origin is what matters; any other argument's storage belongs to the argument's place or temporary.
+    fn argument_storage(&mut self, e: &tir::Expr) -> Origin {
+        if e.ty.is_second_class() { self.expr(e) } else { self.place_origin(e) }
+    }
+
     fn expr(&mut self, e: &tir::Expr) -> Origin {
         use tir::ExprKind as K;
         match &e.kind {
-            K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Const(_) | K::None => {
-                Origin::default()
-            }
+            K::Unit
+            | K::Bool(_)
+            | K::Int(_)
+            | K::Float(_)
+            | K::Char(_)
+            | K::Str(_)
+            | K::Const(_)
+            | K::None
+            | K::LayoutOf { .. } => Origin::default(),
             K::Local(id) => self.local_value(*id),
             // A field, an element, a pointee, or a referent derives from the storage of its base.
-            K::Field(base, _) | K::Index(base, _) | K::Deref(base) | K::DerefRef(base) => self.expr(base),
-            K::Ref { place, .. } => self.expr(place),
+            K::Field(base, _) | K::Deref(base) | K::DerefRef(base) => self.expr(base),
+            K::PtrDeref(base) => {
+                self.expr(base);
+                Origin::temp()
+            }
+            K::Index(base, index) => {
+                self.expr(index);
+                self.expr(base)
+            }
+            K::Ref { place, .. } => self.place_origin(place),
             K::Slice { base, lo, hi } => {
                 self.expr(lo);
                 self.expr(hi);
@@ -245,42 +394,52 @@ impl<'a> Analyzer<'a> {
                 for arg in args {
                     self.expr(arg);
                 }
-                Origin::default()
+                Origin::temp()
             }
             K::Call(f, args) => {
+                let mut storages = Vec::with_capacity(args.len());
                 for arg in args {
-                    self.expr(arg);
+                    storages.push(self.argument_storage(arg));
                 }
                 let sig = &self.sigs[f.0];
                 if !sig.ret.is_second_class() {
-                    return Origin::default();
+                    return Origin::temp();
                 }
                 match sig.ret_origin {
-                    Some(index) if index < args.len() => self.expr(&args[index]),
+                    Some(index) if index < storages.len() => storages[index].clone(),
                     // Static, or a signature that is already known to be invalid.
                     _ => Origin::default(),
                 }
             }
             K::Builtin(b, args) => {
-                let mut origin = Origin::local();
-                if *b == tir::Builtin::Replace {
-                    // The old value comes out of the place, so a view result derives from it.
-                    origin = self.expr(&args[0]);
-                }
+                let mut origins = Vec::with_capacity(args.len());
                 for arg in args {
-                    self.expr(arg);
+                    origins.push(self.expr(arg));
                 }
-                origin
+                match b {
+                    // The old value comes out of the place, so a view result derives from it.
+                    tir::Builtin::Replace => origins.into_iter().next().unwrap_or_default(),
+                    // An empty container owns its (empty) buffer; storing it borrows nothing.
+                    tir::Builtin::ListNew | tir::Builtin::MapNew => Origin::default(),
+                    _ => Origin::temp(),
+                }
             }
             K::Method(m, args) => {
+                let mut origins = Vec::with_capacity(args.len());
                 for arg in args {
-                    self.expr(arg);
+                    origins.push(self.expr(arg));
                 }
                 match m {
                     // A view of the receiver, or a copy of it.
-                    tir::Method::AsStr | tir::Method::Clone => self.expr(&args[0]),
-                    tir::Method::ListLast | tir::Method::MapGet | tir::Method::Chars => self.expr(&args[0]),
-                    _ => Origin::default(),
+                    tir::Method::AsStr
+                    | tir::Method::Clone
+                    | tir::Method::ListLast
+                    | tir::Method::MapGet
+                    | tir::Method::Chars
+                    // Unwrapping an `Option<&T>` hands out the view inside it.
+                    | tir::Method::Unwrap
+                    | tir::Method::Expect => origins.into_iter().next().unwrap_or_default(),
+                    _ => Origin::temp(),
                 }
             }
             K::Block(b) => self.block(b),
@@ -301,51 +460,69 @@ impl<'a> Analyzer<'a> {
                 self.block(body);
                 Origin::default()
             }
-            K::ForRange { lo, hi, body, .. } => {
+            K::Range { lo, hi, .. } => {
+                let mut origin = self.expr(lo);
+                origin.join(&self.expr(hi));
+                origin
+            }
+            K::ForRangeValue { var, range, body } => {
+                self.expr(range);
+                let id = self.block_parent.len();
+                self.block_parent.push(Some(self.current_block));
+                self.current_block = id;
+                if let Some(var) = var {
+                    self.local_block[var.0] = Some(id);
+                }
+                self.block_body(body);
+                self.current_block = self.block_parent[id].expect("a nested block has a parent");
+                Origin::default()
+            }
+            K::ForRange { var, lo, hi, body, .. } => {
                 self.expr(lo);
                 self.expr(hi);
-                self.block(body);
+                let id = self.block_parent.len();
+                self.block_parent.push(Some(self.current_block));
+                self.current_block = id;
+                if let Some(var) = var {
+                    // The loop binding lives for one iteration of the body.
+                    self.local_block[var.0] = Some(id);
+                }
+                self.block_body(body);
+                self.current_block = self.block_parent[id].expect("a nested block has a parent");
                 Origin::default()
             }
-            K::ForArray { pat, array, body } => {
+            K::ForArray { pat, array, body }
+            | K::ForSlice { pat, slice: array, body }
+            | K::ForList { pat, list: array, body }
+            | K::ForMap { pat, map: array, body }
+            | K::ForChars { pat, string: array, body } => {
                 let origin = self.expr(array);
-                self.bind_pattern(pat, &origin);
-                self.block(body);
-                Origin::default()
-            }
-            K::ForSlice { pat, slice, body } => {
-                let origin = self.expr(slice);
-                self.bind_pattern(pat, &origin);
-                self.block(body);
-                Origin::default()
-            }
-            K::ForList { pat, list, body } => {
-                let origin = self.expr(list);
-                self.bind_pattern(pat, &origin);
-                self.block(body);
-                Origin::default()
-            }
-            K::ForMap { pat, map, body } => {
-                let origin = self.expr(map);
-                self.bind_pattern(pat, &origin);
-                self.block(body);
-                Origin::default()
-            }
-            K::ForChars { pat, string, body } => {
-                self.expr(string);
-                self.bind_pattern(pat, &Origin::default());
-                self.block(body);
+                let id = self.block_parent.len();
+                self.block_parent.push(Some(self.current_block));
+                self.current_block = id;
+                // The scrutinee's temporaries live until the end of the loop statement, so a view bound by the
+                // pattern is valid for the body even when the scrutinee was a temporary.
+                self.bind_pattern(pat, &origin, true, array.span);
+                self.block_body(body);
+                self.current_block = self.block_parent[id].expect("a nested block has a parent");
                 Origin::default()
             }
             K::Match(scrutinee, arms) => {
                 let origin = self.expr(scrutinee);
                 let mut result = Origin::default();
                 for arm in arms {
-                    self.bind_pattern(&arm.pat, &origin);
+                    let parent = self.current_block;
+                    let id = self.block_parent.len();
+                    self.block_parent.push(Some(parent));
+                    self.current_block = id;
+                    // An arm binding lives no longer than the match statement, whose temporaries are still
+                    // alive, so a temporary scrutinee is fine here.
+                    self.bind_pattern(&arm.pat, &origin, true, scrutinee.span);
                     if let Some(guard) = &arm.guard {
                         self.expr(guard);
                     }
                     result.join(&self.expr(&arm.body));
+                    self.current_block = parent;
                 }
                 result
             }
@@ -357,14 +534,22 @@ impl<'a> Analyzer<'a> {
                 Origin::default()
             }
             K::Assign(place, value) => {
-                self.expr(value);
-                self.expr(place);
+                let origin = self.expr(value);
+                if let K::Local(id) = &place.kind
+                    && self.f.locals[id.0].ty.is_second_class()
+                {
+                    // The target outlives this statement; its block decides how long its view may borrow.
+                    let target = self.local_block[id.0].unwrap_or(self.current_block);
+                    self.check_stored_view(&origin, target, false, value.span);
+                    self.bindings[id.0] = Some(origin);
+                }
+                self.place_origin(place);
                 Origin::default()
             }
             K::Binary(_, l, r) => {
                 self.expr(l);
                 self.expr(r);
-                Origin::default()
+                Origin::temp()
             }
             K::Break | K::Continue => Origin::default(),
         }
@@ -379,27 +564,37 @@ mod tests {
     fn a_summary_needs_exactly_one_parameter() {
         assert_eq!(Origin::param(0).summary(), Some(0));
         assert_eq!(Origin::param(2).summary(), Some(2));
-        assert_eq!(Origin::local().summary(), None);
+        assert_eq!(Origin::local(LocalId(3)).summary(), None);
+        assert_eq!(Origin::temp().summary(), None);
         assert_eq!(Origin::default().summary(), None);
         let mut two = Origin::param(0);
         two.join(&Origin::param(1));
         assert_eq!(two.summary(), None, "two parameters cannot be attributed");
         let mut mixed = Origin::param(0);
-        mixed.join(&Origin::local());
+        mixed.join(&Origin::local(LocalId(1)));
         assert_eq!(mixed.summary(), None, "a local cannot escape in a view");
     }
 
     #[test]
-    fn joining_unions_parameters_and_locals() {
+    fn joining_unions_parameters_locals_and_temporaries() {
         let mut a = Origin::param(0);
         a.join(&Origin::param(1));
         assert_eq!(a.params.iter().copied().collect::<Vec<_>>(), vec![0, 1]);
-        assert!(!a.local);
-        a.join(&Origin::local());
-        assert!(a.local);
-        // Joining a local origin into itself changes nothing.
-        let mut b = Origin::local();
-        b.join(&Origin::local());
-        assert!(b.params.is_empty() && b.local);
+        assert!(!a.escapes());
+        a.join(&Origin::local(LocalId(4)));
+        assert_eq!(a.locals.iter().copied().collect::<Vec<_>>(), vec![4]);
+        assert!(a.escapes());
+        let mut b = Origin::temp();
+        b.join(&Origin::temp());
+        assert!(b.temp);
+        assert!(Origin::param(0).summary().is_some());
+    }
+
+    #[test]
+    fn only_locals_and_temporaries_escape_a_return() {
+        assert!(!Origin::default().escapes(), "static data is fine");
+        assert!(!Origin::param(0).escapes());
+        assert!(Origin::local(LocalId(0)).escapes());
+        assert!(Origin::temp().escapes());
     }
 }

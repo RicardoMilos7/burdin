@@ -43,6 +43,7 @@ fn stub(item: &FnItem) -> tir::Function {
         moved: Vec::new(),
         ret_origin: None,
         symbolic: true,
+        exported: item.is_exported,
     }
 }
 
@@ -88,6 +89,7 @@ pub(crate) fn check_function(
         moved: Vec::new(),
         ret_origin: None,
         symbolic: false,
+        exported: item.is_exported,
     }
 }
 

@@ -1,7 +1,6 @@
 //! Assignment and the unary and binary operators.
 
 use super::{FnCx, error_expr, mk};
-use crate::generics::Bound;
 use crate::types::compatible;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -79,7 +78,31 @@ impl FnCx<'_> {
             }
             _ => {
                 let comparison = matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge);
+                if matches!(op, B::Add | B::Sub | B::Eq | B::Ne) && !is_untyped_literal(l) {
+                    let left = self.expr(l, if comparison { None } else { expect });
+                    if let Ty::CPtr(_) = left.ty.clone() {
+                        return self.pointer_binary(op, left, r, span);
+                    }
+                    let hint = if left.ty.is_numeric() {
+                        Some(left.ty.clone())
+                    } else {
+                        expect.filter(|t| t.is_numeric()).cloned()
+                    };
+                    let right = self.expr(r, hint.as_ref());
+                    return self.binary_checked(op, left, right, span, op_name);
+                }
                 let (l, r) = self.operands(l, r, if comparison { None } else { expect });
+                self.binary_checked(op, l, r, span, op_name)
+            }
+        }
+    }
+
+    /// The type checks of a binary operator whose two operands are already checked.
+    fn binary_checked(&mut self, op: ast::BinOp, l: tir::Expr, r: tir::Expr, span: Span, op_name: &str) -> tir::Expr {
+        use ast::BinOp as B;
+        let comparison = matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge);
+        {
+            {
                 let ty = if l.ty == Ty::Never { r.ty.clone() } else { l.ty.clone() };
                 if !compatible(&r.ty, &ty) {
                     self.diags.error(
@@ -92,11 +115,10 @@ impl FnCx<'_> {
                 let ok = match op {
                     B::Add | B::Sub | B::Mul | B::Div | B::Rem => ty.is_numeric(),
                     B::BitAnd | B::BitOr | B::BitXor => matches!(ty, Ty::Int(_) | Ty::Bool),
-                    B::Eq | B::Ne => self.globals.has_eq(&ty) || self.param_has(&ty, Bound::Eq),
+                    B::Eq | B::Ne => self.globals.has_eq_in(&ty, &self.bounds),
                     B::Lt | B::Gt | B::Le | B::Ge => {
                         matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char)
-                            || self.globals.has_ord(&ty)
-                            || self.param_has(&ty, Bound::Ord)
+                            || self.globals.has_ord_in(&ty, &self.bounds)
                     }
                     _ => unreachable!("handled above"),
                 };
@@ -115,9 +137,44 @@ impl FnCx<'_> {
                     self.diags.error(Code::TYPE_MISMATCH, span, format!("`{op_name}` cannot be applied to `{ty}`"));
                     return error_expr(span);
                 }
-                let result = if comparison { Ty::Bool } else { ty };
+                let result = if matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge) { Ty::Bool } else { ty };
                 mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), result, span)
             }
+        }
+    }
+
+    /// Pointer equality, element offsets, and pointer difference (issue #72). The operands are checked here
+    /// because pointer arithmetic is not the same-type arithmetic of the ordinary operators.
+    fn pointer_binary(&mut self, op: ast::BinOp, l: tir::Expr, r: &ast::Expr, span: Span) -> tir::Expr {
+        use ast::BinOp as B;
+        let ptr_ty = l.ty.clone();
+        let op_name = op_text(op);
+        match op {
+            B::Eq | B::Ne => {
+                let r = self.expr(r, Some(&ptr_ty));
+                let r = self.expect_ty(r, &ptr_ty);
+                mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), Ty::Bool, span)
+            }
+            B::Add | B::Sub => {
+                let r = self.expr(r, None);
+                match &r.ty {
+                    Ty::Int(_) => mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), ptr_ty, span),
+                    Ty::CPtr(_) if op == B::Sub => {
+                        let r = self.expect_ty(r, &ptr_ty);
+                        mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), Ty::Int(IntTy::Isize), span)
+                    }
+                    other if *other == Ty::Error => error_expr(span),
+                    other => {
+                        self.diags.error(
+                            Code::TYPE_MISMATCH,
+                            r.span,
+                            format!("`{op_name}` on `{ptr_ty}` needs an integer offset, found `{other}`"),
+                        );
+                        error_expr(span)
+                    }
+                }
+            }
+            _ => error_expr(span),
         }
     }
 
@@ -167,6 +224,10 @@ impl FnCx<'_> {
                         let inner = (**inner).clone();
                         mk(tir::ExprKind::Deref(Box::new(e)), inner, span)
                     }
+                    Ty::CPtr(inner) => {
+                        let inner = (**inner).clone();
+                        mk(tir::ExprKind::PtrDeref(Box::new(e)), inner, span)
+                    }
                     Ty::Ref { inner, .. } => {
                         let inner = (**inner).clone();
                         mk(tir::ExprKind::DerefRef(Box::new(e)), inner, span)
@@ -176,7 +237,9 @@ impl FnCx<'_> {
                         self.diags.error(
                             Code::TYPE_MISMATCH,
                             span,
-                            format!("cannot dereference a `{other}`; `*` applies to `Heap<T>` and references"),
+                            format!(
+                                "cannot dereference a `{other}`; `*` applies to `Heap<T>`, `CPtr<T>`, and references"
+                            ),
                         );
                         error_expr(span)
                     }
@@ -254,6 +317,10 @@ pub(super) fn can_cast(from: &Ty, to: &Ty) -> bool {
         (f, t) if scalar(f) && scalar(t) => true,
         (Ty::Bool | Ty::Char, Ty::Int(_)) => true,
         (Ty::Int(IntTy::U8), Ty::Char) => true,
+        // Raw pointers cast to and from integers, and to each other (issue #72).
+        (Ty::CPtr(_), Ty::CPtr(_) | Ty::Int(_)) | (Ty::Int(_), Ty::CPtr(_)) => true,
+        // The address of a place as a raw pointer, for C out-parameters.
+        (Ty::Ref { .. }, Ty::CPtr(_)) => true,
         _ => false,
     }
 }

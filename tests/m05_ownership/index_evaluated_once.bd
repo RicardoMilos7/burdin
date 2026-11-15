@@ -1,0 +1,23 @@
+//@ run
+//> index 1
+//> 2
+//> 2
+
+// An index expression is evaluated exactly once, when the place's address is computed. A tracked move uses a
+// constant index, so there is nothing to evaluate; a move through a runtime index is still E9000 (issue #59,
+// `memory-rules.md` MV6).
+
+struct Noisy {
+    id: i32
+}
+
+fn idx(): usize {
+    println("index 1")
+    1
+}
+
+fn main() {
+    let xs = [Noisy { id: 1 }, Noisy { id: 2 }]
+    println(xs[idx()].id.to_string())
+    println(xs[1].id.to_string())
+}

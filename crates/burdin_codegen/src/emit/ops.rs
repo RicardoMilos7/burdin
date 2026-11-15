@@ -5,7 +5,7 @@ use burdin_diag::Span;
 use burdin_tir::{self as tir, BinOp, IntTy, Ty};
 use inkwell::intrinsics::Intrinsic;
 use inkwell::values::{BasicValueEnum, IntValue};
-use inkwell::{FloatPredicate, IntPredicate};
+use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn binary(
@@ -21,8 +21,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let operand_ty = if l.ty == Ty::Never { &r.ty } else { &l.ty };
         let lv = self.expr_mode(l, Mode::Use)?;
         let rv = self.expr_mode(r, Mode::Use)?;
+        if let Ty::CPtr(_) = operand_ty {
+            return self.pointer_binary(op, lv, rv, l, r);
+        }
         if matches!(op, BinOp::Eq | BinOp::Ne)
-            && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) | Ty::Option(_))
+            && matches!(
+                operand_ty,
+                Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) | Ty::Option(_) | Ty::Result(..) | Ty::Range(..)
+            )
         {
             let lp = self.spill(lv, operand_ty)?;
             let rp = self.spill(rv, operand_ty)?;
@@ -44,7 +50,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return Ok(Some(v.into()));
         }
         if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge)
-            && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) | Ty::Str | Ty::String)
+            && matches!(
+                operand_ty,
+                Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) | Ty::Str | Ty::String | Ty::Range(..)
+            )
         {
             let lp = self.spill(lv, operand_ty)?;
             let rp = self.spill(rv, operand_ty)?;
@@ -123,6 +132,68 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
         };
         Ok(Some(v))
+    }
+
+    /// Pointer equality, pointer difference, and element offsets (`p + n`, `p - n`). None of these are checked:
+    /// the type checker keeps them inside `unsafe`.
+    fn pointer_binary(
+        &mut self,
+        op: BinOp,
+        lv: Option<BasicValueEnum<'ctx>>,
+        rv: Option<BasicValueEnum<'ctx>>,
+        l: &'a tir::Expr,
+        r: &'a tir::Expr,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Ty::CPtr(inner) = &l.ty else { return Ok(None) };
+        let lhs = self.need(lv, &l.ty).into_pointer_value();
+        match op {
+            BinOp::Eq | BinOp::Ne => {
+                let rhs = self.need(rv, &r.ty).into_pointer_value();
+                let a = self.builder.build_ptr_to_int(lhs, self.usize_ty, "").map_err(llvm_err)?;
+                let b = self.builder.build_ptr_to_int(rhs, self.usize_ty, "").map_err(llvm_err)?;
+                let pred = if op == BinOp::Eq { IntPredicate::EQ } else { IntPredicate::NE };
+                let v = self.builder.build_int_compare(pred, a, b, "").map_err(llvm_err)?;
+                Ok(Some(v.into()))
+            }
+            BinOp::Add | BinOp::Sub if matches!(r.ty, Ty::Int(_)) => {
+                let index = match op {
+                    BinOp::Add => self.need_int(rv, &r.ty),
+                    _ => {
+                        let v = self.need_int(rv, &r.ty);
+                        self.builder.build_int_neg(v, "").map_err(llvm_err)?
+                    }
+                };
+                let index = if let Ty::Int(i) = r.ty {
+                    if i.bits() < 64 {
+                        if i.signed() {
+                            self.builder.build_int_s_extend(index, self.usize_ty, "").map_err(llvm_err)?
+                        } else {
+                            self.builder.build_int_z_extend(index, self.usize_ty, "").map_err(llvm_err)?
+                        }
+                    } else {
+                        index
+                    }
+                } else {
+                    index
+                };
+                let elem = self.llvm_ty(inner).unwrap_or_else(|| self.cx.i8_type().into());
+                // SAFETY (LLVM): the result may point outside the allocation; computing the address is allowed.
+                let p = unsafe { self.builder.build_gep(elem, lhs, &[index], "") }.map_err(llvm_err)?;
+                Ok(Some(p.into()))
+            }
+            BinOp::Sub if matches!(r.ty, Ty::CPtr(_)) => {
+                let rhs = self.need(rv, &r.ty).into_pointer_value();
+                let int_ty = self.int_ty(IntTy::Isize);
+                let a = self.builder.build_ptr_to_int(lhs, int_ty, "").map_err(llvm_err)?;
+                let b = self.builder.build_ptr_to_int(rhs, int_ty, "").map_err(llvm_err)?;
+                let bytes = self.builder.build_int_sub(a, b, "").map_err(llvm_err)?;
+                // `p - q` counts elements, like C and `offset_from`; a zero-sized pointee counts as one byte.
+                let size = int_ty.const_int(self.layout_size(inner, false).max(1), false);
+                let v = self.builder.build_int_signed_div(bytes, size, "").map_err(llvm_err)?;
+                Ok(Some(v.into()))
+            }
+            _ => Ok(None),
+        }
     }
 
     pub(super) fn short_circuit(
@@ -318,6 +389,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             (Ty::Float(_), Ty::Float(_)) => {
                 b.build_float_cast(v.into_float_value(), target.into_float_type(), "").map_err(llvm_err)?.into()
+            }
+            (Ty::CPtr(_), Ty::CPtr(_)) | (Ty::Ref { .. }, Ty::CPtr(_)) => v,
+            (Ty::CPtr(_), Ty::Int(i)) => {
+                let int_ty = self.int_ty(*i);
+                b.build_ptr_to_int(v.into_pointer_value(), int_ty, "").map_err(llvm_err)?.into()
+            }
+            (Ty::Int(_), Ty::CPtr(_)) => {
+                let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+                b.build_int_to_ptr(v.into_int_value(), ptr_ty, "").map_err(llvm_err)?.into()
             }
             _ => return Err(format!("unsupported cast from `{from}` to `{to}`")),
         };

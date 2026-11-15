@@ -3,17 +3,21 @@
 //> hello
 //> hello
 
-// The C bridge words: `CString.from`, `as_ptr`, `CStr.to_string`, and `CPtr.null`.
+// The C bridge words: `CString.from`, `as_ptr`, `CStr.to_string`, and `CPtr.null`. A raw pointer is only
+// used inside `unsafe`.
 
 extern "C" {
     fn strlen(s: CPtr<CChar>): CSize
 }
 
 fn main() {
-    let null: CPtr<CChar> = CPtr.null()
     let text = CString.from("hello")
-    let len = unsafe { strlen(text.as_ptr()) }
-    println(len.to_string())
-    println(CStr.to_string(text.as_ptr()))
-    println(CStr.to_string(text.as_ptr()))
+    unsafe {
+        let null: CPtr<CChar> = CPtr.null()
+        let len = strlen(text.as_ptr())
+        println(len.to_string())
+        println(CStr.to_string(text.as_ptr()))
+        println(CStr.to_string(text.as_ptr()))
+        let _ = null
+    }
 }

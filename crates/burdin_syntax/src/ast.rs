@@ -56,11 +56,21 @@ pub enum Item {
     Impl(ImplBlock),
     Interface(InterfaceDecl),
     Extern(ExternBlock),
+    /// `extern "C" fn ... { ... }`: a Burdin function exported with the C ABI (issue #489).
+    ExternFn(ExternFnDecl),
 }
 
-/// `use a.b.c`, `use a.b as x`, or `use a.b.{c, d}`.
+#[derive(Debug)]
+pub struct ExternFnDecl {
+    pub abi: String,
+    pub abi_span: Span,
+    pub decl: FnDecl,
+}
+
+/// `use a.b.c`, `use a.b as x`, or `use a.b.{c, d}`. A `pub use` also re-exports what it imports.
 #[derive(Debug)]
 pub struct UseDecl {
+    pub is_pub: bool,
     /// The module or item path, without the imported names of a brace list.
     pub path: Vec<Ident>,
     /// The name after `as`.
@@ -92,6 +102,8 @@ pub struct StructDecl {
     pub is_priv: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
+    /// `repr(C)`: the struct has the C layout and crosses the C ABI by value.
+    pub repr_c: bool,
     pub derives: Vec<Type>,
     pub fields: Vec<FieldDecl>,
     pub span: Span,
@@ -182,6 +194,8 @@ pub struct FnDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
+    /// `...` after the named parameters of an `extern` declaration.
+    pub is_vararg: bool,
     pub ret: Option<Type>,
     pub where_clause: Vec<WherePred>,
     pub body: Block,

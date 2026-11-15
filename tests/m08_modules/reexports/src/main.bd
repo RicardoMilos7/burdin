@@ -1,0 +1,18 @@
+//@ run
+//> 42
+//> 7
+//> 5
+//> 7
+
+// A package exposes an internal module, its items, and a type with `pub use` (issues #79 and #81).
+
+use util.{answer, helper, Point}
+use util.inner
+
+fn main() {
+    println(answer().to_string())
+    println(helper().to_string())
+    println(inner.extra().to_string())
+    let p = Point { x: 3, y: 4 }
+    println((p.x + p.y).to_string())
+}

@@ -1,0 +1,17 @@
+//@ compile-fail
+// A view stored in a binding may not borrow from a temporary: the temporary is dropped at the end of the
+// statement, before the binding's later use.
+
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+fn main() {
+    let r = first_of(Pair { a: 1, b: 2 }) //~ E0123
+    println(r.to_string())
+}

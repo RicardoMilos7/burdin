@@ -1,0 +1,39 @@
+//@ run
+//> 1
+//> drop 1
+//> end of main
+//> drop 2
+
+// A match on `*h` may bind only some fields of the pointee: the bound field moves out and drops with its arm,
+// and the untouched field drops when the Heap does (issue #61).
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let h = Heap.new(Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } })
+    match *h {
+        Pair { a } => {
+            println(a.id.to_string())
+        }
+    }
+    println("end of main")
+}

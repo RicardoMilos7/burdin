@@ -129,8 +129,21 @@ struct Heap<T> {
 ```
 
 `Heap<T>` owns one allocation. `*h` on an owned `Heap<T>` moves the whole pointee out and frees the allocation;
-reading or assigning through `*h` does not move. Moving a field through `*h` is not supported in stage 0
-(`memory-rules.md`, MV6). Dropping a `Heap` drops the pointee and frees the allocation.
+reading or assigning through `*h` does not move. A field of the pointee (`(*h).a`) is a partial move tracked like a
+field of a local, and dropping the `Heap` drops the remaining fields and frees the allocation (`memory-rules.md`,
+MV6).
+
+## `Range<T>` and `RangeInclusive<T>`
+
+```
+let r: Range<i32> = 0..4
+let q: RangeInclusive<i32> = 0..=4
+```
+
+Both are built-in first-class types. `a..b` builds the exclusive form and `a..=b` the inclusive one; the endpoints
+must be integers, with the type coming from context or defaulting to `i32`. A range is `Copy`, `Clone`, `Eq`,
+`Ord`, and `Hash`, may be stored in a field or collection, and is iterable by `for i in r` (which evaluates `r`
+once). There are no other range members in stage 0.
 
 ## `Option<T>` and `Result<T, E>`
 
@@ -184,6 +197,7 @@ location and aborts (`memory-rules.md`, DR10); `unreachable()` panics with `unre
 ```
 struct CPtr<T>                       // a raw, Copy pointer; no drop
 fn CPtr.null(): CPtr<T>              // associated function; no arguments; type from the expected type
+fn CPtr.is_null(self): bool
 type CChar = i8
 type CSize = usize
 type CVoid = ()                      // only ever behind a CPtr
@@ -196,15 +210,30 @@ type CStr = CPtr<CChar>              // a std alias
 fn CStr.to_string(ptr: CStr): String // reads the NUL-terminated bytes; associated function
 ```
 
-`CPtr<T>` supports only `null`, assignment, copying, and passing to/from `extern "C"`; stage 0 has no pointer
-dereference, arithmetic, comparison, or null test (stage 1). `CString` owns its buffer, has `Drop`, and has no clone.
-`CStr.to_string` is the associated function of `CPtr<CChar>` and copies the bytes with `strlen`.
+`CPtr<T>` supports `null`, assignment, copying, `==`/`!=`, `.is_null()`, element offsets (`p + n`, `p - n`,
+`p - q` as a count of elements), dereference (`*p` as a place to read or write), and casts between `CPtr` types and
+integers. Creating, holding, reading, passing, or moving a `CPtr` value requires an `unsafe` context (E0161,
+`memory-rules.md` US); a field of a `repr(C)` struct behind a `CPtr` is read and written through `*p` and field
+selection. A `CPtr` does not distinguish `const`: writing through the pointer is an `unsafe` operation and is allowed
+whatever the parameter convention that produced the pointer. Stage 0 has no function-pointer types and no `union`
+declaration: a C function pointer can only be stored and passed as `CPtr<CVoid>` until stage 1 adds a callable type
+for the bindgen target, and a union is handled through a `repr(C)` struct over the same bytes or a `CPtr<u8>`.
+`CString` owns its buffer, has `Drop`, and `clone` deep-copies the NUL-terminated buffer.
 
 `extern "C" { fn name(params): ret }` declares a C function. Parameters are passed by value and may be integers,
-floats, or `CPtr<T>`; the result may be one of those or unit. `mut`, `own`, `self`, generics, other ABIs, and a
-`main` or `burdin_*` symbol are rejected (E0162 for a type or convention, E0001 for the syntax of an unsupported
-ABI). A symbol is declared once: a second declaration with the same signature reuses it, a different signature is an
-error. Calling an `extern` function needs `unsafe` (E0161); holding or moving a `CPtr` does not.
+floats, or `CPtr<T>`; the result may be one of those or unit. Aggregates cross the ABI through `CPtr<T>` only: a
+struct declared `repr(C)` has C field order and alignment (`Type.size()` and `Type.align()` report them), but passing
+or returning one by value is E0162 because the platform by-value coercions are not implemented. A Burdin `bool` is a
+one-bit value while C `_Bool` is a one-byte integer, so use `u8` (0 or 1); C `char` is `CChar`. `mut`, `own`, `self`,
+generics, other ABIs, and a `main` or `burdin_*` symbol are rejected (E0162 for a type or convention, E0001 for the
+syntax of an unsupported ABI). A symbol is declared once: a second declaration with the same signature reuses it, a
+different signature is an error. The extra arguments of a variadic declaration (`...`) are each checked against the
+C ABI; inside the body they are passed as written.
+
+`extern "C" fn name(params): ret { ... }` exports a Burdin function under its plain C symbol, so C code (or another
+module that declares it `extern "C"`) can call it. The signature follows the same rules as a declaration: ABI "C",
+`own` parameters, no generics, no `...`, no receiver, and only the C-ABI types above. A panic does not unwind across
+the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 
 ## Tests
 
@@ -218,5 +247,5 @@ error. Calling an `extern` function needs `unsafe` (E0161); holding or moving a 
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*` |
-| C bridge | `m08_modules/extern_libc`, `cstr_roundtrip`, `m11_llvm/llvm_return_42` |
-| Rejected names, arities, and C ABI types | `m09_stdlib/unknown_stdlib_names` (E0002, E0004), `m08_modules/cptr_null_arguments` (E0004), `extern_signature` (E0162) |
+| C bridge | `m08_modules/extern_libc`, `cstr_roundtrip`, `cptr_operations`, `cptr_null_arguments`, `c_out_parameter`, `c_abi_structs`, `cstring_clone`, `export_c_abi`, `m11_llvm/llvm_return_42` |
+| Rejected names, arities, and C ABI types | `m09_stdlib/unknown_stdlib_names` (E0002, E0004), `m08_modules/cptr_null_arguments` (E0004), `extern_signature` (E0162), `export_c_abi_invalid` (E0162) |

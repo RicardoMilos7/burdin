@@ -1,0 +1,24 @@
+//@ run
+//> 1
+//> 1
+// A view of an earlier local (in the same block, or in an enclosing one) is valid for as long as the binding.
+
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+fn main() {
+    let p = Pair { a: 1, b: 2 }
+    let r = first_of(p)
+    println(r.to_string())
+
+    {
+        let inner = first_of(p)
+        println(inner.to_string())
+    }
+}

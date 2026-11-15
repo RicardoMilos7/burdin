@@ -6,6 +6,7 @@ use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_tir::{self as tir, LocalKind, Pat, Ty};
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
+use inkwell::{AddressSpace, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn block(&mut self, b: &'a tir::Block, tail_mode: Mode) -> GenResult<Option<BasicValueEnum<'ctx>>> {
@@ -105,18 +106,28 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// Drops the value at `local` + `path`, honoring the drop flags of every tracked path inside it (DR7).
     pub(super) fn drop_at(&mut self, id: tir::LocalId, path: &[usize], ty: &Ty) -> GenResult<()> {
         let Some(addr) = self.local_address(id, path)? else { return Ok(()) };
+        self.drop_at_address(id, path, ty, addr)
+    }
+
+    /// Drops the value of type `ty` at `addr`, which is `local` + `path`; the flags of the tracked parts below
+    /// the path decide which parts are still initialized.
+    pub(super) fn drop_at_address(
+        &mut self,
+        id: tir::LocalId,
+        path: &[usize],
+        ty: &Ty,
+        addr: PointerValue<'ctx>,
+    ) -> GenResult<()> {
         let flag = self.flag_for(id, path);
-        let inner = self.has_inner_flag(id, path);
-        if !inner {
+        if !self.has_inner_flag(id, path) {
             return match flag {
                 None => self.drop_value(addr, ty),
                 Some(flag) => {
                     let alive = self.builder.build_load(self.cx.bool_type(), flag, "init").map_err(llvm_err)?;
-                    self.if_then(alive.into_int_value(), "drop", |cg| cg.drop_value(addr, ty))
+                    self.if_then(alive.into_int_value(), "drop", move |cg| cg.drop_value(addr, ty))
                 }
             };
         }
-        // Some part was moved on some path: drop the parts that are still initialized, field by field.
         let run = match flag {
             None => None,
             Some(flag) => {
@@ -126,11 +137,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let emit = |cg: &mut Self| -> GenResult<()> {
             match ty {
                 Ty::Struct(_) | Ty::Tuple(_) => {
+                    let t = cg.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
                     for (i, fty) in cg.field_tys(ty).iter().enumerate() {
                         let mut child = path.to_vec();
                         child.push(i);
                         if cg.needs_drop(fty) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some() {
-                            cg.drop_at(id, &child, fty)?;
+                            let p = cg.builder.build_struct_gep(t, addr, i as u32, "").map_err(llvm_err)?;
+                            cg.drop_at_address(id, &child, fty, p)?;
                         }
                     }
                     Ok(())
@@ -194,7 +207,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let tag =
                         cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
                     cg.if_then(tag, "result.drop.ok", |cg| {
-                        if cg.needs_drop(&ok) {
+                        if cg.llvm_ty(&ok).is_some() {
                             let payload = cg.builder.build_struct_gep(rt, addr, 1, "").map_err(llvm_err)?;
                             let mut child = path.to_vec();
                             child.push(0);
@@ -207,7 +220,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
                     let is_err = cg.builder.build_not(tag, "").map_err(llvm_err)?;
                     cg.if_then(is_err, "result.drop.err", |cg| {
-                        if cg.needs_drop(&err) {
+                        if cg.llvm_ty(&err).is_some() {
                             let payload = cg.builder.build_struct_gep(rt, addr, 2, "").map_err(llvm_err)?;
                             let mut child = path.to_vec();
                             child.push(1);
@@ -216,67 +229,104 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         Ok(())
                     })
                 }
+                Ty::Array(elem, n) => {
+                    let n = *n;
+                    let elem = (**elem).clone();
+                    let Some(array_t) = cg.llvm_ty(ty) else { return Ok(()) };
+                    for i in 0..n {
+                        let mut child = path.to_vec();
+                        child.push(i as usize);
+                        if cg.needs_drop(&elem) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some() {
+                            let zero = cg.usize_ty.const_int(0, false);
+                            let index = cg.usize_ty.const_int(i, false);
+                            // SAFETY (LLVM): i < n.
+                            let p = unsafe { cg.builder.build_in_bounds_gep(array_t, addr, &[zero, index], "") }
+                                .map_err(llvm_err)?;
+                            cg.drop_at_address(id, &child, &elem, p)?;
+                        }
+                    }
+                    Ok(())
+                }
+                Ty::List(elem) => {
+                    let elem = (**elem).clone();
+                    let ptr_ty = cg.cx.ptr_type(AddressSpace::default());
+                    let ptr_field = cg.builder.build_struct_gep(cg.string_ty, addr, 0, "").map_err(llvm_err)?;
+                    let len_field = cg.builder.build_struct_gep(cg.string_ty, addr, 1, "").map_err(llvm_err)?;
+                    let data = cg.builder.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+                    let len = cg.builder.build_load(cg.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+                    if let Some(elem_t) = cg.llvm_ty(&elem) {
+                        // The indices whose elements have a drop flag or a flagged field: the other elements
+                        // are still wholly initialized and drop unconditionally.
+                        let mut flagged: Vec<usize> = cg
+                            .flags
+                            .iter()
+                            .filter(|(p, _)| p.local == id && p.path.len() > path.len() && p.path.starts_with(path))
+                            .filter_map(|(p, _)| p.path.get(path.len()).copied())
+                            .filter(|step| *step != tir::MOVED_DEREF)
+                            .collect();
+                        flagged.sort_unstable();
+                        flagged.dedup();
+                        let index = cg.alloca(cg.usize_ty.into(), "drop.i")?;
+                        cg.builder.build_store(index, cg.usize_ty.const_zero()).map_err(llvm_err)?;
+                        let header = cg.new_block("list.drop.cond");
+                        let body = cg.new_block("list.drop.body");
+                        let latch = cg.new_block("list.drop.next");
+                        let end = cg.new_block("list.drop.end");
+                        cg.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                        cg.builder.position_at_end(header);
+                        let i = cg.builder.build_load(cg.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                        let go = cg.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+                        cg.builder.build_conditional_branch(go, body, end).map_err(llvm_err)?;
+                        cg.builder.position_at_end(body);
+                        // SAFETY (LLVM): i < len.
+                        let p = unsafe { cg.builder.build_in_bounds_gep(elem_t, data, &[i], "") }.map_err(llvm_err)?;
+                        // Keep index order: one branch per statically flagged element inside the loop.
+                        let done = cg.new_block("list.drop.done");
+                        for step in &flagged {
+                            let hit = cg.new_block("list.drop.moved");
+                            let next = cg.new_block("list.drop.check");
+                            let want = cg.usize_ty.const_int(*step as u64, false);
+                            let is = cg.builder.build_int_compare(IntPredicate::EQ, i, want, "").map_err(llvm_err)?;
+                            cg.builder.build_conditional_branch(is, hit, next).map_err(llvm_err)?;
+                            cg.builder.position_at_end(hit);
+                            let mut child = path.to_vec();
+                            child.push(*step);
+                            cg.drop_at(id, &child, &elem)?;
+                            cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+                            cg.builder.position_at_end(next);
+                        }
+                        cg.drop_value(p, &elem)?;
+                        cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+                        cg.builder.position_at_end(done);
+                        cg.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
+                        cg.builder.position_at_end(latch);
+                        let i = cg.builder.build_load(cg.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                        let next =
+                            cg.builder.build_int_add(i, cg.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                        cg.builder.build_store(index, next).map_err(llvm_err)?;
+                        cg.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                        cg.builder.position_at_end(end);
+                    }
+                    cg.builder.build_call(cg.rt.free, &[data.into()], "").map_err(llvm_err)?;
+                    Ok(())
+                }
+                Ty::Heap(inner) => {
+                    let ptr_ty = cg.cx.ptr_type(AddressSpace::default());
+                    let p = cg.builder.build_load(ptr_ty, addr, "heap").map_err(llvm_err)?.into_pointer_value();
+                    let mut child = path.to_vec();
+                    child.push(tir::MOVED_DEREF);
+                    if cg.llvm_ty(inner).is_some() {
+                        cg.drop_at_address(id, &child, inner, p)?;
+                    }
+                    cg.builder.build_call(cg.rt.free, &[p.into()], "").map_err(llvm_err)?;
+                    Ok(())
+                }
                 _ => cg.drop_value(addr, ty),
             }
         };
         match run {
             None => emit(self),
             Some(cond) => self.if_then(cond, "drop", emit),
-        }
-    }
-
-    /// Like [`Self::drop_at`], but the address of the value is already known.
-    pub(super) fn drop_at_address(
-        &mut self,
-        id: tir::LocalId,
-        path: &[usize],
-        ty: &Ty,
-        addr: PointerValue<'ctx>,
-    ) -> GenResult<()> {
-        let flag = self.flag_for(id, path);
-        if !self.has_inner_flag(id, path) {
-            return match flag {
-                None => self.drop_value(addr, ty),
-                Some(flag) => {
-                    let alive = self.builder.build_load(self.cx.bool_type(), flag, "init").map_err(llvm_err)?;
-                    self.if_then(alive.into_int_value(), "drop", move |cg| cg.drop_value(addr, ty))
-                }
-            };
-        }
-        // Nested variants of an enum payload: reuse the local walk by addressing the value directly.
-        match ty {
-            Ty::Struct(_) | Ty::Tuple(_) => {
-                for (i, fty) in self.field_tys(ty).iter().enumerate() {
-                    let mut child = path.to_vec();
-                    child.push(i);
-                    if self.needs_drop(fty) || self.has_inner_flag(id, &child) || self.flag_for(id, &child).is_some() {
-                        let t = self.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
-                        let p = self.builder.build_struct_gep(t, addr, i as u32, "").map_err(llvm_err)?;
-                        self.drop_at_address(id, &child, fty, p)?;
-                    }
-                }
-                Ok(())
-            }
-            Ty::Option(inner_ty) => {
-                let ot = self.option_ty(inner_ty);
-                let tag_ptr = self.builder.build_struct_gep(ot, addr, 0, "").map_err(llvm_err)?;
-                let tag = self
-                    .builder
-                    .build_load(self.cx.bool_type(), tag_ptr, "is_some")
-                    .map_err(llvm_err)?
-                    .into_int_value();
-                let inner_ty = inner_ty.clone();
-                self.if_then(tag, "option.drop", move |cg| {
-                    if cg.llvm_ty(&inner_ty).is_some() {
-                        let payload = cg.builder.build_struct_gep(ot, addr, 1, "").map_err(llvm_err)?;
-                        let mut child = path.to_vec();
-                        child.push(0);
-                        cg.drop_at_address(id, &child, &inner_ty, payload)?;
-                    }
-                    Ok(())
-                })
-            }
-            _ => self.drop_value(addr, ty),
         }
     }
 

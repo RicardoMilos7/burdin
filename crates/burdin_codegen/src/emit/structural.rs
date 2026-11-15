@@ -33,6 +33,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 Ok(acc)
             }
+            Ty::Range(inner, _) => {
+                let st = t.into_struct_type();
+                let a = self.builder.build_struct_gep(st, l, 0, "").map_err(llvm_err)?;
+                let b = self.builder.build_struct_gep(st, r, 0, "").map_err(llvm_err)?;
+                let first = self.eq_at(a, b, inner)?;
+                let a = self.builder.build_struct_gep(st, l, 1, "").map_err(llvm_err)?;
+                let b = self.builder.build_struct_gep(st, r, 1, "").map_err(llvm_err)?;
+                let second = self.eq_at(a, b, inner)?;
+                self.builder.build_and(first, second, "").map_err(llvm_err)
+            }
             Ty::Option(inner) => {
                 let ot = t.into_struct_type();
                 let a_tag = self.builder.build_struct_gep(ot, l, 0, "").map_err(llvm_err)?;
@@ -187,6 +197,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.first_difference(&orders)
             }
+            Ty::Range(inner, _) => {
+                let st = t.into_struct_type();
+                let mut orders = Vec::new();
+                for i in 0..2u32 {
+                    let a = self.builder.build_struct_gep(st, l, i, "").map_err(llvm_err)?;
+                    let b = self.builder.build_struct_gep(st, r, i, "").map_err(llvm_err)?;
+                    orders.push(self.cmp_at(a, b, inner)?);
+                }
+                self.first_difference(&orders)
+            }
             Ty::Str | Ty::String => {
                 let (a_ptr, a_len) = self.parts_at(l, ty)?;
                 let (b_ptr, b_len) = self.parts_at(r, ty)?;
@@ -276,6 +296,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 for (i, fty) in self.field_tys(ty).iter().enumerate() {
                     let f = self.builder.build_struct_gep(st, ptr, i as u32, "").map_err(llvm_err)?;
                     acc = self.hash_at(f, fty, acc)?;
+                }
+                Ok(acc)
+            }
+            Ty::Range(inner, _) => {
+                let st = t.into_struct_type();
+                let mut acc = acc;
+                for i in 0..2u32 {
+                    let f = self.builder.build_struct_gep(st, ptr, i, "").map_err(llvm_err)?;
+                    acc = self.hash_at(f, inner, acc)?;
                 }
                 Ok(acc)
             }

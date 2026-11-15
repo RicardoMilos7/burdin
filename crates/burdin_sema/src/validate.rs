@@ -31,6 +31,130 @@ pub(crate) fn check_impl_requirements(globals: &Globals, diags: &mut Diagnostics
     }
 }
 
+/// E0003: a method in a `Type: Interface` implementation must have the interface method's signature: the same
+/// receiver and conventions, the same parameter types, and the same return type (issue #68).
+pub(crate) fn check_impl_signatures(globals: &Globals, diags: &mut Diagnostics) {
+    for info in &globals.impls {
+        let (is_enum, id) = match info.head {
+            Head::Plain(key) => key,
+            Head::Generic(template) => globals.generic_adts[template].identity,
+        };
+        let key = (is_enum, id);
+        let self_ty =
+            if is_enum { Ty::Enum(globals.enum_refs[id].clone()) } else { Ty::Struct(globals.struct_refs[id].clone()) };
+        let env: Vec<(String, Ty)> = vec![("Self".to_string(), self_ty)];
+        for expected in &globals.interfaces[info.iface].methods {
+            let Some(&func) = globals.methods.get(&(key, expected.name.clone())) else { continue };
+            let Some(&span) = globals.method_spans.get(&(key, expected.name.clone())) else { continue };
+            let got = &globals.sigs[func.0];
+            let want_params: Vec<burdin_tir::ParamSig> =
+                expected.sig.params.iter().map(|p| globals.subst_param(p, &env)).collect();
+            let want_ret = globals.subst_ty(&expected.sig.ret, &env);
+            let mut what = Vec::new();
+            if got.has_self != expected.sig.has_self {
+                what.push(if expected.sig.has_self { "it needs a receiver" } else { "it must not have a receiver" });
+            }
+            if got.params.len() != want_params.len() {
+                what.push("it has a different number of parameters");
+            }
+            for (i, (g, w)) in got.params.iter().zip(&want_params).enumerate() {
+                if g.ty != w.ty {
+                    what.push(if i == 0 && got.has_self {
+                        "the receiver type differs"
+                    } else {
+                        "a parameter type differs"
+                    });
+                } else if g.by_ref != w.by_ref
+                    || g.own != w.own
+                    || g.mut_param != w.mut_param
+                    || g.exclusive != w.exclusive
+                {
+                    what.push(if i == 0 && got.has_self {
+                        "the receiver convention differs"
+                    } else {
+                        "a parameter convention differs"
+                    });
+                }
+            }
+            if got.ret != want_ret {
+                what.push("the return type differs");
+            }
+            if globals.fn_unsafe[func.0] != expected.is_unsafe {
+                what.push("`unsafe` differs");
+            }
+            if !what.is_empty() {
+                what.dedup();
+                diags.error(
+                    Code::TYPE_MISMATCH,
+                    span,
+                    format!(
+                        "method `{}` does not match the signature of `{}`: {}",
+                        expected.name,
+                        globals.interfaces[info.iface].name,
+                        what.join(", ")
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// E0150: a public function's signature and a public struct's fields may not name a package-private type; another
+/// package could otherwise be handed a value whose type it cannot name (issue #78).
+pub(crate) fn check_public_signatures(
+    globals: &Globals,
+    items: &[crate::session::FnItem<'_>],
+    diags: &mut Diagnostics,
+) {
+    for (i, item) in items.iter().enumerate() {
+        if item.decl.is_priv {
+            continue;
+        }
+        let Some(sig) = globals.sigs.get(i) else { continue };
+        let private =
+            sig.params.iter().find_map(|p| globals.private_adt(&p.ty)).or_else(|| globals.private_adt(&sig.ret));
+        if let Some(name) = private {
+            diags.error(
+                Code::PRIVATE_ITEM,
+                item.decl.name.span,
+                format!("`{name}` is `priv`, but this public signature uses it"),
+            );
+        }
+    }
+    for (id, s) in globals.structs.iter().enumerate() {
+        if globals.adt_priv.get(&(false, id)).copied().unwrap_or(false) {
+            continue;
+        }
+        for f in &s.fields {
+            if f.is_priv {
+                continue;
+            }
+            if let Some(name) = globals.private_adt(&f.ty) {
+                diags.error(Code::PRIVATE_ITEM, f.span, format!("`{name}` is `priv`, but this public field uses it"));
+            }
+        }
+    }
+    for (id, e) in globals.enums.iter().enumerate() {
+        if globals.adt_priv.get(&(true, id)).copied().unwrap_or(false) {
+            continue;
+        }
+        for v in &e.variants {
+            for f in &v.fields {
+                if f.is_priv {
+                    continue;
+                }
+                if let Some(name) = globals.private_adt(&f.ty) {
+                    diags.error(
+                        Code::PRIVATE_ITEM,
+                        f.span,
+                        format!("`{name}` is `priv`, but this public variant field uses it"),
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// A struct or enum that contains itself by value would have infinite size.
 pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut Diagnostics) {
     fn contained(ty: &Ty, out: &mut Vec<(bool, usize)>) {

@@ -1,0 +1,23 @@
+//@ run
+//> 7
+
+// An `unsafe fn` body is an unsafe context, so raw-pointer work needs no nested `unsafe` block; calling the
+// function still requires one (issue #85).
+
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+unsafe fn write_and_read(p: CPtr<i32>, value: i32): i32 {
+    *p = value
+    *p
+}
+
+fn main() {
+    unsafe {
+        let p = malloc(4) as CPtr<i32>
+        println(write_and_read(p, 7).to_string())
+        free(p as CPtr<CVoid>)
+    }
+}

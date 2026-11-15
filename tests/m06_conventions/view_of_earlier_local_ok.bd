@@ -1,0 +1,14 @@
+//@ run
+//> 7
+//> abc
+// A reference or a slice of an earlier local is valid; the source outlives the view.
+
+fn main() {
+    let n = 7
+    let r = &n
+    println(r.to_string())
+
+    let s = String.from("abcdef")
+    let t = s[0..3]
+    println(t.to_string())
+}

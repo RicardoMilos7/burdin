@@ -1,0 +1,12 @@
+//@ run
+//> 42
+
+// The C caller of `defs.bd`'s exported function is another module that declares it `extern "C"`.
+
+extern "C" {
+    fn add_one(x: i32): i32
+}
+
+fn main() {
+    println(unsafe { add_one(41) }.to_string())
+}

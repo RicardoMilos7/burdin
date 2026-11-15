@@ -1,0 +1,16 @@
+//@ compile-fail
+// A generic instance with a view argument is second-class, so it cannot be stored in a field (SC3, issue #67).
+
+struct Wrapper<T> {
+    value: T
+}
+
+struct Outer {
+    w: Wrapper<&i32> //~ E0120
+}
+
+fn main() {
+    let n = 3
+    let w = Wrapper { value: &n }
+    println(w.value.to_string())
+}

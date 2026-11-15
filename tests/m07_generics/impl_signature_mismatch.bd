@@ -1,0 +1,32 @@
+//@ compile-fail
+// An implementation's method must have the interface method's parameter and receiver conventions,
+// parameter types, and return type (issue #68).
+
+interface Describe {
+    fn describe(self): String
+}
+
+struct Gadget {
+    n: i32
+}
+
+Gadget: Describe {
+    fn describe(self): i32 { //~ E0003
+        self.n
+    }
+}
+
+interface Bump {
+    fn bump(mut self, delta: i32)
+}
+
+struct Counter {
+    n: i32
+}
+
+Counter: Bump {
+    fn bump(self, delta: i32) { //~ E0003
+    }
+}
+
+fn main() {}

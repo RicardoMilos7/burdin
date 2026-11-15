@@ -1,0 +1,14 @@
+//@ run
+//> 3
+
+// A generic instance with a view argument is allowed as a local; its arguments make it second-class (SC3).
+
+struct Wrapper<T> {
+    value: T
+}
+
+fn main() {
+    let n = 3
+    let w = Wrapper { value: &n }
+    println(w.value.to_string())
+}

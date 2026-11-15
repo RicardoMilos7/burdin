@@ -1,0 +1,5 @@
+// A panic in an exported function aborts the process; it never unwinds into the C caller (issue #489).
+
+extern "C" fn boom() {
+    panic("boom")
+}

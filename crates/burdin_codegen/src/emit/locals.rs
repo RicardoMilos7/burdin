@@ -1,6 +1,6 @@
 //! Drop flags and the addresses of locals and their fields.
 
-use super::place::is_direct_place;
+use super::place::{constant_index, is_tracked_place};
 use super::{Codegen, GenResult, llvm_err};
 use burdin_tir::{self as tir, Ty};
 use inkwell::values::PointerValue;
@@ -65,27 +65,73 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     ty = (**inner).clone();
                     i += 1;
                 }
+                Ty::Array(elem, _) => {
+                    let array_t = self.llvm_ty(&ty).expect("an array has a type");
+                    let index = path[i];
+                    let zero = self.usize_ty.const_int(0, false);
+                    let index = self.usize_ty.const_int(index as u64, false);
+                    // SAFETY (LLVM): the move checker only records constant, non-negative indices.
+                    ptr = unsafe { self.builder.build_in_bounds_gep(array_t, ptr, &[zero, index], "") }
+                        .map_err(llvm_err)?;
+                    ty = (**elem).clone();
+                    i += 1;
+                }
+                Ty::List(elem) => {
+                    let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
+                    let data_field =
+                        self.builder.build_struct_gep(self.string_ty, ptr, 0, "list.ptr").map_err(llvm_err)?;
+                    let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
+                    let Some(elem_t) = self.llvm_ty(elem) else { return Ok(None) };
+                    let index = self.usize_ty.const_int(path[i] as u64, false);
+                    // SAFETY (LLVM): the move checker only records constant, non-negative indices.
+                    ptr = unsafe { self.builder.build_in_bounds_gep(elem_t, data, &[index], "") }.map_err(llvm_err)?;
+                    ty = (**elem).clone();
+                    i += 1;
+                }
+                Ty::Heap(inner) if path[i] == tir::MOVED_DEREF => {
+                    let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
+                    ptr = self.builder.build_load(ptr_ty, ptr, "heap").map_err(llvm_err)?.into_pointer_value();
+                    ty = (**inner).clone();
+                    i += 1;
+                }
                 _ => return Ok(None),
             }
         }
         Ok(Some(ptr))
     }
 
-    /// The local and field path of a place expression, if it starts at a local. As in the move checker, a field
-    /// selection beyond an index or a `Heap` dereference does not extend the path: neither is a place.
+    /// The local and field path of a place expression, if it starts at a local. As in the move checker, the path
+    /// follows fields, constant array and `List` indices, and `Heap` pointee fields; a runtime index or a slice
+    /// element cuts it.
     pub(super) fn place_path(&self, e: &tir::Expr) -> Option<(tir::LocalId, Vec<usize>)> {
+        use tir::ExprKind as K;
         match &e.kind {
-            tir::ExprKind::Local(id) => Some((*id, Vec::new())),
-            tir::ExprKind::Field(base, i) => {
+            K::Local(id) => Some((*id, Vec::new())),
+            K::Field(base, i) => {
                 let (root, mut path) = self.place_path(base)?;
-                if is_direct_place(base) {
+                if is_tracked_place(base) {
                     path.push(*i);
                 }
                 Some((root, path))
             }
-            tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) | tir::ExprKind::DerefRef(base) => {
-                self.place_path(base)
+            K::Index(base, index) => {
+                let (root, mut path) = self.place_path(base)?;
+                if is_tracked_place(base)
+                    && matches!(base.ty, Ty::Array(..) | Ty::List(_))
+                    && let Some(index) = constant_index(index)
+                {
+                    path.push(index);
+                }
+                Some((root, path))
             }
+            K::Deref(base) => {
+                let (root, mut path) = self.place_path(base)?;
+                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)) {
+                    path.push(tir::MOVED_DEREF);
+                }
+                Some((root, path))
+            }
+            K::DerefRef(base) => self.place_path(base),
             _ => None,
         }
     }

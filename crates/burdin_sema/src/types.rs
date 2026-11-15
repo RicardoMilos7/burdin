@@ -184,6 +184,7 @@ impl Globals {
             return Ty::Error;
         }
         let args: Vec<Ty> = args.iter().map(|a| self.resolve_type_in(a, self_ty, subst, module, diags)).collect();
+        self.check_adt_bounds(g, &args, span, diags);
         self.adt_instance_ty(g, args)
     }
 
@@ -238,6 +239,18 @@ impl Globals {
                 Ty::Heap(Box::new(inner))
             }
             ("CPtr", 1) => Ty::CPtr(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
+            ("Range", 1) | ("RangeInclusive", 1) => {
+                let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                if !matches!(inner, Ty::Int(_) | Ty::Error) {
+                    diags.error(
+                        Code::TYPE_MISMATCH,
+                        args[0].span,
+                        format!("a range's endpoints must be integers, so `{inner}` cannot be a range element"),
+                    );
+                    return Some(Ty::Error);
+                }
+                Ty::Range(Box::new(inner), name == "RangeInclusive")
+            }
             ("List", 1) => {
                 let elem = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
                 check_storable(&elem, args[0].span, "a `List` element", diags);
@@ -256,23 +269,31 @@ impl Globals {
 
     /// Whether `==` and `!=` apply to values of `ty`.
     pub(crate) fn has_eq(&self, ty: &Ty) -> bool {
+        self.has_eq_in(ty, &[])
+    }
+
+    /// Whether `==` and `!=` apply to values of `ty`, with the bounds of the type parameters in scope. A derived
+    /// `Eq` on `Wrapper<T>` holds when the fields do, which is what a `T: Eq` bound provides (issue #69).
+    pub(crate) fn has_eq_in(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
             // Text compares by value; `String` and `str` compare byte for byte.
             Ty::Str | Ty::String => true,
-            Ty::Option(t) => self.has_eq(t),
-            Ty::Result(t, e) => self.has_eq(t) && self.has_eq(e),
-            Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq(t)),
+            Ty::Param(name) => self.bound_in_env(name, crate::generics::Bound::Eq, env),
+            Ty::Option(t) => self.has_eq_in(t, env),
+            Ty::Range(t, _) => self.has_eq_in(t, env),
+            Ty::Result(t, e) => self.has_eq_in(t, env) && self.has_eq_in(e, env),
+            Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
-                s.derives.eq && s.fields.iter().all(|f| self.has_eq(&f.ty))
+                s.derives.eq && s.fields.iter().all(|f| self.has_eq_in(&f.ty, env))
             }
             Ty::Enum(a) => {
                 let e = &self.enums[a.id];
-                e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq(&f.ty)))
+                e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq_in(&f.ty, env)))
             }
             Ty::Array(..) | Ty::Heap(_) | Ty::CPtr(_) | Ty::CString | Ty::List(_) | Ty::Map(..) | Ty::Chars => false,
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) => false,
+            Ty::Ref { .. } | Ty::Slice(_) => false,
         }
     }
 
