@@ -1,0 +1,5 @@
+[package]
+name = "app"
+
+[dependencies]
+util = { path = "util" }

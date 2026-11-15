@@ -1,0 +1,30 @@
+fn main() {}
+
+// The tests run in separate directories, so they coordinate through a file next to the test binary. The binary is
+// named after the package (`par`, or `par.exe` on Windows), and `env.args()[0]` is its path.
+fn shared(name: str): String {
+    let args = env.args()
+    let exe = args[0].as_str()
+    let mut cut: usize = 3
+    if exe.len() >= 4 && exe[exe.len() - 4..exe.len()] == ".exe" {
+        cut = 7
+    }
+    let mut path = String.from(exe[0..exe.len() - cut])
+    path.push_str(name)
+    path
+}
+
+// `waiter` is declared first, so a sequential run starts it before `creator` and it times out. With two workers both
+// start, and `creator` writes the file the waiter is waiting for.
+test "waiter" [timeout(2000)] {
+    let target = shared("ready.txt")
+    let mut ready = false
+    while !ready {
+        ready = read_to_string(target).is_ok()
+    }
+    assert(ready)?
+}
+
+test "creator" {
+    write_file(shared("ready.txt"), "go")?
+}

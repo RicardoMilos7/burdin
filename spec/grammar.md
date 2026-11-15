@@ -27,7 +27,9 @@ mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  whe
 Reserved for stage 1, rejected as identifiers now: `any  comptime  derive  impl`.
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
-by a string), `derives` (after a struct or enum name), `requires` (after an interface name).
+by a string), `derives` (after a struct or enum name), `requires` (after an interface name). The attribute names of a
+test item (`ignore`, `timeout`, `should_panic`, `should_fail`) are contextual only inside the `[...]` after the test
+name; the checker rejects an unknown name with E0170 ([`test-runner.md`](test-runner.md)).
 
 **Integer literals**: decimal `123`, hex `0xFF`, octal `0o17`, binary `0b1010`, with `_` allowed between digits. No suffixes;
 the type comes from context, or from the other operand when the literal is on the left of a binary operator, and
@@ -121,7 +123,9 @@ UseItem       = "use" IDENT { "." IDENT } [ "." "{" IDENT { "," IDENT } [ "," ] 
 
 ExternBlock   = "extern" STRING "{" { [ "priv" ] FnSig } "}" ;   (* each FnSig on its own line, no body *)
 
-TestItem      = "test" STRING Block ;
+TestItem      = "test" STRING [ TestAttrs ] Block ;
+TestAttrs     = "[" TestAttr { "," TestAttr } [ "," ] "]" ;
+TestAttr      = IDENT [ "(" ( INT | STRING ) ")" ] ;   (* ignore, timeout(ms), should_panic[(message)], should_fail *)
 
 Sep           = "," | NL ;
 ```

@@ -1,0 +1,11 @@
+//@ burdin-test passed=1 failed=1
+//@ failed-test: hangs
+
+// `[timeout(ms)]` bounds one test. A test that does not finish is killed and reported as failed.
+test "finishes" {
+    assert(true)?
+}
+
+test "hangs" [timeout(100)] {
+    while true { }
+}

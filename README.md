@@ -18,6 +18,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
+| [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, parallelism, output capture, isolation, and discovery. |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
@@ -79,8 +80,19 @@ usage:
                [--link-lib <name>]... [diagnostics]
   burdin run <file.bd | package directory> [--release] [--link-lib <name>]... [diagnostics]
              [-- <program arguments>...]
-  burdin test <file.bd | package directory> [--release] [diagnostics]
+  burdin test <file.bd | package directory> [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
+              [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>] [diagnostics]
   burdin explain [<error code>]
+
+test options:
+  -j, --jobs <n>       tests to run at once (default: the number of CPUs)
+  -p <package>         run the tests of one package of the build; may repeat
+  --workspace          run the tests of the entry package and every path dependency
+  --filter <text>      run only tests whose name contains text
+  --ignored            run only tests marked [ignore]
+  --include-ignored    run ignored tests too
+  --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
+  -v, --verbose        print the output of passing tests too
 
 diagnostics:
   --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
@@ -91,7 +103,9 @@ diagnostics:
   --error-limit <n>                       print at most n errors after sorting (0 prints all)
 ```
 
-Long options also accept `--option=value`.
+Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `--filter`,
+`--ignored`/`--include-ignored`, `--timeout`, and `--verbose` are options of `burdin test`; any other command
+rejects them.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
 
@@ -165,25 +179,45 @@ $ ./target/debug/burdin run args.bd -- x y
 ### `burdin test`
 
 ```
-burdin test <target> [--release] [diagnostics]
+burdin test <target> [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
+            [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>] [diagnostics]
 ```
 
-Builds the entry package in test mode and runs every `test "name" { ... }` block, each in its own process, so a panic
-or abort fails only the running test. Tests are stripped from a normal build: `burdin build` and `burdin run` never
-declare or check them. Test mode also replaces the prelude's `assert` and `assert_eq` with versions that return
-`Result<(), AssertError>` instead of panicking, so `assert(...)?` reports a failed test and a helper can propagate it.
-A `main` function is not required in test mode. Only the entry package's tests run, not its dependencies'.
+Builds the selected packages in test mode and runs every `test "name" [attrs] { ... }` block, each in its own
+process, so a panic or abort fails only the running test. Tests are stripped from a normal build: `burdin build` and
+`burdin run` never declare or check them. Test mode also replaces the prelude's `assert` and `assert_eq` with
+versions that return `Result<(), AssertError>` instead of panicking, so `assert(...)?` reports a failed test and a
+helper can propagate it. A `main` function is not required in test mode.
 
-The output is one `FAIL <test name>` line on stdout per failed test, followed by a summary line:
+Test attributes are written after the name: `[ignore]` skips a test by default (`--ignored` runs only ignored tests,
+`--include-ignored` runs all); `[timeout(ms)]` bounds one test (`0` disables the limit); `[should_panic]` and
+`[should_panic("text")]` expect a panic abort (and the text on stderr); `[should_fail]` expects the test to return
+an error. An invalid attribute is E0170.
+
+Tests run concurrently (`-j`, default: the number of CPUs), each in a fresh temporary working directory with a
+clean environment. Their output is captured and printed only when they fail; `--verbose` prints passing output too.
+The report is deterministic: failures and the summary follow declaration order, not completion order.
+
+By default only the entry package's tests run. `-p <package>` selects a package of the build (it may repeat), and
+`--workspace` selects the entry package and every path dependency. `--filter <text>` keeps the tests whose name
+contains `text`. With more than one package, names are displayed as `<package>::<test>`.
+
+The output is one `---- test "name" stdout ----` / `stderr` section and `FAIL <test name>` line per failed test,
+followed by a summary line; a passing test prints nothing by default:
 
 ```console
 $ ./target/debug/burdin test .
+---- test "second one fails" stderr ----
+<the captured stderr>
 FAIL second one fails
 test result: 2 passed, 1 failed
 ```
 
-The exit status is 0 only when every test passes, and 1 when any test fails or compilation fails. `tests/run-tests.sh`
-reads exactly this format: the `FAIL ` prefix and the `test result: N passed, M failed` summary.
+When tests are marked `[ignore]`, the summary ends with `, N ignored`. The exit status is 0 only when every run test
+passes, 1 when a test fails or compilation fails, and 2 for a usage error (an unknown package, a bad `-j`,
+conflicting flags) or a driver failure after loading. `tests/run-tests.sh` reads the `FAIL ` prefix and the
+`test result: N passed, M failed` summary; the full behavior, including isolation and discovery, is
+[`spec/test-runner.md`](spec/test-runner.md), and `tests/check-test-runner.sh` checks it black-box.
 
 ### Diagnostics
 

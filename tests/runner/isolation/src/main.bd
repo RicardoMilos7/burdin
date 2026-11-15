@@ -1,0 +1,9 @@
+fn main() {}
+
+test "writes a probe" {
+    write_file("probe.txt", "x")?
+}
+
+test "cannot see the probe" {
+    assert(read_to_string("probe.txt").is_err())?
+}

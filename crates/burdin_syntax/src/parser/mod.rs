@@ -353,6 +353,39 @@ mod tests {
     }
 
     #[test]
+    fn test_attributes_are_parsed() {
+        let (file, out) = render(
+            "test \"one\" [ignore, timeout(500), should_panic(\"boom\"), should_fail] { }\n\
+             test \"two\" { }\n",
+        );
+        assert_eq!(out, "");
+        assert_eq!(file.tests.len(), 2);
+        let attrs = &file.tests[0].attrs;
+        assert_eq!(attrs.len(), 4);
+        assert_eq!(attrs[0].name.name, "ignore");
+        assert!(attrs[0].value.is_none());
+        assert_eq!(attrs[1].name.name, "timeout");
+        assert!(matches!(attrs[1].value, Some(TestAttrValue::Int(500))));
+        assert_eq!(attrs[2].name.name, "should_panic");
+        assert!(matches!(&attrs[2].value, Some(TestAttrValue::Str(text)) if text == "boom"));
+        assert_eq!(attrs[3].name.name, "should_fail");
+        assert!(file.tests[1].attrs.is_empty());
+    }
+
+    #[test]
+    fn malformed_test_attributes_are_syntax_errors() {
+        for src in [
+            "test \"a\" [ignore { }\n",
+            "test \"a\" [timeout(] { }\n",
+            "test \"a\" [ignore timeout(1)] { }\n",
+            "test \"a\" [ignore]\n",
+        ] {
+            let (_, out) = render(src);
+            assert!(out.contains("E0001"), "{src}: {out}");
+        }
+    }
+
+    #[test]
     fn malformed_input_never_panics() {
         let snippets = [
             "",

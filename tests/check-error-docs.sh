@@ -105,11 +105,12 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/burdin-error-docs.XXXXXX") || exit 1
 state=idle
 code=""
 target=""
+mode=""
 dir=""
 path=""
 
-check_example() {   # $1 example directory, $2 code, $3 target
-    local dir=$1 code=$2 target=$3 status file line marker actual_file line_no matched candidate
+check_example() {   # $1 example directory, $2 code, $3 target, $4 mode (build|test)
+    local dir=$1 code=$2 target=$3 mode=$4 status file line marker actual_file line_no matched candidate
     if [ ! -s "$dir/.files" ]; then
         add_problem "example $code: no source files"
         return
@@ -125,7 +126,12 @@ check_example() {   # $1 example directory, $2 code, $3 target
         add_problem "example $code: target $target is not one of the example files"
         return
     fi
-    ( cd "$dir" && "$BURDIN" build "$target" --no-color --diagnostic-format=short ) > "$dir/out" 2>&1
+    if [ "$mode" = "test" ]; then
+        # Test attributes are checked only in test mode; a normal build strips test items.
+        ( cd "$dir" && "$BURDIN" test "$target" --no-color --diagnostic-format=short ) > "$dir/out" 2>&1
+    else
+        ( cd "$dir" && "$BURDIN" build "$target" --no-color --diagnostic-format=short ) > "$dir/out" 2>&1
+    fi
     status=$?
     if [ "$status" -eq 0 ]; then
         add_problem "example $code: compiled successfully, but the section expects $code"
@@ -184,10 +190,12 @@ while IFS= read -r line; do
                     attrs=$(printf '%s' "$attrs" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
                     code=${attrs%% *}
                     target=""
+                    mode=build
                     rest=${attrs#"$code"}
                     for attr in $rest; do
                         case $attr in
                             target=*) target=${attr#target=} ;;
+                            mode=test) mode=test ;;
                             *) add_problem "docs/error-codes.md: unknown example attribute: $attr" ;;
                         esac
                     done
@@ -251,7 +259,7 @@ while IFS= read -r line; do
         await_end)
             case $line in
                 '<!-- /error-example -->')
-                    check_example "$dir" "$code" "$target"
+                    check_example "$dir" "$code" "$target" "$mode"
                     state=idle
                     ;;
                 *)

@@ -6,7 +6,8 @@ This page explains each code, shows a program that triggers it, and says how to 
 The page and its examples are checked by `tests/check-error-docs.sh` in CI: the codes must match the registry
 exactly, every `burdin` snippet below is a complete program that the check compiles and expects to fail with
 exactly the marked diagnostics, and `burdin explain <code>` (which reads this page) must print every entry. The
-`//~ E0000` comment at the end of a line marks the line the diagnostic is reported on.
+`//~ E0000` comment at the end of a line marks the line the diagnostic is reported on. An example marked
+`mode=test` is compiled with `burdin test`, because a test attribute is checked only in test mode.
 
 Run `burdin explain E0003` to print one entry in the terminal, or `burdin explain` to list the codes.
 
@@ -618,3 +619,21 @@ fn main() {}
 
 **How to fix:** use an integer, float, or `CPtr<T>` in the declaration; pass strings as a `CString`/`CStr` pointer,
 and declare a plain C signature without conventions or receivers.
+
+## E0170: Invalid test attribute
+
+A `test` item's attribute list is checked when the test is compiled. The list may name `ignore`, `timeout`,
+`should_panic`, or `should_fail`, each once. The message names the unknown or repeated attribute, the value the
+attribute does not take, or the `should_panic`/`should_fail` combination.
+
+<!-- error-example: E0170 mode=test -->
+```burdin
+test "repeated" [ignore, ignore] { //~ E0170
+    assert(true)?
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write each attribute once, with the value it takes: `ignore`, `timeout(500)`, `should_panic`, or
+`should_panic("message")`. Use `should_fail` on its own rather than together with `should_panic`; the first expects
+a returned error and the second a panic abort.

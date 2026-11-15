@@ -1,0 +1,7 @@
+fn answer(): i32 {
+    42
+}
+
+test "lib one" {
+    assert_eq(answer(), 42)?
+}
