@@ -127,7 +127,8 @@ profile: {}",
 
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut it = argv.iter();
-    let command = it.next().ok_or("missing command")?.clone();    if !matches!(command.as_str(), "build" | "run" | "test") {
+    let command = it.next().ok_or("missing command")?.clone();
+    if !matches!(command.as_str(), "build" | "run" | "test") {
         return Err(format!("unknown command `{command}`"));
     }
     let mut args = Args {
@@ -208,7 +209,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 let ms: u64 =
                     value.parse().map_err(|_| format!("`--timeout` needs a number of milliseconds, got `{value}`"))?;
                 args.timeout_ms = Some(ms);
-            }            "--" => {
+            }
+            "--" => {
                 args.program_args.extend(it.by_ref().cloned());
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
@@ -304,7 +306,8 @@ fn main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("explain") {
         return explain(&argv[1..]);
     }
-    let args = match parse_args(&argv) {        Ok(a) => a,
+    let args = match parse_args(&argv) {
+        Ok(a) => a,
         Err(msg) => {
             eprintln!("error: {msg}\n{USAGE}");
             return ExitCode::from(2);
@@ -408,7 +411,8 @@ fn explain(args: &[String]) -> ExitCode {
     match args {
         [] => {
             print!("{}", code_list());
-            ExitCode::SUCCESS        }
+            ExitCode::SUCCESS
+        }
         [code] => match explain_section(code) {
             Some(section) => {
                 println!("{section}");
@@ -654,7 +658,13 @@ pub(crate) fn compile(
         return Err(fail(format!("the output path `{}` is a directory; pass `-o <file>`", output.display())));
     }
     let dir = TempDir::new().map_err(|e| fail(format!("cannot create a temporary directory: {e}")))?;
-    let extension = if options.lto { "bc" } else if cfg!(windows) { "obj" } else { "o" };
+    let extension = if options.lto {
+        "bc"
+    } else if cfg!(windows) {
+        "obj"
+    } else {
+        "o"
+    };
     let object = dir.path.join(format!("program.{extension}"));
     let pgo_ir = options.pgo_use.map(|_| dir.path.join("program.pgo.ll"));
     let opts = burdin_codegen::Options {
@@ -723,7 +733,8 @@ fn terminal_width(explicit: Option<usize>, columns: Option<&str>) -> usize {
 /// parse the human summary.
 fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
     let limit = limit.map_or_else(|| "null".to_string(), |limit| limit.to_string());
-    format!("{{\"type\":\"summary\",\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n")}
+    format!("{{\"type\":\"summary\",\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n")
+}
 
 /// Runs `--pgo-use`: merges the profile, applies `pgo-instr-use` with `opt`, and compiles the result with `llc`.
 /// `opt` is used because the LLVM C API does not expose the pass builder's profile options.

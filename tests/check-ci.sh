@@ -397,9 +397,8 @@ fi
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
-    tests/check-docs.sh tests/check-debug-info.sh tests/check-codegen-opt.sh tests/check-build-flags.sh \
-    tests/check-parallel.sh tests/bench-regression.sh; do
     tests/check-docs.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/check-test-runner.sh \
+    tests/check-debug-info.sh tests/check-codegen-opt.sh tests/check-build-flags.sh tests/check-parallel.sh \
     tests/bench-regression.sh tests/fuzz.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
