@@ -272,6 +272,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// Folds the value at `ptr` (of type `ty`, which derives `Hash`) into the hash `acc`.
+    ///
+    /// A map hashes its keys with this function, and a key only has to support `==`, so it also covers `f32`/`f64`,
+    /// `str`/`String`, and `Result`. The payload of an `Option`, `Result`, or enum is mixed in only when its tag says
+    /// it is active: hashing (or reading) an inactive payload would touch a value that was never initialized.
     pub(super) fn hash_at(
         &mut self,
         ptr: PointerValue<'ctx>,
@@ -289,6 +293,35 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     v
                 };
                 self.hash_mix(acc, v)
+            }
+            Ty::Float(_) => {
+                let v = self.builder.build_load(t, ptr, "").map_err(llvm_err)?.into_float_value();
+                let (zero, bits_ty) = match ty {
+                    Ty::Float(burdin_tir::FloatTy::F32) => (self.cx.f32_type().const_zero(), self.cx.i32_type()),
+                    _ => (self.cx.f64_type().const_zero(), self.cx.i64_type()),
+                };
+                // `0.0 == -0.0`, so they must hash alike; a NaN never equals anything and its bits are free.
+                let is_zero = self.builder.build_float_compare(FloatPredicate::OEQ, v, zero, "").map_err(llvm_err)?;
+                let bits = self.builder.build_bit_cast(v, bits_ty, "").map_err(llvm_err)?.into_int_value();
+                let bits = if bits.get_type().get_bit_width() < 64 {
+                    self.builder.build_int_z_extend(bits, self.cx.i64_type(), "").map_err(llvm_err)?
+                } else {
+                    bits
+                };
+                let bits = self
+                    .builder
+                    .build_select(is_zero, self.cx.i64_type().const_zero(), bits, "")
+                    .map_err(llvm_err)?
+                    .into_int_value();
+                self.hash_mix(acc, bits)
+            }
+            Ty::Str | Ty::String => {
+                let (text, len) = self.parts_at(ptr, ty)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.str_hash, &[acc.into(), text.into(), len.into()], "hash")
+                    .map_err(llvm_err)?;
+                Ok(call.try_as_basic_value().basic().expect("`str_hash` returns a hash").into_int_value())
             }
             Ty::Tuple(_) | Ty::Struct(_) => {
                 let st = t.into_struct_type();
@@ -316,9 +349,56 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 if self.llvm_ty(inner).is_none() {
                     return Ok(with_tag);
                 }
+                let some_bb = self.new_block("hash.option.some");
+                let none_bb = self.new_block("hash.option.none");
+                let end = self.new_block("hash.option.end");
+                self.builder.build_conditional_branch(tag, some_bb, none_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(none_bb);
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(some_bb);
                 let payload_ptr = self.builder.build_struct_gep(ot, ptr, 1, "").map_err(llvm_err)?;
-                let with_payload = self.hash_at(payload_ptr, inner, with_tag)?;
-                Ok(self.builder.build_select(tag, with_payload, with_tag, "").map_err(llvm_err)?.into_int_value())
+                let some_hash = self.hash_at(payload_ptr, inner, with_tag)?;
+                let some_from = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                let result = self.builder.build_phi(self.cx.i64_type(), "hash").map_err(llvm_err)?;
+                result.add_incoming(&[(&with_tag, none_bb), (&some_hash, some_from)]);
+                Ok(result.as_basic_value().into_int_value())
+            }
+            Ty::Result(ok, err) => {
+                let rt = t.into_struct_type();
+                let tag_ptr = self.builder.build_struct_gep(rt, ptr, 0, "").map_err(llvm_err)?;
+                let tag = self.builder.build_load(self.cx.bool_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
+                let with_tag = self.hash_mix(acc, tag)?;
+                if self.llvm_ty(ok).is_none() && self.llvm_ty(err).is_none() {
+                    return Ok(with_tag);
+                }
+                let ok_bb = self.new_block("hash.result.ok");
+                let err_bb = self.new_block("hash.result.err");
+                let end = self.new_block("hash.result.end");
+                self.builder.build_conditional_branch(tag, ok_bb, err_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(ok_bb);
+                let ok_hash = if self.llvm_ty(ok).is_some() {
+                    let p = self.builder.build_struct_gep(rt, ptr, 1, "").map_err(llvm_err)?;
+                    self.hash_at(p, ok, with_tag)?
+                } else {
+                    with_tag
+                };
+                let ok_from = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(err_bb);
+                let err_hash = if self.llvm_ty(err).is_some() {
+                    let p = self.builder.build_struct_gep(rt, ptr, 2, "").map_err(llvm_err)?;
+                    self.hash_at(p, err, with_tag)?
+                } else {
+                    with_tag
+                };
+                let err_from = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                let result = self.builder.build_phi(self.cx.i64_type(), "hash").map_err(llvm_err)?;
+                result.add_incoming(&[(&ok_hash, ok_from), (&err_hash, err_from)]);
+                Ok(result.as_basic_value().into_int_value())
             }
             Ty::Enum(a) => {
                 let et = t.into_struct_type();
@@ -326,26 +406,43 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let tag_ptr = self.builder.build_struct_gep(et, ptr, 0, "").map_err(llvm_err)?;
                 let tag = self.builder.build_load(i32_ty, tag_ptr, "").map_err(llvm_err)?.into_int_value();
                 let with_tag = self.hash_mix(acc, tag)?;
-                let mut result = with_tag;
-                for vi in 0..self.program.enums[a.id].variants.len() {
-                    let tys = self.variant_tys(a.id, vi);
-                    if tys.is_empty() {
-                        continue;
-                    }
-                    let vt = self.variant_ty(a.id, vi);
-                    let payload = self.builder.build_struct_gep(et, ptr, 1, "").map_err(llvm_err)?;
-                    let mut acc_v = with_tag;
-                    for (i, fty) in tys.iter().enumerate() {
-                        let f = self.builder.build_struct_gep(vt, payload, i as u32, "").map_err(llvm_err)?;
-                        acc_v = self.hash_at(f, fty, acc_v)?;
-                    }
-                    let is_this = self
-                        .builder
-                        .build_int_compare(IntPredicate::EQ, tag, i32_ty.const_int(vi as u64, false), "")
-                        .map_err(llvm_err)?;
-                    result = self.builder.build_select(is_this, acc_v, result, "").map_err(llvm_err)?.into_int_value();
+                let variants: Vec<Vec<Ty>> =
+                    (0..self.program.enums[a.id].variants.len()).map(|vi| self.variant_tys(a.id, vi)).collect();
+                if variants.iter().all(Vec::is_empty) {
+                    return Ok(with_tag);
                 }
-                Ok(result)
+                let payload = self.builder.build_struct_gep(et, ptr, 1, "").map_err(llvm_err)?;
+                let end = self.new_block("hash.enum.end");
+                let other = self.new_block("hash.enum.other");
+                let mut cases = Vec::with_capacity(variants.len());
+                let mut blocks = Vec::with_capacity(variants.len());
+                for vi in 0..variants.len() {
+                    let bb = self.new_block("hash.enum.case");
+                    cases.push((i32_ty.const_int(vi as u64, false), bb));
+                    blocks.push(bb);
+                }
+                self.builder.build_switch(tag, other, &cases).map_err(llvm_err)?;
+                self.builder.position_at_end(other);
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                let mut incoming = vec![(with_tag, other)];
+                for (vi, bb) in blocks.into_iter().enumerate() {
+                    self.builder.position_at_end(bb);
+                    let vt = self.variant_ty(a.id, vi);
+                    let mut h = with_tag;
+                    for (i, fty) in variants[vi].iter().enumerate() {
+                        let f = self.builder.build_struct_gep(vt, payload, i as u32, "").map_err(llvm_err)?;
+                        h = self.hash_at(f, fty, h)?;
+                    }
+                    let from = self.builder.get_insert_block().expect("positioned");
+                    self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                    incoming.push((h, from));
+                }
+                self.builder.position_at_end(end);
+                let result = self.builder.build_phi(self.cx.i64_type(), "hash").map_err(llvm_err)?;
+                for (v, bb) in &incoming {
+                    result.add_incoming(&[(v, *bb)]);
+                }
+                Ok(result.as_basic_value().into_int_value())
             }
             _ => Err(format!("unsupported hash of `{ty}`")),
         }

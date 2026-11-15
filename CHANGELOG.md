@@ -64,10 +64,18 @@ close-out checklist in `AGENTS.md`).
     methods (`unsafe_fn`, `unsafe_fn_call_requires_unsafe`, `unsafe_interface_method`,
     `unsafe_interface_mismatch`), and an audit of the `spec/memory-rules.md` test matrix against the suite, with US
     extended to the new pointer and unsafe-function tests.
-  - The suite is 227 tests (225 in release); `tests/check_tests.py`, `check_unit_tests.py`, `check_docs.py`,
+  - The suite is 230 tests (228 in release); `tests/check_tests.py`, `check_unit_tests.py`, `check_docs.py`,
     `check_error_docs.py`, `check_diagnostics.py`, `check_codegen_opt.py`, `check_build_flags.py`,
     `check_parallel.py`, `check_test_runner.py`, and `check_debug_info.py` are green, and `cargo fmt --check`,
     `cargo clippy -- -D warnings`, and `cargo test` pass.
+- `Map` is an open-addressing hash table (issue #82). The linear scan became linear probing in the map's existing
+  three-word buffer: a zero hash marks an empty slot, the table doubles and rehashes at a 3/4 load factor, and a
+  removal shifts the rest of the probe cluster back instead of leaving tombstones. Keys still need only `==`: they
+  are hashed structurally (integers, floats, text by its bytes, tuples, structs, enums, `Option`, `Result`, and
+  ranges), so `Hash` is not required. The API, the unspecified iteration order, and the iteration, drop, and clone
+  behavior are unchanged. A 200,000-key insert-and-lookup program drops from 9.8 s to 0.01 s in a release build, and
+  the million-key `m09_stdlib/map_many_keys` witness takes 0.07 s; `map_key_types` and `map_remove_and_clear` cover
+  aggregate keys, deletion, reinsertion, and `clear`. The implementation is described in `spec/stdlib.md`.
 - The release pipeline (issue #452, sub-issues #453-#456): a `Release` workflow builds the six supported targets
   natively (`x86_64`/`aarch64` Linux, macOS, and Windows), smoke-tests `build`, `run`, and `test`, writes
   `burdin-<version>-<target>.tar.gz` archives and SHA-256 checksums, verifies that two checkout paths produce the

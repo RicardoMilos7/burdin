@@ -1,0 +1,87 @@
+//@ run
+//> 2
+//> 13
+//> false
+//> 2
+//> 10
+//> 1
+//> 2
+//> true
+//> false
+//> 3
+//> 7
+//> false
+//> 2
+//> 2
+//> 11
+//> false
+
+// Every type with `==` is a valid map key, not only integers: a derived-`Eq` struct, an enum with a `String`
+// payload, `Option`, `Result`, and a float (where `0.0` and `-0.0` must hash alike) (issue #82).
+
+struct Point derives (Eq) {
+    x: i32,
+    y: i32,
+}
+
+enum Label derives (Eq) {
+    Num(i32),
+    Text(String),
+}
+
+fn main() {
+    let mut points = Map<Point, i32>.new()
+    points.insert(Point { x: 1, y: 2 }, 12)
+    points.insert(Point { x: 2, y: 1 }, 21)
+    points.insert(Point { x: 1, y: 2 }, 13)
+    println(points.len().to_string())
+    match points.get(Point { x: 1, y: 2 }) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+    println(points.contains_key(Point { x: 3, y: 3 }).to_string())
+
+    let mut labels = Map<Label, i32>.new()
+    labels.insert(Label.Num(1), 10)
+    labels.insert(Label.Text(String.from("a")), 20)
+    labels.insert(Label.Text(String.from("a")), 21)
+    println(labels.len().to_string())
+    match labels.remove(Label.Num(1)) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+    println(labels.len().to_string())
+
+    let mut opts = Map<Option<i32>, i32>.new()
+    opts.insert(None, 1)
+    opts.insert(Some(5), 2)
+    opts.insert(None, 3)
+    println(opts.len().to_string())
+    println(opts.contains_key(Some(5)).to_string())
+    println(opts.contains_key(Some(6)).to_string())
+    match opts.get(None) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+
+    let mut floats = Map<f64, i32>.new()
+    floats.insert(0.0, 7)
+    floats.insert(1.5, 8)
+    match floats.get(-0.0) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+    println(floats.contains_key(-1.5).to_string())
+    println(floats.len().to_string())
+
+    let mut results = Map<Result<i32, i32>, i32>.new()
+    results.insert(Ok(1), 10)
+    results.insert(Err(2), 20)
+    results.insert(Ok(1), 11)
+    println(results.len().to_string())
+    match results.get(Ok(1)) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+    println(results.contains_key(Err(3)).to_string())
+}

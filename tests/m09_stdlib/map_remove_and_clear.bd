@@ -1,0 +1,86 @@
+//@ run
+//> 20
+//> 400
+//> 20
+//> 800
+//> 0
+//> false
+//> 66
+//> 0
+//> 35937
+//> 0
+
+// Removing keys is a linear-probing delete: the rest of each probe cluster moves back, so later lookups still
+// find their keys and no tombstones accumulate. Strings as keys also exercise hashing by content, and the integer
+// map deletes interleaved keys and then empties itself (issue #82).
+
+fn main() {
+    let mut m = Map<String, i32>.new()
+    for i in 0..40 {
+        m.insert(i.to_string(), i)
+    }
+    for i in 0..40 {
+        if i % 2 == 0 {
+            m.remove(i.to_string())
+        }
+    }
+    println(m.len().to_string())
+
+    let mut sum = 0
+    for (k, v) in m {
+        sum = sum + v
+    }
+    println(sum.to_string())
+
+    for i in 0..40 {
+        if i % 2 == 1 {
+            m.insert(i.to_string(), i * 2)
+        }
+    }
+    println(m.len().to_string())
+
+    let mut sum = 0
+    for (k, v) in m {
+        sum = sum + v
+    }
+    println(sum.to_string())
+
+    m.clear()
+    println(m.len().to_string())
+    println(m.contains_key(String.from("1")).to_string())
+
+    // A larger integer map: remove every third key, check every key's membership, then empty it.
+    let mut n = Map<i32, i32>.new()
+    for i in 0..100 {
+        n.insert(i, i * 10)
+    }
+    for i in 0..100 {
+        if i % 3 == 0 {
+            n.remove(i)
+        }
+    }
+    println(n.len().to_string())
+
+    let mut bad = 0
+    for i in 0..100 {
+        if i % 3 == 0 {
+            if n.contains_key(i) {
+                bad = bad + 1
+            }
+        } else if !n.contains_key(i) {
+            bad = bad + 1
+        }
+    }
+    println(bad.to_string())
+
+    let mut sum = 0
+    for (k, v) in n {
+        sum = sum + k + v
+    }
+    println(sum.to_string())
+
+    for i in 0..100 {
+        n.remove(i)
+    }
+    println(n.len().to_string())
+}

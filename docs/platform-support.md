@@ -129,8 +129,8 @@ Assumptions that only those implementations back:
 ### Not platform-specific
 
 Language-level gaps and correctness issues that apply everywhere are tracked under "Known problems and risks" in
-[`HANDOFF.md`](../HANDOFF.md#known-problems-and-risks) (for example, `Map` is a linear scan and a few move forms
-are rejected with E9000). They are not repeated here.
+[`HANDOFF.md`](../HANDOFF.md#known-problems-and-risks) (for example, moving a non-`Copy` value through a runtime
+index is rejected with E9000). They are not repeated here.
 
 ## The checked example
 
