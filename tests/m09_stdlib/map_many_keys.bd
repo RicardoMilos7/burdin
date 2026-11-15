@@ -1,0 +1,33 @@
+//@ run
+//> 1000000
+//> 1499998500000
+//> 1000000
+//> false
+
+// A map stays fast with a million keys: lookups and inserts must not scan every entry. The linear-scan map this
+// test was written against takes minutes here and fails the runner's timeout; a hash table finishes in well under a
+// second (issue #82).
+
+fn main() {
+    let n = 1000000
+    let mut m = Map<i64, i64>.new()
+    for k in 0..n {
+        m.insert(k as i64, (k as i64) * 2)
+    }
+    println(m.len().to_string())
+
+    let mut sum: i64 = 0
+    for (k, v) in m {
+        sum = sum + k + v
+    }
+    println(sum.to_string())
+
+    let mut found = 0
+    for k in 0..n {
+        if m.contains_key(k as i64) {
+            found = found + 1
+        }
+    }
+    println(found.to_string())
+    println(m.contains_key(-1).to_string())
+}

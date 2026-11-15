@@ -5,7 +5,7 @@ Written at the end of the first session, updated at the end of the second, third
 ## State
 
 Updated at the end of the twenty-fourth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed**: all 227 conformance tests pass in the debug profile and 225 in
+and the stage 0 gaps of issue #48 are closed**: all 230 conformance tests pass in the debug profile and 228 in
 release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
 and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -46,7 +46,9 @@ gaps, `pub use` and the module visibility rule, the C bridge (`CPtr` operations,
 tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage audit. The twenty-fourth session
 settled issue #83: `CStr` stays a `std` alias for `CPtr<CChar>` and is not a second-class view type; the rule is in
 `spec/stdlib.md` and `spec/memory-rules.md` SC1, and `m08_modules/cstr_is_an_alias.bd`,
-`cstr_no_implicit_conversion.bd`, and `cstr_is_not_a_str.bd` witness it.
+`cstr_no_implicit_conversion.bd`, and `cstr_is_not_a_str.bd` witness it. It also replaced the linear-scan `Map`
+with an open-addressing hash table (issue #82): lookup, insert, and remove are expected O(1), keys still need only
+`==`, and the unspecified iteration order is unchanged.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -59,7 +61,7 @@ settled issue #83: `CStr` stays a `std` alias for `CPtr<CChar>` and is not a sec
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, and `...` in an `extern` signature |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 227 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Conformance tests | `tests/` | 230 tests. All pass: m01 to m11 on Linux, macOS, and Windows (228 in release; two are debug-only) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -194,8 +196,9 @@ how to call WSL from PowerShell.
   with `==`), the integer `parse` associated function, and the containers (`List`: `new`, `push`, `pop`, `last`,
   `insert`, `remove`, `clear`, `contains`, `sort`, `len`, indexing, `for`; `Map`: `new`, `insert`, `get`, `remove`,
   `contains_key`, `clear`, `len`, `for` over `(k, v)`). `List` and `Map` use the three-word `String` layout in
-  the C heap; `Map` is a linear-scan map, not a hash table. Drop and clone glue, `==`, `Ord`, and the move,
-  borrow, and origin checkers understand the new types. `Chars` is only an iterable: `for c in s.chars()` decodes
+  the C heap; `Map` is an open-addressing hash table (twenty-fourth session, issue #82), not a linear scan.
+  Drop and clone glue, `==`, `Ord`, and the move, borrow, and origin checkers understand the new types. `Chars`
+  is only an iterable: `for c in s.chars()` decodes
   UTF-8 in code generation. The prelude also provides file I/O (`read_to_string`, `write_file`), `env.args()`,
   `process.exit`, `process.run`, `assert`, `assert_eq`, `unreachable`, `mem.swap`, and `mem.replace`. The
   `IoError`, `ParseIntError`, and `AssertError` names are aliases for unit in `std`; the `error` declarations of
@@ -510,9 +513,11 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     `_Bool` is declared `u8`, since a Burdin `bool` is one bit, and C `char` is `CChar`. The manifest parser is
     deliberately minimal (path dependencies, no versions, no lockfile). A user `extern` whose symbol collides with a
     runtime libc declaration of a different type is a backend error printed without an error code or source span.
-14. **`Map` is a linear-scan map**, not the hash map the stage 0 table names: the observable API and ordering are
-    the same, but lookup is O(n) and keys only need `Eq`. A hash table can replace the implementation without
-    changing the type or its methods; `Hash` and `hash()` already exist.
+14. **`Map` is a hash table now (#82).** Stage 0 shipped a linear scan; the twenty-fourth session replaced the
+    implementation with open addressing (linear probing, a 3/4 load factor, backward-shift deletion, and structural
+    hashing of keys) without changing the type, its methods, or the unspecified iteration order. Lookup, insert, and
+    remove are expected O(1); a key still needs only `==`, not `Hash`. `spec/stdlib.md` states the implementation and
+    `m09_stdlib/map_key_types`, `map_remove_and_clear`, and `map_many_keys` witness it.
 15. **The error types are aliases for unit.** `std` declares `IoError`, `ParseIntError`, and `AssertError` as
     `type ... = ()`; `read_to_string`, `write_file`, `process.run`, and the integer parsers return
     `Result<T, ()>` under those names. Tests only match `Err(_)`, and the `error` declarations of stage 1 are the

@@ -118,7 +118,11 @@ struct Map<K, V> {
 ```
 
 Keys need `==` (`Eq`). `for (k, v) in map` borrows the map for the loop; iteration order is not specified, so a
-program must not depend on it. The stage 0 implementation is a linear scan, but that is not part of the interface.
+program must not depend on it. The implementation is an open-addressing hash table: lookup, insert, and remove are
+expected O(1), the table keeps a 3/4 load factor and rehashes as it grows, and removing a key shifts the rest of its
+probe cluster back instead of leaving tombstones. Keys are hashed structurally — integers, `bool`, `char`, floats,
+`String` by its bytes, tuples, structs, enums, `Option`, `Result`, and ranges — so a key needs only `==`, not
+`Hash`.
 
 ## `Heap<T>`
 
@@ -262,7 +266,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Output, numbers, parsing | `m02_basics/arithmetic`, `casts_and_numeric_methods`, `m09_stdlib/string_ops` |
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
-| `Map` | `m09_stdlib/map_ops`, `word_count` |
+| `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run` |

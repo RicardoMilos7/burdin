@@ -421,9 +421,13 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
 - **`String` and `str` compare by bytes.** `==`/`!=` and `<`/`<=`/`>`/`>=` require both operands to have the same
   type; there is no conversion in an operator. `List<String>.sort()` uses the same order.
   `m09_stdlib/string_order.bd`, `string_ops.bd`; [standard library](../spec/stdlib.md).
-- **`Map` is a linear scan (deviation).** The design and the stage 0 subset name a hash map; stage 0 stores entries in
-  a list and needs only `Eq` on keys. The API and the (unspecified) iteration order are the same, so tests sum or
-  sort instead of depending on order (`m09_stdlib/map_ops.bd`, `word_count.bd`). `HANDOFF.md` known problem 14.
+- **`Map` is a hash table; its iteration order is unspecified.** The design names a hash map, and the implementation
+  is open addressing with linear probing in the map's three-word buffer: a zero hash marks an empty slot, growth
+  rehashes at a 3/4 load factor, and removal shifts the rest of the probe cluster back. Any type with `==` is a key
+  (no `Hash` requirement): integers, floats, text, tuples, structs, enums, `Option`, `Result`, and ranges hash
+  structurally. Iteration scans the slots, so tests sum or sort instead of depending on order
+  (`m09_stdlib/map_ops.bd`, `map_key_types.bd`, `map_remove_and_clear.bd`, `map_many_keys.bd`, `word_count.bd`).
+  `HANDOFF.md` known problem 14.
 - **`Option` and `Result` expose a subset (deviation).** The tests use `unwrap`, `expect`, `is_some`, `is_none`,
   `orelse`, and `?` (and `is_ok`/`is_err` exist); the design's `map`, `and_then`, `unwrap_or`, `ok_or`, and the rest
   are not implemented until stage 1 (issue #481). `m09_stdlib/option_result_basics.bd`.
