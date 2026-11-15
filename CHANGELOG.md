@@ -6,6 +6,19 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- The release pipeline (issue #452, sub-issues #453-#456): a `Release` workflow builds the six supported targets
+  natively (`x86_64`/`aarch64` Linux, macOS, and Windows), smoke-tests `build`, `run`, and `test`, writes
+  `burdin-<version>-<target>.tar.gz` archives and SHA-256 checksums, verifies that two checkout paths produce the
+  same Linux archive, and publishes only from a `v<version>` tag or an explicit manual `publish`. A manual run
+  defaults to a dry run, and the nightly schedule never publishes. `install.sh` and `install.ps1` install a release
+  after verifying `SHA256SUMS`, with `BURDIN_VERSION`, `BURDIN_CHANNEL`, `BURDIN_INSTALL_DIR`, and
+  `BURDIN_RELEASE_DIR` for the rehearsal path. `burdin --version` gained a `channel:` line (`dev`, `nightly`, or
+  `stable`) backed by `BURDIN_CHANNEL` and `BURDIN_VERSION`; the workspace version became `0.1.0`. The version
+  scheme (SemVer for the compiler, editions versioned separately), channel policy, breaking-change rule, artifact
+  protocol, reproducibility rules, and rehearsal checklist are in `docs/releasing.md`.
+  `tests/build-release.sh` builds and packages a target (and proves reproducibility), `tests/release-notes.sh`
+  extracts a changelog section and checks its links, and `tests/check-release.sh` guards the workflow, the archive,
+  the checksums, both installers, and the metadata in every CI job. No release has been cut.
 - Compiler and runtime debug/observability/performance work (issue #421, sub-issues #422-#432):
   `-g` emits source-level DWARF for functions, parameters, locals, and every expression's line and column
   (`tests/check-debug-info.sh`, which also proves a gdb breakpoint and local read); panics print a symbolized

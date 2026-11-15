@@ -2,6 +2,9 @@
 /target/
 **/*.rs.bk
 
+# Release archives made by tests/build-release.sh
+/dist/
+
 # Build outputs
 *.exe
 *.obj

@@ -1,0 +1,212 @@
+# Releasing Burdin
+
+This page is the version and release policy for the `burdin` compiler, and the checklist that proves the pipeline
+(issues #452-#456). The pipeline is implemented; **no release has been cut yet**. `tests/check-release.sh` runs in
+every CI job and fails when the workflow, the artifacts, the installers, the checksums, or this policy regress.
+
+## Version scheme
+
+Burdin uses [SemVer](https://semver.org/) for the compiler: `MAJOR.MINOR.PATCH`.
+
+- The workspace version in `Cargo.toml` (`[workspace.package] version`) is the single source of truth. A build
+  prints it as the first line of `burdin --version`.
+- A stable release is a tag named `vMAJOR.MINOR.PATCH`. The release workflow refuses a tag whose version does not
+  equal the manifest, so tagging a commit with a stale `Cargo.toml` fails before anything is published.
+- **Before 1.0** the language has no compatibility promise. A breaking change bumps `MINOR`, and a compatible
+  addition or a fix bumps `PATCH`. `0.1.0` is the first published version.
+- **From 1.0** a breaking change bumps `MAJOR`.
+- A prerelease is a SemVer prerelease such as `0.1.0-nightly.20261118`. It sorts before the stable version and is
+  never reported as the latest stable release.
+
+**Language editions are versioned separately from the compiler.** An edition is named by year (`2024` is the current
+one) and defines the meaning of the language; the compiler version defines the implementation. A compiler release
+supports one or more editions and has a default, and a new edition is opt-in, so upgrading the compiler does not
+silently change what an existing program means. The `burdin.toml` field that selects an edition is not implemented
+yet (it arrives with the stage 3 manifest work), so every package currently uses the `2024` edition.
+
+The channel is reported on the second line of `burdin --version` (`channel: dev|nightly|stable`). `BURDIN_VERSION`
+overrides the version printed (nightly builds use it), and `BURDIN_COMMIT` overrides the commit, so a binary built
+outside a git checkout still reports where it came from.
+
+## Channels
+
+| Channel | Built by | Version | Published? |
+| --- | --- | --- | --- |
+| `dev` | a local `cargo build`, or `tests/build-release.sh` without `--channel` | the manifest version | never |
+| `nightly` | the weekly schedule or a manual workflow run | `<manifest>-nightly.YYYYMMDD` | only when a manual run sets `publish`, as a prerelease |
+| `stable` | a push of a `vMAJOR.MINOR.PATCH` tag | exactly the manifest version | yes |
+
+- The scheduled workflow is a nightly **build** of all six targets. It uploads artifacts and checksums but never
+  creates a release, so the schedule cannot publish by accident.
+- A manual run defaults to `publish: false`. It builds, smoke-tests, verifies the checksums, writes them to the job
+  summary, and uploads the bundle; that is the dry run.
+- A tag push publishes. A manual run can publish a nightly or a stable release only when `publish` is explicitly
+  checked.
+- `install.sh` and `install.ps1` default to the stable channel and accept `BURDIN_CHANNEL=nightly` with an explicit
+  `BURDIN_VERSION` (a nightly is never the "latest release").
+
+## Breaking changes and packages
+
+A change is **breaking** when it changes the meaning or validity of a program, the observable behavior of the
+runtime, or the documented driver contract:
+
+- syntax or a standard-library name is removed, renamed, or given a different meaning;
+- a program that compiled and ran before no longer compiles, or produces different output;
+- `burdin build`, `run`, `test`, `explain`, or `--version` changes its contract, flags, or exit statuses.
+
+Diagnostic wording, the order of equal diagnostics, and optimization details are not covered.
+
+Before 1.0 every release may break; the `MINOR` bump is the signal. A breaking release lists the affected forms in
+its changelog entry. Packages depend on each other by path today (`[dependencies] name = { path = ... }`), so there
+is no version resolution to reconcile; when the stage 3 registry adds versions, a package will record the compiler
+range and the edition it was written against, and the resolver will enforce them. Until then, a package's
+`burdin.toml` names no compiler version and the release notes are the compatibility statement.
+
+## Artifacts
+
+Six native targets are built, each on a hosted runner of the same architecture (there is no cross-compilation):
+
+| Target | Runner |
+| --- | --- |
+| `x86_64-unknown-linux-gnu` | `ubuntu-24.04` |
+| `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm` |
+| `x86_64-apple-darwin` | `macos-15-intel` |
+| `aarch64-apple-darwin` | `macos-15` |
+| `x86_64-pc-windows-msvc` | `windows-2025` |
+| `aarch64-pc-windows-msvc` | `windows-11-arm` |
+
+Each job runs `tests/build-release.sh --target <triple> --out dist`, which
+
+1. builds with `cargo build --release --locked -p burdin_driver` and the pinned toolchain;
+2. checks that the binary's `--version` reports the planned version, channel, and target;
+3. smoke-tests `burdin build`, `burdin run`, and `burdin test` on a small program;
+4. writes `burdin-<version>-<target>.tar.gz` and its SHA-256 checksum.
+
+The archive is uniform across platforms (`.tar.gz`, not `.zip`) so one packaging path and one installer shape cover
+all six. Its layout is:
+
+```
+burdin-<version>-<target>/
+  burdin            (burdin.exe on Windows)
+  README.md
+  CHANGELOG.md
+  docs/error-codes.md
+```
+
+**Runtime requirement.** The compiler links LLVM 21 as a shared library (the static Windows archives crash in the
+dynamic-CRT Rust binary), so a prebuilt `burdin` needs the matching LLVM runtime: `libLLVM-21.so` on Linux,
+`libLLVM.dylib` on macOS (`brew install llvm@21`), or `LLVM-C.dll` on Windows. The archive does not bundle LLVM; the
+installers print the fix when the installed compiler cannot start. Bundling the LLVM runtime is a later change.
+
+## Checksums
+
+- Each build job writes `<archive>.sha256` and `SHA256SUMS.<target>` in the `sha256sum -c` format.
+- The release job concatenates the per-target files into one `SHA256SUMS`, verifies it with `sha256sum -c`, and
+  requires all six archives to be present before it does anything else.
+- `install.sh` and `install.ps1` download `SHA256SUMS` and the archive, find the archive's entry, and compare the
+  SHA-256 before extracting anything. A tampered archive, a release without a matching entry, and a target that is
+  not one of the six are refused; `tests/check-release.sh` proves the first two against a local release directory.
+
+There is no signing or provenance attestation yet; a checksum proves the download matches the published file, not
+who built it. The release job is the only writer, and it runs from the tagged commit.
+
+## Reproducibility
+
+A release build is made reproducible rather than merely repeatable:
+
+- `CARGO_INCREMENTAL=0`, so no incremental state leaks into the output;
+- the checkout path and the cargo target directory are remapped with
+  `--remap-path-prefix=<root>=/burdin` and `--remap-path-prefix=<target>=/burdin/target`, so two checkouts at
+  different paths compile the same source text;
+- `SOURCE_DATE_EPOCH` is the commit time and pins `BURDIN_GIT_COMMIT` through the same commit;
+- archive entries are sorted, every mtime is pinned to `SOURCE_DATE_EPOCH`, uid/gid are `0` (GNU tar) or
+  `0`/`root` (bsdtar), the tar format is `ustar`, and gzip is run with `-n`, so the archive has no timestamp or
+  builder identity;
+- `tests/build-release.sh --verify-reproducible` copies the tree to a second path, builds both copies into separate
+  target directories, and requires the two archives to have the same SHA-256. The release workflow's
+  `reproducible` job runs it on Linux for every release.
+
+The guarantee is **same pinned Rust, same LLVM, same system linker, same `Cargo.lock`, same target**. A different
+LLVM build or a different linker may still produce a different binary; the archive metadata is normalized on every
+platform, but byte equality of Mach-O and PE binaries is not claimed across builders and is not checked in CI.
+
+## Installers
+
+Unix (Linux and macOS):
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/RicardoMilos7/burdin/main/install.sh | sh
+```
+
+Windows PowerShell:
+
+```console
+> irm https://raw.githubusercontent.com/RicardoMilos7/burdin/main/install.ps1 | iex
+```
+
+Both installers:
+
+- detect the platform and architecture and select one of the six targets (`BURDIN_TARGET` overrides it);
+- resolve the latest stable release (or a nightly when `BURDIN_CHANNEL=nightly`), or take `BURDIN_VERSION`;
+- verify `SHA256SUMS` before unpacking;
+- install to `$HOME/.local/bin` (Unix) or `%LOCALAPPDATA%\Programs\burdin\bin` (Windows); `BURDIN_INSTALL_DIR`
+  overrides it;
+- run `burdin --version` and warn, with the platform's fix, when the LLVM 21 runtime is missing;
+- print a `PATH` hint without editing the user's shell profile.
+
+`BURDIN_BASE_URL` points the download at another mirror, and `BURDIN_RELEASE_DIR` installs from a local directory —
+the rehearsal path used by `tests/check-release.sh` and the release job. A package-manager formula is a later work
+item; there is no Homebrew tap, `winget` package, or distro package yet.
+
+## Release notes
+
+Release notes are generated from `CHANGELOG.md`, not written twice:
+
+```console
+$ tests/release-notes.sh --version 0.1.0 --check-links --output NOTES.md   # a stable release
+$ tests/release-notes.sh --unreleased --check-links                       # a dry run
+```
+
+- `--version X.Y.Z` requires a `## X.Y.Z — <date>` section; the release workflow fails on a tag without one, so the
+  changelog must be updated before tagging.
+- `--unreleased` uses the `## Unreleased` section and is the rehearsal form; the release job prefixes nightly notes
+  with the nightly version.
+- `--check-links` checks every relative Markdown link in the extracted section against the repository, so a note
+  that points at a removed file fails before publication. Absolute URLs are left to `tests/check-docs.sh`.
+
+## Cutting a release
+
+1. Move the `## Unreleased` entries under a new `## <version> — <YYYY-MM-DD>` heading in `CHANGELOG.md` and leave an
+   empty `## Unreleased` section for the next cycle.
+2. Set `[workspace.package] version` in `Cargo.toml` to `<version>`, then run a build so `Cargo.lock` records the
+   new workspace versions, and commit both.
+3. Run the full local gate: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
+   `cargo test --workspace`, `tests/run-tests.sh` and `tests/run-tests.sh --release`, `tests/check-release.sh`, and
+   `tests/build-release.sh --verify-reproducible`.
+4. Run the release workflow by hand with `publish: false` and inspect the six archives, `SHA256SUMS`, and the
+   reproducibility job. Install the Linux archive with `install.sh` and run `burdin build/run/test` on a sample
+   package.
+5. Commit, tag `v<version>`, and push the tag. The workflow builds the six targets, verifies the checksums and
+   reproducibility, generates the notes, and creates the GitHub release. Re-running the workflow on the same tag
+   uploads the assets again (`gh release upload --clobber`) instead of creating a second release.
+6. After publication, verify the installer one-liners on a clean machine and record the versions and checksums in
+   the release notes. Open the next `## Unreleased` section.
+
+## Rehearsal checklist
+
+Every item below is automated; run it before the first real tag and after a change to the pipeline.
+
+| Step | Command | Expected |
+| --- | --- | --- |
+| Policy and scripts | `tests/check-release.sh` | `No problems.` |
+| Version metadata | `target/debug/burdin --version` | six lines, and `channel:` is `dev` for a local build |
+| Local package | `tests/build-release.sh --target <host> --out dist` | an archive and two checksum files; the script's smoke test passes |
+| Reproducibility | `tests/build-release.sh --verify-reproducible` | `reproducible: <same SHA-256>` for two checkout paths |
+| Install rehearsal | `BURDIN_RELEASE_DIR=$PWD/dist BURDIN_VERSION=<v> BURDIN_INSTALL_DIR=$PWD/bin sh install.sh` | the installed compiler prints `<v>`; a sample `build`, `run`, and `test` pass |
+| Checksum refusal | append a byte to the archive and rerun the installer | `checksum mismatch`, non-zero exit, nothing installed |
+| Dry run | Actions → Release → Run workflow, `publish` unchecked | six artifacts, a verified `SHA256SUMS`, no GitHub release |
+| Stable publish | push a `v<version>` tag whose version matches `Cargo.toml` | a GitHub release with six archives, `SHA256SUMS`, and changelog notes |
+
+The pipeline does not yet provide code signing, an SBOM or provenance attestation, a package-manager formula, a
+bundled LLVM runtime, or Windows PDB symbols. The arm64 Windows and Intel macOS runner labels are GitHub-hosted
+images; the first real rehearsal confirms they are available to the repository.

@@ -38,6 +38,9 @@ tests/check-parallel.sh            check parallel parsing and deterministic diag
 tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
 tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
 tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
+tests/check-release.sh             check the release workflow, archives, checksums, installers, and version policy
+tests/build-release.sh             build, smoke-test, and package one release target (--verify-reproducible)
+tests/release-notes.sh             generate release notes from CHANGELOG.md and check their links
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
@@ -130,8 +133,11 @@ AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
-docs/                     the user-facing error-code reference (checked against tests/README.md)
-tests/                    conformance suite, README with the format and error codes
+docs/                     the user-facing error-code reference (checked against tests/README.md), and the
+                          version/release policy (docs/releasing.md)
+install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
+.github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
+tests/                    conformance suite, README with the format and error codes, and the release scripts
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_codegen, burdin_driver,
                           burdin_bench (generated inputs and `cargo bench` targets),
