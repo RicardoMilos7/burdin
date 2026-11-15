@@ -72,6 +72,7 @@ BURDIN=/path/to/burdin tests/run-tests.sh # choose the compiler driver
 tests/check-tests.sh                  # check directives and error codes (no compiler needed)
 tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
 tests/check-platform.sh               # check the host triple and 64-bit isize/usize (needs a built driver)
+tests/check-platform-support.sh       # check the platform support page against CI and binary-safe output (needs a built driver)
 tests/check-docs.sh                   # check documentation links and the driver contract (needs a built driver)
 tests/check-deps.sh                   # dependency, pin, and license audit (no compiler needed)
 tests/check-debug-info.sh             # -g: DWARF, line table, and a gdb breakpoint when gdb is installed

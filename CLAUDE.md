@@ -62,6 +62,7 @@ tests/check-parallel.sh            check parallel parsing and deterministic diag
 tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
 tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
 tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
+tests/check-platform-support.sh    check the platform support page against CI and binary-safe output (needs a built driver)
 tests/fuzz.sh                      long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 ```
 
@@ -94,7 +95,8 @@ crates/
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
-docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh)
+docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh) and the
+                          platform support matrix and known limitations (checked by tests/check-platform-support.sh)
 spec/                     grammar, memory rules, standard-library surface, derives, test runner, stage 0 scope,
                           stage 1 plan
 tests/                    conformance tests and scripts
