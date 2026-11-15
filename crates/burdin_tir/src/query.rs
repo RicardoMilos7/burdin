@@ -61,13 +61,15 @@ impl TypeDefs<'_> {
             // yields the same view.
             Ty::Ref { mutable, .. } => prop == Property::Clone || !*mutable,
             Ty::Slice(_) => true,
+            // A range is two copied endpoints.
+            Ty::Range(inner, _) => self.holds(inner, prop, seen),
             // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
             Ty::CPtr(_) => true,
-            Ty::String | Ty::Heap(_) => prop == Property::Clone,
+            Ty::String | Ty::Heap(_) | Ty::CString => prop == Property::Clone,
             // A list or a map owns its buffer, so it is never `Copy`; it can be deep-cloned when its elements can.
             Ty::List(t) => prop == Property::Clone && self.holds(t, prop, seen),
             Ty::Map(k, v) => prop == Property::Clone && self.holds(k, prop, seen) && self.holds(v, prop, seen),
-            Ty::CString | Ty::Param(_) => false,
+            Ty::Param(_) => false,
             Ty::Result(t, e) => self.holds(t, prop, seen) && self.holds(e, prop, seen),
             Ty::Array(t, _) | Ty::Option(t) => self.holds(t, prop, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.holds(t, prop, seen)),
@@ -109,6 +111,7 @@ impl TypeDefs<'_> {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::CPtr(_) | Ty::Chars => false,
+            Ty::Range(..) => false,
             Ty::String | Ty::Heap(_) | Ty::CString | Ty::List(_) | Ty::Map(..) => true,
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Option(t) => self.needs_drop_seen(t, seen),
@@ -152,7 +155,7 @@ mod tests {
     }
 
     fn struct_def(name: &str, fields: Vec<FieldDef>, derives: Derives, drop_method: Option<FuncId>) -> StructDef {
-        StructDef { name: name.into(), fields, derives, drop_method }
+        StructDef { name: name.into(), fields, repr_c: false, derives, drop_method }
     }
 
     fn derives(copy: bool, clone: bool) -> Derives {
@@ -160,7 +163,7 @@ mod tests {
     }
 
     fn adt(name: &str, id: usize) -> AdtRef {
-        AdtRef { id, name: name.into() }
+        AdtRef { id, name: name.into(), second_class: false }
     }
 
     fn int() -> Ty {
@@ -194,8 +197,8 @@ mod tests {
         assert!(defs.is_clone(&Ty::String));
         assert!(defs.is_clone(&Ty::Heap(Box::new(int()))));
         assert!(defs.is_clone(&Ty::List(Box::new(Ty::String))));
-        assert!(!defs.is_clone(&Ty::List(Box::new(Ty::CString))));
-        assert!(!defs.is_clone(&Ty::CString));
+        assert!(defs.is_clone(&Ty::List(Box::new(Ty::CString))));
+        assert!(defs.is_clone(&Ty::CString));
         assert!(defs.is_clone(&Ty::Ref { mutable: true, inner: Box::new(int()) }));
     }
 

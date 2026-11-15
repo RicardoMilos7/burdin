@@ -56,8 +56,8 @@ the executable form. Two decisions worth calling out here:
 | Drop | Scope-end drops, fields, temporaries, early exits, drop flags | L |
 | Heap | `Heap<T>` on C `malloc`/`free` | S |
 | Errors | `Option`, `Result<T, E>` with explicit `E`, `?` with `From`, `orelse` with a default value, `unwrap`, `expect`; panics abort | M |
-| Modules | Files as modules, `use` with braces and `as`, `priv`, a prelude; one package with a minimal `burdin.toml` | M |
-| Unsafe and C | `unsafe`, `extern "C"` blocks, `CPtr<T>`, used for libc and the LLVM C API | M |
+| Modules | Files as modules, `use` with braces and `as`, `priv`, `pub use` re-exports, a prelude; one package with a minimal `burdin.toml` | M |
+| Unsafe and C | `unsafe`/`unsafe fn`, `extern "C"` blocks and exported functions, `CPtr<T>` operations, `repr(C)` structs, used for libc and the LLVM C API | M |
 | Tests | `test` blocks with `[ignore]`, `[timeout(ms)]`, `[should_panic]`, and `[should_fail]` attributes, `assert` and `assert_eq` returning errors, a concurrent runner with captured output and per-test processes | M |
 | Diagnostics and driver | Spans, error codes (see `../tests/README.md`), `burdin build`, `run`, `test` | M |
 
@@ -69,7 +69,7 @@ Written mostly in Burdin itself on top of `unsafe` and C's `malloc`, so it also 
 
 | Area | Contents |
 | --- | --- |
-| Core types | `Option<T>`, `Result<T, E>`, `Heap<T>`, and ranges (iterable only; ranges as values are stage 1) |
+| Core types | `Option<T>`, `Result<T, E>`, `Heap<T>`, and `Range<T>`/`RangeInclusive<T>` as ordinary `Copy` values |
 | `String`, `str` | UTF-8; `len`, `push`, `push_str`, `clone`, comparison, slicing, `starts_with`, `find`, `chars()`, number to string and parse |
 | `List<T>` | `new`, `push`, `pop`, `len`, `last`, indexing, `insert`, `remove`, `clear`, `contains`, `sort`, `for` |
 | `Map<K, V>` | Hash map: `new`, `insert`, `get`, `remove`, `contains_key`, `len`, `for` |
@@ -78,7 +78,7 @@ Written mostly in Burdin itself on top of `unsafe` and C's `malloc`, so it also 
 | Output | `print`, `println`, `eprint`, `eprintln` taking `str` |
 | Files and process | `read_to_string`, `write_file`, `env.args()`, `process.exit`, running a child process |
 | Errors | `IoError`, `AssertError`, `panic`, `unreachable` |
-| C bridge | `CPtr<T>`, `CChar`, `CString`, `CStr` (a borrowed `CPtr<CChar>`), hand-written `extern` declarations for libc and the LLVM C API |
+| C bridge | `CPtr<T>` (with `null`, `is_null`, load/store, comparison, offsets, and casts), `CChar`, `CSize`, `CVoid`, `CString` (with `clone`), `CStr` (a borrowed `CPtr<CChar>`), `repr(C)` structs with `size()`/`align()`, variadic declarations, exported `extern "C" fn`, and hand-written `extern` declarations for libc and the LLVM C API |
 
 **Language items** the Rust compiler knows by name: `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Hash`, `From`, `Option`, `Result`,
 the range types, and the intrinsics behind `str` and `[T]`. Everything else is ordinary library code. The exact

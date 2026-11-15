@@ -9,12 +9,61 @@ use std::collections::hash_map::Entry;
 
 impl Sema<'_> {
     pub(crate) fn resolve_imports(&mut self, diags: &mut Diagnostics) {
-        for module in 0..self.module_asts.len() {
-            let ast = self.module_asts[module];
-            for u in &ast.uses {
-                self.resolve_use(module, u, diags);
+        // A `pub use` may import a name another module re-exports, and that may come later in module order. Resolve
+        // the uses that can be resolved now, repeatedly, and only report the ones that never become ready.
+        let mut pending: Vec<(usize, usize)> = self
+            .module_asts
+            .iter()
+            .enumerate()
+            .flat_map(|(module, ast)| (0..ast.uses.len()).map(move |index| (module, index)))
+            .collect();
+        while !pending.is_empty() {
+            let mut next = Vec::new();
+            let mut progress = false;
+            for (module, index) in pending {
+                let u = &self.module_asts[module].uses[index];
+                if self.use_ready(module, u) {
+                    self.resolve_use(module, u, diags);
+                    progress = true;
+                } else {
+                    next.push((module, index));
+                }
             }
+            if !progress {
+                // Nothing became ready: resolve what is left so its error is reported once.
+                for (module, index) in next {
+                    let u = &self.module_asts[module].uses[index];
+                    self.resolve_use(module, u, diags);
+                }
+                break;
+            }
+            pending = next;
         }
+    }
+
+    /// Whether every name a `use` needs is already bound. A `pub use` chain is resolved from its far end inward.
+    fn use_ready(&self, module: usize, u: &ast::UseDecl) -> bool {
+        let names: Vec<String> = u.path.iter().map(|i| i.name.clone()).collect();
+        if !u.items.is_empty() {
+            let Some(target) = self.globals.resolve_module_path(module, &names) else { return false };
+            return u.items.iter().all(|item| self.item_exported(target, &item.name));
+        }
+        if self.globals.resolve_module_path(module, &names).is_some() {
+            return true;
+        }
+        if names.len() > 1
+            && let Some(target) = self.globals.resolve_module_path(module, &names[..names.len() - 1])
+        {
+            let item = &names[names.len() - 1];
+            return self.item_exported(target, item);
+        }
+        false
+    }
+
+    fn item_exported(&self, module: usize, name: &str) -> bool {
+        self.globals.exported_value(module, name).is_some()
+            || self.globals.exported_type(module, name).is_some()
+            || self.globals.exported_iface(module, name).is_some()
     }
 
     fn resolve_use(&mut self, module: usize, u: &ast::UseDecl, diags: &mut Diagnostics) {
@@ -28,7 +77,7 @@ impl Sema<'_> {
                 return;
             };
             for item in &u.items {
-                self.import_item(module, target, item, diags);
+                self.import_item(module, target, item, u.is_pub, diags);
             }
             return;
         }
@@ -36,7 +85,7 @@ impl Sema<'_> {
         // `use path`: a module, or the last segment of the path is an item.
         if let Some(target) = self.globals.resolve_module_path(module, &names) {
             let name = u.alias.clone().unwrap_or_else(|| u.path.last().expect("a use path is not empty").clone());
-            self.bind_module(module, name, target, diags);
+            self.bind_module(module, name, target, u.is_pub, diags);
             return;
         }
         if names.len() > 1
@@ -44,7 +93,7 @@ impl Sema<'_> {
         {
             let item = u.path.last().expect("checked above");
             let name = u.alias.clone().unwrap_or_else(|| item.clone());
-            self.import_item_as(module, target, item, name, diags);
+            self.import_item_as(module, target, item, name, u.is_pub, diags);
             return;
         }
         // A dependency without a `src/lib.bd` or `src/<name>.bd` cannot be imported as a whole.
@@ -66,8 +115,9 @@ impl Sema<'_> {
         diags.error(Code::UNKNOWN_NAME, u.span, format!("unknown module `{path_text}`"));
     }
 
-    /// Binds `name` to the module `target` in `module`.
-    fn bind_module(&mut self, module: usize, name: ast::Ident, target: usize, diags: &mut Diagnostics) {
+    /// Binds `name` to the module `target` in `module`. A `pub use` also makes the alias a public module of
+    /// `module`, so another package can reach it as a qualified path (issue #79).
+    fn bind_module(&mut self, module: usize, name: ast::Ident, target: usize, is_pub: bool, diags: &mut Diagnostics) {
         if let Some(&previous) = self.globals.modules[module].modules.get(&name.name) {
             if previous != target {
                 diags.error(Code::UNSUPPORTED, name.span, format!("`{}` is imported more than once", name.name));
@@ -84,12 +134,15 @@ impl Sema<'_> {
             );
             return;
         }
+        if is_pub {
+            self.globals.modules[module].pub_modules.insert(name.name.clone());
+        }
         self.globals.modules[module].modules.insert(name.name, target);
     }
 
     /// Imports one item, keeping its name.
-    fn import_item(&mut self, module: usize, target: usize, item: &ast::Ident, diags: &mut Diagnostics) {
-        self.import_item_as(module, target, item, item.clone(), diags);
+    fn import_item(&mut self, module: usize, target: usize, item: &ast::Ident, is_pub: bool, diags: &mut Diagnostics) {
+        self.import_item_as(module, target, item, item.clone(), is_pub, diags);
     }
 
     /// Imports one item under `name`, which may be an alias.
@@ -99,6 +152,7 @@ impl Sema<'_> {
         target: usize,
         item: &ast::Ident,
         name: ast::Ident,
+        is_pub: bool,
         diags: &mut Diagnostics,
     ) {
         let info = &self.globals.modules[target];
@@ -128,6 +182,22 @@ impl Sema<'_> {
                 );
             }
         }
+        // `pub use` may not widen a package-private item beyond its package.
+        let declared_private = info.value_priv.get(&item.name).copied().unwrap_or(false)
+            || info.type_priv.get(&item.name).copied().unwrap_or(false)
+            || info.iface_priv.get(&item.name).copied().unwrap_or(false);
+        let mut reexport = is_pub;
+        if is_pub && declared_private {
+            diags.error(
+                Code::PRIVATE_ITEM,
+                item.span,
+                format!("cannot re-export `{}` with `pub use`: it is `priv`", item.name),
+            );
+            reexport = false;
+        }
+        let has_value = value.is_some();
+        let has_type = type_name.is_some();
+        let has_iface = iface.is_some();
         let name_text = name.name.clone();
         let mut duplicate = false;
         if let Some(value) = value {
@@ -156,6 +226,18 @@ impl Sema<'_> {
         }
         if duplicate {
             diags.error(Code::UNSUPPORTED, name.span, format!("`{name_text}` is defined more than once"));
+        }
+        if reexport {
+            let module_info = &mut self.globals.modules[module];
+            if has_value {
+                module_info.pub_values.insert(name_text.clone());
+            }
+            if has_type {
+                module_info.pub_types.insert(name_text.clone());
+            }
+            if has_iface {
+                module_info.pub_ifaces.insert(name_text.clone());
+            }
         }
     }
 }

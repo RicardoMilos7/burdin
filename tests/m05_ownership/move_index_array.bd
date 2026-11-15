@@ -1,0 +1,30 @@
+//@ run
+//> 2
+//> end of main
+//> drop 1
+//> drop 2
+
+// Moving an element out of an array leaves the other elements owned by the array, which drops them.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let xs = [Noisy { id: 1 }, Noisy { id: 2 }]
+    let first = xs[0]
+    println(xs[1].id.to_string())
+    println("end of main")
+}

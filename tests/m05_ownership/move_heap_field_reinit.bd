@@ -1,0 +1,40 @@
+//@ run
+//> 1
+//> 3
+//> end of main
+//> drop 1
+//> drop 3
+//> drop 2
+
+// A field of a Heap pointee can be moved out and then re-initialized: the Heap's drop drops the new value, and
+// the moved-out value drops with its new owner (issue #60).
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let mut h = Heap.new(Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } })
+    let a = (*h).a
+    println(a.id.to_string())
+    (*h).a = Noisy { id: 3 }
+    println((*h).a.id.to_string())
+    println("end of main")
+}

@@ -1,0 +1,40 @@
+//@ run
+//> 1
+//> 2
+//> drop 2
+//> drop 1
+//> end of main
+
+// A match on `*h` moves the fields its pattern binds; the Heap frees the allocation without dropping them again.
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let h = Heap.new(Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } })
+    match *h {
+        Pair { a, b } => {
+            println(a.id.to_string())
+            println(b.id.to_string())
+        }
+    }
+    println("end of main")
+}

@@ -15,15 +15,17 @@ const MAX_ITEMS: usize = 4000;
 impl<'t> Sema<'t> {
     /// Makes the struct or enum for a generic type and these arguments, and registers the methods of its impl blocks.
     pub(crate) fn allocate_adt(&mut self, template: usize, args: Vec<Ty>, diags: &mut Diagnostics) {
-        let (gname, gmodule, is_enum, params, decl, adt_bounds) = {
+        let (gname, gmodule, is_enum, params, decl, adt_bounds, repr_c) = {
             let g = &self.globals.generic_adts[template];
-            (g.name.clone(), g.module, g.is_enum, g.params.clone(), g.decl, g.bounds.clone())
+            let repr_c = !g.is_enum && self.tpl.structs[g.decl].repr_c;
+            (g.name.clone(), g.module, g.is_enum, g.params.clone(), g.decl, g.bounds.clone(), repr_c)
         };
         let symbolic = args.iter().any(|a| self.globals.ty_has_param(a));
         let identity = args.iter().zip(&params).all(|(a, p)| matches!(a, Ty::Param(n) if **n == **p));
         let name = Globals::instance_name(&gname, &args);
         let subst: Vec<(String, Ty)> = params.iter().cloned().zip(args.iter().cloned()).collect();
-        let adt_ref = |id| AdtRef { id, name: Rc::from(name.as_str()) };
+        let second_class = args.iter().any(Ty::is_second_class);
+        let adt_ref = |id| AdtRef { id, name: Rc::from(name.as_str()), second_class };
         let (key, ty) = if is_enum {
             let id = self.globals.enums.len();
             self.globals.enums.push(tir::EnumDef {
@@ -35,6 +37,8 @@ impl<'t> Sema<'t> {
             let r = adt_ref(id);
             self.globals.enum_refs.push(r.clone());
             self.globals.enum_pkg.push(self.globals.package_of(gmodule));
+            let private = self.globals.generic_adts[template].is_priv;
+            self.globals.adt_priv.insert((true, id), private);
             self.src.enums.push(crate::session::AdtSrcEntry { decl: self.tpl.enums[decl], subst, module: gmodule });
             ((true, id), Ty::Enum(r))
         } else {
@@ -42,12 +46,15 @@ impl<'t> Sema<'t> {
             self.globals.structs.push(tir::StructDef {
                 name: name.clone(),
                 fields: Vec::new(),
+                repr_c,
                 derives: tir::Derives::default(),
                 drop_method: None,
             });
             let r = adt_ref(id);
             self.globals.struct_refs.push(r.clone());
             self.globals.struct_pkg.push(self.globals.package_of(gmodule));
+            let private = self.globals.generic_adts[template].is_priv;
+            self.globals.adt_priv.insert((false, id), private);
             self.src.structs.push(crate::session::AdtSrcEntry { decl: self.tpl.structs[decl], subst, module: gmodule });
             ((false, id), Ty::Struct(r))
         };
@@ -85,6 +92,7 @@ impl<'t> Sema<'t> {
             symbolic: false,
             check_body: true,
             is_unsafe: g.is_unsafe,
+            is_exported: false,
         };
         let id = self.push_fn(item);
         self.globals.fn_instances.insert((template, args), id);

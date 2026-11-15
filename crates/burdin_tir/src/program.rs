@@ -50,6 +50,8 @@ pub struct ExternFn {
     pub symbol: String,
     pub params: Vec<Ty>,
     pub ret: Ty,
+    /// A C variadic function (`...` after the named parameters): a call may pass extra C-ABI values.
+    pub vararg: bool,
 }
 
 #[derive(Clone)]

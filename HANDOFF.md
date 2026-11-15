@@ -1,13 +1,14 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, and twenty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, and twenty-third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the nineteenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**:
-all 181 conformance tests pass in the debug profile and 179 in release (two tests are debug-only). `burdin test`
-runs `test` blocks concurrently with attributes, captured output, and per-test isolation, and the m11 program calls
-the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the twelfth deleted the stale
+Updated at the end of the twenty-third session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
+and the stage 0 gaps of issue #48 are closed**: all 224 conformance tests pass in the debug profile and 222 in
+release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
+and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
+(issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
 by `tests/check_docs.py` (issue #42); the thirteenth retired the claude.ai copies of the design and stage 0
 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in CI (#44, #41,
@@ -37,7 +38,12 @@ twenty-first session documented the platform support matrix and known limitation
 `docs/platform-support.md` and added `tests/check_platform_support.py`, which every CI job runs. The twenty-second
 session implemented the release pipeline of issue #452 (sub-issues #453-#456) without cutting a release: a six-target
 release workflow, versioned archives with SHA-256 checksums, reproducible builds and archives, the installers, the
-version/channel metadata, and the policy and rehearsal page in `docs/releasing.md`.
+version/channel metadata, and the policy and rehearsal page in `docs/releasing.md`. The twenty-third session
+implemented the stage 0 correctness gaps of issue #48 (sub-issues #49, #53, #58, #64, #71, #77, #85, #86, #87):
+the view-lifetime rule (E0123), ranges as values, the tracked move forms, the generic inference/bounds/signature
+gaps, `pub use` and the module visibility rule, the C bridge (`CPtr` operations, `unsafe` for every `CPtr` value,
+`CString.clone`, out-parameters, `repr(C)` layout, variadic declarations, exported `extern "C" fn`), conformance
+tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage audit.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -47,10 +53,10 @@ version/channel metadata, and the policy and rehearsal page in `docs/releasing.m
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
 | Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the deferred differential tests (issue #444) |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
-| Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items, the permissive declaration layout, and the call-site marker rules |
-| Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
+| Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, and `...` in an `extern` signature |
+| Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 181 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Conformance tests | `tests/` | 224 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -106,9 +112,10 @@ how to call WSL from PowerShell.
   variant fields, `Option` payload), computes the MV1 move contexts, and reports use of a moved or maybe-moved place
   (E0100), a move out of borrowed content (E0101), moving a field out of a `Drop` type (E0103), and moving an outer
   local inside a loop (E0104). The loop condition is checked inside the loop, only branches that can fall through are
-  merged, and a guard that fails restores the drop flags of the bindings its pattern moved. Moves it cannot follow are
-  rejected with E9000 instead of being miscompiled: moving a non-`Copy` value through indexing or a `Heap`
-  dereference, moving a value out of `match *h`, and a moving pattern with a guard on a temporary scrutinee. It does
+  merged, and a guard that fails restores the drop flags of the bindings its pattern moved. The twentieth session
+  extended the tracked forms (see the #48 bullet): heap fields, constant array and `List` indices, `match *h`, and a
+  guarded moving pattern on a temporary scrutinee all work now. The move still rejected with E9000 is a non-`Copy`
+  element through a runtime index (`let x = xs[i]` with a non-constant `i`). It does
   not rewrite the tree; it returns the list of places read in a move context (`Function.moved`) for code generation. `Heap.new` builds `Heap<T>`; `String.new`, `String.from`, `push_str`, and
   `clone` are built-in methods.
 - Milestone 6 added the conventions, references, views, and exclusivity. Every parameter that is not `own` is passed by
@@ -167,13 +174,15 @@ how to call WSL from PowerShell.
   `use math.{add, mul}`, `use geometry.shapes as sh`, `use lib`. Qualified paths work in expressions, types, struct
   literals, patterns, and enum variants (`sh.Square { ... }`, `sh.Color.Red`, `let p: sh.Square`). `priv` is
   package-private: another package importing a private item, reading or writing a private field, or calling a
-  private method gets E0150. `extern "C" { fn ... }` registers C functions by their plain symbol; calls require an
+  private method gets E0150. `pub use` re-exports a name, and a dependency's non-root modules are reachable only when
+  its root re-exports them; a public signature or field may not name a package-private type (E0150). `extern "C" { fn ... }` registers C functions by their plain symbol; calls require an
   `unsafe` block or `unsafe fn` (E0161) and use the C ABI with by-value parameters limited to integers, floats, and
   `CPtr<T>`. `unsafe` blocks are ordinary block expressions with an unsafe depth, and `unsafe fn` bodies are
-  unsafe. `CPtr<T>` is a raw, `Copy` pointer; `CPtr.null()` takes its type from context. `CString` is an owning,
-  NUL-terminated buffer (`CString.from(str)`, `.as_ptr(): CPtr<CChar>`) with `Drop`; `CChar`, `CSize`, and `CVoid`
-  are the C names (`i8`, `usize`, and unit behind a pointer). Extern declarations are deduplicated by symbol, and a
-  second declaration with a different signature is an error.
+  unsafe. `CPtr<T>` is a raw, `Copy` pointer; `CPtr.null()` takes its type from context (the twenty-third session added
+  the pointer operations and made every `CPtr` value require `unsafe`; see the #48 bullet). `CString` is an owning,
+  NUL-terminated buffer (`CString.from(str)`, `.as_ptr(): CPtr<CChar>`) with `Drop` and a deep `clone`; `CChar`,
+  `CSize`, and `CVoid` are the C names (`i8`, `usize`, and unit behind a pointer). Extern declarations are
+  deduplicated by symbol, and a second declaration with a different signature is an error.
 - Milestone 9 added the standard library. `Result<T, E>`, `List<T>`, `Map<K, V>`, and `Chars` are built-in types
   (`Ty::Result`, `Ty::List`, `Ty::Map`, `Ty::Chars`): `Ok`/`Err` construct and match like `Some`/`None`, `?` lowers
   in sema to a match that returns early through the enclosing `Option`/`Result` and converts the error through a
@@ -220,6 +229,41 @@ how to call WSL from PowerShell.
   `libLLVM-21.so`, not `libLLVM-C.so`, so the driver asks `llvm-config --libdir` and `--link-shared --libs` and adds
   `-L` plus an rpath. The m11 program builds and verifies `define i32 @answer() { ret i32 42 }` through the LLVM C API
   and prints the IR. (Emitting an object file from the LLVM C API is still a later step in the stage 1 compiler.)
+- **Issue #48 closed the stage 0 gaps.** The work, by theme:
+  - *View lifetime (#49).* `burdin_check/src/origins.rs` was rewritten around an `Origin` with parameter, local, and
+    temporary sources plus the block tree. RT5 is the new rule (E0123): a second-class value stored in a `let` or an
+    assignment may derive only from static data, a parameter, or a local of the same or an enclosing block; a
+    temporary or an inner-block local is rejected at the binding. `match`/`if let`/`for` pattern bindings are
+    exempt, and a synthetic scrutinee local (`LocalKind::Scrutinee`) carries the temporary's origin.
+  - *Ranges as values (#53).* `Ty::Range(T, inclusive)` holds the endpoints; `ExprKind::Range` builds one and
+    `ForRangeValue` iterates a stored one. `Range<T>` and `RangeInclusive<T>` are builtin names, the endpoints are
+    integers of one type (the `for` forms keep their inference), and the structural `==`, ordering, `Hash`, `clone`,
+    and drop paths cover them. `for i in r` evaluates `r` once and does not borrow it.
+  - *Moves (#58).* `burdin_check/src/moves.rs` tracks constant array and `List` indices, heap pointee fields (the
+    `MOVED_DEREF` path step), `match *h`, and a moving pattern with a guard on a temporary scrutinee (the scrutinee
+    is wrapped in a compiler-made local of the same statement). A runtime index is still E9000. Code generation
+    follows the same paths (`place_path`, `drop_at_address`), and a whole `*h` move leaves the `Heap`'s drop to free
+    the allocation once.
+  - *Generics (#64).* A static method of a generic type infers its arguments from the method's own parameters; a
+    generic type's bounds are checked at instantiation (E0141); a view type argument makes the instance
+    second-class (SC3) and is rejected in a stored position; an impl method is compared with the interface method
+    (E0003, including `unsafe`); `==`/`<` on symbolic instances follow the bounds; `Self` resolves in expressions,
+    struct literals, patterns, and type paths.
+  - *Modules (#77).* `pub use` re-exports a module or item, imports resolve to a fixpoint so a re-export may come
+    later in module order, a dependency's non-root modules are hidden unless the root re-exports them, and a public
+    signature or field naming a package-private type is E0150.
+  - *C bridge (#71: #72-#76, #489, #490).* `CPtr<T>` gained load/store through `*p` (`ExprKind::PtrDeref`), `.is_null()`,
+    `==`/`!=`, `p ± n`, `p - q` (an element count), and casts to/from integers and other `CPtr` types; every creation,
+    hold, use, or move of a `CPtr` now requires `unsafe` (E0161), and a reference converted to a pointer ends its loan
+    at the cast.
+    `CString.clone` copies the NUL-terminated buffer in the runtime. Out-parameters work through
+    `&mut x as CPtr<...>`. `struct Name repr(C)` has the C layout and `Type.size()`/`Type.align()`; `...` declares a
+    variadic C function; `extern "C" fn` exports a Burdin function under its plain symbol with the C ABI rules
+    (E0162). Aggregates cross the ABI through `CPtr<T>` only (by-value lowering is not implemented), C `_Bool` is
+    declared `u8`, and C `char` is `CChar`.
+  - *Coverage (#85-#87).* `unsafe fn` and unsafe interface methods have run and compile-fail tests, and the
+    memory-rule coverage matrix in `spec/memory-rules.md` was audited against the suite (every referenced test
+    exists, and US now lists the new tests).
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
@@ -431,43 +475,38 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
    exit codes (still only "non-zero" in `run-abort`), and the test dispatcher's `atoi`/`strlen` path. The `macos` job
    covers the arm64 triple, `cc` linking, libc calls, the test dispatcher, and `--link-lib LLVM-C`. Intel macOS is not
    tested. `docs/platform-support.md` is the full matrix, the per-platform evidence, and the known gaps (issue #457).
-8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`,
-   `extern "C"`, and `test` items are exercised by m07, m08, and m10. Not covered by a conformance test yet:
-   `unsafe fn` declarations (they work; tested by hand) and `interface` methods that are `unsafe`.
+8. **The grammar is tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`/`pub use`,
+   `extern "C"` blocks and exported functions, `repr(C)`, ranges as values, `Self` in expressions, and `test` items
+   are exercised by m06, m07, m08, and m10; `unsafe fn` declarations and unsafe interface methods have their own
+   tests (`m08_modules/unsafe_fn*`, `m07_generics/unsafe_interface_method`).
 9. **The claude.ai copies are historical (issue #44).** The design document there lacks the exclusivity rule, and the
    stage 0 document there is the old export. The repository files are the only maintained copies and say so at their
    tops (`CLAUDE.md`, `AGENTS.md`, `Burdin Language Design.md`, and `spec/stage0-subset.md`). Deleting or archiving the
    claude.ai pages themselves is a manual action for the owner, who has the account access; the repository has no link
    to them, so nothing here depends on those pages.
-10. **Ownership gaps that no test exercises yet.** Moving a field out of a temporary `match` scrutinee is still not
-    tracked, so the temporary's other fields are leaked. The move forms the checker cannot follow are rejected with
-    E9000 rather than miscompiled: moving a non-`Copy` value through indexing or a `Heap` dereference (a field of an
-    array element or of the pointee), moving a value out of `match *h`, and a moving pattern with a guard on a
-    temporary scrutinee. A `match` on an owned local or an `own` parameter is tracked normally. Milestone 9's
-    `List`/`Map` make moving a non-`Copy` element through indexing reachable (`let x = xs[0]`); it is still E9000,
-    so move the element with `remove` instead. Issue #21 settled the rule for heap pointees: `*h` moves the whole
-    pointee, and a field moves only after the pointee is in a local (`m05_ownership/heap_move_whole_then_field.bd`);
-    the E9000 forms remain the stage 1 fix in `stage1-subset.md`.
-11. **A view can outlive the storage it borrows from without a diagnostic.** No registry code covers it, and the spec
-    only states the function-return case (RT2). Examples: `let r = first_of(Pair { a: 1, b: 2 })` (the temporary drops
-    at the end of the `let`, DR5), `let r = { let p = Pair { a: 1, b: 2 }; first_of(p) }` (the source local dies with
-    the block), and `let t = "x".to_string().as_str()`. The borrow checker creates no loan for a temporary and has no
-    notion of a source's scope ending, and origin inference gives a temporary argument an empty origin. Decide the
-    rule and its error code first, then implement. E0122 at the binding is the closest code, but its registry text says
-    "returned".
+10. **One ownership gap remains.** Moving a non-`Copy` value through a **runtime** index (`let x = xs[i]` with a
+    non-constant `i`) is still E9000: the checker cannot tell which element moves, so it rejects the program rather
+    than miscompiling it. Moving a constant array or `List` index, a heap pointee field, out of `match *h`, and a
+    guarded moving pattern on a temporary scrutinee are tracked (twenty-third session, `spec/memory-rules.md` MV6 and
+    MV8). Use `remove` for a dynamic `List` element until stage 1 extends the path model (`stage1-subset.md`).
+11. **A stored view could outlive its source; that is closed (#49).** RT5 with E0123 rejects a view of a temporary, of
+    an inner-block local, or of a dropped `String` in a `let` or assignment, reported at the stored value. The old
+    examples (`let r = first_of(Pair { .. })`, `let r = { let p = ...; first_of(p) }`,
+    `let t = "x".to_string().as_str()`) are compile-fail tests in `m06_conventions`; the rule is in
+    `spec/memory-rules.md` RT5. Match/`if let`/`for` bindings remain exempt because their source lives to the end of
+    the statement.
 12. **The Rust toolchain is pinned** (issue #19, 2026-11-14) to `1.100.0` with `clippy` and `rustfmt` in
     `rust-toolchain.toml`, so `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` are reproducible
     from a clean machine. CI installs that toolchain (`rustup toolchain install` reads the file) and verifies
     `rustc --version` and both components; `tests/check_ci.py` fails if the pin or CI's verification step goes missing.
     Bumping the version means running `cargo fmt --all` after the change.
-13. **The module and C bridge is narrower than the design.** There is no syntax for a private module, no module
-    visibility check, and no check that public signatures only use public types. `CPtr` supports only `null()` and
-    `CString.as_ptr()`, plus `CStr.to_string` (no dereference, null test, pointer arithmetic, or comparison).
-    `extern` accepts only integers, floats, and `CPtr` (no C `bool`/`char`/structs/unions/function pointers/varargs),
-    and only the `C` ABI. `CString` has no clone. `unsafe` is required only for calls, not for holding or moving a
-    `CPtr`. There is no way to re-export an imported name (no `pub use`), and no module visibility. The manifest parser
-    is deliberately minimal (path dependencies, no versions, no lockfile). A user `extern` whose symbol collides with
-    a runtime libc declaration of a different type is a backend error printed without an error code or source span.
+13. **The module and C bridge still has deliberate edges.** There is no `priv` marker on a module: the rule is
+    positional, so a dependency's non-root modules are hidden unless its root re-exports them with `pub use`. There
+    are no function-pointer types and no `union` declarations, and a `repr(C)` struct crosses the C ABI only through
+    `CPtr<T>` (passing or returning one by value is E0162 because the platform coercions are not implemented). C
+    `_Bool` is declared `u8`, since a Burdin `bool` is one bit, and C `char` is `CChar`. The manifest parser is
+    deliberately minimal (path dependencies, no versions, no lockfile). A user `extern` whose symbol collides with a
+    runtime libc declaration of a different type is a backend error printed without an error code or source span.
 14. **`Map` is a linear-scan map**, not the hash map the stage 0 table names: the observable API and ordering are
     the same, but lookup is O(n) and keys only need `Eq`. A hash table can replace the implementation without
     changing the type or its methods; `Hash` and `hash()` already exist.
@@ -475,9 +514,11 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     `type ... = ()`; `read_to_string`, `write_file`, `process.run`, and the integer parsers return
     `Result<T, ()>` under those names. Tests only match `Err(_)`, and the `error` declarations of stage 1 are the
     place to give them payloads. This is also why the names were removed from the compiler's `builtin_type`.
-16. **Ranges are only iterable, not values (decided, issue #21).** `a..b` and `a..=b` are handled by `for`; a range
-    stored in a binding or passed to a function is still E9000. Stage 0 settles the syntax and iteration forms
-    (`m06_conventions/range_forms.bd`); ranges as first-class values arrive with m13 (`stage1-subset.md`).
+16. **Ranges are values now (#53).** `a..b` is a `Range<T>` and `a..=b` a `RangeInclusive<T>`: they are stored,
+    passed, put in fields and containers, compared, cloned, and hashed, and `for` iterates a stored range without
+    borrowing it. Endpoints are integers of one type; the exclusive/inclusive bounds and the overflow behavior of
+    `for` are unchanged. Stage 1's iterator protocol makes ranges implement `Iterable`/`Iterator`; the value types
+    themselves no longer change.
 17. **The standard library is embedded with `include_str!`.** Changing `std/` requires rebuilding `burdin`; a
     project that declares its own `std` package replaces the embedded one (and then must provide every prelude
     name it uses). The prelude copies public names into every module including dependency packages, so a
@@ -753,7 +794,8 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   (E0005 assignment, E0101 move-out); `*h` moves the whole pointee and frees it. Moving a field through `*h` stays an
   E9000 stage 1 gap; move the pointee into a local first.
 - **`for` and ranges (#27).** `for` borrows its collection shared for the whole loop (E0111 on mutation), the binding
-  is read-only (E0005), maps iterate `(k, v)`, `chars()` iterates `char`, and `a..b`/`a..=b` are iterable only.
+  is read-only (E0005), maps iterate `(k, v)`, `chars()` iterates `char`, and `a..b`/`a..=b` are iterable. (Issue #53
+  later made ranges ordinary values; the loop forms kept this behavior.)
 - **Standard-library surface (#28-#31).** Written with signatures in `spec/stdlib.md`, including `unreachable`,
   `String`/`str` ordering, `CPtr.null()` taking no arguments, and the C bridge names.
 - **`main` (#32).** Unit, no parameters, E0003 otherwise. Decided for stage 1 (m16): a returned error is printed with
@@ -984,6 +1026,57 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   installed compiler. The manual checklist in `docs/releasing.md` covers the parts CI cannot (the first real tag,
   a clean machine, and the external download URLs).
 
+## Decided in the twenty-third session
+
+- **A stored view's source rule is RT5 (E0123), checked in `origins.rs`.** A second-class value stored in a `let`, an
+  assignment, or a `let` pattern binding may derive only from static data, a parameter, or a local declared in the
+  same or an enclosing block. A temporary, or a local of an inner block, is E0123 at the stored value. The rules for
+  `match`, `if let`, and `for` bindings are exempt: their source lives to the end of the same statement and the
+  binding does not. Origin is now a set of parameters, locals, and a "temporary" flag, with the block ancestry
+  tracked, and the check stays body-local.
+- **Ranges are ordinary `Copy` values with integer endpoints.** `a..b` and `a..=b` produce `Range<T>` /
+  `RangeInclusive<T>`, where both endpoints have the same integer type (inferred from context or the other
+  endpoint, as before). A range is evaluated once and `for i in r` does not borrow it; equality, ordering, hashing,
+  cloning, and dropping are the structural versions of the two fields. `..` is the lowest-precedence operator, so a
+  range used as an operand is written in parentheses (`(4..=6) == r`); open-ended forms (`..b`, `a..`, `..`) do not
+  exist.
+- **The move checker tracks constant indices and heap fields, not runtime indices.** A constant array or `List`
+  index (`xs[0]`) is a path step, and a field of a heap pointee (`(*h).a`) extends the path through the `MOVED_DEREF`
+  step. A moving pattern on a temporary `match` scrutinee is safe: the scrutinee is moved into a compiler-made local
+  of the statement, so untouched fields drop once and a failed guard restores what an earlier arm bound. An index
+  expression is evaluated once. A runtime index remains E9000: without knowing the element, the drop flag cannot be
+  placed, and miscompiling is worse.
+- **Generic gaps use the existing rules.** A static method of a generic type unifies `Self`'s arguments with the
+  method's parameters (so `Holder.make(x)` infers `T`); a generic type's bounds are checked when it is instantiated
+  (E0141), not only in the symbolic check; a view type argument makes the instance second-class (SC3), so it is
+  allowed as a local but rejected in a field; an impl method is compared with the interface method, including
+  `unsafe` (E0003); `==`/`<` on symbolic instances are accepted when the bounds provide `Eq`/`Ord`; and `Self`
+  resolves in expressions, struct literals, patterns, and type paths of an impl block.
+- **`pub use` re-exports, and module visibility is positional.** `pub use` copies a module or item into the
+  re-exporting module's exported names; import resolution iterates to a fixpoint so a re-export may appear later in
+  module order. A dependency's root module (`src/<package>.bd` or `src/lib.bd`) is what `use <package>` names; its
+  non-root modules are hidden unless the root re-exports them (E0002 when reached directly). `pub use` of a
+  package-private item and a public signature or field naming a package-private type are E0150. There is no `priv`
+  marker on a module because a file has no item position to carry it.
+- **Every `CPtr` value requires `unsafe`.** Creating (`CPtr.null()`), holding, passing, moving, dereferencing,
+  testing, comparing, offsetting, or casting a raw pointer is E0161 outside `unsafe`/`unsafe fn`. This closes the
+  design's rule that raw pointers are only usable in unsafe code; the memory rules still apply inside. A reference
+  converted to a `CPtr` (`&mut x as CPtr<T>`) ends its borrow at the conversion, because the pointer leaves the safe
+  domain; that is what makes out-parameters work without a spurious E0111.
+- **C aggregates cross the ABI through `CPtr<T>` only.** `struct Name repr(C)` fixes field order, padding, and
+  alignment (`Type.size()`/`Type.align()` report the LLVM ABI layout), and a pointer to it is an ordinary
+  `CPtr<Struct>`. Passing or returning an aggregate by value is E0162: the SysV/MSVC coercions (packing a small
+  struct into a register, `sret`) do not match LLVM's lowering of a literal struct return, and a silent ABI
+  mismatch is worse than a rejection. C `_Bool` is a one-byte integer, so it is declared `u8` (0 or 1); C `char` is
+  `CChar` (`i8`).
+- **`extern "C" fn` exports a Burdin function under its plain symbol.** The declaration rules apply (ABI "C", `own`
+  parameters, no generics/`...`/receiver), and the C symbol is reused if an `extern "C"` declaration of the same
+  type exists, so a caller in another module or language links to the same function. Variadic declarations take
+  `...`; each extra argument is checked against the C ABI.
+- **The coverage issues are verification work.** `unsafe fn` and unsafe interface methods have run and compile-fail
+  tests (#85, #86), and the memory-rule matrix was audited with a script over every referenced test (#87); `US` now
+  names the pointer and unsafe-function tests.
+
 ## What is left to do, in order
 
 1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
@@ -993,9 +1086,10 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
    `spec/test-runner.md` holds its intended shape and the issue stays open until then.
 2. Write the m12 tests before the code, the same way stage 0 was built: `tests/m12_closures` and its `//@` expectations
    are the spec for the first stage 1 milestone.
-3. Close the stage 0 correctness gaps that stage 1 inherits, each with a registry code and tests first: a view outliving
-   its source (problem 11), ranges as values (16), the move forms rejected as E9000 (10), the generic gaps (the old
-   item 4 of this list), and the module and C gaps (13).
+3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
+   values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
+   still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
+   C function-pointer and `union` types, by-value C aggregates, and a `priv` module marker if a project needs one.
 4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
    `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m11 in both
    the debug and release profiles (issues #11, #16, #47, and #12), and cache cargo and LLVM 21 (issue #46).

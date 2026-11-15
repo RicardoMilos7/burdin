@@ -114,7 +114,7 @@ impl<'a> Checker<'a> {
         use tir::ExprKind as K;
         match &e.kind {
             K::Local(_) => {}
-            K::Field(base, _) | K::Deref(base) | K::DerefRef(base) => self.place_subexpr(base),
+            K::Field(base, _) | K::Deref(base) | K::PtrDeref(base) | K::DerefRef(base) => self.place_subexpr(base),
             K::Index(base, index) => {
                 self.place_subexpr(base);
                 self.expr(index, Mode::Use);
@@ -211,8 +211,9 @@ impl<'a> Checker<'a> {
             | K::Const(_)
             | K::None
             | K::Break
-            | K::Continue => {}
-            K::Local(_) | K::Field(..) | K::Deref(..) | K::DerefRef(..) | K::Index(..) => {
+            | K::Continue
+            | K::LayoutOf { .. } => {}
+            K::Local(_) | K::Field(..) | K::Deref(..) | K::PtrDeref(..) | K::DerefRef(..) | K::Index(..) => {
                 let access = if mode == Mode::Move && !self.is_copy(&e.ty) { Access::Move } else { Access::Read };
                 self.access_place(e, access);
             }
@@ -288,6 +289,10 @@ impl<'a> Checker<'a> {
                 self.expr(hi, Mode::Use);
                 self.block(body);
             }
+            K::ForRangeValue { range, body, .. } => {
+                self.expr(range, Mode::Use);
+                self.block(body);
+            }
             K::ForArray { array, body, .. } => {
                 // The loop borrows the collection for as long as it runs, so the body cannot change it.
                 self.access_place(array, Access::Read);
@@ -357,6 +362,20 @@ impl<'a> Checker<'a> {
                 self.expr(l, Mode::Use);
                 self.expr(r, Mode::Use);
             }
+            K::Range { lo, hi, .. } => {
+                self.expr(lo, Mode::Use);
+                self.expr(hi, Mode::Use);
+            }
+            // A reference converted to a raw pointer leaves the safe borrow domain: the pointer may only be used
+            // inside `unsafe`, where the programmer is responsible for the pointer's validity (memory-rules.md,
+            // RF; issue #76). The conversion still conflicts with live loans on the place.
+            K::Cast(inner) if matches!(e.ty, Ty::CPtr(_)) => match &inner.kind {
+                K::Ref { place, mutable } => {
+                    let access = if *mutable { Access::BorrowMut } else { Access::Read };
+                    self.access_place(place, access);
+                }
+                _ => self.expr(inner, Mode::Use),
+            },
             K::Unary(_, inner) | K::Cast(inner) | K::ArrayRepeat(inner, _) => self.expr(inner, Mode::Use),
             K::Array(elems) | K::Tuple(elems) => {
                 for el in elems {
@@ -457,10 +476,14 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::None
         | K::Break
         | K::Continue
+        | K::LayoutOf { .. }
         | K::Return(None) => {}
-        K::Field(base, _) | K::Deref(base) | K::DerefRef(base) | K::Unary(_, base) | K::Cast(base) => {
-            locals_used(base, out)
-        }
+        K::Field(base, _)
+        | K::Deref(base)
+        | K::PtrDeref(base)
+        | K::DerefRef(base)
+        | K::Unary(_, base)
+        | K::Cast(base) => locals_used(base, out),
         K::Index(base, index) => {
             locals_used(base, out);
             locals_used(index, out);
@@ -486,6 +509,10 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(l, out);
             locals_used(r, out);
         }
+        K::Range { lo, hi, .. } => {
+            locals_used(lo, out);
+            locals_used(hi, out);
+        }
         K::Block(b) => locals_used_block(b, out),
         K::If(cond, then, other) => {
             locals_used(cond, out);
@@ -502,6 +529,10 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         K::ForRange { lo, hi, body, .. } => {
             locals_used(lo, out);
             locals_used(hi, out);
+            locals_used_block(body, out);
+        }
+        K::ForRangeValue { range, body, .. } => {
+            locals_used(range, out);
             locals_used_block(body, out);
         }
         K::ForArray { array, body, .. } => {
@@ -563,10 +594,14 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::None
         | K::Break
         | K::Continue
+        | K::LayoutOf { .. }
         | K::Return(None) => {}
-        K::Field(base, _) | K::Deref(base) | K::DerefRef(base) | K::Unary(_, base) | K::Cast(base) => {
-            uses_expr(base, stmt, last)
-        }
+        K::Field(base, _)
+        | K::Deref(base)
+        | K::PtrDeref(base)
+        | K::DerefRef(base)
+        | K::Unary(_, base)
+        | K::Cast(base) => uses_expr(base, stmt, last),
         K::Index(base, index) => {
             uses_expr(base, stmt, last);
             uses_expr(index, stmt, last);
@@ -592,6 +627,10 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(l, stmt, last);
             uses_expr(r, stmt, last);
         }
+        K::Range { lo, hi, .. } => {
+            uses_expr(lo, stmt, last);
+            uses_expr(hi, stmt, last);
+        }
         K::Block(b) => uses_block(b, stmt, last),
         K::If(cond, then, other) => {
             uses_expr(cond, stmt, last);
@@ -608,6 +647,10 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         K::ForRange { lo, hi, body, .. } => {
             uses_expr(lo, stmt, last);
             uses_expr(hi, stmt, last);
+            uses_block(body, stmt, last);
+        }
+        K::ForRangeValue { range, body, .. } => {
+            uses_expr(range, stmt, last);
             uses_block(body, stmt, last);
         }
         K::ForArray { array, body, .. } => {

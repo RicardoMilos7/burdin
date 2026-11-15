@@ -75,6 +75,7 @@ impl FnCx<'_> {
     fn extern_call(&mut self, name: &ast::Ident, id: usize, args: &[ast::Arg], span: Span) -> tir::Expr {
         let info = &self.globals.externs[id];
         let sig = info.sig.clone();
+        let vararg = info.vararg;
         let symbol = info.symbol.clone();
         // Visibility is checked where the name is bound (the `use` import, or a module-qualified call), so a
         // `priv` declaration in one module does not hide a public declaration of the same symbol in another.
@@ -85,9 +86,34 @@ impl FnCx<'_> {
                 format!("calling the C function `{symbol}` requires an `unsafe` block"),
             );
         }
-        let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+        let fixed = sig.params.len();
+        if args.len() < fixed || (!vararg && args.len() != fixed) {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            let expected = if vararg { format!("at least {fixed}") } else { fixed.to_string() };
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{symbol}` takes {expected} argument(s), but {} were given", args.len()),
+            );
+            return error_expr(span);
+        }
+        let (fixed_args, extra_args) = args.split_at(fixed);
+        let Some(mut checked) = self.args(&name.name, &sig.params, fixed_args, None, span) else {
             return error_expr(span);
         };
+        for a in extra_args {
+            let value = self.expr(&a.expr, None);
+            if value.ty != Ty::Error && !crate::resolve::is_c_abi_value(&value.ty) {
+                self.diags.error(
+                    Code::C_ABI,
+                    value.span,
+                    crate::resolve::c_abi_rejection(&value.ty, "passed through `...` to a C function"),
+                );
+            }
+            checked.push(value);
+        }
         mk(tir::ExprKind::ExternCall(id, checked), sig.ret, span)
     }
 
@@ -159,7 +185,7 @@ impl FnCx<'_> {
         let l = self.auto_deref(l);
         let r = self.expr(&args[1].expr, Some(&l.ty));
         let r = self.coerce_arg(r, &l.ty);
-        if !self.globals.has_eq(&l.ty) && !self.param_has(&l.ty, crate::generics::Bound::Eq) {
+        if !self.globals.has_eq_in(&l.ty, &self.bounds) && !self.param_has(&l.ty, crate::generics::Bound::Eq) {
             self.diags.error(
                 Code::BOUND_NOT_SATISFIED,
                 span,
@@ -478,7 +504,7 @@ impl FnCx<'_> {
             checked.insert(0, recv);
             return mk(tir::ExprKind::Call(f, checked), ret, span);
         }
-        if name.name == "hash" && args.is_empty() && self.globals.has_hash(&recv.ty) {
+        if name.name == "hash" && args.is_empty() && self.globals.has_hash_in(&recv.ty, &self.bounds) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
         let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
@@ -504,7 +530,7 @@ impl FnCx<'_> {
         }
         match (&m, &recv.ty) {
             (Method::ListSort, Ty::List(elem)) => {
-                if !self.globals.has_ord(elem) {
+                if !self.globals.has_ord_in(elem, &self.bounds) {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
                         span,
@@ -513,7 +539,7 @@ impl FnCx<'_> {
                 }
             }
             (Method::ListContains, Ty::List(elem)) => {
-                if !self.globals.has_eq(elem) {
+                if !self.globals.has_eq_in(elem, &self.bounds) {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
                         span,
@@ -522,7 +548,7 @@ impl FnCx<'_> {
                 }
             }
             (Method::MapGet | Method::MapRemove | Method::MapContainsKey | Method::MapInsert, Ty::Map(k, _))
-                if !self.globals.has_eq(k) =>
+                if !self.globals.has_eq_in(k, &self.bounds) =>
             {
                 self.diags.error(
                     Code::BOUND_NOT_SATISFIED,
@@ -640,6 +666,15 @@ impl FnCx<'_> {
         }
         if let Ty::Param(_) = ty {
             return self.param_assoc_call(ty, name, args, span);
+        }
+        // `Type.size()` and `Type.align()`: the C layout of a type, for `repr(C)` size assertions (issue #490).
+        if matches!(name.name.as_str(), "size" | "align") && args.is_empty() {
+            let user_method = crate::globals::adt_key(ty)
+                .is_some_and(|key| self.globals.methods.contains_key(&(key, name.name.clone())));
+            if !user_method {
+                let alignment = name.name == "align";
+                return mk(tir::ExprKind::LayoutOf { ty: ty.clone(), alignment }, Ty::Int(IntTy::Usize), span);
+            }
         }
         // A raw pointer has `null`; a pointer to `CChar` is how `CStr` is written, so it also reads the
         // NUL-terminated bytes into a `String`.

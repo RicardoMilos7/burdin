@@ -8,7 +8,20 @@ use burdin_syntax::ast;
 use burdin_tir::{self as tir, Ty};
 
 impl FnCx<'_> {
+    /// Checks an expression, then enforces that a raw C pointer is only used inside `unsafe` (memory-rules.md,
+    /// US; issue #74). `CPtr` types in signatures and `extern` declarations are not values and are not affected.
     pub(super) fn expr(&mut self, e: &ast::Expr, expect: Option<&Ty>) -> tir::Expr {
+        let checked = self.expr_inner(e, expect);
+        // An `unsafe` block is checked with the depth raised; the block itself is the boundary and its result
+        // may be a raw pointer.
+        let boundary = matches!(e.kind, ast::ExprKind::UnsafeBlock(_));
+        if !boundary && self.unsafe_depth == 0 && matches!(checked.ty, Ty::CPtr(_)) {
+            self.diags.error(Code::UNSAFE_REQUIRED, checked.span, "using a raw C pointer requires an `unsafe` block");
+        }
+        checked
+    }
+
+    fn expr_inner(&mut self, e: &ast::Expr, expect: Option<&Ty>) -> tir::Expr {
         use ast::ExprKind as K;
         let span = e.span;
         match &e.kind {
@@ -138,7 +151,7 @@ impl FnCx<'_> {
             K::IfLet { pattern, scrutinee, then_block, else_expr } => {
                 self.if_let(pattern, scrutinee, then_block, else_expr.as_deref(), expect, span)
             }
-            K::Range { .. } => self.unsupported(span, "ranges outside `for` loops"),
+            K::Range { lo, hi, inclusive } => self.range_expr(lo, hi, *inclusive, expect, span),
             K::OrElse(value, default) => self.orelse(value, default, span),
             K::Try(inner) => self.try_expr(inner, span),
             K::SelfValue => match self.self_local {

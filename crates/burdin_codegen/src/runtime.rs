@@ -73,6 +73,8 @@ pub(crate) struct Runtime<'ctx> {
     pub cstring_from: FunctionValue<'ctx>,
     /// `(ptr) -> usize`: the length of a NUL-terminated C string (libc `strlen`).
     pub strlen: FunctionValue<'ctx>,
+    /// `(ptr) -> ptr`: a fresh copy of a NUL-terminated C string, for `CString.clone`.
+    pub cstring_clone: FunctionValue<'ctx>,
     /// `(ptr, bytes: usize) -> ptr`: `realloc`, panicking when it fails.
     pub realloc: FunctionValue<'ctx>,
     /// `(s: *String, c: i32)`: appends one UTF-8 code point.
@@ -309,6 +311,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
     fn generate(&mut self) -> GenResult<Runtime<'ctx>> {
         let h = self.helpers()?;
         let string_push_str = self.string_push_str(&h)?;
+        let cstring_from = self.cstring_from(&h)?;
         let alloc = self.heap_alloc(&h)?;
         let free = self.heap_free()?;
         let alloc_string = h.alloc_string;
@@ -336,8 +339,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             char_to_string: self.char_to_string(&h)?,
             str_starts_with: self.str_starts_with()?,
             str_find_char: self.str_find_char()?,
-            cstring_from: self.cstring_from(&h)?,
+            cstring_from,
             strlen: libc(self.module, "strlen", self.usize_ty.fn_type(&[self.ptr_ty.into()], false)),
+            cstring_clone: self.cstring_clone(&h, cstring_from)?,
             realloc: self.heap_realloc(&h)?,
             string_push_char: self.string_push_char(string_push_str)?,
             str_eq: self.str_eq()?,
@@ -1408,6 +1412,23 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(done);
         self.b.build_return(Some(&p)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `cstring_clone(ptr) -> ptr`: copies a NUL-terminated C string with `strlen` and `cstring_from`.
+    fn cstring_clone(
+        &mut self,
+        h: &Helpers<'ctx>,
+        cstring_from: FunctionValue<'ctx>,
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, usize_ty) = (self.ptr_ty, self.usize_ty);
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_cstring_clone", ptr_ty.fn_type(&[ptr_ty.into()], false));
+        let src = Self::ptr_param(f, 0);
+        let len = self.call(strlen, &[src.into()])?.expect("strlen returns a size").into_int_value();
+        let _ = h;
+        let copy = self.call(cstring_from, &[src.into(), len.into()])?.expect("cstring_from returns a pointer");
+        self.b.build_return(Some(&copy)).map_err(llvm_err)?;
         Ok(f)
     }
 

@@ -1,0 +1,9 @@
+//@ compile-fail
+// A dependency's non-root module is hidden unless its root re-exports it: reaching it through `use` or through a
+// qualified path is E0002 (issues #80 and #81).
+
+use util.inner.extra //~ E0002
+
+fn main() {
+    println(util.inner.extra().to_string()) //~ E0002
+}

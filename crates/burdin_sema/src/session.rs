@@ -6,7 +6,7 @@ use crate::consts::check_const_cycles;
 use crate::derives::validate_derives;
 use crate::generics::Bound;
 use crate::globals::{Global, Globals, ModuleInfo, PackageInfo};
-use crate::validate::check_impl_requirements;
+use crate::validate::{check_impl_requirements, check_impl_signatures, check_public_signatures};
 use burdin_diag::{Code, Diagnostics, FileId, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, FuncId, Signature, Ty};
@@ -28,6 +28,8 @@ pub(crate) struct FnItem<'a> {
     pub(crate) check_body: bool,
     /// An `unsafe fn`: calling it requires an `unsafe` context, and its body is one.
     pub(crate) is_unsafe: bool,
+    /// An `extern "C" fn`: emitted with the C ABI under its plain symbol (issue #489).
+    pub(crate) is_exported: bool,
 }
 
 /// The generic items of the program, by index.
@@ -87,6 +89,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) alias_decls: Vec<NamedSrc<'t, ast::TypeAliasDecl>>,
     /// The `extern` declarations whose signatures are resolved once types and imports are known.
     pub(crate) extern_srcs: Vec<crate::declare::ExternSrc<'t>>,
+    /// The `extern "C" fn` definitions, for their C-ABI signature checks.
+    pub(crate) export_srcs: Vec<(FuncId, &'t ast::ExternFnDecl)>,
     /// Generic functions whose bounds are resolved once imports are known.
     pub(crate) generic_fn_bounds: Vec<(usize, &'t ast::FnDecl, usize)>,
     /// Every `Drop::drop` method and where it was declared, to check its signature once all are known.
@@ -131,6 +135,10 @@ impl<'t> Sema<'t> {
                     value_priv: Default::default(),
                     type_priv: Default::default(),
                     iface_priv: Default::default(),
+                    pub_values: Default::default(),
+                    pub_types: Default::default(),
+                    pub_ifaces: Default::default(),
+                    pub_modules: Default::default(),
                 });
                 module_asts.push(module.ast);
             }
@@ -150,6 +158,7 @@ impl<'t> Sema<'t> {
             const_decls: Vec::new(),
             alias_decls: Vec::new(),
             extern_srcs: Vec::new(),
+            export_srcs: Vec::new(),
             generic_fn_bounds: Vec::new(),
             drop_checks: Vec::new(),
             test_mode,
@@ -185,6 +194,7 @@ impl<'a> FnItem<'a> {
             symbolic: false,
             check_body: true,
             is_unsafe: decl.is_unsafe,
+            is_exported: false,
         }
     }
 }
@@ -228,7 +238,10 @@ impl<'t> Sema<'t> {
         check_const_cycles(&consts, &self.const_decls.iter().map(|c| c.decl).collect::<Vec<_>>(), diags);
         let mut checks = Diagnostics::default();
         self.check_drop_signatures(&mut checks);
+        self.check_export_signatures(&mut checks);
         check_impl_requirements(&self.globals, &mut checks);
+        check_impl_signatures(&self.globals, &mut checks);
+        check_public_signatures(&self.globals, &self.fn_items, &mut checks);
         validate_derives(&self.globals, &mut checks);
         diags.absorb(checks);
         let Globals { structs, enums, sigs, externs, .. } = self.globals;
@@ -238,6 +251,7 @@ impl<'t> Sema<'t> {
                 symbol: e.symbol,
                 params: e.sig.params.into_iter().map(|p| p.ty).collect(),
                 ret: e.sig.ret,
+                vararg: e.vararg,
             })
             .collect();
         tir::Program { functions, consts, structs, enums, signatures: sigs, externs, main, tests: self.tests }
@@ -256,6 +270,53 @@ impl<'t> Sema<'t> {
             _ => {
                 diags.error(Code::UNKNOWN_NAME, Span::new(module.file, 0, 0), "the program has no `main` function");
                 None
+            }
+        }
+    }
+
+    /// An `extern "C" fn` must use the C ABI: ABI "C", no generics or receiver, `own` parameters only (they are
+    /// the by-value ones), no `...`, and only C-ABI types (issues #489 and #490).
+    fn check_export_signatures(&self, diags: &mut Diagnostics) {
+        for &(func, e) in &self.export_srcs {
+            let decl = &e.decl;
+            if e.abi != "C" {
+                diags.error(Code::C_ABI, e.abi_span, format!("the `{}` ABI cannot be exported; only \"C\"", e.abi));
+            }
+            if !decl.generics.is_empty() || !decl.where_clause.is_empty() {
+                diags.error(Code::C_ABI, decl.name.span, "an exported function cannot be generic");
+            }
+            if decl.is_vararg {
+                diags.error(Code::C_ABI, decl.name.span, "an exported function cannot take variadic arguments");
+            }
+            for p in &decl.params {
+                match &p.kind {
+                    ast::ParamKind::SelfParam => {
+                        diags.error(Code::C_ABI, p.span, "an exported function cannot take `self`");
+                    }
+                    ast::ParamKind::Named { .. } if p.convention != ast::Convention::Own => {
+                        diags.error(
+                            Code::C_ABI,
+                            p.span,
+                            "an exported function parameter is passed by value in C; declare it `own`",
+                        );
+                    }
+                    ast::ParamKind::Named { .. } => {}
+                }
+            }
+            if let Some(sig) = self.globals.sigs.get(func.0) {
+                let bad = sig
+                    .params
+                    .iter()
+                    .map(|p| &p.ty)
+                    .chain(std::iter::once(&sig.ret))
+                    .find(|ty| **ty != Ty::Unit && **ty != Ty::Error && !crate::resolve::is_c_abi_value(ty));
+                if let Some(ty) = bad {
+                    diags.error(
+                        Code::C_ABI,
+                        decl.name.span,
+                        crate::resolve::c_abi_rejection(ty, "the C ABI of an exported function"),
+                    );
+                }
             }
         }
     }

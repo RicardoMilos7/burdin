@@ -1,0 +1,39 @@
+//@ run
+//> 21
+//> 42
+
+// An interface method can be `unsafe`: the implementation repeats the marker, a call needs an `unsafe` context,
+// and the interface's default body runs as an unsafe context too (issue #86).
+
+interface Reader {
+    unsafe fn read_raw(self): i32
+}
+
+struct Buffer {
+    n: i32
+}
+
+Buffer: Reader {
+    unsafe fn read_raw(self): i32 {
+        self.n
+    }
+}
+
+interface Fallback {
+    unsafe fn base(self): i32 { 42 }
+}
+
+struct Thing {
+    n: i32
+}
+
+Thing: Fallback {}
+
+fn main() {
+    unsafe {
+        let b = Buffer { n: 21 }
+        println(b.read_raw().to_string())
+        let t = Thing { n: 0 }
+        println(t.base().to_string())
+    }
+}

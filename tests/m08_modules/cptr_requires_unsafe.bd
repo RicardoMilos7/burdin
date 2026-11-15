@@ -1,0 +1,17 @@
+//@ compile-fail
+// A raw C pointer is created, held, and dereferenced only inside `unsafe` (issue #74).
+
+extern "C" {
+    fn strlen(s: CPtr<CChar>): CSize
+}
+
+fn main() {
+    let p: CPtr<CChar> = CPtr.null() //~ E0161
+    let text = CString.from("hello")
+    let n = unsafe { strlen(text.as_ptr()) }
+    println(n.to_string())
+
+    let x = unsafe { (1 as usize) as CPtr<i32> }
+    let y = *x //~ E0161
+    println(y.to_string())
+}

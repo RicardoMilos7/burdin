@@ -7,13 +7,15 @@ use burdin_syntax::ast;
 use burdin_tir::{self as tir, LocalId, LocalKind, Pat, Ty};
 use std::collections::HashMap;
 
-/// Which kind of `for` loop a non-range iterable produces.
+/// Which kind of `for` loop a non-literal-range iterable produces.
 enum ForKind {
     Array,
     Slice,
     List,
     Map,
     Chars,
+    /// A `Range<T>` or `RangeInclusive<T>` value, evaluated once.
+    Range,
 }
 
 impl FnCx<'_> {
@@ -55,71 +57,118 @@ impl FnCx<'_> {
         body: &ast::Block,
         span: Span,
     ) -> tir::Expr {
-        let ast::ExprKind::Range { lo, hi, inclusive } = &iter.kind else {
-            let array = self.expr(iter, None);
-            let (elem, kind) = match &array.ty {
-                Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
-                Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
-                Ty::List(t) => ((**t).clone(), ForKind::List),
-                Ty::Map(k, v) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
-                Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
-                Ty::Chars => (Ty::Char, ForKind::Chars),
-                other => {
-                    self.diags.error(
-                        Code::TYPE_MISMATCH,
-                        iter.span,
-                        format!("cannot iterate over a value of type `{other}`"),
-                    );
-                    (Ty::Error, ForKind::Array)
+        if let ast::ExprKind::Range { lo, hi, inclusive } = &iter.kind {
+            let (lo, hi) = self.operands(lo, hi, None);
+            let ty = if lo.ty == Ty::Never { hi.ty.clone() } else { lo.ty.clone() };
+            let hi = self.expect_ty(hi, &ty);
+            if !matches!(ty, Ty::Int(_) | Ty::Error) {
+                self.diags.error(Code::TYPE_MISMATCH, iter.span, format!("cannot iterate over a range of `{ty}`"));
+            }
+            self.scopes.push(HashMap::new());
+            let var = match &pattern.kind {
+                ast::PatternKind::Binding { name, mutable } => {
+                    Some(self.declare(&name.name, ty, *mutable, LocalKind::Owned))
+                }
+                ast::PatternKind::Wild => None,
+                _ => {
+                    self.scopes.pop();
+                    return self.unsupported(pattern.span, "this `for` pattern");
                 }
             };
-            self.scopes.push(HashMap::new());
-            // `for` borrows the collection, so its elements are read-only views.
-            let pat = self.pattern(pattern, &elem, false);
-            if !self.exhaustive(&elem, &[&pat]) {
-                self.diags.error(
-                    Code::NON_EXHAUSTIVE,
-                    pattern.span,
-                    format!("this pattern does not match every value of `{elem}`"),
-                );
-            }
             self.loops.push(false);
             let (body, _) = self.block(body, None);
             self.loops.pop();
             self.scopes.pop();
-            let array = Box::new(array);
-            let kind = match kind {
-                ForKind::Array => tir::ExprKind::ForArray { pat, array, body },
-                ForKind::Slice => tir::ExprKind::ForSlice { pat, slice: array, body },
-                ForKind::List => tir::ExprKind::ForList { pat, list: array, body },
-                ForKind::Map => tir::ExprKind::ForMap { pat, map: array, body },
-                ForKind::Chars => tir::ExprKind::ForChars { pat, string: array, body },
-            };
+            let kind = tir::ExprKind::ForRange { var, lo: Box::new(lo), hi: Box::new(hi), inclusive: *inclusive, body };
             return mk(kind, Ty::Unit, span);
-        };
-        let (lo, hi) = self.operands(lo, hi, None);
-        let ty = if lo.ty == Ty::Never { hi.ty.clone() } else { lo.ty.clone() };
-        let hi = self.expect_ty(hi, &ty);
-        if !matches!(ty, Ty::Int(_) | Ty::Error) {
-            self.diags.error(Code::TYPE_MISMATCH, iter.span, format!("cannot iterate over a range of `{ty}`"));
         }
-        self.scopes.push(HashMap::new());
-        let var = match &pattern.kind {
-            ast::PatternKind::Binding { name, mutable } => {
-                Some(self.declare(&name.name, ty, *mutable, LocalKind::Owned))
-            }
-            ast::PatternKind::Wild => None,
-            _ => {
-                self.scopes.pop();
-                return self.unsupported(pattern.span, "this `for` pattern");
+        let iterable = self.expr(iter, None);
+        let (elem, kind) = match &iterable.ty {
+            Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
+            Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
+            Ty::List(t) => ((**t).clone(), ForKind::List),
+            Ty::Map(k, v) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
+            Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
+            Ty::Chars => (Ty::Char, ForKind::Chars),
+            Ty::Range(t, _) => ((**t).clone(), ForKind::Range),
+            other => {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    iter.span,
+                    format!("cannot iterate over a value of type `{other}`"),
+                );
+                (Ty::Error, ForKind::Array)
             }
         };
+        self.scopes.push(HashMap::new());
+        if matches!(kind, ForKind::Range) {
+            // A range value's endpoints are integers, so the loop binding is a plain owned integer like the
+            // literal form.
+            let var = match &pattern.kind {
+                ast::PatternKind::Binding { name, mutable } => {
+                    Some(self.declare(&name.name, elem, *mutable, LocalKind::Owned))
+                }
+                ast::PatternKind::Wild => None,
+                _ => {
+                    self.scopes.pop();
+                    return self.unsupported(pattern.span, "this `for` pattern");
+                }
+            };
+            self.loops.push(false);
+            let (body, _) = self.block(body, None);
+            self.loops.pop();
+            self.scopes.pop();
+            let kind = tir::ExprKind::ForRangeValue { var, range: Box::new(iterable), body };
+            return mk(kind, Ty::Unit, span);
+        }
+        // `for` borrows the collection, so its elements are read-only views.
+        let pat = self.pattern(pattern, &elem, false);
+        if !self.exhaustive(&elem, &[&pat]) {
+            self.diags.error(
+                Code::NON_EXHAUSTIVE,
+                pattern.span,
+                format!("this pattern does not match every value of `{elem}`"),
+            );
+        }
         self.loops.push(false);
         let (body, _) = self.block(body, None);
         self.loops.pop();
         self.scopes.pop();
-        let kind = tir::ExprKind::ForRange { var, lo: Box::new(lo), hi: Box::new(hi), inclusive: *inclusive, body };
+        let array = Box::new(iterable);
+        let kind = match kind {
+            ForKind::Array => tir::ExprKind::ForArray { pat, array, body },
+            ForKind::Slice => tir::ExprKind::ForSlice { pat, slice: array, body },
+            ForKind::List => tir::ExprKind::ForList { pat, list: array, body },
+            ForKind::Map => tir::ExprKind::ForMap { pat, map: array, body },
+            ForKind::Chars => tir::ExprKind::ForChars { pat, string: array, body },
+            ForKind::Range => unreachable!("handled above"),
+        };
         mk(kind, Ty::Unit, span)
+    }
+
+    /// `lo..hi` or `lo..=hi`: an ordinary value of `Range<T>` or `RangeInclusive<T>`. The endpoints are integers;
+    /// the type comes from the left operand, from the right when the left is `!`, or from the expected type.
+    pub(super) fn range_expr(
+        &mut self,
+        lo: &ast::Expr,
+        hi: &ast::Expr,
+        inclusive: bool,
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        let hint = match expect {
+            Some(Ty::Range(t, _)) => Some((**t).clone()),
+            _ => None,
+        };
+        let (lo, hi) = self.operands(lo, hi, hint.as_ref());
+        let ty = if lo.ty == Ty::Never { hi.ty.clone() } else { lo.ty.clone() };
+        let hi = self.expect_ty(hi, &ty);
+        if !matches!(ty, Ty::Int(_) | Ty::Error) {
+            self.diags.error(Code::TYPE_MISMATCH, span, format!("a range's endpoints must be integers, found `{ty}`"));
+            return error_expr(span);
+        }
+        let ty = if ty == Ty::Error { Ty::Error } else { Ty::Range(Box::new(ty), inclusive) };
+        mk(tir::ExprKind::Range { lo: Box::new(lo), hi: Box::new(hi), inclusive }, ty, span)
     }
 
     pub(super) fn match_expr(
@@ -129,7 +178,9 @@ impl FnCx<'_> {
         expect: Option<&Ty>,
         span: Span,
     ) -> tir::Expr {
-        let scrutinee = self.expr(scrutinee, None);
+        let value = self.expr(scrutinee, None);
+        let moves = arms.iter().any(|a| a.pattern.as_ref().is_some_and(pattern_has_binding));
+        let (scrutinee, owned_temp) = if moves { self.own_scrutinee_temp(value) } else { (value, None) };
         let owned = self.owns_scrutinee(&scrutinee);
         let mut ty = Ty::Never;
         let mut checked = Vec::new();
@@ -157,13 +208,15 @@ impl FnCx<'_> {
                 format!("this `match` does not cover every value of `{}`", scrutinee.ty),
             );
         }
-        mk(tir::ExprKind::Match(Box::new(scrutinee), checked), ty, span)
+        let matched = mk(tir::ExprKind::Match(Box::new(scrutinee), checked), ty, span);
+        self.wrap_scrutinee(matched, owned_temp, span)
     }
 
     /// `if let pattern = scrutinee { ... } else { ... }`, checked as a `match` with a catch-all arm.
     /// `expr?`: unwraps an `Option` or a `Result`, returning early through the enclosing function.
     pub(super) fn try_expr(&mut self, operand: &ast::Expr, span: Span) -> tir::Expr {
         let value = self.expr(operand, None);
+        let (value, owned_temp) = self.own_scrutinee_temp(value);
         let value_ty = value.ty.clone();
         let ret = self.ret.clone();
         match (&ret, &value_ty) {
@@ -183,7 +236,8 @@ impl FnCx<'_> {
                     tir::Arm { pat: some, guard: None, body },
                     tir::Arm { pat: Pat::None, guard: None, body: early },
                 ];
-                mk(tir::ExprKind::Match(Box::new(value), arms), inner, span)
+                let matched = mk(tir::ExprKind::Match(Box::new(value), arms), inner, span);
+                self.wrap_scrutinee(matched, owned_temp, span)
             }
             (Ty::Result(ret_ok, ret_err), Ty::Result(ok, err)) => {
                 if !compatible(ok, ret_ok) {
@@ -218,7 +272,8 @@ impl FnCx<'_> {
                     tir::Arm { pat: Pat::Ok(Box::new(Pat::Binding(id, mode))), guard: None, body },
                     tir::Arm { pat: Pat::Err(Box::new(Pat::Binding(eid, emode))), guard: None, body: early },
                 ];
-                mk(tir::ExprKind::Match(Box::new(value), arms), ok, span)
+                let matched = mk(tir::ExprKind::Match(Box::new(value), arms), ok, span);
+                self.wrap_scrutinee(matched, owned_temp, span)
             }
             (Ty::Option(_) | Ty::Result(..), _) => {
                 self.diags.error(
@@ -242,6 +297,13 @@ impl FnCx<'_> {
     /// `value orelse default`: the payload of an `Option` or a `Result`, or `default` when it is empty.
     pub(super) fn orelse(&mut self, value: &ast::Expr, default: &ast::Expr, span: Span) -> tir::Expr {
         let value = self.expr(value, None);
+        let (value, owned_temp) = self.own_scrutinee_temp(value);
+        let matched = self.orelse_match(value, default, span);
+        self.wrap_scrutinee(matched, owned_temp, span)
+    }
+
+    /// The `match` an `orelse` lowers to.
+    fn orelse_match(&mut self, value: tir::Expr, default: &ast::Expr, span: Span) -> tir::Expr {
         match value.ty.clone() {
             Ty::Option(inner) => {
                 let inner = (*inner).clone();
@@ -307,7 +369,9 @@ impl FnCx<'_> {
         expect: Option<&Ty>,
         span: Span,
     ) -> tir::Expr {
-        let scrutinee = self.expr(scrutinee, None);
+        let value = self.expr(scrutinee, None);
+        let (scrutinee, owned_temp) =
+            if pattern_has_binding(pattern) { self.own_scrutinee_temp(value) } else { (value, None) };
         let owned = self.owns_scrutinee(&scrutinee);
         self.scopes.push(HashMap::new());
         let pat = self.pattern(pattern, &scrutinee.ty, owned);
@@ -325,6 +389,51 @@ impl FnCx<'_> {
         };
         let arms =
             vec![tir::Arm { pat, guard: None, body: then }, tir::Arm { pat: Pat::Wild, guard: None, body: other }];
-        mk(tir::ExprKind::Match(Box::new(scrutinee), arms), ty, span)
+        let matched = mk(tir::ExprKind::Match(Box::new(scrutinee), arms), ty, span);
+        self.wrap_scrutinee(matched, owned_temp, span)
+    }
+
+    /// Moves a temporary match scrutinee into a compiler-made local, so that moving bindings can track its parts
+    /// and the rest of the value still drops once. Returns the local expression and the initializer to bind.
+    fn own_scrutinee_temp(&mut self, value: tir::Expr) -> (tir::Expr, Option<(LocalId, tir::Expr)>) {
+        if burdin_tir::place::place_root(&value).is_some() {
+            return (value, None);
+        }
+        let ty = value.ty.clone();
+        let span = value.span;
+        let id = LocalId(self.locals.len());
+        self.locals.push(tir::Local {
+            name: "__match".to_string(),
+            ty: ty.clone(),
+            mutable: false,
+            by_ref: false,
+            kind: LocalKind::Scrutinee,
+        });
+        (mk(tir::ExprKind::Local(id), ty, span), Some((id, value)))
+    }
+
+    /// Wraps a lowered `match` in the block that declares its scrutinee local, when there is one.
+    fn wrap_scrutinee(&self, matched: tir::Expr, owned_temp: Option<(LocalId, tir::Expr)>, span: Span) -> tir::Expr {
+        let Some((id, value)) = owned_temp else { return matched };
+        let ty = matched.ty.clone();
+        let stmt = tir::Stmt::Let(Pat::Binding(id, tir::BindMode::Move), value, None);
+        let block = tir::Block { stmts: vec![stmt], tail: Some(Box::new(matched)) };
+        mk(tir::ExprKind::Block(block), ty, span)
+    }
+}
+
+/// Whether an AST pattern binds any name, so it can move parts of a temporary scrutinee.
+fn pattern_has_binding(pattern: &ast::Pattern) -> bool {
+    match &pattern.kind {
+        ast::PatternKind::Wild | ast::PatternKind::Lit(_) | ast::PatternKind::Range(..) | ast::PatternKind::Path(_) => {
+            false
+        }
+        ast::PatternKind::Binding { .. } | ast::PatternKind::At(..) => true,
+        ast::PatternKind::Tuple(subs) => subs.iter().any(pattern_has_binding),
+        ast::PatternKind::TupleStruct(_, subs) => subs.iter().any(pattern_has_binding),
+        ast::PatternKind::Struct(_, fields) => {
+            fields.iter().any(|f| f.pattern.as_ref().is_none_or(pattern_has_binding))
+        }
+        ast::PatternKind::Or(alts) => alts.iter().any(pattern_has_binding),
     }
 }

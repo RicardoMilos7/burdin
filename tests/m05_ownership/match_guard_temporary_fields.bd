@@ -1,0 +1,41 @@
+//@ run
+//> 1
+//> drop 1
+//> drop 2
+//> end of main
+
+// A moving pattern with a guard on a temporary scrutinee restores the moved fields when the guard fails, so the
+// next arm and the temporary's drop both see them initialized (issue #62).
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    match (Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } }) {
+        Pair { a } if a.id > 5 => {
+            println(a.id.to_string())
+        }
+        Pair { a } => {
+            println(a.id.to_string())
+        }
+    }
+    println("end of main")
+}

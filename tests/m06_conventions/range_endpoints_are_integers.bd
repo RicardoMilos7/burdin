@@ -1,0 +1,7 @@
+//@ compile-fail
+// A range's endpoints must be integers; the element type is checked when the range is written.
+
+fn main() {
+    let r = 1.0..2.0 //~ E0003
+    let q: Range<f64> = 0..1 //~ E0003
+}

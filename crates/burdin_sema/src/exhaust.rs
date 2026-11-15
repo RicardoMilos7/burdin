@@ -197,7 +197,7 @@ mod tests {
     }
 
     fn adt(name: &str, id: usize) -> AdtRef {
-        AdtRef { id, name: name.into() }
+        AdtRef { id, name: name.into(), second_class: false }
     }
 
     fn exhaustive_with(ty: &Ty, pats: &[Pat]) -> bool {
@@ -337,6 +337,7 @@ mod tests {
             fields: vec![field("a", Ty::Bool), field("b", Ty::Bool)],
             derives: Derives::default(),
             drop_method: None,
+            repr_c: false,
         };
         let structs = [def];
         let ty = Ty::Struct(adt("S", 0));

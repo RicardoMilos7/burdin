@@ -21,8 +21,10 @@ A feature is in stage 1 only if one of these is true:
    declarations, extension methods, default and named arguments, operator overloading, comptime, allocators.
 2. A standard-library type or the author's own projects need it to be usable (a `for` loop over a user-defined
    collection, `List.map`, a `Result` returned from `main`, a test that reports a typed failure).
-3. It closes a stage 0 gap that would otherwise be a soundness or consistency problem (a view outliving its source,
-   ranges as values, the move forms rejected as E9000).
+3. It closes a stage 0 gap that would otherwise be a soundness or consistency problem. Issue #48 closed the known
+   stage 0 gaps in stage 0 itself (view lifetime, ranges as values, the tracked move forms, the generic gaps,
+   `pub use` and module visibility, `repr(C)`, and the C pointers and signatures); what remains is listed under
+   "Fixes that ship with stage 1".
 
 Everything else waits for stage 2 (tasks and concurrency) or stage 3 (tooling and ecosystem), even if it is already
 designed.
@@ -35,7 +37,7 @@ every stage 0 gap listed in "Fixes that ship with stage 1" has a registry code a
 | Area | Included | Weight |
 | --- | --- | --- |
 | Closures | `|a, b| ...` expressions, typed parameters and returns, capture by borrow or move, second-class chains, passing and returning closures | L |
-| Iteration | `Iterable<T>` and `Iterator<T>`, `next`, `iter()`/`into_iter()`, user-defined `for`, lazy `map`/`filter`/`take`/`fold`/`sum`/`count`/`to_list`, eager `List` methods, ranges as values | L |
+| Iteration | `Iterable<T>` and `Iterator<T>`, `next`, `iter()`/`into_iter()`, user-defined `for`, lazy `map`/`filter`/`take`/`fold`/`sum`/`count`/`to_list`, eager `List` methods, ranges as iterable values | L |
 | Formatting | String interpolation with `{name}` and `{expr}`, escaped `{{`/`}}`, `Display` and `Debug`, format specifiers, generalized `print`/`println`/`format` | M |
 | `any` and `impl` | Existential types in signatures, boxing, dynamic dispatch, downcast, object safety rules | L |
 | Errors | `error` declarations with payloads and `from`, generated messages, dynamic `Error`, default `Result<T>`, `.context(...)`, traces in debug builds, `fn main(): Result<()>`, typed test failures | L |
@@ -56,7 +58,7 @@ folder and every earlier folder pass in debug and release.
 | # | Folder | Scope | Exit |
 | --- | --- | --- | --- |
 | 12 | `m12_closures` | Closure expressions, capture analysis, calling, storing, returning, passing to functions | A closure borrows and a closure moves; a stored closure outlives its scope; using a captured moved value is rejected |
-| 13 | `m13_iterators` | `Iterable`/`Iterator`, `next`, `iter`/`into_iter`, user `for`, lazy and eager chains, ranges as values | `for` over a user type, a lazy chain with no intermediate list, a range stored in a binding |
+| 13 | `m13_iterators` | `Iterable`/`Iterator`, `next`, `iter`/`into_iter`, user `for`, lazy and eager chains, ranges through the protocol | `for` over a user type, a lazy chain with no intermediate list, `(0..n).iter()` |
 | 14 | `m14_format` | Interpolation, `Display`/`Debug`, specifiers, `format`, generalized output | A formatted string with named and positional values; a type's `Display` used by `to_string` |
 | 15 | `m15_any` | `any` and `impl` in signatures, boxing, dynamic dispatch, downcast | A `List<any>` of mixed types and a downcast that checks its type |
 | 16 | `m16_errors` | `error` declarations, `from`, messages, dynamic `Error`, default `Result<T>`, `context`, traces, `main(): Result<()>`, typed asserts | A `?` chain that converts two error types; a printed error with a source chain; a test that fails with a message |
@@ -74,27 +76,23 @@ Milestones 20 and 21 are the riskiest and may split (for example `m20a_mir`, `m2
 
 ## Fixes that ship with stage 1
 
-These are stage 0 gaps that stage 1 features would otherwise build on. Each gets a registry code, a test, and a spec
-update **before** the code, per the working rules.
+Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
+the tracked move forms, the generic inference/bounds/signature gaps, `Self` in expressions, `pub use` and the
+module rules, `CString.clone`, and the C pointer and signature work (#71). These are what remains; each gets a
+registry code, a test, and a spec update **before** the code, per the working rules.
 
-1. **A view can outlive the storage it borrows from** (HANDOFF problem 11). Decide the rule and its code (for example
-   `E0123`): `let r = first_of(Pair { a: 1, b: 2 })`, `let r = { let p = ...; first_of(p) }`, and
-   `let t = "x".to_string().as_str()`. The simplest rule that fits the checker: a second-class result may not derive
-   from a temporary or from a local that dies before the binding, and a view stored in a local may not outlive the
-   statement that created its source.
-2. **Ranges as values** (HANDOFF problem 16). `a..b` and `a..=b` become ordinary values of a range type, iterable by
-   `for`, storable in fields and collections, and able to appear in patterns. This comes with milestone 13.
-3. **The move forms rejected as E9000** (HANDOFF problem 10): moving a non-`Copy` value through indexing or a `Heap`
-   dereference, moving out of `match *h`, and a moving pattern with a guard on a temporary scrutinee. Extend the move
-   checker instead of rejecting the program.
-4. **Generic gaps** (HANDOFF item 4 of the ninth session): inference for a static method of a generic type from its
-   own arguments, bounds checked when a generic type is instantiated, a view type as a type argument being
-   second-class (SC3), interface method signatures in an impl compared with the interface's, and `==`/`<` on symbolic
-   instances in a generic body.
-5. **Module and C gaps** (HANDOFF problem 13): pointer intrinsics beyond `null`/`as_ptr` (dereference, null test,
-   comparison, arithmetic), C `bool`/`char`/structs/unions/function pointers/varargs, `unsafe` for holding a `CPtr`,
-   public signatures using only public types, `pub use`, module visibility, `CString.clone`.
-6. **`Self` in expressions** (`Self.new()`, `Self { ... }`) — cheap, and useful once interfaces and impls grow.
+1. **Moves through a runtime index** (HANDOFF problem 10). A constant array or `List` index and a `Heap` pointee
+   field are tracked; `let x = xs[i]` with a non-constant `i` is still E9000 because the checker cannot tell which
+   element moves. Extend the move checker (or the typed tree) instead of rejecting the program.
+2. **C function pointers and unions.** `repr(C)` structs have a decided layout and cross the ABI through `CPtr<T>`;
+   function-pointer types and `union` declarations wait for the bindgen target (m22) that needs them.
+3. **Private modules.** Stage 0 has no syntax for a private module. The rule is that a dependency's non-root
+   modules are hidden: only its root (`src/<package>.bd` or `src/lib.bd`) is reachable, and it re-exports what it
+   wants with `pub use` (`m08_modules/reexports*`). A `priv` marker on a module can refine this in stage 1 if a
+   project needs it.
+4. **C ABI aggregates by value.** Passing or returning a `repr(C)` struct by value is E0162 because the platform
+   coercions (register packing, `sret`) are not implemented. A bindgen target that must call such a C function
+   would need that lowering.
 
 ## Decisions needed before milestone 12
 

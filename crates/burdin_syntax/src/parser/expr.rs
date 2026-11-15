@@ -202,6 +202,7 @@ impl Parser<'_> {
                 | True
                 | False
                 | SelfValue
+                | SelfType
                 | LParen
                 | LBracket
                 | LBrace
@@ -252,6 +253,16 @@ impl Parser<'_> {
             TokenKind::SelfValue => {
                 self.bump();
                 lit(ExprKind::SelfValue)
+            }
+            // `Self` in expression position: the enclosing impl's type, as the left side of `Self.new()`,
+            // `Self.Variant`, or `Self { ... }`.
+            TokenKind::SelfType => {
+                self.bump();
+                let name = Ident { name: "Self".to_string(), span: start };
+                if self.at_struct_literal(r) {
+                    return self.struct_literal(vec![name], start);
+                }
+                Ok(Expr { kind: ExprKind::Name { name, args: Vec::new() }, span: start })
             }
             TokenKind::Ident(_) => {
                 let generic = self.generic_args_ahead();

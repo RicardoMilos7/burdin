@@ -57,8 +57,13 @@ impl Parser<'_> {
                 let span = start.to(name.span);
                 Ok(Pattern { kind: PatternKind::Binding { name, mutable: true }, span })
             }
-            TokenKind::Ident(_) => {
-                let mut path = vec![self.ident("a name")?];
+            TokenKind::Ident(_) | TokenKind::SelfType => {
+                let mut path = if matches!(self.kind(), TokenKind::SelfType) {
+                    self.bump();
+                    vec![Ident { name: "Self".to_string(), span: start }]
+                } else {
+                    vec![self.ident("a name")?]
+                };
                 while self.at(&TokenKind::Dot) {
                     self.bump();
                     path.push(self.ident("a name")?);

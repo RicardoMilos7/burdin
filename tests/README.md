@@ -166,6 +166,7 @@ against this table and whose examples it compiles; `burdin explain <code>` print
 | E0120 | Reference or view stored in a struct field, enum variant, or collection |
 | E0121 | Returned reference or view derives from more than one parameter (reported at the signature) |
 | E0122 | Returned reference or view points to a local |
+| E0123 | A view stored in a binding outlives the storage it borrows from (a temporary or a local of an inner block) |
 | E0130 | Derive requirement not met (reported at the offending field or derive clause) |
 | E0140 | Interface implementation is missing a method (reported at the `impl` line) |
 | E0141 | Interface bound or `requires` not satisfied, or a generic body uses an operation its bounds do not provide |
@@ -210,12 +211,13 @@ executable form. The design document leaves them open; where a rule says "deviat
    `spec/memory-rules.md` RT1-RT4.
 5. **Pattern bindings** from a borrowed scrutinee are read-only places usable like plain values (no explicit `&`):
    assigning to one is E0005 and moving out of one is E0101. `*h` dereferences a `Heap<T>`; on an owned `Heap<T>`,
-   `*h` moves the whole pointee out and frees the allocation. Moving a field through `*h` is not supported in stage 0
-   (E9000; stage 1). `spec/memory-rules.md` MV6, MV8.
+   `*h` moves the whole pointee out and frees the allocation, and a field of the pointee (`(*h).a`) is a tracked
+   partial move (issue #58). `spec/memory-rules.md` MV6, MV8.
 6. **Loops.** `for x in list` (and arrays and slices) borrows the collection for the whole loop, so it is still usable
    afterwards, and gives a read-only element place usable like a value. Maps use `for (k, v) in map` (also a borrow).
-   `for c in s.chars()`. Mutating the collection in the body is E0111. Ranges are `a..b` and `a..=b`, and in stage 0
-   they are only iterable. `spec/memory-rules.md` IT1-IT3.
+   `for c in s.chars()`. Mutating the collection in the body is E0111. Ranges are ordinary values of
+   `Range<T>`/`RangeInclusive<T>` (issue #53), iterated by `for i in r` without borrowing `r`.
+   `spec/memory-rules.md` IT1-IT3.
 7. **Library names and signatures.** The surface is written down with signatures in `spec/stdlib.md`: numeric
    methods, `String` and `str` methods and slicing, `List`, `Map`, `Heap`, `Option`/`Result`, file, process, and
    environment functions, the C bridge names, and `unreachable()`. Unknown names are E0002 and wrong arities E0004.
@@ -331,9 +333,10 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   one exception to the single-source rule, and a `str` constant of a literal is static too. Decision 4;
   `m06_conventions/return_literal_ok.bd`, `static_literals.bd`; RT4.
 - **Borrowed pattern bindings are read-only places used like values.** No `&` is written on a binding from a borrowed
-  scrutinee, and `*h` on an owned `Heap<T>` moves the whole pointee out and frees it; a field of the pointee moves
-  only after the whole pointee is in a local. Decision 5; `m06_conventions/match_borrowed_binding.bd`,
-  `m05_ownership/match_borrowed_binding_readonly.bd`, `heap_tree_eval.bd`, `heap_move_whole_then_field.bd`; MV6, MV8.
+  scrutinee, and `*h` on an owned `Heap<T>` moves the whole pointee out and frees it. A field of the pointee
+  (`(*h).a`) is tracked as a partial move of the `Heap` (issue #58). Decision 5;
+  `m06_conventions/match_borrowed_binding.bd`, `m05_ownership/match_borrowed_binding_readonly.bd`,
+  `heap_tree_eval.bd`, `heap_move_whole_then_field.bd`, `move_heap_field.bd`; MV6, MV8.
 - **`for` borrows its collection for the whole loop.** The design's `for` runs through a borrowing iterator, and
   stage 0 makes the borrow last until the loop ends, so a `mut` call on the same collection in the body is E0111.
   Decision 6; `m09_stdlib/for_borrows_list.bd`, `m06_conventions/for_borrow_forms.bd`. Appending while iterating
@@ -359,14 +362,28 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
 - **`main` returns unit (deviation).** A parameter or a non-unit return type is E0003. `fn main(): Result<()>` and
   printing a returned error are stage 1 (m16 prints the error chain to stderr and exits non-zero). Decision 8;
   every `//@ run` test, `m02_basics/main_returns_value.bd`, `main_takes_parameter.bd`.
-- **`unsafe` gates `extern` calls only (deviation).** The design also puts raw-pointer dereferences, unchecked
-  accessors, and low-level casts behind `unsafe`. Stage 0 requires it for calls; holding or moving a `CPtr` does not
-  need it. `HANDOFF.md` known problem 13; `m08_modules/extern_libc.bd`, `m11_llvm/llvm_return_42.bd`.
+- **`unsafe` gates C calls and every `CPtr` value.** Calling an `extern` function, an `unsafe fn`, or an `unsafe`
+  interface method requires `unsafe`, and so does creating, holding, passing, moving, dereferencing, testing,
+  comparing, offsetting, or casting a `CPtr`. Inside `unsafe` the memory rules still apply. US;
+  `m08_modules/cptr_requires_unsafe.bd`, `cptr_operations.bd`, `unsafe_fn.bd`,
+  `unsafe_fn_call_requires_unsafe.bd`, `m07_generics/unsafe_interface_method.bd`.
+- **A stored view may not outlive its source.** A second-class value in a `let` or assignment may derive only from
+  static data, a parameter, or a local of the same or an enclosing block; a temporary or an inner-block local is
+  E0123. Match/`if let`/`for` pattern bindings are exempt because their source lives to the end of the statement.
+  RT5; `m06_conventions/view_lifetime_ok.bd`, `view_of_earlier_local_ok.bd`,
+  `view_outlives_temporary.bd`, `view_outlives_inner_local.bd`, `view_outlives_string.bd`.
+- **Ranges are ordinary values.** `a..b` is `Range<T>`, `a..=b` is `RangeInclusive<T>`; the endpoints are integers
+  of the same type, and the type is `Copy`, `Clone`, `Eq`, and droppable like a two-field struct. A stored range is
+  evaluated once and iterated with `for i in r` without borrowing it. Issue #53; [standard library](../spec/stdlib.md),
+  `m06_conventions/range_values.bd`, `range_forms.bd`, `m09_stdlib/for_borrow_forms.bd`.
 - **Array and slice patterns are stage 1 (deviation).** The design lists arrays under destructuring; stage 0 matches
   structs, enums, tuples, literals, and ranges. No test uses array patterns (issue #486).
-- **No private modules or module-visibility check (deviation).** The design allows `priv` on modules and checks that
-  public signatures use public types; stage 0 has no syntax for a private module and no module-visibility check
-  (`HANDOFF.md` known problem 13). The tests cover `priv` items and fields across packages (`m08_modules/*`).
+- **No `priv` marker on modules; a dependency's non-root modules are hidden (deviation).** The design allows `priv`
+  on modules and checks that public signatures use public types. Stage 0 has no module item to mark, so the rule is
+  positional: a dependency's root module is reachable as `use <package>` and its other modules are hidden unless the
+  root re-exports them with `pub use` (`m08_modules/reexports`, `reexports_hidden`). `pub use` cannot widen a
+  package-private item (E0150), and a public signature or field may not name a package-private type (E0150;
+  `public_signature_leaks.bd`, `pub_use_private`).
 - **`as` also converts `char` to an integer.** The design says `as` converts between numeric types; stage 0 follows
   Rust and allows `c as i32` (`m09_stdlib/tokenizer.bd`, `m02_basics/casts_and_numeric_methods.bd`).
 - **No linter (deviation).** The design's warnings (`else` on a same-package enum, "use `.iter()`") are deferred with
@@ -418,15 +435,22 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   `m09_stdlib/file_io.bd`, `file_io_binary.bd`.
 - **`env.args()` puts the program name first.** The design names `std.env.args()` but not its contents. Decision 7;
   `m09_stdlib/env_args.bd`.
-- **C bridge surface.** `CPtr<T>`, `CChar`, `CSize`, `CVoid` (only behind a pointer), `CString`, `CStr` (an alias for
-  `CPtr<CChar>`), `CString.from(str).as_ptr()`, `CPtr.null()` (no arguments), and `CStr.to_string(ptr): String`.
-  `extern "C"` parameters and results are integers, floats, and `CPtr`. The design sketches `CPtr` only. Decision 7;
-  `m08_modules/extern_libc.bd`, `cptr_null_arguments.bd`, `cstr_roundtrip.bd`, `m11_llvm/llvm_return_42.bd`.
+- **C bridge surface.** `CPtr<T>` (with `null`, `is_null`, load/store through `*p`, `==`/`!=`, offsets `p ± n` and
+  `p - q`, and casts to/from integers and other `CPtr` types), `CChar` (`i8`), `CSize` (`usize`), `CVoid` (only
+  behind a pointer), `CString` (with a deep `clone`), `CStr` (an alias for `CPtr<CChar>`), `CString.from(str)`,
+  `.as_ptr()`, `CPtr.null()` (no arguments), and `CStr.to_string(ptr): String`. `struct Name repr(C)` has the C field
+  order/padding/alignment and reports it with `Type.size()`/`Type.align()`. `extern "C"` parameters and results are
+  integers, floats, and `CPtr`; `...` passes extra C-ABI arguments; `extern "C" fn` exports a Burdin function under
+  its plain symbol. Aggregates cross the ABI only through `CPtr<T>` (by value is E0162), C `_Bool` is declared `u8`,
+  and C `char` is `CChar`. Issues #72-#76, #489, #490; [standard library](../spec/stdlib.md);
+  `m08_modules/cptr_operations.bd`, `c_abi_structs.bd`, `c_out_parameter.bd`, `cstring_clone.bd`,
+  `export_c_abi`, `extern_signature.bd`, `export_c_abi_invalid.bd`.
 
 ### Not covered yet
 
 These are absences, not deviations; they are listed so the next review does not mistake silence for a decision. No
 test currently exercises: release-mode wrapping (the runner can only skip a test in release, not change its
-expectation), out-of-range shift panics, `unsafe fn` declarations, a `main(): Result<()>` (stage 1), bounds panics
-for `List`/`Map`/slice indexing (only arrays are covered), `priv` methods, `match` on `bool` or `char`, or struct
-patterns that omit fields.
+expectation), out-of-range shift panics, a `main(): Result<()>` (stage 1), bounds panics for `List`/`Map`/slice
+indexing (only arrays are covered), `priv` methods, `match` on `bool` or `char`, struct patterns that omit fields,
+moving through a runtime index (E9000), C function-pointer types and `union` declarations, or passing a `repr(C)`
+struct by value across the C ABI (E0162).

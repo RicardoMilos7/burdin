@@ -106,6 +106,19 @@ impl<'a> FnCx<'a> {
     /// If `e` names a type (and no value hides it), that type: the left side of `Point.new` or `Shape.Circle`.
     pub(super) fn type_path(&mut self, e: &ast::Expr) -> Option<PathTy> {
         let ast::ExprKind::Name { name, args } = &e.kind else { return None };
+        if name.name == "Self" {
+            if !args.is_empty() {
+                self.diags.error(Code::TYPE_MISMATCH, name.span, "`Self` takes no generic arguments");
+                return Some(PathTy::Ty(Ty::Error));
+            }
+            return Some(PathTy::Ty(match &self.self_ty {
+                Some(ty) => ty.clone(),
+                None => {
+                    self.diags.error(Code::UNKNOWN_NAME, name.span, "`Self` is only available inside a method block");
+                    Ty::Error
+                }
+            }));
+        }
         if self.lookup(&name.name).is_some() || self.globals.value(self.module, &name.name).is_some() {
             return None;
         }
@@ -230,6 +243,14 @@ impl<'a> FnCx<'a> {
     /// `sh.Square`, `sh.Shape.Circle`. A generic type name resolves to the scrutinee's instance. The last value is
     /// the module whose namespace the type name came from.
     fn adt_path(&self, path: &[ast::Ident], scrutinee: &Ty) -> Option<(Ty, Option<ast::Ident>, usize, ast::Ident)> {
+        // `Self.Variant` and `Self { ... }` in the impl block of the type.
+        if path.first().is_some_and(|first| first.name == "Self") {
+            if path.len() > 2 {
+                return None;
+            }
+            let ty = self.self_ty.clone().unwrap_or(Ty::Error);
+            return Some((ty, path.get(1).cloned(), self.module, path[0].clone()));
+        }
         for k in (0..path.len()).rev() {
             let target = if k == 0 {
                 Some(self.module)
@@ -294,6 +315,9 @@ impl<'a> FnCx<'a> {
             tir::ExprKind::Local(id) => self.locals[id.0].mutable,
             tir::ExprKind::Field(base, _) | tir::ExprKind::Deref(base) => self.place_mutable(base),
             tir::ExprKind::DerefRef(base) => matches!(base.ty, Ty::Ref { mutable: true, .. }),
+            // Writing through a raw pointer writes C memory; it does not mutate the binding that holds the
+            // pointer, and `unsafe` is what guards it (memory-rules.md, US; issue #72).
+            tir::ExprKind::PtrDeref(_) => true,
             // Elements of an array or a list place are mutable with it; elements of a slice view are read-only.
             tir::ExprKind::Index(base, _) => matches!(base.ty, Ty::Array(..) | Ty::List(_)) && self.place_mutable(base),
             _ => false,
@@ -308,7 +332,9 @@ impl<'a> FnCx<'a> {
             return false;
         }
         match place_root(e) {
-            Some(root) => matches!(self.locals[root.0].kind, LocalKind::Owned | LocalKind::OwnParam),
+            Some(root) => {
+                matches!(self.locals[root.0].kind, LocalKind::Owned | LocalKind::OwnParam | LocalKind::Scrutinee)
+            }
             None => true,
         }
     }

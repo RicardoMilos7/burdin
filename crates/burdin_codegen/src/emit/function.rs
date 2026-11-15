@@ -23,8 +23,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 })
                 .collect::<GenResult<_>>()?;
             let fn_ty = match self.llvm_ty(&e.ret) {
-                Some(t) => t.fn_type(&params, false),
-                None => self.cx.void_type().fn_type(&params, false),
+                Some(t) => t.fn_type(&params, e.vararg),
+                None => self.cx.void_type().fn_type(&params, e.vararg),
             };
             // The runtime already declares some libc functions (`free`, `malloc`, ...). Reuse the declaration when
             // it has the same type; a different one would silently link to the wrong ABI.
@@ -56,8 +56,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 None => self.cx.void_type().fn_type(&params, false),
             };
             // Burdin functions keep their symbol (`burdin.<name>`) in the executable's symbol table, so a panic
-            // backtrace can name them. The `burdin.` prefix keeps them apart from C symbols.
-            let value = self.module.add_function(&format!("burdin.{}", f.name), fn_ty, Some(Linkage::External));
+            // backtrace can name them. The `burdin.` prefix keeps them apart from C symbols. An exported function
+            // takes its plain C symbol and reuses an `extern` declaration of the same symbol (issue #489).
+            let name = if f.exported { f.name.clone() } else { format!("burdin.{}", f.name) };
+            let value = match self.module.get_function(&name) {
+                Some(existing) if existing.get_type() == fn_ty => existing,
+                Some(_) => {
+                    return Err(format!("exported function `{name}` conflicts with a declaration of another type"));
+                }
+                None => self.module.add_function(&name, fn_ty, Some(Linkage::External)),
+            };
             self.functions.push(value);
         }
         for (i, f) in program.functions.iter().enumerate() {

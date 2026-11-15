@@ -1,0 +1,10 @@
+//@ compile-fail
+// A generic type's declared bounds are checked at every concrete instantiation (issue #66).
+
+struct CopyBox<T: Copy> {
+    value: T
+}
+
+fn main() {
+    let b: CopyBox<String> = CopyBox { value: String.from("x") } //~ E0141
+}

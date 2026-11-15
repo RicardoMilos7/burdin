@@ -205,6 +205,7 @@ impl FnCx<'_> {
                 }
             }
         }
+        globals.check_adt_bounds(g, &args, span, self.diags);
         Some(globals.adt_instance_ty(g, args))
     }
 
@@ -253,14 +254,54 @@ impl FnCx<'_> {
             let fields = checked.into_iter().enumerate().collect();
             return mk(tir::ExprKind::Variant(vi, fields), ty, span);
         }
-        // Anything else is an associated function; the type arguments can only come from the expected type.
-        let Some(ty) = self.template_instance(g, Vec::new(), expect, span) else {
-            return self.args_then_error(args, span);
+        // An associated function: its type arguments come from its own parameters first, then from the expected
+        // type (issue #65).
+        let (is_enum, id) = globals.generic_adts[g].identity;
+        let identity = if is_enum { globals.enum_refs[id].clone() } else { globals.struct_refs[id].clone() };
+        let key = (is_enum, id);
+        let method = globals.methods.get(&(key, name.name.clone())).copied();
+        let Some(f) = method else {
+            let Some(ty) = self.template_instance(g, Vec::new(), expect, span) else {
+                return self.args_then_error(args, span);
+            };
+            if ty == Ty::Error {
+                return self.args_then_error(args, span);
+            }
+            return self.assoc_call(&ty, name, args, span);
         };
-        if ty == Ty::Error {
+        let pattern = globals.sigs[f.0].clone();
+        if pattern.has_self {
+            self.diags.error(
+                Code::UNKNOWN_NAME,
+                name.span,
+                format!("`{}` has a `self` parameter; call it as `{}.{}(...)`", name.name, identity.name, name.name),
+            );
             return self.args_then_error(args, span);
         }
-        self.assoc_call(&ty, name, args, span)
+        if args.len() != pattern.params.len() {
+            let _ = self.args(&name.name, &pattern.params, args, None, span);
+            return error_expr(span);
+        }
+        let mut checked = Vec::new();
+        for (a, p) in args.iter().zip(&pattern.params) {
+            let hint = if globals.ty_has_param(&p.ty) { None } else { Some(&p.ty) };
+            checked.push(self.expr(&a.expr, hint));
+        }
+        let mut bindings = Vec::new();
+        for (e, p) in checked.iter().zip(&pattern.params) {
+            globals.unify(&p.ty, &e.ty, &mut bindings);
+        }
+        let Some(ty) = self.template_instance(g, bindings, expect, span) else { return error_expr(span) };
+        if ty == Ty::Error {
+            return error_expr(span);
+        }
+        let Some(actual) = crate::globals::adt_key(&ty) else { return error_expr(span) };
+        let Some(&func) = globals.methods.get(&(actual, name.name.clone())) else { return error_expr(span) };
+        let sig = globals.sigs[func.0].clone();
+        let Some(checked) = self.args_pre(&name.name, &sig.params, args, None, span, Some(checked)) else {
+            return error_expr(span);
+        };
+        mk(tir::ExprKind::Call(func, checked), sig.ret, span)
     }
 
     /// `Wrapper { inner: value }` for a generic struct: the type arguments come from the field values.

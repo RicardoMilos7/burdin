@@ -1,0 +1,37 @@
+//@ run
+//> 1
+//> drop 1
+//> drop 2
+//> end of main
+
+// Moving one field out of a temporary scrutinee drops the untouched fields exactly once.
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce(self.id)
+    }
+}
+
+fn announce(id: i32) {
+    let mut line = String.from("drop ")
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    match (Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } }) {
+        Pair { a } => {
+            println(a.id.to_string())
+        }
+    }
+    println("end of main")
+}

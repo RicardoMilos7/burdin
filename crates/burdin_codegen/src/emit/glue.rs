@@ -85,6 +85,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 format!("Map<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
             Ty::Heap(inner) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
+            Ty::Range(inner, inclusive) => {
+                format!("Range<{},{inclusive}>", self.structural_key_in(inner, seen))
+            }
             Ty::Ref { mutable, inner } => {
                 format!("&{}{}", if *mutable { "mut " } else { "" }, self.structural_key_in(inner, seen))
             }
@@ -204,6 +207,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
+            // The endpoints of a range are integers, so a range owns nothing.
+            Ty::Range(..) => Ok(()),
             Ty::Param(_) => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
             // nothing. The `Chars` iterator is a view of a `str` too.
@@ -423,6 +428,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         match ty {
             Ty::String => {
                 self.builder.build_call(self.rt.string_clone, &[dst.into(), src.into()], "").map_err(llvm_err)?;
+                Ok(())
+            }
+            Ty::CString => {
+                let p = self.builder.build_load(ptr_ty, src, "cstring").map_err(llvm_err)?.into_pointer_value();
+                let call = self.builder.build_call(self.rt.cstring_clone, &[p.into()], "").map_err(llvm_err)?;
+                let copy = call.try_as_basic_value().basic().expect("`cstring_clone` returns a pointer");
+                self.builder.build_store(dst, copy).map_err(llvm_err)?;
                 Ok(())
             }
             Ty::Heap(inner) => {

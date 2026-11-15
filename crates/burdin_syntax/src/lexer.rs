@@ -332,6 +332,7 @@ impl Lexer<'_> {
         use TokenKind::*;
         let (a, b, c) = (self.peek(0), self.peek(1), self.peek(2));
         let three = match (a, b, c) {
+            (b'.', b'.', b'.') => Some(DotDotDot),
             (b'.', b'.', b'=') => Some(DotDotEq),
             _ => None,
         };
@@ -455,6 +456,7 @@ mod tests {
     #[test]
     fn punctuation_uses_the_longest_token() {
         let cases: &[(&str, TokenKind)] = &[
+            ("...", DotDotDot),
             ("..=", DotDotEq),
             ("..", DotDot),
             (".", Dot),

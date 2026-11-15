@@ -10,8 +10,9 @@ impl Parser<'_> {
         let mut file = File::default();
         while !self.at_eof() {
             self.nl_stack.clear();
-            if self.at(&TokenKind::Use) {
-                match self.use_decl() {
+            if self.at(&TokenKind::Use) || self.at_pub_use() {
+                let is_pub = self.at_pub_use();
+                match self.use_decl(is_pub) {
                     Ok(use_decl) => file.uses.push(use_decl),
                     Err(Reported) => self.recover_item(),
                 }
@@ -33,6 +34,11 @@ impl Parser<'_> {
         file
     }
 
+    /// `pub use`: `pub` is contextual here, so it stays an ordinary identifier everywhere else.
+    fn at_pub_use(&self) -> bool {
+        matches!(self.kind(), TokenKind::Ident(name) if name == "pub") && matches!(self.nth_kind(1), TokenKind::Use)
+    }
+
     /// A `test` item: `test`, the contextual keyword, followed by a string. This is the only position where `test`
     /// is not an ordinary identifier.
     fn at_test_item(&self) -> bool {
@@ -49,16 +55,19 @@ impl Parser<'_> {
             TokenKind::Interface => Ok(Some(Item::Interface(self.interface_decl(is_priv, start)?))),
             TokenKind::Type => Ok(Some(Item::TypeAlias(self.type_alias(is_priv, start)?))),
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
-            TokenKind::Extern => Ok(Some(Item::Extern(self.extern_block(is_priv, start)?))),
+            TokenKind::Extern => Ok(Some(self.extern_item(is_priv, start)?)),
             TokenKind::Ident(_) | TokenKind::SelfType if !is_priv => Ok(Some(Item::Impl(self.impl_block(start)?))),
             _ => Err(self.unexpected("an item")),
         }
     }
 
     /// `use path`, `use path as name`, or `use path.{item, item}`. Uses are collected separately from items,
-    /// because they declare no item of their own.
-    pub(super) fn use_decl(&mut self) -> PResult<UseDecl> {
+    /// because they declare no item of their own. `pub use` re-exports what it imports (issue #79).
+    pub(super) fn use_decl(&mut self, is_pub: bool) -> PResult<UseDecl> {
         let start = self.span();
+        if is_pub {
+            self.bump();
+        }
         self.expect(&TokenKind::Use)?;
         let mut path = vec![self.ident("a module or item name")?];
         let mut items = Vec::new();
@@ -89,11 +98,12 @@ impl Parser<'_> {
         } else {
             None
         };
-        Ok(UseDecl { path, alias, items, span: start.to(self.prev_span()) })
+        Ok(UseDecl { is_pub, path, alias, items, span: start.to(self.prev_span()) })
     }
 
-    /// `extern "C" { [priv] fn ... }`: declarations of C functions, which have no body.
-    pub(super) fn extern_block(&mut self, is_priv: bool, start: Span) -> PResult<ExternBlock> {
+    /// `extern "C" { [priv] fn ... }` declares C functions; `extern "C" fn ... { ... }` exports a Burdin
+    /// function with the C ABI (issue #489).
+    pub(super) fn extern_item(&mut self, is_priv: bool, start: Span) -> PResult<Item> {
         self.expect(&TokenKind::Extern)?;
         let abi_span = self.span();
         let abi = match self.kind().clone() {
@@ -103,25 +113,34 @@ impl Parser<'_> {
             }
             _ => return Err(self.unexpected("an ABI string, such as \"C\"")),
         };
-        self.open(&TokenKind::LBrace, true)?;
-        let mut decls = Vec::new();
-        while !self.at(&TokenKind::RBrace) {
-            if self.at_eof() {
-                return Err(self.unexpected("`}`"));
+        if self.at(&TokenKind::LBrace) {
+            self.open(&TokenKind::LBrace, true)?;
+            let mut decls = Vec::new();
+            while !self.at(&TokenKind::RBrace) {
+                if self.at_eof() {
+                    return Err(self.unexpected("`}`"));
+                }
+                let fn_start = self.span();
+                let fn_priv = self.eat(&TokenKind::Priv);
+                if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
+                    return Err(self.unexpected("a function signature"));
+                }
+                let (decl, has_body) = self.fn_decl_opt(fn_priv, fn_start, true)?;
+                if has_body {
+                    self.diags.error(Code::SYNTAX, decl.body.span, "an `extern` function has no body");
+                }
+                decls.push(decl);
             }
-            let fn_start = self.span();
-            let fn_priv = self.eat(&TokenKind::Priv);
-            if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
-                return Err(self.unexpected("a function signature"));
-            }
-            let (decl, has_body) = self.fn_decl_opt(fn_priv, fn_start, true)?;
-            if has_body {
-                self.diags.error(Code::SYNTAX, decl.body.span, "an `extern` function has no body");
-            }
-            decls.push(decl);
+            self.close(&TokenKind::RBrace)?;
+            return Ok(Item::Extern(ExternBlock { abi, abi_span, is_priv, decls, span: start.to(self.prev_span()) }));
         }
-        self.close(&TokenKind::RBrace)?;
-        Ok(ExternBlock { abi, abi_span, is_priv, decls, span: start.to(self.prev_span()) })
+        let fn_start = self.span();
+        let fn_priv = self.eat(&TokenKind::Priv);
+        if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
+            return Err(self.unexpected("`{` or a function signature"));
+        }
+        let (decl, _) = self.fn_decl_opt(fn_priv, fn_start, false)?;
+        Ok(Item::ExternFn(ExternFnDecl { abi, abi_span, decl }))
     }
 
     /// Ends one entry of a list inside braces: a `,` or a line break separates entries (grammar section 2,
@@ -178,9 +197,30 @@ impl Parser<'_> {
         self.expect(&TokenKind::Struct)?;
         let name = self.ident("a struct name")?;
         let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        let repr_c = self.repr_c()?;
         let derives = self.derives()?;
         let fields = self.field_list()?;
-        Ok(StructDecl { is_priv, name, generics, derives, fields, span: start.to(self.prev_span()) })
+        Ok(StructDecl { is_priv, name, generics, repr_c, derives, fields, span: start.to(self.prev_span()) })
+    }
+
+    /// The contextual marker `repr(C)` after a struct name (issue #490).
+    fn repr_c(&mut self) -> PResult<bool> {
+        if !matches!(self.kind(), TokenKind::Ident(name) if name == "repr") {
+            return Ok(false);
+        }
+        self.bump();
+        self.open(&TokenKind::LParen, false)?;
+        let abi = self.ident("an ABI name")?;
+        self.close(&TokenKind::RParen)?;
+        if abi.name != "C" {
+            self.diags.error(
+                Code::UNSUPPORTED,
+                abi.span,
+                format!("`repr({})` is not implemented; only `repr(C)` is", abi.name),
+            );
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     pub(super) fn enum_decl(&mut self, is_priv: bool, start: Span) -> PResult<EnumDecl> {
@@ -290,6 +330,7 @@ impl Parser<'_> {
             name: Ident { name: format!("__burdin_test_{index}"), span: name_span },
             generics: Vec::new(),
             params: Vec::new(),
+            is_vararg: false,
             ret: Some(ret),
             where_clause: Vec::new(),
             body: Block { stmts, span: body_span },
@@ -375,7 +416,13 @@ impl Parser<'_> {
         let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
         self.open(&TokenKind::LParen, false)?;
         let mut params = Vec::new();
+        let mut is_vararg = false;
         while !self.at(&TokenKind::RParen) {
+            if self.at(&TokenKind::DotDotDot) {
+                self.bump();
+                is_vararg = true;
+                break;
+            }
             params.push(self.param()?);
             if !self.eat(&TokenKind::Comma) {
                 break;
@@ -387,11 +434,14 @@ impl Parser<'_> {
         if body_optional && !self.at(&TokenKind::LBrace) {
             let span = start.to(self.prev_span());
             let body = Block { stmts: Vec::new(), span };
-            return Ok((FnDecl { is_priv, is_unsafe, name, generics, params, ret, where_clause, body, span }, false));
+            return Ok((
+                FnDecl { is_priv, is_unsafe, name, generics, params, is_vararg, ret, where_clause, body, span },
+                false,
+            ));
         }
         let body = self.block()?;
         let span = start.to(body.span);
-        Ok((FnDecl { is_priv, is_unsafe, name, generics, params, ret, where_clause, body, span }, true))
+        Ok((FnDecl { is_priv, is_unsafe, name, generics, params, is_vararg, ret, where_clause, body, span }, true))
     }
 
     pub(super) fn const_decl(&mut self, is_priv: bool, start: Span) -> PResult<ConstDecl> {

@@ -51,6 +51,11 @@ pub(crate) struct ModuleInfo {
     pub(crate) value_priv: HashMap<String, bool>,
     pub(crate) type_priv: HashMap<String, bool>,
     pub(crate) iface_priv: HashMap<String, bool>,
+    /// Names this module re-exports with `pub use`, in each namespace, and the module aliases it re-exports.
+    pub(crate) pub_values: std::collections::HashSet<String>,
+    pub(crate) pub_types: std::collections::HashSet<String>,
+    pub(crate) pub_ifaces: std::collections::HashSet<String>,
+    pub(crate) pub_modules: std::collections::HashSet<String>,
 }
 
 /// One package of the compilation: the package being built and its dependencies.
@@ -67,6 +72,8 @@ pub(crate) struct PackageInfo {
 pub(crate) struct ExternInfo {
     pub(crate) symbol: String,
     pub(crate) sig: Signature,
+    /// A C variadic function: a call may pass extra C-ABI arguments.
+    pub(crate) vararg: bool,
 }
 
 /// One `Type: From<Source>` block: the `from` method `?` calls to convert a `Source` error.
@@ -90,10 +97,14 @@ pub(crate) struct Globals {
     /// The package that declares each struct or enum, for field visibility (E0150).
     pub(crate) struct_pkg: Vec<usize>,
     pub(crate) enum_pkg: Vec<usize>,
+    /// Whether each struct or enum (an instance included) is package-private.
+    pub(crate) adt_priv: HashMap<(bool, usize), bool>,
     /// Methods by the type they belong to (`(false, struct)` or `(true, enum)`) and name.
     pub(crate) methods: HashMap<((bool, usize), String), FuncId>,
     /// Whether each method is package-private.
     pub(crate) method_priv: HashMap<((bool, usize), String), bool>,
+    /// Where each method was declared, for signature diagnostics.
+    pub(crate) method_spans: HashMap<((bool, usize), String), burdin_diag::Span>,
     /// The package of the impl block or interface that defines each method, for visibility.
     pub(crate) method_pkg: HashMap<((bool, usize), String), usize>,
     /// The `Drop::drop` method of a type that has a `Type: Drop` block.
@@ -157,28 +168,64 @@ impl Globals {
         self.modules[module].modules.get(name).copied()
     }
 
-    /// The value `name` if the module declares it: imports are private to their module and are not re-exported.
+    /// The value `name` if the module declares it or re-exports it with `pub use`: plain imports are private to
+    /// their module.
     pub(crate) fn exported_value(&self, module: usize, name: &str) -> Option<Global> {
-        if !self.modules[module].value_priv.contains_key(name) {
+        let info = &self.modules[module];
+        if !info.value_priv.contains_key(name) && !info.pub_values.contains(name) {
             return None;
         }
         self.value(module, name)
     }
 
-    /// The type `name` if the module declares it.
+    /// The type `name` if the module declares or re-exports it.
     pub(crate) fn exported_type(&self, module: usize, name: &str) -> Option<TypeName> {
-        if !self.modules[module].type_priv.contains_key(name) {
+        let info = &self.modules[module];
+        if !info.type_priv.contains_key(name) && !info.pub_types.contains(name) {
             return None;
         }
         self.type_name(module, name)
     }
 
-    /// The interface `name` if the module declares it.
+    /// The interface `name` if the module declares or re-exports it.
     pub(crate) fn exported_iface(&self, module: usize, name: &str) -> Option<usize> {
-        if !self.modules[module].iface_priv.contains_key(name) {
+        let info = &self.modules[module];
+        if !info.iface_priv.contains_key(name) && !info.pub_ifaces.contains(name) {
             return None;
         }
         self.iface_name(module, name)
+    }
+
+    /// The first package-private struct or enum a type mentions, for the public-signature rule (E0150).
+    pub(crate) fn private_adt(&self, ty: &Ty) -> Option<String> {
+        match ty {
+            Ty::Struct(a) => {
+                if self.adt_priv.get(&(false, a.id)).copied().unwrap_or(false) {
+                    Some(a.name.to_string())
+                } else {
+                    None
+                }
+            }
+            Ty::Enum(a) => {
+                if self.adt_priv.get(&(true, a.id)).copied().unwrap_or(false) {
+                    Some(a.name.to_string())
+                } else {
+                    None
+                }
+            }
+            Ty::Ref { inner, .. }
+            | Ty::Slice(inner)
+            | Ty::Array(inner, _)
+            | Ty::Option(inner)
+            | Ty::Heap(inner)
+            | Ty::CPtr(inner)
+            | Ty::Range(inner, _)
+            | Ty::List(inner) => self.private_adt(inner),
+            Ty::Result(t, e) => self.private_adt(t).or_else(|| self.private_adt(e)),
+            Ty::Map(k, v) => self.private_adt(k).or_else(|| self.private_adt(v)),
+            Ty::Tuple(ts) => ts.iter().find_map(|t| self.private_adt(t)),
+            _ => None,
+        }
     }
 
     /// Whether a value name is package-private where it is declared.
@@ -228,9 +275,20 @@ impl Globals {
     pub(crate) fn resolve_module_path(&self, from: usize, path: &[String]) -> Option<usize> {
         let Some(first) = path.first() else { return self.find_module_in_package(self.package_of(from), path) };
         if let Some(module) = self.module_alias(from, first) {
+            let module_package = self.modules[module].package;
+            if module_package != self.package_of(from) && path.len() > 1 {
+                let name = &path[1];
+                let target = *self.modules[module].modules.get(name)?;
+                if !self.modules[module].pub_modules.contains(name) {
+                    return None;
+                }
+                let mut full = self.modules[target].path.clone();
+                full.extend_from_slice(&path[2..]);
+                return self.find_module_in_package(module_package, &full);
+            }
             let mut full = self.modules[module].path.clone();
             full.extend_from_slice(&path[1..]);
-            return self.find_module_in_package(self.modules[module].package, &full);
+            return self.find_module_in_package(module_package, &full);
         }
         let package = self.package_of(from);
         if let Some(module) = self.find_module_in_package(package, path) {
@@ -240,6 +298,16 @@ impl Globals {
         if path.len() == 1 {
             return self.packages[dep].root_module;
         }
-        self.find_module_in_package(dep, &path[1..])
+        // A dependency's non-root modules are private: only the aliases its root module re-exports with
+        // `pub use <module>` are reachable (issue #81).
+        let root = self.packages[dep].root_module?;
+        let name = &path[1];
+        let target = *self.modules[root].modules.get(name)?;
+        if !self.modules[root].pub_modules.contains(name) {
+            return None;
+        }
+        let mut full = self.modules[target].path.clone();
+        full.extend_from_slice(&path[2..]);
+        self.find_module_in_package(dep, &full)
     }
 }

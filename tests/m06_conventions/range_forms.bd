@@ -4,8 +4,10 @@
 //> 2
 //> 3
 //> 4
+//> 1
 
-// `a..b` is exclusive and `a..=b` is inclusive.
+// `a..b` is exclusive and `a..=b` is inclusive; an inclusive range ending at the maximum integer runs once
+// without overflowing the loop counter (issue #57).
 
 fn main() {
     let mut total = 0
@@ -23,4 +25,10 @@ fn main() {
     for i in 2..5 {
         println(i.to_string())
     }
+
+    let mut last = 0
+    for i in 2147483647..=2147483647 {
+        last = last + 1
+    }
+    println(last.to_string())
 }

@@ -20,6 +20,7 @@ import re
 import shutil
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import harness
@@ -282,7 +283,11 @@ with harness.temporary_dir("burdin-release-") as work:
             ):
                 expect_contains("archive layout", entry, "\n".join(sorted(names)))
 
-            # Packaging is deterministic: the same binary, version, and epoch make the same bytes.
+            # Packaging is deterministic: the same binary, version, and epoch make the same bytes. The second run
+            # starts a whole second later so a timestamp read from the clock instead of SOURCE_DATE_EPOCH cannot
+            # pass by landing in the same second; bsdtar (macOS) packs the staging files' times, so that leak
+            # used to make this fail intermittently there.
+            time.sleep(1)
             check()
             second = run_release(
                 "--binary", str(fake), "--target", target, "--version", "9.9.9",

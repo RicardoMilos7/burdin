@@ -429,6 +429,31 @@ fn main() {}
 **How to fix:** return an owned value, or return a view derived from a read-only or `mut` parameter, whose storage
 belongs to the caller.
 
+## E0123: View outlives the storage it borrows from
+
+A view stored in a local borrows from storage that dies before the binding: a temporary, which is dropped at the
+end of its statement, or a local of an inner block, which is dropped before the binding escapes it.
+
+<!-- error-example: E0123 -->
+```burdin
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+fn main() {
+    let r = first_of(Pair { a: 1, b: 2 }) //~ E0123
+}
+```
+<!-- /error-example -->
+
+**How to fix:** keep the source in a local that outlives the view (`let pair = Pair { a: 1, b: 2 }` and then
+`first_of(pair)`), or store an owned value instead of a view.
+
 ## E0130: Derive requirement not met
 
 A field's type does not satisfy the trait being derived, or the type combines derives or interfaces that cannot
@@ -585,7 +610,8 @@ fn main() {}
 ## E0161: Operation that requires `unsafe` outside `unsafe`
 
 Calling an `extern "C"` function, an `unsafe fn`, or an `unsafe` interface method needs an `unsafe` block (or an
-`unsafe fn` body).
+`unsafe fn` body). So does any raw-pointer operation: creating, holding, passing, moving, dereferencing, testing
+(`.is_null()`), comparing, offsetting, or casting a `CPtr` value.
 
 <!-- error-example: E0161 -->
 ```burdin
@@ -605,7 +631,10 @@ should carry the requirement.
 ## E0162: Type or convention not allowed in an `extern "C"` declaration
 
 Parameters and results of a C declaration are limited to integers, floats, and `CPtr<T>`; declarations take no
-`mut`, `own`, or `self`, no generics, and only the `C` convention.
+`mut`, `own`, or `self`, no generics, and only the `C` convention. The same rules apply to an exported
+`extern "C" fn`, which also rejects `...` and must declare every parameter `own`. A `repr(C)` struct crosses the C
+ABI through `CPtr<T>` only, because the platform by-value coercions are not implemented, and a Burdin `bool` is a
+one-bit value while C `_Bool` is a one-byte integer, so pass it as `u8` (0 or 1).
 
 <!-- error-example: E0162 -->
 ```burdin

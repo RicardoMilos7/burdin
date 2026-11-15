@@ -83,7 +83,7 @@ impl<'t> Sema<'t> {
             return;
         }
         let full = self.globals.qualified(module, &name.name);
-        let adt = |id| AdtRef { id, name: Rc::from(full.as_str()) };
+        let adt = |id| AdtRef { id, name: Rc::from(full.as_str()), second_class: false };
         let params: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
         for (i, p) in params.iter().enumerate() {
             if params[..i].contains(p) {
@@ -103,11 +103,13 @@ impl<'t> Sema<'t> {
                 self.globals.structs.push(tir::StructDef {
                     name: full.clone(),
                     fields: Vec::new(),
+                    repr_c: s.repr_c,
                     derives: tir::Derives::default(),
                     drop_method: None,
                 });
                 self.globals.struct_refs.push(adt(id));
                 self.globals.struct_pkg.push(package);
+                self.globals.adt_priv.insert((false, id), is_priv);
                 self.src.structs.push(crate::session::AdtSrcEntry { decl: s, subst: Vec::new(), module });
             }
             ast::Item::Enum(e) if generics.is_empty() => {
@@ -121,6 +123,7 @@ impl<'t> Sema<'t> {
                 });
                 self.globals.enum_refs.push(adt(id));
                 self.globals.enum_pkg.push(package);
+                self.globals.adt_priv.insert((true, id), is_priv);
                 self.src.enums.push(crate::session::AdtSrcEntry { decl: e, subst: Vec::new(), module });
             }
             ast::Item::Struct(s) => {
@@ -129,6 +132,7 @@ impl<'t> Sema<'t> {
                 self.globals.generic_adts.push(GenericAdt {
                     name: full,
                     module,
+                    is_priv,
                     is_enum: false,
                     params,
                     bounds: Vec::new(),
@@ -143,6 +147,7 @@ impl<'t> Sema<'t> {
                 self.globals.generic_adts.push(GenericAdt {
                     name: full,
                     module,
+                    is_priv,
                     is_enum: true,
                     params,
                     bounds: Vec::new(),
@@ -234,6 +239,7 @@ impl<'t> Sema<'t> {
                                 symbolic: true,
                                 check_body: true,
                                 is_unsafe: f.is_unsafe,
+                                is_exported: false,
                             });
                             let index = self.globals.generic_fns.len();
                             self.globals.modules[module].values.insert(name.clone(), Global::Generic(index));
@@ -265,6 +271,22 @@ impl<'t> Sema<'t> {
                         self.const_decls.push(NamedSrc { decl: c, module });
                     }
                     ast::Item::Extern(block) => self.declare_extern(module, block, diags),
+                    ast::Item::ExternFn(e) => {
+                        let name = &e.decl.name.name;
+                        if self.globals.modules[module].values.contains_key(name) || builtin(name).is_some() {
+                            diags.error(
+                                Code::UNSUPPORTED,
+                                e.decl.name.span,
+                                format!("`{name}` is defined more than once"),
+                            );
+                            continue;
+                        }
+                        let id = self.push_fn(FnItem::plain(&e.decl, name.clone(), module, None));
+                        self.fn_items[id.0].is_exported = true;
+                        self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
+                        self.globals.modules[module].value_priv.insert(name.clone(), e.decl.is_priv);
+                        self.export_srcs.push((id, e));
+                    }
                     ast::Item::Struct(_)
                     | ast::Item::Enum(_)
                     | ast::Item::TypeAlias(_)
@@ -338,7 +360,11 @@ impl<'t> Sema<'t> {
                 Some(id) => id,
                 None => {
                     let id = self.globals.externs.len();
-                    self.globals.externs.push(ExternInfo { symbol: symbol.clone(), sig: Signature::placeholder() });
+                    self.globals.externs.push(ExternInfo {
+                        symbol: symbol.clone(),
+                        sig: Signature::placeholder(),
+                        vararg: decl.is_vararg,
+                    });
                     self.globals.extern_symbols.insert(symbol.clone(), id);
                     id
                 }
@@ -375,6 +401,7 @@ impl<'t> Sema<'t> {
                     symbolic: true,
                     check_body: true,
                     is_unsafe: m.decl.is_unsafe,
+                    is_exported: false,
                 };
                 self.push_fn(item);
             }

@@ -67,7 +67,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::ExternCall(id, args) => {
                 let ext = &self.program.externs[*id];
                 let mut values: Vec<BasicMetadataValueEnum> = Vec::new();
-                for (a, ty) in args.iter().zip(&ext.params) {
+                for (i, a) in args.iter().enumerate() {
+                    let ty = ext.params.get(i).unwrap_or(&a.ty);
                     let v = self.expr_mode(a, Mode::Use)?;
                     if self.llvm_ty(ty).is_some() {
                         values.push(self.need(v, ty).into());
@@ -123,6 +124,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::ForRange { var, lo, hi, inclusive, body } => {
                 self.for_range(*var, lo, hi, *inclusive, body)?;
+                None
+            }
+            K::ForRangeValue { var, range, body } => {
+                self.for_range_value(*var, range, body)?;
                 None
             }
             K::ForArray { pat, array, body } => {
@@ -202,6 +207,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     }
                     None => None,
                 }
+            }
+            K::Range { lo, hi, .. } => {
+                let Some(t) = self.llvm_ty(&e.ty) else {
+                    self.expr_mode(lo, Mode::Move)?;
+                    self.expr_mode(hi, Mode::Move)?;
+                    return Ok(None);
+                };
+                let lo_v = self.expr_mode(lo, Mode::Move)?;
+                let lo_v = self.need(lo_v, &lo.ty);
+                let hi_v = self.expr_mode(hi, Mode::Move)?;
+                let hi_v = self.need(hi_v, &hi.ty);
+                let mut agg = undef(t).into_struct_value();
+                agg = self.builder.build_insert_value(agg, lo_v, 0, "").map_err(llvm_err)?.into_struct_value();
+                agg = self.builder.build_insert_value(agg, hi_v, 1, "").map_err(llvm_err)?.into_struct_value();
+                Some(agg.into())
             }
             K::Array(elems) => {
                 let Some(t) = self.llvm_ty(&e.ty) else {
@@ -284,7 +304,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 Some(agg.into())
             }
-            K::Index(..) | K::Field(..) | K::Deref(..) | K::DerefRef(..) => self.expr_place(e, mode)?,
+            K::Index(..) | K::Field(..) | K::Deref(..) | K::PtrDeref(..) | K::DerefRef(..) => {
+                self.expr_place(e, mode)?
+            }
+            K::LayoutOf { ty, alignment } => {
+                let size = self.layout_size(ty, *alignment);
+                Some(self.usize_ty.const_int(size, false).into())
+            }
         };
         if e.ty == Ty::Never {
             return Ok(None);

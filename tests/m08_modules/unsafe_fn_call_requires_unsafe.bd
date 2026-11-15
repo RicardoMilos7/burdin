@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// Calling an `unsafe fn` outside an `unsafe` context is E0161 (issue #85).
+
+unsafe fn danger(x: i32): i32 {
+    x
+}
+
+fn main() {
+    let n = danger(1) //~ E0161
+    println(n.to_string())
+}
