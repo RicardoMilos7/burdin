@@ -97,6 +97,28 @@ else
         # PDB; the Linux and macOS jobs are where the DWARF sections are verified.
         echo "note: the Windows linker kept no DWARF sections; skipping the section checks" >&2
     else
+        if ! grep -Fq "DW_TAG_compile_unit" info.txt; then
+            # Show what the executable and the IR actually carry, so a platform that drops the sections is
+            # diagnosable from the CI log without a second run.
+            {
+                echo "debug: the executable carries no compile unit; diagnosing"
+                file "$exe" 2>&1
+                if command -v otool >/dev/null 2>&1; then
+                    otool -l "$exe" 2>&1 | grep -E 'segname|sectname' | head -n 30
+                fi
+                "$dwarfdump" --debug-info "$exe" 2>&1 | head -n 10
+                if "$BURDIN" build dbg.bd -g --emit-ir diag.ll -o diag_exe >/dev/null 2>diag.err; then
+                    echo "IR: $(grep -c '!DICompileUnit' diag.ll) DICompileUnit, $(grep -c '!DISubprogram' diag.ll) DISubprogram"
+                    if llc_tool=$(find_tool llc); then
+                        if "$llc_tool" -filetype=obj diag.ll -o diag.o 2>/dev/null; then
+                            "$dwarfdump" --debug-info diag.o 2>&1 | grep -E 'DW_TAG_compile_unit|DW_TAG_subprogram|error' | head -n 6
+                        fi
+                    fi
+                else
+                    echo "IR build failed: $(head -n 5 diag.err)"
+                fi
+            } >&2
+        fi
         expect_info() {   # $1 description, $2 pattern
             checks=$((checks + 1))
             grep -Fq -- "$2" info.txt || add_problem "DWARF: $1 (missing '$2')"
