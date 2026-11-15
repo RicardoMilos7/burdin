@@ -10,7 +10,7 @@
 //! **Panics.** A panic prints `path:LINE:COL: panic: message` and then a symbolized `stack backtrace:` section, so
 //! the message line keeps its stage 0 format. The runtime frames above the panicking function are skipped. On Unix
 //! the trace uses libc's `backtrace`/`backtrace_symbols_fd` and needs the `.eh_frame` unwind tables the code
-//! generator adds to every function; on Windows it uses `CaptureStackBackTrace` (addresses only, because symbolizing
+//! generator adds to every function; on Windows it uses `RtlCaptureStackBackTrace` (addresses only, because symbolizing
 //! needs a PDB the driver does not produce).
 //!
 //! **Stack overflow.** The main thread gets an alternate signal stack and a `SIGSEGV` handler on Unix (an
@@ -920,13 +920,13 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let (i32_ty, ptr_ty, i64_ty) = (self.i32(), self.ptr_ty, self.i64());
         let capture = libc(
             self.module,
-            "CaptureStackBackTrace",
+            "RtlCaptureStackBackTrace",
             self.cx.i16_type().fn_type(&[i32_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false),
         );
         let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
         let buf = self.b.build_alloca(ptr_ty.array_type(BACKTRACE_FRAMES), "frames").map_err(llvm_err)?;
-        // Skip `CaptureStackBackTrace`, this function, and `burdin_rt_panic`; the runtime frames are hidden like
-        // on Unix.
+        // Skip `RtlCaptureStackBackTrace`, this function, and `burdin_rt_panic`; the runtime frames are hidden
+        // like on Unix.
         let hidden = i32_ty.const_int(3, false);
         let n = self
             .call(
@@ -938,7 +938,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                     ptr_ty.const_null().into(),
                 ],
             )?
-            .expect("CaptureStackBackTrace returns a count")
+            .expect("RtlCaptureStackBackTrace returns a count")
             .into_int_value();
         let n = self.b.build_int_z_extend(n, i32_ty, "n").map_err(llvm_err)?;
         let enough = self.b.build_int_compare(IntPredicate::SGT, n, i32_ty.const_zero(), "").map_err(llvm_err)?;

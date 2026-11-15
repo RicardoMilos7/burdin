@@ -159,12 +159,13 @@ Compiles the target to a native executable. On success it prints nothing and exi
 - `--release` enables optimization (`-O2` through LLVM). Debug builds panic on overflow of `+`, `-`, `*`, and
   `MIN / -1`; release builds wrap. Division by zero always panics. This is language behavior, not only an
   optimization choice.
-- `-g` (or `--debug-info`) emits source-level debug information: DWARF on ELF and Mach-O, and the LLVM debug
+- `-g` (or `--debug-info`) emits source-level debug information: DWARF in the executable on ELF, DWARF in a
+  `<output>.dSYM` bundle on macOS (ld64 keeps it out of the executable and writes a debug map), and the LLVM debug
   metadata the COFF backend carries for Windows. Every Burdin function is a `DW_TAG_subprogram`, every parameter and
   local a `DW_TAG_formal_parameter`/`DW_TAG_variable`, and every expression sets the line table, so a debugger can
   stop on a Burdin line and read a local. `burdin run -g` compiles with it too. `tests/check-debug-info.sh` builds a
-  program, reads the sections with `llvm-dwarfdump`, and, when `gdb` is installed, stops on a Burdin line and prints
-  the locals.
+  program, reads the sections with `llvm-dwarfdump` (from the `.dSYM` on macOS), and, when `gdb` is installed, stops
+  on a Burdin line and prints the locals.
 - `--strip` passes the platform strip option to the linker (`-s` on ELF/Mach-O; `/OPT:REF /OPT:ICF` with MSVC) and
   keeps the program's behavior. `tests/check-build-flags.sh` enforces a 128 KiB budget for a stripped hello-world
   and 512 KiB for a program using `List` and `Map` on Linux and macOS.

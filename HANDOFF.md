@@ -301,14 +301,15 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   DWARF (and the LLVM debug metadata the COFF backend carries) for every function, parameter, local, and expression.
   Instructions get the line and column of their expression's span, so a breakpoint on a Burdin line stops there and
   the locals are readable. Debug types model the scalars, references, arrays, tuples, structs, `Option`, `Result`,
-  `str`, `String`, and the containers; an enum with a payload is an opaque named type. `tests/check-debug-info.sh`
-  builds a program with `-g`, compares its output, reads the sections with `llvm-dwarfdump`, and, when `gdb` is
-  installed, breaks on `dbg.bd:7` and reads `sum`, `a`, and `b` (3, 1, 2). The optimized profile keeps the line
-  table and runs the same. Cost: the hello-world executable grows from 27992 to 30480 bytes in debug and from
-  18232 to 21424 in release.
+  `str`, `String`, and the containers; an enum with a payload is an opaque named type. On macOS ld64 keeps DWARF out
+  of the executable, so the driver runs `dsymutil` and writes `<output>.dSYM`. `tests/check-debug-info.sh` builds a
+  program with `-g`, compares its output, reads the sections with `llvm-dwarfdump` (from the `.dSYM` on macOS), and,
+  when `gdb` is installed, breaks on `dbg.bd:7` and reads `sum`, `a`, and `b` (3, 1, 2). The optimized profile keeps
+  the line table and runs the same. Cost: the hello-world executable grows from 27992 to 30480 bytes in debug and
+  from 18232 to 21424 in release.
 - **Panic backtraces (#423).** After the unchanged `path:LINE:COL: panic: message` line, a panic prints
   `stack backtrace:` and the symbolized frames above the runtime. Unix uses libc `backtrace_symbols_fd`; Windows uses
-  `CaptureStackBackTrace`, which gives addresses because no PDB is produced. The two runtime frames between the
+  `RtlCaptureStackBackTrace` and links `kernel32.lib`, and gives addresses because no PDB is produced. The two runtime frames between the
   panic function and the caller are skipped; `notail` on the panic call keeps the panicking function's frame;
   every defined function gets `uwtable`; and Burdin functions keep external `burdin.<name>` symbols, with `-rdynamic`
   on ELF, so names resolve. Decision: backtraces are always on, in both profiles. An optimized build may inline the

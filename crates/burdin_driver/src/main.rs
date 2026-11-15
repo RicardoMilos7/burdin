@@ -810,7 +810,7 @@ fn llvm_tool(name: &str) -> Option<PathBuf> {
 struct LinkOptions {
     /// Put the program's symbols in the dynamic symbol table (ELF), for panic backtraces.
     export_dynamic: bool,
-    /// Keep the DWARF from the object in the executable (`-g`). Apple's linker drops it without this.
+    /// Keep source-level debug information (`-g`). On macOS, `link` also writes the `.dSYM` bundle.
     debug: bool,
     /// Strip the executable (`--strip`).
     strip: bool,
@@ -843,6 +843,26 @@ fn link(object: &Path, output: &Path, libs: &[String], opts: &LinkOptions) -> Re
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         ));
+    }
+    if opts.debug && cfg!(target_os = "macos") {
+        write_dsym(output)?;
+    }
+    Ok(())
+}
+
+/// ld64 keeps DWARF out of the executable and writes a debug map instead; `dsymutil` combines the object's DWARF
+/// into `<output>.dSYM`, which is where lldb and other Darwin debuggers read it from.
+fn write_dsym(output: &Path) -> Result<(), String> {
+    let mut dsym = output.as_os_str().to_os_string();
+    dsym.push(".dSYM");
+    let dsym = PathBuf::from(dsym);
+    let out = Command::new("dsymutil").arg(output).arg("-o").arg(&dsym).output().map_err(|e| {
+        format!(
+            "cannot run `dsymutil`: {e}; source-level debug information on macOS needs the Xcode command-line tools"
+        )
+    })?;
+    if !out.status.success() {
+        return Err(format!("`dsymutil` failed for `{}`:\n{}", output.display(), String::from_utf8_lossy(&out.stderr)));
     }
     Ok(())
 }

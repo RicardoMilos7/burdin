@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Checks source-level debug information (issue #422). Needs a built driver; uses llvm-dwarfdump to read the
-# DWARF and gdb, when it is installed, to prove a breakpoint on a Burdin line and a local read work.
+# DWARF (from the executable on Linux, from the .dSYM bundle on macOS) and gdb, when it is installed, to prove a
+# breakpoint on a Burdin line and a local read work.
 #
 # BURDIN selects the driver, like tests/run-tests.sh; otherwise target/{debug,release}/burdin is used.
 #
@@ -90,8 +91,13 @@ dwarfdump=$(find_tool llvm-dwarfdump) || true
 if [ -z "${dwarfdump:-}" ]; then
     echo "warning: llvm-dwarfdump not found; skipping the debug-info sections" >&2
 else
-    "$dwarfdump" --debug-info "$exe" > info.txt 2>/dev/null
-    "$dwarfdump" --debug-line "$exe" > lines.txt 2>/dev/null
+    # ld64 keeps DWARF in a .dSYM bundle beside the executable; the driver produces it for `-g` on macOS.
+    dwarf_target=$exe
+    if [ -d "$exe.dSYM" ]; then
+        dwarf_target="$exe.dSYM/Contents/Resources/DWARF/$(basename "$exe")"
+    fi
+    "$dwarfdump" --debug-info "$dwarf_target" > info.txt 2>/dev/null
+    "$dwarfdump" --debug-line "$dwarf_target" > lines.txt 2>/dev/null
     if [ "$windows_host" -eq 1 ] && ! grep -Fq "DW_TAG_compile_unit" info.txt; then
         # MSVC's link.exe does not carry the DWARF sections into the image, and the driver does not produce a
         # PDB; the Linux and macOS jobs are where the DWARF sections are verified.
@@ -106,7 +112,7 @@ else
                 if command -v otool >/dev/null 2>&1; then
                     otool -l "$exe" 2>&1 | grep -E 'segname|sectname' | head -n 30
                 fi
-                "$dwarfdump" --debug-info "$exe" 2>&1 | head -n 10
+                "$dwarfdump" --debug-info "$dwarf_target" 2>&1 | head -n 10
                 if "$BURDIN" build dbg.bd -g --emit-ir diag.ll -o diag_exe >/dev/null 2>diag.err; then
                     echo "IR: $(grep -c '!DICompileUnit' diag.ll) DICompileUnit, $(grep -c '!DISubprogram' diag.ll) DISubprogram"
                     if llc_tool=$(find_tool llc); then
@@ -138,7 +144,11 @@ else
 
     # An optimized build keeps the line table too.
     if "$BURDIN" build dbg.bd --release -g -o dbg_release >/dev/null 2>err; then
-        "$dwarfdump" --debug-line dbg_release > lines_release.txt 2>/dev/null
+        release_target=./dbg_release
+        if [ -d "$release_target.dSYM" ]; then
+            release_target="$release_target.dSYM/Contents/Resources/DWARF/dbg_release"
+        fi
+        "$dwarfdump" --debug-line "$release_target" > lines_release.txt 2>/dev/null
         if [ "$windows_host" -eq 0 ]; then
             checks=$((checks + 1))
             grep -Fq "dbg.bd" lines_release.txt \
