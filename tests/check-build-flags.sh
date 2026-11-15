@@ -135,9 +135,8 @@ else
             [ -n "$strip_size" ] && [ "$strip_size" -le 131072 ] \
                 || add_problem "stripped hello is ${strip_size:-?} bytes, over the 128 KiB budget"
             checks=$((checks + 1))
-            if nm hello_strip 2>/dev/null | grep -q "burdin\."; then
-                add_problem "--strip left Burdin symbols in the executable"
-            fi
+            leftover=$(nm hello_strip 2>/dev/null | grep "burdin\." | head -n 3 | tr '\n' ' ')
+            [ -z "$leftover" ] || add_problem "--strip left Burdin symbols in the executable: $leftover"
             ;;
     esac
 fi

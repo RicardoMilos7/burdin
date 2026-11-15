@@ -948,6 +948,11 @@ fn unix_link_args(object: &Path, output: &Path, libs: &[String], opts: &LinkOpti
     }
     if opts.strip {
         args.push("-s".into());
+        if cfg!(target_os = "macos") {
+            // `-s` removes the symbol table but Mach-O still exports every global function through the export
+            // trie, and `nm` reports those names. A stripped executable needs to export only its entry point.
+            args.push("-Wl,-exported_symbol,_main".into());
+        }
     }
     for lib in libs {
         match resolve_llvm_c(lib) {
