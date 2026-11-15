@@ -1,5 +1,6 @@
 //@ run-abort
 //@ debug-only
+//@ skip-platform: windows
 //@ stderr: stack backtrace:
 //@ stderr: burdin.innermost
 //@ stderr: burdin.outer

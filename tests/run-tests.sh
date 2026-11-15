@@ -46,6 +46,13 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 TESTS_DIR=$SCRIPT_DIR
 REPO_DIR=$(dirname "$SCRIPT_DIR")
 
+case "$(uname -s)" in
+    Linux*) host_platform=linux ;;
+    Darwin*) host_platform=macos ;;
+    MSYS*|MINGW*|CYGWIN*) host_platform=windows ;;
+    *) host_platform=unknown ;;
+esac
+
 PROFILE_FLAG=""
 VERBOSE=0
 LIST_ONLY=0
@@ -274,6 +281,14 @@ while IFS= read -r root; do
         printf 'FAIL  %s: no test kind directive\n' "$rel"
         failed=$((failed + 1)); failed_list+=("$rel"); continue
     fi
+    skip_on=$(directive_values "$root" skip-platform | tr '\n' ' ')
+    case " $skip_on " in
+        *" $host_platform "*)
+            printf 'SKIP  %s (skip-platform: %s)\n' "$rel" "$host_platform"
+            skipped=$((skipped + 1))
+            continue
+            ;;
+    esac
     if [ -n "$PROFILE_FLAG" ] && has_directive "$root" debug-only; then
         printf 'SKIP  %s (debug-only)\n' "$rel"; skipped=$((skipped + 1)); continue
     fi

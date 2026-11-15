@@ -50,6 +50,7 @@ Directives are line comments at any position in the root file.
 | `//@ exit-code: N` | Expected exit code with `run`. |
 | `//@ args: a b` | Command-line arguments passed after the program name. |
 | `//@ debug-only` | Skip in release profile (overflow checks). |
+| `//@ skip-platform: os` | Skip on that host: `linux`, `macos`, or `windows`; several may be listed. |
 | `//@ link-lib: NAME` | Extra library to link. |
 | `//@ undecided: text` | Skipped; documents an open design question. |
 
@@ -88,7 +89,8 @@ release. The release run skips tests marked `//@ debug-only`. The `burdin test` 
 fixtures under `tests/runner/` that carry no `//@` directives and are therefore not conformance tests.
 
 The compiler and runtime work of issue #421 is covered in two places. The observable runtime behavior has conformance
-tests: `m02_basics/panic_backtrace.bd` (both profiles), `m02_basics/panic_backtrace_names.bd` (debug-only),
+tests: `m02_basics/panic_backtrace.bd` (both profiles), `m02_basics/panic_backtrace_names.bd` (debug-only, Linux
+and macOS),
 `m02_basics/stack_overflow_aborts.bd`, and the existing flush tests
 (`m02_basics/panic_flushes_stdout.bd`, `m09_stdlib/exit_code.bd`). The flags and code-generation effects have the
 four scripts above: they read the `--emit-ir` text (drop flags, bounds checks, glue) and compare parallel and

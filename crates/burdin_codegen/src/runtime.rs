@@ -896,14 +896,6 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .call(backtrace, &[buf.into(), i32_ty.const_int(u64::from(BACKTRACE_FRAMES), false).into()])?
             .expect("backtrace returns a count")
             .into_int_value();
-        if self.darwin {
-            let write_u64 = self.module.get_function("burdin_rt_write_u64").expect("write_u64 exists");
-            let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
-            let n64 = self.b.build_int_z_extend(n, self.i64(), "n64").map_err(llvm_err)?;
-            self.write_const(write_all, 2, b"debug backtrace frames: ")?;
-            self.call(write_u64, &[i32_ty.const_int(2, false).into(), n64.into()])?;
-            self.write_const(write_all, 2, b"\n")?;
-        }
         let hidden = i32_ty.const_int(2, false);
         let enough = self.b.build_int_compare(IntPredicate::SGT, n, hidden, "enough").map_err(llvm_err)?;
         let show = self.block(f, "show");

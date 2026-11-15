@@ -1,11 +1,12 @@
 //@ run-abort
 //@ stderr: panic: boom
 //@ stderr: stack backtrace:
-//@ stderr: panic_backtrace(
+//@ stderr: 0x
 
-// A panic prints a symbolized backtrace after its message, in both profiles. Optimized builds may inline the
-// functions around the panic, so this test only requires the trace and a symbolized frame; the names of the
-// unoptimized frames are checked by `panic_backtrace_names.bd` (debug-only).
+// A panic prints a backtrace after its message, in both profiles. Symbolization differs by platform (names on
+// ELF and Mach-O, addresses only on Windows without a PDB), and optimized builds may inline the functions around
+// the panic, so this test requires the trace and one frame address. `panic_backtrace_names.bd` checks the
+// unoptimized frame names (debug-only, not on Windows).
 
 fn innermost(x: i32) {
     if x > 0 {

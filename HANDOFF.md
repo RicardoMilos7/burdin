@@ -309,11 +309,13 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   from 18232 to 21424 in release.
 - **Panic backtraces (#423).** After the unchanged `path:LINE:COL: panic: message` line, a panic prints
   `stack backtrace:` and the symbolized frames above the runtime. Unix uses libc `backtrace_symbols_fd`; Windows uses
-  `RtlCaptureStackBackTrace` and links `kernel32.lib`, and gives addresses because no PDB is produced. The two runtime frames between the
-  panic function and the caller are skipped; `notail` on the panic call keeps the panicking function's frame;
-  every defined function gets `uwtable`; and Burdin functions keep external `burdin.<name>` symbols, with `-rdynamic`
-  on ELF, so names resolve. Decision: backtraces are always on, in both profiles. An optimized build may inline the
-  frames around the panic, so the name test is `debug-only` and the release test only requires a symbolized frame.
+  `RtlCaptureStackBackTrace` and links `kernel32.lib`, and gives addresses because no PDB is produced. The two runtime
+  frames between the panic function and the caller are skipped; `notail` on the panic call keeps the panicking
+  function's frame; every defined function gets `uwtable`, and on Darwin `frame-pointer=all` because libSystem's
+  `backtrace` needs a frame chain; Burdin functions keep external `burdin.<name>` symbols, with `-rdynamic` on ELF,
+  so names resolve. Decision: backtraces are always on, in both profiles. An optimized build may inline the frames
+  around the panic, so the name test is `debug-only` (not on Windows) and the release test only requires a frame
+  address.
 - **Buffered standard output (#424).** `burdin_rt_out_write` appends to an 8 KiB block buffer, line buffered when fd 1
   is a terminal (`isatty`); standard error stays unbuffered. `burdin_rt_flush` runs from `atexit` (normal return and
   `process.exit`), before a panic message, and from the stack-overflow handler, so no output is lost. The existing
