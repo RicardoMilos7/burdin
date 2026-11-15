@@ -4,9 +4,12 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the sixteenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**: all
-174 tests pass in the debug profile and 173 in release (one m02 test is debug-only). `burdin test` runs `test` blocks,
-and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
+Updated at the end of the seventeenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**:
+all 177 tests pass in the debug profile and 175 in release (two tests are debug-only). `burdin test` runs `test`
+blocks, and the m11 program calls the LLVM C API. The seventeenth session implemented the compiler and runtime work
+of issue #421 (sub-issues #422-#432): source-level debug information, panic backtraces, buffered output, a
+main-thread stack-overflow guard, glue deduplication, drop-flag elimination, bounds-check elision, LTO and PGO
+flags, stripping and a size budget, `--version` with build metadata, and parallel parsing. The eleventh session added the macOS CI job (issues #16, #17, #18); the
 twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a
 root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
 design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in
@@ -20,7 +23,7 @@ ordering operators work on `str`/`String`, and an invalid `extern "C"` type or c
 
 | What | Where | Status |
 | --- | --- | --- |
-| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`, diagnostics, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. `tests/check-docs.sh` checks the links and the documented behavior, and both CI jobs run it |
+| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`, diagnostics, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The seventeenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior. `tests/check-docs.sh` checks the links and the documented behavior, and every CI job runs it and the four new scripts |
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
@@ -28,14 +31,14 @@ ordering operators work on `str`/`String`, and an invalid `extern "C"` type or c
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items, the permissive declaration layout, and the call-site marker rules |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 174 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Conformance tests | `tests/` | 177 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, and diagnostics in `burdin_diag`. CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`; see the layout in `CLAUDE.md` |
-| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, output, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
+| Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446) |
 | LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH` |
 
 Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21; the macOS and
@@ -200,7 +203,8 @@ how to call WSL from PowerShell.
   dropping a `Heap` drops the pointee and frees the allocation; moving the pointee out of a `Heap` frees it. `clone`
   is deep: `Copy` values are copied bitwise, `String` copies its buffer, `Heap` allocates and clones the pointee, and
   aggregates clone field by field.
-- `burdin_driver`: `build` (writes `<package name>` in the current directory, `-o` to change it, `--emit-ir file.ll`),
+- `burdin_driver`: `build` (writes `<package name>` in the current directory, `-o` to change it, `--emit-ir file.ll`,
+  and `-g`, `--strip`, `--lto`, `--pgo-generate`, `--pgo-use`), `--version` (version, target, LLVM, commit, profile),
   `run` (builds into a temporary directory, passes the exit code through, 128+signal for a signal), and `test` (builds
   in test mode and runs one process per test; it owns the counts and `FAIL` lines). A target is a `.bd` file or a
   package directory; dependency cycles, missing paths, invalid module names, and malformed manifests are reported as
@@ -255,6 +259,80 @@ advisory (`continue-on-error`) until the runner numbers are stable: a regression
 failing the job. A missing baseline (including one evicted after seven days without a run) is recorded and passes.
 `tests/check-ci.sh` fails if the step, the script, the cache, or the harness modes go missing, and
 `cargo test -p burdin_bench` covers the format and the threshold arithmetic.
+
+### Debug information, observability, and performance (issues #421-#432)
+
+The non-feature work of issue #421 is implemented and checked by four scripts that every CI job runs.
+
+- **Source-level debug information (#422, `-g`/`--debug-info`).** `crates/burdin_codegen/src/emit/debug.rs` emits
+  DWARF (and the LLVM debug metadata the COFF backend carries) for every function, parameter, local, and expression.
+  Instructions get the line and column of their expression's span, so a breakpoint on a Burdin line stops there and
+  the locals are readable. Debug types model the scalars, references, arrays, tuples, structs, `Option`, `Result`,
+  `str`, `String`, and the containers; an enum with a payload is an opaque named type. `tests/check-debug-info.sh`
+  builds a program with `-g`, compares its output, reads the sections with `llvm-dwarfdump`, and, when `gdb` is
+  installed, breaks on `dbg.bd:7` and reads `sum`, `a`, and `b` (3, 1, 2). The optimized profile keeps the line
+  table and runs the same. Cost: the hello-world executable grows from 27992 to 30480 bytes in debug and from
+  18232 to 21424 in release.
+- **Panic backtraces (#423).** After the unchanged `path:LINE:COL: panic: message` line, a panic prints
+  `stack backtrace:` and the symbolized frames above the runtime. Unix uses libc `backtrace_symbols_fd`; Windows uses
+  `CaptureStackBackTrace`, which gives addresses because no PDB is produced. The two runtime frames between the
+  panic function and the caller are skipped; `notail` on the panic call keeps the panicking function's frame;
+  every defined function gets `uwtable`; and Burdin functions keep external `burdin.<name>` symbols, with `-rdynamic`
+  on ELF, so names resolve. Decision: backtraces are always on, in both profiles. An optimized build may inline the
+  frames around the panic, so the name test is `debug-only` and the release test only requires a symbolized frame.
+- **Buffered standard output (#424).** `burdin_rt_out_write` appends to an 8 KiB block buffer, line buffered when fd 1
+  is a terminal (`isatty`); standard error stays unbuffered. `burdin_rt_flush` runs from `atexit` (normal return and
+  `process.exit`), before a panic message, and from the stack-overflow handler, so no output is lost. The existing
+  `m02_basics/panic_flushes_stdout.bd` and `m09_stdlib/exit_code.bd` tests now witness the buffer, not the old
+  unbuffered path. Measured: 200,000 lines of 70 bytes (14 MB) reach `/dev/null` in 8 ms in a release build; a
+  std-heavy program links in 26680 bytes stripped.
+- **Main-thread stack overflow guard (#425).** On Unix the runtime installs a 64 KiB alternate signal stack and a
+  `SA_SIGINFO` `SIGSEGV` handler, compares the fault address with the main stack's guard region (recorded through
+  `pthread_getattr_np`/`pthread_attr_getstack`, or `pthread_get_stackaddr_np` on macOS), prints
+  `panic: stack overflow` or `panic: invalid memory access`, flushes, and exits 134. Windows registers an
+  `AddVectoredExceptionHandler` filter for `EXCEPTION_STACK_OVERFLOW`. `m02_basics/stack_overflow_aborts.bd` recurses
+  a million frames in both profiles. The handler is `SA_RESETHAND` and has a reentrancy guard.
+- **Monomorphization and code size (#426).** Generic instances were already unique by type arguments. Drop and clone
+  glue are now keyed by a structural type key (`Codegen::structural_key`), so two distinct types with the same shape
+  share one `burdin.drop.N`/`burdin.clone.N`; recursion through `Heap` is cut off with `rec`. The IR check sees one
+  drop glue for `Heap<A>` and `Heap<B>` where `A` and `B` have the same fields. LLVM's `MergeFunctions` pass was
+  evaluated and rejected: Burdin functions must stay externally visible for backtrace symbols, the remaining
+  identical bodies are already shared, and enabling it changed neither the symbol count nor the binary size. The
+  fixture executable is 28032 bytes.
+- **Drop-flag elimination (#427).** `burdin_check` now records every point where a local's scope can end (block
+  fallthrough, `return`, `break`, `continue`) and marks a whole-local move `always_dead` when all observations see it
+  moved. Code generation allocates no `i1` flag and emits no drop for such a local. A conditional move
+  (`if c { take(s) }`) still gets its flag. `tests/check-codegen-opt.sh` pins the IR count: one flag for the
+  conditional fixture and none for the unconditional one. Adjacent drops of one aggregate were already merged
+  field-by-field by DR7.
+- **Bounds-check elision (#428).** A constant array index that is in range, and `for i in 0..xs.len() { xs[i] }`,
+  skip the check; every other dynamic index keeps the panic. The elision lives in `place.rs` with a fact stack
+  (`bounds_facts`) that is pushed only around the loop body and popped afterwards. `tests/check-codegen-opt.sh`
+  requires zero `bounds.fail` blocks in the elidable fixture and runs an out-of-range index that still panics; the
+  existing `m02_basics/index_out_of_bounds_aborts.bd` keeps the other side.
+- **LTO and PGO (#429).** `--lto` writes LLVM bitcode and links with `-flto`; `--pgo-generate` runs
+  `pgo-instr-gen,instrprof` and links `-fprofile-instr-generate`; `--pgo-use FILE` runs `llvm-profdata merge`,
+  `opt -passes=pgo-instr-use[,default<O2>] -pgo-test-profile-file=...`, then `llc -relocation-model=pic`, and links
+  normally. Both need an LLVM compiler driver (`BURDIN_CC=clang`); MSVC rejects them, and `--lto` cannot be combined
+  with PGO. Measured on `fib(34)` with `--release`: plain 26 ms, LTO 28 ms, PGO 28 ms; sizes 18256, 18528, and 22456
+  bytes. The compiler emits one module, so LTO has nothing to merge across objects today; the flags and their
+  correctness are what this milestone delivers, and PGO instrumentation is visible (an IR profile with 54 functions
+  and 131 blocks on the hello-world fixture).
+- **Release size and stripping (#430).** `--strip` passes `-s` on ELF/Mach-O; with MSVC it passes `/OPT:REF` and
+  `/OPT:ICF` (cl writes no debug directory without `/DEBUG`). `tests/check-build-flags.sh` enforces 128 KiB for a
+  stripped hello world and 512 KiB for a std-heavy program on Linux and macOS. Measured on WSL x86-64: hello 27992
+  bytes / stripped 22584; std-heavy stripped 26680.
+- **`--version` and build metadata (#431).** `crates/burdin_driver/build.rs` embeds the target, profile, and git
+  commit (with `BURDIN_COMMIT` as an override), and `burdin_codegen::llvm_version()` reads the linked LLVM version
+  through the C API. `--version` prints five lines (`burdin`, `target`, `llvm`, `commit`, `profile`), covered by a
+  unit test and by `check-docs.sh` and `check-build-flags.sh`. Decision: diagnostics do not print the compiler
+  version; their format is unchanged, and a bug report should include `burdin --version`.
+- **Parallel front-end analysis (#432).** The driver parses modules in `BURDIN_JOBS` worker threads (default: the
+  machine's parallelism; 1 is sequential). Each worker keeps its own `Diagnostics`, and the driver merges them in
+  file order, so a parallel run is byte-identical to a sequential one. `tests/check-parallel.sh` builds a 24-module
+  package with each job count and compares the diagnostics of a 12-module failing package between 1 and 8 workers.
+  **Checking is still sequential**: the issue conditions parallel checking on a query-based library, which does not
+  exist yet. Parsing is the phase that scales without one.
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -654,6 +732,51 @@ failing the job. A missing baseline (including one evicted after seven days with
 - **New tests.** 40 conformance tests cover the decisions; `tests/README.md` has the per-decision table. The suite is
   174 tests, 173 in release.
 
+## Decided in the seventeenth session
+
+- **Debug information is opt-in (`-g`).** It is not tied to the profile: a debug build without `-g` stays small, and
+  `--release -g` works when a debugger is needed for an optimized binary. The metadata is emitted in both cases, and
+  the type model deliberately leaves payload enums opaque rather than guessing at their union layout.
+- **Backtraces are always on.** A panic ends the process, and the trace is the diagnostic that makes the abort
+  useful; there is no environment switch. The first line keeps the stage 0 format exactly. Runtime frames are hidden
+  by skipping the two frames between the panic function and its caller; `notail` keeps the panicking function's own
+  frame. Windows prints addresses because symbolization needs a PDB, which the driver does not produce.
+- **Standard output is block buffered (8 KiB), line buffered on a terminal, and stderr is unbuffered.** `atexit`
+  covers normal returns and `process.exit`; the panic path and the stack-overflow handler flush explicitly. The
+  stage 0 stdlib has no explicit output handle, so there is nothing user-visible to flush yet; a stage 1 handle
+  would call the same `burdin_rt_flush`.
+- **The stack guard distinguishes faults by address.** Unix records the main stack's bounds at startup and only
+  reports a stack overflow when the fault lies in the 1 MiB below the stack; other faults report
+  `panic: invalid memory access`. Both paths flush and exit 134. The Windows filter checks the exception code.
+- **Glue is shared by structural shape, and LLVM's `MergeFunctions` is not used.** Two types with the same field
+  types generate one drop/clone glue; a user `Drop` method keeps its own type's glue. MergeFunctions cannot merge the
+  externally visible Burdin functions (their symbols are needed for backtraces), and the remaining duplicates are
+  already shared, so enabling it changed nothing measurable.
+- **Drop-flag elimination is limited to whole locals the move checker proves dead at every exit.** Partial moves and
+  conditional moves keep their runtime flags, which is what makes the analysis small and auditable. Adjacent drops
+  are not merged by hand: eliminating a statically dead drop removes it entirely, which is stronger than merging its
+  check, and release `-O2` merges the remaining branch structure. Hand-merging would complicate DR7's field-by-field
+  partial drops for little gain.
+- **Bounds checks are elided only for an in-range constant index and for an index from `for i in 0..xs.len()` over
+  the same collection.** Every other dynamic index keeps the panic.
+- **LTO and PGO are opt-in and need an LLVM compiler driver and tools.** `--lto` emits bitcode and links with
+  `-flto`; `--pgo-generate` instruments with `pgo-instr-gen,instrprof`; `--pgo-use` runs the profile pipeline through
+  `opt` and `llc` because the LLVM C API does not expose the pass builder's profile options. MSVC `cl` rejects LTO
+  and instrumentation, and `--lto` and PGO cannot be combined. Release does not turn them on by default: the
+  compiler emits one module, so LTO currently has nothing to combine across objects, and the measured fib benchmark
+  showed no gain (26/28/28 ms, 18256/18528/22456 bytes).
+- **`--strip` uses the platform's linker flag and has a size budget.** `-s` on ELF/Mach-O; `/OPT:REF`/`/OPT:ICF`
+  with MSVC. CI enforces 128 KiB for a stripped hello-world and 512 KiB for a stripped std-heavy program on Linux and
+  macOS. The budget is deliberately generous (the measured sizes are 22584 and 26680 bytes) so it catches an
+  accidental runtime or library growth, not compiler noise.
+- **`--version` prints five stable lines, and diagnostics do not carry the version.** Keeping every diagnostic line
+  in the registry format matters more than embedding a version; a bug report includes `burdin --version` (documented
+  in README.md).
+- **Parsing is parallel by default; checking is not.** `BURDIN_JOBS` controls the workers (1 is sequential). Each
+  worker keeps its own diagnostics and the driver merges them in file order, so output is byte-identical. Parallel
+  checking waits for the query-based library the issue names as its prerequisite; the current `Sema` is one shared
+  mutable state.
+
 ## What is left to do, in order
 
 1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
@@ -673,6 +796,11 @@ failing the job. A missing baseline (including one evicted after seven days with
    Next: an Intel macOS job and another arm64 host if they are wanted.
 5. The 16 assumptions in `tests/README.md` are settled (issue #21, sixteenth session); their rules are in `spec/` and
    their tests are in the suite. A new open question still gets an `//@ undecided` test until it is decided.
+6. The issue #421 work is done, with these follow-ups if they ever matter: a PDB/CodeView path for Windows so
+   backtraces and debuggers get symbol names (the COFF object carries LLVM debug metadata today, but `cl` produces no
+   PDB); multi-object emission so LTO has something to combine; a query-based library to parallelize checking as
+   well as parsing; and a stable PGO benchmark where instrumented profiles show a measurable gain. The code-size
+   budgets in `tests/check-build-flags.sh` are the regression guard for the release binary.
 
 ## Starting the next session
 

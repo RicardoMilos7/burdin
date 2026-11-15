@@ -105,6 +105,20 @@ jobs:
       - name: Build
         run: cargo build
 
+      # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
+      # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
+      - name: Check debug information
+        run: tests/check-debug-info.sh
+
+      - name: Check code-generation optimizations
+        run: tests/check-codegen-opt.sh
+
+      - name: Check build flags and metadata
+        run: tests/check-build-flags.sh
+
+      - name: Check parallel analysis
+        run: tests/check-parallel.sh
+
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
@@ -223,6 +237,20 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
+      # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
+      - name: Check debug information
+        run: tests/check-debug-info.sh
+
+      - name: Check code-generation optimizations
+        run: tests/check-codegen-opt.sh
+
+      - name: Check build flags and metadata
+        run: tests/check-build-flags.sh
+
+      - name: Check parallel analysis
+        run: tests/check-parallel.sh
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).
@@ -374,6 +402,20 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
+      # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
+      - name: Check debug information
+        run: tests/check-debug-info.sh
+
+      - name: Check code-generation optimizations
+        run: tests/check-codegen-opt.sh
+
+      - name: Check build flags and metadata
+        run: tests/check-build-flags.sh
+
+      - name: Check parallel analysis
+        run: tests/check-parallel.sh
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).

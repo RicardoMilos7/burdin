@@ -45,6 +45,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
+    /// Whether `index` is a loop variable known to stay in `0..base.len()` while the current loop body runs.
+    fn index_in_bounds(&self, base: &tir::Expr, index: &tir::Expr) -> bool {
+        let (tir::ExprKind::Local(index), tir::ExprKind::Local(collection)) = (&index.kind, &base.kind) else {
+            return false;
+        };
+        self.bounds_facts.iter().any(|(i, c)| i == index && c == collection)
+    }
+
     /// The address of a place expression that starts at a local, without spilling anything.
     pub(super) fn direct_place_ptr(&mut self, e: &'a tir::Expr) -> GenResult<Option<PointerValue<'ctx>>> {
         if self.place_path(e).is_none() {
@@ -71,7 +79,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let base_ptr = self.place_ptr(base)?;
                     let i = self.expr_mode(index, Mode::Use)?;
                     let i = self.need_int(i, &Ty::Int(IntTy::Usize));
-                    self.bounds_check(i, self.usize_ty.const_int(len, false), e.span)?;
+                    // A constant index in range needs no check, and neither does a loop index from
+                    // `for i in 0..xs.len()` (issue #428).
+                    let constant = matches!(index.kind, tir::ExprKind::Int(v) if v >= 0 && (v as u64) < len);
+                    if !constant && !self.index_in_bounds(base, index) {
+                        self.bounds_check(i, self.usize_ty.const_int(len, false), e.span)?;
+                    }
                     let (Some(base_ptr), Some(array_t)) = (base_ptr, self.llvm_ty(&base.ty)) else {
                         return Ok(None);
                     };
@@ -94,10 +107,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let len = self.builder.build_extract_value(s, 1, "slice.len").map_err(llvm_err)?.into_int_value();
                     let i = self.expr_mode(index, Mode::Use)?;
                     let i = self.need_int(i, &Ty::Int(IntTy::Usize));
-                    self.bounds_check(i, len, e.span)?;
+                    if !self.index_in_bounds(base, index) {
+                        self.bounds_check(i, len, e.span)?;
+                    }
                     match self.llvm_ty(&elem) {
                         Some(elem_t) => {
-                            // SAFETY (LLVM): the index was checked against the length above.
+                            // SAFETY (LLVM): the index is in bounds by the check above, or by the elided one.
                             let ptr =
                                 unsafe { self.builder.build_in_bounds_gep(elem_t, ptr, &[i], "") }.map_err(llvm_err)?;
                             Ok(Some(ptr))
@@ -120,10 +135,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
                     let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
                     let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
-                    self.bounds_check(i, len, e.span)?;
+                    if !self.index_in_bounds(base, index) {
+                        self.bounds_check(i, len, e.span)?;
+                    }
                     match self.llvm_ty(&elem) {
                         Some(elem_t) => {
-                            // SAFETY (LLVM): the index was checked against the length above.
+                            // SAFETY (LLVM): the index is in bounds by the check above, or by the elided one.
                             let p = unsafe { self.builder.build_in_bounds_gep(elem_t, data, &[i], "") }
                                 .map_err(llvm_err)?;
                             Ok(Some(p))

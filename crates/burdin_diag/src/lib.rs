@@ -72,6 +72,16 @@ impl SourceMap {
     pub fn get(&self, id: FileId) -> &SourceFile {
         &self.files[id.0 as usize]
     }
+
+    /// Every source file with its id, in the order they were added.
+    pub fn iter(&self) -> impl Iterator<Item = (FileId, &SourceFile)> {
+        self.files.iter().enumerate().map(|(i, file)| (FileId(i as u32), file))
+    }
+
+    /// The first source file, if any.
+    pub fn first(&self) -> Option<(FileId, &SourceFile)> {
+        self.iter().next()
+    }
 }
 
 /// An error code from the registry in `tests/README.md`.

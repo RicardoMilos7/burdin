@@ -68,11 +68,23 @@ tests/check-tests.sh                  # check directives and error codes (no com
 tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
 tests/check-platform.sh               # check the host triple and 64-bit isize/usize (needs a built driver)
 tests/check-docs.sh                   # check documentation links and the driver contract (needs a built driver)
+tests/check-debug-info.sh             # -g: DWARF, line table, and a gdb breakpoint when gdb is installed
+tests/check-codegen-opt.sh            # drop-flag elimination, bounds-check elision, shared glue
+tests/check-build-flags.sh            # --version, --strip's budget, --lto, and PGO
+tests/check-parallel.sh               # parallel parsing and deterministic diagnostics
 pwsh tests/check-tests.ps1            # the same check in PowerShell
 ```
 
 CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and
 release. The release run skips tests marked `//@ debug-only`.
+
+The compiler and runtime work of issue #421 is covered in two places. The observable runtime behavior has conformance
+tests: `m02_basics/panic_backtrace.bd` (both profiles), `m02_basics/panic_backtrace_names.bd` (debug-only),
+`m02_basics/stack_overflow_aborts.bd`, and the existing flush tests
+(`m02_basics/panic_flushes_stdout.bd`, `m09_stdlib/exit_code.bd`). The flags and code-generation effects have the
+four scripts above: they read the `--emit-ir` text (drop flags, bounds checks, glue) and compare parallel and
+sequential diagnostics. `BURDIN_JOBS=1` forces sequential parsing for a comparison; the default is the machine's
+parallelism.
 
 The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, then `PATH`. It expects `burdin build`,
 `burdin run`, and `burdin test` to behave as documented in [the driver contract](../README.md#the-driver-contract) at

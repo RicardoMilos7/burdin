@@ -30,6 +30,10 @@ tests/check-unit-tests.sh          check the front-end unit tests and their CI c
 tests/check-ci.sh                  validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
 tests/check-platform.sh            check the host triple and 64-bit isize/usize (needs a built driver)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
+tests/check-debug-info.sh          check -g's DWARF, line table, and a gdb breakpoint (needs a built driver)
+tests/check-codegen-opt.sh         check drop-flag elimination, bounds-check elision, and shared glue
+tests/check-build-flags.sh         check --version, --strip's size budget, --lto, and PGO
+tests/check-parallel.sh            check parallel parsing and deterministic diagnostics
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests

@@ -87,6 +87,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     pub(super) fn drop_local(&mut self, id: tir::LocalId) -> GenResult<()> {
+        // The move checker proved the whole local is moved before every way its scope can end.
+        if self.dead_locals.contains(&id) {
+            return Ok(());
+        }
         let local = &self.locals[id.0];
         if local.by_ref || matches!(local.kind, LocalKind::BorrowedParam | LocalKind::View) {
             return Ok(());

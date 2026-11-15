@@ -269,8 +269,19 @@ Test: `m05_ownership/drop_shadowing`.
 **DR10 Panics.** A panic prints `<file>:<line>:<column>: panic: <message>` to stderr, flushes stdout first, and aborts
 with a non-zero status (SIGABRT on POSIX, a non-zero exit on Windows). No drops run, and no further statements or
 temporaries are evaluated. `panic(msg)`, `unreachable()`, `assert`, a failed `expect`, overflow in debug, division by
-zero, and an out-of-bounds index all take this path.
-Tests: `m02_basics/*_aborts`, `panic_reports_location`, `panic_flushes_stdout`, `panic_runs_no_drops`.
+zero, and an out-of-bounds index all take this path. After the message line the runtime prints a symbolized
+`stack backtrace:` section, hiding its own frames; the message line and the status are the stable part. The one
+exception is a stack overflow, which is not a panic with a source location: the main-thread guard prints
+`panic: stack overflow` and exits 134 (`DR10a`). Standard output is buffered; a panic flushes it before writing
+anything to stderr, so the observable order is unchanged.
+
+**DR10a Stack overflow.** The main thread has a guard: exceeding its stack prints `panic: stack overflow` to stderr
+and ends the process with status 134. On Unix an alternate signal stack and a `SIGSEGV` handler distinguish a fault
+in the stack's guard region from another fault (which prints `panic: invalid memory access`); on Windows a vectored
+exception filter handles `EXCEPTION_STACK_OVERFLOW`. No drops run.
+
+Tests: `m02_basics/*_aborts`, `panic_reports_location`, `panic_flushes_stdout`, `panic_runs_no_drops`,
+`panic_backtrace`, `panic_backtrace_names`, `stack_overflow_aborts`; `tests/check-debug-info.sh`.
 
 ## 10. Derives that depend on these rules (CP)
 

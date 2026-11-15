@@ -1,5 +1,7 @@
 //! The move checker: enforces the move rules of `spec/memory-rules.md` (MV) on one function body and records
-//! every place read in a move context, so that the code generator knows which drop flags to keep.
+//! every place read in a move context, so that the code generator knows which drop flags to keep. It also observes
+//! every point where a scope can end, and marks a whole-local move `always_dead` when every observation saw it moved;
+//! the code generator then omits its flag and its drop (issue #427).
 //!
 //! The analysis walks the typed tree in source order and keeps an initialization state for every local, as a
 //! map from field paths to [`Status`]. A path with no entry of its own inherits its parent's state. `if`,
@@ -128,6 +130,11 @@ struct Checker<'a> {
     scopes: Vec<Vec<LocalId>>,
     loops: Vec<LoopInfo>,
     moved: Vec<tir::MovedPlace>,
+    /// Which locals have been initialized at least once (parameters start declared).
+    declared: Vec<bool>,
+    /// For every declared local: whether every observation at a drop site saw it moved. `None` before the first
+    /// observation, `Some(false)` once any exit could drop it while it is initialized.
+    dead_at_exits: Vec<Option<bool>>,
 }
 
 /// Checks the body of `f` and returns the places it moves.
@@ -140,8 +147,14 @@ pub(crate) fn check_function(f: &tir::Function, env: Env, diags: &mut Diagnostic
         scopes: vec![Vec::new()],
         loops: Vec::new(),
         moved: Vec::new(),
+        declared: f.locals.iter().map(|local| matches!(local.kind, LocalKind::OwnParam)).collect(),
+        dead_at_exits: vec![None; f.locals.len()],
     };
     cx.block(&f.body, Mode::Move);
+    cx.observe_exits();
+    for place in &mut cx.moved {
+        place.always_dead = place.path.is_empty() && cx.dead_at_exits[place.local.0] == Some(true);
+    }
     cx.moved
 }
 
@@ -346,7 +359,7 @@ impl<'a> Checker<'a> {
     }
 
     fn record_move(&mut self, root: LocalId, path: &[usize], span: Span) {
-        let place = tir::MovedPlace { local: root, path: path.to_vec() };
+        let place = tir::MovedPlace { local: root, path: path.to_vec(), always_dead: false };
         if !self.moved.contains(&place) {
             self.moved.push(place);
         }
@@ -359,6 +372,21 @@ impl<'a> Checker<'a> {
 
     fn init_place(&mut self, root: LocalId, path: &[usize]) {
         self.states[root.0].reinit(path);
+        if path.is_empty() {
+            self.declared[root.0] = true;
+        }
+    }
+
+    /// Records whether every declared local is moved at a point where its scope can end, which is what makes a
+    /// whole-local move statically dead and saves its drop flag (issue #427).
+    fn observe_exits(&mut self) {
+        for (i, declared) in self.declared.iter().enumerate() {
+            if !declared {
+                continue;
+            }
+            let dead = self.states[i].get(&[]) == Status::Moved;
+            self.dead_at_exits[i] = Some(self.dead_at_exits[i].unwrap_or(true) && dead);
+        }
     }
 
     // ----- expressions -----------------------------------------------------
@@ -596,14 +624,17 @@ impl<'a> Checker<'a> {
                 if let Some(lp) = self.loops.last_mut() {
                     lp.exits.push(state);
                 }
+                self.observe_exits();
             }
             K::Continue => {
                 self.check_loop_moves();
+                self.observe_exits();
             }
             K::Return(value) => {
                 if let Some(v) = value {
                     self.expr(v, Mode::Move);
                 }
+                self.observe_exits();
             }
             K::Assign(place, value) => {
                 self.expr(value, Mode::Move);
@@ -818,6 +849,9 @@ impl<'a> Checker<'a> {
             if tail.ty == Ty::Never {
                 falls = false;
             }
+        }
+        if falls {
+            self.observe_exits();
         }
         self.scopes.pop();
         falls

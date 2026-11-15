@@ -5,7 +5,7 @@ use crate::ty::IntTy;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FuncId(pub usize);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LocalId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

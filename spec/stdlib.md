@@ -19,6 +19,11 @@ fn eprintln(s: str)
 ```
 
 Each writes to stdout or stderr. `println`/`eprintln` add one `\n`. A `String` argument is converted by IC1.
+Standard output is buffered and standard error is not; the buffer is flushed when it fills, after a line when
+stdout is a terminal, and before the process ends through a normal return, `process.exit`, a panic, or the
+stack-overflow guard. A program never sees the difference except through the timing of the bytes (there is no
+explicit output handle in stage 0); the flush points are what keep the order of stdout and stderr correct before
+an abnormal end.
 
 ## Numbers and parsing
 

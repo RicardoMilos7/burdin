@@ -73,12 +73,25 @@ conformance runner (`tests/run-tests.sh`) and the documentation check depend on 
 
 ```
 usage:
-  burdin build <file.bd | package directory> [--release] [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
-  burdin run <file.bd | package directory> [--release] [--link-lib <name>]... [-- <program arguments>...]
+  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto]
+               [--pgo-generate | --pgo-use <profile>]
+               [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
+  burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
+             [-- <program arguments>...]
   burdin test <file.bd | package directory> [--release]
+  burdin --version
 ```
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
+
+Environment:
+
+| Variable | Meaning |
+| --- | --- |
+| `BURDIN_CC` | The C compiler driver used to link against libc (default `cc`, `cl` on Windows). |
+| `BURDIN_COMMIT` | Overrides the git commit `--version` prints (for builds without a `.git` directory). |
+| `BURDIN_JOBS` | The number of parser threads; `1` is sequential. Default: the machine's parallelism. |
+| `LLVM_SYS_211_PREFIX` | The LLVM 21 installation; its `bin/llvm-config` drives `--link-lib LLVM-C`. |
 
 ### Targets and packages
 
@@ -106,7 +119,9 @@ A single `.bd` file is a package with one module (its module path is empty) and 
 ### `burdin build`
 
 ```
-burdin build <target> [--release] [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
+burdin build <target> [--release] [-g] [--strip] [--lto]
+             [--pgo-generate | --pgo-use <profile>]
+             [-o <output>] [--emit-ir <file.ll>] [--link-lib <name>]...
 ```
 
 Compiles the target to a native executable. On success it prints nothing and exits 0.
@@ -118,6 +133,21 @@ Compiles the target to a native executable. On success it prints nothing and exi
 - `--release` enables optimization (`-O2` through LLVM). Debug builds panic on overflow of `+`, `-`, `*`, and
   `MIN / -1`; release builds wrap. Division by zero always panics. This is language behavior, not only an
   optimization choice.
+- `-g` (or `--debug-info`) emits source-level debug information: DWARF on ELF and Mach-O, and the LLVM debug
+  metadata the COFF backend carries for Windows. Every Burdin function is a `DW_TAG_subprogram`, every parameter and
+  local a `DW_TAG_formal_parameter`/`DW_TAG_variable`, and every expression sets the line table, so a debugger can
+  stop on a Burdin line and read a local. `burdin run -g` compiles with it too. `tests/check-debug-info.sh` builds a
+  program, reads the sections with `llvm-dwarfdump`, and, when `gdb` is installed, stops on a Burdin line and prints
+  the locals.
+- `--strip` passes the platform strip option to the linker (`-s` on ELF/Mach-O; `/OPT:REF /OPT:ICF` with MSVC) and
+  keeps the program's behavior. `tests/check-build-flags.sh` enforces a 128 KiB budget for a stripped hello-world
+  and 512 KiB for a program using `List` and `Map` on Linux and macOS.
+- `--lto` emits LLVM bitcode and links it with `-flto`. It needs an LLVM compiler driver: set `BURDIN_CC=clang` (MSVC
+  `cl` cannot link bitcode).
+- `--pgo-generate` compiles with IR-level profile instrumentation and links the profile runtime (again with an LLVM
+  driver). Run the program with `LLVM_PROFILE_FILE=default.profraw`, then `--pgo-use default.profraw` merges the
+  profile with `llvm-profdata`, applies `pgo-instr-use` with `opt`, and compiles the result with `llc`. The LLVM 21
+  command-line tools must be on `PATH` or under `LLVM_SYS_211_PREFIX`. `--lto` cannot be combined with PGO.
 - `--emit-ir <file.ll>` also writes the module's textual LLVM IR to that path, as generated and before the release
   optimization passes.
 
@@ -170,6 +200,43 @@ test result: 2 passed, 1 failed
 The exit status is 0 only when every test passes, and 1 when any test fails or compilation fails. `tests/run-tests.sh`
 reads exactly this format: the `FAIL ` prefix and the `test result: N passed, M failed` summary.
 
+### `burdin --version`
+
+```
+burdin 0.0.0
+target: x86_64-unknown-linux-gnu
+llvm: 21.1.8
+commit: b011782b7f2a
+profile: debug
+```
+
+The version comes from `Cargo.toml`, the target and profile from the build (`target` is the host triple the compiler
+was built for), the LLVM version from the linked LLVM library, and the commit from git at build time (`unknown` when
+the build had no `.git`, unless `BURDIN_COMMIT` overrides it). Diagnostics do **not** print the compiler version:
+their format stays `path:LINE:COL: error[E0000]: message`. Include the `--version` output in a bug report.
+
+### Runtime behavior
+
+These properties are part of the generated runtime and are checked by the conformance suite and the scripts below.
+
+- **Buffered output.** Standard output is block buffered in 8 KiB, or line buffered when fd 1 is a terminal
+  (`isatty`). Standard error is unbuffered. The buffer is flushed at a normal exit (through `atexit`), by
+  `process.exit`, before a panic message, and by the stack-overflow handler, so output is never lost before an
+  abnormal end. `tests/m02_basics/panic_flushes_stdout.bd` and `tests/m09_stdlib/exit_code.bd` witness it.
+- **Panic backtraces.** A panic prints its stable message line and then `stack backtrace:` with symbolized frames,
+  hiding the runtime's own frames. Every generated function carries an unwind table (`uwtable`), and Burdin
+  functions keep their `burdin.<name>` symbol, so the trace names them in both profiles; an optimized build may
+  inline the frames around the panic. `tests/m02_basics/panic_backtrace.bd` checks both profiles and
+  `panic_backtrace_names.bd` (debug-only) checks the names.
+- **Stack overflow.** The main thread gets an alternate signal stack and a `SIGSEGV` handler on Unix, and a
+  vectored exception handler for `EXCEPTION_STACK_OVERFLOW` on Windows. Unbounded recursion ends with
+  `panic: stack overflow` and status 134 instead of a raw fault; a fault that is not in the stack guard region ends
+  with `panic: invalid memory access`. `tests/m02_basics/stack_overflow_aborts.bd` covers the recursion case.
+- **Parallel parsing.** Modules are independent, so `burdin build`/`run`/`test` parse them in parallel. Each worker
+  keeps its own diagnostics and the driver merges them in file order, so the output is byte-identical to a
+  sequential run. `BURDIN_JOBS` sets the worker count (1 is sequential); `tests/check-parallel.sh` compares the two
+  modes on a multi-module package, including its errors.
+
 ### Diagnostics
 
 Compilation diagnostics go to stderr, one per line, grouped by file and in source order within each file:
@@ -201,7 +268,7 @@ generation:
 ```console
 $ ./target/debug/burdin build hello.bd --emit-ir hello.ll
 $ grep -m1 'define.*@burdin.main' hello.ll
-define internal void @burdin.main() {
+define void @burdin.main() {
 ```
 
 The file is written before the release optimization passes, so `--release --emit-ir` shows pre-optimization IR. The
@@ -267,10 +334,19 @@ Usage errors print `error: <message>` followed by the usage block.
 
 `tests/check-docs.sh` verifies that the links in the repository's Markdown files resolve (files and heading anchors),
 that the checked example above still compiles and prints the shown output, and that the documented driver behavior
-holds: `build` output naming, `-o`, `--emit-ir`, `run` exit-status passthrough, `-- args`, the `test` summary format,
-the diagnostic format, `--link-lib` (including `LLVM-C` where LLVM is available), and `BURDIN_CC`. Run it after
-building the driver:
+holds: `build` output naming, `-o`, `--emit-ir`, `--version`, `-g`, `--strip`, `--release`, `run` exit-status
+passthrough, `-- args`, the `test` summary format, the diagnostic format, `--link-lib` (including `LLVM-C` where
+LLVM is available), and `BURDIN_CC`. Run it after building the driver:
 
 ```console
 $ tests/check-docs.sh
+```
+
+The other checks need a built driver too and cover the runtime and code-generation work of issues #421-#432:
+
+```console
+$ tests/check-debug-info.sh     # -g: DWARF, line table, and a gdb breakpoint when gdb is installed
+$ tests/check-codegen-opt.sh    # drop-flag elimination, bounds-check elision, shared glue
+$ tests/check-build-flags.sh    # --version, --strip's budget, --lto, and PGO
+$ tests/check-parallel.sh       # parallel parsing and deterministic diagnostics
 ```
