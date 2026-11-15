@@ -1,0 +1,36 @@
+//@ run
+//> hello
+//> hello
+//> hello
+//> false
+//> true
+
+// `CStr` is a `std` alias for `CPtr<CChar>` and not a second-class view type (issue #83): the two spellings
+// are one type, a `CStr` value is Copy and may be stored in a field or a container, and only the explicit
+// `CString.from`/`as_ptr` and `CStr.to_string` conversions exist.
+
+struct Holder {
+    ptr: CStr
+}
+
+unsafe fn identity(p: CStr): CStr {
+    p
+}
+
+fn main() {
+    let text = CString.from("hello")
+    unsafe {
+        let p: CStr = text.as_ptr()
+        let q: CPtr<CChar> = p
+        let again: CStr = q
+        let copy = again
+        let holder = Holder { ptr: copy }
+        let mut list = List<CStr>.new()
+        list.push(p)
+        println(CStr.to_string(again))
+        println(CStr.to_string(identity(holder.ptr)))
+        println(CStr.to_string(list[0]))
+        println(p.is_null().to_string())
+        println((p == holder.ptr).to_string())
+    }
+}

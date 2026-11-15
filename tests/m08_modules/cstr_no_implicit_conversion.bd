@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// `CStr` is an alias for `CPtr<CChar>`: there is no implicit conversion from `str`, `String`, or
+// `CString` to `CStr`, and `CStr.to_string` takes a `CStr` (issue #83).
+
+fn takes_cstr(c: CStr) {
+    let _ = 1
+}
+
+fn main() {
+    takes_cstr("hello") //~ E0003
+    takes_cstr(String.from("hello")) //~ E0003
+    takes_cstr(CString.from("hello")) //~ E0003
+    let _ = CStr.to_string("hello") //~ E0003
+}

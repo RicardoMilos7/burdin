@@ -1,11 +1,11 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, and twenty-third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, and twenty-fourth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the twenty-third session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed**: all 224 conformance tests pass in the debug profile and 222 in
+Updated at the end of the twenty-fourth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
+and the stage 0 gaps of issue #48 are closed**: all 227 conformance tests pass in the debug profile and 225 in
 release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
 and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -43,7 +43,10 @@ implemented the stage 0 correctness gaps of issue #48 (sub-issues #49, #53, #58,
 the view-lifetime rule (E0123), ranges as values, the tracked move forms, the generic inference/bounds/signature
 gaps, `pub use` and the module visibility rule, the C bridge (`CPtr` operations, `unsafe` for every `CPtr` value,
 `CString.clone`, out-parameters, `repr(C)` layout, variadic declarations, exported `extern "C" fn`), conformance
-tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage audit.
+tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage audit. The twenty-fourth session
+settled issue #83: `CStr` stays a `std` alias for `CPtr<CChar>` and is not a second-class view type; the rule is in
+`spec/stdlib.md` and `spec/memory-rules.md` SC1, and `m08_modules/cstr_is_an_alias.bd`,
+`cstr_no_implicit_conversion.bd`, and `cstr_is_not_a_str.bd` witness it.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -56,7 +59,7 @@ tests for `unsafe fn` and unsafe interface methods, and a memory-rule coverage a
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, and `...` in an `extern` signature |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 224 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Conformance tests | `tests/` | 227 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -696,7 +699,10 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   in `Program.tests`.
 - `CStr` is a `std` type alias for `CPtr<CChar>`, not a new view type: `CStr.to_string(ptr)` is the associated
   function `to_string` of a `CPtr<CChar>`, implemented with libc `strlen` plus the existing string allocator. This
-  avoids a second implicit conversion while giving the m11 test its name.
+  avoids a second implicit conversion while giving the m11 test its name. Issue #83 confirmed the decision and
+  wrote it down: the rule is in `spec/stdlib.md` ("`CStr` is an alias, not a view type") and `spec/memory-rules.md`
+  SC1, and `m08_modules/cstr_is_an_alias.bd` (run), `cstr_no_implicit_conversion.bd`, and `cstr_is_not_a_str.bd`
+  (E0003, E0002) are its witnesses.
 - `--link-lib LLVM-C` is resolved by the driver through `llvm-config` because Ubuntu ships the C API inside
   `libLLVM-21.so`, not as `libLLVM-C.so`. The driver adds the libdir and an rpath; other library names still go to the
   linker unchanged. This is the one platform-specific exception in the driver.

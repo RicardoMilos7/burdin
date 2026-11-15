@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// `CStr` is a raw pointer, not a view: it has no `str`/`String` methods and converts to neither (issue #83).
+
+fn takes_str(s: str) {
+    let _ = s
+}
+
+fn main() {
+    let text = CString.from("hello")
+    unsafe {
+        let p: CStr = text.as_ptr()
+        takes_str(p) //~ E0003
+        let _ = p.to_string() //~ E0002
+        let _ = p.len() //~ E0002
+    }
+}
