@@ -78,7 +78,7 @@ Written mostly in Burdin itself on top of `unsafe` and C's `malloc`, so it also 
 | Output | `print`, `println`, `eprint`, `eprintln` taking `str` |
 | Files and process | `read_to_string`, `write_file`, `env.args()`, `process.exit`, running a child process |
 | Errors | `IoError`, `AssertError`, `panic`, `unreachable` |
-| C bridge | `CPtr<T>` (with `null`, `is_null`, load/store, comparison, offsets, and casts), `CChar`, `CSize`, `CVoid`, `CString` (with `clone`), `CStr` (a borrowed `CPtr<CChar>`), `repr(C)` structs with `size()`/`align()`, variadic declarations, exported `extern "C" fn`, and hand-written `extern` declarations for libc and the LLVM C API |
+| C bridge | `CPtr<T>` (with `null`, `is_null`, load/store, comparison, offsets, and casts), `CChar`, `CSize`, `CVoid`, `CString` (with `clone`), `CStr` (a `std` alias for `CPtr<CChar>`, not a view type), `repr(C)` structs with `size()`/`align()`, variadic declarations, exported `extern "C" fn`, and hand-written `extern` declarations for libc and the LLVM C API |
 
 **Language items** the Rust compiler knows by name: `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Hash`, `From`, `Option`, `Result`,
 the range types, and the intrinsics behind `str` and `[T]`. Everything else is ordinary library code. The exact

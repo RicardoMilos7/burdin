@@ -445,6 +445,13 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   and C `char` is `CChar`. Issues #72-#76, #489, #490; [standard library](../spec/stdlib.md);
   `m08_modules/cptr_operations.bd`, `c_abi_structs.bd`, `c_out_parameter.bd`, `cstring_clone.bd`,
   `export_c_abi`, `extern_signature.bd`, `export_c_abi_invalid.bd`.
+- **`CStr` stays an alias and is not a view type (issue #83).** It is the same type as `CPtr<CChar>`, a
+  first-class `Copy` value that may be stored in a field and returned without an origin rule. There is no implicit
+  conversion in either direction (`str`/`String`/`CString` to `CStr` is E0003, and `CStr` to `str`/`String` is
+  E0003), no string method on it (`p.to_string()` and `p.len()` are E0002), and only the explicit
+  `CString.from(s).as_ptr()` and the associated `CStr.to_string(p)` conversions. The `CString` must outlive the
+  pointer, because a `CPtr` is not a tracked view. [Standard library](../spec/stdlib.md), SC1;
+  `m08_modules/cstr_is_an_alias.bd`, `cstr_no_implicit_conversion.bd`, `cstr_is_not_a_str.bd`.
 
 ### Not covered yet
 

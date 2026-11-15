@@ -53,13 +53,20 @@ close-out checklist in `AGENTS.md`).
     (`spec/stdlib.md`). Tests: `cptr_operations`, `cptr_requires_unsafe`, `c_out_parameter`, `c_abi_structs`,
     `cstring_clone`, `export_c_abi`, `export_c_abi_invalid`, `export_c_abi_panics`; docs in `spec/stdlib.md`,
     `spec/grammar.md`, and `docs/error-codes.md`.
+  - **`CStr` is an alias, not a view type (#83).** `CStr` remains a `std` alias for `CPtr<CChar>`: one type
+    under two names, first-class and `Copy`, with no length, origin, or conversion rules of its own. There is no
+    implicit conversion between text and a C string in either direction (E0003), `p.to_string()` and every other
+    string method are E0002, and the only conversions are the explicit `CString.from(s).as_ptr()` and the
+    associated `CStr.to_string(p)`. Every use keeps requiring `unsafe`. The rule and its rationale are in
+    `spec/stdlib.md`; `m08_modules/cstr_is_an_alias` (run), `cstr_no_implicit_conversion`, and
+    `cstr_is_not_a_str` witness it.
   - **Coverage (#85, #86, #87).** Run and compile-fail tests for `unsafe fn` declarations and unsafe interface
     methods (`unsafe_fn`, `unsafe_fn_call_requires_unsafe`, `unsafe_interface_method`,
     `unsafe_interface_mismatch`), and an audit of the `spec/memory-rules.md` test matrix against the suite, with US
     extended to the new pointer and unsafe-function tests.
-  - The suite is 224 tests (222 in release); `tests/check-tests.sh`, `check-unit-tests.sh`, `check-docs.sh`,
-    `check-error-docs.sh`, `check-diagnostics.sh`, `check-codegen-opt.sh`, `check-build-flags.sh`,
-    `check-parallel.sh`, `check-test-runner.sh`, and `check-debug-info.sh` are green, and `cargo fmt --check`,
+  - The suite is 227 tests (225 in release); `tests/check_tests.py`, `check_unit_tests.py`, `check_docs.py`,
+    `check_error_docs.py`, `check_diagnostics.py`, `check_codegen_opt.py`, `check_build_flags.py`,
+    `check_parallel.py`, `check_test_runner.py`, and `check_debug_info.py` are green, and `cargo fmt --check`,
     `cargo clippy -- -D warnings`, and `cargo test` pass.
 - The release pipeline (issue #452, sub-issues #453-#456): a `Release` workflow builds the six supported targets
   natively (`x86_64`/`aarch64` Linux, macOS, and Windows), smoke-tests `build`, `run`, and `test`, writes
