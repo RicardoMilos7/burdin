@@ -1,0 +1,16 @@
+//@ burdin-test passed=2 failed=0
+
+fn make(own n: i32): Fn(i32): i32 {
+    |x| x + n
+}
+
+test "closure in a test" {
+    let base = 2
+    let f = |x: i32| x * base
+    assert_eq(f(3), 6)?
+}
+
+test "closure returned from a helper" {
+    let add = make(10)
+    assert_eq(add(5), 15)?
+}

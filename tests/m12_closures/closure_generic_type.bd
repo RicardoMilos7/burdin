@@ -1,0 +1,22 @@
+//@ run
+//> 2
+//> 30
+
+// An `Fn` bound on a generic type's parameter is inferred from the closure value, and a closure may be
+// returned from a closure: the inner one moves the outer capture through both records.
+struct Holder<F: Fn(i32): i32> {
+    f: F
+}
+
+fn make(own n: i32): Fn(): Fn(i32): i32 {
+    || |x| x + n
+}
+
+fn main() {
+    let h = Holder { f: |x| x + 1 }
+    println(h.f(1).to_string())
+
+    let outer = make(10)
+    let inner = outer()
+    println(inner(20).to_string())
+}

@@ -1,0 +1,29 @@
+//@ run
+//> 3
+//> 4
+//> 5
+
+// A function value forwards each argument with the function's own convention: read-only, `own`, and `mut`.
+fn length(s: String): usize {
+    s.len()
+}
+
+fn take(own s: String): usize {
+    s.len()
+}
+
+fn bump(mut x: i32): i32 {
+    x = x + 1
+    x
+}
+
+fn main() {
+    let read: Fn(String): usize = length
+    println(read(String.from("abc")).to_string())
+
+    let owned: Fn(String): usize = take
+    println(owned(String.from("abcd")).to_string())
+
+    let mutating: Fn(i32): i32 = bump
+    println(mutating(4).to_string())
+}

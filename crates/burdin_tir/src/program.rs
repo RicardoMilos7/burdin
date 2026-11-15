@@ -2,12 +2,14 @@
 
 use crate::defs::{EnumDef, StructDef};
 use crate::ops::FuncId;
-use crate::tree::{Const, Function};
+use crate::tree::{Closure, Const, Function};
 use crate::ty::Ty;
 
 /// A type-checked program: the input of the memory checks and then of code generation.
 pub struct Program {
     pub functions: Vec<Function>,
+    /// The closure bodies, indexed by [`crate::tree::ExprKind::Closure`].
+    pub closures: Vec<Closure>,
     pub consts: Vec<Const>,
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,

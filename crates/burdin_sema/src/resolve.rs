@@ -207,6 +207,12 @@ fn alias_refs(ty: &ast::Type, module: usize, globals: &Globals, out: &mut Vec<us
             }
         }
         ast::TypeKind::Tuple(elems) => elems.iter().for_each(|e| alias_refs(e, module, globals, out)),
+        ast::TypeKind::Fn { params, ret, .. } => {
+            params.iter().for_each(|e| alias_refs(e, module, globals, out));
+            if let Some(ret) = ret {
+                alias_refs(ret, module, globals, out);
+            }
+        }
         ast::TypeKind::Array(e, _) | ast::TypeKind::Slice(e) | ast::TypeKind::Ref { ty: e, .. } => {
             alias_refs(e, module, globals, out)
         }

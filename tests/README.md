@@ -5,8 +5,8 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Anything the stage 0 subset defers (closures, iterators, interpolation, `any`, `error` declarations,
-comptime, tasks, leak detection, allocator parameters) has **no tests here**.
+Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (iterators, interpolation, `any`, `error`
+declarations, comptime, tasks, leak detection, allocator parameters) has **no tests here** yet.
 
 ## Layout
 
@@ -23,6 +23,7 @@ tests/
   m09_stdlib/          Option, Result, ?, String, List, Map, I/O
   m10_test_runner/     `test` blocks and `burdin test`
   m11_llvm/            calling the LLVM C API from Burdin
+  m12_closures/        closures, captures, closure types and bounds
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -186,6 +187,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0163 | Invalid `extern` declaration: a runtime-reserved symbol, a generic function, or a signature that conflicts with an earlier declaration of the symbol |
 | E0164 | Unsupported `repr`: only `repr(C)` exists |
 | E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, or `should_panic` with `should_fail` |
+| E0171 | A closure whose captures or result would outlive the storage they borrow: a second-class closure used as an owned one, or a closure returning a view |
 | E0180 | Type arguments given to a type that declares no type parameters |
 
 ### Codes without a compile-fail test
@@ -258,6 +260,21 @@ executable form. The design document leaves them open; where a rule says "deviat
     indexing, a `Heap` dereference, a reference dereference, or a method call, so `xs[0].a` and `xs[1].a` are one
     place and are rejected (E0110), as is a whole value together with one of its fields.
     `spec/memory-rules.md` EX1-EX3.
+
+## Stage 1 decisions
+
+These extend the list above; they are settled in `spec/` and witnessed by the stage 1 tests.
+
+17. **Closures.** A closure is `|a, b| expr` and has one of the compiler-known interface types `Fn(A, B): R`,
+    `FnMut(A, B): R`, or `FnOnce(A, B): R`. It captures whole variables: by borrow when used in place, by move when
+    an owned closure type is expected (a written annotation, field, return, or closure-interface parameter). A
+    closure with a borrow capture is second-class and cannot escape; its captures are loans held until the closure's
+    last use. Its kind follows the body: `FnOnce` if it moves a captured value out, `FnMut` if it mutates one, else
+    `Fn`; a value may be used at a lower capability (`Fn` as `FnMut` as `FnOnce`). Calling borrows `Fn` shared,
+    `FnMut` exclusively, and moves `FnOnce`. The representation is a boxed capture record behind a code pointer, so
+    closure values are never `Copy`, `Clone`, or derived. A non-generic function, a built-in function, or `Some` is
+    a value of a closure type when the context expects one: it becomes a captureless `Fn` closure (CL11).
+    `spec/grammar.md` section 4, `spec/memory-rules.md` CL1-CL11, `tests/m12_closures/`.
 
 ## Review of the expected outputs
 

@@ -231,6 +231,39 @@ impl<'a> Checker<'a> {
                 self.access_place(inner, Access::Read);
                 self.add_loan(inner, false);
             }
+            // Building a borrowing closure takes the same loan as `&`/`&mut` on each captured place (CL7); the
+            // loan is held by the closure value (attached by the enclosing `let`) until its last use.
+            K::Closure { captures, .. } => {
+                for c in captures {
+                    let place = tir::Expr { kind: tir::ExprKind::Local(c.local), ty: c.ty.clone(), span: e.span };
+                    match c.mode {
+                        tir::CaptureMode::Borrow => {
+                            self.access_place(&place, Access::Read);
+                            self.add_loan(&place, false);
+                        }
+                        tir::CaptureMode::BorrowMut => {
+                            self.access_place(&place, Access::BorrowMut);
+                            self.add_loan(&place, true);
+                        }
+                        tir::CaptureMode::Move => self.access_place(&place, Access::Move),
+                    }
+                }
+            }
+            K::ClosureCall { callee, args, kind } => {
+                match kind {
+                    tir::FnKind::Fn => self.access_place(callee, Access::Read),
+                    tir::FnKind::FnMut => self.access_place(callee, Access::BorrowMut),
+                    tir::FnKind::FnOnce => self.expr(callee, Mode::Move),
+                }
+                for arg in args {
+                    self.expr(arg, Mode::Move);
+                }
+                // A view returned by the closure derives from the closure value it was called through.
+                if e.ty.is_second_class() {
+                    let mutable = matches!(e.ty, Ty::Ref { mutable: true, .. });
+                    self.add_loan(callee, mutable);
+                }
+            }
             K::Call(f, args) => self.call(f.0, args),
             // C functions borrow nothing from Burdin values: their arguments are scalars and raw pointers.
             K::ExternCall(_, args) => {
@@ -505,6 +538,11 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| locals_used(x, out));
         }
+        K::Closure { captures, .. } => out.extend(captures.iter().map(|c| c.local)),
+        K::ClosureCall { callee, args, .. } => {
+            locals_used(callee, out);
+            args.iter().for_each(|x| locals_used(x, out));
+        }
         K::Binary(_, l, r) | K::Assign(l, r) => {
             locals_used(l, out);
             locals_used(r, out);
@@ -621,6 +659,15 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| uses_expr(x, stmt, last)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| uses_expr(x, stmt, last)),
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+            args.iter().for_each(|x| uses_expr(x, stmt, last));
+        }
+        K::Closure { captures, .. } => {
+            for c in captures {
+                last[c.local.0] = Some(last[c.local.0].map_or(stmt, |s: usize| s.max(stmt)));
+            }
+        }
+        K::ClosureCall { callee, args, .. } => {
+            uses_expr(callee, stmt, last);
             args.iter().for_each(|x| uses_expr(x, stmt, last));
         }
         K::Binary(_, l, r) | K::Assign(l, r) => {

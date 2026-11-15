@@ -1,0 +1,15 @@
+//@ run
+//> 15
+//> 10
+//> 20
+
+// A closure used in place borrows what it reads (CL2, CL3), so the captured variable stays usable.
+fn main() {
+    let n = 10
+    let f = |x: i32| x + n
+    println(f(5).to_string())
+    println(n.to_string())
+
+    let g = || n * 2
+    println(g().to_string())
+}

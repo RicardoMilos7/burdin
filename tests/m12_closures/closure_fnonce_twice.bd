@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// Calling an `FnOnce` closure consumes it, so a second call is a use of a moved value (CL6).
+fn main() {
+    let f: FnOnce(): i32 = || 1
+    println(f().to_string())
+    println(f().to_string()) //~ E0100
+}

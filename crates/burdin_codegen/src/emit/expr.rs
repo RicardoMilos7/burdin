@@ -82,6 +82,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::Builtin(b, args) => self.builtin(*b, args, &e.ty, e.span)?,
             K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
+            K::Closure { closure, captures } => self.closure_value(*closure, captures, e.span)?,
+            K::ClosureCall { callee, args, kind } => self.closure_call(callee, args, *kind)?,
             K::StringAsStr(inner) => {
                 let (ptr, len) = self.view_parts(inner)?;
                 Some(self.make_str(ptr, len)?.into())
@@ -170,6 +172,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 };
                 self.drop_scopes_above(0)?;
                 self.free_temps_from(0)?;
+                // A `FnOnce` body owns its capture record; every return path must free it. A `Fn`/`FnMut` body
+                // destroys it on an early return only when the call consumed the value (CL6/CL8).
+                if let Some(env) = self.return_env {
+                    self.builder.build_call(self.rt.free, &[env.into()], "").map_err(llvm_err)?;
+                } else if let Some((env, drop, consumed)) = self.return_consume {
+                    self.destroy_if_consumed(env, drop, consumed)?;
+                }
                 let ret = self.ret;
                 if self.llvm_ty(ret).is_some() {
                     let v = self.need(v, ret);

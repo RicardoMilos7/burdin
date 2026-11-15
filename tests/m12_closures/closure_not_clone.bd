@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A closure is not `Clone` (CL10).
+fn main() {
+    let f = |x: i32| x + 1
+    let g = f.clone() //~ E0002
+    println("done")
+}

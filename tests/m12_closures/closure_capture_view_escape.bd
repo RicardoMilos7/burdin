@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Moving a view into the record does not make the closure own it: returning such a closure is E0171 (CL3).
+fn make(s: str): Fn(): usize {
+    || s.len() //~ E0171
+}
+
+fn main() {
+    println(make("abc")().to_string())
+}

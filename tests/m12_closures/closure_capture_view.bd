@@ -1,0 +1,12 @@
+//@ run
+//> 3
+
+// A closure may capture a view in place; it is second-class, so it stays a local and is called directly (CL3).
+fn count(s: str): usize {
+    let f = || s.len()
+    f()
+}
+
+fn main() {
+    println(count("abc").to_string())
+}

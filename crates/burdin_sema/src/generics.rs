@@ -13,10 +13,10 @@
 use crate::globals::{Globals, adt_key};
 use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
-use burdin_tir::{FuncId, ParamSig, Signature, Ty};
+use burdin_tir::{self as tir, FnKind, FnSig, FuncId, ParamSig, Signature, Ty};
 use std::rc::Rc;
 
-/// A requirement on a type parameter: a built-in interface or a user interface.
+/// A requirement on a type parameter: a built-in interface, a user interface, or an `Fn`-family closure bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Bound {
     User(usize),
@@ -26,6 +26,9 @@ pub(crate) enum Bound {
     Ord,
     Hash,
     Default,
+    /// A closure capability: `Fn(A, B): R`, `FnMut(...)`, or `FnOnce(...)`. The index selects the signature in
+    /// [`Globals::fn_bounds`].
+    Fn(usize, tir::FnKind),
 }
 
 pub(crate) const BUILTIN_INTERFACES: &[&str] = &["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Drop", "From"];
@@ -107,12 +110,13 @@ impl Globals {
     /// that still mentions a type parameter is left to the symbolic check of the enclosing body.
     pub(crate) fn check_adt_bounds(&self, template: usize, args: &[Ty], span: Span, diags: &mut Diagnostics) {
         let info = &self.generic_adts[template];
+        let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(args.iter().cloned()).collect();
         for ((pname, bounds), arg) in info.params.iter().zip(&info.bounds).zip(args) {
             if self.ty_has_param(arg) {
                 continue;
             }
             for bound in bounds {
-                if !self.satisfies(arg, *bound, &[]) {
+                if !self.satisfies_with(arg, *bound, &[], &subst) {
                     diags.error(
                         Code::BOUND_NOT_SATISFIED,
                         span,
@@ -167,6 +171,7 @@ impl Globals {
             | Ty::List(inner) => self.ty_has_param(inner),
             Ty::Result(ok, err) => self.ty_has_param(ok) || self.ty_has_param(err),
             Ty::Map(k, v) => self.ty_has_param(k) || self.ty_has_param(v),
+            Ty::Fn { sig, .. } => sig.params.iter().any(|t| self.ty_has_param(t)) || self.ty_has_param(&sig.ret),
             Ty::Tuple(ts) => ts.iter().any(|t| self.ty_has_param(t)),
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((_, args)) => args.iter().any(|a| self.ty_has_param(a)),
@@ -202,6 +207,14 @@ impl Globals {
                 self.unify(pk, ak, bindings);
                 self.unify(pv, av, bindings);
             }
+            (Ty::Fn { sig: psig, kind: pk, borrowed: pb }, Ty::Fn { sig: asig, kind: ak, borrowed: ab })
+                if pk.at_least(*ak) && pb == ab && psig.params.len() == asig.params.len() =>
+            {
+                for (p, a) in psig.params.iter().zip(&asig.params) {
+                    self.unify(p, a, bindings);
+                }
+                self.unify(&psig.ret, &asig.ret, bindings);
+            }
             (Ty::Tuple(ps), Ty::Tuple(acts)) if ps.len() == acts.len() => {
                 for (p, a) in ps.iter().zip(acts) {
                     self.unify(p, a, bindings);
@@ -235,6 +248,14 @@ impl Globals {
             Ty::Heap(t) => Ty::Heap(go(t)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),
             Ty::Range(t, inclusive) => Ty::Range(go(t), *inclusive),
+            Ty::Fn { sig, kind, borrowed } => Ty::Fn {
+                sig: Rc::new(FnSig {
+                    params: sig.params.iter().map(|t| self.subst_ty(t, env)).collect(),
+                    ret: Box::new(self.subst_ty(&sig.ret, env)),
+                }),
+                kind: *kind,
+                borrowed: *borrowed,
+            },
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
             Ty::Struct(_) | Ty::Enum(_) => match self.origin_of(ty) {
                 Some((template, args)) => {
@@ -282,12 +303,61 @@ impl Globals {
             Bound::Ord => "Ord".into(),
             Bound::Hash => "Hash".into(),
             Bound::Default => "Default".into(),
+            Bound::Fn(i, kind) => self.fn_sig_name(i, kind),
+        }
+    }
+
+    /// `Fn(A, B): R` for a closure bound signature.
+    fn fn_sig_name(&self, index: usize, kind: FnKind) -> String {
+        let sig = &self.fn_bounds.borrow()[index];
+        let params: Vec<String> = sig.params.iter().map(|p| p.to_string()).collect();
+        format!("{}({}): {}", kind.name(), params.join(", "), sig.ret)
+    }
+
+    /// The signature a closure bound stands for, with the type parameters in `subst` replaced.
+    pub(crate) fn bound_fn_sig(&self, index: usize, subst: &[(String, Ty)]) -> FnSig {
+        let sig = self.fn_bounds.borrow()[index].clone();
+        FnSig {
+            params: sig.params.iter().map(|p| self.subst_ty(p, subst)).collect(),
+            ret: Box::new(self.subst_ty(&sig.ret, subst)),
+        }
+    }
+
+    /// The signature a call through `ty` uses, when its type or its bounds provide one.
+    pub(crate) fn fn_call_sig(&self, ty: &Ty, env: &Env) -> Option<(FnSig, FnKind)> {
+        match ty {
+            Ty::Fn { sig, kind, .. } => Some(((**sig).clone(), *kind)),
+            Ty::Param(name) => env.iter().find(|(n, _)| n == &**name).and_then(|(_, bounds)| {
+                bounds.iter().find_map(|b| match b {
+                    Bound::Fn(i, kind) => Some((self.bound_fn_sig(*i, &[]), *kind)),
+                    _ => None,
+                })
+            }),
+            _ => None,
         }
     }
 
     /// Resolves a bound written in a generic parameter list, a `where` clause, `requires`, or a derive. A user
-    /// interface may be named through a module (`T: sh.Describe`).
-    pub(crate) fn resolve_bound(&self, ty: &ast::Type, module: usize, diags: &mut Diagnostics) -> Option<Bound> {
+    /// interface may be named through a module (`T: sh.Describe`), and `Fn(...)`/`FnMut(...)`/`FnOnce(...)` are the
+    /// closure bounds. `subst` is what the enclosing declaration's type parameters stand for.
+    pub(crate) fn resolve_bound(
+        &self,
+        ty: &ast::Type,
+        subst: &[(String, Ty)],
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Option<Bound> {
+        if let ast::TypeKind::Fn { kind, params, ret } = &ty.kind {
+            let params: Vec<Ty> = params.iter().map(|p| self.resolve_type_in(p, None, subst, module, diags)).collect();
+            let ret = ret.as_ref().map(|r| self.resolve_type_in(r, None, subst, module, diags)).unwrap_or(Ty::Unit);
+            let sig = FnSig { params, ret: Box::new(ret) };
+            let mut bounds = self.fn_bounds.borrow_mut();
+            let index = bounds.iter().position(|b| *b == sig).unwrap_or_else(|| {
+                bounds.push(sig);
+                bounds.len() - 1
+            });
+            return Some(Bound::Fn(index, ast_kind(*kind)));
+        }
         let ast::TypeKind::Path(segs) = &ty.kind else {
             diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-non-path
             return None;
@@ -354,10 +424,31 @@ impl Globals {
 
     /// Whether values of `ty` meet `bound`. `env` gives the bounds of the type parameters in scope.
     pub(crate) fn satisfies(&self, ty: &Ty, bound: Bound, env: &Env) -> bool {
+        self.satisfies_with(ty, bound, env, &[])
+    }
+
+    /// `satisfies`, with the type parameters of the enclosing declaration replaced by `subst`. A closure bound's
+    /// signature may name other type parameters (`F: Fn(T): T`), so a call checks the substituted signature.
+    pub(crate) fn satisfies_with(&self, ty: &Ty, bound: Bound, env: &Env, subst: &[(String, Ty)]) -> bool {
         match ty {
             Ty::Error | Ty::Never => true,
             Ty::Param(name) => {
                 env.iter().any(|(n, bs)| n == &**name && bs.iter().any(|b| self.bound_closure(*b).contains(&bound)))
+                    // A type parameter whose own bound is an `Fn` bound satisfies that bound directly.
+                    || match bound {
+                        Bound::Fn(i, kind) => env.iter().any(|(n, bs)| {
+                            n == &**name
+                                && bs.iter().any(|b| match b {
+                                    Bound::Fn(other, other_kind) => {
+                                        self.bound_fn_sig(*other, subst)
+                                            == self.bound_fn_sig(i, subst)
+                                            && other_kind.at_least(kind)
+                                    }
+                                    _ => false,
+                                })
+                        }),
+                        _ => false,
+                    }
             }
             _ => match bound {
                 Bound::Copy => self.is_copy(ty),
@@ -367,6 +458,10 @@ impl Globals {
                 Bound::Hash => self.has_hash_in(ty, env),
                 Bound::Default => self.has_default(ty),
                 Bound::User(i) => self.implements(ty, i, env),
+                Bound::Fn(i, kind) => match ty {
+                    Ty::Fn { sig, kind: actual, .. } => **sig == self.bound_fn_sig(i, subst) && actual.at_least(kind),
+                    _ => false,
+                },
             },
         }
     }
@@ -510,6 +605,15 @@ impl Globals {
 
 pub(crate) fn param_ty(name: &str) -> Ty {
     Ty::Param(Rc::from(name))
+}
+
+/// The typed-tree capability of a written closure type or bound.
+pub(crate) fn ast_kind(kind: ast::FnKind) -> FnKind {
+    match kind {
+        ast::FnKind::Fn => FnKind::Fn,
+        ast::FnKind::FnMut => FnKind::FnMut,
+        ast::FnKind::FnOnce => FnKind::FnOnce,
+    }
 }
 
 /// The position of the span used for diagnostics that have no better place (the whole program).

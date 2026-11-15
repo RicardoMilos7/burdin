@@ -1,0 +1,38 @@
+//@ run
+//> made
+//> 7
+//> dropped
+//> 1
+//> dropped
+
+// A closure owns the captures it moves in: dropping the closure drops them (CL4). A `FnOnce` call moves the
+// value out of the record, so the caller drops it instead.
+struct Loud {
+    value: i32
+}
+
+Loud: Drop {
+    fn drop(mut self) {
+        println("dropped")
+    }
+}
+
+fn main() {
+    {
+        let loud = Loud { value: 7 }
+        let f: Fn(): i32 = || loud.clone_value()
+        println("made")
+        println(f().to_string())
+    }
+
+    let other = Loud { value: 1 }
+    let once: FnOnce(): Loud = || other
+    let taken = once()
+    println(taken.value.to_string())
+}
+
+Loud {
+    fn clone_value(self): i32 {
+        self.value
+    }
+}

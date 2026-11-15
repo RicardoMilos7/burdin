@@ -1,0 +1,23 @@
+//@ run
+//> made
+//> dropped
+//> 42
+
+// A closure whose body only reads a moved-in capture is `Fn`, but it may be used where `FnOnce` is expected.
+// Calling it there consumes the record, so the capture is dropped exactly once (CL5, CL6, CL8).
+struct Loud {
+    value: i32
+}
+
+Loud: Drop {
+    fn drop(mut self) {
+        println("dropped")
+    }
+}
+
+fn main() {
+    let loud = Loud { value: 42 }
+    let f: FnOnce(): i32 = || loud.value
+    println("made")
+    println(f().to_string())
+}

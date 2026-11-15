@@ -1,0 +1,24 @@
+//@ run
+//> 1
+//> 3
+//> 6
+//> 0
+
+// A stored closure owns its captures (CL2, CL4). A `FnMut` field keeps its own state across calls; the
+// captured local it copied from is unchanged.
+struct Counter {
+    f: FnMut(i32): i32
+}
+
+fn main() {
+    let mut seed = 0
+    let mut c = Counter { f: |x| {
+        seed = seed + x
+        seed
+    } }
+
+    println(c.f(1).to_string())
+    println(c.f(2).to_string())
+    println(c.f(3).to_string())
+    println(seed.to_string())
+}

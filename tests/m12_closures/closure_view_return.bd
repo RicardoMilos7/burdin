@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// A closure may not return a view: the result would borrow the capture record (CL9, E0171).
+fn main() {
+    let f = |s: str|: str { s } //~ E0171
+    println(f("x"))
+}

@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// An `FnMut` call borrows the closure exclusively, which needs a mutable place (CL6, E0113).
+fn main() {
+    let mut n = 0
+    let f = |x: i32| {
+        n = n + x
+        n
+    }
+    println(f(1).to_string()) //~ E0113
+}

@@ -1,13 +1,12 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, and twenty-fourth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, and twenty-fifth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the twenty-fourth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed**: all 246 conformance tests pass in the debug profile and 245 in
-release (two tests are debug-only; one is skipped on Windows). `burdin test` runs `test` blocks concurrently with
-attributes, captured output, and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
+Updated at the end of the twenty-fifth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
+and the stage 0 gaps of issue #48 are closed; milestone 12 (closures) is done**: all 292 conformance tests pass in
+the debug profile and 290 in release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
 by `tests/check_docs.py` (issue #42); the thirteenth retired the claude.ai copies of the design and stage 0
@@ -53,7 +52,13 @@ with an open-addressing hash table (issue #82): lookup, insert, and remove are e
 `// e9000:` id, and `tests/check_e9000.py` keeps the table and the compiler in agreement. The stage 0 diagnostics
 that had no future milestone got permanent codes (E0007, E0009, E0131, E0163, E0164, E0180) with compile-fail
 tests; string literal patterns and inclusive slice ranges are implemented, and a dead "comparing strings" branch was
-removed. The remaining E9000 sites are assigned to m12, m13, m19, m20, m21, or the cross-cutting Stage 1 work.
+removed. The remaining E9000 sites are assigned to m13, m19, m20, m21, or the cross-cutting Stage 1 work.
+
+The twenty-fifth session implemented milestone 12, closures (issue #88, sub-issues #89-#97): `|a, b| ...` and `||`
+expressions, the `Fn`/`FnMut`/`FnOnce` interface types and generic `Fn` bounds with monomorphization, borrow and
+move capture analysis, calls that borrow or move the closure, storing, returning, and passing closures, function
+values (`add`, builtins, and `Some` used where a closure type is expected), drop and clone glue for closure values,
+the rules CL1-CL11, and `tests/m12_closures` with 45 tests. The suite is now 292 tests (290 in release).
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -66,7 +71,8 @@ removed. The remaining E9000 sites are assigned to m12, m13, m19, m20, m21, or t
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, and `...` in an `extern` signature |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 247 tests. All pass: m01 to m11 on Linux, macOS, and Windows (245 in release; two are debug-only) |
+| Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
+| Conformance tests | `tests/` | 292 tests. All pass: m01 to m12 on Linux; 290 in release (two debug-only) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -79,7 +85,7 @@ removed. The remaining E9000 sites are assigned to m12, m13, m19, m20, m21, or t
 | Dependencies and licenses | `Cargo.lock`, `tests/dependencies.txt`, `tests/check_deps.py`, `docs/dependencies.md` | 18 external crates (`inkwell` plus everything it pulls in through `llvm-sys` 211); all licenses permissive (mostly MIT OR Apache-2.0; `inkwell` is Apache-2.0); exact `=x.y.z` pins with crates.io source and checksum; `tests/check_deps.py` checks all of it offline and re-verifies the licenses through `cargo metadata` after the build. Every CI job runs it (issue #449) |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, the directive check, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check_platform.py`, `tests/check_platform_support.py`, and conformance m01-m11 in both the debug and release profiles (`tests/run_tests.py --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check_ci.py` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench_regression.py`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.py --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, the directive check, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check_platform.py`, `tests/check_platform_support.py`, and conformance m01-m12 in both the debug and release profiles (`tests/run_tests.py --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check_ci.py` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench_regression.py`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.py --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
 | Fuzzing | `crates/burdin_fuzz/` | Dependency-free deterministic lexer/parser fuzzing. `corpus/syntax/` holds the edge cases and every input that found a panic; `tests/corpus.rs` replays it plus 20,000 mutations during `cargo test --workspace`, which is the check that fails when a panic is reintroduced. `tests/fuzz.py` runs a longer session (the watchdog fails a stalled input) and the scheduled `fuzz` CI job uploads found inputs; a found input is committed under the corpus with its fix (issues #288, #447) |
 | Release pipeline | `.github/workflows/release.yml`, `tests/build_release.py`, `tests/release_notes.py`, `tests/check_release.py` | Implemented, no release cut (issue #452, sub-issues #453-#456). The workflow builds the six supported targets on native runners, smoke-tests each, writes `burdin-<version>-<target>.tar.gz` plus SHA-256 checksums, verifies Linux reproducibility from two checkout paths, and publishes only from a tag or an explicit manual `publish`; the schedule and a plain manual run are dry runs. `tests/build_release.py` also packages an existing binary (`--binary`) for the check, and its archive is deterministic (sorted entries, fixed mtimes, uid/gid 0, `gzip -n`). `tests/check_release.py` runs in every CI job |
 | Installers | `install.sh`, `install.ps1`, `docs/releasing.md` | One-line installers for Unix and Windows. Both verify `SHA256SUMS` before unpacking, install to a user directory, run `--version` and warn when the LLVM 21 runtime is missing, and support `BURDIN_VERSION`, `BURDIN_CHANNEL`, `BURDIN_INSTALL_DIR`, `BURDIN_BASE_URL`, and `BURDIN_RELEASE_DIR` (the local rehearsal path). A package-manager formula is not written yet |
@@ -276,6 +282,20 @@ how to call WSL from PowerShell.
   - *Coverage (#85-#87).* `unsafe fn` and unsafe interface methods have run and compile-fail tests, and the
     memory-rule coverage matrix in `spec/memory-rules.md` was audited against the suite (every referenced test
     exists, and US now lists the new tests).
+- **Milestone 12 added closures.** The parser reads `|a, b| expr`, `|a: i32|: T { ... }`, and `||`, and the type
+  `Fn(A, B): R`/`FnMut`/`FnOnce` in types and bounds; `generic_args_ahead` now tracks parentheses and brackets, so
+  `List<Fn(i32): i32>` parses. In `burdin_tir`, `Ty::Fn { sig, kind, borrowed }` is the interface type (`borrowed`
+  marks a second-class closure), `ExprKind::Closure { closure, captures }` builds a value, `ExprKind::ClosureCall`
+  calls one, and `Program::closures` holds each body as a `Function` whose locals include its captures. `burdin_sema`
+  checks a closure by capturing the body's free names from the enclosing `FnCx` (eagerly, so nested closures capture
+  through the outer record), infers parameter types from the expected `Fn(...)` type or an `Fn` bound, and
+  classifies the body's uses of the captures into a capture mode and `Fn`/`FnMut`/`FnOnce`. `burdin_check` moves a
+  moved-in capture and reads a borrowed one at the construction, takes loans for borrow captures held by the
+  closure, and applies the call's borrow or move to the callee; the closure body is checked as its own function.
+  `burdin_codegen` builds `{ code, env, drop }`, allocates the capture record, generates the body function with the
+  record as its first parameter, and emits an indirect call; the record's destructor drops moved-in captures and
+  frees it, and a `FnOnce` body frees the record after dropping what it did not move out. `tests/m12_closures/`
+  covers the behavior.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
@@ -755,7 +775,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 - CI has a `windows` job on `windows-latest` next to `linux` and `macos`. `ilammy/msvc-dev-cmd` loads the MSVC
   environment, the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive is unpacked into `C:\llvm`, and its
-  `bin` goes on `PATH` so `LLVM-C.dll` is found. The job runs every check plus m01-m11 and a `BURDIN_CC=cl` smoke run,
+  `bin` goes on `PATH` so `LLVM-C.dll` is found. The job runs every check plus m01-m12 and a `BURDIN_CC=cl` smoke run,
   and caches the cargo registry, `target/`, and the unpacked LLVM archive with the same key shape as the other jobs.
 - Git for Windows ships a coreutils `link.exe`, and the runner image made rustc pick it instead of MSVC's linker, so
   the Windows job names MSVC's `link.exe` through `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` instead of relying on
@@ -1097,21 +1117,71 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   tests (#85, #86), and the memory-rule matrix was audited with a script over every referenced test (#87); `US` now
   names the pointer and unsafe-function tests.
 
+## Decided in the twenty-fifth session
+
+- **Closures are boxed capture records with interface types.** A closure expression has one of the compiler-known
+  types `Fn(A, B): R`, `FnMut(...)`, or `FnOnce(...)`, and a value is `{ code, env, drop }`: a code pointer, a
+  heap-allocated capture record, and the record's destructor. This makes stored, returned, interface-typed, and
+  container-held closures uniform at the cost of one allocation; an inline anonymous type was rejected because a
+  struct field or return type cannot name it before milestone 15's `impl`/`any`.
+- **`Fn`/`FnMut`/`FnOnce` are contextual type names and bounds.** `Fn(i32): i32` is a type; `F: Fn(i32): i32` is a
+  generic bound resolved into `Bound::Fn(signature, capability)` and monomorphized per closure type. Capabilities
+  order `Fn` > `FnMut` > `FnOnce`: a value may be used at a lower capability, never a higher one (E0141).
+- **Captures are whole variables, borrowed in place and moved into owned positions.** A closure captures every
+  variable its body uses and does not bind. The context decides the mode: an expected owned closure type (a written
+  annotation, a field or element type, a return, an own argument, or an `Fn(...)` parameter) moves the captures in;
+  any other use borrows. A generic `F: Fn`/`FnMut` keeps the concrete mode, so a borrowing closure crosses that call
+  and remains second-class (E0120/E0123/E0171); an `FnOnce` bound moves because the call consumes the closure. A
+  body write makes a borrowed capture `&mut`. A closure that moves a view (`str`, `&T`, a slice, or an aggregate
+  containing one) into its record is second-class as well: the record holds bits that point at storage the closure
+  does not own, so it cannot escape either (E0171).
+- **The body's use of captures decides the kind.** Moving a moved-in non-Copy capture out makes the closure
+  `FnOnce`; writing a capture makes it `FnMut`; otherwise it is `Fn`. The sema-side classification is a typed-tree
+  walk (`fncx/closure.rs`); the move checker still enforces the move and borrow rules themselves. Calling borrows
+  `Fn` shared, borrows `FnMut` exclusively (E0113), and moves `FnOnce` (E0100). A closure value may be called at a
+  lower capability, so a `Fn`/`FnMut` value called through a weakened `FnOnce` type consumes and destroys its
+  capture record (on the normal and on an early `return`). A closure that must outlive the call cannot capture a
+  read-only or `mut` parameter by move (E0101).
+- **Free names are captured eagerly.** The body's free-name scan runs before the closure is checked, so a nested
+  closure's names are captured through the enclosing closure's record. A closure body is a separate function with
+  its own return, loops, and locals; `break`/`continue` do not cross it, and a second-class return type is E0171
+  because the result would point into the record.
+- **Function values are captureless closures.** A non-generic function name, a built-in function name, or `Some`
+  used where a closure type is expected synthesizes a closure with no captures whose body forwards its owned
+  arguments to the function with the function's own conventions. A function returning a view is E0171 (the view
+  would point into the wrapper's argument), an `unsafe fn` is E0161 (a closure call has no `unsafe` boundary), and
+  a generic or `extern` function as a value stays E9000 under Stage 1. The E9000 audit rows owned by m12 were
+  removed with their sites.
+- **Known limits of the milestone.** A closure cannot return a view (`str`, `&T`, `[T]`) at all; parameter types are
+  inferred only from an expected closure type or an `Fn` bound, so a bare `let f = |x| ...` needs an annotation; there
+  is no `move` keyword because the context selects move captures; a closure *literal* passed to a bound whose
+  signature names another type parameter of the callee (`F: Fn(T): T`) is not inferred, because the arguments are
+  checked in order and the closure's signature is fixed from the bound before `T` is known (pass a variable of a
+  concrete closure type instead); passing a closure parameter through a generic function by returning it is rejected
+  by the existing move/origin rules (returning a closure created inside the function works); a generic function
+  cannot be used as a value (annotate a concrete instantiation by wrapping it in a closure); and every closure value
+  allocates its record.
+- **An array drop/clone bug was fixed with the milestone.** The drop and clone glue walked arrays with a one-index
+  GEP, which strides by the whole array instead of one element; an array of closures exposed it. The glue now uses
+  `[0, i]`, and arrays of any droppable element drop and clone correctly.
+
 ## What is left to do, in order
 
-1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
-   question (comptime), the closure representation, the iterator protocol (associated types or a generic
-   `Iterator<T>`), `any`/`impl`, the error representation, and allocator parameters all shape milestones 12 to 24.
-   Issue #444 (differential tests between comptime and compiled code) is blocked on the milestone 20 interpreter;
-   `spec/test-runner.md` holds its intended shape and the issue stays open until then.
-2. Write the m12 tests before the code, the same way stage 0 was built: `tests/m12_closures` and its `//@` expectations
-   are the spec for the first stage 1 milestone.
+1. Read `spec/stage1-subset.md` and settle the decisions for milestone 13 (the iterator protocol: associated types
+   or a generic `Iterator<T>`, how `next` borrows, mutates, or consumes, and how a lazy chain stays second-class).
+   The MIR interpreter question (comptime), `any`/`impl`, the error representation, and allocator parameters shape
+   later milestones and can wait for theirs. Issue #444 (differential tests between comptime and compiled code) is
+   blocked on the milestone 20 interpreter; `spec/test-runner.md` holds its intended shape and the issue stays open
+   until then.
+2. Write the m13 tests before the code, the same way stage 0 and m12 were built: `tests/m13_iterators` and its `//@`
+   expectations are the spec for the next stage 1 milestone. Closures are ready for `filter`/`map`, but the standard
+   library methods themselves belong to m13.
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
    C function-pointer and `union` types, by-value C aggregates, and a `priv` module marker if a project needs one.
 4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
-   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m11 in both
+   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m12 in both
    the debug and release profiles (issues #11, #16, #47, and #12), and cache cargo and LLVM 21 (issue #46).
    `tests/check_ci.py` guards that the workflow keeps covering the suite in both profiles, every job, and their
    caches; `tests/check_platform.py` guards the host triple. Every job also records and compares benchmark baselines,
@@ -1136,6 +1206,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 12, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 13, then write its tests.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

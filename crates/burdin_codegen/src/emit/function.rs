@@ -68,8 +68,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             };
             self.functions.push(value);
         }
+        // Closures: their functions are declared (and their record destructors generated) before any body that
+        // may create a closure value.
+        self.declare_closures()?;
+        self.define_closure_drops()?;
         for (i, f) in program.functions.iter().enumerate() {
             self.function(self.functions[i], f)?;
+        }
+        for (i, clos) in program.closures.iter().enumerate() {
+            self.closure_body(self.closure_funcs[i], i, clos)?;
         }
         // Drop and clone glue may declare more glue for the types they contain; generate until there is none left.
         while let Some((kind, ty, value)) = self.pending_glue.pop() {
@@ -98,6 +105,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.function = Some(value);
         self.locals = &f.locals;
         self.ret = &f.ret;
+        self.return_env = None;
+        self.return_consume = None;
         self.loops.clear();
         self.temps = vec![Vec::new()];
         self.slots.clear();

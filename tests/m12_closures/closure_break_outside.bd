@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `break` cannot cross a closure boundary: the body is its own function with its own loops (CL8, E0001).
+fn main() {
+    for i in 0..3 {
+        let f = || {
+            break //~ E0001
+        }
+        f()
+    }
+}

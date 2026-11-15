@@ -233,15 +233,32 @@ pub struct PathSegment {
     pub args: Vec<Type>,
 }
 
+/// The capability family of a closure type (`Fn`, `FnMut`, `FnOnce`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FnKind {
+    Fn,
+    FnMut,
+    FnOnce,
+}
+
 #[derive(Debug)]
 pub enum TypeKind {
     Path(Vec<PathSegment>),
+    /// `Fn(A, B): R`, `FnMut(A): R`, or `FnOnce(): R`.
+    Fn {
+        kind: FnKind,
+        params: Vec<Type>,
+        ret: Option<Box<Type>>,
+    },
     SelfType,
     Unit,
     Tuple(Vec<Type>),
     Array(Box<Type>, Box<Expr>),
     Slice(Box<Type>),
-    Ref { mutable: bool, ty: Box<Type> },
+    Ref {
+        mutable: bool,
+        ty: Box<Type>,
+    },
     Never,
 }
 
@@ -400,6 +417,13 @@ pub enum ExprKind {
     Call(Box<Expr>, Vec<Arg>),
     Index(Box<Expr>, Box<Expr>),
     Match(Box<Expr>, Vec<MatchArm>),
+    /// `|a, b| body`, `|a: i32|: bool body`, or `|| body`.
+    Closure {
+        params: Vec<ClosureParam>,
+        /// The return type after the closing `|`, if written.
+        ret: Option<Type>,
+        body: Box<Expr>,
+    },
     /// `Path { field: value, ... }`; the path is a type name or `Enum.Variant`.
     StructLit(Vec<Ident>, Vec<FieldInit>),
     IfLet {
@@ -408,6 +432,13 @@ pub enum ExprKind {
         then_block: Block,
         else_expr: Option<Box<Expr>>,
     },
+}
+
+/// One parameter of a closure: a name and an optional type (`|x: i32, y|`).
+#[derive(Debug)]
+pub struct ClosureParam {
+    pub name: Ident,
+    pub ty: Option<Type>,
 }
 
 #[derive(Debug)]

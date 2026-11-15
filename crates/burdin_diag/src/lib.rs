@@ -147,6 +147,8 @@ impl Code {
     pub const UNSUPPORTED_REPR: Code = Code("E0164");
     /// A `test` attribute that is unknown, repeated, has a value it does not take, or conflicts with another.
     pub const TEST_ATTRIBUTE: Code = Code("E0170");
+    /// A closure that borrows its captures used where it could outlive them.
+    pub const CLOSURE_ESCAPES: Code = Code("E0171");
     /// Type arguments given to a type that declares no type parameters.
     pub const NOT_A_GENERIC_TYPE: Code = Code("E0180");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.

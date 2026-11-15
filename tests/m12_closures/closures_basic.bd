@@ -1,0 +1,24 @@
+//@ run
+//> 8
+//> 1
+//> 11
+//> 6
+
+// A closure is an expression with a callable interface type. A parameter type comes from the expected
+// `Fn(...)` type when it is not written.
+fn main() {
+    let add = |a: i32, b: i32| a + b
+    println(add(3, 5).to_string())
+
+    let one = || 1
+    println(one().to_string())
+
+    let f: Fn(i32): i32 = |x| x + 10
+    println(f(1).to_string())
+
+    let block = |x: i32|: i32 {
+        let doubled = x * 2
+        doubled
+    }
+    println(block(2 + 1).to_string())
+}

@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// Returning a borrowing closure as the tail expression is E0171 too (CL3).
+fn make(): Fn(): i32 {
+    let n = 1
+    let f = || n
+    f //~ E0171
+}
+
+fn main() {
+    let g = make()
+    println(g().to_string())
+}

@@ -1,0 +1,18 @@
+//@ run
+//> 11
+//> 20
+//> 3
+//> 7
+
+// Closure values are storable: an array, a `List`, and a `Map` own their closures (CL3).
+fn main() {
+    let fs: [Fn(i32): i32; 2] = [|x| x + 1, |x| x * 2]
+    println(fs[0](10).to_string())
+    println(fs[1](10).to_string())
+
+    let mut list: List<Fn(i32): i32> = List<Fn(i32): i32>.new()
+    list.push(|x| x - 2)
+    list.push(|x| x + 2)
+    println(list[0](5).to_string())
+    println(list[1](5).to_string())
+}

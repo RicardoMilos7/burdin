@@ -219,7 +219,35 @@ impl Parser<'_> {
                 | Bang
                 | Star
                 | Amp
+                | Pipe
+                | OrOr
         )
+    }
+
+    /// `|a, b| body`, `|| body`, or `|a: i32|: bool body`. The body is one expression, so a block after the
+    /// closing `|` is the body.
+    pub(super) fn closure_expr(&mut self) -> PResult<Expr> {
+        let start = self.span();
+        let mut params = Vec::new();
+        if !self.eat(&TokenKind::OrOr) {
+            self.open(&TokenKind::Pipe, false)?;
+            while !self.at(&TokenKind::Pipe) {
+                if self.at_eof() {
+                    return Err(self.unexpected("`|`"));
+                }
+                let name = self.ident("a closure parameter")?;
+                let ty = if self.eat(&TokenKind::Colon) { Some(self.ty()?) } else { None };
+                params.push(ClosureParam { name, ty });
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.close(&TokenKind::Pipe)?;
+        }
+        let ret = if self.eat(&TokenKind::Colon) { Some(self.ty()?) } else { None };
+        let body = self.expr()?;
+        let span = start.to(body.span);
+        Ok(Expr { kind: ExprKind::Closure { params, ret, body: Box::new(body) }, span })
     }
 
     pub(super) fn primary(&mut self, r: Restriction) -> PResult<Expr> {
@@ -362,7 +390,7 @@ impl Parser<'_> {
                 lit(ExprKind::Continue)
             }
             TokenKind::Match => self.match_expr(),
-            TokenKind::Pipe | TokenKind::OrOr => Err(self.error_here("closures are not part of stage 0".into())),
+            TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
             TokenKind::Reserved(_) => {
                 self.ident("an expression")?;
                 unreachable!()

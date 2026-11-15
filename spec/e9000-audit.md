@@ -23,14 +23,11 @@ page.
 | `declare-generic-interface` | `crates/burdin_sema/src/declare.rs` | A generic interface (`interface Iterator<T> { ... }`) | m13 | #390 |
 | `declare-generic-alias` | `crates/burdin_sema/src/declare.rs` | A generic type alias (`type Pair<T> = (T, T)`) | m21 | #392 |
 | `declare-where-non-param` | `crates/burdin_sema/src/declare.rs` | A `where` predicate on something other than a type parameter, such as an associated-type projection | Stage 1 | #394 |
-| `call-non-callable` | `crates/burdin_sema/src/fncx/call.rs` | Calling a closure value or another non-name expression | m12 | #88 |
+| `function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using a generic or `extern` function as a value | Stage 1 | #493 |
 | `for-range-literal-pattern` | `crates/burdin_sema/src/fncx/control.rs` | A `for` pattern other than a binding or `_` over a literal range (`for (a, b) in 0..n`) | m13 | #102 |
 | `for-range-value-pattern` | `crates/burdin_sema/src/fncx/control.rs` | The same over a stored range value | m13 | #102 |
 | `array-repeat-length` | `crates/burdin_sema/src/fncx/expr.rs` | `[value; count]` where `count` is not an integer literal | m21 | #403 |
 | `const-expression` | `crates/burdin_sema/src/fncx/item.rs` | A `const` initializer beyond literals, other constants, operators, and casts | m20 | #163 |
-| `function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using a function as a value | m12 | #88 |
-| `builtin-function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using a built-in function as a value | m12 | #88 |
-| `some-function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using `Some` as a function value | m12 | #88 |
 | `unsupported-helper` | `crates/burdin_sema/src/fncx/mod.rs` | The shared `unsupported()` helper that reports the `E9000` sites in expression checking; not a construct | helper | - |
 | `pattern-constant` | `crates/burdin_sema/src/fncx/pattern.rs` | A constant used as a pattern | Stage 1 | #493 |
 | `pattern-or-binding` | `crates/burdin_sema/src/fncx/pattern.rs` | A binding inside an alternative of an or-pattern | Stage 1 | #493 |
@@ -53,7 +50,9 @@ page.
 
 ## Why the owners differ
 
-- `m12` (closures) owns function values and calls: the first-class function surface arrives with closures.
+- `m12` (closures) owned calls and the first-class function surface; calls, named functions, built-in functions, and
+  `Some` as a value are implemented with closures. Using a generic or `extern` function as a value is the remaining
+  Stage 1 work, because it needs the callee's type arguments or the C calling convention.
 - `m13` (iterators) owns generic interfaces and generic methods, because `Iterator<T>`, `Iterable<T>`, and their
   adapters are the first user-written `interface Name<T>` uses.
 - `m19` (operators) owns a built-in interface implemented by hand: the operator interfaces are the first built-in

@@ -1,0 +1,22 @@
+//@ run
+//> once
+//> in option
+//> 42
+
+// A closure that moves a captured value out of its record is `FnOnce` (CL5). Calling it consumes the
+// closure; the value it moved out is returned to the caller.
+fn call_once<F: FnOnce(): String>(own f: F): String {
+    f()
+}
+
+fn main() {
+    let s = String.from("once")
+    println(call_once(|| s))
+
+    let t = String.from("in option")
+    let o: Option<FnOnce(): String> = Some(|| t)
+    println(o.unwrap()())
+
+    let n: FnOnce(): i32 = || 42
+    println(n().to_string())
+}

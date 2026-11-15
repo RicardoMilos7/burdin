@@ -157,6 +157,9 @@ impl FnCx<'_> {
             K::SelfValue => match self.self_local {
                 Some(id) => mk(tir::ExprKind::Local(id), self.locals[id.0].ty.clone(), span),
                 None => {
+                    if let Some(e) = self.capture_name("self", span) {
+                        return e;
+                    }
                     self.diags.error(
                         Code::UNKNOWN_NAME,
                         span,
@@ -165,6 +168,7 @@ impl FnCx<'_> {
                     error_expr(span)
                 }
             },
+            K::Closure { params, ret, body } => self.closure(params, ret.as_ref(), body, expect, span),
             K::UnsafeBlock(b) => {
                 self.unsafe_depth += 1;
                 let (b, ty) = self.block(b, expect);

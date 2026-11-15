@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A body that uses `return` needs the closure's return type, because the body cannot be inferred first.
+fn main() {
+    let f = |x: i32| { //~ E0003
+        if x > 0 {
+            return 1
+        }
+        0
+    }
+    println(f(1).to_string())
+}

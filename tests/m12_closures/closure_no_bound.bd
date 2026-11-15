@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Calling a type parameter needs an `Fn`-family bound (CL6, E0141).
+fn call<F>(f: F, x: i32): i32 {
+    f(x) //~ E0141
+}
+
+fn main() {
+    println(call(|x: i32| x + 1, 2).to_string())
+}

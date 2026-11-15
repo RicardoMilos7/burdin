@@ -472,6 +472,29 @@ impl<'a> Checker<'a> {
                     self.expr(a, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
                 }
             }
+            // Building a closure moves each moved-in capture and reads each borrowed one (CL2-CL4).
+            K::Closure { captures, .. } => {
+                for c in captures {
+                    match c.mode {
+                        tir::CaptureMode::Move => {
+                            if self.is_copy(&c.ty) {
+                                self.read_place(c.local, &[], e.span);
+                            } else {
+                                self.move_place(c.local, &[], e.span);
+                            }
+                        }
+                        _ => self.read_place(c.local, &[], e.span),
+                    }
+                }
+            }
+            // Calling an `FnOnce` closure consumes it; an `Fn`/`FnMut` call only reads it (CL6). A closure
+            // parameter is owned, so each argument is moved.
+            K::ClosureCall { callee, args, kind } => {
+                self.expr(callee, if *kind == tir::FnKind::FnOnce { Mode::Move } else { Mode::Use });
+                for a in args {
+                    self.expr(a, Mode::Move);
+                }
+            }
             K::StringAsStr(inner) => self.expr(inner, Mode::Use),
             K::Block(b) => {
                 self.block(b, mode);

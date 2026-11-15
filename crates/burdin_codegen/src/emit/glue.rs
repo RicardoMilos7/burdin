@@ -148,6 +148,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             debug_entry: self.debug_entry,
             dead_locals: std::mem::take(&mut self.dead_locals),
             bounds_facts: std::mem::take(&mut self.bounds_facts),
+            return_env: self.return_env.take(),
+            return_consume: self.return_consume.take(),
         });
         let entry = self.cx.append_basic_block(value, "entry");
         let body = self.cx.append_basic_block(value, "body");
@@ -167,6 +169,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.temps = vec![Vec::new()];
         self.loops.clear();
         self.flags.clear();
+        self.return_consume = None;
         Ok(())
     }
 
@@ -192,6 +195,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.debug_entry = ctx.debug_entry;
         self.dead_locals = ctx.dead_locals;
         self.bounds_facts = ctx.bounds_facts;
+        self.return_env = ctx.return_env;
+        self.return_consume = ctx.return_consume;
         if let Some(position) = ctx.position {
             self.builder.position_at_end(position);
         }
@@ -213,6 +218,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
             // nothing. The `Chars` iterator is a view of a `str` too.
             Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) | Ty::Chars => Ok(()),
+            // A closure owns its capture record; its destructor drops the moved-in captures and frees it.
+            Ty::Fn { .. } => {
+                let v =
+                    self.builder.build_load(self.closure_ty, addr, "closure").map_err(llvm_err)?.into_struct_value();
+                let env = self.builder.build_extract_value(v, 1, "").map_err(llvm_err)?.into_pointer_value();
+                let drop = self.builder.build_extract_value(v, 2, "").map_err(llvm_err)?.into_pointer_value();
+                let drop_ty = self.cx.void_type().fn_type(&[ptr_ty.into()], false);
+                self.builder.build_indirect_call(drop_ty, drop, &[env.into()], "").map_err(llvm_err)?;
+                Ok(())
+            }
             Ty::CString => {
                 let p = self.builder.build_load(ptr_ty, addr, "cstring").map_err(llvm_err)?.into_pointer_value();
                 self.builder.build_call(self.rt.free, &[p.into()], "").map_err(llvm_err)?;
@@ -323,6 +338,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 let elem = (**elem).clone();
                 let array_t = self.llvm_ty(ty).expect("an array has a type");
+                let zero = self.usize_ty.const_zero();
                 let index = self.alloca(self.usize_ty.into(), "drop.i")?;
                 self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
                 let header = self.new_block("array.drop.cond");
@@ -337,8 +353,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
                 self.builder.position_at_end(body);
-                // SAFETY (LLVM): i < n.
-                let p = unsafe { self.builder.build_in_bounds_gep(array_t, addr, &[i], "") }.map_err(llvm_err)?;
+                // SAFETY (LLVM): i < n. The first index walks the array value from the pointer; the second
+                // selects the element.
+                let p = unsafe { self.builder.build_in_bounds_gep(array_t, addr, &[zero, i], "") }.map_err(llvm_err)?;
                 self.drop_value(p, &elem)?;
                 let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
                 self.builder.build_store(index, next).map_err(llvm_err)?;
@@ -533,10 +550,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.clone_map(dst, src, &key, &value)
             }
             Ty::Chars => self.copy_bits(dst, src, ty),
+            // A closure is not `Clone` (CL10); this is unreachable in a checked program.
+            Ty::Fn { .. } => Ok(()),
             Ty::Array(elem, n) => {
                 let n = *n;
                 let elem = (**elem).clone();
                 let array_t = self.llvm_ty(ty).expect("an array has a type");
+                let zero = self.usize_ty.const_zero();
                 let index = self.alloca(self.usize_ty.into(), "clone.i")?;
                 self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
                 let header = self.new_block("array.clone.cond");
@@ -551,9 +571,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
                 self.builder.position_at_end(body);
-                // SAFETY (LLVM): i < n.
-                let s = unsafe { self.builder.build_in_bounds_gep(array_t, src, &[i], "") }.map_err(llvm_err)?;
-                let d = unsafe { self.builder.build_in_bounds_gep(array_t, dst, &[i], "") }.map_err(llvm_err)?;
+                // SAFETY (LLVM): i < n. The first index walks the array value from the pointer.
+                let s = unsafe { self.builder.build_in_bounds_gep(array_t, src, &[zero, i], "") }.map_err(llvm_err)?;
+                let d = unsafe { self.builder.build_in_bounds_gep(array_t, dst, &[zero, i], "") }.map_err(llvm_err)?;
                 self.clone_value(d, s, &elem)?;
                 let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
                 self.builder.build_store(index, next).map_err(llvm_err)?;
