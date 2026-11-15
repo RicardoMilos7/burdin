@@ -1,0 +1,40 @@
+//@ run
+//> 1
+//> 2
+//> 3
+//> 1
+//> 2
+//> 3
+//> 6
+//> 1
+
+// Ranges are iterable values: `iter()` on a stored range, and the inclusive form stops at its upper
+// endpoint without overflowing the element type.
+fn main() {
+    let r = 1..4
+    let mut it = r.iter()
+    loop {
+        match it.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+    let inc = 1..=3
+    let mut it2 = inc.iter()
+    loop {
+        match it2.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+    let mut n = 0
+    for x in (250 as u8)..=(255 as u8) {
+        n = n + 1
+    }
+    println(n.to_string())
+    let mut m = 0
+    for x in (255 as u8)..=(255 as u8) {
+        m = m + 1
+    }
+    println(m.to_string())
+}

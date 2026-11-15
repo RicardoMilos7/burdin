@@ -1,0 +1,56 @@
+//@ run
+//> first 1
+//> drop 1
+//> list left
+//> first 4
+//> drop 4
+//> array left
+//> map left
+//> drop 6
+//> drop 5
+//> drop 2
+//> drop 3
+
+// An owning iterator drops the items it has not yielded when it is dropped, and an entry it already
+// moved out is not dropped again.
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn main() {
+    let mut xs = List<Noisy>.new()
+    xs.push(Noisy { id: 1 })
+    xs.push(Noisy { id: 2 })
+    xs.push(Noisy { id: 3 })
+    let mut it = xs.into_iter()
+    match it.next() {
+        Some(v) => announce("first ", v.id),
+        None => {}
+    }
+    println("list left")
+
+    let ys = [Noisy { id: 4 }, Noisy { id: 5 }]
+    let mut ait = ys.into_iter()
+    match ait.next() {
+        Some(v) => announce("first ", v.id),
+        None => {}
+    }
+    println("array left")
+
+    let mut m = Map<i32, Noisy>.new()
+    m.insert(7, Noisy { id: 6 })
+    let mit = m.into_iter()
+    println("map left")
+}

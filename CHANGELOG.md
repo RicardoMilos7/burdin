@@ -33,9 +33,9 @@ close-out checklist in `AGENTS.md`).
     wrapping, and a reversed inclusive range (`a[2..=1]`) still panics. `m09_stdlib/slice_inclusive`,
     `slice_inclusive_bounds`, and `slice_inclusive_reversed` witness it. A dead "comparing strings" branch was
     removed.
-  - The remaining E9000 sites are assigned to m13 (generic interfaces and methods), m19 (hand-built built-in
-    interfaces), m20 (constant expressions), m21 (the remaining type-system forms), or Stage 1 for the cross-cutting
-    pattern, bound, `where`, function-value, and runtime-index move forms.
+  - The remaining E9000 sites are assigned to m19 (hand-built built-in interfaces), m20 (constant expressions),
+    m21 (the remaining type-system forms), or Stage 1 for the cross-cutting pattern, bound, `where`,
+    function-value, and runtime-index move forms.
 - Close the stage 0 correctness gaps carried into stage 1 (issue #48, sub-issues #49, #53, #58, #64, #71, #77,
   #85, #86, #87).
   - **View lifetime (#49).** RT5 and the new E0123 reject a view stored in a `let` or an assignment that derives
@@ -264,6 +264,44 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   292 tests (290 in release).
 - Documentation: `spec/grammar.md` sections 1, 4, and 6, `spec/memory-rules.md` section 12, `spec/stage1-subset.md`,
   `spec/e9000-audit.md`, `tests/README.md`, `docs/error-codes.md`, and `HANDOFF.md`.
+
+### Milestone 13 — iterators (issue #98, sub-issues #99-#108)
+
+- Generic interfaces and generic methods in sema: `interface Name<T>` declares type parameters and bounds, an impl
+  supplies the interface's arguments (`Type: Iterator<i32>`), and a method may have its own parameters
+  (`fn map<U, F: FnMut(T): U>`). Each call instantiates the method for the types it infers, with method parameters
+  first so a default method's `F` wins over an impl parameter of the same name. `Fn` bounds infer the parameters
+  inside them (`F: FnMut(T): U` gives `U` from the closure), and a `where` clause is checked with the impl's own
+  arguments substituted. A generic `From` method is E0003.
+- The protocol in `std`: `interface Iterator<T> { fn next(mut self): Option<T> }` and the marker
+  `interface Iterable<T> { }`, with lazy default methods `map`, `filter`, `take`, `skip`, `fold`, `count`,
+  `any_item` (the reserved `any` is spelled `.any` at the call), `all`, `find`, and `to_list`. The adapter types
+  `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter` are generic structs whose `next` forwards to the source and
+  the closure. Default methods are instantiated on demand for each receiver type, so a chain never instantiates
+  every adapter's own adapters.
+- Built-in implementations in the compiler: `iter()` and `into_iter()` on arrays, slices, `List`, `Map`, `Chars`,
+  and ranges, and the compiler-known iterator types `ArrayIntoIter<T, N>`, `ListIntoIter<T>`, `MapIter<K, V>`,
+  `MapIntoIter<K, V>`, and `RangeIter<T>`. A borrowing collection yields `T` when it is `Copy` and `&T` otherwise; a
+  map yields `(&K, &V)` and `MapIntoIter` yields owned `(K, V)` and clears each entry it moves; `Chars.next`
+  decodes one UTF-8 scalar value; an inclusive range iterator stops at its upper endpoint without computing
+  `upper + 1`. `it.sum()` is compiler-known for integer items, and `next` on a non-mutable place is E0113.
+- `for` over a user type or an iterator value lowers to `let mut __iter = e; loop { match __iter.next() { Some(pat)
+  => body, None => break } }`. An `Iterable<T>` is iterated through `iter()` and its result must be an
+  `Iterator<T>` (E0141); a type that is both an `Iterable` and an `Iterator` is iterated through `iter()`, because
+  `for` borrows its source. The pattern must match every item (E0006). The stage 0 built-in loop forms and their
+  rules are unchanged.
+- Eager `List` methods `map`, `filter`, `fold`, `any`, `all`, and `find` in `std`: they borrow the list, pass the
+  closure a view of each element, and return owned results (`filter` and `find` clone the element).
+- Memory rules IT4-IT12 in the new `spec/iterators.md`: a chain is second-class (E0120, E0123), a view-typed
+  parameter may be returned (RT2 now covers an `own` parameter whose type is a view), and a return-origin union
+  counts only values that carry a view. Temporary drop flags (`tmp.live`) make a temporary created on one branch of
+  a `match` drop only where it exists.
+- Tests: `tests/m13_iterators/` adds 21 conformance tests (run and compile-fail) covering `for` over a user type,
+  `iter`/`into_iter`/`next`, list, array, slice, map, `Chars`, and range iteration including the inclusive maximum,
+  the lazy adapters and their laziness, the eager `List` methods, `sum`, generic iterator/iterable functions, and
+  the second-class rejections. The suite is 313 tests (311 in release).
+- Documentation: `spec/iterators.md` (new), `spec/memory-rules.md` section 7, `spec/stdlib.md`,
+  `spec/stage1-subset.md`, `spec/e9000-audit.md`, `tests/README.md` decision 18, `CLAUDE.md`, and `HANDOFF.md`.
 
 
 ## Stage 0 — 2026-11-14

@@ -1,0 +1,51 @@
+//@ run
+//> 33
+//> 33
+//> 2
+//> 33
+//> 2
+
+// Iterating a map: the built-in `for` keeps borrowing entries, `iter()` yields `(&K, &V)`, and
+// `into_iter()` yields owned `(K, V)` pairs.
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 10)
+    m.insert(2, 20)
+
+    // The built-in `for` over a map keeps its stage 0 behavior.
+    let mut key_sum = 0
+    for (k, v) in m {
+        key_sum = key_sum + k + v
+    }
+    println(key_sum.to_string())
+
+    let mut total = 0
+    let mut n = 0
+    let mut it = m.iter()
+    loop {
+        match it.next() {
+            Some((k, v)) => {
+                n = n + 1
+                total = total + *k + *v
+            }
+            None => break,
+        }
+    }
+    println(total.to_string())
+    println(n.to_string())
+
+    let mut moved = 0
+    let mut count = 0
+    let mut it2 = m.into_iter()
+    loop {
+        match it2.next() {
+            Some((k, v)) => {
+                count = count + 1
+                moved = moved + k + v
+            }
+            None => break,
+        }
+    }
+    println(moved.to_string())
+    println(count.to_string())
+}

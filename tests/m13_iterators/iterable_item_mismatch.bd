@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// The iterator `iter()` returns must yield the `T` of `Iterable<T>`.
+struct S {}
+
+S: Iterable<i32> {
+    fn iter(self): C {
+        C {}
+    }
+}
+
+struct C {}
+
+C: Iterator<u8> {
+    fn next(mut self): Option<u8> {
+        None
+    }
+}
+
+fn main() {
+    for x in (S {}) {} //~ E0141
+}

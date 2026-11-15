@@ -1,6 +1,6 @@
 # The Burdin standard library
 
-The stage 0 standard library, written in Burdin. The compiler embeds these files in `burdin` and makes the
+The standard library (stage 0 plus the stage 1 closure and iterator surface), written in Burdin. The compiler embeds these files in `burdin` and makes the
 package a dependency of every program, then copies its public names into every module (the prelude). A
 project that declares its own package named `std` replaces this one.
 
@@ -11,6 +11,7 @@ project that declares its own package named `std` replaces this one.
 | `env.bd` | `args` |
 | `process.bd` | `exit`, `run` |
 | `mem.bd` | `swap`, `replace` |
+| `iter.bd` | `Iterator<T>` and `Iterable<T>`, the lazy adapters and their types, and the eager `List` helpers |
 
 Some names in the stage 0 table are compiler built-ins rather than Burdin code, because the language cannot
 express them yet: `Option`, `Result`, `Heap`, `List`, `Map`, `String`, `str`, the `str`/`[T]` intrinsics,

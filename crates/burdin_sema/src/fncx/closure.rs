@@ -174,7 +174,10 @@ impl FnCx<'_> {
         // Return type: written, expected, or inferred from the body.
         let annotated = ret.map(|t| self.resolve(t));
         let expected_ret = expected.as_ref().map(|(sig, _, _)| (*sig.ret).clone());
+        // An expected return type that is still a type parameter (`Fn(T): U`) is an inference hole: a written
+        // annotation says what the parameter stands for, so it is checked by unifying, not as a mismatch.
         if let (Some(a), Some(e)) = (&annotated, &expected_ret)
+            && !self.globals.ty_has_param(e)
             && !compatible(a, e)
         {
             self.mismatch(span, e, a);
@@ -224,7 +227,11 @@ impl FnCx<'_> {
                 (tir::Block { stmts: Vec::new(), tail: Some(Box::new(e)) }, ty)
             }
         };
+        // An expected return type that is still a type parameter (`F: Fn(T): U` in a generic method) is an
+        // inference hole: the body's value is what `U` stands for. A written annotation is always enforced.
+        let open_return = annotated.is_none() && matches!(declared_ret, Some(Ty::Param(_)));
         let ret_ty = match declared_ret.clone() {
+            Some(_) if open_return && body_ty != Ty::Never => body_ty.clone(),
             Some(t) => t,
             None => {
                 if body_ty == Ty::Never {
@@ -234,7 +241,7 @@ impl FnCx<'_> {
                 }
             }
         };
-        if !compatible(&body_ty, &ret_ty) {
+        if !open_return && !compatible(&body_ty, &ret_ty) {
             child.mismatch(body.span, &ret_ty, &body_ty);
         }
         // A view returned by a closure would point into the closure's capture record, which is gone once the

@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `next` borrows its iterator exclusively, so the iterator must be a mutable place.
+fn main() {
+    let xs = [1, 2, 3]
+    let it = xs.iter()
+    let first = it.next() //~ E0113
+}

@@ -65,6 +65,10 @@ impl TypeDefs<'_> {
             Ty::Range(inner, _) => self.holds(inner, prop, seen),
             // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
             Ty::CPtr(_) => true,
+            // An iterator advances through its state, so it is never copied or cloned.
+            Ty::ListIntoIter(_) | Ty::ArrayIntoIter(..) | Ty::MapIter(..) | Ty::MapIntoIter(..) | Ty::RangeIter(..) => {
+                false
+            }
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
             Ty::String | Ty::Heap(_) | Ty::CString => prop == Property::Clone,
@@ -113,10 +117,18 @@ impl TypeDefs<'_> {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::CPtr(_) | Ty::Chars => false,
-            Ty::Range(..) => false,
+            Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) => false,
             // A closure's capture record is heap-allocated and may own its captures.
             Ty::Fn { .. } => true,
-            Ty::String | Ty::Heap(_) | Ty::CString | Ty::List(_) | Ty::Map(..) => true,
+            // An owning iterator frees its buffer (or drops the elements it has not handed out).
+            Ty::String
+            | Ty::Heap(_)
+            | Ty::CString
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::ListIntoIter(_)
+            | Ty::MapIntoIter(..) => true,
+            Ty::ArrayIntoIter(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Option(t) => self.needs_drop_seen(t, seen),
             Ty::Result(t, e) => self.needs_drop_seen(t, seen) || self.needs_drop_seen(e, seen),

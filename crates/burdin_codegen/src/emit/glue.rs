@@ -4,6 +4,7 @@ use super::{Codegen, GenResult, Glue, SavedContext, llvm_err};
 use burdin_tir::Ty;
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
+use inkwell::types::BasicType;
 use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -87,6 +88,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Heap(inner) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
             Ty::Range(inner, inclusive) => {
                 format!("Range<{},{inclusive}>", self.structural_key_in(inner, seen))
+            }
+            Ty::RangeIter(inner, inclusive) => {
+                format!("RangeIter<{},{inclusive}>", self.structural_key_in(inner, seen))
+            }
+            Ty::ListIntoIter(inner) => format!("ListIntoIter<{}>", self.structural_key_in(inner, seen)),
+            Ty::ArrayIntoIter(inner, n) => format!("ArrayIntoIter<{},{}>", self.structural_key_in(inner, seen), n),
+            Ty::MapIter(k, v) => {
+                format!("MapIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
+            }
+            Ty::MapIntoIter(k, v) => {
+                format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
             Ty::Ref { mutable, inner } => {
                 format!("&{}{}", if *mutable { "mut " } else { "" }, self.structural_key_in(inner, seen))
@@ -216,8 +228,57 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Range(..) => Ok(()),
             Ty::Param(_) => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
-            // nothing. The `Chars` iterator is a view of a `str` too.
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) | Ty::Chars => Ok(()),
+            // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map.
+            Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) | Ty::Chars | Ty::MapIter(..) | Ty::RangeIter(..) => Ok(()),
+            Ty::ListIntoIter(elem) => {
+                let elem = (**elem).clone();
+                self.drop_list_into_iter(addr, &elem)
+            }
+            Ty::MapIntoIter(key, value) => {
+                let (key, value) = ((**key).clone(), (**value).clone());
+                self.drop_map_into_iter(addr, &key, &value)
+            }
+            Ty::ArrayIntoIter(elem, n) => {
+                let (elem, n) = ((**elem).clone(), *n);
+                if n == 0 || !self.needs_drop(&elem) || self.llvm_ty(&elem).is_none() {
+                    return Ok(());
+                }
+                let index_field = self
+                    .builder
+                    .build_struct_gep(self.iter_array_ty(&elem, n), addr, 1, "iter.index")
+                    .map_err(llvm_err)?;
+                let start = self.builder.build_load(self.usize_ty, index_field, "").map_err(llvm_err)?.into_int_value();
+                let slots = self
+                    .builder
+                    .build_struct_gep(self.iter_array_ty(&elem, n), addr, 0, "iter.array")
+                    .map_err(llvm_err)?;
+                let elem_t = self.llvm_ty(&elem).expect("checked above");
+                let array_t = elem_t.array_type(n as u32);
+                let index = self.alloca(self.usize_ty.into(), "array.iter.drop.i")?;
+                self.builder.build_store(index, start).map_err(llvm_err)?;
+                let header = self.new_block("array.iter.drop.cond");
+                let body = self.new_block("array.iter.drop.body");
+                let exit = self.new_block("array.iter.drop.end");
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(header);
+                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                let go = self
+                    .builder
+                    .build_int_compare(IntPredicate::ULT, i, self.usize_ty.const_int(n, false), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                let zero = self.usize_ty.const_zero();
+                // SAFETY (LLVM): index <= i < n.
+                let p =
+                    unsafe { self.builder.build_in_bounds_gep(array_t, slots, &[zero, i], "") }.map_err(llvm_err)?;
+                self.drop_value(p, &elem)?;
+                let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                self.builder.build_store(index, next).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(exit);
+                Ok(())
+            }
             // A closure owns its capture record; its destructor drops the moved-in captures and frees it.
             Ty::Fn { .. } => {
                 let v =

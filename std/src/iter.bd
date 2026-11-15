@@ -1,0 +1,285 @@
+// The iteration protocol (spec/iterators.md).
+//
+// `Iterator<T>` is the stateful object a chain is made of: `next` advances it and returns its next item.
+// `Iterable<T>` is a marker: a type implements it to say that `for` accepts it, and the compiler checks that the
+// type provides `iter(self)` (borrowing) and, when it is used, `into_iter(own self)` (consuming) returning an
+// `Iterator<T>`. The built-in collections implement both in the compiler; these declarations give user types the
+// same surface, with the lazy adapters written here as default methods.
+//
+// A lazy chain borrows its source: its iterator types carry the source's view type, so a chain is second-class
+// (memory-rules SC2/SC3) and cannot be stored in a field or a collection.
+
+/// A stateful iterator. `next` borrows the iterator exclusively and advances it.
+interface Iterator<T> {
+    /// The next item, or `None` when the iterator is exhausted.
+    fn next(mut self): Option<T>
+
+    /// A lazy chain that applies `f` to every item.
+    fn map<U, F: FnMut(T): U>(own self, own f: F): MapIter<Self, T, U, F> {
+        MapIter { inner: self, f: f }
+    }
+
+    /// A lazy chain that keeps the items `f` accepts. `f` receives a view so the item can still be returned.
+    fn filter<F: FnMut(&T): bool>(own self, own f: F): FilterIter<Self, T, F> {
+        FilterIter { inner: self, f: f }
+    }
+
+    /// A lazy chain of at most `count` items.
+    fn take(own self, count: usize): TakeIter<Self, T> {
+        TakeIter { inner: self, remaining: count }
+    }
+
+    /// A lazy chain that drops the first `count` items.
+    fn skip(own self, count: usize): SkipIter<Self, T> {
+        SkipIter { inner: self, remaining: count }
+    }
+
+    /// Folds the items into an accumulator, left to right.
+    fn fold<A, F: FnMut(A, T): A>(mut self, own init: A, own f: F): A {
+        let mut acc = init
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    acc = f(acc, x)
+                }
+                None => {
+                    return acc
+                }
+            }
+        }
+    }
+
+    /// The number of items left.
+    fn count(mut self): usize {
+        let mut n: usize = 0
+        loop {
+            match self.next() {
+                Some(_) => {
+                    n = n + 1
+                }
+                None => {
+                    return n
+                }
+            }
+        }
+    }
+
+    /// Whether `f` accepts any item. Stops at the first one it does. The adapter is spelled `.any(...)`; the
+    /// method is named `any_item` because `any` is reserved until milestone 15 (spec/iterators.md, IT9).
+    fn any_item<F: FnMut(T): bool>(mut self, own f: F): bool {
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if f(x) {
+                        return true
+                    }
+                }
+                None => {
+                    return false
+                }
+            }
+        }
+    }
+
+    /// Whether `f` accepts every item. Stops at the first one it does not.
+    fn all<F: FnMut(T): bool>(mut self, own f: F): bool {
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if !f(x) {
+                        return false
+                    }
+                }
+                None => {
+                    return true
+                }
+            }
+        }
+    }
+
+    /// The first item `f` accepts, with the iterator still holding the source's view.
+    fn find<F: FnMut(&T): bool>(mut self, own f: F): Option<T> {
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if f(&x) {
+                        return Some(x)
+                    }
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+
+    /// Collects the remaining items into a list. A chain over borrowed items produces a second-class list of
+    /// views, which cannot be stored; clone the items first to get an owned list.
+    fn to_list(mut self): List<T> {
+        let mut out: List<T> = List<T>.new()
+        loop {
+            match self.next() {
+                Some(x) => {
+                    out.push(x)
+                }
+                None => {
+                    return out
+                }
+            }
+        }
+    }
+}
+
+/// A collection that `for` can iterate through `iter(self)`.
+interface Iterable<T> {
+}
+
+/// The lazy `map` chain: `inner` and the closure.
+struct MapIter<I, T, U, F: FnMut(T): U> {
+    inner: I
+    f: F
+}
+
+MapIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): U {
+    fn next(mut self): Option<U> {
+        match self.inner.next() {
+            Some(x) => Some(self.f(x)),
+            None => None,
+        }
+    }
+}
+
+/// The lazy `filter` chain.
+struct FilterIter<I, T, F: FnMut(&T): bool> {
+    inner: I
+    f: F
+}
+
+FilterIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
+    fn next(mut self): Option<T> {
+        loop {
+            match self.inner.next() {
+                Some(x) => {
+                    if self.f(&x) {
+                        return Some(x)
+                    }
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+}
+
+/// The lazy `take` chain.
+struct TakeIter<I, T> {
+    inner: I
+    remaining: usize
+}
+
+TakeIter<I, T>: Iterator<T> where I: Iterator<T> {
+    fn next(mut self): Option<T> {
+        if self.remaining == 0 {
+            return None
+        }
+        self.remaining = self.remaining - 1
+        self.inner.next()
+    }
+}
+
+/// The lazy `skip` chain.
+struct SkipIter<I, T> {
+    inner: I
+    remaining: usize
+}
+
+SkipIter<I, T>: Iterator<T> where I: Iterator<T> {
+    fn next(mut self): Option<T> {
+        loop {
+            if self.remaining == 0 {
+                return self.inner.next()
+            }
+            self.remaining = self.remaining - 1
+            match self.inner.next() {
+                Some(_) => {}
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+}
+
+// The eager `List` methods. They borrow the list and return owned results, and their closures receive views
+// (Burdin Language Design, "Collections and iteration"). The compiler resolves `xs.map(f)` and the other names
+// below to these functions (spec/iterators.md, IT9).
+
+/// `xs.map(f)`: a new list of the closure's results.
+priv fn __list_map<T, U, F: FnMut(&T): U>(list: List<T>, own f: F): List<U> {
+    let mut out: List<U> = List<U>.new()
+    let mut f = f
+    for x in list {
+        out.push(f(&x))
+    }
+    out
+}
+
+/// `xs.filter(f)`: a new list of the items `f` accepts.
+priv fn __list_filter<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): List<T> {
+    let mut out: List<T> = List<T>.new()
+    let mut f = f
+    for x in list {
+        if f(&x) {
+            out.push(x.clone())
+        }
+    }
+    out
+}
+
+/// `xs.fold(init, f)`: the items folded into an accumulator, left to right.
+priv fn __list_fold<T, A, F: FnMut(A, &T): A>(list: List<T>, own init: A, own f: F): A {
+    let mut acc = init
+    let mut f = f
+    for x in list {
+        acc = f(acc, &x)
+    }
+    acc
+}
+
+/// `xs.any(f)`: whether `f` accepts any element.
+priv fn __list_any<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
+    let mut f = f
+    for x in list {
+        if f(&x) {
+            return true
+        }
+    }
+    false
+}
+
+/// `xs.all(f)`: whether `f` accepts every element.
+priv fn __list_all<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
+    let mut f = f
+    for x in list {
+        if !f(&x) {
+            return false
+        }
+    }
+    true
+}
+
+/// `xs.find(f)`: the first element `f` accepts, cloned so the result is owned.
+priv fn __list_find<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Option<T> {
+    let mut f = f
+    for x in list {
+        if f(&x) {
+            return Some(x.clone())
+        }
+    }
+    None
+}

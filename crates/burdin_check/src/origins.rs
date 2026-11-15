@@ -146,8 +146,9 @@ impl<'a> Analyzer<'a> {
         let mut local_block = vec![None; f.locals.len()];
         for (i, local) in f.locals.iter().enumerate() {
             // An owned parameter lives until the function returns; a view of it kept in a local is fine, but
-            // returning one is E0122 through the origin.
-            if local.kind == LocalKind::OwnParam {
+            // returning one is E0122 through the origin. A parameter whose type is itself a view is a
+            // view-typed parameter (RT2): its value is a copy of the caller's view, so returning it is fine.
+            if local.kind == LocalKind::OwnParam && !local.ty.is_second_class() {
                 local_block[i] = Some(0);
             }
         }
@@ -162,7 +163,6 @@ impl<'a> Analyzer<'a> {
             local_block,
         }
     }
-
     /// Analyzes the body and returns the union of the origins of all returned expressions.
     fn body(&mut self) -> Origin {
         let tail = self.block_body(&self.f.body);
@@ -175,15 +175,21 @@ impl<'a> Analyzer<'a> {
         self.returns.clone()
     }
 
-    /// The origin of a local's storage: a borrowed parameter stands for its position in the signature.
+    /// The origin of a local's storage: a parameter whose type is a view stands for its position in the
+    /// signature, whether it is borrowed or passed by value. A `View` local is a binding onto the scrutinee's
+    /// storage, so its storage is whatever the binding views.
     fn local_storage(&self, id: LocalId) -> Origin {
-        match self.f.locals[id.0].kind {
-            LocalKind::BorrowedParam => {
-                let index = self.f.params.iter().position(|p| *p == id).unwrap_or(0);
-                Origin::param(index)
-            }
+        let local = &self.f.locals[id.0];
+        match local.kind {
+            LocalKind::BorrowedParam => Origin::param(self.param_index(id)),
+            LocalKind::OwnParam if local.ty.is_second_class() => Origin::param(self.param_index(id)),
+            LocalKind::View => self.bindings[id.0].clone().unwrap_or_else(|| Origin::local(id)),
             _ => Origin::local(id),
         }
+    }
+
+    fn param_index(&self, id: LocalId) -> usize {
+        self.f.params.iter().position(|p| *p == id).unwrap_or(0)
     }
 
     /// The origin of a local's value: a view binding stands for the storage it views.
@@ -346,9 +352,11 @@ impl<'a> Analyzer<'a> {
     }
 
     /// The origin of the storage an argument hands to a call. A value of a second-class type carries a view, so
-    /// its own origin is what matters; any other argument's storage belongs to the argument's place or temporary.
+    /// its own origin is what matters; a `View` binding stands for the storage it views. Any other argument's
+    /// storage belongs to the argument's place or temporary.
     fn argument_storage(&mut self, e: &tir::Expr) -> Origin {
-        if e.ty.is_second_class() { self.expr(e) } else { self.place_origin(e) }
+        let view_local = matches!(&e.kind, tir::ExprKind::Local(id) if self.f.locals[id.0].kind == LocalKind::View);
+        if e.ty.is_second_class() || view_local { self.expr(e) } else { self.place_origin(e) }
     }
 
     fn expr(&mut self, e: &tir::Expr) -> Origin {
@@ -363,9 +371,24 @@ impl<'a> Analyzer<'a> {
             | K::Const(_)
             | K::None
             | K::LayoutOf { .. } => Origin::default(),
-            K::Local(id) => self.local_value(*id),
+            // A plain value carries no view, even when its storage is a parameter's.
+            K::Local(id) => {
+                if e.ty.is_second_class() {
+                    self.local_value(*id)
+                } else {
+                    Origin::default()
+                }
+            }
             // A field, an element, a pointee, or a referent derives from the storage of its base.
-            K::Field(base, _) | K::Deref(base) | K::DerefRef(base) => self.expr(base),
+            K::Field(base, _) | K::DerefRef(base) => self.expr(base),
+            // A `Heap` owns its pointee, so a view of it derives from the heap's own storage.
+            K::Deref(base) => {
+                if base.ty.is_second_class() {
+                    self.expr(base)
+                } else {
+                    self.place_origin(base)
+                }
+            }
             K::PtrDeref(base) => {
                 self.expr(base);
                 Origin::temp()
@@ -378,10 +401,19 @@ impl<'a> Analyzer<'a> {
             K::Slice { base, lo, hi, .. } => {
                 self.expr(lo);
                 self.expr(hi);
-                self.expr(base)
+                // Slicing a `String` views the string's own storage; slicing a view looks through it.
+                if base.ty.is_second_class() { self.expr(base) } else { self.place_origin(base) }
             }
-            K::StringAsStr(inner)
-            | K::Some(inner)
+            // A `str` view of a `String` views the string's storage: the string's own place when it is owned,
+            // or whatever a view of a string already views.
+            K::StringAsStr(inner) => {
+                if inner.ty.is_second_class() {
+                    self.expr(inner)
+                } else {
+                    self.place_origin(inner)
+                }
+            }
+            K::Some(inner)
             | K::Ok(inner)
             | K::Err(inner)
             | K::ArrayRepeat(inner, _)
@@ -390,7 +422,11 @@ impl<'a> Analyzer<'a> {
             K::Array(elems) | K::Tuple(elems) => {
                 let mut origin = Origin::default();
                 for x in elems {
-                    origin.join(&self.expr(x));
+                    if x.ty.is_second_class() {
+                        origin.join(&self.expr(x));
+                    } else {
+                        self.expr(x);
+                    }
                 }
                 origin
             }
@@ -417,7 +453,13 @@ impl<'a> Analyzer<'a> {
             K::Struct(fields) | K::Variant(_, fields) => {
                 let mut origin = Origin::default();
                 for (_, x) in fields {
-                    origin.join(&self.expr(x));
+                    // Only a field that carries a view contributes an origin; an owned field that happens to
+                    // name a parameter (`TakeIter { remaining: count }`) must not (RT2).
+                    if x.ty.is_second_class() {
+                        origin.join(&self.expr(x));
+                    } else {
+                        self.expr(x);
+                    }
                 }
                 origin
             }
@@ -457,9 +499,23 @@ impl<'a> Analyzer<'a> {
                 }
             }
             K::Method(m, args) => {
+                // A method whose result is a view of its receiver hands out the receiver's storage, whether the
+                // receiver is itself a view (`[T]`) or an owned container (`String`, `List`, a map).
+                let receiver_view = matches!(
+                    m,
+                    tir::Method::AsStr
+                        | tir::Method::Clone
+                        | tir::Method::ListLast
+                        | tir::Method::MapGet
+                        | tir::Method::Chars
+                        | tir::Method::Iter
+                        | tir::Method::IterNext
+                        | tir::Method::Unwrap
+                        | tir::Method::Expect
+                );
                 let mut origins = Vec::with_capacity(args.len());
-                for arg in args {
-                    origins.push(self.expr(arg));
+                for (i, arg) in args.iter().enumerate() {
+                    origins.push(if i == 0 && receiver_view { self.argument_storage(arg) } else { self.expr(arg) });
                 }
                 match m {
                     // A view of the receiver, or a copy of it.
@@ -468,6 +524,9 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::ListLast
                     | tir::Method::MapGet
                     | tir::Method::Chars
+                    // An iterator borrows the collection it walks; the items it yields point into it.
+                    | tir::Method::Iter
+                    | tir::Method::IterNext
                     // Unwrapping an `Option<&T>` hands out the view inside it.
                     | tir::Method::Unwrap
                     | tir::Method::Expect => origins.into_iter().next().unwrap_or_default(),
@@ -540,7 +599,10 @@ impl<'a> Analyzer<'a> {
                 Origin::default()
             }
             K::Match(scrutinee, arms) => {
-                let origin = self.expr(scrutinee);
+                // Pattern bindings view sub-places of the scrutinee, so a plain value contributes its storage;
+                // a value that is itself a view contributes whatever it views.
+                let origin =
+                    if scrutinee.ty.is_second_class() { self.expr(scrutinee) } else { self.place_origin(scrutinee) };
                 let mut result = Origin::default();
                 for arm in arms {
                     let parent = self.current_block;

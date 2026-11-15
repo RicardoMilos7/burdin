@@ -15,15 +15,19 @@ pub(crate) fn check_impl_requirements(globals: &Globals, diags: &mut Diagnostics
         };
         let ty =
             if is_enum { Ty::Enum(globals.enum_refs[id].clone()) } else { Ty::Struct(globals.struct_refs[id].clone()) };
-        for r in &globals.interfaces[info.iface].requires {
-            if !globals.satisfies(&ty, *r, &info.wheres) {
+        let iface = &globals.interfaces[info.iface];
+        // A generic interface's `requires` bounds name its parameters; the impl's arguments replace them.
+        let subst: Vec<(String, Ty)> = iface.params.iter().cloned().zip(info.iface_args.iter().cloned()).collect();
+        for r in &iface.requires {
+            let bound = globals.subst_bound(r, &subst);
+            if !globals.satisfies(&ty, &bound, &info.wheres) {
                 diags.error(
                     Code::BOUND_NOT_SATISFIED,
                     info.span,
                     format!(
                         "`{}` requires `{}`, which `{ty}` does not implement",
-                        globals.interfaces[info.iface].name,
-                        globals.bound_name(*r)
+                        iface.name,
+                        globals.bound_name(&bound)
                     ),
                 );
             }
@@ -42,14 +46,25 @@ pub(crate) fn check_impl_signatures(globals: &Globals, diags: &mut Diagnostics) 
         let key = (is_enum, id);
         let self_ty =
             if is_enum { Ty::Enum(globals.enum_refs[id].clone()) } else { Ty::Struct(globals.struct_refs[id].clone()) };
-        let env: Vec<(String, Ty)> = vec![("Self".to_string(), self_ty)];
+        let mut env: Vec<(String, Ty)> = vec![("Self".to_string(), self_ty)];
+        // A generic interface's parameters stand for the impl's arguments in every method signature.
+        env.extend(globals.interfaces[info.iface].params.iter().cloned().zip(info.iface_args.iter().cloned()));
         for expected in &globals.interfaces[info.iface].methods {
             let Some(&func) = globals.methods.get(&(key, expected.name.clone())) else { continue };
             let Some(&span) = globals.method_spans.get(&(key, expected.name.clone())) else { continue };
+            // A method with its own type parameters (`fn map<U>`) has no single concrete signature to compare; its
+            // calls are checked against the bounds instead.
+            if expected.generic || globals.method_templates.contains_key(&func) {
+                continue;
+            }
             let got = &globals.sigs[func.0];
             let want_params: Vec<burdin_tir::ParamSig> =
                 expected.sig.params.iter().map(|p| globals.subst_param(p, &env)).collect();
             let want_ret = globals.subst_ty(&expected.sig.ret, &env);
+            // A generic instance the substitution needed may not exist yet; the next pass compares it.
+            if want_ret == Ty::Error || want_params.iter().any(|p| p.ty == Ty::Error) {
+                continue;
+            }
             let mut what = Vec::new();
             if got.has_self != expected.sig.has_self {
                 what.push(if expected.sig.has_self { "it needs a receiver" } else { "it must not have a receiver" });

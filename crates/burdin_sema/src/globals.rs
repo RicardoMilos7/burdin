@@ -135,6 +135,17 @@ pub(crate) struct Globals {
     pub(crate) from_methods: Vec<FuncId>,
     /// Instances asked for while resolving types and checking calls, to be allocated before the next pass.
     pub(crate) requests: RefCell<Vec<Request>>,
+    /// Every module of the embedded `std` package, where the compiler finds the iterator protocol's names.
+    pub(crate) std_modules: Vec<usize>,
+    /// The `std.Iterator<T>` and `std.Iterable<T>` interfaces, when the standard library declares them.
+    pub(crate) iterator_iface: Option<usize>,
+    pub(crate) iterable_iface: Option<usize>,
+    /// The generic method template each registered generic method stands for.
+    pub(crate) method_templates: HashMap<FuncId, crate::generics::GenericMethod>,
+    /// The instance of each generic method for its method-level type arguments.
+    pub(crate) method_instances: HashMap<(usize, Vec<Ty>), FuncId>,
+    /// The lazily created default-method templates of interface methods for built-in receiver types.
+    pub(crate) builtin_method_templates: HashMap<(usize, usize, Ty, Vec<Ty>), crate::generics::GenericMethod>,
 }
 
 pub(crate) fn adt_key(ty: &Ty) -> Option<(bool, usize)> {
@@ -196,6 +207,18 @@ impl Globals {
             return None;
         }
         self.iface_name(module, name)
+    }
+
+    /// The generic function behind an eager `List` method (`xs.map(f)`), looked up in the standard library.
+    pub(crate) fn eager_list_fn(&self, name: &str) -> Option<usize> {
+        if !matches!(name, "map" | "filter" | "fold" | "any" | "all" | "find") {
+            return None;
+        }
+        let name = format!("__list_{name}");
+        self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
+            Global::Generic(g) => Some(g),
+            _ => None,
+        })
     }
 
     /// The first package-private struct or enum a type mentions, for the public-signature rule (E0150).

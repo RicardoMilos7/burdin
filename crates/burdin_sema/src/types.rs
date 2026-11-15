@@ -289,7 +289,7 @@ impl Globals {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
             // Text compares by value; `String` and `str` compare byte for byte.
             Ty::Str | Ty::String => true,
-            Ty::Param(name) => self.bound_in_env(name, crate::generics::Bound::Eq, env),
+            Ty::Param(name) => self.bound_in_env(name, &crate::generics::Bound::Eq, env),
             Ty::Option(t) => self.has_eq_in(t, env),
             Ty::Range(t, _) => self.has_eq_in(t, env),
             Ty::Result(t, e) => self.has_eq_in(t, env) && self.has_eq_in(e, env),
@@ -309,7 +309,12 @@ impl Globals {
             | Ty::List(_)
             | Ty::Map(..)
             | Ty::Chars
-            | Ty::Fn { .. } => false,
+            | Ty::Fn { .. }
+            | Ty::ListIntoIter(_)
+            | Ty::ArrayIntoIter(..)
+            | Ty::MapIter(..)
+            | Ty::MapIntoIter(..)
+            | Ty::RangeIter(..) => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,
         }
     }

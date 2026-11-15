@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// `Iterable` promises `iter`; a `for` loop over the type needs it.
+struct S {
+    n: i32
+}
+
+S: Iterable<i32> {}
+
+fn main() {
+    for x in (S { n: 1 }) {} //~ E0141
+}

@@ -96,12 +96,22 @@ struct List<T> {
     fn clear(mut self)
     fn contains(self, value: T): bool // needs == on T
     fn sort(mut self)                 // ascending; needs < on T
+    fn iter(self): [T]                // borrows: `T` if Copy, else `&T`
+    fn into_iter(own self): ListIntoIter<T>   // consumes the list
+    fn map<U, F: FnMut(&T): U>(self, f: F): List<U>
+    fn filter<F: FnMut(&T): bool>(self, f: F): List<T>   // needs Clone on T
+    fn fold<A, F: FnMut(A, &T): A>(self, init: A, f: F): A
+    fn any<F: FnMut(&T): bool>(self, f: F): bool
+    fn all<F: FnMut(&T): bool>(self, f: F): bool
+    fn find<F: FnMut(&T): bool>(self, f: F): Option<T>   // needs Clone on T
 }
 ```
 
 Indexing `xs[i]` is a place: it reads or writes one element, takes a `usize`, and panics when out of bounds.
 `for x in xs` borrows the list for the loop and yields read-only element places (`memory-rules.md`, IT). `T` must be
-storable, so `List<str>` and `List<&T>` are rejected (E0120).
+storable, so `List<str>` and `List<&T>` are rejected (E0120). The last six methods are the eager iteration helpers:
+they borrow the list, hand the closure a view of each element, and return owned results (`iterators.md`, IT10);
+`.any` is resolved to the `std` function named `__list_any` and spelled with the reserved word.
 
 ## `Map<K, V>`
 
@@ -114,6 +124,8 @@ struct Map<K, V> {
     fn contains_key(self, key: K): bool
     fn clear(mut self)
     fn len(self): usize
+    fn iter(self): MapIter<K, V>          // yields (&K, &V)
+    fn into_iter(own self): MapIntoIter<K, V>   // consumes the map, yielding (K, V)
 }
 ```
 
@@ -147,7 +159,17 @@ let q: RangeInclusive<i32> = 0..=4
 Both are built-in first-class types. `a..b` builds the exclusive form and `a..=b` the inclusive one; the endpoints
 must be integers, with the type coming from context or defaulting to `i32`. A range is `Copy`, `Clone`, `Eq`,
 `Ord`, and `Hash`, may be stored in a field or collection, and is iterable by `for i in r` (which evaluates `r`
-once). There are no other range members in stage 0.
+once). `r.iter()` and `r.into_iter()` give a `RangeIter<T>` that yields the endpoints in order; the inclusive form
+stops after the upper endpoint without computing `upper + 1`, so it does not overflow (`iterators.md`, IT11).
+
+## Iteration
+
+`std` declares `Iterator<T>` (`next`, plus the default methods `map`, `filter`, `take`, `skip`, `fold`, `count`,
+`any_item`, `all`, `find`, and `to_list`) and the marker `Iterable<T>`. The compiler implements both for arrays,
+slices, `List`, `Map`, `Chars`, and ranges, and adds `sum` for iterators of integers; `std` declares the adapter
+types `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter`. A program implements the interfaces to make its own type
+work with `for` and the adapters. The rules, the item types, and the second-class restrictions are in
+[`iterators.md`](iterators.md).
 
 ## `Option<T>` and `Result<T, E>`
 
@@ -267,6 +289,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
+| Iteration | `m13_iterators/*` (`iterators.md`) |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run` |

@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A chain borrows its source for as long as it is used, so the source cannot be written while the chain
+// is still live.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let mut it = xs.iter()
+    let first = it.next()
+    xs.push(2) //~ E0111
+    let second = it.next()
+}

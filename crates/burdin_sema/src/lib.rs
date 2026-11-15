@@ -26,6 +26,7 @@ mod globals;
 mod impls;
 mod imports;
 mod instances;
+mod iterators;
 mod prelude;
 mod resolve;
 mod session;

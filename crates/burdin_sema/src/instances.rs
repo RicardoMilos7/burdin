@@ -5,6 +5,7 @@ use crate::globals::Globals;
 use crate::impls::MethodScope;
 use crate::session::{FnItem, ImplTemplate, Sema};
 use burdin_diag::{Code, Diagnostics, FileId};
+use burdin_syntax::ast;
 use burdin_tir::{self as tir, AdtRef, Ty};
 use std::rc::Rc;
 
@@ -66,7 +67,7 @@ impl<'t> Sema<'t> {
             let met = symbolic
                 || imp.wheres.iter().all(|(n, bounds)| {
                     let arg = isubst.iter().find(|(m, _)| m == n).map(|(_, t)| t);
-                    arg.is_none_or(|arg| bounds.iter().all(|b| self.globals.satisfies_with(arg, *b, &[], &isubst)))
+                    arg.is_none_or(|arg| bounds.iter().all(|b| self.globals.satisfies_with(arg, b, &[], &isubst)))
                 });
             if !met {
                 continue;
@@ -74,8 +75,12 @@ impl<'t> Sema<'t> {
             let mut env: Vec<(String, Vec<Bound>)> =
                 imp.params.iter().cloned().zip(adt_bounds.iter().cloned()).collect();
             env.extend(imp.wheres.iter().cloned());
+            let iface = imp.iface.map(|i| {
+                let args: Vec<Ty> = imp.iface_args.iter().map(|a| self.globals.subst_ty(a, &isubst)).collect();
+                (i, args)
+            });
             let scope = MethodScope { subst: &isubst, bounds: &env, symbolic, check_body: !symbolic || identity };
-            self.register_methods(imp.decl, imp.module, imp.iface, &ty, scope, diags);
+            self.register_methods(imp.decl, imp.module, iface, &ty, scope, diags);
         }
     }
 
@@ -96,6 +101,107 @@ impl<'t> Sema<'t> {
         };
         let id = self.push_fn(item);
         self.globals.fn_instances.insert((template, args), id);
+    }
+
+    /// Makes the function for one instantiation of a generic method.
+    fn allocate_method(&mut self, template: usize, args: Vec<Ty>) {
+        let t = &self.tpl.methods[template];
+        let mut subst: Vec<(String, Ty)> = t.params.iter().cloned().zip(args.iter().cloned()).collect();
+        subst.extend(t.base_subst.iter().cloned());
+        let mut bounds: Vec<(String, Vec<Bound>)> = Vec::new();
+        for (p, bs) in t.params.iter().zip(&t.bounds) {
+            bounds.push((p.clone(), bs.clone()));
+        }
+        bounds.extend(t.base_bounds.iter().cloned());
+        let symbolic = args.iter().any(|a| self.globals.ty_has_param(a))
+            || t.base_subst.iter().any(|(_, ty)| self.globals.ty_has_param(ty))
+            || t.self_ty.as_ref().is_some_and(|ty| self.globals.ty_has_param(ty));
+        let name = Globals::instance_name(&t.name, &args);
+        let item = FnItem {
+            decl: t.decl,
+            name,
+            module: t.module,
+            self_ty: t.self_ty.clone(),
+            subst,
+            bounds,
+            symbolic,
+            check_body: !symbolic,
+            is_unsafe: t.is_unsafe,
+            is_exported: false,
+        };
+        let id = self.push_fn(item);
+        self.globals.method_instances.insert((template, args), id);
+    }
+
+    /// Creates the template and identity function of an interface default method for a built-in receiver type
+    /// (a slice, `Chars`, a list iterator, ...), which has no impl block to register it.
+    fn allocate_builtin_template(
+        &mut self,
+        iface: usize,
+        method: usize,
+        self_ty: Ty,
+        iface_args: Vec<Ty>,
+        diags: &mut Diagnostics,
+    ) {
+        let info = &self.globals.interfaces[iface];
+        let name = info.name.clone();
+        let module = info.module;
+        let params = info.params.clone();
+        let iface_bounds = info.bounds.clone();
+        let decl: &'t ast::FnDecl = &self.tpl.ifaces[iface].methods[method].decl;
+        let base_subst: Vec<(String, Ty)> = params.iter().cloned().zip(iface_args.iter().cloned()).collect();
+        let mut base_bounds: Vec<(String, Vec<Bound>)> =
+            vec![("Self".to_string(), vec![Bound::User(iface, iface_args.clone())])];
+        for (p, bs) in params.iter().zip(&iface_bounds) {
+            base_bounds.push((p.clone(), bs.iter().map(|b| self.globals.subst_bound(b, &base_subst)).collect()));
+        }
+        let method_params: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        let method_bounds = crate::declare::method_bounds(decl, &base_subst, &self.globals, module, diags);
+        let mut subst: Vec<(String, Ty)> = Vec::new();
+        for p in &method_params {
+            subst.push((p.clone(), crate::generics::param_ty(p)));
+        }
+        subst.extend(base_subst.iter().cloned());
+        let mut bounds: Vec<(String, Vec<Bound>)> = Vec::new();
+        for (p, bs) in method_params.iter().zip(&method_bounds) {
+            bounds.push((p.clone(), bs.clone()));
+        }
+        bounds.extend(base_bounds.iter().cloned());
+        let item = FnItem {
+            decl,
+            name: format!("{name}.{}", decl.name.name),
+            module,
+            self_ty: Some(self_ty.clone()),
+            subst,
+            bounds,
+            symbolic: true,
+            check_body: true,
+            is_unsafe: decl.is_unsafe,
+            is_exported: false,
+        };
+        let identity = self.push_fn(item);
+        let template = crate::session::MethodTemplate {
+            decl,
+            name: format!("{self_ty}.{}", decl.name.name),
+            module,
+            self_ty: Some(self_ty.clone()),
+            base_subst,
+            base_bounds,
+            params: method_params,
+            bounds: method_bounds,
+            is_unsafe: decl.is_unsafe,
+        };
+        let index = self.tpl.methods.len();
+        self.tpl.methods.push(template);
+        self.globals.builtin_method_templates.insert(
+            (iface, method, self_ty, iface_args),
+            crate::generics::GenericMethod {
+                template: index,
+                identity,
+                params: self.tpl.methods[index].params.clone(),
+                bounds: self.tpl.methods[index].bounds.clone(),
+            },
+        );
     }
 
     /// Allocates what the last pass asked for. Returns whether anything was allocated, which means the pass has to
@@ -122,6 +228,19 @@ impl<'t> Sema<'t> {
                 Request::Func(template, args) => {
                     if !self.globals.fn_instances.contains_key(&(template, args.clone())) {
                         self.allocate_fn(template, args);
+                        any = true;
+                    }
+                }
+                Request::Method(template, args) => {
+                    if !self.globals.method_instances.contains_key(&(template, args.clone())) {
+                        self.allocate_method(template, args);
+                        any = true;
+                    }
+                }
+                Request::BuiltinMethodTemplate { iface, method, self_ty, iface_args } => {
+                    let key = (iface, method, self_ty.clone(), iface_args.clone());
+                    if !self.globals.builtin_method_templates.contains_key(&key) {
+                        self.allocate_builtin_template(iface, method, self_ty, iface_args, diags);
                         any = true;
                     }
                 }

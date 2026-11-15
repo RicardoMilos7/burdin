@@ -1,0 +1,35 @@
+//@ run
+//> 1
+//> 2
+//> 3
+//> 20
+//> 30
+
+// `into_iter()` takes the list and yields its elements by value; the iterator owns the buffer.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    let mut it = xs.into_iter()
+    loop {
+        match it.next() {
+            Some(x) => println(x.to_string()),
+            None => break,
+        }
+    }
+    let mut ys = List<i32>.new()
+    ys.push(20)
+    ys.push(30)
+    let mut it2 = ys.into_iter()
+    let a = it2.next()
+    let b = it2.next()
+    match a {
+        Some(x) => println(x.to_string()),
+        None => println("none"),
+    }
+    match b {
+        Some(x) => println(x.to_string()),
+        None => println("none"),
+    }
+}

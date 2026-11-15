@@ -502,6 +502,10 @@ impl FnCx<'_> {
         {
             self.check_member_access(&recv.ty, key, name);
             self.check_unsafe_call(f, &name.name, name.span);
+            // A method with its own type parameters is instantiated for the arguments this call infers.
+            if let Some(info) = self.globals.method_templates.get(&f).cloned() {
+                return self.generic_method_call(info, recv, &name.name, args, span);
+            }
             let sig = &self.globals.sigs[f.0];
             if !sig.has_self {
                 self.diags.error(
@@ -538,6 +542,10 @@ impl FnCx<'_> {
         if let Some((index, field_ty)) = self.closure_field(&recv, &name.name) {
             let field = mk(tir::ExprKind::Field(Box::new(recv), index), field_ty, name.span);
             return self.closure_call(field, args, span);
+        }
+        // The iteration protocol: `next`, `sum`, the eager `List` helpers, and the `Iterator` default methods.
+        if let Some(e) = self.iterator_method(recv.clone(), name, args, span) {
+            return e;
         }
         let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{}`", name.name, recv.ty));
@@ -599,11 +607,12 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Method(m, checked), ret, span)
     }
 
-    /// A struct field of closure type named `name`, for calling `holder.f(x)`.
+    /// A struct field of closure type named `name`, for calling `holder.f(x)`. A field whose type is a type
+    /// parameter with an `Fn`-family bound is callable the same way (the adapters in `std` store one).
     fn closure_field(&self, recv: &tir::Expr, name: &str) -> Option<(usize, Ty)> {
         let Ty::Struct(a) = &recv.ty else { return None };
         let (index, field) = self.globals.structs[a.id].fields.iter().enumerate().find(|(_, f)| f.name == name)?;
-        matches!(field.ty, Ty::Fn { .. }).then(|| (index, field.ty.clone()))
+        self.globals.fn_call_sig(&field.ty, &self.bounds).map(|_| (index, field.ty.clone()))
     }
 
     /// A function or constant found through a module path: `math.add(...)`, `sh.area(...)`.

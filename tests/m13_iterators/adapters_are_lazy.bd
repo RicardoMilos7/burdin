@@ -1,0 +1,25 @@
+//@ run
+//> m
+//> m
+//> 3
+//> c
+//> c
+//> true
+
+// A chain only pulls what the consumer asks for: `take(2)` runs `map`'s closure twice, and `any`
+// stops at the first item its closure accepts.
+fn main() {
+    let xs = [1, 2, 3, 4]
+
+    let total = xs.iter().map(|x: i32|: i32 {
+        println("m")
+        x
+    }).take(2).sum()
+    println(total.to_string())
+
+    let hit = xs.iter().any(|x: i32|: bool {
+        println("c")
+        x > 1
+    })
+    println(hit.to_string())
+}

@@ -310,6 +310,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_product(&name, &members)
             }
+            Ty::RangeIter(inner, _) => {
+                let members = vec![
+                    ("lo".to_string(), (**inner).clone()),
+                    ("hi".to_string(), (**inner).clone()),
+                    ("done".to_string(), Ty::Bool),
+                ];
+                let name = Self::debug_name(ty);
+                self.debug_product(&name, &members)
+            }
+            Ty::ListIntoIter(_) | Ty::MapIter(..) | Ty::MapIntoIter(..) => {
+                let name = Self::debug_name(ty);
+                self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
+            }
+            Ty::ArrayIntoIter(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Option(inner) => {
                 let members = vec![("is_some".to_string(), Ty::Bool), ("value".to_string(), (**inner).clone())];
                 let name = Self::debug_name(ty);

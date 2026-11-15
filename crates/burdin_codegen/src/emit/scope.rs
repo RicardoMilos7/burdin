@@ -348,15 +348,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// Frees the temporaries of the frames from `depth` up, leaving their slots empty. Temporaries drop in
-    /// reverse creation order (DR5), so its newest temporary goes first.
+    /// reverse creation order (DR5), so its newest temporary goes first. A temporary is dropped only on a path
+    /// that created it: its live flag guards the drop.
     pub(super) fn free_temps_from(&mut self, depth: usize) -> GenResult<()> {
-        let units: Vec<(PointerValue<'ctx>, Ty)> =
+        let units: Vec<(PointerValue<'ctx>, Ty, PointerValue<'ctx>)> =
             self.temps[depth..].iter().rev().flat_map(|frame| frame.iter().rev()).cloned().collect();
-        for (slot, ty) in units {
-            self.drop_value(slot, &ty)?;
-            if let Some(t) = self.llvm_ty(&ty) {
-                self.builder.build_store(slot, undef(t)).map_err(llvm_err)?;
-            }
+        for (slot, ty, live) in units {
+            let Some(t) = self.llvm_ty(&ty) else { continue };
+            let flag = self.builder.build_load(self.cx.bool_type(), live, "").map_err(llvm_err)?.into_int_value();
+            self.if_then(flag, "temp.drop", |cg| {
+                cg.drop_value(slot, &ty)?;
+                cg.builder.build_store(slot, undef(t)).map_err(llvm_err)?;
+                cg.builder.build_store(live, cg.cx.bool_type().const_zero()).map_err(llvm_err)?;
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -370,14 +375,24 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let slot = self.alloca(t, "tmp")?;
         let v = self.need(v, ty);
         self.builder.build_store(slot, v).map_err(llvm_err)?;
-        self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone()));
+        let live = self.mark_temp_live()?;
+        self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone(), live));
         Ok(())
     }
 
     /// Records the value at `slot` as a temporary of the current statement.
     pub(super) fn add_temp_slot(&mut self, slot: PointerValue<'ctx>, ty: &Ty) {
-        if self.needs_drop(ty) {
-            self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone()));
+        if !self.needs_drop(ty) {
+            return;
         }
+        let live = self.mark_temp_live().expect("allocating a drop flag cannot fail");
+        self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone(), live));
+    }
+
+    /// The live flag of a new temporary, set on the current path.
+    fn mark_temp_live(&mut self) -> GenResult<PointerValue<'ctx>> {
+        let live = self.alloca(self.cx.bool_type().into(), "tmp.live")?;
+        self.builder.build_store(live, self.cx.bool_type().const_int(1, false)).map_err(llvm_err)?;
+        Ok(live)
     }
 }

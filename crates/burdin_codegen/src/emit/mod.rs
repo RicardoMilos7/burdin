@@ -11,6 +11,7 @@ mod debug;
 mod expr;
 mod function;
 mod glue;
+mod iterate;
 mod locals;
 mod ops;
 mod panics;
@@ -64,7 +65,7 @@ struct SavedContext<'ctx, 'a> {
     locals: &'a [tir::Local],
     ret: &'a Ty,
     scopes: Vec<Vec<tir::LocalId>>,
-    temps: Vec<Vec<(PointerValue<'ctx>, Ty)>>,
+    temps: Vec<Vec<(PointerValue<'ctx>, Ty, PointerValue<'ctx>)>>,
     flags: Vec<(tir::MovedPlace, PointerValue<'ctx>)>,
     loops: Vec<LoopTargets<'ctx>>,
     debug_scope: Option<inkwell::debug_info::DISubprogram<'ctx>>,
@@ -131,8 +132,9 @@ pub(crate) struct Codegen<'ctx, 'a> {
     /// The drop flags of the places `tir::Function::moved` lists, innermost path last.
     flags: Vec<(tir::MovedPlace, PointerValue<'ctx>)>,
     /// One frame per statement being generated: values to drop at the end of the statement. Each slot holds a
-    /// value of its type; the slot is zeroed once it is dropped, so dropping it twice is harmless.
-    temps: Vec<Vec<(PointerValue<'ctx>, Ty)>>,
+    /// value of its type and a live flag; the flag is set where the temporary is created and cleared once it is
+    /// dropped, so a temporary created on only one branch of a `match` is not dropped on the other (DR5).
+    temps: Vec<Vec<(PointerValue<'ctx>, Ty, PointerValue<'ctx>)>>,
     /// The target is Windows (the runtime uses the Windows CRT).
     windows: bool,
     /// `-g`: the module's debug metadata, or `None`.
