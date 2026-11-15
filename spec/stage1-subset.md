@@ -6,7 +6,11 @@ rest of the core language, then stops. It is a plan, not a commitment: each mile
 and the plan changes when a decision changes.
 
 Stage 1 does not weaken or replace anything stage 0 built. The memory model, the parameter conventions, second-class
-references and views, drop elaboration, monomorphization, and the diagnostics registry stay as they are. New features
+references and views, drop elaboration, monomorphization, and the diagnostics registry stay as they are. The 16
+decisions settled for stage 0 (issue #21: call-site markers, the `String`-to-`str` conversion, copyable views,
+static literals, pattern bindings and `*h`, `for` borrowing, the standard-library surface, unit `main`, panic
+output, binary-safe file I/O, `Drop` syntax, literals and division, declaration layout, temporary drops, derives,
+and exclusivity places) are the baseline; a stage 1 feature must extend them, not add a parallel rule. New features
 must reuse those rules, not add parallel ones.
 
 ## Inclusion rule
@@ -123,7 +127,9 @@ code; do not invent them inside the implementation.
 4. **Error representation.** How `error enum` lowers (enum with payload fields and a generated message method), how
    `from` is registered (like `Type: From<Source>`), what a trace costs in debug, and the representation of the
    default `Result<T>` (a boxed `Error` behind a pointer, presumably). The `IoError`/`ParseIntError`/`AssertError`
-   unit aliases become real error types here.
+   unit aliases become real error types here. Decided for `main`: `fn main(): Result<T>` in milestone 16 prints the
+   returned error, with its context chain, to stderr and exits with a non-zero status; `Ok` exits 0 and prints
+   nothing. Stage 0 keeps `fn main()` returning unit (issue #32; `stage0-subset.md`).
 
 5. **Allocators.** The syntax for an allocator parameter, how it propagates through `List`/`Map`/`Heap`/`Arena`, what
    `Shared<T>` is (non-atomic `Rc` or atomic `Arc`; `Send` arrives in stage 2), and how the leak-detecting allocator
@@ -195,8 +201,8 @@ slip past stage 1, and a package registry.
 
 ## Working on stage 1
 
-- Read `tests/README.md` first; the format and the assumptions are the same, and a new assumption gets a number
-  there.
+- Read `tests/README.md` first; the format is the same, and a new language decision gets a numbered entry there
+  before it gets a test.
 - One milestone at a time, tests first. A milestone is done when its folder and every earlier folder pass in debug
   and release. Extend the CI milestone list in `.github/workflows/ci.yml` only when a milestone is finished.
 - Every error gets a code in the registry in `tests/README.md` before the code that reports it. Do not use E9000 for

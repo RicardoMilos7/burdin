@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// The conversion does not apply to a `let` annotation.
+
+fn main() {
+    let s = String.from("abc")
+    let t: str = s //~ E0003
+    println(t)
+}

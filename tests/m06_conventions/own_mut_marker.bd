@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// An `own` parameter is passed plainly; a `mut` marker is E0115.
+
+struct P {
+    id: i32
+}
+
+fn eat(own p: P): i32 { p.id }
+
+fn main() {
+    let p = P { id: 1 }
+    println(eat(mut p).to_string()) //~ E0115
+}

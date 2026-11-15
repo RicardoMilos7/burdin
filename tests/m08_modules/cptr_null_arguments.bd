@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// `CPtr.null()` takes no arguments.
+
+fn main() {
+    let p: CPtr<CChar> = CPtr.null(1) //~ E0004
+}

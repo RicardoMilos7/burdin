@@ -1,0 +1,8 @@
+//@ run-abort
+//@ stderr: unreachable
+//> before
+
+fn main() {
+    println("before")
+    unreachable()
+}

@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// The standard-library surface is fixed: unknown names are E0002 and wrong arities E0004.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.get(0) //~ E0002
+    let s = String.from("abc")
+    s.substring(1) //~ E0002
+    let t = String.from() //~ E0004
+    let n = read_to_string() //~ E0004
+}

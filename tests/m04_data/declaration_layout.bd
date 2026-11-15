@@ -1,0 +1,35 @@
+//@ run
+//> 3
+//> b
+//> 7
+
+// Declaration layout: fields and variants may be separated by commas or line breaks.
+// Items need no separators, and struct literals use commas.
+struct P { x: i32, y: i32 }
+
+enum E { A, B }
+
+struct Q
+{
+    x: i32
+    y: i32
+}
+
+fn add(a: i32, b: i32): i32 { a + b }
+
+fn main() {
+    let p = P { x: 1, y: 2 }
+    println(add(p.x, p.y).to_string())
+
+    let e = E.B
+    match e {
+        E.A => println("a")
+        E.B => println("b")
+    }
+
+    let q = Q {
+        x: 3,
+        y: 4,
+    }
+    println(add(q.x, q.y).to_string())
+}

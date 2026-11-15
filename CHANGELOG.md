@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- Settle the 16 assumptions in `tests/README.md` (issue #21, sub-issues #22-#40). The decisions are now rules in
+  `spec/grammar.md`, `spec/memory-rules.md`, two new spec files (`spec/stdlib.md` for the standard-library surface
+  and `spec/derives.md` for the exact derived members and FNV-1a hash values), and `spec/stage0-subset.md` /
+  `spec/stage1-subset.md`; `tests/README.md` links each decision to its section. 40 conformance tests witness them.
+  Four implementation gaps closed with the decisions: `Drop` rejects a read-only or `own` receiver (E0003),
+  `CPtr.null` rejects arguments (E0004), the ordering operators work on `str` and `String`, and an invalid
+  `extern "C"` type or convention is E0162.
 - Retire the claude.ai copies of the design and stage 0 documents (issue #44): the repository files are canonical and
   say so, the external copies are recorded as historical, and the design document marks its snippets as illustrative.
 - The driver contract is documented in a new root `README.md`: `burdin build`, `run`, and `test`, the diagnostic

@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: boom
+//> flushed line
+
+// Panics flush stdout before they abort, so a line printed first is not lost.
+
+fn main() {
+    println("flushed line")
+    panic("boom")
+}

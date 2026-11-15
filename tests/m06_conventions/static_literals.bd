@@ -1,0 +1,41 @@
+//@ run
+//> yes
+//> no
+//> hi
+//> greeting
+//> zero
+//> other
+
+// String literals are static views, in any returned expression, and so are `str`
+// constants whose value is a literal.
+
+const GREETING: str = "greeting"
+const ALSO: str = GREETING
+
+fn pick(flag: bool): str {
+    if flag { "yes" } else { "no" }
+}
+
+fn block(): str {
+    { "hi" }
+}
+
+fn constant(): str {
+    ALSO
+}
+
+fn sign(n: i32): str {
+    match n {
+        0 => "zero"
+        _ => "other"
+    }
+}
+
+fn main() {
+    println(pick(true))
+    println(pick(false))
+    println(block())
+    println(constant())
+    println(sign(0))
+    println(sign(1))
+}

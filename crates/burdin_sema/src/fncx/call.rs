@@ -400,7 +400,7 @@ impl FnCx<'_> {
             && self.lookup("CPtr").is_none()
             && self.globals.value(self.module, "CPtr").is_none()
         {
-            return self.cptr_null(expect, span);
+            return self.cptr_null(args, expect, span);
         }
         if let Some(path) = self.type_path(recv) {
             return match path {
@@ -573,7 +573,11 @@ impl FnCx<'_> {
     }
 
     /// `CPtr.null()`.
-    fn cptr_null(&mut self, expect: Option<&Ty>, span: Span) -> tir::Expr {
+    fn cptr_null(&mut self, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        if !args.is_empty() {
+            self.diags.error(Code::ARG_COUNT, span, "`CPtr.null` takes no arguments");
+            return self.args_then_error(args, span);
+        }
         match expect {
             Some(Ty::CPtr(inner)) => {
                 mk(tir::ExprKind::Builtin(Builtin::CPtrNull, Vec::new()), Ty::CPtr(inner.clone()), span)

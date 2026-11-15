@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// A binding from a borrowed scrutinee is a read-only place.
+
+enum Entry {
+    Named(String)
+}
+
+fn touch(e: Entry) {
+    match e {
+        Entry.Named(name) => {
+            name = String.from("x") //~ E0005
+        },
+    }
+}
+
+fn main() {
+    touch(Entry.Named(String.from("y")))
+}

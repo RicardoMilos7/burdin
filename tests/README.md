@@ -133,61 +133,80 @@ The registry the tests use. The compiler adopts these numbers (or the tests are 
 | E0150 | Use of a `priv` item from another package |
 | E0160 | `?` used in a function whose return type is not `Option` or `Result` |
 | E0161 | Operation that requires `unsafe` used outside `unsafe` |
+| E0162 | Type or convention not allowed in an `extern "C"` declaration (parameters and results are integers, floats, and `CPtr`) |
 
-## Assumptions the tests make
+## Decisions the tests encode
 
-The design document leaves these open. The tests use the choices below, so confirm or change them
-(a search and replace on the tests is cheap).
+These were the 16 open assumptions of the original suite. Issue #21 settled them in sub-issues #22-#40: each is now a
+language decision recorded in `spec/`, and the tests below (and the decision tests in the next section) are its
+executable form. The design document leaves them open; where a rule says "deviation", stage 0 deliberately differs.
 
-1. **Call sites.** A `mut` parameter is passed with a `mut` marker (`push(mut list, 1)`). An `own` parameter is passed
-   plainly and moves the value. A read-only parameter is passed plainly and borrows.
-2. **One implicit coercion.** A `String` passed where `str` is expected is borrowed as a `str`. All other conversions are explicit.
-3. **Views are copyable.** `str`, `[T]`, and `&T` can be used many times. `&mut T` cannot be copied.
-4. **String literals are static views.** A function may return a literal as `str` whatever its parameters are. Any other returned
-   view or reference must derive from exactly one parameter.
-5. **Pattern bindings** from a borrowed scrutinee are read-only places usable like plain values (no explicit `&`).
-   `*h` dereferences a `Heap<T>`; on an owned `Heap<T>`, `*h` moves the value out and frees the allocation.
-6. **Loops.** `for x in list` (and arrays and slices) borrows the collection, so it is still usable afterwards, and gives
-   a read-only element place usable like a value. Maps use `for (k, v) in map` (also a borrow). `for c in s.chars()`.
-   Ranges are `a..b` and `a..=b`.
-7. **Library names and signatures.** `n.to_string()` (integers, `bool`, `char`, `str`), `i32.parse(s)`,
-   `wrapping_add/sub/mul`, `checked_add/sub/mul` (returning `Option<T>`), `min`, `max`, `abs`; `String.new()`,
-   `String.from(str)`, `s.push_str(str)`, `s.push(char)`, `s.len(): usize` (bytes), `s.starts_with(str)`,
-   `s.find(char): Option<usize>`, `s.find_str(str): Option<usize>`, slicing `s[a..b]`, `.clone()`, `.as_str()`,
-   `s.chars()`, and the comparison operators (so `List<String>.sort()` works); `List<T>.new`, `push(v)`,
-   `pop(): Option<T>`, `len(): usize`, `last(): Option<&T>`, `insert(i, v)`, `remove(i): T`, `clear()`,
-   `contains(v): bool`, `sort()`; `Map<K, V>.new`, `insert(k, v)`, `get(k): Option<&V>`, `remove(k): Option<V>`,
-   `contains_key(k): bool`, `len(): usize`; `Heap.new(v)`; `mem.swap(mut a, mut b)`,
-   `mem.replace(mut place, value): T`; `read_to_string(path): Result<String, IoError>`,
-   `write_file(path, text): Result<(), IoError>`; `process.exit(code)`, `process.run(command)`;
-   `env.args(): List<String>` (program name first); `panic(msg)`, `assert(cond)`, `assert_eq(a, b)`;
-   `Option`/`Result` `unwrap()`, `expect(msg)`, `orelse`, and `is_some`/`is_none` (`Option`) or `is_ok`/`is_err`
-   (`Result`); `CString.from(str).as_ptr()`, `CPtr.null()`, `CStr.to_string(ptr: CPtr<CChar>): String` (`CStr` is
-   an alias for `CPtr<CChar>`). The C bridge types are `CPtr<T>`, `CChar` (a signed byte), `CSize` (`size_t`),
-   `CVoid` (only behind a pointer), and `CString`; `extern "C"` parameters and results are limited to integers,
-   floats, and `CPtr`.
-8. **`main`** returns unit in stage 0 (the default-error `Result<T>` is stage 1). Fallible APIs use explicit error types.
-9. **Panics** flush stdout before aborting, and print the message, the file name, and the line to stderr.
-10. **File I/O is binary-safe** on Windows (no newline translation).
-11. **`Drop`** is `Type: Drop { fn drop(mut self) { ... } }`.
-12. **Integer literals** have no suffixes. `/` and `%` truncate toward zero.
-13. **Syntax shape.** Struct fields and enum variants are one per line. Struct literals use commas. Items need no separators.
-14. **Temporaries** are dropped at the end of the statement, and reading a field of a temporary does not extend its life.
-15. **Derives** provide `hash(self): u64` for `Hash` and a static `default()` for `Default`.
+1. **Call sites.** A named `mut` parameter is passed with a `mut` marker (`push(mut list, 1)`); a missing marker is
+   E0114 and a marker on a non-`mut` (including `own`) parameter is E0115. An `own` parameter is passed plainly and
+   moves the value. A read-only parameter is passed plainly and borrows. A `mut self` receiver takes no marker (a
+   marker there is a syntax error, E0001). `spec/grammar.md` 8.4, `spec/memory-rules.md` CV2-CV4.
+2. **One implicit coercion.** A `String` passed where `str` is expected is borrowed as a `str` and stays usable.
+   This is the only implicit conversion, and it applies only to argument-like positions (call arguments, `Some`/`Ok`/
+   `Err` payloads, `assert_eq`, `mem.replace`); a `let`, assignment, return, array or tuple element, or comparison
+   does not convert. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
+   `spec/memory-rules.md` IC1.
+3. **Views are copyable.** `str`, `[T]`, `&T`, and `CPtr<T>` can be used many times without a derive. `&mut T` cannot
+   be copied: assigning it moves it (E0100), while passing it to `&mut` or dereferencing reborrows it.
+   `spec/memory-rules.md` RF4.
+4. **String literals are static views.** A function may return a literal as `str` whatever its parameters are, in a
+   tail expression, `return`, block, `if` branch, or `match` arm. A `str` constant whose value is a literal is static
+   too. Any other returned view or reference must derive from exactly one parameter.
+   `spec/memory-rules.md` RT1-RT4.
+5. **Pattern bindings** from a borrowed scrutinee are read-only places usable like plain values (no explicit `&`):
+   assigning to one is E0005 and moving out of one is E0101. `*h` dereferences a `Heap<T>`; on an owned `Heap<T>`,
+   `*h` moves the whole pointee out and frees the allocation. Moving a field through `*h` is not supported in stage 0
+   (E9000; stage 1). `spec/memory-rules.md` MV6, MV8.
+6. **Loops.** `for x in list` (and arrays and slices) borrows the collection for the whole loop, so it is still usable
+   afterwards, and gives a read-only element place usable like a value. Maps use `for (k, v) in map` (also a borrow).
+   `for c in s.chars()`. Mutating the collection in the body is E0111. Ranges are `a..b` and `a..=b`, and in stage 0
+   they are only iterable. `spec/memory-rules.md` IT1-IT3.
+7. **Library names and signatures.** The surface is written down with signatures in `spec/stdlib.md`: numeric
+   methods, `String` and `str` methods and slicing, `List`, `Map`, `Heap`, `Option`/`Result`, file, process, and
+   environment functions, the C bridge names, and `unreachable()`. Unknown names are E0002 and wrong arities E0004.
+8. **`main`** takes no parameters and returns unit in stage 0; either violation is E0003. Stage 1's
+   `fn main(): Result<...>` (m16) prints the returned error chain to stderr and exits non-zero.
+   `spec/stage0-subset.md`, `spec/stage1-subset.md`.
+9. **Panics** print the message, file, line, and column to stderr, flush stdout first, and abort with a non-zero
+   status; no drops run. `spec/memory-rules.md` DR10.
+10. **File I/O is binary-safe** on Windows (no newline translation) and treats text as UTF-8 bytes without
+    normalization. `spec/stdlib.md`.
+11. **`Drop`** is `Type: Drop { fn drop(mut self) { ... } }` and nothing else: `mut self` and a unit return are
+    required (E0003), and `Drop` cannot be derived (E0002) or combined with `Copy` (E0130).
+    `spec/grammar.md`, `spec/memory-rules.md` DR8.
+12. **Integer literals** have no suffixes (E0001 if one is written). Their type comes from context, else the other
+    operand of a binary operator, else `i32` (`f64` for floats). `/` and `%` truncate toward zero.
+    `spec/grammar.md`, `spec/stage0-subset.md`.
+13. **Syntax shape.** Struct fields and enum variants may be separated by a comma or a line break; the tests and the
+    recommended style put one per line, and the parser accepts both. Struct literals use commas. Items need no
+    separators. `spec/grammar.md` "Declaration layout".
+14. **Temporaries** are dropped in reverse creation order at the end of the statement that created them, and reading a
+    field of a temporary does not extend its life. A block's tail-expression temporaries drop before its locals.
+    `spec/memory-rules.md` DR5.
+15. **Derives** provide `hash(self): u64` (FNV-1a, exact values pinned), a static `default()` for structs, and the
+    documented `Eq`/`Ord` field and variant orders. `spec/derives.md`.
 16. **Exclusivity works on places.** A place is a local or parameter followed by struct fields (`p.a`, `o.inner.b`).
     Different places do not overlap, so `swap_vals(mut p.a, mut p.b)` is allowed. A place never continues through
-    indexing, a `Heap` dereference, or a method call, so `xs[0].a` and `xs[1].a` are one place and are rejected (E0110),
-    as is a whole value together with one of its fields. (Decided.)
+    indexing, a `Heap` dereference, a reference dereference, or a method call, so `xs[0].a` and `xs[1].a` are one
+    place and are rejected (E0110), as is a whole value together with one of its fields.
+    `spec/memory-rules.md` EX1-EX3.
 
 ## Review of the expected outputs
 
 The expected outputs and diagnostics were written by hand before the compiler existed, so a passing test only
 proves that the implementation matches the expectation. Issue #20 reviewed every test against
 [the design](../Burdin%20Language%20Design.md), [the grammar](../spec/grammar.md),
-[the memory rules](../spec/memory-rules.md), [the stage 0 subset](../spec/stage0-subset.md), and the assumptions
+[the memory rules](../spec/memory-rules.md), [the stage 0 subset](../spec/stage0-subset.md), and the decisions
 above on 2026-11-14. Each milestone folder was read in full. No expectation was found to encode an accidental
 behavior, so no test was changed; the behavior the tests pin where the design is silent, defers a feature, or
 deliberately differs is recorded below.
+
+The counts in the table are the 134 tests issue #20 reviewed. Issue #21 then added the decision tests in the next
+section; the suite is larger than the table.
 
 | Folder | Tests | What was reviewed |
 | --- | --- | --- |
@@ -204,13 +223,45 @@ deliberately differs is recorded below.
 | `m11_llvm` | 1 | the LLVM C API through `extern "C"` and `CPtr` |
 | **Total** | **134** | |
 
+### Decision tests (issue #21)
+
+The tests added when the 16 decisions were settled. Every decision also links to the `spec/` section that states the
+rule; the existing tests listed in that section remain the main coverage, and these fill the gaps.
+
+| Decision | Tests added |
+| --- | --- |
+| 1. Call-site markers (#22) | `m06_conventions/call_site_markers`, `receiver_mut_marker`, `own_mut_marker` |
+| 2. One implicit conversion (#23) | `m06_conventions/string_str_conversion`, `let_string_to_str`, `mut_ref_to_shared_ref`, `ref_string_to_str`, `string_to_slice` |
+| 3. Views are copyable (#24) | `m06_conventions/views_are_copy`, `mut_ref_move_then_use` |
+| 4. Static literals (#25) | `m06_conventions/static_literals`, `const_is_not_a_place` |
+| 5. Pattern bindings and `*h` (#26) | `m05_ownership/heap_move_whole_then_field`, `match_borrowed_binding_readonly`, `match_borrowed_binding_move` |
+| 6. `for` borrows; ranges (#27) | `m06_conventions/for_borrow_forms`, `range_forms`, `for_mutate_array`, `for_mutate_map`, `for_binding_readonly` |
+| 7a. Numeric and `String` names (#28) | `m09_stdlib/string_order`, `unknown_stdlib_names` |
+| 7b. `List`, `Map`, `Heap` names (#29) | `m09_stdlib/unknown_stdlib_names` (and the existing `list_ops`, `map_ops`) |
+| 7c. File, process, environment names (#30) | `m09_stdlib/file_io_binary`, `unreachable_aborts`, `unknown_stdlib_names` |
+| 7d. C bridge names (#31) | `m08_modules/cptr_null_arguments`, `cstr_roundtrip`, `extern_signature` |
+| 8. `main` returns unit (#32) | `m02_basics/main_returns_value`, `main_takes_parameter` |
+| 9. Panic output and flush (#33) | `m02_basics/panic_reports_location`, `panic_runs_no_drops` |
+| 10. Binary-safe file I/O (#34) | `m09_stdlib/file_io_binary` |
+| 11. `Drop` declaration (#35) | `m05_ownership/drop_signature`, `drop_derive` |
+| 12. Literals and division (#36) | `m02_basics/division_truncates`, `literal_suffix`, `literal_inference` |
+| 13. Declaration layout (#37) | `m04_data/declaration_layout` |
+| 14. Temporary drop timing (#38) | `m05_ownership/drop_block_tail` |
+| 15. Derive outputs (#39) | `m07_generics/derive_values` |
+| 16. Exclusivity places (#40) | the existing `m06_conventions/exclusivity_*` and `disjoint_field_borrows` |
+
+Settling them also fixed four implementation gaps: `Drop` now rejects a read-only or `own` receiver (E0003),
+`CPtr.null` rejects arguments (E0004), `<`/`<=`/`>`/`>=` work on `str` and `String` (they previously crashed in
+code generation; `m09_stdlib/string_order`), and an invalid `extern "C"` type or convention has its own code, E0162
+(`m08_modules/extern_signature`).
+
 ## Intentional choices and deviations
 
 "Design" means [the design document](../Burdin%20Language%20Design.md). A **deviation** is a place where stage 0
 deliberately does something the design does not, or does not yet, require. The other entries are choices the design
 leaves open that the tests now pin. Features that are only deferred have no tests here; the complete list is in
 [the stage 0 subset](../spec/stage0-subset.md). Code quoted below comes from tests that compile and run; the one
-illustrative fragment, the `Drop` declaration with `...`, is marked as such in assumption 11.
+illustrative fragment, the `Drop` declaration with `...`, is marked as such in decision 11.
 
 ### Language and memory
 
@@ -219,28 +270,34 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in a
   writes `fn max_of<T: Ord>(own a: T, own b: T): T` (`m07_generics/generic_functions.bd`). Returning a read-only
   parameter is E0101 (`m06_conventions/move_out_of_readonly_param.bd`; CV1, RT2).
 - **One implicit conversion (deviation).** A `String` passed where `str` is expected is borrowed as a `str`; no other
-  conversion is implicit. The design says "no implicit conversions". Assumption 2;
-  `m06_conventions/str_views.bd`, `m09_stdlib/string_ops.bd`.
-- **Views are copyable without deriving `Copy` (deviation).** `&T`, `str`, and `[T]` are Copy; `&mut T` is not. The
-  design makes copying explicit except for `Copy` types and does not derive `Copy` on these. Assumption 3;
-  `m06_conventions/references_basic.bd`, `str_views.bd`, `slice_views.bd`; RF4.
+  conversion is implicit, and it applies only to argument-like positions. The design says "no implicit conversions".
+  Decision 2; [memory rules](../spec/memory-rules.md) IC1; `m06_conventions/str_views.bd`,
+  `m06_conventions/string_str_conversion.bd`, `m09_stdlib/string_ops.bd`.
+- **Views are copyable without deriving `Copy` (deviation).** `&T`, `str`, `[T]`, and `CPtr<T>` are Copy; `&mut T` is
+  not. The design makes copying explicit except for `Copy` types and does not derive `Copy` on these. Decision 3;
+  `m06_conventions/references_basic.bd`, `views_are_copy.bd`, `str_views.bd`, `slice_views.bd`; RF4.
 - **String literals are static views (an exception).** A function may return a literal from any parameter list, the
-  one exception to the single-source rule. Assumption 4; `m06_conventions/return_literal_ok.bd`; RT4.
+  one exception to the single-source rule, and a `str` constant of a literal is static too. Decision 4;
+  `m06_conventions/return_literal_ok.bd`, `static_literals.bd`; RT4.
 - **Borrowed pattern bindings are read-only places used like values.** No `&` is written on a binding from a borrowed
-  scrutinee, and `*h` on an owned `Heap<T>` moves the pointee out and frees it. Assumption 5;
-  `m06_conventions/match_borrowed_binding.bd`, `m05_ownership/heap_tree_eval.bd`; MV6, MV8.
+  scrutinee, and `*h` on an owned `Heap<T>` moves the whole pointee out and frees it; a field of the pointee moves
+  only after the whole pointee is in a local. Decision 5; `m06_conventions/match_borrowed_binding.bd`,
+  `m05_ownership/match_borrowed_binding_readonly.bd`, `heap_tree_eval.bd`, `heap_move_whole_then_field.bd`; MV6, MV8.
 - **`for` borrows its collection for the whole loop.** The design's `for` runs through a borrowing iterator, and
   stage 0 makes the borrow last until the loop ends, so a `mut` call on the same collection in the body is E0111.
-  Assumption 6; `m09_stdlib/for_borrows_list.bd`. Appending while iterating returns with the stage 1 iteration
-  protocol (`HANDOFF.md` known problem 19).
+  Decision 6; `m09_stdlib/for_borrows_list.bd`, `m06_conventions/for_borrow_forms.bd`. Appending while iterating
+  returns with the stage 1 iteration protocol (`HANDOFF.md` known problem 19).
 - **Owned parameters drop after locals, in reverse declaration order.** The design fixes the order of locals and
   fields but not parameters. DR3; `m05_ownership/drop_params_and_let_underscore.bd`.
 - **Derived `Ord` orders enum variants by declaration.** The design's `Ord` rule covers field order; it does not
   define variant order. `m07_generics/derives.bd` pins `Low < Mid < High`.
-- **`Drop` is spelled as an interface block.** `Type: Drop { fn drop(mut self) { ... } }`. Assumption 11; every
-  `m05_ownership` drop test.
-- **Derive method forms.** `Hash` provides `hash(self): u64`, `Default` a static `default()`, and `Eq`/`Ord` the
-  comparison operators. Assumption 15; `m07_generics/derives.bd`.
+- **`Drop` is spelled as an interface block.** `Type: Drop { fn drop(mut self) { ... } }`. `mut self` and a unit
+  return are required (E0003), and `Drop` cannot be derived. Decision 11; every `m05_ownership` drop test,
+  `drop_signature.bd`, `drop_derive.bd`.
+- **Derive method forms.** `Hash` provides `hash(self): u64` with the exact FNV-1a values in
+  [the derives spec](../spec/derives.md), `Default` a static `default()` for structs, and `Eq`/`Ord` the comparison
+  operators with fields in declaration order and variants in declaration order. Decision 15;
+  `m07_generics/derives.bd`, `derive_values.bd`.
 - **No MIR (deviation).** The design's compiler architecture has a MIR; stage 0 checks the typed tree (`burdin_tir`),
   and `burdin_mir` is planned for stage 1 (`spec/stage1-subset.md`, issue #493). The header and RF2 of
   [the memory rules](../spec/memory-rules.md) now say so.
@@ -248,8 +305,9 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in a
   computes it per top-level statement, so any use inside a loop keeps a loan live for the whole loop. This rejects
   some programs the design would allow; it never accepts a conflicting one. RF2, `HANDOFF.md`;
   `m06_conventions/borrow_ends_at_last_use.bd` pins the last-use rule.
-- **`main` returns unit (deviation).** `fn main(): Result<()>` and printing a returned error are stage 1.
-  Assumption 8; every `//@ run` test.
+- **`main` returns unit (deviation).** A parameter or a non-unit return type is E0003. `fn main(): Result<()>` and
+  printing a returned error are stage 1 (m16 prints the error chain to stderr and exits non-zero). Decision 8;
+  every `//@ run` test, `m02_basics/main_returns_value.bd`, `main_takes_parameter.bd`.
 - **`unsafe` gates `extern` calls only (deviation).** The design also puts raw-pointer dereferences, unchecked
   accessors, and low-level casts behind `unsafe`. Stage 0 requires it for calls; holding or moving a `CPtr` does not
   need it. `HANDOFF.md` known problem 13; `m08_modules/extern_libc.bd`, `m11_llvm/llvm_return_42.bd`.
@@ -266,7 +324,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in a
 ### Errors and testing
 
 - **Explicit error types (deviation).** `Result<T, E>` always names `E`; dynamic `Result<T>`, the `error` keyword,
-  `.context(...)`, and traces are stage 1. Assumption 8; `m09_stdlib/question_and_from.bd`.
+  `.context(...)`, and traces are stage 1. Decision 8; `m09_stdlib/question_and_from.bd`.
 - **`?` converts through a hand-written `From` impl (deviation).** The design's `from` clause inside an `error enum`
   is not available, so the test writes `AppError: From<ParseError> { fn from(...) }`
   (`m09_stdlib/question_and_from.bd`).
@@ -274,7 +332,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in a
   until stage 1. Tests only match `Err(_)` (`m09_stdlib/*`). `HANDOFF.md` known problem 15.
 - **`assert` has two modes (deviation).** In a normal build it panics; in a `burdin test` build the prelude binds
   `__test_assert`/`__test_assert_eq`, which return `Result<(), AssertError>` so a failed test is reported instead of
-  aborting. The design describes the test form only. Assumption 9, `HANDOFF.md` known problem 18;
+  aborting. The design describes the test form only. Decision 9, `HANDOFF.md` known problem 18;
   `m10_test_runner/*`.
 - **No leak-detecting allocator (deviation).** The design runs every test under one; allocators are stage 1, so no
   test asserts that a leaked allocation fails. `spec/stage0-subset.md`.
@@ -285,12 +343,16 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in a
 ### Standard library and C bridge
 
 - **Names and signatures are the tests' choices.** The design names some operations and says `Option`/`Result`
-  follow Rust "and so on"; stage 0 uses the set in assumption 7, now including the signatures the tests exercise.
-  `HANDOFF.md` known problem 2. In particular `List.last` and `Map.get` return `Option<&T>`/`Option<&V>`, `List.pop`
+  follow Rust "and so on"; stage 0's exact surface is [the standard-library spec](../spec/stdlib.md), including the
+  signatures the tests exercise. In particular `List.last` and `Map.get` return `Option<&T>`/`Option<&V>`, `List.pop`
   returns `Option<T>`, `List.remove` and `Map.remove` return owned values, and `List.contains` takes a value.
+  Unknown names are E0002 and wrong arities E0004.
 - **`String` length and slicing are byte-based.** `s.len()` is bytes and `s[a..b]` slices bytes; `chars()` iterates
   Unicode scalar values. The design says UTF-8 but does not define `len`. `m09_stdlib/string_ops.bd`,
-  `m09_stdlib/file_io.bd`; assumption 7.
+  `m09_stdlib/file_io.bd`, `file_io_binary.bd`; decision 7.
+- **`String` and `str` compare by bytes.** `==`/`!=` and `<`/`<=`/`>`/`>=` require both operands to have the same
+  type; there is no conversion in an operator. `List<String>.sort()` uses the same order.
+  `m09_stdlib/string_order.bd`, `string_ops.bd`; [standard library](../spec/stdlib.md).
 - **`Map` is a linear scan (deviation).** The design and the stage 0 subset name a hash map; stage 0 stores entries in
   a list and needs only `Eq` on keys. The API and the (unspecified) iteration order are the same, so tests sum or
   sort instead of depending on order (`m09_stdlib/map_ops.bd`, `word_count.bd`). `HANDOFF.md` known problem 14.
@@ -301,18 +363,19 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in a
   subset narrows the set. `m02_basics/casts_and_numeric_methods.bd`.
 - **No `i128`/`u128` (deviation).** Stage 0 stops at `i64`/`u64`, as the stage 0 subset says; the design lists all of
   them. No test uses the wider types.
-- **File I/O is binary-safe.** No newline translation on Windows. Assumption 10; `m09_stdlib/file_io.bd`.
-- **`env.args()` puts the program name first.** The design names `std.env.args()` but not its contents. Assumption 7;
+- **File I/O is binary-safe.** No newline translation on Windows and no UTF-8 normalization. Decision 10;
+  `m09_stdlib/file_io.bd`, `file_io_binary.bd`.
+- **`env.args()` puts the program name first.** The design names `std.env.args()` but not its contents. Decision 7;
   `m09_stdlib/env_args.bd`.
 - **C bridge surface.** `CPtr<T>`, `CChar`, `CSize`, `CVoid` (only behind a pointer), `CString`, `CStr` (an alias for
-  `CPtr<CChar>`), `CString.from(str).as_ptr()`, `CPtr.null()`, and `CStr.to_string(ptr): String`. `extern "C"`
-  parameters and results are integers, floats, and `CPtr`. The design sketches `CPtr` only. Assumption 7;
-  `m08_modules/extern_libc.bd`, `m11_llvm/llvm_return_42.bd`.
+  `CPtr<CChar>`), `CString.from(str).as_ptr()`, `CPtr.null()` (no arguments), and `CStr.to_string(ptr): String`.
+  `extern "C"` parameters and results are integers, floats, and `CPtr`. The design sketches `CPtr` only. Decision 7;
+  `m08_modules/extern_libc.bd`, `cptr_null_arguments.bd`, `cstr_roundtrip.bd`, `m11_llvm/llvm_return_42.bd`.
 
 ### Not covered yet
 
 These are absences, not deviations; they are listed so the next review does not mistake silence for a decision. No
 test currently exercises: release-mode wrapping (the runner can only skip a test in release, not change its
-expectation), out-of-range shift panics, `unsafe fn` declarations, a `main(): Result<()>`, bounds panics for
-`List`/`Map`/slice indexing (only arrays are covered), `priv` methods, `match` on `bool` or `char`, struct patterns
-that omit fields, or the exact text of a derived `hash()` value (only equality of hashes is checked).
+expectation), out-of-range shift panics, `unsafe fn` declarations, a `main(): Result<()>` (stage 1), bounds panics
+for `List`/`Map`/slice indexing (only arrays are covered), `priv` methods, `match` on `bool` or `char`, or struct
+patterns that omit fields.

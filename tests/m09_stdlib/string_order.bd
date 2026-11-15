@@ -1,0 +1,26 @@
+//@ run
+//> false
+//> true
+//> true
+//> a
+//> b
+
+// `String` and `str` compare byte for byte; `List<String>.sort()` uses the same order.
+
+fn show_bool(b: bool) {
+    if b { println("true") } else { println("false") }
+}
+
+fn main() {
+    show_bool("b" < "a")
+    show_bool("a" < "b")
+    show_bool(String.from("a") < String.from("b"))
+
+    let mut xs = List<String>.new()
+    xs.push(String.from("b"))
+    xs.push(String.from("a"))
+    xs.sort()
+    for s in xs {
+        println(s)
+    }
+}

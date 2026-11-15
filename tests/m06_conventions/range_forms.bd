@@ -1,0 +1,26 @@
+//@ run
+//> 6
+//> 6
+//> 2
+//> 3
+//> 4
+
+// `a..b` is exclusive and `a..=b` is inclusive.
+
+fn main() {
+    let mut total = 0
+    for i in 0..4 {
+        total = total + i
+    }
+    println(total.to_string())
+
+    let mut inclusive = 0
+    for i in 0..=3 {
+        inclusive = inclusive + i
+    }
+    println(inclusive.to_string())
+
+    for i in 2..5 {
+        println(i.to_string())
+    }
+}

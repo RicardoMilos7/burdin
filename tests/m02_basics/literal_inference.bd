@@ -1,0 +1,19 @@
+//@ run
+//> 1
+//> 2
+//> 3
+//> 4
+//> 3
+
+fn main() {
+    let a = 1                  // defaults to i32
+    let b: i64 = 2             // the annotation gives the literal its type
+    let c = 1 + b              // a literal on the left takes the right operand's type
+    let d: u8 = 255
+    let e = 1.5                // defaults to f64
+    println(a.to_string())
+    println(b.to_string())
+    println(c.to_string())
+    println((d as i32 - 251).to_string())
+    println(((e * 2.0) as i32).to_string())
+}

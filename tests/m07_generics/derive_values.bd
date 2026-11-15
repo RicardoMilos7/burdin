@@ -1,0 +1,43 @@
+//@ run
+//> 590684067820433389
+//> 589729691727335466
+//> 17855101231749507460
+//> 12638153115695167455
+//> 589729691727335466
+//> 0
+//> 0
+//> 0
+
+// The exact FNV-1a values `Hash` produces, and the default values `Default` builds.
+
+struct Pair derives (Copy, Clone, Eq, Ord, Hash, Default) {
+    a: i32
+    b: i32
+}
+
+enum E derives (Copy, Hash) {
+    A
+    B(i32)
+}
+
+struct Text derives (Default) {
+    s: String
+}
+
+fn main() {
+    let zero = Pair { a: 0, b: 0 }
+    let one = Pair { a: 1, b: 2 }
+    let negative = Pair { a: -1, b: 2 }
+    println(zero.hash().to_string())
+    println(one.hash().to_string())
+    println(negative.hash().to_string())
+    println(E.A.hash().to_string())
+    println(E.B(2).hash().to_string())
+
+    let d = Pair.default()
+    println(d.a.to_string())
+    println(d.b.to_string())
+
+    let t = Text.default()
+    println(t.s.len().to_string())
+}

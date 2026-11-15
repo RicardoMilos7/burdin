@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `&mut T` is not Copy: assigning it moves it.
+
+fn main() {
+    let mut n = 1
+    let a = &mut n
+    let b = a
+    println((*b).to_string())
+    println((*a).to_string()) //~ E0100
+}

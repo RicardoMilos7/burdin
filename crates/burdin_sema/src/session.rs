@@ -260,11 +260,15 @@ impl<'t> Sema<'t> {
         }
     }
 
-    /// `drop` must be `fn drop(mut self)` and return nothing.
+    /// `drop` must be `fn drop(mut self)` and return nothing. `mut self` is the only receiver that is
+    /// passed by address and borrowed exclusively; a read-only `self` is not mutable enough, and `own self`
+    /// would move the value that is being dropped.
     fn check_drop_signatures(&self, diags: &mut Diagnostics) {
         for &(id, span) in &self.drop_checks {
             let sig = &self.globals.sigs[id.0];
-            if !(sig.has_self && sig.params.len() == 1 && sig.params[0].by_ref && sig.ret == Ty::Unit) {
+            let receiver = sig.params.first();
+            let mut_self = receiver.is_some_and(|p| p.by_ref && p.exclusive);
+            if !(sig.has_self && sig.params.len() == 1 && mut_self && sig.ret == Ty::Unit) {
                 diags.error(
                     Code::TYPE_MISMATCH,
                     span,

@@ -9,11 +9,12 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 
 ## Read order
 
-1. `tests/README.md` — the test format, the error-code registry, and the 16 assumptions.
+1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
-3. `spec/stage0-subset.md` (complete) and `spec/stage1-subset.md` (the current plan).
-4. `HANDOFF.md` for the current state; `Burdin Language Design.md` for the full rationale.
-5. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
+3. `spec/stdlib.md`, `spec/derives.md` — the standard-library surface and the exact derived members.
+4. `spec/stage0-subset.md` (complete) and `spec/stage1-subset.md` (the current plan).
+5. `HANDOFF.md` for the current state; `Burdin Language Design.md` for the full rationale.
+6. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
 
 The files in this repository are the only maintained copies. Documents hosted on claude.ai are historical: they are
 not updated and may disagree with the repository.
@@ -118,7 +119,7 @@ CLAUDE.md                 Claude-specific entry point and working rules
 AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
-spec/                     grammar, memory rules, stage 0 scope, stage 1 plan
+spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
 tests/                    conformance suite, README with the format and error codes
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_codegen, burdin_driver,

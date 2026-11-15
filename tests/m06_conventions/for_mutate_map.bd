@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Mutating a map inside its `for` loop conflicts with the loop's borrow.
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 10)
+    for (k, v) in m {
+        m.insert(k, v) //~ E0111
+    }
+}

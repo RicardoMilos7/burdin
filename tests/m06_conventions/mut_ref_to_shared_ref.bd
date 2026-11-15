@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// There is no coercion from `&mut T` to `&T`.
+
+fn read(x: &i32): i32 { *x }
+
+fn main() {
+    let mut n = 1
+    let r = &mut n
+    println(read(r).to_string()) //~ E0003
+}

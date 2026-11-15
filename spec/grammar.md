@@ -30,7 +30,9 @@ Contextual keywords, meaningful only in one position and otherwise ordinary iden
 by a string), `derives` (after a struct or enum name), `requires` (after an interface name).
 
 **Integer literals**: decimal `123`, hex `0xFF`, octal `0o17`, binary `0b1010`, with `_` allowed between digits. No suffixes;
-the type comes from context or defaults to `i32`. A leading `-` is the unary operator, not part of the literal.
+the type comes from context, or from the other operand when the literal is on the left of a binary operator, and
+defaults to `i32` otherwise. A leading `-` is the unary operator, not part of the literal. `/` and `%` truncate toward
+zero; see `stage0-subset.md` for the rest of the numeric behavior.
 
 **Float literals**: digits `.` digits with an optional exponent (`2.5`, `3.99`, `1.0e3`), and digits with an exponent (`1e3`).
 A `.` must be followed by a digit to make a float, so `0..3` is `0`, `..`, `3`, and `t.0.1` is `t`, `.`, `0`, `.`, `1`:
@@ -62,8 +64,9 @@ There are no statement terminators. Each token records whether a line break come
    So a call's `(` or an index `[` must be on the same line as the callee, and a line starting with `-`, `*`, `&`, `(` or `[`
    starts a new statement.
 3. **After a binary operator, `=`, `,`, `.`, `:`, `=>`, or an opening bracket**, the expression necessarily continues on the next line.
-4. **Lists inside braces** (struct fields, enum variants, struct-literal fields, match arms, interface and extern items)
-   are separated by `,` or by a line break. A trailing separator is allowed. Lists inside `(...)`, `[...]` and `<...>` use commas only.
+4. **Lists inside braces** (struct fields, enum variants, struct-literal fields, match arms) are separated by `,` or
+   by a line break. A trailing separator is allowed. Interface methods and `extern` declarations follow one another
+   with no separator, like top-level items. Lists inside `(...)`, `[...]` and `<...>` use commas only.
 5. `return` and `break` take a value only if one starts on the same line.
 
 ```
@@ -122,6 +125,20 @@ TestItem      = "test" STRING Block ;
 
 Sep           = "," | NL ;
 ```
+
+**Declaration layout.** The lists inside braces are separated by `,` or by a line break. The tests and the
+recommended style put one struct field, one enum variant, and one struct-literal field per line; the parser accepts
+both forms, so `struct P { x: i32, y: i32 }` and the one-per-line version mean the same thing. Struct literals,
+variant constructors, argument lists, generic arguments, tuples, and arrays also use commas. Interface methods,
+`extern` declarations, and top-level items need no separator: each one ends where the next begins.
+
+**`main`.** In stage 0 the entry point is an ordinary function `fn main()`: it takes no parameters and returns
+nothing. A parameter or a non-unit return type is E0003. Stage 1 adds `fn main(): Result<...>` (m16).
+
+**`Drop`.** The only way to declare a drop method is `Type: Drop { fn drop(mut self) { ... } }`. The block has
+exactly one method named `drop`; `drop` takes `mut self` and returns nothing, and any other receiver or a return type
+is E0003. `Drop` is not derivable (E0002) and cannot be combined with `Copy` (E0130); the memory rules are in
+`memory-rules.md` (DR8).
 
 An item that starts with an identifier (not a keyword) is an impl block. `Type: Interface { ... }` implements an interface,
 `Type { ... }` adds methods with no interface, and generics and `where` bounds go on either.
@@ -191,7 +208,7 @@ Precedence from loosest to tightest:
 UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | PostfixExpr ;
 PostfixExpr   = Primary { "?" | "." IDENT | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
 ArgList       = Arg { "," Arg } [ "," ] ;
-Arg           = [ "mut" ] Expr ;                        (* "mut" marks an argument passed to a mut parameter *)
+Arg           = [ "mut" ] Expr ;                        (* "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)
 
 Primary       = Literal | PathExpr | "self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | IfExpr | MatchExpr | LoopExpr | WhileExpr | ForExpr
@@ -215,6 +232,9 @@ ForExpr       = "for" Pattern "in" Expr Block ;
 
 Arms are separated by `,` or a line break, and the separator may be left out after the last arm or after an arm whose
 body is a block. `else` is the catch-all arm and must be last.
+
+A range is `a..b` (exclusive) or `a..=b` (inclusive). In stage 0 a range is only iterable by `for`; storing one in a
+binding, field, or collection is stage 1 (m13).
 
 ## 7. Patterns
 
@@ -245,8 +265,10 @@ the prelude). The linter requires bindings to be lowercase.
    This is why `List<i32>.new()` and `Stack<i32>.new().push(1)` parse, and `Level.Low < Level.High` is a comparison.
 3. **Paths in expressions** are parsed as an identifier followed by field accesses. Whether `a.b.c` is a module path,
    an associated function, a variant, or a field access is decided during name resolution, not parsing.
-4. **`mut` at a call site** (`add_to(mut c, 4)`) is part of the argument. Receivers of `mut self` methods are borrowed
-   mutably implicitly (`c.bump()`) and need no marker.
+4. **Call-site markers.** A named `mut` parameter is passed with `mut` before the argument (`add_to(mut c, 4)`); an
+   `own` parameter and every read-only parameter are passed plainly. Receivers of `mut self` methods are borrowed
+   mutably implicitly (`c.bump()`); a `mut` marker in receiver position is a syntax error. A missing marker for a
+   `mut` parameter is E0114; a `mut` marker on an argument whose parameter is not `mut` (including `own`) is E0115.
 5. **Closures** (`|x| ...`) are not parsed in stage 0; a leading `|` in expression position is a syntax error (E0001).
 6. **An item that starts with an identifier** is an impl block. The parser decides between `Type: Interface {` and
    `Type {` by the token after the type.

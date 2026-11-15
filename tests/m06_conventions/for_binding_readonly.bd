@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// The loop binding is a read-only place.
+
+fn main() {
+    let xs = [1, 2, 3]
+    for x in xs {
+        x = 5 //~ E0005
+    }
+}

@@ -12,7 +12,7 @@ conformance suite and the specs, not by this file; see the index below.
 
 | Document | Contents |
 | --- | --- |
-| [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the assumptions the tests make. Read this first. |
+| [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the settled language decisions. Read this first. |
 | [`spec/grammar.md`](spec/grammar.md) | The syntax of stage 0. |
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |

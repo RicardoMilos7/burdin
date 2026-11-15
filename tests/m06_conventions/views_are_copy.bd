@@ -1,0 +1,40 @@
+//@ run
+//> 1
+//> 1
+//> abc
+//> abc
+//> 7
+//> 7
+//> 12
+
+// `&T`, `str`, and `[T]` are Copy; `&mut T` is reborrowed by a call.
+
+fn show_ref(r: &i32) { println((*r).to_string()) }
+
+fn show_str(s: str) { println(s) }
+
+fn show_slice(xs: [i32]) { println(xs[0].to_string()) }
+
+fn bump(r: &mut i32) { *r = *r + 1 }
+
+fn main() {
+    let n = 1
+    let r = &n
+    show_ref(r)
+    show_ref(r)
+
+    let s = "abc"
+    show_str(s)
+    show_str(s)
+
+    let xs = [7, 8]
+    let sl = xs[0..2]
+    show_slice(sl)
+    show_slice(sl)
+
+    let mut m = 10
+    let a = &mut m
+    bump(a)
+    bump(a)
+    println(m.to_string())
+}

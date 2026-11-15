@@ -28,6 +28,16 @@ systems, and rejects every memory-rule violation in the test set.
 
 ## Language features in stage 0
 
+The 16 choices the tests originally assumed were settled as language decisions by issue #21, one sub-issue each
+(#22-#40). The rules live in `grammar.md`, `memory-rules.md`, `stdlib.md`, and `derives.md`; the tests named there are
+the executable form. Two decisions worth calling out here:
+
+- **Entry point.** `main` takes no parameters and returns `()`. A parameter or a non-unit return type is E0003.
+  Stage 1's `fn main(): Result<()>` (m16) reports a returned error on stderr and exits non-zero.
+- **Numeric literals and division.** Integer literals have no suffixes; their type comes from context, else the
+  other operand, else `i32` (`f64` for floats). `/` and `%` truncate toward zero. Overflow panics in debug and wraps
+  in release; division by zero and out-of-range shifts always panic.
+
 | Area | Included | Weight |
 | --- | --- | --- |
 | Lexing and syntax | Identifiers; integer, float, char, string literals with escapes; all comment forms; no semicolons; blocks as expressions | S |
@@ -59,7 +69,7 @@ Written mostly in Burdin itself on top of `unsafe` and C's `malloc`, so it also 
 
 | Area | Contents |
 | --- | --- |
-| Core types | `Option<T>`, `Result<T, E>`, `Heap<T>`, ranges |
+| Core types | `Option<T>`, `Result<T, E>`, `Heap<T>`, and ranges (iterable only; ranges as values are stage 1) |
 | `String`, `str` | UTF-8; `len`, `push`, `push_str`, `clone`, comparison, slicing, `starts_with`, `find`, `chars()`, number to string and parse |
 | `List<T>` | `new`, `push`, `pop`, `len`, `last`, indexing, `insert`, `remove`, `clear`, `contains`, `sort`, `for` |
 | `Map<K, V>` | Hash map: `new`, `insert`, `get`, `remove`, `contains_key`, `len`, `for` |
@@ -71,10 +81,13 @@ Written mostly in Burdin itself on top of `unsafe` and C's `malloc`, so it also 
 | C bridge | `CPtr<T>`, `CChar`, `CString`, `CStr` (a borrowed `CPtr<CChar>`), hand-written `extern` declarations for libc and the LLVM C API |
 
 **Language items** the Rust compiler knows by name: `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Hash`, `From`, `Option`, `Result`,
-the range types, and the intrinsics behind `str` and `[T]`. Everything else is ordinary library code.
+the range types, and the intrinsics behind `str` and `[T]`. Everything else is ordinary library code. The exact
+surface a program may use, with signatures, is in `stdlib.md`; the derived members are in `derives.md`.
 
 **Runtime.** A small start-up wrapper calls `main`, and the panic path prints the message with file and line, flushes stdout,
 and aborts. Files, processes, paths, and environment go through one platform module with an implementation per operating system.
+File I/O is byte-for-byte: there is no newline translation on Windows and no UTF-8 normalization, so a string written and
+read back is identical. `read_to_string`/`write_file` treat the bytes as UTF-8 text and `len` counts bytes.
 
 ## Deferred
 

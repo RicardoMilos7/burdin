@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Mutating an array inside its `for` loop conflicts with the loop's borrow.
+
+fn main() {
+    let mut xs = [1, 2, 3]
+    for x in xs {
+        xs[0] = x //~ E0111
+    }
+}

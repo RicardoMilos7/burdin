@@ -105,6 +105,8 @@ impl Code {
     pub const PRIVATE_ITEM: Code = Code("E0150");
     pub const QUESTION_OUTSIDE: Code = Code("E0160");
     pub const UNSAFE_REQUIRED: Code = Code("E0161");
+    /// A type or convention that cannot cross the `extern "C"` boundary.
+    pub const C_ABI: Code = Code("E0162");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// It disappears once stage 0 is complete.
     pub const UNSUPPORTED: Code = Code("E9000");

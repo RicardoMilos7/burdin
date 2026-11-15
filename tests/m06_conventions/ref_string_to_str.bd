@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `&String` does not convert to `str`; the String itself does.
+
+fn take(t: str): usize { t.len() }
+
+fn main() {
+    let s = String.from("abc")
+    println(take(&s).to_string()) //~ E0003
+}

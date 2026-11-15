@@ -1,0 +1,28 @@
+//@ run
+//> 5
+//> 5
+//> hello
+//> 5
+//> hello
+//> hello
+
+// A String passed where a str is expected is borrowed as a str; the String stays usable.
+
+fn len(s: str): usize { s.len() }
+
+fn main() {
+    let s = String.from("hello")
+    println(len(s).to_string())
+    println(len(s).to_string())
+    println(s)
+    println(s.as_str().len().to_string())
+
+    let o: Option<str> = Some(s)
+    match o {
+        Some(v) => println(v),
+        None => println("none"),
+    }
+
+    assert_eq("abc", String.from("abc"))
+    println(s)
+}

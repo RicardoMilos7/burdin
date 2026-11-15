@@ -1,11 +1,11 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, and fifteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, and sixteenth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the fifteenth session (2026-11-14). **Milestones 1 to 11 are done, so stage 0 is complete**: all
-134 tests pass in the debug profile and 133 in release (one m02 test is debug-only). `burdin test` runs `test` blocks,
+Updated at the end of the sixteenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**: all
+174 tests pass in the debug profile and 173 in release (one m02 test is debug-only). `burdin test` runs `test` blocks,
 and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
 twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a
 root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
@@ -13,7 +13,10 @@ design and stage 0 documents, added the compiler benchmarks, and cached the carg
 CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12); the fifteenth runs
 the finished conformance milestones in the release profile in every CI job (issue #47) and adds benchmark regression
 tracking: the harness saves and compares a baseline, and each CI job keeps one in a cache and reports regressions
-advisably (issue #446).
+advisably (issue #446); the sixteenth settled the 16
+assumptions of issue #21 (sub-issues #22-#40) in `spec/`, added `spec/stdlib.md` and `spec/derives.md`, 40 decision
+tests, and four small fixes: `Drop` now rejects a read-only or `own` receiver, `CPtr.null` rejects arguments, the
+ordering operators work on `str`/`String`, and an invalid `extern "C"` type or convention is E0162.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -22,9 +25,10 @@ advisably (issue #446).
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
-| Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items |
-| Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6). All stage 0 memory rules are implemented |
-| Conformance tests | `tests/` | 134 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`, and `extern` items, the permissive declaration layout, and the call-site marker rules |
+| Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
+| Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
+| Conformance tests | `tests/` | 174 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, and diagnostics in `burdin_diag`. CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
@@ -205,6 +209,11 @@ how to call WSL from PowerShell.
   `libLLVM-21.so` and Homebrew's `libLLVM-C.dylib` / `libLLVM.dylib`, and adds `-L` plus an rpath. On MSVC it passes
   `LLVM-C.lib` and adds `/LIBPATH:<LLVM_SYS_211_PREFIX>/lib` when that import library is there. A missing `cl` is
   reported with the fix (a Developer Command Prompt, or `BURDIN_CC`).
+- Issue #21 settled the decisions and closed four small gaps: `check_drop_signatures` (`burdin_sema/src/session.rs`)
+  now requires an exclusive `mut self` receiver, `CPtr.null` (`burdin_sema/src/fncx/call.rs`) rejects arguments with
+  E0004, `<`/`<=`/`>`/`>=` on `str` and `String` go through `cmp_at` instead of the integer path
+  (`burdin_codegen/src/emit/ops.rs`), and an invalid `extern "C"` type or convention is E0162
+  (`burdin_sema/src/resolve.rs`).
 - Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
   were no syntax errors.
 
@@ -255,7 +264,7 @@ failing the job. A missing baseline (including one evicted after seven days with
 - Memory model: value semantics, single owner, parameter conventions (read-only default, `mut`, `own`), second-class references
   and views, automatic `Drop`, `Heap<T>`, global allocator, abort on panic.
 - Exclusivity works on places: field paths of a local or parameter are separate places. Indexing, `Heap` dereference, and method
-  calls are not (option C). Recorded in the design document and as assumption 16 in `tests/README.md`.
+  calls are not (option C). Recorded in the design document and as decision 16 in `tests/README.md`.
 - Stage 0 has no closures, string interpolation, `any`/`impl`, `error` declarations, comptime, tasks, or leak detection.
 - Syntax choices: `fn f(): T`, `let` / `let mut`, `Type: Interface { }`, `derives (...)`, `priv` means package-private,
   `?` and `orelse`, `else` arm in `match`, call-site `mut` marker.
@@ -272,15 +281,16 @@ failing the job. A missing baseline (including one evicted after seven days with
 ## Known problems and risks
 
 1. **The expected outputs were reviewed on 2026-11-14 (issue #20).** Every test in every milestone folder was read
-   against the design, the grammar, the memory rules, the stage 0 subset, and the assumptions list. No expectation was
+   against the design, the grammar, the memory rules, the stage 0 subset, and the decision list. No expectation was
    found to encode an accidental behavior, so no test changed; every intentional choice or deviation the suite pins is
-   recorded in `tests/README.md` under "Intentional choices and deviations". A new test still needs the same review: a
-   passing test proves the implementation matches the expectation, not the design document.
-2. **Many tests depend on standard-library names I chose** (`String.from`, `push_str`, `i32.parse`, `find`, `find_str`, `env.args()`,
-   `CString.from`, `CPtr.null()`, and others). They are listed in assumption 7 of `tests/README.md`. They are guesses, not decisions.
-3. **15 other assumptions in `tests/README.md` are mine, not yours.** The risky ones: call-site `mut` for `mut` parameters,
-   `String` coercing to `str` as the only implicit conversion, views being copyable, `for` borrowing the collection, and string
-   literals being static.
+   recorded in `tests/README.md` under "Intentional choices and deviations". Issue #21 then added 37 decision tests,
+   each written with the rule it witnesses. A new test still needs the same review: a passing test proves the
+   implementation matches the expectation, not the design document.
+2. **The standard-library names are decided (issue #21, 7a-7d).** `spec/stdlib.md` is the surface, and the tests
+   witness it. It is no longer a list of guesses.
+3. **The other assumptions are decided (issue #21).** Call-site markers, the `String`-to-`str` conversion, copyable
+   views, `for` borrowing, static literals, and the rest are rules in `spec/`, with the tests named there. The
+   `tests/README.md` decision list links each one.
 4. **Rules I made up while writing the specs** (see the end of the last session's summary): newline continuation only before
    `.`, `?`, `else`, `orelse`, `as`, `&&`, `||`; `own` parameters are immutable bindings; a block's tail-expression temporaries drop
    before its locals; `orelse` binds looser than `||`; comparison operators do not chain.
@@ -307,7 +317,9 @@ failing the job. A missing baseline (including one evicted after seven days with
     array element or of the pointee), moving a value out of `match *h`, and a moving pattern with a guard on a
     temporary scrutinee. A `match` on an owned local or an `own` parameter is tracked normally. Milestone 9's
     `List`/`Map` make moving a non-`Copy` element through indexing reachable (`let x = xs[0]`); it is still E9000,
-    so move the element with `remove` instead.
+    so move the element with `remove` instead. Issue #21 settled the rule for heap pointees: `*h` moves the whole
+    pointee, and a field moves only after the pointee is in a local (`m05_ownership/heap_move_whole_then_field.bd`);
+    the E9000 forms remain the stage 1 fix in `stage1-subset.md`.
 11. **A view can outlive the storage it borrows from without a diagnostic.** No registry code covers it, and the spec
     only states the function-return case (RT2). Examples: `let r = first_of(Pair { a: 1, b: 2 })` (the temporary drops
     at the end of the `let`, DR5), `let r = { let p = Pair { a: 1, b: 2 }; first_of(p) }` (the source local dies with
@@ -335,9 +347,9 @@ failing the job. A missing baseline (including one evicted after seven days with
     `type ... = ()`; `read_to_string`, `write_file`, `process.run`, and the integer parsers return
     `Result<T, ()>` under those names. Tests only match `Err(_)`, and the `error` declarations of stage 1 are the
     place to give them payloads. This is also why the names were removed from the compiler's `builtin_type`.
-16. **Ranges are only iterable, not values.** `a..b` and `a..=b` are handled by `for`; a range stored in a binding
-    or passed to a function is still E9000. The stage 0 core-type table lists ranges, so this needs a decision
-    before it can be called complete.
+16. **Ranges are only iterable, not values (decided, issue #21).** `a..b` and `a..=b` are handled by `for`; a range
+    stored in a binding or passed to a function is still E9000. Stage 0 settles the syntax and iteration forms
+    (`m06_conventions/range_forms.bd`); ranges as first-class values arrive with m13 (`stage1-subset.md`).
 17. **The standard library is embedded with `include_str!`.** Changing `std/` requires rebuilding `burdin`; a
     project that declares its own `std` package replaces the embedded one (and then must provide every prelude
     name it uses). The prelude copies public names into every module including dependency packages, so a
@@ -350,6 +362,13 @@ failing the job. A missing baseline (including one evicted after seven days with
 19. **`for` now borrows its collection for the whole loop.** A `mut` method on the same collection inside the body
     is E0111, which also rejects useful patterns such as appending while iterating a list; that is deliberate
     until the iteration protocol of stage 1.
+20. **A `match` on a Copy `Option` field can crash code generation.** Found while writing the decision tests and not
+    caused by them: with `struct D { a: i32, o: Option<i32> }`, `let d = D { a: 1, o: None }` followed by
+    `match d.o { Some(v) => ..., None => ... }` prints the arm and then aborts in `free()` (reproduced on Linux
+    x86-64, debug profile). Copying the field into a local first (`let o = d.o; match o { ... }`) also crashes, while
+    `d.o.is_none()` and a struct whose only field is the `Option` work. No milestone test matches a Copy `Option`
+    field, so the suite is green; this needs a codegen investigation before stage 1 relies on it. The same shape
+    with `Option<String>` works.
 
 ## Decided in the third session
 
@@ -586,6 +605,55 @@ failing the job. A missing baseline (including one evicted after seven days with
   save the baseline cache with the runner-and-lockfile key, run `tests/bench-regression.sh`, keep the step advisory,
   and record the baseline only on main.
 
+## Decided in the sixteenth session
+
+- **Issue #21 is settled.** The 16 assumptions in `tests/README.md` are now decisions, one sub-issue each (#22-#40),
+  stated in the spec and witnessed by tests. The list below is the short form; the rules are in `spec/grammar.md`,
+  `spec/memory-rules.md`, `spec/stdlib.md`, `spec/derives.md`, and `spec/stage0-subset.md`, and `tests/README.md`
+  links each decision to its section.
+- **Call sites (#22).** A named `mut` parameter takes `mut` at every call site (E0114 missing, E0115 on a parameter
+  that is not `mut`); `own` and read-only parameters take no marker; a `mut self` receiver takes no marker, and a
+  marker in receiver position is a syntax error.
+- **One implicit conversion (#23).** `String` to `str`, as a borrow, only in argument-like positions (call
+  arguments, `Some`/`Ok`/`Err`, `assert_eq`, `mem.replace`). `let`, assignment, returns, array/tuple elements, and
+  operators do not convert; there are no reference or user-defined conversions.
+- **Views are Copy (#24).** `&T`, `str`, `[T]`, and `CPtr<T>`; `&mut T` moves on assignment and reborrows when passed
+  to `&mut` or dereferenced.
+- **Static literals (#25).** A string literal is static in any returned expression, and a `str` constant of a literal
+  is static too; no other expression is.
+- **Pattern bindings and `*h` (#26).** Bindings from a borrowed scrutinee are read-only places usable like values
+  (E0005 assignment, E0101 move-out); `*h` moves the whole pointee and frees it. Moving a field through `*h` stays an
+  E9000 stage 1 gap; move the pointee into a local first.
+- **`for` and ranges (#27).** `for` borrows its collection shared for the whole loop (E0111 on mutation), the binding
+  is read-only (E0005), maps iterate `(k, v)`, `chars()` iterates `char`, and `a..b`/`a..=b` are iterable only.
+- **Standard-library surface (#28-#31).** Written with signatures in `spec/stdlib.md`, including `unreachable`,
+  `String`/`str` ordering, `CPtr.null()` taking no arguments, and the C bridge names.
+- **`main` (#32).** Unit, no parameters, E0003 otherwise. Decided for stage 1 (m16): a returned error is printed with
+  its context chain to stderr and the process exits non-zero.
+- **Panics (#33).** `<file>:<line>:<column>: panic: <message>` on stderr, stdout flushed first, non-zero exit, no
+  drops.
+- **File I/O (#34).** Byte-for-byte, no newline translation on Windows, no UTF-8 normalization.
+- **`Drop` (#35).** `Type: Drop { fn drop(mut self) { ... } }` only; `mut self` and a unit return are required
+  (E0003), and `Drop` is not derivable (E0002) and not combinable with `Copy` (E0130).
+- **Literals and division (#36).** No suffixes (E0001); context, then the other operand, then `i32`/`f64`; `/` and
+  `%` truncate toward zero.
+- **Declaration layout (#37).** The parser accepts commas or line breaks in brace lists; the tests and style use one
+  field/variant per line; struct literals use commas; items need no separators. (This keeps the existing
+  `Shape.Rect { w, h }` declaration in `m04_data` valid.)
+- **Temporary drops (#38).** End of statement, reverse creation order, field reads do not extend, block
+  tail-expression temporaries before the block's locals.
+- **Derives (#39).** Exact `Eq`/`Ord` field and variant orders, `Hash` as FNV-1a over scalar values with the offset
+  basis and prime recorded, `Default` for structs, and worked hash values pinned in `m07_generics/derive_values.bd`.
+- **Exclusivity places (#40).** Confirmed as the design states: field paths only, `xs[0].a` and `xs[1].a` one place
+  (E0110), different nested fields separate.
+- **Four implementation fixes came with the decisions.** `check_drop_signatures` now requires an exclusive `mut self`
+  receiver (`crates/burdin_sema/src/session.rs`); `CPtr.null` rejects arguments with E0004
+  (`crates/burdin_sema/src/fncx/call.rs`); the ordering operators handle `str`/`String` through `cmp_at` instead of
+  the integer path (`crates/burdin_codegen/src/emit/ops.rs`), which previously crashed code generation; and an
+  invalid `extern "C"` type or convention is E0162 (`crates/burdin_sema/src/resolve.rs`).
+- **New tests.** 40 conformance tests cover the decisions; `tests/README.md` has the per-decision table. The suite is
+  174 tests, 173 in release.
+
 ## What is left to do, in order
 
 1. Read `spec/stage1-subset.md` and settle its "Decisions needed before milestone 12" list. The MIR interpreter
@@ -603,8 +671,8 @@ failing the job. A missing baseline (including one evicted after seven days with
    caches; `tests/check-platform.sh` guards the host triple. Every job also records and compares benchmark baselines,
    advisory until the runner numbers are stable (issue #446); when they are, drop `continue-on-error` from the step.
    Next: an Intel macOS job and another arm64 host if they are wanted.
-5. Review the failing-test assumptions in `tests/README.md` with the author and settle each one in the spec; the
-   passing suite only shows the implementation matches the hand-written expectations, not the design document.
+5. The 16 assumptions in `tests/README.md` are settled (issue #21, sixteenth session); their rules are in `spec/` and
+   their tests are in the suite. A new open question still gets an `//@ undecided` test until it is decided.
 
 ## Starting the next session
 

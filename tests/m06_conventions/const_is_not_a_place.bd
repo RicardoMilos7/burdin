@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A constant is a value, not a place; its address cannot be taken. String literals
+// and `str` constants are the only static views.
+
+const N: i32 = 5
+
+fn get(): &i32 {
+    &N //~ E0003
+}
+
+fn main() {
+    println((*get()).to_string())
+}
