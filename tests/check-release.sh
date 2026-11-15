@@ -229,7 +229,11 @@ EOF
             expect_contains "archive layout" "$entry" "$listing"
         done
 
-        # Packaging is deterministic: the same binary, version, and epoch make the same bytes.
+        # Packaging is deterministic: the same binary, version, and epoch make the same bytes. The second run
+        # starts a whole second later so a timestamp read from the clock instead of SOURCE_DATE_EPOCH cannot
+        # pass by landing in the same second; bsdtar (macOS) packs the staging files' times, so that leak
+        # used to make this fail intermittently there.
+        sleep 1
         checks=$((checks + 1))
         if ! "$RELEASE_SCRIPT" --binary "$work/fake-burdin" --target "$target" --version 9.9.9 \
                 --channel stable --out "$work/dist-b" > "$work/package-b.log" 2>&1; then
