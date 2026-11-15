@@ -19,6 +19,24 @@ close-out checklist in `AGENTS.md`).
   `tests/build-release.sh` builds and packages a target (and proves reproducibility), `tests/release-notes.sh`
   extracts a changelog section and checks its links, and `tests/check-release.sh` guards the workflow, the archive,
   the checksums, both installers, and the metadata in every CI job. No release has been cut.
+- Dependency and license audit (issue #449). `Cargo.lock` is committed and pins every external crate by exact
+  version, crates.io source, and checksum, and every direct requirement is written `=x.y.z`.
+  `tests/dependencies.txt` is the reviewed inventory: one line per external crate with its license and why the
+  compiler needs it (18 crates today, all transitive through `inkwell` 0.11 and `llvm-sys` 211). `tests/check-deps.sh`
+  fails on an unreviewed crate, a version change, a lockfile without a checksum, a non-exact requirement, a
+  non-permissive license, or a license that disagrees with the crate's own metadata. Every CI job runs it after
+  `cargo build` with `BURDIN_DEPS_REQUIRE_METADATA=1`; `tests/check-ci.sh` guards the step, its position, and the
+  inventory. `docs/dependencies.md` records the policy and the review, including LLVM's host-supplied
+  Apache-2.0 WITH LLVM-exception license.
+
+- The platform support matrix and its known limitations are documented in
+  [`docs/platform-support.md`](docs/platform-support.md) (issue #457): the tested and untested OS/architecture pairs,
+  the runtime features each CI job proves, and the gaps (no PDB and no symbolized backtraces on Windows, the untested
+  Linux and Windows arm64 hosts, the untested libc assumptions, and the terminal-only output path). The page is linked
+  from this file and the documentation index. `tests/check-platform-support.sh` checks the matrix against
+  `ci.yml`, compiles and runs the page's example, and proves binary-safe standard output and file I/O byte-for-byte;
+  every CI job runs it.
+
 - Compiler and runtime debug/observability/performance work (issue #421, sub-issues #422-#432):
   `-g` emits source-level DWARF for functions, parameters, locals, and every expression's line and column
   (`tests/check-debug-info.sh`, which also proves a gdb breakpoint and local read); panics print a symbolized

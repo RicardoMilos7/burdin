@@ -1,6 +1,6 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, and twentieth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, and twenty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
@@ -29,13 +29,19 @@ wired into every CI job, and an error-code coverage audit that fails when a regi
 runtime work of issue #421 (sub-issues #422-#432): source-level debug information, panic backtraces, buffered output,
 a main-thread stack-overflow guard, glue deduplication, drop-flag elimination, bounds-check elision, LTO and PGO
 flags, stripping and a size budget, `--version` with build metadata, and parallel parsing. The twentieth session
-implemented the release pipeline of issue #452 (sub-issues #453-#456) without cutting a release: a six-target
+added the dependency and license audit of issue #449: `Cargo.lock` is committed with exact pins and checksums,
+`tests/dependencies.txt` records every external crate with its license and role, and `tests/check-deps.sh` fails on
+an unreviewed crate, a changed version, a non-permissive license, a non-exact direct requirement, or a stale
+lockfile; every CI job runs it after `cargo build` and requires the crates' own `cargo metadata` license fields. The
+twenty-first session documented the platform support matrix and known limitations (issue #457) in
+`docs/platform-support.md` and added `tests/check-platform-support.sh`, which every CI job runs. The twenty-second
+session implemented the release pipeline of issue #452 (sub-issues #453-#456) without cutting a release: a six-target
 release workflow, versioned archives with SHA-256 checksums, reproducible builds and archives, the installers, the
 version/channel metadata, and the policy and rehearsal page in `docs/releasing.md`.
 
 | What | Where | Status |
 | --- | --- | --- |
-| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`/`explain`, diagnostics and their formats, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The nineteenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior; the twentieth added `BURDIN_VERSION`/`BURDIN_CHANNEL`, the `channel:` line, the installers, and `docs/releasing.md`. `tests/check-docs.sh` checks the links and the documented behavior, and every CI job runs it and the other check scripts |
+| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`/`explain`, diagnostics and their formats, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The nineteenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior; the twenty-second added `BURDIN_VERSION`/`BURDIN_CHANNEL`, the `channel:` line, the installers, and `docs/releasing.md`. `tests/check-docs.sh` checks the links and the documented behavior, and every CI job runs it and the other check scripts |
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
@@ -48,13 +54,15 @@ version/channel metadata, and the policy and rehearsal page in `docs/releasing.m
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check-diagnostics.sh` and `tests/check-error-docs.sh` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check-test-runner.sh` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check-tests.sh`, `tests/check-tests.ps1`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
+| Platform support | `docs/platform-support.md`, `tests/check-platform-support.sh` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
+| Dependencies and licenses | `Cargo.lock`, `tests/dependencies.txt`, `tests/check-deps.sh`, `docs/dependencies.md` | 18 external crates (`inkwell` plus everything it pulls in through `llvm-sys` 211); all licenses permissive (mostly MIT OR Apache-2.0; `inkwell` is Apache-2.0); exact `=x.y.z` pins with crates.io source and checksum; `tests/check-deps.sh` checks all of it offline and re-verifies the licenses through `cargo metadata` after the build. Every CI job runs it (issue #449) |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.sh --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, check-tests, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check-platform.sh`, `tests/check-platform-support.sh`, and conformance m01-m11 in both the debug and release profiles (`tests/run-tests.sh --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check-ci.sh` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench-regression.sh`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.sh --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
 | Fuzzing | `crates/burdin_fuzz/` | Dependency-free deterministic lexer/parser fuzzing. `corpus/syntax/` holds the edge cases and every input that found a panic; `tests/corpus.rs` replays it plus 20,000 mutations during `cargo test --workspace`, which is the check that fails when a panic is reintroduced. `tests/fuzz.sh` runs a longer session (the watchdog fails a stalled input) and the scheduled `fuzz` CI job uploads found inputs; a found input is committed under the corpus with its fix (issues #288, #447) |
 | Release pipeline | `.github/workflows/release.yml`, `tests/build-release.sh`, `tests/release-notes.sh`, `tests/check-release.sh` | Implemented, no release cut (issue #452, sub-issues #453-#456). The workflow builds the six supported targets on native runners, smoke-tests each, writes `burdin-<version>-<target>.tar.gz` plus SHA-256 checksums, verifies Linux reproducibility from two checkout paths, and publishes only from a tag or an explicit manual `publish`; the schedule and a plain manual run are dry runs. `tests/build-release.sh` also packages an existing binary (`--binary`) for the check, and its archive is deterministic (sorted entries, fixed mtimes, uid/gid 0, `gzip -n`). `tests/check-release.sh` runs in every CI job |
 | Installers | `install.sh`, `install.ps1`, `docs/releasing.md` | One-line installers for Unix and Windows. Both verify `SHA256SUMS` before unpacking, install to a user directory, run `--version` and warn when the LLVM 21 runtime is missing, and support `BURDIN_VERSION`, `BURDIN_CHANNEL`, `BURDIN_INSTALL_DIR`, `BURDIN_BASE_URL`, and `BURDIN_RELEASE_DIR` (the local rehearsal path). A package-manager formula is not written yet |
@@ -422,7 +430,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
    exercises the CRT paths: binary-safe file I/O (no newline translation), `_write` and `_setmode` versus `write`, abort
    exit codes (still only "non-zero" in `run-abort`), and the test dispatcher's `atoi`/`strlen` path. The `macos` job
    covers the arm64 triple, `cc` linking, libc calls, the test dispatcher, and `--link-lib LLVM-C`. Intel macOS is not
-   tested.
+   tested. `docs/platform-support.md` is the full matrix, the per-platform evidence, and the known gaps (issue #457).
 8. **The grammar is mostly tried now.** Generic arguments in expressions (`Stack<i32>.new()`, rule 8.2), `use`,
    `extern "C"`, and `test` items are exercised by m07, m08, and m10. Not covered by a conformance test yet:
    `unsafe fn` declarations (they work; tested by hand) and `interface` methods that are `unsafe`.
@@ -908,13 +916,32 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   accidental runtime or library growth, not compiler noise.
 - **`--version` prints stable lines, and diagnostics do not carry the version.** Keeping every diagnostic line
   in the registry format matters more than embedding a version; a bug report includes `burdin --version` (documented
-  in README.md). The twentieth session added a `channel:` line, so a release build now prints six.
+  in README.md). The twenty-second session added a `channel:` line, so a release build now prints six.
 - **Parsing is parallel by default; checking is not.** `BURDIN_JOBS` controls the workers (1 is sequential). Each
   worker keeps its own diagnostics and the driver merges them in file order, so output is byte-identical. Parallel
   checking waits for the query-based library the issue names as its prerequisite; the current `Sema` is one shared
   mutable state.
 
 ## Decided in the twentieth session
+
+- **The dependency audit is a checked inventory, not a third-party scanner (issue #449).** `tests/dependencies.txt`
+  lists every external crate with its exact version, license, and role, and `tests/check-deps.sh` compares it with
+  `Cargo.lock` and the manifests. It is offline and deterministic, so it runs in every job without network or an
+  unpinned tool. A vulnerability scan (`cargo audit` and the RustSec advisory database) is a manual extra, not a CI
+  dependency; `docs/dependencies.md` says so.
+- **External requirements are exact `=x.y.z` pins, and `Cargo.lock` is committed.** The lockfile records the
+  crates.io source and checksum of every crate, so a changed dependency cannot slip in with a matching inventory
+  line; CI's `cargo metadata --locked --offline` also proves the lockfile is current with the manifests.
+- **The policy is permissive-only, and every identifier in an expression must be allowed.** An `OR` with one
+  copyleft branch is rejected rather than accepted through the permissive side. The accepted set is stated in
+  `tests/dependencies.txt` and enforced by the script; only `Apache-2.0 WITH LLVM-exception` is accepted as a
+  `WITH` term (for LLVM itself, which is host-provided and not vendored).
+- **The crates' own metadata is the source of truth in CI.** After `cargo build`, every job runs the audit with
+  `BURDIN_DEPS_REQUIRE_METADATA=1`, so each license is re-read from the crate's metadata and a failure to do so is
+  an error. Locally, before a build populates the registry cache, the same failure is a note, so the offline checks
+  still run on an unpacked tree.
+
+## Decided in the twenty-second session
 
 - **SemVer, with editions versioned separately (issue #456).** The compiler version is the workspace version in
   `Cargo.toml`, a stable release is a `vMAJOR.MINOR.PATCH` tag that must match it, and the workspace is `0.1.0` for
@@ -985,7 +1012,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
    PDB); multi-object emission so LTO has something to combine; a query-based library to parallelize checking as
    well as parsing; and a stable PGO benchmark where instrumented profiles show a measurable gain. The code-size
    budgets in `tests/check-build-flags.sh` are the regression guard for the release binary.
-7. The release pipeline is implemented (issue #452, twentieth session), but no release has been cut. Next: run the
+7. The release pipeline is implemented (issue #452, twenty-second session), but no release has been cut. Next: run the
    manual dry run from `docs/releasing.md` (it builds all six targets and creates no release), confirm the `windows-11-arm`
    and `macos-15-intel` images on this repository, then tag the first stable release. Follow-ups the pipeline does not
    cover yet: a package-manager formula (Homebrew/winget), code signing and provenance attestations, bundling the LLVM
