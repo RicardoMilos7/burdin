@@ -57,7 +57,7 @@ usage:
   burdin explain <code>    print the reference entry for an error code (for example E0003)";
 
 /// The user-facing error-code reference, embedded so `burdin explain` cannot disagree with the page that
-/// `tests/check-error-docs.sh` checks (issue #437).
+/// `tests/check_error_docs.py` checks (issue #437).
 const ERROR_DOCS: &str = include_str!("../../../docs/error-codes.md");
 
 #[derive(Debug)]
@@ -410,7 +410,7 @@ fn job_count(modules: usize, available: usize, requested: usize) -> usize {
 }
 
 /// `burdin explain`: prints the reference entry for one code, or lists the codes. The text comes from the same
-/// page `tests/check-error-docs.sh` compiles examples from (issue #437).
+/// page `tests/check_error_docs.py` compiles examples from (issue #437).
 fn explain(args: &[String]) -> ExitCode {
     match args {
         [] => {

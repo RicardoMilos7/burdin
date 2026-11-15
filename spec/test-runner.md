@@ -3,7 +3,7 @@
 This file is the behavior of `burdin test` and of the attributes on a `test` item. The syntax is in
 [`grammar.md`](grammar.md) (`TestItem`); the driver contract is summarized in
 [`README.md`](../README.md#burdin-test), and the black-box checks are in
-[`tests/check-test-runner.sh`](../tests/check-test-runner.sh) with the conformance tests in
+[`tests/check_test_runner.py`](../tests/check_test_runner.py) with the conformance tests in
 [`tests/m10_test_runner`](../tests/m10_test_runner).
 
 The runner builds the selected packages in test mode. A test body is compiled as a function that returns
@@ -139,11 +139,11 @@ Issue #444 stays open until milestone 20 provides the interpreter.
 
 | Behavior | Test |
 | --- | --- |
-| `[ignore]`, the ignored count, `--ignored`, `--include-ignored` | `tests/m10_test_runner/attributes_ignore.bd`, `tests/check-test-runner.sh` |
-| `[should_panic]`, `[should_panic("text")]`, `[should_fail]` | `tests/m10_test_runner/attributes_should_panic.bd`, `tests/check-test-runner.sh` |
-| `[timeout(ms)]` | `tests/m10_test_runner/attributes_timeout.bd`, `tests/check-test-runner.sh` |
+| `[ignore]`, the ignored count, `--ignored`, `--include-ignored` | `tests/m10_test_runner/attributes_ignore.bd`, `tests/check_test_runner.py` |
+| `[should_panic]`, `[should_panic("text")]`, `[should_fail]` | `tests/m10_test_runner/attributes_should_panic.bd`, `tests/check_test_runner.py` |
+| `[timeout(ms)]` | `tests/m10_test_runner/attributes_timeout.bd`, `tests/check_test_runner.py` |
 | Invalid attributes (E0170) | `tests/m10_test_runner/attributes_invalid.bd` (`//@ test-compile-fail`) |
-| Parallel execution and deterministic failure order | `tests/check-test-runner.sh` |
-| Output capture, `--verbose` | `tests/check-test-runner.sh` |
-| Fresh working directory, clean environment, cleanup | `tests/check-test-runner.sh` |
-| `-p`, `--workspace`, `--filter`, dependency tests | `tests/check-test-runner.sh` |
+| Parallel execution and deterministic failure order | `tests/check_test_runner.py` |
+| Output capture, `--verbose` | `tests/check_test_runner.py` |
+| Fresh working directory, clean environment, cleanup | `tests/check_test_runner.py` |
+| `-p`, `--workspace`, `--filter`, dependency tests | `tests/check_test_runner.py` |

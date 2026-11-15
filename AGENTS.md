@@ -23,26 +23,26 @@ not updated and may disagree with the repository.
 ## Commands
 
 ```
-tests/run_tests.py                 run the conformance tests (Python 3; parallel by default)
-tests/run_tests.py m05 -v          one milestone, with diffs
-tests/run_tests.py --release       release profile (skips debug-only tests)
-tests/check_tests.py               validate directives and error codes (Python 3; no compiler needed)
-tests/check-unit-tests.sh          check the front-end unit tests and their CI coverage (no compiler needed)
-tests/check-ci.sh                  validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
-tests/check-deps.sh                audit the dependency pins and licenses (no compiler needed)
-tests/check-platform.sh            check the host triple and 64-bit isize/usize (needs a built driver)
-tests/check-platform-support.sh    check the platform support page against CI and binary-safe output (needs a built driver)
-tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
-tests/check-debug-info.sh          check -g's DWARF, line table, and a gdb breakpoint (needs a built driver)
-tests/check-codegen-opt.sh         check drop-flag elimination, bounds-check elision, and shared glue
-tests/check-build-flags.sh         check --version, --strip's size budget, --lto, and PGO
-tests/check-parallel.sh            check parallel parsing and deterministic diagnostics
-tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
-tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
-tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
-tests/check-release.sh             check the release workflow, archives, checksums, installers, and version policy
-tests/build-release.sh             build, smoke-test, and package one release target (--verify-reproducible)
-tests/release-notes.sh             generate release notes from CHANGELOG.md and check their links
+python3 tests/run_tests.py               run the conformance tests (Python 3; parallel by default)
+python3 tests/run_tests.py m05 -v        one milestone, with diffs
+python3 tests/run_tests.py --release     release profile (skips debug-only tests)
+python3 tests/check_tests.py             validate directives and error codes (Python 3; no compiler needed)
+python3 tests/check_unit_tests.py        check the front-end unit tests and their CI coverage (no compiler needed)
+python3 tests/check_ci.py                validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
+python3 tests/check_deps.py              audit the dependency pins and licenses (no compiler needed)
+python3 tests/check_platform.py          check the host triple and 64-bit isize/usize (needs a built driver)
+python3 tests/check_platform_support.py  check the platform support page against CI and binary-safe output (needs a built driver)
+python3 tests/check_docs.py              check documentation links and the driver contract (needs a built driver)
+python3 tests/check_debug_info.py        check -g's DWARF, line table, and a gdb breakpoint (needs a built driver)
+python3 tests/check_codegen_opt.py       check drop-flag elimination, bounds-check elision, and shared glue
+python3 tests/check_build_flags.py       check --version, --strip's size budget, --lto, and PGO
+python3 tests/check_parallel.py          check parallel parsing and deterministic diagnostics
+python3 tests/check_diagnostics.py       check color, width, formats, error limits, and ordering (needs a built driver)
+python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
+python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
+python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
+python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
+python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
@@ -50,14 +50,14 @@ cargo bench -p burdin_bench        compiler benchmarks (lex, parse, sema, codege
 cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs
 cargo bench -p burdin_bench -- --save FILE       record a benchmark baseline
 cargo bench -p burdin_bench -- --baseline FILE   compare with a baseline (exit 1 on a regression)
-tests/bench-regression.sh          benchmark regression check CI runs (advisory, issue #446)
-tests/fuzz.sh                      long lexer/parser fuzzing session (the scheduled CI job; issue #447)
-tests/fuzz.sh --seconds 60         a short local session; found inputs go to fuzz-out/crashes/
+python3 tests/bench_regression.py        benchmark regression check CI runs (advisory, issue #446)
+python3 tests/fuzz.py                    long lexer/parser fuzzing session (the scheduled CI job; issue #447)
+python3 tests/fuzz.py --seconds 60       a short local session; found inputs go to fuzz-out/crashes/
 ```
 
-Development happens in WSL Ubuntu first. The conformance runner and the directive checker are Python 3
-(`tests/run_tests.py`, `tests/check_tests.py`), so they behave the same on every host; the shell scripts also run from
-Git Bash on Windows.
+Development happens in WSL Ubuntu first. Every check and test tool under `tests/` is Python 3, so it behaves the
+same on every host (invoke it with `python3` on Unix and `python` on Windows); the remaining shell scripts
+(`install.sh` and the CI helpers) run from Git Bash on Windows.
 
 ## Working rules
 

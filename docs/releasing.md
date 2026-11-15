@@ -1,7 +1,7 @@
 # Releasing Burdin
 
 This page is the version and release policy for the `burdin` compiler, and the checklist that proves the pipeline
-(issues #452-#456). The pipeline is implemented; **no release has been cut yet**. `tests/check-release.sh` runs in
+(issues #452-#456). The pipeline is implemented; **no release has been cut yet**. `tests/check_release.py` runs in
 every CI job and fails when the workflow, the artifacts, the installers, the checksums, or this policy regress.
 
 ## Version scheme
@@ -32,7 +32,7 @@ outside a git checkout still reports where it came from.
 
 | Channel | Built by | Version | Published? |
 | --- | --- | --- | --- |
-| `dev` | a local `cargo build`, or `tests/build-release.sh` without `--channel` | the manifest version | never |
+| `dev` | a local `cargo build`, or `tests/build_release.py` without `--channel` | the manifest version | never |
 | `nightly` | the weekly schedule or a manual workflow run | `<manifest>-nightly.YYYYMMDD` | only when a manual run sets `publish`, as a prerelease |
 | `stable` | a push of a `vMAJOR.MINOR.PATCH` tag | exactly the manifest version | yes |
 
@@ -75,7 +75,7 @@ Six native targets are built, each on a hosted runner of the same architecture (
 | `x86_64-pc-windows-msvc` | `windows-2025` |
 | `aarch64-pc-windows-msvc` | `windows-11-arm` |
 
-Each job runs `tests/build-release.sh --target <triple> --out dist`, which
+Each job runs `tests/build_release.py --target <triple> --out dist`, which
 
 1. builds with `cargo build --release --locked -p burdin_driver` and the pinned toolchain;
 2. checks that the binary's `--version` reports the planned version, channel, and target;
@@ -105,7 +105,7 @@ installers print the fix when the installed compiler cannot start. Bundling the 
   requires all six archives to be present before it does anything else.
 - `install.sh` and `install.ps1` download `SHA256SUMS` and the archive, find the archive's entry, and compare the
   SHA-256 before extracting anything. A tampered archive, a release without a matching entry, and a target that is
-  not one of the six are refused; `tests/check-release.sh` proves the first two against a local release directory.
+  not one of the six are refused; `tests/check_release.py` proves the first two against a local release directory.
 
 There is no signing or provenance attestation yet; a checksum proves the download matches the published file, not
 who built it. The release job is the only writer, and it runs from the tagged commit.
@@ -122,7 +122,7 @@ A release build is made reproducible rather than merely repeatable:
 - archive entries are sorted, every mtime is pinned to `SOURCE_DATE_EPOCH`, uid/gid are `0` (GNU tar) or
   `0`/`root` (bsdtar), the tar format is `ustar`, and gzip is run with `-n`, so the archive has no timestamp or
   builder identity;
-- `tests/build-release.sh --verify-reproducible` copies the tree to a second path, builds both copies into separate
+- `python3 tests/build_release.py --verify-reproducible` copies the tree to a second path, builds both copies into separate
   target directories, and requires the two archives to have the same SHA-256. The release workflow's
   `reproducible` job runs it on Linux for every release.
 
@@ -155,7 +155,7 @@ Both installers:
 - print a `PATH` hint without editing the user's shell profile.
 
 `BURDIN_BASE_URL` points the download at another mirror, and `BURDIN_RELEASE_DIR` installs from a local directory —
-the rehearsal path used by `tests/check-release.sh` and the release job. A package-manager formula is a later work
+the rehearsal path used by `tests/check_release.py` and the release job. A package-manager formula is a later work
 item; there is no Homebrew tap, `winget` package, or distro package yet.
 
 ## Release notes
@@ -163,8 +163,8 @@ item; there is no Homebrew tap, `winget` package, or distro package yet.
 Release notes are generated from `CHANGELOG.md`, not written twice:
 
 ```console
-$ tests/release-notes.sh --version 0.1.0 --check-links --output NOTES.md   # a stable release
-$ tests/release-notes.sh --unreleased --check-links                       # a dry run
+$ tests/release_notes.py --version 0.1.0 --check-links --output NOTES.md   # a stable release
+$ tests/release_notes.py --unreleased --check-links                       # a dry run
 ```
 
 - `--version X.Y.Z` requires a `## X.Y.Z — <date>` section; the release workflow fails on a tag without one, so the
@@ -172,7 +172,7 @@ $ tests/release-notes.sh --unreleased --check-links                       # a dr
 - `--unreleased` uses the `## Unreleased` section and is the rehearsal form; the release job prefixes nightly notes
   with the nightly version.
 - `--check-links` checks every relative Markdown link in the extracted section against the repository, so a note
-  that points at a removed file fails before publication. Absolute URLs are left to `tests/check-docs.sh`.
+  that points at a removed file fails before publication. Absolute URLs are left to `tests/check_docs.py`.
 
 ## Cutting a release
 
@@ -181,8 +181,8 @@ $ tests/release-notes.sh --unreleased --check-links                       # a dr
 2. Set `[workspace.package] version` in `Cargo.toml` to `<version>`, then run a build so `Cargo.lock` records the
    new workspace versions, and commit both.
 3. Run the full local gate: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
-   `cargo test --workspace`, `tests/run_tests.py` and `tests/run_tests.py --release`, `tests/check-release.sh`, and
-   `tests/build-release.sh --verify-reproducible`.
+   `cargo test --workspace`, `tests/run_tests.py` and `tests/run_tests.py --release`, `tests/check_release.py`, and
+   `python3 tests/build_release.py --verify-reproducible`.
 4. Run the release workflow by hand with `publish: false` and inspect the six archives, `SHA256SUMS`, and the
    reproducibility job. Install the Linux archive with `install.sh` and run `burdin build/run/test` on a sample
    package.
@@ -198,10 +198,10 @@ Every item below is automated; run it before the first real tag and after a chan
 
 | Step | Command | Expected |
 | --- | --- | --- |
-| Policy and scripts | `tests/check-release.sh` | `No problems.` |
+| Policy and scripts | `tests/check_release.py` | `No problems.` |
 | Version metadata | `target/debug/burdin --version` | six lines, and `channel:` is `dev` for a local build |
-| Local package | `tests/build-release.sh --target <host> --out dist` | an archive and two checksum files; the script's smoke test passes |
-| Reproducibility | `tests/build-release.sh --verify-reproducible` | `reproducible: <same SHA-256>` for two checkout paths |
+| Local package | `python3 tests/build_release.py --target <host> --out dist` | an archive and two checksum files; the script's smoke test passes |
+| Reproducibility | `python3 tests/build_release.py --verify-reproducible` | `reproducible: <same SHA-256>` for two checkout paths |
 | Install rehearsal | `BURDIN_RELEASE_DIR=$PWD/dist BURDIN_VERSION=<v> BURDIN_INSTALL_DIR=$PWD/bin sh install.sh` | the installed compiler prints `<v>`; a sample `build`, `run`, and `test` pass |
 | Checksum refusal | append a byte to the archive and rerun the installer | `checksum mismatch`, non-zero exit, nothing installed |
 | Dry run | Actions → Release → Run workflow, `publish` unchecked | six artifacts, a verified `SHA256SUMS`, no GitHub release |

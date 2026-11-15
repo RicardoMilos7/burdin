@@ -17,7 +17,7 @@ Environment:
 --------------------------------------------------------------------------------
 Driver contract assumed by this runner. If your driver differs, change only this section.
 The full contract, including --emit-ir, --link-lib (and LLVM-C), and BURDIN_CC, is documented in
-README.md at the repository root (`The driver contract`), and tests/check-docs.sh checks it.
+README.md at the repository root (`The driver contract`), and tests/check_docs.py checks it.
 
   burdin build <target> [--release]
       Compiles. Diagnostics go to stderr; each starts with a line in the form

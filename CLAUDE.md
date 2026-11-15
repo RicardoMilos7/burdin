@@ -49,29 +49,30 @@ If these disagree, stop and say so. Do not pick one silently.
 ## Commands
 
 ```
-tests/run_tests.py                 run the conformance tests against the compiler (Python 3; BURDIN=path overrides the binary)
-tests/run_tests.py m05 -v          only milestone 5, with diffs for failures
-tests/check_tests.py               check test directives and error codes (Python 3; no compiler needed)
-tests/check-unit-tests.sh          check the front-end unit tests and their CI coverage (no compiler needed)
-tests/check-deps.sh                audit the dependency pins and licenses (no compiler needed)
-tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
-tests/check-debug-info.sh          check -g, the line table, and a gdb breakpoint (needs a built driver)
-tests/check-codegen-opt.sh         check drop-flag elimination, bounds-check elision, and shared glue
-tests/check-build-flags.sh         check --version, --strip's size budget, --lto, and PGO
-tests/check-parallel.sh            check parallel parsing and deterministic diagnostics
-tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
-tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
-tests/check-test-runner.sh         check `burdin test` attributes, parallelism, output, isolation, and discovery
-tests/check-release.sh             check the release workflow, archives, checksums, installers, and version policy
-tests/build-release.sh             build, smoke-test, and package one release target (--verify-reproducible)
-tests/release-notes.sh             generate release notes from CHANGELOG.md and check their links
-tests/check-platform-support.sh    check the platform support page against CI and binary-safe output (needs a built driver)
-tests/fuzz.sh                      long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
+python3 tests/run_tests.py               run the conformance tests against the compiler (Python 3; BURDIN=path overrides the binary)
+python3 tests/run_tests.py m05 -v        only milestone 5, with diffs for failures
+python3 tests/check_tests.py             check test directives and error codes (Python 3; no compiler needed)
+python3 tests/check_unit_tests.py        check the front-end unit tests and their CI coverage (no compiler needed)
+python3 tests/check_deps.py              audit the dependency pins and licenses (no compiler needed)
+python3 tests/check_docs.py              check documentation links and the driver contract (needs a built driver)
+python3 tests/check_debug_info.py        check -g, the line table, and a gdb breakpoint (needs a built driver)
+python3 tests/check_codegen_opt.py       check drop-flag elimination, bounds-check elision, and shared glue
+python3 tests/check_build_flags.py       check --version, --strip's size budget, --lto, and PGO
+python3 tests/check_parallel.py          check parallel parsing and deterministic diagnostics
+python3 tests/check_diagnostics.py       check color, width, formats, error limits, and ordering (needs a built driver)
+python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
+python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
+python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
+python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
+python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
+python3 tests/check_platform_support.py  check the platform support page against CI and binary-safe output (needs a built driver)
+python3 tests/fuzz.py                    long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 ```
 
-On Windows run the `.sh` scripts from Git Bash. `tests/run_tests.py` and `tests/check_tests.py` need Python 3 and run
-unchanged on every platform (invoke them with `python3` on Unix and `python` on Windows); the runner expects
-`burdin build`, `burdin run`, and `burdin test` as described at the top of `tests/run_tests.py`.
+The test scripts are Python 3 and run unchanged on every platform (invoke them with `python3` on Unix and `python`
+on Windows); on Windows the shell scripts that remain (`install.sh` and the CI helpers) run from Git Bash. The
+conformance runner expects `burdin build`, `burdin run`, and `burdin test` as described at the top of
+`tests/run_tests.py`.
 
 ## Layout
 
@@ -100,8 +101,8 @@ crates/
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
-docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh), the platform
-                          support matrix and known limitations (checked by tests/check-platform-support.sh), and the
+docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the platform
+                          support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)
 .github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
 spec/                     grammar, memory rules, standard-library surface, derives, test runner, stage 0 scope,
@@ -119,7 +120,7 @@ not on sema. Keep everything before codegen free of LLVM so the checks can be te
 Rust is pinned by `rust-toolchain.toml` to an exact stable version with the `clippy` and `rustfmt` components (currently
 `1.100.0`; edition 2024), so `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` give the same
 verdict on a clean machine. Bump the version deliberately, together with a `cargo fmt --all` pass and a HANDOFF.md note;
-`tests/check-ci.sh` fails if the pin, its components, or CI's verification step goes missing. **LLVM 21** through
+`tests/check_ci.py` fails if the pin, its components, or CI's verification step goes missing. **LLVM 21** through
 `inkwell` 0.11 (feature `llvm21-1-no-llvm-linking`), and the system C compiler driver as the linker against libc (`cc`
 on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides). `crates/burdin_codegen/build.rs` links the shared LLVM
 library on every platform: the static LLVM archives in the official Windows release are built with the static CRT and
@@ -130,7 +131,7 @@ conversions, and heap allocation as LLVM IR that calls libc directly.
 Platforms: Linux, macOS, Windows; x86-64 and arm64.
 
 External Rust crates are exact-pinned, committed in `Cargo.lock`, and reviewed in `tests/dependencies.txt`:
-`tests/check-deps.sh` enforces the permissive-license policy and the pins (see `docs/dependencies.md`).
+`tests/check_deps.py` enforces the permissive-license policy and the pins (see `docs/dependencies.md`).
 
 **Development happens in WSL Ubuntu 26.04 first** (decided). The repository stays on `F:`; build and test from WSL at
 `/mnt/f/projects/burdin-lang`. Packages: `build-essential llvm-21-dev libpolly-21-dev clang-21 libzstd-dev zlib1g-dev`, and

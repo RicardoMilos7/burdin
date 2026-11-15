@@ -6,11 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
-- The conformance runner and the directive checker are Python 3 (`tests/run_tests.py`, `tests/check_tests.py`), one
-  implementation for Linux, macOS, and Windows instead of the former `run-tests.sh` and the `check-tests.sh`/`.ps1`
-  pair. The runner keeps the same directives, diagnostics, output order, and exit codes, runs tests in parallel by
-  default (`-j N`; results are still printed in test order), and removes the Git Bash process-spawn cost that
-  dominated the Windows CI job: the full suite takes 3 s instead of 31 s on WSL with the same compiler.
+- Every check and test tool under `tests/` is Python 3 (`tests/run_tests.py`, `tests/check_*.py`,
+  `tests/build_release.py`, `tests/release_notes.py`, `tests/bench_regression.py`, `tests/fuzz.py`, and the shared
+  `tests/harness.py`), one implementation for Linux, macOS, and Windows instead of the former shell scripts and the
+  `check-tests.ps1` duplicate. The conformance runner keeps the same directives, diagnostics, output order, and exit
+  codes, and runs tests in parallel by default (`-j N`; results are still printed in test order). CI invokes Python
+  directly on all three platforms. This removes the Git Bash process-spawn cost that dominated the Windows CI job:
+  the full suite takes 3 s instead of 31 s on WSL with the same compiler, and `check_docs.py` walks links in-process.
 - The release pipeline (issue #452, sub-issues #453-#456): a `Release` workflow builds the six supported targets
   natively (`x86_64`/`aarch64` Linux, macOS, and Windows), smoke-tests `build`, `run`, and `test`, writes
   `burdin-<version>-<target>.tar.gz` archives and SHA-256 checksums, verifies that two checkout paths produce the
