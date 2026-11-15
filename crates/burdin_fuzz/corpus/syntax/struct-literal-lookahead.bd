@@ -1,0 +1,21 @@
+// The struct-literal lookahead: `Name {`, `Name { field:`, `Name { }`, and blocks after names.
+fn main() {
+    let a = S { x: 1, y }
+    let b = S { }
+    let c = S { x }
+    let d = S { x, }
+    let e = S {
+        x: 1,
+        y: 2,
+    }
+    let f = Shape.Rect { w: 1, h: 2 }
+    let g = S{ x: 1 }
+    let h = if x == S { x: 1 } { 1 } else { 2 }
+    let i = while x < S { x: 1 }.x { }
+    let j = match x { S { x } => x, _ => 0 }
+    let k = P { x: if y { S { x: 1 } } else { S { x: 2 } } }
+    let l = a.b.c { d: 1 }
+    let m = f() { x: 1 }
+    let n = (S) { x: 1 }
+    let o = S.<T> { x: 1 }
+}

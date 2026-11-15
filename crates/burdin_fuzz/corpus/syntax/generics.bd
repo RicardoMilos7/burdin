@@ -1,0 +1,23 @@
+// Generic parameters, bounds, where clauses, and arguments in every position.
+struct Pair<A, B> { first: A, second: B }
+struct Bounded<T: Ord + Eq> { item: T }
+enum Maybe<T> { Some(T), None }
+interface Show<T> { fn show(self): String }
+type Alias<T> = Pair<T, T>
+type Bad<> = i32
+type Bad2<T,> = T
+fn f<T>(x: T): T { x }
+fn g<T: Ord + Eq, U>(x: T, y: U): T where T: Clone, U: Ord { x }
+fn h<T,>(x: T): T { x }
+fn i<>(x: i32) {}
+fn j(x: Pair<i32, Pair<bool, u8>>) {}
+fn k() {
+    let a = Pair<i32, bool> { first: 1, second: true }
+    let b = f::<i32>(1)
+    let c = f::<> (1)
+    let d = Maybe<i32>.Some(1)
+    let e = <i32>1
+    let f = f<T>
+    let g = f< T >(1)
+    let h = f<i32
+}

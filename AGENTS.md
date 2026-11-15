@@ -38,6 +38,8 @@ cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs
 cargo bench -p burdin_bench -- --save FILE       record a benchmark baseline
 cargo bench -p burdin_bench -- --baseline FILE   compare with a baseline (exit 1 on a regression)
 tests/bench-regression.sh          benchmark regression check CI runs (advisory, issue #446)
+tests/fuzz.sh                      long lexer/parser fuzzing session (the scheduled CI job; issue #447)
+tests/fuzz.sh --seconds 60         a short local session; found inputs go to fuzz-out/crashes/
 ```
 
 Development happens in WSL Ubuntu first; the shell scripts also run from Git Bash on Windows.
@@ -123,6 +125,7 @@ spec/                     grammar, memory rules, standard-library surface, deriv
 tests/                    conformance suite, README with the format and error codes
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_codegen, burdin_driver,
-                          burdin_bench (generated inputs and `cargo bench` targets)
+                          burdin_bench (generated inputs and `cargo bench` targets),
+                          burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin
 ```
