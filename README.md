@@ -14,6 +14,9 @@ conformance suite and the specs, not by this file; see the index below.
 | --- | --- |
 | [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the settled language decisions. Read this first. |
 | [`docs/error-codes.md`](docs/error-codes.md) | The user-facing reference for every error code, with a checked example and a fix for each. `burdin explain <code>` prints one entry. |
+| [`docs/dependencies.md`](docs/dependencies.md) | The dependency and license policy, the review of every crate, and how to add one. `tests/check-deps.sh` enforces it. |
+| [`docs/platform-support.md`](docs/platform-support.md) | The tested OS/architecture pairs, the runtime features each CI job proves, and the known limitations. |
+| [`docs/releasing.md`](docs/releasing.md) | The version scheme, release channels, artifact and checksum protocol, reproducibility rules, and the rehearsal checklist. |
 | [`spec/grammar.md`](spec/grammar.md) | The syntax of stage 0. |
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
@@ -38,7 +41,9 @@ Requirements:
 - a system C compiler driver to link against libc: `cc` on Linux and macOS, MSVC `cl` on Windows.
 
 On Ubuntu, the packages are `build-essential llvm-21-dev libpolly-21-dev clang-21 libzstd-dev zlib1g-dev`. Development
-happens in WSL Ubuntu first; `CLAUDE.md` has the exact setup and the PowerShell wrapper. Build from the repository root:
+happens in WSL Ubuntu first; `CLAUDE.md` has the exact setup and the PowerShell wrapper.
+[`docs/platform-support.md`](docs/platform-support.md) records which configurations CI tests, which are untested, and
+the known gaps. Build from the repository root:
 
 ```console
 $ cargo build
@@ -46,6 +51,50 @@ $ cargo build
 
 The driver is then `target/debug/burdin` (or `target\debug\burdin.exe`). The examples below use that path; if the binary
 is on `PATH`, drop the prefix.
+
+### Dependencies and licenses
+
+The compiler has one direct external Rust dependency, `inkwell` 0.11 (Apache-2.0), which binds LLVM 21
+through `llvm-sys` (MIT). Every other crate in [`Cargo.lock`](Cargo.lock) is transitively required by
+those two and is reviewed in [`tests/dependencies.txt`](tests/dependencies.txt); the policy and the
+review are in [`docs/dependencies.md`](docs/dependencies.md).
+
+- External requirements are exact (`=x.y.z`), and the committed `Cargo.lock` records the resolved
+  version, source, and checksum of every crate, so builds are reproducible.
+- Only permissive licenses are accepted (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode-3.0, and similar);
+  a copyleft identifier fails the check.
+- LLVM itself is supplied by the host toolchain under Apache-2.0 WITH LLVM-exception and is not
+  vendored.
+
+`tests/check-deps.sh` checks all of this without a compiler and re-verifies each license through
+`cargo metadata --locked --offline` after a build. Every CI job runs it:
+
+```console
+$ tests/check-deps.sh
+No problems.
+```
+
+## Installing a release
+
+The release workflow builds and publishes prebuilt compilers for six targets: Linux, macOS, and Windows on x86-64
+and arm64. **No release has been cut yet**; the one-liners below work from the first published release onward. On
+Unix:
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/RicardoMilos7/burdin/main/install.sh | sh
+```
+
+On Windows PowerShell:
+
+```console
+> irm https://raw.githubusercontent.com/RicardoMilos7/burdin/main/install.ps1 | iex
+```
+
+The installers verify the release's `SHA256SUMS` before unpacking, install into `$HOME/.local/bin`
+(`%LOCALAPPDATA%\Programs\burdin\bin` on Windows), and accept `BURDIN_VERSION` to pin a version,
+`BURDIN_CHANNEL=nightly` for a nightly, and `BURDIN_INSTALL_DIR` to change the destination. A prebuilt compiler needs
+the LLVM 21 shared library at run time (`libLLVM-21.so`, `libLLVM.dylib`, or `LLVM-C.dll`); it is not bundled. The
+artifact names, checksums, reproducibility rules, and release steps are in [`docs/releasing.md`](docs/releasing.md).
 
 ## Hello, world
 
@@ -116,8 +165,10 @@ Environment:
 | Variable | Meaning |
 | --- | --- |
 | `BURDIN_CC` | The C compiler driver used to link against libc (default `cc`, `cl` on Windows). |
+| `BURDIN_CHANNEL` | The release channel `--version` prints: `dev` (default), `nightly`, or `stable`. |
 | `BURDIN_COMMIT` | Overrides the git commit `--version` prints (for builds without a `.git` directory). |
 | `BURDIN_JOBS` | The number of parser threads; `1` is sequential. Default: the machine's parallelism. |
+| `BURDIN_VERSION` | Overrides the version `--version` prints (nightly builds). |
 | `LLVM_SYS_211_PREFIX` | The LLVM 21 installation; its `bin/llvm-config` drives `--link-lib LLVM-C`. |
 
 ### Targets and packages
@@ -250,17 +301,20 @@ conflicting flags) or a driver failure after loading. `tests/run-tests.sh` reads
 ### `burdin --version`
 
 ```
-burdin 0.0.0
+burdin 0.1.0
+channel: dev
 target: x86_64-unknown-linux-gnu
 llvm: 21.1.8
 commit: b011782b7f2a
 profile: debug
 ```
 
-The version comes from `Cargo.toml`, the target and profile from the build (`target` is the host triple the compiler
-was built for), the LLVM version from the linked LLVM library, and the commit from git at build time (`unknown` when
-the build had no `.git`, unless `BURDIN_COMMIT` overrides it). Diagnostics do **not** print the compiler version:
-their format stays `path:LINE:COL: error[E0000]: message`. Include the `--version` output in a bug report.
+The version comes from `Cargo.toml` (unless `BURDIN_VERSION` overrides it), the channel from `BURDIN_CHANNEL`
+(`dev` for a local build, `nightly` or `stable` for a release), the target and profile from the build (`target` is
+the host triple the compiler was built for), the LLVM version from the linked LLVM library, and the commit from git
+at build time (`unknown` when the build had no `.git`, unless `BURDIN_COMMIT` overrides it). The version scheme and
+channels are in [`docs/releasing.md`](docs/releasing.md). Diagnostics do **not** print the compiler version: their
+format stays `path:LINE:COL: error[E0000]: message`. Include the `--version` output in a bug report.
 
 ### Runtime behavior
 
@@ -460,10 +514,21 @@ $ tests/check-debug-info.sh     # -g: DWARF, line table, and a gdb breakpoint wh
 $ tests/check-codegen-opt.sh    # drop-flag elimination, bounds-check elision, shared glue
 $ tests/check-build-flags.sh    # --version, --strip's budget, --lto, and PGO
 $ tests/check-parallel.sh       # parallel parsing and deterministic diagnostics
+$ tests/check-release.sh        # release workflow, archives, checksums, installers, and version channels
 ```
+
+The release pipeline has three scripts of its own: `tests/build-release.sh` builds and packages one target (and
+`--verify-reproducible` proves two checkout paths produce the same archive), `tests/release-notes.sh` extracts a
+changelog section and checks its links, and `.github/workflows/release.yml` builds the six targets, verifies the
+checksums, and publishes only from a tag push or an explicit manual `publish`. See
+[`docs/releasing.md`](docs/releasing.md).
 Two checks cover the diagnostics themselves, and every CI job runs them after the build:
 
 - `tests/check-diagnostics.sh` checks the default and short and JSON formats, color and `NO_COLOR`, wrapping and
   `--width`, notes and suggestions, `--error-limit`, and deterministic ordering.
 - `tests/check-error-docs.sh` checks that [`docs/error-codes.md`](docs/error-codes.md) mirrors the registry, that
   every snippet fails with exactly the marked diagnostics, and that `burdin explain` prints every entry.
+
+The dependency audit needs no built compiler: `tests/check-deps.sh` reads `Cargo.lock`, the manifests, and
+[`tests/dependencies.txt`](tests/dependencies.txt), and re-verifies the licenses through `cargo metadata` when it can.
+Every CI job runs it after `cargo build` with `BURDIN_DEPS_REQUIRE_METADATA=1`.

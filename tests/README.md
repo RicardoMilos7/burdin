@@ -72,7 +72,9 @@ BURDIN=/path/to/burdin tests/run-tests.sh # choose the compiler driver
 tests/check-tests.sh                  # check directives and error codes (no compiler needed)
 tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
 tests/check-platform.sh               # check the host triple and 64-bit isize/usize (needs a built driver)
+tests/check-platform-support.sh       # check the platform support page against CI and binary-safe output (needs a built driver)
 tests/check-docs.sh                   # check documentation links and the driver contract (needs a built driver)
+tests/check-deps.sh                   # dependency, pin, and license audit (no compiler needed)
 tests/check-debug-info.sh             # -g: DWARF, line table, and a gdb breakpoint when gdb is installed
 tests/check-codegen-opt.sh            # drop-flag elimination, bounds-check elision, shared glue
 tests/check-build-flags.sh            # --version, --strip's budget, --lto, and PGO
@@ -123,6 +125,17 @@ may get slower before `--baseline` reports it. CI keeps the baseline in `actions
 and architecture, the pinned toolchain, and `Cargo.lock`, so only numbers from the same kind of machine are
 compared; a push to main records a new baseline, and a pull request compares against the last main run on that
 platform. `HANDOFF.md` records the first baseline and the meaning of the `--smoke` budgets.
+
+## Dependencies and licenses
+
+[`dependencies.txt`](dependencies.txt) is the reviewed record of every external crate: one
+`name<TAB>version<TAB>license<TAB>why` line per crate in `Cargo.lock`. `tests/check-deps.sh` fails when the
+lockfile and the record disagree, when a crate has no checksum, when a direct requirement is not an exact
+`=x.y.z` pin, or when a license is outside the permissive policy stated at the top of that file. It also
+re-reads each crate's license and proves the lockfile is current with `cargo metadata --locked --offline`;
+a missing registry cache makes that verification a note, unless `BURDIN_DEPS_REQUIRE_METADATA=1` (which
+every CI job sets, after `cargo build`). The policy and the review are
+[`docs/dependencies.md`](../docs/dependencies.md).
 
 ## Error codes
 

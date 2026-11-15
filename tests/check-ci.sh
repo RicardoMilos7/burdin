@@ -33,7 +33,13 @@
 #   * the documentation check (which reads the driver contract in README.md) runs in every job;
 #   * every job runs the diagnostics presentation check and the error-code reference check, and the reference
 #     exists, is the registry's mirror image, and is linked from README.md (issues #434-#437);
-#   * every job runs the black-box check of the test runner (issues #438-#443).
+#   * every job runs the black-box check of the test runner (issues #438-#443);
+#   * every job runs the dependency and license audit after `cargo build`, with the license metadata
+#     verification required, and the reviewed inventory and its policy are in place (issue #449);
+#   * every job runs the platform support check, and docs/platform-support.md (the matrix and its known
+#     limitations) exists and is linked from README.md and CHANGELOG.md (issue #457);
+#   * every job runs the release-pipeline check, which guards the release workflow, the six-target matrix, the
+#     checksums, the installers, and the pinned version/channel metadata (issues #452-#456).
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")
@@ -211,6 +217,20 @@ check_fuzz() {   # $1 block
         || add_problem "ci.yml: fuzz job: does not upload the directory that holds found inputs"
 }
 
+# Dependency and license audit (issue #449). The audit must run after the build, so `cargo metadata
+# --locked --offline` can read the crates' own license fields, and it must require that verification
+# rather than accepting the reviewed inventory on trust.
+check_deps_audit() {   # $1 job, $2 block
+    local job=$1 block=$2 build_line deps_line
+    build_line=$(grep -nF 'run: cargo build' <<< "$block" | head -n 1 | cut -d: -f1)
+    deps_line=$(grep -nF 'tests/check-deps.sh' <<< "$block" | head -n 1 | cut -d: -f1)
+    if [ -n "$build_line" ] && [ -n "$deps_line" ] && [ "$deps_line" -lt "$build_line" ]; then
+        add_problem "ci.yml: $job job: the dependency audit runs before cargo build (cargo metadata needs the registry)"
+    fi
+    grep -qF 'BURDIN_DEPS_REQUIRE_METADATA: 1' <<< "$block" \
+        || add_problem "ci.yml: $job job: the dependency audit does not require cargo metadata (BURDIN_DEPS_REQUIRE_METADATA=1)"
+}
+
 linux=$(job_block linux)
 macos=$(job_block macos)
 windows=$(job_block windows)
@@ -270,6 +290,7 @@ for job in linux macos windows; do
         'tests/check-tests.sh' \
         'tests/check-unit-tests.sh' \
         'tests/check-ci.sh' \
+        'tests/check-deps.sh' \
         'tests/check-platform.sh' \
         'tests/check-docs.sh' \
         'tests/check-debug-info.sh' \
@@ -279,6 +300,8 @@ for job in linux macos windows; do
         'tests/check-diagnostics.sh' \
         'tests/check-error-docs.sh' \
         'tests/check-test-runner.sh' \
+        'tests/check-platform-support.sh' \
+        'tests/check-release.sh' \
         'tests/bench-regression.sh' \
         'rustup toolchain install' \
         'rustc --version' \
@@ -294,6 +317,7 @@ for job in linux macos windows; do
     check_conformance "$job" "$block" release
     check_caches "$job" "$block"
     check_bench_regression "$job" "$block"
+    check_deps_audit "$job" "$block"
 done
 
 check_fuzz "$fuzz"
@@ -369,6 +393,51 @@ check_script tests/check-debug-info.sh "llvm-dwarfdump" "gdb" "-g" "DW_TAG_subpr
 check_script tests/check-codegen-opt.sh "alloca i1" "bounds.fail" "burdin.drop" "index out of bounds"
 check_script tests/check-build-flags.sh "burdin --version" "--strip" "--lto" "--pgo-use" "131072"
 check_script tests/check-parallel.sh "BURDIN_JOBS" "diff -u"
+check_script tests/check-platform-support.sh "docs/platform-support.md" "Untested" "check-docs" "wc -c"
+
+# The dependency and license audit (issue #449): the reviewed inventory must cover the direct
+# dependency and its LLVM bindings, the policy must stay stated, the script must keep checking the
+# lockfile, the pins, and the licenses through cargo metadata, and the review page must exist and be
+# linked from the documentation index.
+deps_inventory=$SCRIPT_DIR/dependencies.txt
+[ -f "$deps_inventory" ] || add_problem "tests/dependencies.txt: missing (the reviewed dependency inventory)"
+check_script tests/check-deps.sh "Cargo.lock" "dependencies.txt" "cargo metadata" \
+    "BURDIN_DEPS_REQUIRE_METADATA" "checksum" "permissive" "exact"
+if [ -f "$deps_inventory" ]; then
+    for crate in inkwell llvm-sys; do
+        grep -qE "^$crate[[:space:]]" "$deps_inventory" \
+            || add_problem "tests/dependencies.txt: no $crate entry"
+    done
+    grep -qi 'permissive' "$deps_inventory" \
+        || add_problem "tests/dependencies.txt: the license policy is no longer stated"
+fi
+if [ ! -f "$ROOT/docs/dependencies.md" ]; then
+    add_problem "docs/dependencies.md: missing (the dependency and license review)"
+else
+    grep -qF 'docs/dependencies.md' "$ROOT/README.md" \
+        || add_problem "README.md: does not link docs/dependencies.md"
+fi
+
+# The release pipeline (issues #452-#456): the check must keep covering the six targets, the release workflow, the
+# archive and checksum scripts, both installers, and the version policy, and the files it reads must exist.
+release_workflow=$ROOT/.github/workflows/release.yml
+[ -f "$release_workflow" ] || add_problem ".github/workflows/release.yml: missing"
+if [ -f "$release_workflow" ]; then
+    for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin \
+                  aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+        grep -qF -- "$target" "$release_workflow" \
+            || add_problem "release.yml: does not build $target"
+    done
+    grep -qF -- "if: needs.plan.outputs.publish == 'true'" "$release_workflow" \
+        || add_problem "release.yml: the publish step is not gated"
+fi
+check_script tests/check-release.sh "SHA256SUMS" "install.sh" "install.ps1" "release-notes.sh" \
+    "x86_64-unknown-linux-gnu" "docs/releasing.md" "channel:" "smoke_test" "--verify-reproducible"
+[ -f "$ROOT/docs/releasing.md" ] || add_problem "docs/releasing.md: missing"
+[ -f "$ROOT/tests/build-release.sh" ] || add_problem "tests/build-release.sh: missing"
+[ -f "$ROOT/tests/release-notes.sh" ] || add_problem "tests/release-notes.sh: missing"
+[ -f "$ROOT/install.sh" ] || add_problem "install.sh: missing"
+[ -f "$ROOT/install.ps1" ] || add_problem "install.ps1: missing"
 
 # The m11 test is the one that proves --link-lib LLVM-C resolves in CI.
 if ! grep -rqs --include='*.bd' -- '//@ link-lib: LLVM-C' "$SCRIPT_DIR/m11_llvm"; then
@@ -394,12 +463,24 @@ else
         || add_problem "docs/error-codes.md: codes do not match the tests/README.md registry"
 fi
 
+# The platform support matrix (issue #457) must exist and be reachable from the documentation index and the
+# release notes; the script that checks it is required in every job above.
+if [ ! -f "$ROOT/docs/platform-support.md" ]; then
+    add_problem "docs/platform-support.md: missing (the platform support matrix and known limitations)"
+else
+    grep -qF 'docs/platform-support.md' "$ROOT/README.md" \
+        || add_problem "README.md: does not link docs/platform-support.md"
+    grep -qF 'platform-support.md' "$ROOT/CHANGELOG.md" \
+        || add_problem "CHANGELOG.md: the release notes do not link docs/platform-support.md"
+fi
+
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
-    tests/check-docs.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/check-test-runner.sh \
-    tests/check-debug-info.sh tests/check-codegen-opt.sh tests/check-build-flags.sh tests/check-parallel.sh \
-    tests/bench-regression.sh tests/fuzz.sh; do
+    tests/check-platform-support.sh tests/check-docs.sh tests/check-deps.sh tests/check-diagnostics.sh \
+    tests/check-error-docs.sh tests/check-test-runner.sh tests/check-debug-info.sh tests/check-codegen-opt.sh \
+    tests/check-build-flags.sh tests/check-parallel.sh tests/check-release.sh tests/build-release.sh \
+    tests/release-notes.sh tests/bench-regression.sh tests/fuzz.sh install.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"

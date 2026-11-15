@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks the build flags and binary metadata:
-#   * `burdin --version` prints the version, target, LLVM version, commit, and profile (issue #431);
+#   * `burdin --version` prints the version, channel, target, LLVM version, commit, and profile (issues #431, #454);
 #   * `--strip` removes the symbol table and keeps the program's output, and the stripped sizes stay under the
 #     size budget recorded here (issue #430);
 #   * `--lto` links bitcode and runs, and `--pgo-generate`/`--pgo-use` round-trip a profile (issue #429), when an
@@ -57,10 +57,13 @@ status=$?
 if [ "$status" -ne 0 ]; then
     add_problem "burdin --version: exit status $status: $(cat err)"
 else
-    for prefix in "burdin " "target: " "llvm: " "commit: " "profile: "; do
+    for prefix in "burdin " "channel: " "target: " "llvm: " "commit: " "profile: "; do
         checks=$((checks + 1))
         printf '%s\n' "$version" | grep -q "^$prefix" || add_problem "burdin --version: no '$prefix' line"
     done
+    checks=$((checks + 1))
+    printf '%s\n' "$version" | grep -Eq '^channel: (dev|nightly|stable)$' \
+        || add_problem "burdin --version: the channel is not dev, nightly, or stable"
     checks=$((checks + 1))
     printf '%s\n' "$version" | grep -Eq '^llvm: [0-9]+\.[0-9]+\.[0-9]+$' \
         || add_problem "burdin --version: the LLVM version is not major.minor.patch"

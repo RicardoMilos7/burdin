@@ -9,7 +9,7 @@
 #     matches a heading;
 #   * the `burdin` program marked `check-docs` in README.md compiles and prints the documented output;
 #   * `build` output naming, `-o`, `--emit-ir`, `--release`, `-g`, `--strip`, and `--link-lib` (including
-#     LLVM-C when llvm-config is available), and `--version`'s five metadata lines;
+#     LLVM-C when llvm-config is available), and `--version`'s six metadata lines;
 #   * `run` passes arguments after `--` and the program's exit status through;
 #   * `test` prints the documented `FAIL` lines and summary and exits 1 on a failure;
 #   * diagnostics have the documented `path:LINE:COL: error[CODE]: message` shape;
@@ -171,7 +171,7 @@ else
         # --version: the build metadata the README documents.
         run_driver "$BURDIN" --version
         expect_status "burdin --version" 0
-        for prefix in "burdin " "target: " "llvm: " "commit: " "profile: "; do
+        for prefix in "burdin " "channel: " "target: " "llvm: " "commit: " "profile: "; do
             expect_contains "burdin --version" "$prefix" "$stdout"
         done
 

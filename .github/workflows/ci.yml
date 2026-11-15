@@ -110,6 +110,16 @@ jobs:
       - name: Build
         run: cargo build
 
+      # The dependency audit (issue #449): every crate in Cargo.lock is reviewed in
+      # tests/dependencies.txt, every license is permissive, every direct requirement is an exact
+      # pin, and the lockfile is current. It runs after the build so `cargo metadata --locked
+      # --offline` can re-verify the license fields from the crates themselves; the verification is
+      # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
+      - name: Audit dependencies and licenses
+        env:
+          BURDIN_DEPS_REQUIRE_METADATA: 1
+        run: bash tests/check-deps.sh
+
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
       - name: Check debug information
@@ -120,6 +130,11 @@ jobs:
 
       - name: Check build flags and metadata
         run: tests/check-build-flags.sh
+
+      # The release pipeline (issues #452-#456): the six-target workflow, versioned archives, SHA-256 checksums,
+      # both installers, the version/channel policy, and release notes generated from the changelog.
+      - name: Check the release pipeline
+        run: tests/check-release.sh
 
       - name: Check parallel analysis
         run: tests/check-parallel.sh
@@ -175,6 +190,11 @@ jobs:
 
       - name: Check host target
         run: tests/check-platform.sh
+
+      # The platform support matrix and its known limitations (issue #457): the page must agree with this
+      # workflow, its example must run, and standard output and file I/O must stay binary-safe.
+      - name: Check platform support matrix
+        run: tests/check-platform-support.sh
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
@@ -258,6 +278,16 @@ jobs:
       - name: Build
         run: cargo build
 
+      # The dependency audit (issue #449): every crate in Cargo.lock is reviewed in
+      # tests/dependencies.txt, every license is permissive, every direct requirement is an exact
+      # pin, and the lockfile is current. It runs after the build so `cargo metadata --locked
+      # --offline` can re-verify the license fields from the crates themselves; the verification is
+      # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
+      - name: Audit dependencies and licenses
+        env:
+          BURDIN_DEPS_REQUIRE_METADATA: 1
+        run: bash tests/check-deps.sh
+
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
       - name: Check debug information
@@ -268,6 +298,11 @@ jobs:
 
       - name: Check build flags and metadata
         run: tests/check-build-flags.sh
+
+      # The release pipeline (issues #452-#456): the six-target workflow, versioned archives, SHA-256 checksums,
+      # both installers, the version/channel policy, and release notes generated from the changelog.
+      - name: Check the release pipeline
+        run: tests/check-release.sh
 
       - name: Check parallel analysis
         run: tests/check-parallel.sh
@@ -324,6 +359,11 @@ jobs:
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
         run: tests/check-platform.sh
+
+      # The platform support matrix and its known limitations (issue #457): the page must agree with this
+      # workflow, its example must run, and standard output and file I/O must stay binary-safe.
+      - name: Check platform support matrix
+        run: tests/check-platform-support.sh
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
@@ -438,6 +478,16 @@ jobs:
       - name: Build
         run: cargo build
 
+      # The dependency audit (issue #449): every crate in Cargo.lock is reviewed in
+      # tests/dependencies.txt, every license is permissive, every direct requirement is an exact
+      # pin, and the lockfile is current. It runs after the build so `cargo metadata --locked
+      # --offline` can re-verify the license fields from the crates themselves; the verification is
+      # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
+      - name: Audit dependencies and licenses
+        env:
+          BURDIN_DEPS_REQUIRE_METADATA: 1
+        run: bash tests/check-deps.sh
+
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
       - name: Check debug information
@@ -448,6 +498,11 @@ jobs:
 
       - name: Check build flags and metadata
         run: tests/check-build-flags.sh
+
+      # The release pipeline (issues #452-#456): the six-target workflow, versioned archives, SHA-256 checksums,
+      # both installers, the version/channel policy, and release notes generated from the changelog.
+      - name: Check the release pipeline
+        run: tests/check-release.sh
 
       - name: Check parallel analysis
         run: tests/check-parallel.sh
@@ -503,6 +558,11 @@ jobs:
 
       - name: Check host target
         run: bash tests/check-platform.sh
+
+      # The platform support matrix and its known limitations (issue #457): the page must agree with this
+      # workflow, its example must run, and standard output and file I/O must stay binary-safe.
+      - name: Check platform support matrix
+        run: bash tests/check-platform-support.sh
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
