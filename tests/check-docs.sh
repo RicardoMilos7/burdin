@@ -2,7 +2,7 @@
 # Checks the documentation: relative links resolve, and the checked example and the documented driver
 # contract still hold. Needs a built driver. Usage: tests/check-docs.sh
 #
-# BURDIN selects the driver, like tests/run-tests.sh; otherwise target/{debug,release}/burdin is used.
+# BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin is used.
 #
 # What it checks:
 #   * every relative link in the repository's Markdown files points at a file, and every `#anchor`

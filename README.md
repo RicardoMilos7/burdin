@@ -121,7 +121,7 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 ## The driver contract
 
 The `burdin` command has the subcommands `build`, `run`, `test`, and `explain`. This section is the contract they
-implement; the conformance runner (`tests/run-tests.sh`) and the documentation check depend on it.
+implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
 usage:
@@ -294,7 +294,7 @@ test result: 2 passed, 1 failed
 
 When tests are marked `[ignore]`, the summary ends with `, N ignored`. The exit status is 0 only when every run test
 passes, 1 when a test fails or compilation fails, and 2 for a usage error (an unknown package, a bad `-j`,
-conflicting flags) or a driver failure after loading. `tests/run-tests.sh` reads the `FAIL ` prefix and the
+conflicting flags) or a driver failure after loading. `tests/run_tests.py` reads the `FAIL ` prefix and the
 `test result: N passed, M failed` summary; the full behavior, including isolation and discovery, is
 [`spec/test-runner.md`](spec/test-runner.md), and `tests/check-test-runner.sh` checks it black-box.
 

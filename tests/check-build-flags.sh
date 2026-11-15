@@ -6,7 +6,7 @@
 #   * `--lto` links bitcode and runs, and `--pgo-generate`/`--pgo-use` round-trip a profile (issue #429), when an
 #     LLVM compiler driver and the LLVM tools are installed. On MSVC those two options are rejected.
 #
-# Needs a built driver. BURDIN selects it, like tests/run-tests.sh.
+# Needs a built driver. BURDIN selects it, like tests/run_tests.py.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")

@@ -112,7 +112,7 @@ read back is identical. `read_to_string`/`write_file` treat the bytes as UTF-8 t
 ## Milestones
 
 Each milestone is a vertical slice. It is done when every test in its folder (and all earlier folders) passes with
-`tests/run-tests.sh`. When a decision changes, update the spec and the tests first, then the code.
+`tests/run_tests.py`. When a decision changes, update the spec and the tests first, then the code.
 
 | # | Folder | Scope | Exit |
 | --- | --- | --- | --- |

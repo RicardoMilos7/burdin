@@ -2,7 +2,7 @@
 # Checks the black-box behavior of `burdin test`: attributes, parallel execution, output capture, isolation, and
 # package discovery. Needs a built driver. Usage: tests/check-test-runner.sh
 #
-# BURDIN selects the driver, like tests/run-tests.sh. The fixtures under tests/runner/ are ordinary packages with
+# BURDIN selects the driver, like tests/run_tests.py. The fixtures under tests/runner/ are ordinary packages with
 # no `//@` directives, so the conformance runner ignores them.
 #
 # What it checks (issues #438, #439, #440, #441, #442, #443):

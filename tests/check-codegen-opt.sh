@@ -7,7 +7,7 @@
 #   * glue deduplication (issue #426): two same-shaped types share one drop-glue function.
 #
 # The checks read the unoptimized `--emit-ir` text, so they do not depend on the optimization pipeline.
-# Needs a built driver. BURDIN selects it, like tests/run-tests.sh.
+# Needs a built driver. BURDIN selects it, like tests/run_tests.py.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")

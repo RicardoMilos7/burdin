@@ -94,7 +94,7 @@ require_command() {   # $1 job, $2 block, $3 command
 profile_conformance() {   # $1 block, $2 debug|release
     local steps
     # The BURDIN_CC step runs a subset, so it is never the full-suite step for either profile.
-    steps=$(grep -E 'tests/run-tests\.sh' <<< "$1" | grep -v 'BURDIN_CC')
+    steps=$(grep -E 'tests/run_tests\.py' <<< "$1" | grep -v 'BURDIN_CC')
     if [ "$2" = "release" ]; then
         grep -F -- '--release' <<< "$steps" | tail -n 1
     else
@@ -110,7 +110,7 @@ check_conformance() {   # $1 job, $2 block, $3 debug|release
     esac
     conformance=$(profile_conformance "$block" "$profile")
     if [ -z "$conformance" ]; then
-        add_problem "ci.yml: $job job: no $label conformance step (tests/run-tests.sh)"
+        add_problem "ci.yml: $job job: no $label conformance step (tests/run_tests.py)"
         return
     fi
     for dir in "$SCRIPT_DIR"/m[0-9]*_*; do
@@ -287,7 +287,7 @@ for job in linux macos windows; do
         windows) block=$windows ;;
     esac
     for command in \
-        'tests/check-tests.sh' \
+        'tests/check_tests.py' \
         'tests/check-unit-tests.sh' \
         'tests/check-ci.sh' \
         'tests/check-deps.sh' \
@@ -337,12 +337,12 @@ fi
 
 # The release run (issue #47) is only meaningful when the runner selects the profile and skips
 # debug-only tests, and the suite must contain one so that skip path stays exercised.
-runner=$ROOT/tests/run-tests.sh
+runner=$ROOT/tests/run_tests.py
 if [ -f "$runner" ]; then
     grep -qF -- '--release' "$runner" \
-        || add_problem "tests/run-tests.sh: no --release option"
+        || add_problem "tests/run_tests.py: no --release option"
     grep -qF 'debug-only' "$runner" \
-        || add_problem "tests/run-tests.sh: the release profile does not skip debug-only tests"
+        || add_problem "tests/run_tests.py: the release profile does not skip debug-only tests"
     grep -rqs --include='*.bd' '^//@ debug-only' "$SCRIPT_DIR" \
         || add_problem "tests/: no test is marked //@ debug-only, so the release profile never exercises the skip"
 fi
@@ -476,7 +476,7 @@ fi
 
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
-    tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
+    tests/check_tests.py tests/check-unit-tests.sh tests/run_tests.py tests/check-ci.sh tests/check-platform.sh \
     tests/check-platform-support.sh tests/check-docs.sh tests/check-deps.sh tests/check-diagnostics.sh \
     tests/check-error-docs.sh tests/check-test-runner.sh tests/check-debug-info.sh tests/check-codegen-opt.sh \
     tests/check-build-flags.sh tests/check-parallel.sh tests/check-release.sh tests/build-release.sh \

@@ -181,7 +181,7 @@ $ tests/release-notes.sh --unreleased --check-links                       # a dr
 2. Set `[workspace.package] version` in `Cargo.toml` to `<version>`, then run a build so `Cargo.lock` records the
    new workspace versions, and commit both.
 3. Run the full local gate: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
-   `cargo test --workspace`, `tests/run-tests.sh` and `tests/run-tests.sh --release`, `tests/check-release.sh`, and
+   `cargo test --workspace`, `tests/run_tests.py` and `tests/run_tests.py --release`, `tests/check-release.sh`, and
    `tests/build-release.sh --verify-reproducible`.
 4. Run the release workflow by hand with `publish: false` and inspect the six archives, `SHA256SUMS`, and the
    reproducibility job. Install the Linux archive with `install.sh` and run `burdin build/run/test` on a sample

@@ -2,7 +2,7 @@
 # Checks the platform support matrix and its known limitations (issue #457). Needs a built driver.
 # Usage: tests/check-platform-support.sh
 #
-# BURDIN selects the driver, like tests/run-tests.sh; otherwise target/{debug,release}/burdin[.exe] is used.
+# BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin[.exe] is used.
 #
 # What it checks:
 #   * docs/platform-support.md exists and is linked from README.md (the documentation index) and
@@ -152,7 +152,7 @@ done
 milestones=$(grep -oE 'tests/m[0-9]+_[A-Za-z0-9_]+/' <<< "$doc" | sed -E 's#tests/(m[0-9]+)_.*#\1#' | sort -u)
 for milestone in $milestones; do
     check
-    grep -qE "tests/run-tests\.sh.*[ ]$milestone([ ]|$)" <<< "$workflow" \
+    grep -qE "tests/run_tests\.py.*[ ]$milestone([ ]|$)" <<< "$workflow" \
         || add_problem "ci.yml: no conformance step runs $milestone (the platform page relies on it)"
 done
 

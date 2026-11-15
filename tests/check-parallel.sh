@@ -3,7 +3,7 @@
 # with any BURDIN_JOBS value, and a package with errors reports byte-identical diagnostics whether the modules
 # are parsed sequentially (BURDIN_JOBS=1) or in parallel.
 #
-# Needs a built driver. BURDIN selects it, like tests/run-tests.sh.
+# Needs a built driver. BURDIN selects it, like tests/run_tests.py.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")

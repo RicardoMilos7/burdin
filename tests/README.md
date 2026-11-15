@@ -63,13 +63,14 @@ stopping at the first error) and no others. The `test` item's attributes (`[igno
 ## Running the tests
 
 ```
-tests/run-tests.sh                    # every test, debug profile
-tests/run-tests.sh m05 m06            # only paths containing m05 or m06
-tests/run-tests.sh -v drop_order      # show diffs and compiler output for failures
-tests/run-tests.sh --release          # release profile (skips debug-only tests)
-tests/run-tests.sh --list             # list tests and their kinds
-BURDIN=/path/to/burdin tests/run-tests.sh # choose the compiler driver
-tests/check-tests.sh                  # check directives and error codes (no compiler needed)
+python3 tests/run_tests.py            # every test, debug profile (python on Windows)
+python3 tests/run_tests.py m05 m06    # only paths containing m05 or m06
+python3 tests/run_tests.py -v drop_order   # show diffs and compiler output for failures
+python3 tests/run_tests.py --release  # release profile (skips debug-only tests)
+python3 tests/run_tests.py --list     # list tests and their kinds
+python3 tests/run_tests.py -j 4       # four tests at a time (default: CPU count, at most 8)
+BURDIN=/path/to/burdin python3 tests/run_tests.py  # choose the compiler driver
+python3 tests/check_tests.py          # check directives and error codes (no compiler needed)
 tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
 tests/check-platform.sh               # check the host triple and 64-bit isize/usize (needs a built driver)
 tests/check-platform-support.sh       # check the platform support page against CI and binary-safe output (needs a built driver)
@@ -82,7 +83,6 @@ tests/check-parallel.sh               # parallel parsing and deterministic diagn
 tests/check-diagnostics.sh            # check color, width, formats, error limits, and ordering (needs a built driver)
 tests/check-error-docs.sh             # check the error-code reference and `burdin explain` (needs a built driver)
 tests/check-test-runner.sh            # check `burdin test` attributes, parallelism, output, isolation, discovery
-pwsh tests/check-tests.ps1            # the same check in PowerShell
 ```
 
 CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and
@@ -101,10 +101,11 @@ parallelism.
 
 The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, then `PATH`. It expects `burdin build`,
 `burdin run`, and `burdin test` to behave as documented in [the driver contract](../README.md#the-driver-contract) at
-the repository root (summarized at the top of `run-tests.sh`): diagnostics as
+the repository root (summarized at the top of `run_tests.py`): diagnostics as
 `path:LINE:COL: error[E0000]: message`, and a `test result: N passed, M failed` line plus `FAIL <name>` lines from
 `burdin test`. If the real driver differs, change the section marked in that file. The exit code is 0 only when every
-test passes. On Windows, run it from Git Bash.
+test passes. The runner is Python 3 (invoke it with `python3` on Unix and `python` on Windows) and runs tests in
+parallel by default; `-j N` sets the worker count, and results are printed in the same order either way.
 
 ## Benchmarks
 
@@ -178,7 +179,7 @@ against this table and whose examples it compiles; `burdin explain <code>` print
 
 Every code in the registry above needs a `//~` marker in at least one conformance test. A code that cannot be
 witnessed by a compile-fail test (for example, a rule only a passing test can show) is listed here with the reason;
-`tests/check-tests.sh` and `tests/check-tests.ps1` fail when a registered code is in neither place, and when a row
+`tests/check_tests.py` fails when a registered code is in neither place, and when a row
 here names an unknown code, a code that already has a test, or no reason.
 
 | Code | Why it has no compile-fail test |

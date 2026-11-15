@@ -2,7 +2,7 @@
 # Checks the user-facing error-code reference (issue #437). Needs a built driver.
 # Usage: tests/check-error-docs.sh
 #
-# BURDIN selects the driver, like tests/run-tests.sh; otherwise target/{debug,release}/burdin is used.
+# BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin is used.
 #
 # What it checks:
 #   * docs/error-codes.md has exactly one section for every code in the tests/README.md registry, no extra

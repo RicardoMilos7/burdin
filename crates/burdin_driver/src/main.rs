@@ -1,5 +1,5 @@
 //! The `burdin` command: `build`, `run`, and `test`. The contract is documented in `README.md` at the repository
-//! root (`The driver contract`) and summarized at the top of tests/run-tests.sh.
+//! root (`The driver contract`) and summarized at the top of tests/run_tests.py.
 
 mod package;
 mod test_runner;

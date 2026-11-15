@@ -2,7 +2,7 @@
 # Checks diagnostics presentation and tooling (issues #434, #435, #436). Needs a built driver.
 # Usage: tests/check-diagnostics.sh
 #
-# BURDIN selects the driver, like tests/run-tests.sh; otherwise target/{debug,release}/burdin is used.
+# BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin is used.
 #
 # What it checks:
 #   * default output is plain when stderr is not a terminal, and --color=always/--no-color/NO_COLOR behave as

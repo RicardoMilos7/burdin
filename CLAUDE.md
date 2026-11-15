@@ -49,9 +49,9 @@ If these disagree, stop and say so. Do not pick one silently.
 ## Commands
 
 ```
-tests/run-tests.sh                 run the conformance tests against the compiler (BURDIN=path overrides the binary)
-tests/run-tests.sh m05 -v          only milestone 5, with diffs for failures
-tests/check-tests.sh               check test directives and error codes (no compiler needed; also check-tests.ps1)
+tests/run_tests.py                 run the conformance tests against the compiler (Python 3; BURDIN=path overrides the binary)
+tests/run_tests.py m05 -v          only milestone 5, with diffs for failures
+tests/check_tests.py               check test directives and error codes (Python 3; no compiler needed)
 tests/check-unit-tests.sh          check the front-end unit tests and their CI coverage (no compiler needed)
 tests/check-deps.sh                audit the dependency pins and licenses (no compiler needed)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
@@ -69,8 +69,9 @@ tests/check-platform-support.sh    check the platform support page against CI an
 tests/fuzz.sh                      long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 ```
 
-On Windows run the `.sh` scripts from Git Bash. The runner expects `burdin build`, `burdin run`, and `burdin test` as described at
-the top of `tests/run-tests.sh`.
+On Windows run the `.sh` scripts from Git Bash. `tests/run_tests.py` and `tests/check_tests.py` need Python 3 and run
+unchanged on every platform (invoke them with `python3` on Unix and `python` on Windows); the runner expects
+`burdin build`, `burdin run`, and `burdin test` as described at the top of `tests/run_tests.py`.
 
 ## Layout
 
@@ -138,8 +139,8 @@ outer shell does not expand `$?`), and keep Windows entries out of `PATH` inside
 
 Windows builds are covered by the `windows` CI job (issue #12). Locally, install LLVM 21 from the official
 `clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz` archive, set `LLVM_SYS_211_PREFIX` to it, put its `bin` on `PATH`,
-and run from a Visual Studio Developer Command Prompt so `cl` is on `PATH` (or set `BURDIN_CC`). `tests/run-tests.sh`
-runs from Git Bash.
+and run from a Visual Studio Developer Command Prompt so `cl` is on `PATH` (or set `BURDIN_CC`). `tests/run_tests.py`
+runs with Python 3 from any shell, Git Bash included.
 
 Diagnostics that are not in the registry: `E9000` means "not implemented in this compiler yet". After stage 0 it marks
 constructs that belong to stage 1 or later; each one gets a real diagnostic when its milestone arrives.

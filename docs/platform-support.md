@@ -33,7 +33,7 @@ no claim at all.
 
 | Runtime feature | Checked by | Linux x86-64 | macOS arm64 | Windows x86-64 |
 | --- | --- | --- | --- | --- |
-| Language, runtime, and code generation (m01-m11) | `tests/run-tests.sh` (debug and release) | yes | yes | yes |
+| Language, runtime, and code generation (m01-m11) | `tests/run_tests.py` (debug and release) | yes | yes | yes |
 | Host triple and 64-bit `usize`/`isize` | `tests/check-platform.sh` | yes | yes | yes |
 | Binary-safe standard output and file I/O | `tests/check-platform-support.sh`, `tests/m09_stdlib/file_io_binary.bd` | yes | yes | yes |
 | Buffered output flushed on return, `process.exit`, and panics | `tests/m02_basics/panic_flushes_stdout.bd`, `tests/m09_stdlib/exit_code.bd` | yes | yes | yes |
@@ -155,10 +155,10 @@ From a clean checkout, after `cargo build`:
 ```console
 $ tests/check-platform-support.sh
 $ tests/check-platform.sh
-$ tests/run-tests.sh
+$ python3 tests/run_tests.py
 ```
 
 `tests/check-platform-support.sh` checks this page, binary-safe output and file I/O, and the example above;
-`tests/check-platform.sh` checks the host triple and the pointer width; `tests/run-tests.sh` runs the conformance
+`tests/check-platform.sh` checks the host triple and the pointer width; `tests/run_tests.py` runs the conformance
 suite in the debug profile (add `--release` for the release profile). CI runs all three, and the suite in both
 profiles, on every platform. The console blocks on this page are illustrative; the scripts are the checked part.

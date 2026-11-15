@@ -11,7 +11,7 @@
 #   * docs/releasing.md records the version scheme, channels, artifact protocol, reproducibility, and rehearsal;
 #   * `burdin --version` reports the version and channel the policy requires.
 #
-# Needs a built driver for the last section. BURDIN selects it, like tests/run-tests.sh.
+# Needs a built driver for the last section. BURDIN selects it, like tests/run_tests.py.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")

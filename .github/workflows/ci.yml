@@ -91,7 +91,7 @@ jobs:
           rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
-        run: tests/check-tests.sh
+        run: python3 tests/check_tests.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
@@ -198,13 +198,13 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: python3 tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: tests/run-tests.sh --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
   # macOS on arm64: proves the host-triple target, the C libc calls, and LLVM-C linking on Apple's
   # toolchain (issues #16, #17, #18). Homebrew's LLVM is keg-only, so point inkwell at its prefix and
@@ -259,7 +259,7 @@ jobs:
           rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
-        run: tests/check-tests.sh
+        run: python3 tests/check_tests.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
@@ -367,13 +367,13 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: tests/run-tests.sh -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: python3 tests/run_tests.py -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: tests/run-tests.sh -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: python3 tests/run_tests.py -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
   windows:
     runs-on: windows-latest
@@ -459,7 +459,7 @@ jobs:
           rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
-        run: bash tests/check-tests.sh
+        run: python tests/check_tests.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
@@ -566,17 +566,17 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: bash tests/run-tests.sh m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: python tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: bash tests/run-tests.sh --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
+        run: python tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11
 
       # The default linker on Windows is already `cl`; this proves the `BURDIN_CC` override takes the same path.
       - name: Conformance tests with BURDIN_CC=cl
-        run: BURDIN_CC=cl bash tests/run-tests.sh m01_hello m11_llvm
+        run: BURDIN_CC=cl python tests/run_tests.py m01_hello m11_llvm
 
   # Continuous fuzzing (issue #447). Every job replays the committed corpus through
   # `cargo test --workspace`, so a reintroduced panic fails a pull request. This job adds the longer

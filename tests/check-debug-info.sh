@@ -3,7 +3,7 @@
 # DWARF (from the executable on Linux, from the .dSYM bundle on macOS) and gdb, when it is installed, to prove a
 # breakpoint on a Burdin line and a local read work.
 #
-# BURDIN selects the driver, like tests/run-tests.sh; otherwise target/{debug,release}/burdin is used.
+# BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin is used.
 #
 # What it checks:
 #   * `burdin build -g` produces an executable whose output is unchanged;

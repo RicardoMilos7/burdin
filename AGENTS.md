@@ -23,10 +23,10 @@ not updated and may disagree with the repository.
 ## Commands
 
 ```
-tests/run-tests.sh                 run the conformance tests
-tests/run-tests.sh m05 -v          one milestone, with diffs
-tests/run-tests.sh --release       release profile (skips debug-only tests)
-tests/check-tests.sh               validate directives and error codes (no compiler needed)
+tests/run_tests.py                 run the conformance tests (Python 3; parallel by default)
+tests/run_tests.py m05 -v          one milestone, with diffs
+tests/run_tests.py --release       release profile (skips debug-only tests)
+tests/check_tests.py               validate directives and error codes (Python 3; no compiler needed)
 tests/check-unit-tests.sh          check the front-end unit tests and their CI coverage (no compiler needed)
 tests/check-ci.sh                  validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
 tests/check-deps.sh                audit the dependency pins and licenses (no compiler needed)
@@ -55,7 +55,9 @@ tests/fuzz.sh                      long lexer/parser fuzzing session (the schedu
 tests/fuzz.sh --seconds 60         a short local session; found inputs go to fuzz-out/crashes/
 ```
 
-Development happens in WSL Ubuntu first; the shell scripts also run from Git Bash on Windows.
+Development happens in WSL Ubuntu first. The conformance runner and the directive checker are Python 3
+(`tests/run_tests.py`, `tests/check_tests.py`), so they behave the same on every host; the shell scripts also run from
+Git Bash on Windows.
 
 ## Working rules
 
