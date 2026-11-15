@@ -1,0 +1,28 @@
+// Number literals: radixes, separators, exponents, suffixes, and overflow.
+fn main() {
+    let a = 0
+    let b = 00
+    let c = 1_000_000
+    let d = 0xDEAD_beef
+    let e = 0o777
+    let f = 0b1010_1010
+    let g = 0x
+    let h = 0b2
+    let i = 0o9
+    let j = 1.0
+    let k = 1.
+    let l = .5
+    let m = 1e9
+    let n = 1E-9
+    let o = 1e
+    let p = 1e+
+    let q = 1.0e
+    let r = 1i32
+    let s = 1.0f64
+    let t = 999999999999999999999999999999999999999
+    let u = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+    let v = 1_2__3___
+    let w = 1..2
+    let x = t.0.1
+    let y = 1.2.abs()
+}

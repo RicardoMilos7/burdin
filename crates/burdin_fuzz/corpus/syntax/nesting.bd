@@ -1,0 +1,16 @@
+// Nested delimiters in expressions, types, patterns, and blocks.
+fn main() {
+    let a = ((((((1))))))
+    let b = [[[[[[1]]]]]]
+    let c = if (((a))) { while (((b))) { } } else { loop { } }
+    let d: (((((i32))))) = a
+    let e: [[[[[i32; 1]; 1]; 1]; 1]; 1] = b
+    let f = match (((x))) { (((1))) => (((2))), _ => 0 }
+    let g = &(&(&(&(&x))))
+    let h = *(*x)
+    let i = -(-(-(-(-1))))
+    let j = [[[[(1, (2, (3, (4))))]]]]
+}
+fn nested<T>(x: T) {
+    { { { { { let y = { { { x } } } } } } } }
+}

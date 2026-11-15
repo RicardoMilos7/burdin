@@ -1,0 +1,26 @@
+// Ranges, operators, and the newline rules around them.
+fn main() {
+    let a = 1..2
+    let b = 1..=2
+    let c = a..b
+    let d = 1..2..3
+    let e = 1..=2..=3
+    let f = ..2
+    let g = 1..
+    let h = x && y || z
+    let i = x
+        && y
+    let j = x
+        || y
+    let k = x
+        + y
+    let l = x == y == z
+    let m = x < y < z
+    let n = x = y
+    let o = x = y = z
+    let p = -x as i32 + !y * *z & &w
+    let q = a << b >> c >>> d
+    let r = x ? y ? z ?
+    let s = a.orelse b.orelse c
+    let t = a?.b?.c?
+}
