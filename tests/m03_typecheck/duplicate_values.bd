@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// A function and a constant may not repeat a name already declared in the module (E0007).
+
+fn twice(): i32 {
+    1
+}
+
+fn twice(): i32 { //~ E0007
+    2
+}
+
+const LIMIT: i32 = 10
+
+const LIMIT: i32 = 20 //~ E0007
+
+fn main() {}

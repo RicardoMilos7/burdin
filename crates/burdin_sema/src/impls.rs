@@ -56,7 +56,7 @@ impl<'t> Sema<'t> {
         }
 
         if !imp.where_clause.is_empty() {
-            diags.error(Code::UNSUPPORTED, imp.span, "`where` clauses are not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, imp.span, "`where` clauses are not implemented in this compiler yet"); // e9000: impl-where-concrete
         }
         let self_ty = self.globals.resolve_type(&imp.ty, None, module, diags);
         let Some(key) = adt_key(&self_ty) else {
@@ -82,7 +82,7 @@ impl<'t> Sema<'t> {
         match kind {
             ImplKind::Builtin => {
                 diags.error(
-                    Code::UNSUPPORTED,
+                    Code::UNSUPPORTED, // e9000: impl-builtin-hand
                     imp.span,
                     "implementing a built-in interface by hand is not implemented in this compiler yet; use `derives`",
                 );
@@ -159,7 +159,7 @@ impl<'t> Sema<'t> {
         let Some(t) = &imp.interface else { return Some(ImplKind::Inherent) };
         let ast::TypeKind::Path(segs) = &t.kind else {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::UNSUPPORTED, // e9000: impl-interface-path-kind
                 t.span,
                 "this kind of interface path is not implemented in this compiler yet",
             );
@@ -209,7 +209,7 @@ impl<'t> Sema<'t> {
             diags.error(Code::PRIVATE_ITEM, seg.name.span, format!("interface `{name}` is `priv` in another package"));
         }
         if !seg.args.is_empty() {
-            diags.error(Code::UNSUPPORTED, t.span, "generic interfaces are not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, t.span, "generic interfaces are not implemented in this compiler yet"); // e9000: impl-generic-interface
             return None;
         }
         Some(ImplKind::User(i))
@@ -239,7 +239,7 @@ impl<'t> Sema<'t> {
                 }
                 _ => {
                     diags.error(
-                        Code::UNSUPPORTED,
+                        Code::UNSUPPORTED, // e9000: impl-specific-args
                         arg.span,
                         "an impl block for specific type arguments is not implemented in this compiler yet",
                     );
@@ -258,12 +258,12 @@ impl<'t> Sema<'t> {
         }
         for (i, p) in params.iter().enumerate() {
             if params[..i].contains(p) {
-                diags.error(Code::UNSUPPORTED, seg.args[i].span, format!("type parameter `{p}` is declared twice"));
+                diags.error(Code::DUPLICATE_NAME, seg.args[i].span, format!("type parameter `{p}` is declared twice"));
             }
         }
         if matches!(kind, ImplKind::Drop | ImplKind::Builtin) {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::UNSUPPORTED, // e9000: impl-builtin-generic
                 imp.span,
                 "implementing a built-in interface for a generic type is not implemented in this compiler yet",
             );
@@ -302,7 +302,7 @@ impl<'t> Sema<'t> {
             };
             let Some(name) = name else {
                 diags.error(
-                    Code::UNSUPPORTED,
+                    Code::UNSUPPORTED, // e9000: impl-where-non-param
                     pred.ty.span,
                     "a `where` clause on something other than a type parameter is not implemented in this compiler yet",
                 );
@@ -335,7 +335,7 @@ impl<'t> Sema<'t> {
             return;
         };
         if !m.generics.is_empty() {
-            diags.error(Code::UNSUPPORTED, m.name.span, "generic methods are not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, m.name.span, "generic methods are not implemented in this compiler yet"); // e9000: impl-from-generic-method
             return;
         }
         self.register_methods(imp, module, None, self_ty, MethodScope::plain(), diags);
@@ -354,12 +354,16 @@ impl<'t> Sema<'t> {
         diags: &mut Diagnostics,
     ) {
         if imp.methods.len() != 1 {
-            diags.error(Code::UNSUPPORTED, imp.span, "a `Drop` implementation must contain exactly one `drop` method");
+            diags.error(
+                Code::INVALID_DROP_IMPL,
+                imp.span,
+                "a `Drop` implementation must contain exactly one `drop` method",
+            );
             return;
         }
         let m = &imp.methods[0];
         if m.name.name != "drop" {
-            diags.error(Code::UNSUPPORTED, m.name.span, "a `Drop` implementation must define `drop`");
+            diags.error(Code::INVALID_DROP_IMPL, m.name.span, "a `Drop` implementation must define `drop`");
             return;
         }
         let is_variant = match self_ty {
@@ -371,7 +375,7 @@ impl<'t> Sema<'t> {
             || self.globals.drop_methods.contains_key(&key)
         {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::DUPLICATE_NAME,
                 m.name.span,
                 format!("`{self_ty}` already has a member named `{}`", m.name.name),
             );
@@ -479,7 +483,7 @@ impl<'t> Sema<'t> {
         diags: &mut Diagnostics,
     ) {
         if !decl.generics.is_empty() || !decl.where_clause.is_empty() {
-            diags.error(Code::UNSUPPORTED, decl.name.span, "generic methods are not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, decl.name.span, "generic methods are not implemented in this compiler yet"); // e9000: impl-method-generic
             return;
         }
         let clashes_with_variant = match self_ty {
@@ -489,7 +493,7 @@ impl<'t> Sema<'t> {
         let method_key = (key, decl.name.name.clone());
         if self.globals.methods.contains_key(&method_key) || clashes_with_variant {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::DUPLICATE_NAME,
                 decl.name.span,
                 format!("`{self_ty}` already has a member named `{}`", decl.name.name),
             );

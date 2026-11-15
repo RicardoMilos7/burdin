@@ -106,7 +106,7 @@ impl<'t> Sema<'t> {
         for r in requests {
             if self.fn_items.len() + self.globals.structs.len() + self.globals.enums.len() > MAX_ITEMS {
                 diags.error(
-                    Code::UNSUPPORTED,
+                    Code::UNSUPPORTED, // e9000: instances-limit
                     nowhere(file),
                     "too many generic instantiations; a generic type or function may instantiate itself without end",
                 );

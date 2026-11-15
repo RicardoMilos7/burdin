@@ -54,7 +54,7 @@ impl FnCx<'_> {
                 }
             }
             _ => {
-                self.unsupported(callee.span, "calling this expression");
+                self.unsupported(callee.span, "calling this expression"); // e9000: call-non-callable
                 return self.args_then_error(args, span);
             }
         };

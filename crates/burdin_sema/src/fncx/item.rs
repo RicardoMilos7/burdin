@@ -22,7 +22,7 @@ pub(crate) fn check_const(
     let value = cx.expect_ty(value, ty);
     if !is_const_expr(&value) {
         cx.diags.error(
-            Code::UNSUPPORTED,
+            Code::UNSUPPORTED, // e9000: const-expression
             decl.value.span,
             "only literals, other constants, operators, and casts are allowed in a constant for now",
         );

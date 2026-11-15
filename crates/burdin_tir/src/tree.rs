@@ -190,11 +190,12 @@ pub enum ExprKind {
     },
     /// `*r` on a `&T` or `&mut T`: the referent.
     DerefRef(Box<Expr>),
-    /// `base[lo..hi]`: a view of bytes or elements of the base.
+    /// `base[lo..hi]` (or `base[lo..=hi]`): a view of bytes or elements of the base.
     Slice {
         base: Box<Expr>,
         lo: Box<Expr>,
         hi: Box<Expr>,
+        inclusive: bool,
     },
     Array(Vec<Expr>),
     ArrayRepeat(Box<Expr>, u64),
@@ -239,6 +240,8 @@ pub enum Pat {
     Bool(bool),
     Int(i128),
     Char(char),
+    /// A string literal, compared byte for byte against a `str` scrutinee.
+    Str(String),
     /// An inclusive range of integers or characters (as their code points).
     Range(i128, i128),
     Or(Vec<Pat>),

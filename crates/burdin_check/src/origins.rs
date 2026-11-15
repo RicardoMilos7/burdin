@@ -250,7 +250,7 @@ impl<'a> Analyzer<'a> {
 
     fn bind_pattern(&mut self, pat: &Pat, origin: &Origin, allow_temp: bool, span: Span) {
         match pat {
-            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Range(..) | Pat::None => {}
+            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
             Pat::Binding(id, mode) => self.set_binding(*id, *mode, origin, allow_temp, span),
             Pat::At(id, mode, inner) => {
                 self.set_binding(*id, *mode, origin, allow_temp, span);
@@ -363,7 +363,7 @@ impl<'a> Analyzer<'a> {
                 self.expr(base)
             }
             K::Ref { place, .. } => self.place_origin(place),
-            K::Slice { base, lo, hi } => {
+            K::Slice { base, lo, hi, .. } => {
                 self.expr(lo);
                 self.expr(hi);
                 self.expr(base)

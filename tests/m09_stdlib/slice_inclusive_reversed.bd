@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: out of bounds
+
+// An inclusive range is reversed when the written start is greater than the written end, even though
+// advancing the end by one would make the pair look empty.
+
+fn main() {
+    let a = [1, 2, 3]
+    println(a[2..=1].len().to_string())
+}

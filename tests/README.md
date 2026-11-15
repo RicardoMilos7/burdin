@@ -71,6 +71,7 @@ python3 tests/run_tests.py --list         # list tests and their kinds
 python3 tests/run_tests.py -j 4           # four tests at a time (default: CPU count, at most 8)
 BURDIN=/path/to/burdin python3 tests/run_tests.py  # choose the compiler driver
 python3 tests/check_tests.py              # check directives and error codes (no compiler needed)
+python3 tests/check_e9000.py              # check the E9000 audit and its milestone owners (no compiler needed)
 python3 tests/check_ci.py                 # check the CI workflow and the Rust toolchain pin (no compiler needed)
 python3 tests/check_platform.py           # check the host triple and 64-bit isize/usize (needs a built driver)
 python3 tests/check_platform_support.py   # check the platform support page against CI and binary-safe output (needs a built driver)
@@ -145,6 +146,10 @@ The registry the tests use. The compiler adopts these numbers (or the tests are 
 user-facing entry in [the error-code reference](../docs/error-codes.md), which `tests/check_error_docs.py` checks
 against this table and whose examples it compiles; `burdin explain <code>` prints the entry.
 
+`E9000` is not a registry code: it means "not implemented in this compiler yet". Every remaining site is assigned
+to a milestone in [`spec/e9000-audit.md`](../spec/e9000-audit.md), and `tests/check_e9000.py` fails when a site is
+unassigned, stale, or owned by a milestone that has shipped.
+
 | Code | Meaning |
 | --- | --- |
 | E0001 | Syntax error (lexing or parsing) |
@@ -153,7 +158,9 @@ against this table and whose examples it compiles; `burdin explain <code>` print
 | E0004 | Wrong number of arguments |
 | E0005 | Assignment to an immutable binding, or mutation through a read-only parameter |
 | E0006 | Non-exhaustive `match` (reported at the `match` line) |
+| E0007 | A name is declared or imported more than once (type, interface, function, constant, test, type parameter, field, variant, member, or import) |
 | E0008 | Literal out of range for its type |
+| E0009 | A declaration depends on itself: a constant, a type alias, or a type that contains itself |
 | E0100 | Use of a moved or possibly moved value |
 | E0101 | Move out of borrowed content (for example returning a read-only parameter by value) |
 | E0103 | Partial move out of a type that implements `Drop` |
@@ -168,6 +175,7 @@ against this table and whose examples it compiles; `burdin explain <code>` print
 | E0122 | Returned reference or view points to a local |
 | E0123 | A view stored in a binding outlives the storage it borrows from (a temporary or a local of an inner block) |
 | E0130 | Derive requirement not met (reported at the offending field or derive clause) |
+| E0131 | A `Drop` implementation that is not exactly one method named `drop` |
 | E0140 | Interface implementation is missing a method (reported at the `impl` line) |
 | E0141 | Interface bound or `requires` not satisfied, or a generic body uses an operation its bounds do not provide |
 | E0142 | Orphan rule violation |
@@ -175,7 +183,10 @@ against this table and whose examples it compiles; `burdin explain <code>` print
 | E0160 | `?` used in a function whose return type is not `Option` or `Result` |
 | E0161 | Operation that requires `unsafe` used outside `unsafe` |
 | E0162 | Type or convention not allowed in an `extern "C"` declaration (parameters and results are integers, floats, and `CPtr`) |
+| E0163 | Invalid `extern` declaration: a runtime-reserved symbol, a generic function, or a signature that conflicts with an earlier declaration of the symbol |
+| E0164 | Unsupported `repr`: only `repr(C)` exists |
 | E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, or `should_panic` with `should_fail` |
+| E0180 | Type arguments given to a type that declares no type parameters |
 
 ### Codes without a compile-fail test
 
@@ -463,5 +474,5 @@ These are absences, not deviations; they are listed so the next review does not 
 test currently exercises: release-mode wrapping (the runner can only skip a test in release, not change its
 expectation), out-of-range shift panics, a `main(): Result<()>` (stage 1), bounds panics for `List`/`Map`/slice
 indexing (only arrays are covered), `priv` methods, `match` on `bool` or `char`, struct patterns that omit fields,
-moving through a runtime index (E9000), C function-pointer types and `union` declarations, or passing a `repr(C)`
-struct by value across the C ABI (E0162).
+moving through a runtime index (E9000, assigned to Stage 1 in `spec/e9000-audit.md`), C function-pointer types and
+`union` declarations, or passing a `repr(C)` struct by value across the C ABI (E0162).

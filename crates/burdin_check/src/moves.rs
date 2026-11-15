@@ -436,7 +436,7 @@ impl<'a> Checker<'a> {
             K::Local(id) => self.use_local(*id, &[], e.span, mode),
             K::Field(..) | K::Index(..) | K::Deref(_) | K::PtrDeref(_) | K::DerefRef(_) => self.place_expr(e, mode),
             K::Ref { place, .. } => self.expr(place, Mode::Use),
-            K::Slice { base, lo, hi } => {
+            K::Slice { base, lo, hi, .. } => {
                 self.expr(base, Mode::Use);
                 self.expr(lo, Mode::Use);
                 self.expr(hi, Mode::Use);
@@ -618,7 +618,7 @@ impl<'a> Checker<'a> {
                             (Code::MOVE_FROM_BORROW, "cannot move out of a slice element")
                         } else {
                             (
-                                Code::UNSUPPORTED,
+                                Code::UNSUPPORTED, // e9000: move-runtime-index-match
                                 "matching through a runtime index is not implemented in this compiler yet",
                             )
                         };
@@ -733,7 +733,7 @@ impl<'a> Checker<'a> {
                     self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content");
                 } else {
                     self.error(
-                        Code::UNSUPPORTED,
+                        Code::UNSUPPORTED, // e9000: move-runtime-index-place
                         e.span,
                         "moving a non-Copy value through a runtime index is not implemented in this compiler yet",
                     );
@@ -911,7 +911,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) {
         match pat {
-            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Range(..) | Pat::None => {}
+            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
             Pat::Binding(id, mode) => {
                 self.init_binding(*id, *mode, path, root, span);
             }
@@ -1039,7 +1039,7 @@ fn pattern_moves(pat: &Pat) -> bool {
 
 fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
         Pat::Binding(id, _) => out.push(*id),
         Pat::At(id, _, inner) => {
             out.push(*id);

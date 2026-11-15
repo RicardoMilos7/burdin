@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// Importing the same name twice is a duplicate definition (E0007).
+
+use math.add
+use math.add //~ E0007
+
+fn main() {}

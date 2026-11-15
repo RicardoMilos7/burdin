@@ -139,24 +139,31 @@ both forms, so `struct P { x: i32, y: i32 }` and the one-per-line version mean t
 variant constructors, argument lists, generic arguments, tuples, and arrays also use commas. Interface methods,
 `extern` declarations, and top-level items need no separator: each one ends where the next begins.
 
+**Unique names and cycles.** A name is unique in its namespace: a repeated type, interface, function, constant,
+test, type parameter, field, variant, method, or import is E0007. A declaration may not depend on itself: a constant
+whose value mentions it, a type alias that resolves to itself, and a struct or enum that contains itself by value
+are E0009 (put a recursive value behind `Heap<T>`).
+
 **`main`.** In stage 0 the entry point is an ordinary function `fn main()`: it takes no parameters and returns
 nothing. A parameter or a non-unit return type is E0003. Stage 1 adds `fn main(): Result<...>` (m16).
 
 **`Drop`.** The only way to declare a drop method is `Type: Drop { fn drop(mut self) { ... } }`. The block has
-exactly one method named `drop`; `drop` takes `mut self` and returns nothing, and any other receiver or a return type
-is E0003. `Drop` is not derivable (E0002) and cannot be combined with `Copy` (E0130); the memory rules are in
-`memory-rules.md` (DR8).
+exactly one method named `drop`; anything else is E0131. `drop` takes `mut self` and returns nothing, and any other
+receiver or a return type is E0003. `Drop` is not derivable (E0002) and cannot be combined with `Copy` (E0130); the
+memory rules are in `memory-rules.md` (DR8).
 
 An item that starts with an identifier (not a keyword) is an impl block. `Type: Interface { ... }` implements an interface,
 `Type { ... }` adds methods with no interface, and generics and `where` bounds go on either.
 
 **`repr(C)`.** `struct Name repr(C) { ... }` gives a struct the C layout: fields in declaration order with C padding
 and alignment, reported by `Type.size()` and `Type.align()`. It may be used behind `CPtr<T>` in the C bridge; passing
-or returning it by value across the C ABI is E0162 (`stdlib.md`). `repr(...)` with another ABI is E9000.
+or returning it by value across the C ABI is E0162 (`stdlib.md`). `repr(...)` with another ABI is E0164.
 
 **`extern "C"`.** A block declares C functions; a single `extern "C" fn` with a body exports a Burdin function under
 its plain C symbol. The signature rules are in `stdlib.md`; `...` is only allowed in a declaration, and a variadic
-parameter list on any other function is E0001.
+parameter list on any other function is E0001. The convention must be `C` (E0162). A generic declaration in a block,
+a runtime-reserved symbol, and a second declaration of one symbol with a different signature are E0163; an exported
+function's generic or variadic form is E0162.
 
 **`pub use` and module visibility.** `pub use` adds the imported names to the exporting module's exported names, so
 another module or package can import them. `use <package>` names a dependency's root module (`src/<package>.bd` or
@@ -180,7 +187,8 @@ GenericArgs   = "<" Type { "," Type } [ "," ] ">" ;
 
 `i32`, `str`, `bool`, `String`, `Range<T>`, `RangeInclusive<T>`, `Self` and the other built-in names are ordinary
 type paths resolved in the prelude. `Self` means the type of the enclosing impl block, there and in expressions and
-patterns (`Self.new()`, `Self { ... }`, `Self.Variant`).
+patterns (`Self.new()`, `Self { ... }`, `Self.Variant`). Type arguments need a type that declares type parameters;
+`Plain<i32>` where `Plain` is not generic is E0180.
 
 ## 5. Statements and blocks
 
@@ -280,7 +288,9 @@ FieldPat      = IDENT [ ":" Pattern ] ;                          (* `w` alone is
 ```
 
 A bare identifier pattern is a binding unless a unit variant or constant with that name is in scope (`None` is, through
-the prelude). The linter requires bindings to be lowercase.
+the prelude). The linter requires bindings to be lowercase. A string literal pattern compares a `str` scrutinee byte
+for byte; the domain of `str` is open, so it never makes a `match` exhaustive without an `else` or `_` arm, and a
+`String` scrutinee needs `as_str` first. `tests/m04_data/string_patterns` and `nonexhaustive_string` witness both.
 
 ## 8. Disambiguation rules
 

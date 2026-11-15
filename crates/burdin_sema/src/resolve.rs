@@ -49,7 +49,7 @@ impl Sema<'_> {
             for v in &entry.decl.variants {
                 if variants.iter().any(|o| o.name == v.name.name) {
                     diags.error(
-                        Code::UNSUPPORTED,
+                        Code::DUPLICATE_NAME,
                         v.name.span,
                         format!("variant `{}` is defined more than once", v.name.name),
                     );
@@ -130,7 +130,7 @@ impl Sema<'_> {
             match signatures.iter().find(|(other, _, _)| *other == id) {
                 Some((_, _, first)) if !same_signature(first, &sig) => {
                     diags.error(
-                        Code::UNSUPPORTED,
+                        Code::INVALID_EXTERN,
                         decl.name.span,
                         format!("the C function `{symbol}` is declared with a different signature here"),
                     );
@@ -157,7 +157,11 @@ pub(crate) fn resolve_alias(
     match state[i] {
         2 => return,
         1 => {
-            diags.error(Code::UNSUPPORTED, decl.name.span, format!("type alias `{}` refers to itself", decl.name.name));
+            diags.error(
+                Code::CYCLIC_DECLARATION,
+                decl.name.span,
+                format!("type alias `{}` refers to itself", decl.name.name),
+            );
             state[i] = 3;
             return;
         }
@@ -214,7 +218,7 @@ pub(crate) fn check_unique_fields<'a>(names: impl Iterator<Item = &'a ast::Ident
     let mut seen: Vec<&str> = Vec::new();
     for n in names {
         if seen.contains(&n.name.as_str()) {
-            diags.error(Code::UNSUPPORTED, n.span, format!("field `{}` is declared more than once", n.name));
+            diags.error(Code::DUPLICATE_NAME, n.span, format!("field `{}` is declared more than once", n.name));
         }
         seen.push(&n.name);
     }

@@ -2,7 +2,7 @@
 //! item boundaries so that every syntax error in a file is reported.
 //!
 //! Constructs that are in the grammar but not yet implemented by this compiler are reported with
-//! `Code::UNSUPPORTED`.
+//! `Code::UNSUPPORTED`; `spec/e9000-audit.md` tracks the remaining sites.
 
 mod expr;
 mod items;

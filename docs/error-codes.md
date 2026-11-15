@@ -127,6 +127,28 @@ fn main() {
 **How to fix:** add the missing variant, literal, or range patterns, or add an `else` arm to cover everything
 that is left.
 
+## E0007: A name is declared more than once
+
+A type, interface, function, constant, test, type parameter, field, enum variant, method, or import repeats a name
+that is already declared in the same namespace. The diagnostic points at the second declaration.
+
+<!-- error-example: E0007 -->
+```burdin
+fn value(): i32 {
+    1
+}
+
+fn value(): i32 { //~ E0007
+    2
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** rename one of the two declarations, or remove it. Types and values have separate namespaces, so a
+type and a function may share a spelling; two items in the same namespace may not.
+
 ## E0008: Literal out of range for its type
 
 The value of an integer or float literal does not fit the type the context gives it.
@@ -140,6 +162,22 @@ fn main() {
 <!-- /error-example -->
 
 **How to fix:** use a wider type for the binding or the expression, or write a value the type can represent.
+
+## E0009: A declaration depends on itself
+
+A constant's initializer depends on the constant itself, a type alias refers to itself (directly or through other
+aliases), or a struct or enum contains itself by value, which would need infinite size.
+
+<!-- error-example: E0009 -->
+```burdin
+const LIMIT: i32 = LIMIT //~ E0009
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** break the cycle: give the constant a value that does not mention it, point the alias at a concrete
+type, or put the recursive value behind a `Heap<T>` (or a `List<T>`, which allocates).
 
 ## E0100: Use of a moved value
 
@@ -476,6 +514,29 @@ fn main() {}
 **How to fix:** give the field type the derive it needs, stop deriving the member, or remove one of the conflicting
 declarations. A type with a destructor is never `Copy`.
 
+## E0131: Invalid `Drop` implementation
+
+A `Drop` block is exactly one method named `drop`. The diagnostic is reported at the block when it has more than
+one method, or at the method name when the one method is named something else.
+
+<!-- error-example: E0131 -->
+```burdin
+struct Widget {
+    id: i32
+}
+
+Widget: Drop { //~ E0131
+    fn drop(mut self) {}
+    fn extra(self) {}
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** write `Type: Drop { fn drop(mut self) { ... } }` with no other methods. Put any other cleanup in an
+ordinary method or in the `drop` body.
+
 ## E0140: Interface implementation is missing a method
 
 The `Type: Interface` block does not implement every method that has no default. The diagnostic is reported at the
@@ -649,6 +710,43 @@ fn main() {}
 **How to fix:** use an integer, float, or `CPtr<T>` in the declaration; pass strings as a `CString`/`CStr` pointer,
 and declare a plain C signature without conventions or receivers.
 
+## E0163: Invalid `extern` declaration
+
+An `extern` declaration names a symbol the runtime reserves (`main`, `burdin_rt_*`, `burdin.*`), declares a generic
+function, or gives a second declaration of one symbol a different signature than the first. The diagnostic points
+at the offending name.
+
+<!-- error-example: E0163 -->
+```burdin
+extern "C" {
+    fn burdin_rt_panic(): i32 //~ E0163
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** choose a symbol the runtime does not own, remove the type parameters from the declaration, or make
+every declaration of one symbol use the same signature. The first declaration defines the ABI.
+
+## E0164: Unsupported `repr`
+
+Only `repr(C)` exists: a struct may ask for the C layout or for the default Burdin layout, and no other
+representation is accepted.
+
+<!-- error-example: E0164 -->
+```burdin
+struct Packed repr(packed) { //~ E0164
+    x: i32
+    y: i32
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** write `repr(C)`, or remove the marker to keep the default layout.
+
 ## E0170: Invalid test attribute
 
 A `test` item's attribute list is checked when the test is compiled. The list may name `ignore`, `timeout`,
@@ -666,3 +764,23 @@ test "repeated" [ignore, ignore] { //~ E0170
 **How to fix:** write each attribute once, with the value it takes: `ignore`, `timeout(500)`, `should_panic`, or
 `should_panic("message")`. Use `should_fail` on its own rather than together with `should_panic`; the first expects
 a returned error and the second a panic abort.
+
+## E0180: Type arguments on a non-generic type
+
+A type path supplies type arguments to a type that declares no type parameters, such as a plain struct or a
+built-in like `i32`.
+
+<!-- error-example: E0180 -->
+```burdin
+struct Pair {
+    a: i32
+}
+
+fn main() {
+    let p: Pair<i32> = Pair { a: 1 } //~ E0180
+}
+```
+<!-- /error-example -->
+
+**How to fix:** remove the type arguments, or declare the type with the parameters the program needs
+(`struct Pair<T> { ... }`).

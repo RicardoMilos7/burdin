@@ -27,6 +27,7 @@ python3 tests/run_tests.py               run the conformance tests (Python 3; pa
 python3 tests/run_tests.py m05 -v        one milestone, with diffs
 python3 tests/run_tests.py --release     release profile (skips debug-only tests)
 python3 tests/check_tests.py             validate directives and error codes (Python 3; no compiler needed)
+python3 tests/check_e9000.py             check the E9000 audit against the compiler (no compiler needed)
 python3 tests/check_unit_tests.py        check the front-end unit tests and their CI coverage (no compiler needed)
 python3 tests/check_ci.py                validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
 python3 tests/check_deps.py              audit the dependency pins and licenses (no compiler needed)

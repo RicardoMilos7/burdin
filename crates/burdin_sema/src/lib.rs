@@ -2,7 +2,8 @@
 //!
 //! The checker covers the stage 0 language up to milestone 9: every file is a module, packages import each other
 //! with `use`, `priv` items are package-private, and `extern "C"` declarations plus `unsafe` blocks expose the C
-//! ABI (see `modules.rs` and `unsafe.rs`). Everything else is reported with `Code::UNSUPPORTED` until its milestone.
+//! ABI (see `modules.rs` and `unsafe.rs`). Everything else is reported with `Code::UNSUPPORTED` until its milestone;
+//! `spec/e9000-audit.md` lists every remaining site with the milestone and issue that remove it.
 //!
 //! Generics are monomorphized here, so the memory checks (`burdin_check`) and code generation only ever see
 //! concrete types. The work is organized in phases over one `Sema` (`session.rs`):

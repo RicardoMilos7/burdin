@@ -110,7 +110,12 @@ impl Code {
     pub const ARG_COUNT: Code = Code("E0004");
     pub const IMMUTABLE: Code = Code("E0005");
     pub const NON_EXHAUSTIVE: Code = Code("E0006");
+    /// A type, interface, function, constant, test, type parameter, field, variant, member, or import that
+    /// repeats a name already declared in its namespace.
+    pub const DUPLICATE_NAME: Code = Code("E0007");
     pub const LITERAL_RANGE: Code = Code("E0008");
+    /// A declaration that depends on itself: a constant, a type alias, or a type that contains itself.
+    pub const CYCLIC_DECLARATION: Code = Code("E0009");
     pub const MOVED: Code = Code("E0100");
     pub const MOVE_FROM_BORROW: Code = Code("E0101");
     pub const PARTIAL_MOVE_FROM_DROP: Code = Code("E0103");
@@ -125,6 +130,8 @@ impl Code {
     pub const RETURN_LOCAL_ORIGIN: Code = Code("E0122");
     pub const VIEW_OUTLIVES_SOURCE: Code = Code("E0123");
     pub const DERIVE_REQUIREMENT: Code = Code("E0130");
+    /// A `Drop` implementation that is not exactly one method named `drop`.
+    pub const INVALID_DROP_IMPL: Code = Code("E0131");
     pub const MISSING_INTERFACE_METHOD: Code = Code("E0140");
     pub const BOUND_NOT_SATISFIED: Code = Code("E0141");
     pub const ORPHAN_RULE: Code = Code("E0142");
@@ -133,10 +140,18 @@ impl Code {
     pub const UNSAFE_REQUIRED: Code = Code("E0161");
     /// A type or convention that cannot cross the `extern "C"` boundary.
     pub const C_ABI: Code = Code("E0162");
+    /// An `extern` declaration with a runtime-reserved symbol, a generic function, or a signature that
+    /// conflicts with an earlier declaration of the same symbol.
+    pub const INVALID_EXTERN: Code = Code("E0163");
+    /// A `repr` other than `repr(C)`.
+    pub const UNSUPPORTED_REPR: Code = Code("E0164");
     /// A `test` attribute that is unknown, repeated, has a value it does not take, or conflicts with another.
     pub const TEST_ATTRIBUTE: Code = Code("E0170");
+    /// Type arguments given to a type that declares no type parameters.
+    pub const NOT_A_GENERIC_TYPE: Code = Code("E0180");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
-    /// It disappears once stage 0 is complete.
+    /// Every remaining site is assigned to a milestone in `spec/e9000-audit.md`, and `tests/check_e9000.py`
+    /// fails when a site is unassigned, stale, or belongs to a milestone that has shipped.
     pub const UNSUPPORTED: Code = Code("E9000");
 }
 

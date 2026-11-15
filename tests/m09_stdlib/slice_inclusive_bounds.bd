@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: out of bounds
+
+// An inclusive end is the last included index, so it must be strictly less than the length.
+
+fn main() {
+    let a = [1, 2, 3]
+    println(a[0..=3].len().to_string())
+}

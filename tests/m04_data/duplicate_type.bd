@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// A type, a field, and a variant may not repeat a name already declared in its namespace (E0007).
+
+struct Point {
+    x: i32
+    x: i32 //~ E0007
+}
+
+struct Point { //~ E0007
+    y: i32
+}
+
+enum Color {
+    Red
+    Red //~ E0007
+}
+
+fn main() {}

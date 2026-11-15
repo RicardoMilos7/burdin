@@ -37,7 +37,7 @@ impl<'t> Sema<'t> {
         if let ast::Item::Interface(i) = item {
             if !i.generics.is_empty() {
                 diags.error(
-                    Code::UNSUPPORTED,
+                    Code::UNSUPPORTED, // e9000: declare-generic-interface
                     i.name.span,
                     "generic interfaces are not implemented in this compiler yet",
                 );
@@ -49,7 +49,7 @@ impl<'t> Sema<'t> {
                 || builtin_type(name).is_some()
                 || BUILTIN_INTERFACES.contains(&name.as_str())
             {
-                diags.error(Code::UNSUPPORTED, i.name.span, format!("`{name}` is defined more than once"));
+                diags.error(Code::DUPLICATE_NAME, i.name.span, format!("`{name}` is defined more than once"));
                 return;
             }
             let full = self.globals.qualified(module, name);
@@ -72,14 +72,14 @@ impl<'t> Sema<'t> {
             _ => return,
         };
         if matches!(item, ast::Item::TypeAlias(_)) && !generics.is_empty() {
-            diags.error(Code::UNSUPPORTED, name.span, "generic type aliases are not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, name.span, "generic type aliases are not implemented in this compiler yet"); // e9000: declare-generic-alias
         }
         let module_info = &self.globals.modules[module];
         if module_info.types.contains_key(&name.name)
             || module_info.ifaces.contains_key(&name.name)
             || builtin_type(&name.name).is_some()
         {
-            diags.error(Code::UNSUPPORTED, name.span, format!("type `{}` is defined more than once", name.name));
+            diags.error(Code::DUPLICATE_NAME, name.span, format!("type `{}` is defined more than once", name.name));
             return;
         }
         let full = self.globals.qualified(module, &name.name);
@@ -88,7 +88,7 @@ impl<'t> Sema<'t> {
         for (i, p) in params.iter().enumerate() {
             if params[..i].contains(p) {
                 diags.error(
-                    Code::UNSUPPORTED,
+                    Code::DUPLICATE_NAME,
                     generics[i].name.span,
                     format!("type parameter `{p}` is declared twice"),
                 );
@@ -216,7 +216,11 @@ impl<'t> Sema<'t> {
                     ast::Item::Fn(f) => {
                         let name = &f.name.name;
                         if self.globals.modules[module].values.contains_key(name) || builtin(name).is_some() {
-                            diags.error(Code::UNSUPPORTED, f.name.span, format!("`{name}` is defined more than once"));
+                            diags.error(
+                                Code::DUPLICATE_NAME,
+                                f.name.span,
+                                format!("`{name}` is defined more than once"),
+                            );
                             continue;
                         }
                         let full = self.globals.qualified(module, name);
@@ -260,7 +264,11 @@ impl<'t> Sema<'t> {
                     ast::Item::Const(c) => {
                         let name = &c.name.name;
                         if self.globals.modules[module].values.contains_key(name) || builtin(name).is_some() {
-                            diags.error(Code::UNSUPPORTED, c.name.span, format!("`{name}` is defined more than once"));
+                            diags.error(
+                                Code::DUPLICATE_NAME,
+                                c.name.span,
+                                format!("`{name}` is defined more than once"),
+                            );
                             continue;
                         }
                         self.globals.modules[module]
@@ -275,7 +283,7 @@ impl<'t> Sema<'t> {
                         let name = &e.decl.name.name;
                         if self.globals.modules[module].values.contains_key(name) || builtin(name).is_some() {
                             diags.error(
-                                Code::UNSUPPORTED,
+                                Code::DUPLICATE_NAME,
                                 e.decl.name.span,
                                 format!("`{name}` is defined more than once"),
                             );
@@ -315,7 +323,7 @@ impl<'t> Sema<'t> {
                 let name = test.func.name.name.clone();
                 let attrs = check_test_attrs(test, diags);
                 if self.globals.modules[module].values.contains_key(&name) || builtin(&name).is_some() {
-                    diags.error(Code::UNSUPPORTED, test.name_span, format!("`{name}` is defined more than once"));
+                    diags.error(Code::DUPLICATE_NAME, test.name_span, format!("`{name}` is defined more than once"));
                     continue;
                 }
                 let full = self.globals.qualified(module, &name);
@@ -332,28 +340,28 @@ impl<'t> Sema<'t> {
     fn declare_extern(&mut self, module: usize, block: &'t ast::ExternBlock, diags: &mut Diagnostics) {
         if block.abi != "C" {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::C_ABI,
                 block.abi_span,
-                format!("the `{}` ABI is not implemented in this compiler yet; only \"C\" is", block.abi),
+                format!("the `{}` ABI is not supported; only \"C\" is", block.abi),
             );
         }
         for decl in &block.decls {
             let symbol = decl.name.name.clone();
             let is_priv = block.is_priv || decl.is_priv;
             if self.globals.modules[module].values.contains_key(&symbol) || builtin(&symbol).is_some() {
-                diags.error(Code::UNSUPPORTED, decl.name.span, format!("`{symbol}` is defined more than once"));
+                diags.error(Code::DUPLICATE_NAME, decl.name.span, format!("`{symbol}` is defined more than once"));
                 continue;
             }
             if symbol == "main" || symbol.starts_with("burdin_rt_") || symbol.starts_with("burdin.") {
                 diags.error(
-                    Code::UNSUPPORTED,
+                    Code::INVALID_EXTERN,
                     decl.name.span,
                     format!("`{symbol}` is reserved by the runtime and cannot be declared as an `extern` function"),
                 );
                 continue;
             }
             if !decl.generics.is_empty() || !decl.where_clause.is_empty() {
-                diags.error(Code::UNSUPPORTED, decl.name.span, "an `extern` function cannot be generic");
+                diags.error(Code::INVALID_EXTERN, decl.name.span, "an `extern` function cannot be generic");
                 continue;
             }
             let id = match self.globals.extern_symbols.get(&symbol).copied() {
@@ -509,7 +517,7 @@ pub(crate) fn fn_bounds(f: &ast::FnDecl, globals: &Globals, module: usize, diags
             }
             None => {
                 diags.error(
-                    Code::UNSUPPORTED,
+                    Code::UNSUPPORTED, // e9000: declare-where-non-param
                     pred.ty.span,
                     "a `where` clause on something other than a type parameter is not implemented in this compiler yet",
                 );

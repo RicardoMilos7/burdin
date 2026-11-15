@@ -43,7 +43,7 @@ pub(crate) fn check_const_cycles(consts: &[tir::Const], decls: &[&ast::ConstDecl
     for i in 0..consts.len() {
         if deps[i].iter().any(|d| reaches(d.0, i, &deps)) {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::CYCLIC_DECLARATION,
                 decls[i].name.span,
                 format!("constant `{}` depends on itself", decls[i].name.name),
             );

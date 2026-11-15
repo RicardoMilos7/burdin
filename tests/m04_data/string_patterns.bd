@@ -1,0 +1,59 @@
+//@ run
+//> matched
+//> view
+//> empty
+//> or
+//> guarded
+//> if let
+//> let else ok
+//> some abc
+
+// A string literal pattern compares the bytes of a `str` scrutinee. It works on a literal, a slice view, and the
+// empty string, in an or-pattern, and with a guard.
+
+fn main() {
+    let s = "abc"
+    match s {
+        "abc" => println("matched"),
+        else => println("other"),
+    }
+
+    let v = "hello"[1..3]
+    match v {
+        "el" => println("view"),
+        else => println("no"),
+    }
+
+    let e = ""
+    match e {
+        "" => println("empty"),
+        else => println("not empty"),
+    }
+
+    match s {
+        "x" | "abc" => println("or"),
+        else => println("other2"),
+    }
+
+    match s {
+        "abc" if true => println("guarded"),
+        else => println("unguarded"),
+    }
+
+    if let "abc" = s {
+        println("if let")
+    }
+
+    let "abc" = s else {
+        println("let else")
+        return
+    }
+    println("let else ok")
+
+    let o: Option<str> = Some("abc")
+    match o {
+        Some("abc") => println("some abc"),
+        Some(_) => println("some other"),
+        None => println("none"),
+    }
+}

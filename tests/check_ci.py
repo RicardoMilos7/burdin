@@ -279,6 +279,7 @@ if "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" not in windows:
 
 required_steps = [
     "tests/check_tests.py",
+    "tests/check_e9000.py",
     "tests/check_unit_tests.py",
     "tests/check_ci.py",
     "tests/check_deps.py",
@@ -393,6 +394,9 @@ check_script(
     "tests/check_build_flags.py", "burdin --version", "--strip", "--lto", "--pgo-use", "131072"
 )
 check_script("tests/check_parallel.py", "BURDIN_JOBS", "unified_diff")
+check_script(
+    "tests/check_e9000.py", "e9000-audit.md", "Code::UNSUPPORTED", "// e9000:", "run_tests.py", "Stage 1"
+)
 check_script(
     "tests/check_platform_support.py",
     "docs/platform-support.md",
@@ -511,6 +515,7 @@ else:
 # Scripts CI invokes must exist, be executable, and have LF endings.
 scripts = [
     "tests/check_tests.py",
+    "tests/check_e9000.py",
     "tests/check_unit_tests.py",
     "tests/run_tests.py",
     "tests/check_ci.py",

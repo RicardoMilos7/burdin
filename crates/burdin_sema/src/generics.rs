@@ -289,18 +289,18 @@ impl Globals {
     /// interface may be named through a module (`T: sh.Describe`).
     pub(crate) fn resolve_bound(&self, ty: &ast::Type, module: usize, diags: &mut Diagnostics) -> Option<Bound> {
         let ast::TypeKind::Path(segs) = &ty.kind else {
-            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-non-path
             return None;
         };
         let Some(first) = segs.first() else {
-            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-empty
             return None;
         };
         // A plain name: a built-in interface, or one in scope.
         if segs.len() == 1 {
             let name = first.name.name.as_str();
             if !first.args.is_empty() {
-                diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
+                diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-generic-args
                 return None;
             }
             return Some(match name {
@@ -312,7 +312,7 @@ impl Globals {
                 "Default" => Bound::Default,
                 "Drop" | "From" => {
                     diags.error(
-                        Code::UNSUPPORTED,
+                        Code::UNSUPPORTED, // e9000: bound-drop-from
                         ty.span,
                         format!("`{name}` as a bound is not implemented in this compiler yet"),
                     );
@@ -335,7 +335,7 @@ impl Globals {
         let last = segs.last().expect("the path has a last segment");
         let name = last.name.name.as_str();
         if !last.args.is_empty() {
-            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet");
+            diags.error(Code::UNSUPPORTED, ty.span, "this kind of bound is not implemented in this compiler yet"); // e9000: bound-qualified-generic
             return None;
         }
         if self.package_of(target) != self.package_of(module)

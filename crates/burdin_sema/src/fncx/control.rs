@@ -72,7 +72,7 @@ impl FnCx<'_> {
                 ast::PatternKind::Wild => None,
                 _ => {
                     self.scopes.pop();
-                    return self.unsupported(pattern.span, "this `for` pattern");
+                    return self.unsupported(pattern.span, "this `for` pattern"); // e9000: for-range-literal-pattern
                 }
             };
             self.loops.push(false);
@@ -111,7 +111,7 @@ impl FnCx<'_> {
                 ast::PatternKind::Wild => None,
                 _ => {
                     self.scopes.pop();
-                    return self.unsupported(pattern.span, "this `for` pattern");
+                    return self.unsupported(pattern.span, "this `for` pattern"); // e9000: for-range-value-pattern
                 }
             };
             self.loops.push(false);

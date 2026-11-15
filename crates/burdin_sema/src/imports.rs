@@ -120,7 +120,7 @@ impl Sema<'_> {
     fn bind_module(&mut self, module: usize, name: ast::Ident, target: usize, is_pub: bool, diags: &mut Diagnostics) {
         if let Some(&previous) = self.globals.modules[module].modules.get(&name.name) {
             if previous != target {
-                diags.error(Code::UNSUPPORTED, name.span, format!("`{}` is imported more than once", name.name));
+                diags.error(Code::DUPLICATE_NAME, name.span, format!("`{}` is imported more than once", name.name));
             }
             return;
         }
@@ -128,7 +128,7 @@ impl Sema<'_> {
             || self.globals.modules[module].types.contains_key(&name.name)
         {
             diags.error(
-                Code::UNSUPPORTED,
+                Code::DUPLICATE_NAME,
                 name.span,
                 format!("`{}` is imported here and also defined in this module", name.name),
             );
@@ -225,7 +225,7 @@ impl Sema<'_> {
             }
         }
         if duplicate {
-            diags.error(Code::UNSUPPORTED, name.span, format!("`{name_text}` is defined more than once"));
+            diags.error(Code::DUPLICATE_NAME, name.span, format!("`{name_text}` is defined more than once"));
         }
         if reexport {
             let module_info = &mut self.globals.modules[module];

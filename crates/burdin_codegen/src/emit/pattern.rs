@@ -98,6 +98,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let c = v.get_type().const_int(u64::from(*ch as u32), false);
                 self.builder.build_int_compare(IntPredicate::EQ, v, c, "").map_err(llvm_err)
             }
+            Pat::Str(s) => {
+                let ptr = place.expect("a string has storage");
+                let v = self.builder.build_load(self.str_ty, ptr, "").map_err(llvm_err)?.into_struct_value();
+                let p = self.builder.build_extract_value(v, 0, "").map_err(llvm_err)?;
+                let n = self.builder.build_extract_value(v, 1, "").map_err(llvm_err)?;
+                let literal = self.str_literal(s.as_bytes());
+                let lp = literal.get_field_at_index(0).expect("str has a pointer");
+                let ln = literal.get_field_at_index(1).expect("str has a length");
+                let call = self
+                    .builder
+                    .build_call(self.rt.str_eq, &[p.into(), n.into(), lp.into(), ln.into()], "")
+                    .map_err(llvm_err)?;
+                Ok(call.try_as_basic_value().basic().expect("`str_eq` returns a flag").into_int_value())
+            }
             Pat::Range(lo, hi) => {
                 let v = load_int(self)?;
                 let signed = matches!(ty, Ty::Int(i) if i.signed());
@@ -315,7 +329,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 /// The locals a pattern binds, in source order.
 pub(super) fn collect_bindings(pat: &Pat, out: &mut Vec<tir::LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
         Pat::Binding(id, _) => out.push(*id),
         Pat::At(id, _, inner) => {
             out.push(*id);

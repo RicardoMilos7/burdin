@@ -5,9 +5,9 @@ Written at the end of the first session, updated at the end of the second, third
 ## State
 
 Updated at the end of the twenty-fourth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed**: all 230 conformance tests pass in the debug profile and 228 in
-release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
-and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
+and the stage 0 gaps of issue #48 are closed**: all 246 conformance tests pass in the debug profile and 245 in
+release (two tests are debug-only; one is skipped on Windows). `burdin test` runs `test` blocks concurrently with
+attributes, captured output, and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
 by `tests/check_docs.py` (issue #42); the thirteenth retired the claude.ai copies of the design and stage 0
@@ -48,7 +48,12 @@ settled issue #83: `CStr` stays a `std` alias for `CPtr<CChar>` and is not a sec
 `spec/stdlib.md` and `spec/memory-rules.md` SC1, and `m08_modules/cstr_is_an_alias.bd`,
 `cstr_no_implicit_conversion.bd`, and `cstr_is_not_a_str.bd` witness it. It also replaced the linear-scan `Map`
 with an open-addressing hash table (issue #82): lookup, insert, and remove are expected O(1), keys still need only
-`==`, and the unspecified iteration order is unchanged.
+`==`, and the unspecified iteration order is unchanged. The same session audited every `Code::UNSUPPORTED` site
+(issue #84): `spec/e9000-audit.md` assigns each remaining E9000 to a milestone and an issue, each site carries a
+`// e9000:` id, and `tests/check_e9000.py` keeps the table and the compiler in agreement. The stage 0 diagnostics
+that had no future milestone got permanent codes (E0007, E0009, E0131, E0163, E0164, E0180) with compile-fail
+tests; string literal patterns and inclusive slice ranges are implemented, and a dead "comparing strings" branch was
+removed. The remaining E9000 sites are assigned to m12, m13, m19, m20, m21, or the cross-cutting Stage 1 work.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -61,10 +66,11 @@ with an open-addressing hash table (issue #82): lookup, insert, and remove are e
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, and `...` in an `extern` signature |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 230 tests. All pass: m01 to m11 on Linux, macOS, and Windows (228 in release; two are debug-only) |
+| Conformance tests | `tests/` | 247 tests. All pass: m01 to m11 on Linux, macOS, and Windows (245 in release; two are debug-only) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
+| E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check_unit_tests.py` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
@@ -494,7 +500,8 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     non-constant `i`) is still E9000: the checker cannot tell which element moves, so it rejects the program rather
     than miscompiling it. Moving a constant array or `List` index, a heap pointee field, out of `match *h`, and a
     guarded moving pattern on a temporary scrutinee are tracked (twenty-third session, `spec/memory-rules.md` MV6 and
-    MV8). Use `remove` for a dynamic `List` element until stage 1 extends the path model (`stage1-subset.md`).
+    MV8). Use `remove` for a dynamic `List` element until stage 1 extends the path model (`stage1-subset.md`). The two
+    runtime-index sites are assigned to Stage 1 in `spec/e9000-audit.md` (issues #84 and #493).
 11. **A stored view could outlive its source; that is closed (#49).** RT5 with E0123 rejects a view of a temporary, of
     an inner-block local, or of a dropped `String` in a `let` or assignment, reported at the stored value. The old
     examples (`let r = first_of(Pair { .. })`, `let r = { let p = ...; first_of(p) }`,
@@ -551,7 +558,8 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 - Diagnostics without a registry code use these for now: `break`/`continue` outside a loop is E0001; assigning to
   something that is not a place is E0005; a constant that depends on itself and a non-constant expression in a `const`
-  are E9000. Give them registry codes when the spec settles them.
+  are E9000. Give them registry codes when the spec settles them. *The self-cycle is E0009 and the non-constant
+  expression is `const-expression` in `spec/e9000-audit.md` (issue #84).*
 
 ## Decided in the fourth session
 
@@ -561,7 +569,8 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   contains itself by value, and a type alias cycle are E9000; a missing or repeated field in a struct literal, an
   `else` block of `let ... else` that can finish normally, and an irrefutable pattern with `else` are E0003; an unknown
   field or variant is E0002; a refutable `let` or `for` pattern without `else` is E0006; calling a `mut self` method on
-  an immutable place is E0113 (the same rule as a `mut` argument).
+  an immutable place is E0113 (the same rule as a `mut` argument). *Issue #84 gave duplicate definitions E0007 and the
+  cycles E0009; none of them is E9000 any more.*
 
 ## Decided in the fifth session
 

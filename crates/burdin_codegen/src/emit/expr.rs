@@ -94,7 +94,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 };
                 Some(ptr.into())
             }
-            K::Slice { base, lo, hi } => Some(self.slice(base, lo, hi, e.span)?.into()),
+            K::Slice { base, lo, hi, inclusive } => Some(self.slice(base, lo, hi, *inclusive, e.span)?.into()),
             K::Block(b) => self.block(b, mode)?,
             K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty, mode)?,
             K::While(cond, body) => {

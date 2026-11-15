@@ -13,6 +13,29 @@ close-out checklist in `AGENTS.md`).
   codes, and runs tests in parallel by default (`-j N`; results are still printed in test order). CI invokes Python
   directly on all three platforms. This removes the Git Bash process-spawn cost that dominated the Windows CI job:
   the full suite takes 3 s instead of 31 s on WSL with the same compiler, and `check_docs.py` walks links in-process.
+- Audit every E9000 site and assign it to a milestone (issue #84).
+  - `spec/e9000-audit.md` lists every remaining `Code::UNSUPPORTED` site with the construct, the owning milestone,
+    and the issue that removes it. Each site carries a `// e9000: <id>` marker, and `tests/check_e9000.py` fails
+    when the source and the table disagree, when a row is stale, or when a site names a milestone that CI already
+    runs. Every CI job runs it.
+  - The stage 0 diagnostics that had no future milestone now have permanent codes and compile-fail tests: E0007 (a
+    name declared or imported more than once; `duplicate_values`, `duplicate_type`, `duplicate_type_parameter`,
+    `duplicate_member`, `duplicate_import`), E0009 (a cyclic or infinitely sized declaration; `constant_cycle`,
+    `cyclic_types`), E0131 (invalid `Drop`; `drop_impl_shape`), E0163 (invalid `extern`; `extern_invalid`,
+    `extern_signature_conflict`), E0164 (unsupported `repr`; `repr_other`), and E0180 (type arguments on a
+    non-generic type; `type_args_on_non_generic`). The registry, `docs/error-codes.md`, and their examples are
+    updated.
+  - String literal patterns are implemented: a `str` scrutinee compares byte for byte, including slice views, the
+    empty string, or-patterns, and guards. The domain is open, so a `match` on strings still needs an `else` or `_`
+    arm (`m04_data/string_patterns`, `nonexhaustive_string`).
+  - An inclusive slice range (`s[a..=b]`) is implemented; `spec/stdlib.md` already promised it. The slice end is
+    checked as `hi < len` before it is advanced, so the maximum inclusive end panics as out of bounds rather than
+    wrapping, and a reversed inclusive range (`a[2..=1]`) still panics. `m09_stdlib/slice_inclusive`,
+    `slice_inclusive_bounds`, and `slice_inclusive_reversed` witness it. A dead "comparing strings" branch was
+    removed.
+  - The remaining E9000 sites are assigned to m12 (function values and calls), m13 (generic interfaces and methods),
+    m19 (hand-built built-in interfaces), m20 (constant expressions), m21 (the remaining type-system forms), or
+    Stage 1 for the cross-cutting pattern, bound, `where`, and runtime-index move forms.
 - Close the stage 0 correctness gaps carried into stage 1 (issue #48, sub-issues #49, #53, #58, #64, #71, #77,
   #85, #86, #87).
   - **View lifetime (#49).** RT5 and the new E0123 reject a view stored in a `let` or an assignment that derives
@@ -64,7 +87,7 @@ close-out checklist in `AGENTS.md`).
     methods (`unsafe_fn`, `unsafe_fn_call_requires_unsafe`, `unsafe_interface_method`,
     `unsafe_interface_mismatch`), and an audit of the `spec/memory-rules.md` test matrix against the suite, with US
     extended to the new pointer and unsafe-function tests.
-  - The suite is 230 tests (228 in release); `tests/check_tests.py`, `check_unit_tests.py`, `check_docs.py`,
+  - The suite is 247 tests (245 in release); `tests/check_tests.py`, `check_unit_tests.py`, `check_docs.py`,
     `check_error_docs.py`, `check_diagnostics.py`, `check_codegen_opt.py`, `check_build_flags.py`,
     `check_parallel.py`, `check_test_runner.py`, and `check_debug_info.py` are green, and `cargo fmt --check`,
     `cargo clippy -- -D warnings`, and `cargo test` pass.

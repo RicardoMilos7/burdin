@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A constant that depends on itself, directly or through another constant, is E0009.
+
+const A: i32 = B //~ E0009
+const B: i32 = A //~ E0009
+
+fn main() {}

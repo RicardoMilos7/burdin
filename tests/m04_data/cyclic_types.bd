@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A type alias may not refer to itself, and a struct may not contain itself by value (E0009).
+
+type A = B //~ E0009
+type B = A
+
+struct Recursive { //~ E0009
+    next: Recursive
+}
+
+fn main() {}
