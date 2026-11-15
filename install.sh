@@ -92,23 +92,30 @@ fetch_text() {   # $1 URL -> stdout
 }
 
 latest_version() {   # $1 stable|nightly
-    local api json tag
     api="https://api.github.com/repos/$REPO/releases"
     if [ "$1" = stable ]; then
         json=$(fetch_text "$api/latest") || return 1
     else
         json=$(fetch_text "$api?per_page=30") || return 1
     fi
-    tag=$(printf '%s' "$json" \
+    # A `for` loop over the tags keeps this inside POSIX sh: macOS's /bin/sh (bash 3.2 in POSIX mode) rejects a
+    # `{ ...; }` group followed by `;;` inside a case branch. Tag names contain no whitespace.
+    tags=$(printf '%s' "$json" \
         | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
-        | sed -n 's/.*"\([^"]*\)"$/\1/p' \
-        | while IFS= read -r candidate; do
+        | sed -n 's/.*"\([^"]*\)"$/\1/p')
+    tag=""
+    for candidate in $tags; do
+        if [ "$1" = nightly ]; then
             case "$candidate" in
-                *nightly*) [ "$1" = nightly ] && { printf '%s\n' "$candidate"; break; } ;;
-                *) [ "$1" = stable ] && { printf '%s\n' "$candidate"; break; } ;;
+                *nightly*) tag=$candidate; break ;;
             esac
-        done \
-        | head -n 1)
+        else
+            case "$candidate" in
+                *nightly*) ;;
+                *) tag=$candidate; break ;;
+            esac
+        fi
+    done
     [ -n "$tag" ] || return 1
     printf '%s' "${tag#v}"
 }
