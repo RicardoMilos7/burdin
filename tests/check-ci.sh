@@ -27,7 +27,9 @@
 #     `cargo test --workspace` in every job, a scheduled `fuzz` job runs the longer session through
 #     tests/fuzz.sh, and it uploads the failing inputs so they can be committed with the fix (issue #447);
 #   * a conformance test still exercises --link-lib LLVM-C;
-#   * the documentation check (which reads the driver contract in README.md) runs in both jobs.
+#   * the documentation check (which reads the driver contract in README.md) runs in every job;
+#   * every job runs the diagnostics presentation check and the error-code reference check, and the reference
+#     exists, is the registry's mirror image, and is linked from README.md (issues #434-#437).
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPT_DIR")
@@ -266,6 +268,8 @@ for job in linux macos windows; do
         'tests/check-ci.sh' \
         'tests/check-platform.sh' \
         'tests/check-docs.sh' \
+        'tests/check-diagnostics.sh' \
+        'tests/check-error-docs.sh' \
         'tests/bench-regression.sh' \
         'rustup toolchain install' \
         'rustc --version' \
@@ -354,10 +358,23 @@ elif ! grep -qF 'check-docs' "$ROOT/README.md"; then
     add_problem "README.md: does not mention tests/check-docs.sh"
 fi
 
+# The user-facing error-code reference (issue #437) must mirror the registry exactly and be in the docs index.
+if [ ! -f "$ROOT/docs/error-codes.md" ]; then
+    add_problem "docs/error-codes.md: missing (the user-facing error-code reference)"
+else
+    grep -qF 'docs/error-codes.md' "$ROOT/README.md" \
+        || add_problem "README.md: does not link docs/error-codes.md"
+    docs_codes=$(tr -d '\r' < "$ROOT/docs/error-codes.md" | grep -oE '^## E[0-9]{4}:' | grep -oE 'E[0-9]{4}' | sort -u)
+    registry_codes=$(tr -d '\r' < "$SCRIPT_DIR/README.md" | grep -oE '^\| E[0-9]{4} \|' | grep -oE 'E[0-9]{4}' | sort -u)
+    [ "$docs_codes" = "$registry_codes" ] \
+        || add_problem "docs/error-codes.md: codes do not match the tests/README.md registry"
+fi
+
 # Scripts CI invokes must exist, be executable, and have LF endings.
 for rel in \
     tests/check-tests.sh tests/check-unit-tests.sh tests/run-tests.sh tests/check-ci.sh tests/check-platform.sh \
-    tests/check-docs.sh tests/bench-regression.sh tests/fuzz.sh; do
+    tests/check-docs.sh tests/check-diagnostics.sh tests/check-error-docs.sh tests/bench-regression.sh \
+    tests/fuzz.sh; do
     path=$ROOT/$rel
     if [ ! -f "$path" ]; then
         add_problem "$rel: missing"

@@ -276,8 +276,10 @@ impl Parser<'_> {
         let ret = path("Result", vec![Type { kind: TypeKind::Unit, span }, path("AssertError", Vec::new())]);
         let unit = Expr { kind: ExprKind::Unit, span };
         let ok = Expr { kind: ExprKind::Name { name: Ident { name: "Ok".to_string(), span }, args: Vec::new() }, span };
-        let tail =
-            Expr { kind: ExprKind::Call(Box::new(ok), vec![Arg { mut_marker: false, expr: unit }]), span: body_span };
+        let tail = Expr {
+            kind: ExprKind::Call(Box::new(ok), vec![Arg { mut_marker: false, mut_span: None, expr: unit }]),
+            span: body_span,
+        };
         let mut stmts = body.stmts;
         stmts.push(Stmt::Expr(tail));
         let func = FnDecl {

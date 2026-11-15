@@ -54,6 +54,8 @@ tests/run-tests.sh m05 -v          only milestone 5, with diffs for failures
 tests/check-tests.sh               check test directives and error codes (no compiler needed; also check-tests.ps1)
 tests/check-unit-tests.sh          check the front-end unit tests and their CI coverage (no compiler needed)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
+tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
+tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
 tests/fuzz.sh                      long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 ```
 
@@ -86,6 +88,7 @@ crates/
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
+docs/                     the user-facing error-code reference (checked by tests/check-error-docs.sh)
 spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts
 ```

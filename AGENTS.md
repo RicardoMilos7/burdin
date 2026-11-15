@@ -30,6 +30,8 @@ tests/check-unit-tests.sh          check the front-end unit tests and their CI c
 tests/check-ci.sh                  validate the CI workflow, its caches, and the pinned Rust toolchain (no compiler needed)
 tests/check-platform.sh            check the host triple and 64-bit isize/usize (needs a built driver)
 tests/check-docs.sh                check documentation links and the driver contract (needs a built driver)
+tests/check-diagnostics.sh         check color, width, formats, error limits, and ordering (needs a built driver)
+tests/check-error-docs.sh          check the error-code reference and `burdin explain` (needs a built driver)
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
@@ -122,6 +124,7 @@ AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
+docs/                     the user-facing error-code reference (checked against tests/README.md)
 tests/                    conformance suite, README with the format and error codes
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_codegen, burdin_driver,

@@ -144,6 +144,16 @@ jobs:
       - name: Check documentation
         run: tests/check-docs.sh
 
+      # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
+      # formats, the error limit, and deterministic ordering.
+      - name: Check diagnostics behavior
+        run: tests/check-diagnostics.sh
+
+      # The user-facing error-code reference (issue #437): every code, every example compiled, and
+      # `burdin explain`.
+      - name: Check the error-code reference
+        run: tests/check-error-docs.sh
+
       - name: Check host target
         run: tests/check-platform.sh
 
@@ -262,6 +272,16 @@ jobs:
 
       - name: Check documentation
         run: tests/check-docs.sh
+
+      # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
+      # formats, the error limit, and deterministic ordering.
+      - name: Check diagnostics behavior
+        run: tests/check-diagnostics.sh
+
+      # The user-facing error-code reference (issue #437): every code, every example compiled, and
+      # `burdin explain`.
+      - name: Check the error-code reference
+        run: tests/check-error-docs.sh
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -413,6 +433,16 @@ jobs:
 
       - name: Check documentation
         run: bash tests/check-docs.sh
+
+      # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
+      # formats, the error limit, and deterministic ordering.
+      - name: Check diagnostics behavior
+        run: bash tests/check-diagnostics.sh
+
+      # The user-facing error-code reference (issue #437): every code, every example compiled, and
+      # `burdin explain`.
+      - name: Check the error-code reference
+        run: bash tests/check-error-docs.sh
 
       - name: Check host target
         run: bash tests/check-platform.sh

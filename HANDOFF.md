@@ -4,26 +4,28 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the sixteenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**: all
-174 tests pass in the debug profile and 173 in release (one m02 test is debug-only). `burdin test` runs `test` blocks,
-and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues #16, #17, #18); the
-twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a
-root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the claude.ai copies of the
-design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry, `target/`, and LLVM 21 in
-CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link (issue #12); the fifteenth runs
-the finished conformance milestones in the release profile in every CI job (issue #47) and adds benchmark regression
-tracking: the harness saves and compares a baseline, and each CI job keeps one in a cache and reports regressions
-advisably (issue #446); the sixteenth settled the 16
-assumptions of issue #21 (sub-issues #22-#40) in `spec/`, added `spec/stdlib.md` and `spec/derives.md`, 40 decision
-tests, and four small fixes: `Drop` now rejects a read-only or `own` receiver, `CPtr.null` rejects arguments, the
-ordering operators work on `str`/`String`, and an invalid `extern "C"` type or convention is E0162; the seventeenth
-added deterministic lexer/parser fuzzing: a committed corpus plus a 20,000-mutation replay in every CI job, a
-scheduled `fuzz` job that runs a ten-minute session and uploads new inputs, and a watchdog for an input that stops
-returning (issues #288 and #447).
+Updated at the end of the seventeenth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete**:
+all 174 conformance tests pass in the debug profile and 173 in release (one m02 test is debug-only). `burdin test`
+runs `test` blocks, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job
+(issues #16, #17, #18); the twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented
+the driver contract in a root `README.md`, checked by `tests/check-docs.sh` (issue #42); the thirteenth retired the
+claude.ai copies of the design and stage 0 documents, added the compiler benchmarks, and cached the cargo registry,
+`target/`, and LLVM 21 in CI (#44, #41, #46); the fourteenth added the Windows CI job and the shared LLVM link
+(issue #12); the fifteenth runs the finished conformance milestones in the release profile in every CI job
+(issue #47) and adds benchmark regression tracking: the harness saves and compares a baseline, and each CI job keeps
+one in a cache and reports regressions advisably (issue #446); the sixteenth settled the 16 assumptions of issue #21
+(sub-issues #22-#40) in `spec/`, added `spec/stdlib.md` and `spec/derives.md`, 40 decision tests, and four small
+fixes: `Drop` now rejects a read-only or `own` receiver, `CPtr.null` rejects arguments, the ordering operators work
+on `str`/`String`, and an invalid `extern "C"` type or convention is E0162; the seventeenth added two things: the
+diagnostics presentation and tooling of issue #433 (sub-issues #434-#437) — colors, terminal width, and `--no-color`;
+notes and suggestions with spans and edits; deterministic ordering and `--error-limit`; and the checked
+`docs/error-codes.md` reference with `burdin explain` — and deterministic lexer/parser fuzzing: a committed corpus
+plus a 20,000-mutation replay in every CI job, a scheduled `fuzz` job that runs a ten-minute session and uploads new
+inputs, and a watchdog for an input that stops returning (issues #288 and #447).
 
 | What | Where | Status |
 | --- | --- | --- |
-| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`, diagnostics, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. `tests/check-docs.sh` checks the links and the documented behavior, and both CI jobs run it |
+| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`, diagnostics, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. `tests/check-docs.sh` checks the links and the documented behavior, and every CI job runs it |
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
@@ -32,6 +34,7 @@ returning (issues #288 and #447).
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
 | Conformance tests | `tests/` | 174 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check-diagnostics.sh` and `tests/check-error-docs.sh` run in every CI job |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, and diagnostics in `burdin_diag`. CI runs `cargo test --workspace` in every job, and `tests/check-unit-tests.sh` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`. Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
@@ -218,8 +221,16 @@ how to call WSL from PowerShell.
   E0004, `<`/`<=`/`>`/`>=` on `str` and `String` go through `cmp_at` instead of the integer path
   (`burdin_codegen/src/emit/ops.rs`), and an invalid `extern "C"` type or convention is E0162
   (`burdin_sema/src/resolve.rs`).
-- Diagnostics are printed in source order as `path:LINE:COL: error[E0000]: message`. Semantic checks run only if there
-  were no syntax errors.
+- Diagnostics are collected, sorted by file and byte offset (ties by code, message, and discovery order), and
+  rendered once, so the output is deterministic and never streamed. The human format starts each diagnostic with
+  `path:LINE:COL: error[E0000]: message`, colors the location, severity, and code when enabled, wraps to the width,
+  and prints one line per note (`= note:`) and suggestion (`= help:`); `short` is the plain one-line format the
+  test scripts parse; `json` is one object per diagnostic plus a summary object with structured spans, notes, and
+  suggestions (a span and a replacement). `--color`, `--no-color`, `NO_COLOR`, `--width`, and `COLUMNS` control the
+  human format; `--error-limit N` truncates after sorting and reports how many were hidden, and the default prints
+  every error. `burdin explain <code>` prints the entry from `docs/error-codes.md`, which is embedded in the driver
+  and checked by compiling every snippet; `tests/check-diagnostics.sh` covers the presentation and ordering.
+  Semantic checks run only if there were no syntax errors.
 
 ### Compiler benchmarks and regression tracking (issues #41, #446)
 
@@ -660,6 +671,39 @@ failing the job. A missing baseline (including one evicted after seven days with
 
 ## Decided in the seventeenth session
 
+- **Diagnostics are sorted once, never streamed** (issue #436). The semantic and memory checks already collect the
+  whole list before the driver prints it, so the renderer sorts by file (load order), byte offset, code, message,
+  and discovery order. That makes equal spans stable and the output byte-for-byte deterministic. The "report every
+  error in a file" rule therefore holds by default; `--error-limit N` is opt-in, applies to the sorted list, and
+  only hides output (the summary counts every error). `0` means no limit.
+- **Three formats** (issues #434, #435). `human` is the default and is the only one that colors or wraps; `short`
+  is exactly one plain `path:LINE:COL: error[E0000]: message` line per diagnostic, which is what the test scripts
+  parse; `json` is one object per diagnostic plus a final summary object, with `span` (file, line, column, end,
+  byte offsets), `notes`, and `suggestions` (message, span, replacement). An insert is a span with equal ends, and
+  an empty replacement deletes. The JSON is the interface an editor uses for diagnostics and quick-fix code
+  actions; there is no LSP yet.
+- **Color precedence**: an explicit `--color always`/`never` (or `--no-color` for `never`) wins over a non-empty
+  `NO_COLOR`; `auto` is the default and requires stderr to be a terminal and `NO_COLOR` to be absent. The last
+  color option on the command line wins. The decision is a pure function unit-tested in the driver.
+- **Width precedence**: `--width`, then a positive `COLUMNS`, then 80; `--width 0` disables wrapping. Wrapping
+  only inserts breaks and a four-space hanging indent and never changes the message characters, so a hard-split
+  word can be reconstructed by removing the breaks.
+- **Notes and suggestions are part of the diagnostic model, not of rendering.** `Diagnostic` carries
+  `notes: Vec<Note>` (optional span) and `suggestions: Vec<Suggestion>` (span + replacement). E0100 now notes where
+  the value was moved from, E0110 notes the conflicting argument, and E0114/E0115 attach the `mut` insertion or
+  deletion (the parser records the marker's span in `ast::Arg.mut_span`). The human renderer prints `= note:` and
+  `= help:`; `short` omits both.
+- **The error-code reference is a checked page, embedded in the driver** (issue #437). `docs/error-codes.md` has one
+  section per registry code with a complete example and a fix. The markers `<!-- error-example: E0000 -->` delimit
+  each snippet, which `tests/check-error-docs.sh` extracts, compiles, and requires to fail with exactly the marked
+  `//~` diagnostics (a multi-file snippet uses `// --- path ---` lines and `target=`). The driver embeds the page
+  with `include_str!`, so `burdin explain <code>` and the page cannot drift; a unit test compares the page headings
+  with the registry in `tests/README.md`.
+- **CI runs two new checks in every job**: `tests/check-diagnostics.sh` (formats, color, width, notes/suggestions,
+  limit, determinism, flag syntax) and `tests/check-error-docs.sh` (registry coverage, every example compiled,
+  `burdin explain`). `tests/check-ci.sh` fails if either step, either script, or the reference page goes missing,
+  and checks that the page's code set equals the registry without compiling anything.
+- **No new diagnostic codes.** The registry is unchanged; #433 is presentation and tooling.
 - **The fuzzer is dependency-free and deterministic (issues #288, #447).** `crates/burdin_fuzz` has its own
   SplitMix64 generator and mutation operators rather than `cargo-fuzz`/libFuzzer, so it builds on the pinned stable
   toolchain, adds no dependency to `Cargo.lock`, and needs no backend or LLVM. A run is a function of the corpus,
