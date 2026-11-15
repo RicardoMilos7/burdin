@@ -2,7 +2,7 @@
 
 Burdin's compiler depends on a small, reviewed set of Rust crates and on LLVM. This page records the
 policy and the review; the checked, per-crate record is [`tests/dependencies.txt`](../tests/dependencies.txt),
-and [`tests/check-deps.sh`](../tests/check-deps.sh) enforces it in every CI job (issue #449).
+and [`tests/check_deps.py`](../tests/check_deps.py) enforces it in every CI job (issue #449).
 
 ## Policy
 
@@ -50,7 +50,7 @@ Homebrew; the Windows job uses the official LLVM release archive.
    existing crate would do instead.
 3. Add or change its line in [`tests/dependencies.txt`](../tests/dependencies.txt) with its license
    and why the compiler needs it.
-4. Run `tests/check-deps.sh` (CI runs it with `BURDIN_DEPS_REQUIRE_METADATA=1` after `cargo build`).
+4. Run `tests/check_deps.py` (CI runs it with `BURDIN_DEPS_REQUIRE_METADATA=1` after `cargo build`).
 
 The audit covers provenance, pinning, and licenses. It is not a vulnerability scanner: it does not
 fetch the RustSec advisory database. A security review of a dependency change is still a review step,

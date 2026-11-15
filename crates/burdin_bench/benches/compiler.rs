@@ -12,7 +12,7 @@
 //!
 //! A run can also be recorded and compared with a stored baseline: `--save FILE` writes the medians of this
 //! run, and `--baseline FILE` compares this run with them and exits 1 when a case is more than `--threshold`
-//! percent slower (default 25). CI runs both through `tests/bench-regression.sh`, with the baseline in a cache
+//! percent slower (default 25). CI runs both through `tests/bench_regression.py`, with the baseline in a cache
 //! keyed by the runner, the pinned toolchain, and `Cargo.lock` (issue #446).
 //!
 //! `cargo bench -p burdin_bench -- <filter>` measures only the cases whose name contains `filter`
@@ -223,7 +223,7 @@ fn measurement(stage: &str, size: &str, median: Duration) -> Measurement {
 }
 
 /// Reads a stored baseline, compares this run with it, and returns 1 when a case is over the threshold so a
-/// caller (a developer, or `tests/bench-regression.sh`) can decide whether that fails the run.
+/// caller (a developer, or `tests/bench_regression.py`) can decide whether that fails the run.
 fn compare_with_baseline(path: &Path, current: &[Measurement], threshold: u32) -> i32 {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,

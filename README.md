@@ -14,7 +14,7 @@ conformance suite and the specs, not by this file; see the index below.
 | --- | --- |
 | [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the settled language decisions. Read this first. |
 | [`docs/error-codes.md`](docs/error-codes.md) | The user-facing reference for every error code, with a checked example and a fix for each. `burdin explain <code>` prints one entry. |
-| [`docs/dependencies.md`](docs/dependencies.md) | The dependency and license policy, the review of every crate, and how to add one. `tests/check-deps.sh` enforces it. |
+| [`docs/dependencies.md`](docs/dependencies.md) | The dependency and license policy, the review of every crate, and how to add one. `tests/check_deps.py` enforces it. |
 | [`docs/platform-support.md`](docs/platform-support.md) | The tested OS/architecture pairs, the runtime features each CI job proves, and the known limitations. |
 | [`docs/releasing.md`](docs/releasing.md) | The version scheme, release channels, artifact and checksum protocol, reproducibility rules, and the rehearsal checklist. |
 | [`spec/grammar.md`](spec/grammar.md) | The syntax of stage 0. |
@@ -66,11 +66,11 @@ review are in [`docs/dependencies.md`](docs/dependencies.md).
 - LLVM itself is supplied by the host toolchain under Apache-2.0 WITH LLVM-exception and is not
   vendored.
 
-`tests/check-deps.sh` checks all of this without a compiler and re-verifies each license through
+`tests/check_deps.py` checks all of this without a compiler and re-verifies each license through
 `cargo metadata --locked --offline` after a build. Every CI job runs it:
 
 ```console
-$ tests/check-deps.sh
+$ tests/check_deps.py
 No problems.
 ```
 
@@ -115,13 +115,13 @@ $ ./target/debug/burdin run hello.bd
 hello, world
 ```
 
-The program above and this command are checked by `tests/check-docs.sh`. Other command transcripts in this file are
+The program above and this command are checked by `tests/check_docs.py`. Other command transcripts in this file are
 illustrative; the behavior they show is covered by the conformance tests and by that script.
 
 ## The driver contract
 
 The `burdin` command has the subcommands `build`, `run`, `test`, and `explain`. This section is the contract they
-implement; the conformance runner (`tests/run-tests.sh`) and the documentation check depend on it.
+implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
 usage:
@@ -214,11 +214,11 @@ Compiles the target to a native executable. On success it prints nothing and exi
   `<output>.dSYM` bundle on macOS (ld64 keeps it out of the executable and writes a debug map), and the LLVM debug
   metadata the COFF backend carries for Windows. Every Burdin function is a `DW_TAG_subprogram`, every parameter and
   local a `DW_TAG_formal_parameter`/`DW_TAG_variable`, and every expression sets the line table, so a debugger can
-  stop on a Burdin line and read a local. `burdin run -g` compiles with it too. `tests/check-debug-info.sh` builds a
+  stop on a Burdin line and read a local. `burdin run -g` compiles with it too. `tests/check_debug_info.py` builds a
   program, reads the sections with `llvm-dwarfdump` (from the `.dSYM` on macOS), and, when `gdb` is installed, stops
   on a Burdin line and prints the locals.
 - `--strip` passes the platform strip option to the linker (`-s` on ELF/Mach-O; `/OPT:REF /OPT:ICF` with MSVC) and
-  keeps the program's behavior. `tests/check-build-flags.sh` enforces a 128 KiB budget for a stripped hello-world
+  keeps the program's behavior. `tests/check_build_flags.py` enforces a 128 KiB budget for a stripped hello-world
   and 512 KiB for a program using `List` and `Map` on Linux and macOS.
 - `--lto` emits LLVM bitcode and links it with `-flto`. It needs an LLVM compiler driver: set `BURDIN_CC=clang` (MSVC
   `cl` cannot link bitcode).
@@ -294,9 +294,9 @@ test result: 2 passed, 1 failed
 
 When tests are marked `[ignore]`, the summary ends with `, N ignored`. The exit status is 0 only when every run test
 passes, 1 when a test fails or compilation fails, and 2 for a usage error (an unknown package, a bad `-j`,
-conflicting flags) or a driver failure after loading. `tests/run-tests.sh` reads the `FAIL ` prefix and the
+conflicting flags) or a driver failure after loading. `tests/run_tests.py` reads the `FAIL ` prefix and the
 `test result: N passed, M failed` summary; the full behavior, including isolation and discovery, is
-[`spec/test-runner.md`](spec/test-runner.md), and `tests/check-test-runner.sh` checks it black-box.
+[`spec/test-runner.md`](spec/test-runner.md), and `tests/check_test_runner.py` checks it black-box.
 
 ### `burdin --version`
 
@@ -335,7 +335,7 @@ These properties are part of the generated runtime and are checked by the confor
   with `panic: invalid memory access`. `tests/m02_basics/stack_overflow_aborts.bd` covers the recursion case.
 - **Parallel parsing.** Modules are independent, so `burdin build`/`run`/`test` parse them in parallel. Each worker
   keeps its own diagnostics and the driver merges them in file order, so the output is byte-identical to a
-  sequential run. `BURDIN_JOBS` sets the worker count (1 is sequential); `tests/check-parallel.sh` compares the two
+  sequential run. `BURDIN_JOBS` sets the worker count (1 is sequential); `tests/check_parallel.py` compares the two
   modes on a multi-module package, including its errors.
 
 ### Diagnostics
@@ -402,7 +402,7 @@ code for "not implemented in this compiler yet"; the conformance suite does not 
 ### `burdin explain` and the error-code reference
 
 [`docs/error-codes.md`](docs/error-codes.md) explains every registry code, with a program that triggers it and how
-to fix it. The page is checked in CI: `tests/check-error-docs.sh` compiles every snippet and requires exactly the
+to fix it. The page is checked in CI: `tests/check_error_docs.py` compiles every snippet and requires exactly the
 marked diagnostics, and the driver embeds the page, so the two cannot drift.
 
 ```
@@ -487,48 +487,48 @@ Usage errors print `error: <message>` followed by the usage block.
 
 `crates/burdin_fuzz` lexes and parses a committed corpus and deterministic mutations of it. `cargo test --workspace`
 replays the corpus in every CI job, so a panic reintroduced by a change fails CI. The scheduled `fuzz` job runs a
-longer session through `tests/fuzz.sh`; a found input is written under `fuzz-out/crashes` and is committed under
+longer session through `tests/fuzz.py`; a found input is written under `fuzz-out/crashes` and is committed under
 `crates/burdin_fuzz/corpus/syntax/` together with its fix. See
 [`crates/burdin_fuzz/corpus/syntax/README.md`](crates/burdin_fuzz/corpus/syntax/README.md).
 
 ```console
-$ tests/fuzz.sh --seconds 60
+$ tests/fuzz.py --seconds 60
 ```
 
 ## Checking the documentation
 
-`tests/check-docs.sh` verifies that the links in the repository's Markdown files resolve (files and heading anchors),
+`tests/check_docs.py` verifies that the links in the repository's Markdown files resolve (files and heading anchors),
 that the checked example above still compiles and prints the shown output, and that the documented driver behavior
 holds: `build` output naming, `-o`, `--emit-ir`, `--version`, `-g`, `--strip`, `--release`, `run` exit-status
 passthrough, `-- args`, the `test` summary format, the diagnostic format, `--link-lib` (including `LLVM-C` where
 LLVM is available), and `BURDIN_CC`. Run it after building the driver:
 
 ```console
-$ tests/check-docs.sh
+$ tests/check_docs.py
 ```
 
 The other checks need a built driver too and cover the runtime and code-generation work of issues #421-#432:
 
 ```console
-$ tests/check-debug-info.sh     # -g: DWARF, line table, and a gdb breakpoint when gdb is installed
-$ tests/check-codegen-opt.sh    # drop-flag elimination, bounds-check elision, shared glue
-$ tests/check-build-flags.sh    # --version, --strip's budget, --lto, and PGO
-$ tests/check-parallel.sh       # parallel parsing and deterministic diagnostics
-$ tests/check-release.sh        # release workflow, archives, checksums, installers, and version channels
+$ tests/check_debug_info.py     # -g: DWARF, line table, and a gdb breakpoint when gdb is installed
+$ tests/check_codegen_opt.py    # drop-flag elimination, bounds-check elision, shared glue
+$ tests/check_build_flags.py    # --version, --strip's budget, --lto, and PGO
+$ tests/check_parallel.py       # parallel parsing and deterministic diagnostics
+$ tests/check_release.py        # release workflow, archives, checksums, installers, and version channels
 ```
 
-The release pipeline has three scripts of its own: `tests/build-release.sh` builds and packages one target (and
-`--verify-reproducible` proves two checkout paths produce the same archive), `tests/release-notes.sh` extracts a
+The release pipeline has three scripts of its own: `tests/build_release.py` builds and packages one target (and
+`--verify-reproducible` proves two checkout paths produce the same archive), `tests/release_notes.py` extracts a
 changelog section and checks its links, and `.github/workflows/release.yml` builds the six targets, verifies the
 checksums, and publishes only from a tag push or an explicit manual `publish`. See
 [`docs/releasing.md`](docs/releasing.md).
 Two checks cover the diagnostics themselves, and every CI job runs them after the build:
 
-- `tests/check-diagnostics.sh` checks the default and short and JSON formats, color and `NO_COLOR`, wrapping and
+- `tests/check_diagnostics.py` checks the default and short and JSON formats, color and `NO_COLOR`, wrapping and
   `--width`, notes and suggestions, `--error-limit`, and deterministic ordering.
-- `tests/check-error-docs.sh` checks that [`docs/error-codes.md`](docs/error-codes.md) mirrors the registry, that
+- `tests/check_error_docs.py` checks that [`docs/error-codes.md`](docs/error-codes.md) mirrors the registry, that
   every snippet fails with exactly the marked diagnostics, and that `burdin explain` prints every entry.
 
-The dependency audit needs no built compiler: `tests/check-deps.sh` reads `Cargo.lock`, the manifests, and
+The dependency audit needs no built compiler: `tests/check_deps.py` reads `Cargo.lock`, the manifests, and
 [`tests/dependencies.txt`](tests/dependencies.txt), and re-verifies the licenses through `cargo metadata` when it can.
 Every CI job runs it after `cargo build` with `BURDIN_DEPS_REQUIRE_METADATA=1`.

@@ -1,7 +1,7 @@
 # Reviewed Rust dependencies of the Burdin compiler (issue #449).
 #
 # One line per external crate in Cargo.lock: name, version, license expression, and why the compiler
-# needs it. tests/check-deps.sh fails when Cargo.lock and this file disagree, when a license is outside
+# needs it. tests/check_deps.py fails when Cargo.lock and this file disagree, when a license is outside
 # the policy below, when Cargo.lock is missing or a crate has no checksum, or when a direct dependency
 # in a Cargo.toml is not pinned to an exact version. Every CI job runs that script after `cargo build`,
 # with BURDIN_DEPS_REQUIRE_METADATA=1, so the license strings are also re-read from the crates'
@@ -25,7 +25,7 @@
 #
 # To update after a deliberate dependency change: set the exact version in Cargo.toml, let
 # `cargo build` update Cargo.lock, review the new crate, then add or change its line here and run
-# tests/check-deps.sh.
+# tests/check_deps.py.
 #
 # name	version	license	why the compiler needs it
 anyhow	1.0.104	MIT OR Apache-2.0	llvm-sys build script: error types

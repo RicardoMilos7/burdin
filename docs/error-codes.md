@@ -3,7 +3,7 @@
 Every Burdin diagnostic carries a code from the registry in [`tests/README.md`](../tests/README.md#error-codes).
 This page explains each code, shows a program that triggers it, and says how to fix it.
 
-The page and its examples are checked by `tests/check-error-docs.sh` in CI: the codes must match the registry
+The page and its examples are checked by `tests/check_error_docs.py` in CI: the codes must match the registry
 exactly, every `burdin` snippet below is a complete program that the check compiles and expects to fail with
 exactly the marked diagnostics, and `burdin explain <code>` (which reads this page) must print every entry. The
 `//~ E0000` comment at the end of a line marks the line the diagnostic is reported on. An example marked

@@ -2,7 +2,7 @@
 /target/
 **/*.rs.bk
 
-# Release archives made by tests/build-release.sh
+# Release archives made by tests/build_release.py
 /dist/
 
 # Build outputs
@@ -19,8 +19,12 @@
 burdin_test_*.txt
 burdin_word_count.txt
 
-# Inputs found by tests/fuzz.sh; commit them under crates/burdin_fuzz/corpus/syntax/ with the fix
+# Inputs found by tests/fuzz.py; commit them under crates/burdin_fuzz/corpus/syntax/ with the fix
 /fuzz-out/
+
+# Python bytecode from the test scripts
+__pycache__/
+*.pyc
 
 # Editors and OS
 .vs/

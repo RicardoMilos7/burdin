@@ -63,31 +63,31 @@ stopping at the first error) and no others. The `test` item's attributes (`[igno
 ## Running the tests
 
 ```
-tests/run-tests.sh                    # every test, debug profile
-tests/run-tests.sh m05 m06            # only paths containing m05 or m06
-tests/run-tests.sh -v drop_order      # show diffs and compiler output for failures
-tests/run-tests.sh --release          # release profile (skips debug-only tests)
-tests/run-tests.sh --list             # list tests and their kinds
-BURDIN=/path/to/burdin tests/run-tests.sh # choose the compiler driver
-tests/check-tests.sh                  # check directives and error codes (no compiler needed)
-tests/check-ci.sh                     # check the CI workflow and the Rust toolchain pin (no compiler needed)
-tests/check-platform.sh               # check the host triple and 64-bit isize/usize (needs a built driver)
-tests/check-platform-support.sh       # check the platform support page against CI and binary-safe output (needs a built driver)
-tests/check-docs.sh                   # check documentation links and the driver contract (needs a built driver)
-tests/check-deps.sh                   # dependency, pin, and license audit (no compiler needed)
-tests/check-debug-info.sh             # -g: DWARF, line table, and a gdb breakpoint when gdb is installed
-tests/check-codegen-opt.sh            # drop-flag elimination, bounds-check elision, shared glue
-tests/check-build-flags.sh            # --version, --strip's budget, --lto, and PGO
-tests/check-parallel.sh               # parallel parsing and deterministic diagnostics
-tests/check-diagnostics.sh            # check color, width, formats, error limits, and ordering (needs a built driver)
-tests/check-error-docs.sh             # check the error-code reference and `burdin explain` (needs a built driver)
-tests/check-test-runner.sh            # check `burdin test` attributes, parallelism, output, isolation, discovery
-pwsh tests/check-tests.ps1            # the same check in PowerShell
+python3 tests/run_tests.py                # every test, debug profile (python on Windows)
+python3 tests/run_tests.py m05 m06        # only paths containing m05 or m06
+python3 tests/run_tests.py -v drop_order  # show diffs and compiler output for failures
+python3 tests/run_tests.py --release      # release profile (skips debug-only tests)
+python3 tests/run_tests.py --list         # list tests and their kinds
+python3 tests/run_tests.py -j 4           # four tests at a time (default: CPU count, at most 8)
+BURDIN=/path/to/burdin python3 tests/run_tests.py  # choose the compiler driver
+python3 tests/check_tests.py              # check directives and error codes (no compiler needed)
+python3 tests/check_ci.py                 # check the CI workflow and the Rust toolchain pin (no compiler needed)
+python3 tests/check_platform.py           # check the host triple and 64-bit isize/usize (needs a built driver)
+python3 tests/check_platform_support.py   # check the platform support page against CI and binary-safe output (needs a built driver)
+python3 tests/check_docs.py               # check documentation links and the driver contract (needs a built driver)
+python3 tests/check_deps.py               # dependency, pin, and license audit (no compiler needed)
+python3 tests/check_debug_info.py         # -g: DWARF, line table, and a gdb breakpoint when gdb is installed
+python3 tests/check_codegen_opt.py        # drop-flag elimination, bounds-check elision, shared glue
+python3 tests/check_build_flags.py        # --version, --strip's budget, --lto, and PGO
+python3 tests/check_parallel.py           # parallel parsing and deterministic diagnostics
+python3 tests/check_diagnostics.py        # check color, width, formats, error limits, and ordering (needs a built driver)
+python3 tests/check_error_docs.py         # check the error-code reference and `burdin explain` (needs a built driver)
+python3 tests/check_test_runner.py        # check `burdin test` attributes, parallelism, output, isolation, discovery
 ```
 
 CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and
 release. The release run skips tests marked `//@ debug-only`. The `burdin test` features themselves (attributes,
-`-j`, output capture, isolation, `-p`/`--workspace`) are checked black-box by `tests/check-test-runner.sh`, with
+`-j`, output capture, isolation, `-p`/`--workspace`) are checked black-box by `tests/check_test_runner.py`, with
 fixtures under `tests/runner/` that carry no `//@` directives and are therefore not conformance tests.
 
 The compiler and runtime work of issue #421 is covered in two places. The observable runtime behavior has conformance
@@ -101,10 +101,12 @@ parallelism.
 
 The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, then `PATH`. It expects `burdin build`,
 `burdin run`, and `burdin test` to behave as documented in [the driver contract](../README.md#the-driver-contract) at
-the repository root (summarized at the top of `run-tests.sh`): diagnostics as
+the repository root (summarized at the top of `run_tests.py`): diagnostics as
 `path:LINE:COL: error[E0000]: message`, and a `test result: N passed, M failed` line plus `FAIL <name>` lines from
 `burdin test`. If the real driver differs, change the section marked in that file. The exit code is 0 only when every
-test passes. On Windows, run it from Git Bash.
+test passes. All the scripts under `tests/` are Python 3 (invoke them with `python3` on Unix and `python` on Windows).
+The runner runs tests in parallel by default; `-j N` sets the worker count, and results are printed in the same order
+either way.
 
 ## Benchmarks
 
@@ -116,7 +118,7 @@ cargo bench -p burdin_bench -- --smoke            # the time budgets CI runs
 cargo bench -p burdin_bench -- lex                # only cases whose name contains `lex`
 cargo bench -p burdin_bench -- --save bench.txt   # record the medians as a baseline
 cargo bench -p burdin_bench -- --baseline bench.txt   # compare; exit 1 when a case is over the threshold
-tests/bench-regression.sh                         # the advisory check CI runs
+python3 tests/bench_regression.py         # the advisory check CI runs
 ```
 
 `crates/burdin_bench` generates its inputs, so a size is the only parameter of a measurement. A baseline is a
@@ -129,7 +131,7 @@ platform. `HANDOFF.md` records the first baseline and the meaning of the `--smok
 ## Dependencies and licenses
 
 [`dependencies.txt`](dependencies.txt) is the reviewed record of every external crate: one
-`name<TAB>version<TAB>license<TAB>why` line per crate in `Cargo.lock`. `tests/check-deps.sh` fails when the
+`name<TAB>version<TAB>license<TAB>why` line per crate in `Cargo.lock`. `tests/check_deps.py` fails when the
 lockfile and the record disagree, when a crate has no checksum, when a direct requirement is not an exact
 `=x.y.z` pin, or when a license is outside the permissive policy stated at the top of that file. It also
 re-reads each crate's license and proves the lockfile is current with `cargo metadata --locked --offline`;
@@ -140,7 +142,7 @@ every CI job sets, after `cargo build`). The policy and the review are
 ## Error codes
 
 The registry the tests use. The compiler adopts these numbers (or the tests are updated). Every code also has a
-user-facing entry in [the error-code reference](../docs/error-codes.md), which `tests/check-error-docs.sh` checks
+user-facing entry in [the error-code reference](../docs/error-codes.md), which `tests/check_error_docs.py` checks
 against this table and whose examples it compiles; `burdin explain <code>` prints the entry.
 
 | Code | Meaning |
@@ -179,7 +181,7 @@ against this table and whose examples it compiles; `burdin explain <code>` print
 
 Every code in the registry above needs a `//~` marker in at least one conformance test. A code that cannot be
 witnessed by a compile-fail test (for example, a rule only a passing test can show) is listed here with the reason;
-`tests/check-tests.sh` and `tests/check-tests.ps1` fail when a registered code is in neither place, and when a row
+`tests/check_tests.py` fails when a registered code is in neither place, and when a row
 here names an unknown code, a code that already has a test, or no reason.
 
 | Code | Why it has no compile-fail test |

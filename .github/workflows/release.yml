@@ -58,7 +58,7 @@ jobs:
           INPUT_PUBLISH: ${{ inputs.publish }}
         run: |
           set -eu
-          manifest=$(tests/build-release.sh --print-version)
+          manifest=$(python3 tests/build_release.py --print-version)
           channel=nightly
           publish=false
           tag=""
@@ -217,7 +217,7 @@ jobs:
           key: release-${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
 
       - name: Build, smoke-test, and package
-        run: tests/build-release.sh --target "${{ matrix.target }}" --out dist
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tests/build_release.py --target "${{ matrix.target }}" --out dist
 
       - name: Upload the archive and checksum
         uses: actions/upload-artifact@v4
@@ -259,7 +259,7 @@ jobs:
         env:
           BURDIN_VERSION: ${{ needs.plan.outputs.version }}
           BURDIN_CHANNEL: ${{ needs.plan.outputs.channel }}
-        run: tests/build-release.sh --target x86_64-unknown-linux-gnu --verify-reproducible
+        run: python3 tests/build_release.py --target x86_64-unknown-linux-gnu --verify-reproducible
 
   release:
     needs: [plan, build, reproducible]
@@ -318,15 +318,15 @@ jobs:
         env:
           BURDIN: ${{ github.workspace }}/installed/bin/burdin
           BURDIN_VERSION: ${{ needs.plan.outputs.version }}
-        run: tests/check-release.sh
+        run: python3 tests/check_release.py
 
       - name: Generate the release notes
         run: |
           set -eu
           if [ "$CHANNEL" = stable ]; then
-            tests/release-notes.sh --version "$VERSION" --check-links --output NOTES.md
+            python3 tests/release_notes.py --version "$VERSION" --check-links --output NOTES.md
           else
-            tests/release-notes.sh --unreleased --check-links --output NOTES.md
+            python3 tests/release_notes.py --unreleased --check-links --output NOTES.md
             { printf '_Nightly build %s._\n\n' "$VERSION"; cat NOTES.md; } > NOTES.nightly
             mv NOTES.nightly NOTES.md
           fi

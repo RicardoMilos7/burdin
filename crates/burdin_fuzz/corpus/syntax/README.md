@@ -19,5 +19,5 @@ and commit both together. The replay test then keeps the panic from coming back.
 Run the long session locally with:
 
 ```
-tests/fuzz.sh --seconds 60
+tests/fuzz.py --seconds 60
 ```

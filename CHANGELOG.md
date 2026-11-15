@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- Every check and test tool under `tests/` is Python 3 (`tests/run_tests.py`, `tests/check_*.py`,
+  `tests/build_release.py`, `tests/release_notes.py`, `tests/bench_regression.py`, `tests/fuzz.py`, and the shared
+  `tests/harness.py`), one implementation for Linux, macOS, and Windows instead of the former shell scripts and the
+  `check-tests.ps1` duplicate. The conformance runner keeps the same directives, diagnostics, output order, and exit
+  codes, and runs tests in parallel by default (`-j N`; results are still printed in test order). CI invokes Python
+  directly on all three platforms. This removes the Git Bash process-spawn cost that dominated the Windows CI job:
+  the full suite takes 3 s instead of 31 s on WSL with the same compiler, and `check_docs.py` walks links in-process.
 - Close the stage 0 correctness gaps carried into stage 1 (issue #48, sub-issues #49, #53, #58, #64, #71, #77,
   #85, #86, #87).
   - **View lifetime (#49).** RT5 and the new E0123 reject a view stored in a `let` or an assignment that derives
