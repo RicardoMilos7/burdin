@@ -5,8 +5,8 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (interpolation, `any`, `error`
-declarations, comptime, tasks, leak detection, allocator parameters) has **no tests here** yet.
+Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (`any`, `error` declarations,
+comptime, tasks, leak detection, allocator parameters) has **no tests here** yet.
 
 ## Layout
 
@@ -25,6 +25,7 @@ tests/
   m11_llvm/            calling the LLVM C API from Burdin
   m12_closures/        closures, captures, closure types and bounds
   m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops
+  m14_format/          interpolation, `Display`/`Debug`, format specifiers, `format`, output
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -190,6 +191,11 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, or `should_panic` with `should_fail` |
 | E0171 | A closure whose captures or result would outlive the storage they borrow: a second-class closure used as an owned one, or a closure returning a view |
 | E0180 | Type arguments given to a type that declares no type parameters |
+| E0190 | Format specifier that is malformed or does not apply to the formatted value |
+| E0191 | Placeholder naming an argument the call does not have |
+| E0192 | Argument of a format call that the format string does not use |
+| E0193 | Value in a placeholder whose type does not implement `Display` (`Debug` for `{:?}`) |
+| E0194 | A format call with arguments whose format string is not a string literal |
 
 ### Codes without a compile-fail test
 
@@ -288,6 +294,16 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `any`, `all`, `find`, `to_list`) are default methods that allocate nothing, and the eager `List` methods borrow
     the list and return owned results. A chain is second-class and may not be stored (E0120) or kept past a
     temporary's statement (E0123). `spec/iterators.md` IT4-IT12, `tests/m13_iterators/`.
+19. **Formatting is checked and lowered at compile time.** A string literal's `{...}` placeholders are part of the
+    type-checked program: `{expr}` holds an expression evaluated where the string is, `{}` and `{n}` name the
+    arguments of the enclosing `format`/`print`/`println`/`eprint`/`eprintln` call, and `{{`/`}}` are literal
+    braces. The checker reports a missing argument (E0191), an unused one (E0192), a value that does not implement
+    `Display`/`Debug` (E0193), a specifier that does not apply (E0190), and a call with arguments whose format
+    string is not a literal (E0194); the compiler then lowers the string to `Formatter` calls, so no format string
+    is parsed at run time. An argument used by two placeholders is evaluated once (a place by borrowing, a `Copy`
+    value by copying). `Display` and `Debug` are ordinary `std` interfaces implemented by the compiler for the
+    built-in types and by an impl block (or `derives (Debug)`) for a user type. A one-argument output call takes no
+    format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
 
 ## Review of the expected outputs
 

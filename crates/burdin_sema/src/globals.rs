@@ -140,6 +140,9 @@ pub(crate) struct Globals {
     /// The `std.Iterator<T>` and `std.Iterable<T>` interfaces, when the standard library declares them.
     pub(crate) iterator_iface: Option<usize>,
     pub(crate) iterable_iface: Option<usize>,
+    /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
+    pub(crate) display_iface: Option<usize>,
+    pub(crate) debug_iface: Option<usize>,
     /// The generic method template each registered generic method stands for.
     pub(crate) method_templates: HashMap<FuncId, crate::generics::GenericMethod>,
     /// The instance of each generic method for its method-level type arguments.
@@ -207,6 +210,31 @@ impl Globals {
             return None;
         }
         self.iface_name(module, name)
+    }
+
+    /// The struct `name` of the standard library, as a type.
+    pub(crate) fn std_struct_ty(&self, name: &str) -> Option<Ty> {
+        self.std_modules.iter().find_map(|&module| match self.type_name(module, name)? {
+            TypeName::Struct(i) => Some(Ty::Struct(self.struct_refs[i].clone())),
+            _ => None,
+        })
+    }
+
+    /// The non-generic function `name` of the standard library (the formatting helpers are `priv`, so the
+    /// compiler finds them here rather than through the prelude).
+    pub(crate) fn std_func(&self, name: &str) -> Option<FuncId> {
+        self.std_modules.iter().find_map(|&module| match self.value(module, name)? {
+            Global::Func(f) => Some(f),
+            _ => None,
+        })
+    }
+
+    /// The generic function `name` of the standard library.
+    pub(crate) fn std_generic(&self, name: &str) -> Option<usize> {
+        self.std_modules.iter().find_map(|&module| match self.value(module, name)? {
+            Global::Generic(g) => Some(g),
+            _ => None,
+        })
     }
 
     /// The generic function behind an eager `List` method (`xs.map(f)`), looked up in the standard library.

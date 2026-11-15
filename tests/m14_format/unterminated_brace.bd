@@ -1,0 +1,9 @@
+//@ compile-fail
+
+fn main() {
+    let k = 1
+    println("a {k") //~ E0001
+    println("a } b") //~ E0001
+    println("{k}} and {{{k}") //~ E0001
+    println("ok {{ and }} and {k}")
+}

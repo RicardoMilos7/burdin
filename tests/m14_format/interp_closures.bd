@@ -1,0 +1,41 @@
+//@ run
+//> n=5
+//> k is 9
+//> [    42]
+//> total is now 3
+//> total is now 7
+//> done with 7
+//> 0: a
+//> 1: b
+//> 2: c
+//> <a><b><c>end
+fn apply<F: Fn(i32): String>(f: F, n: i32): String {
+    f(n)
+}
+
+fn main() {
+    let prefix = String.from("n=")
+    let show = |n: i32| format("{prefix}{n}")
+    println(show(5))
+    println(apply(|k: i32| "k is {k}", 9))
+    let width = 6
+    let pad = |n: i32| "[{n:>6}]"
+    println(pad(42))
+    let mut total = 0
+    let mut add = |n: i32| {
+        total = total + n
+        println("total is now {total}")
+    }
+    add(3)
+    add(4)
+    println("done with {total}")
+    let names = ["a", "b", "c"]
+    let count: usize = 3
+    for i in 0..count {
+        println("{i}: {names[i]}")
+    }
+    for item in names.iter() {
+        print("<{item}>")
+    }
+    println("end")
+}

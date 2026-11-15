@@ -52,6 +52,8 @@ pub enum Builtin {
     Unreachable,
     /// `process.run(command)`: runs a command through the system shell.
     RunCommand,
+    /// `__float_str(v, prec, single)`: the text of a float (see the runtime's `f64_to_string`).
+    FloatStr,
     /// `mem.swap(a, b)`: exchanges two places.
     Swap,
     /// `mem.replace(place, value)`: stores a value and returns the old one.

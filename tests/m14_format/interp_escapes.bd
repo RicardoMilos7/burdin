@@ -1,0 +1,33 @@
+//@ run
+//> braces: { 5 }
+//> {5}
+//> }{
+//> tab:	|backslash: \n quote: " end
+//> raw: {x} \n {{
+//> raw with "quotes" and {x}
+//> hashes "# inside
+//> multi
+//> line 5
+//> end
+//> char in hole: } {
+//> empty: []
+//> escapes in a nested string: a	b|
+//> plain { literal
+fn main() {
+    let x = 5
+    println("braces: {{ {x} }}")
+    println("{{{x}}}")
+    println("}}{{")
+    println("tab:\t|backslash: \\n quote: \" end")
+    println(r"raw: {x} \n {{")
+    println(r#"raw with "quotes" and {x}"#)
+    println(r##"hashes "# inside"##)
+    println("multi
+line {x}
+end")
+    println("char in hole: {'}'} {'{'}")
+    println("empty: [{""}]")
+    println("escapes in a nested string: {"a\tb"}|")
+    let s = "plain {{ literal"
+    println(s)
+}

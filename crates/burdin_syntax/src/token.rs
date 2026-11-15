@@ -11,6 +11,8 @@ pub enum TokenKind {
     Float(String),
     Char(char),
     Str(String),
+    /// A string literal with `{...}` placeholders (spec/format.md): its literal text and holes in order.
+    Interp(Vec<InterpPiece>),
 
     // Keywords
     As,
@@ -138,7 +140,7 @@ impl TokenKind {
             Int(_) => "integer literal".into(),
             Float(_) => "float literal".into(),
             Char(_) => "character literal".into(),
-            Str(_) => "string literal".into(),
+            Str(_) | Interp(_) => "string literal".into(),
             Reserved(word) => format!("reserved word `{word}`"),
             Eof => "end of file".into(),
             other => format!("`{}`", other.text()),
@@ -216,12 +218,29 @@ impl TokenKind {
             Gt => ">",
             Le => "<=",
             Ge => ">=",
-            Ident(_) | Int(_) | Float(_) | Char(_) | Str(_) | Reserved(_) | Eof => "",
+            Ident(_) | Int(_) | Float(_) | Char(_) | Str(_) | Interp(_) | Reserved(_) | Eof => "",
         }
     }
 }
 
-#[derive(Clone, Debug)]
+/// One piece of an interpolated string literal.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InterpPiece {
+    /// Literal text, with escapes and `{{`/`}}` already resolved.
+    Lit(String),
+    Hole(Box<HoleTokens>),
+}
+
+/// A `{expr:spec}` placeholder as the lexer saw it: the expression's tokens (ending in `Eof`; only `Eof` for a
+/// positional `{}`), the raw specifier text after the first top-level `:`, and the span of the whole placeholder.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoleTokens {
+    pub tokens: Vec<Token>,
+    pub spec: Option<(String, Span)>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,

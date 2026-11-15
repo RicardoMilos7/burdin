@@ -29,6 +29,7 @@ impl FnCx<'_> {
             K::Float(text) => self.float_literal(text, false, expect, span),
             K::Char(c) => mk(tir::ExprKind::Char(*c), Ty::Char, span),
             K::Str(s) => mk(tir::ExprKind::Str(s.clone()), Ty::Str, span),
+            K::Interp(parts) => self.interp_expr(parts, span),
             K::Bool(b) => mk(tir::ExprKind::Bool(*b), Ty::Bool, span),
             K::Unit => mk(tir::ExprKind::Unit, Ty::Unit, span),
             K::Name { name, args } if args.is_empty() => self.name(name, expect),

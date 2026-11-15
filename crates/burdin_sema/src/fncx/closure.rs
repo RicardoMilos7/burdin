@@ -709,6 +709,13 @@ impl FreeNames {
             K::Name { name, .. } => self.use_name(&name.name, name.span),
             K::SelfValue => self.use_name("self", e.span),
             K::Unit | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Bool(_) | K::Break | K::Continue => {}
+            K::Interp(parts) => {
+                for part in parts {
+                    if let ast::InterpPart::Hole(ast::Hole { arg: ast::HoleArg::Expr(e), .. }) = part {
+                        self.expr(e);
+                    }
+                }
+            }
             K::Tuple(es) | K::Array(es) => es.iter().for_each(|x| self.expr(x)),
             K::ArrayRepeat(a, b) => {
                 self.expr(a);
@@ -855,6 +862,9 @@ fn contains_return(e: &ast::Expr) -> bool {
         | K::SelfValue
         | K::Break
         | K::Continue => false,
+        K::Interp(parts) => parts.iter().any(|part| {
+            matches!(part, ast::InterpPart::Hole(ast::Hole { arg: ast::HoleArg::Expr(e), .. }) if contains_return(e))
+        }),
         K::Tuple(es) | K::Array(es) => es.iter().any(contains_return),
         K::ArrayRepeat(a, b) => contains_return(a) || contains_return(b),
         K::Block(b) | K::UnsafeBlock(b) | K::Loop(b) => block_has_return(b),

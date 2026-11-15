@@ -1,0 +1,29 @@
+//@ run
+//> [burdin] [burdin    ] [    burdin] [  burdin  ] [burdin    ]
+//> [bur] [bur       ] [       bur] [***burd****]
+//> [hello   ] [   hello] [he]
+//> [z] [z  ] [  z] [--z--]
+//> [true] [true   ] [   true] [tr]
+//> [héllo ] [hé] [   日本]
+//> [burdin] []
+//> ["burdin"] ["hello"] ['z']
+//> ["a\"b\\c\nd\te"] ['\n'] ['\''] ['"']
+//> ["burdin"  ] [  "burdin"]
+fn main() {
+    let s = "burdin"
+    let owned = String.from("hello")
+    let c = 'z'
+    let t = true
+    println("[{s}] [{s:10}] [{s:>10}] [{s:^10}] [{s:<10}]")
+    println("[{s:.3}] [{s:10.3}] [{s:>10.3}] [{s:*^11.4}]")
+    println("[{owned:8}] [{owned:>8}] [{owned:.2}]")
+    println("[{c}] [{c:3}] [{c:>3}] [{c:-^5}]")
+    println("[{t}] [{t:7}] [{t:>7}] [{t:.2}]")
+    let accented = "héllo"
+    let wide = "日本"
+    println("[{accented:6}] [{accented:.2}] [{wide:>5}]")
+    println("[{s:2}] [{s:.0}]")
+    println("[{s:?}] [{owned:?}] [{c:?}]")
+    println("[{"a\"b\\c\nd\te":?}] [{'\n':?}] [{'\'':?}] [{'"':?}]")
+    println("[{s:10?}] [{s:>10?}]")
+}

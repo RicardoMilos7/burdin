@@ -1,0 +1,45 @@
+//@ run
+//> secret 7 / Secret#7
+//> Holder { secret: Secret#7, spare: None }
+//> Err(3)
+//> (1, "one", 'c', true)
+//> Some(Some(4))
+//> ()
+struct Secret {
+    id: i32
+    key: String
+}
+
+// A hand-written `Debug` hides the key; `Display` shows the id. `Debug` and `Display` are separate interfaces.
+Secret: Debug {
+    fn debug(self, mut f: Formatter) {
+        f.write_str("Secret#")
+        self.id.debug(mut f)
+    }
+}
+
+Secret: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str("secret ")
+        self.id.fmt(mut f)
+    }
+}
+
+struct Holder derives (Debug) {
+    secret: Secret
+    spare: Option<Secret>
+}
+
+fn main() {
+    let s = Secret { id: 7, key: String.from("hunter2") }
+    println("{s} / {s:?}")
+    let holder = Holder { secret: s, spare: None }
+    println("{holder:?}")
+    let r: Result<Secret, i32> = Err(3)
+    println("{r:?}")
+    let pairs = (1, "one", 'c', true)
+    println("{pairs:?}")
+    let nested: Option<Option<i32>> = Some(Some(4))
+    println("{nested:?}")
+    println("{():?}")
+}

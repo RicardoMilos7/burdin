@@ -27,6 +27,8 @@ impl Sema<'_> {
         };
         self.globals.iterator_iface = find_iface(&self.globals, "Iterator");
         self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
+        self.globals.display_iface = find_iface(&self.globals, "Display");
+        self.globals.debug_iface = find_iface(&self.globals, "Debug");
         // The one-segment standard modules are usable as modules: `env.args()`, `mem.swap(...)`.
         let aliases: Vec<(String, usize)> = std_modules
             .iter()

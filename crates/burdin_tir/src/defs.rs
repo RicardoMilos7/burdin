@@ -13,6 +13,8 @@ pub struct Derives {
     pub ord: bool,
     pub hash: bool,
     pub default: bool,
+    /// `Debug`: the compiler generates the impl block, and this records that the fields must support it.
+    pub debug: bool,
     /// Where the derive names were written, for diagnostics at the derive clause.
     pub copy_span: Option<Span>,
     pub clone_span: Option<Span>,

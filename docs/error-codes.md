@@ -809,3 +809,126 @@ fn main() {
 
 **How to fix:** remove the type arguments, or declare the type with the parameters the program needs
 (`struct Pair<T> { ... }`).
+
+## E0190: Format specifier that is malformed or does not apply
+
+The text after the `:` of a placeholder (`{value:spec}`) follows the grammar
+`[[fill]align][+][#][0][width][.precision][type]`. The diagnostic is reported for a character that does not fit
+that grammar (an unknown type letter, a `.` with no digits, a width over 4096), and for a specifier the value
+cannot take: `x`, `X`, `b`, and `o` format integers only, a precision formats floats, text, and user types, and
+`+`, `#`, and `0` format numbers. `spec/format.md` has the table of what each value type accepts.
+
+<!-- error-example: E0190 -->
+```burdin
+fn main() {
+    let n = 5
+    let s = "text"
+    println("{s:x}") //~ E0190
+    println("{n:.2}") //~ E0190
+}
+```
+<!-- /error-example -->
+
+**How to fix:** use a specifier the value's type accepts. Integers take a width, fill and alignment, `+`, `0`, and
+a radix; floats and text take a width, fill, alignment, and a precision; `{:?}` takes a width, fill, and
+alignment. A user type chooses what to honor in its `fmt` body (through `f.pad`).
+
+## E0191: Placeholder naming an argument the call does not have
+
+A `{}` or `{n}` placeholder uses an argument of the enclosing `println`, `print`, `format`, or `eprint` call. The
+diagnostic is reported when there are fewer arguments than the placeholder needs (in a bare string literal outside
+a format call, every `{}` and `{n}` is such a placeholder), and when a needed argument appears in more than one
+placeholder but is not a place and is not `Copy`, so it cannot be evaluated once and reused.
+
+<!-- error-example: E0191 -->
+```burdin
+fn made(): String {
+    String.from("made")
+}
+
+fn main() {
+    let name = "ana"
+    println("{} {}", 1) //~ E0191
+    println("{1}") //~ E0191
+    println("{name} {name}")
+    println("{0} {0}", made()) //~ E0191
+}
+```
+<!-- /error-example -->
+
+**How to fix:** add the argument the placeholder needs, or use the placeholder name syntax for a value in scope
+(`{name}`). An argument used by two placeholders is evaluated once when it is a local or another place, or a
+`Copy` value; bind anything else to a `let` first.
+
+## E0192: Argument of a format call that the format string does not use
+
+Every argument after the format string must be used by a placeholder. The diagnostic is reported at the unused
+argument, so an argument left over from an edit is easy to spot.
+
+<!-- error-example: E0192 -->
+```burdin
+fn main() {
+    println("hello {}", "ana", 7) //~ E0192
+    println("{} {}", 1, "x", 2) //~ E0192
+}
+```
+<!-- /error-example -->
+
+**How to fix:** use the argument with `{}` or `{n}`, or remove it from the call.
+
+## E0193: Value that does not implement `Display` or `Debug`
+
+`{}` needs the value's type to implement `Display`, and `{:?}` needs `Debug`. Integers, floats, `bool`, `char`,
+`str`, and `String` implement both; `()` and the compound types (tuples of 2 to 4, `Option`, `Result`, `List`,
+`Heap`) implement `Debug` when their parts do; a struct or enum implements them with an impl block or, for `Debug`
+only, with `derives (Debug)`. A type parameter needs the interface as a bound (`fn show<T: Display>(value: T)`).
+
+<!-- error-example: E0193 -->
+```burdin
+struct Plain {
+    id: i32
+}
+
+struct Shown {
+    id: i32
+}
+
+Shown: Display {
+    fn fmt(self, mut f: Formatter) {
+        self.id.fmt(mut f)
+    }
+}
+
+fn main() {
+    let plain = Plain { id: 1 }
+    let shown = Shown { id: 2 }
+    println("{plain}") //~ E0193
+    println("{plain:?}") //~ E0193
+    println("{shown:?}") //~ E0193
+    println("{shown}")
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write `Type: Display { fn fmt(self, mut f: Formatter) { ... } }`, or add `Debug` to the
+`derives` clause, or use `{:?}` when the type only implements `Debug`. A generic function adds the bound
+(`<T: Display>`). When the message says the type implements `Debug`, `{:?}` formats it.
+
+## E0194: Format string that is not a string literal
+
+A call with more than one argument builds its text from the first argument, which must be a string literal (with
+or without placeholders), because its placeholders are checked against the rest of the call at compile time. A
+plain call with one argument is unchanged: `println(text)` writes any `str` value, literal or not.
+
+<!-- error-example: E0194 -->
+```burdin
+fn main() {
+    let template = "n is"
+    let n = 3
+    println(template, n) //~ E0194
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write the format string out at the call (`println("n = {n}")`), or format into a `String` first
+(`let text = format("n = {n}")`) and print the value.

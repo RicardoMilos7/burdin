@@ -1,0 +1,76 @@
+//@ run
+//> Point { x: 1, y: 2.5 }
+//> Person { name: "Ana", age: 30, home: Point { x: 1, y: 2.5 }, tags: ["a", "b\"q"] }
+//> Dot Circle(1.5) Rect { w: 2, h: 3 }
+//> Pair(Point { x: 1, y: 2.5 }, Point { x: 1, y: 2.5 })
+//> Wrapper { value: 7, maybe: Some(8) }
+//> Wrapper { value: "s", maybe: Some("t") }
+//> Empty
+//> Point { x: 1, y: 2.5 }
+//> Rect { w: 0, h: 0 }
+//> Wrapper { value: Point { x: 1, y: 2.5 }, maybe: Some(Point { x: 1, y: 2.5 }) }
+//> Node(Node(Leaf, 1), 2)
+//> 5
+//> "str"
+//> 1.0
+//> 22
+struct Point derives (Debug, Copy) {
+    x: i32
+    y: f64
+}
+
+struct Person derives (Debug) {
+    name: String
+    age: u8
+    home: Point
+    tags: List<String>
+}
+
+enum Shape derives (Debug) {
+    Dot
+    Circle(f64)
+    Rect { w: i32, h: i32 }
+    Pair(Point, Point)
+}
+
+struct Wrapper<T> derives (Debug) {
+    value: T
+    maybe: Option<T>
+}
+
+struct Empty derives (Debug) {
+}
+
+enum Tree derives (Debug) {
+    Leaf
+    Node(Heap<Tree>, i32)
+}
+
+fn dump<T: Debug>(value: T) {
+    println("{value:?}")
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2.5 }
+    println("{p:?}")
+    let mut tags: List<String> = List<String>.new()
+    tags.push(String.from("a"))
+    tags.push(String.from("b\"q"))
+    let person = Person { name: String.from("Ana"), age: 30, home: p, tags: tags }
+    println("{person:?}")
+    println("{Shape.Dot:?} {Shape.Circle(1.5):?} {Shape.Rect { w: 2, h: 3 }:?}")
+    println("{Shape.Pair(p, p):?}")
+    println("{Wrapper { value: 7, maybe: Some(8) }:?}")
+    println("{Wrapper { value: "s", maybe: Some("t") }:?}")
+    println("{Empty {}:?}")
+    dump(p)
+    dump(Shape.Rect { w: 0, h: 0 })
+    dump(Wrapper { value: p, maybe: Some(p) })
+    let tree = Tree.Node(Heap.new(Tree.Node(Heap.new(Tree.Leaf), 1)), 2)
+    println("{tree:?}")
+    dump(5)
+    dump("str")
+    dump(1.0)
+    let s = format("{p:?}")
+    println("{s.len()}")
+}

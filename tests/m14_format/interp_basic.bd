@@ -1,0 +1,14 @@
+//@ run
+//> hello world
+//> 1 + 2 = 3
+//> flag: true, ch: x
+fn main() {
+    let name = "world"
+    println("hello {name}")
+    let a = 1
+    let b = 2
+    println("{a} + {b} = {a + b}")
+    let flag = true
+    let c = 'x'
+    println("flag: {flag}, ch: {c}")
+}

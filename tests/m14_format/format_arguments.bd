@@ -1,0 +1,26 @@
+//@ compile-fail
+
+fn made(): String {
+    String.from("made")
+}
+
+fn main() {
+    let name = "x"
+    let template = "no holes"
+    println("{} {}", 1) //~ E0191
+    println("{1}", 1) //~ E0191 //~ E0192
+    println("{}") //~ E0191
+    println("{0}") //~ E0191
+    let plain = "no argument for {}" //~ E0191
+    println("{0} {0}", made()) //~ E0191
+    println("{}", 1, 2) //~ E0192
+    println("{0}", 1, 2) //~ E0192
+    println("no placeholder", name) //~ E0192
+    println(template, 1) //~ E0194
+    let built = format(template, 1) //~ E0194
+    let none = format() //~ E0004
+    println("{} {}", 1) //~ E0191
+    println("{nope}") //~ E0002
+    println("{nope:?}") //~ E0002
+    println("{} {name} {}", 1, 2)
+}

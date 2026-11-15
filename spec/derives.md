@@ -1,7 +1,7 @@
 # Burdin derives (stage 0)
 
-A struct or enum may list `derives (...)` after its name (`grammar.md`). The compiler knows exactly six derives:
-`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`. Each is independent: deriving `Copy` does not provide
+A struct or enum may list `derives (...)` after its name (`grammar.md`). The compiler knows exactly seven derives:
+`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug`. Each is independent: deriving `Copy` does not provide
 `clone()`, and deriving `Ord` does not provide `==`; list every one a program uses. A derive whose requirement is
 not met is E0130, reported at the offending field (or at the derive clause for `Drop` and `Copy`).
 
@@ -88,6 +88,23 @@ on an enum it is not implemented in stage 0 (`E9000`, stage 1). The derive requi
 
 A default value is built as an ordinary value at the use site; there is no hidden storage.
 
+## `Debug`
+
+`derives (Debug)` implements `Debug`, the interface `{:?}` needs (`format.md`, FM4). The derive requires every
+field to implement `Debug` (E0130 at the field) and needs the same bound on a generic type's parameters. The
+compiler writes the impl block as ordinary Burdin source (`crates/burdin_syntax/src/derive.rs`) and parses it
+with the same parser as a hand-written block, so a derived `Debug` and a written one behave identically:
+
+- a struct writes `Name { field: value, ... }`, every field in declaration order, or `Name` for a struct with no
+  fields;
+- an enum writes the active variant's name: `Variant` with no payload, `Variant(a, b)`, or
+  `Variant { field: value }`;
+- each value is written with its own `Debug`, so a nested derived type nests its braces the same way;
+- every token of the generated block carries the span of the `Debug` in the derive clause, and the checker does not
+  report diagnostics of its own inside it: a field that is not `Debug` is already E0130 at the field.
+
+`Display` is not derived; write `Type: Display { fn fmt(self, mut f: Formatter) { ... } }`.
+
 ## Tests
 
 | Derive | Tests |
@@ -97,4 +114,5 @@ A default value is built as an ordinary value at the use site; there is no hidde
 | `Hash` | `m07_generics/derives`, `derive_values` |
 | `Default` | `m07_generics/derives`, `derive_values` |
 | Requirement failures | `m07_generics/derive_field_not_eq` (E0130), `m05_ownership/copy_with_drop` (E0130) |
+| `Debug` | `m14_format/debug_derive`, `debug_manual` |
 | `Drop` not derivable | `m05_ownership/drop_derive` (E0002) |

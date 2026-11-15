@@ -12,13 +12,17 @@ is expected is borrowed as a `str` (IC1).
 ## Output
 
 ```
-fn print(s: str)
-fn println(s: str)
-fn eprint(s: str)
-fn eprintln(s: str)
+fn format(fmt: str, ...): String
+fn print(fmt: str, ...)
+fn println(fmt: str, ...)
+fn eprint(fmt: str, ...)
+fn eprintln(fmt: str, ...)
 ```
 
-Each writes to stdout or stderr. `println`/`eprintln` add one `\n`. A `String` argument is converted by IC1.
+Each takes a string literal, with or without `{...}` placeholders, followed by the arguments its placeholders use
+(`format.md`, FM1 and FM6). The output functions write the text to stdout or stderr; `println`/`eprintln` add one `\n`,
+and `format` returns the `String`. A call with one argument takes no format string, so `println(text)`
+still writes any `str` value, and a `String` argument is converted by IC1.
 Standard output is buffered and standard error is not; the buffer is flushed when it fills, after a line when
 stdout is a terminal, and before the process ends through a normal return, `process.exit`, a panic, or the
 stack-overflow guard. A program never sees the difference except through the timing of the bytes (there is no
@@ -43,9 +47,10 @@ fn abs(self): Self                    // signed types only
 fn parse(s: str): Result<Self, ParseIntError>
 ```
 
-`bool`, `char`, and `str` have `to_string(self): String`. `bool` also works in `if`/`while` conditions. `parse` is
+Floats have `to_string(self): String`, through `Display` (`format.md`, FM8); `f64` and `f32` have no other
+methods in stage 0. `bool`, `char`, and `str` have `to_string(self): String`. `bool` also works in `if`/`while` conditions. `parse` is
 the associated function `i32.parse(s)`; it accepts an optional leading `-` and digits in the base 10 and returns
-`Err(())` (`ParseIntError` is a unit alias in stage 0) for anything else. Floats have no methods in stage 0.
+`Err(())` (`ParseIntError` is a unit alias in stage 0) for anything else.
 
 Arithmetic is the built-in operators only: `+ - * / %`, `<< >>`, `& | ^`, unary `-`. Overflow panics in debug and
 wraps in release for `+ - *` and unary `-`; division by zero and out-of-range shifts always panic. `/` and `%`

@@ -151,6 +151,16 @@ impl Code {
     pub const CLOSURE_ESCAPES: Code = Code("E0171");
     /// Type arguments given to a type that declares no type parameters.
     pub const NOT_A_GENERIC_TYPE: Code = Code("E0180");
+    /// A format specifier that is malformed or does not apply to the formatted type.
+    pub const BAD_FORMAT_SPEC: Code = Code("E0190");
+    /// A placeholder that names an argument the format call does not have.
+    pub const FORMAT_ARG_MISSING: Code = Code("E0191");
+    /// An argument of a format call that no placeholder uses.
+    pub const FORMAT_ARG_UNUSED: Code = Code("E0192");
+    /// A placeholder whose value does not implement `Display` (or `Debug` for `{:?}`).
+    pub const NOT_FORMATTABLE: Code = Code("E0193");
+    /// A format call with arguments whose format string is not a string literal.
+    pub const FORMAT_NOT_LITERAL: Code = Code("E0194");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// Every remaining site is assigned to a milestone in `spec/e9000-audit.md`, and `tests/check_e9000.py`
     /// fails when a site is unassigned, stale, or belongs to a milestone that has shipped.
@@ -263,6 +273,11 @@ impl Diagnostics {
 
     pub fn len(&self) -> usize {
         self.list.len()
+    }
+
+    /// Drops every diagnostic after the first `len`.
+    pub fn truncate(&mut self, len: usize) {
+        self.list.truncate(len);
     }
 
     pub fn is_empty(&self) -> bool {

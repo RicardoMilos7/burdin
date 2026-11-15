@@ -12,6 +12,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__read_to_string" => Builtin::ReadToString,
         "__write_file" => Builtin::WriteFile,
         "__args" => Builtin::EnvArgs,
+        "__float_str" => Builtin::FloatStr,
         "__exit" => Builtin::ProcessExit,
         "__run" => Builtin::RunCommand,
         _ => return None,
@@ -21,7 +22,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
 pub(crate) fn builtin_sig(b: Builtin) -> Signature {
     let ret = match b {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
-        Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString => Ty::String,
+        Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit)),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(Ty::Unit)),
@@ -37,6 +38,11 @@ pub(crate) fn builtin_sig(b: Builtin) -> Signature {
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
         Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        Builtin::FloatStr => vec![
+            ParamSig::plain(Ty::Float(FloatTy::F64)),
+            ParamSig::plain(Ty::Int(IntTy::I32)),
+            ParamSig::plain(Ty::Bool),
+        ],
         // `assert_eq` checks its two arguments specially: their type is inferred, not fixed.
         Builtin::AssertEq => Vec::new(),
         // `Heap.new` is checked separately: its result type depends on the value.
