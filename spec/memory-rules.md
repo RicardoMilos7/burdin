@@ -58,9 +58,12 @@ Tests: `m05_ownership/partial_move_ok`, `m05_ownership/partial_move_from_drop`.
 freed when the `Heap` is dropped (its flag records that the pointee is gone). Reading or assigning through `*h` does not
 move. A field of the pointee moves like any field: `(*h).a` leaves the other fields initialized, and the `Heap`'s drop
 drops them and frees the allocation. A constant array or `List` index is tracked the same way, as a partial move of the
-collection; moving through a runtime index is still E9000 (the checker cannot tell which element it is).
-Tests: `m05_ownership/heap_tree_eval`, `heap_move_whole_then_field`, `move_heap_field`, `move_heap_field_after_move`
-(E0100), `match_heap_pointee`, `move_index_array`, `move_index_list`, `move_index_after_move` (E0100),
+collection; moving through a runtime index is still E9000 (the checker cannot tell which element it is). An index
+expression is evaluated once, when the place's address is computed; a tracked move is written with a constant index,
+so there is no expression to re-evaluate.
+Tests: `m05_ownership/heap_tree_eval`, `heap_move_whole_then_field`, `move_heap_field`, `move_heap_field_reinit`,
+`move_heap_field_after_move` (E0100), `match_heap_pointee`, `match_heap_pointee_partial`, `move_index_array`,
+`move_index_list`, `move_index_after_move` (E0100), `index_evaluated_once`,
 `m07_generics/generic_stack`, `m05_ownership/copy_and_clone`.
 
 **MV7 Move out of borrowed content.** Moving a non-Copy value out of a place that is only borrowed (a read-only or `mut`
@@ -77,7 +80,7 @@ to it is E0005 and moving out of it is E0101. A binding is dropped at the end of
 A temporary scrutinee is moved into a compiler-made local of the same statement, so its untouched parts still drop
 once and a failed guard restores the parts an earlier arm bound.
 Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_then_use`, `match_temporary_fields_drop`,
-`match_guard_temporary`, `m06_conventions/match_borrowed_binding`, `match_borrowed_binding_readonly`,
+`match_guard_temporary`, `match_guard_temporary_fields`, `match_heap_pointee_partial`, `m06_conventions/match_borrowed_binding`, `match_borrowed_binding_readonly`,
 `m07_generics/generic_stack`.
 
 ## 2. Mutability (MU)

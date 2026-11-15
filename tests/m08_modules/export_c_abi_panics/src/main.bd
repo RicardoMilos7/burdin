@@ -1,0 +1,16 @@
+//@ run-abort
+//@ stderr: panic: boom
+//> before
+
+// The C caller of `defs.bd`'s exported function sees an abort, not an unwind (issue #489).
+
+extern "C" {
+    fn boom()
+}
+
+fn main() {
+    println("before")
+    unsafe {
+        boom()
+    }
+}

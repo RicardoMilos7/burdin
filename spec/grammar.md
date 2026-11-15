@@ -259,7 +259,8 @@ body is a block. `else` is the catch-all arm and must be last.
 A range is `a..b` (exclusive) or `a..=b` (inclusive): an ordinary value of type `Range<T>` or `RangeInclusive<T>`.
 Both are first-class, `Copy`, and iterable by `for`, and may be stored in a binding, field, or collection. The
 endpoints must be integers, and both take their type from context, from the other endpoint, or default to `i32`.
-The range operators bind looser than comparison, so `r == (0..4)` needs the parentheses.
+The range operators bind looser than comparison, so `r == (0..4)` needs the parentheses. Both endpoints are
+required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are a syntax error.
 
 ## 7. Patterns
 

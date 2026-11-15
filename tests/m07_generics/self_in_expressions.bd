@@ -3,8 +3,9 @@
 //> 8
 //> true
 //> 7
+//> 9
 
-// `Self` in expressions, struct literals, variant paths, and patterns (issue #70).
+// `Self` in expressions, struct literals, variant paths, and patterns, including a generic impl (issue #70).
 
 struct Counter {
     n: i32
@@ -48,6 +49,22 @@ Flag {
     }
 }
 
+struct Boxed<T> {
+    value: T
+}
+
+Boxed<T> {
+    fn wrap(value: T): Self {
+        Self { value }
+    }
+
+    fn unwrap(self): T {
+        match self {
+            Self { value } => value
+        }
+    }
+}
+
 fn main() {
     let mut c = Counter.new(7)
     println(c.value().to_string())
@@ -59,4 +76,7 @@ fn main() {
 
     let t = Counter.new(7).twin()
     println(t.value().to_string())
+
+    let b = Boxed.wrap(9)
+    println(b.unwrap().to_string())
 }

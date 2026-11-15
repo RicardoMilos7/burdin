@@ -16,13 +16,15 @@ close-out checklist in `AGENTS.md`).
   - **Ranges as values (#53).** `a..b` is a `Range<T>` and `a..=b` a `RangeInclusive<T>`: `Copy`, equal, ordered,
     hashable, cloneable, droppable, storable in fields and containers, and iterable with `for i in r` without
     borrowing the range. Endpoints are integers of one type; `..` has the lowest precedence. The type and its
-    structural behavior are in `spec/grammar.md`, `spec/stdlib.md`, and `Ty::Range`; `range_values` and
-    `range_endpoints_are_integers` witness it.
+    structural behavior are in `spec/grammar.md`, `spec/stdlib.md`, and `Ty::Range`; open-ended forms (`..b`, `a..`,
+    `..`) do not exist. `range_values` (storage, clone, equality, hash, Map key, iteration),
+    `range_endpoints_are_integers`, and `range_forms` (loop forms and the inclusive maximum) witness it.
   - **Move checker (#58).** Constant array and `List` indices, heap pointee fields (`(*h).a`), `match *h`, and a
     moving pattern with a guard on a temporary scrutinee are tracked instead of E9000. A temporary scrutinee is
-    moved into a compiler-made local, so its other fields drop once and a failed guard restores the arm's moves. A
-    runtime index is still E9000. `spec/memory-rules.md` MV6/MV8 and `m05_ownership/move_index_*`,
-    `move_heap_field*`, `match_heap_pointee`, `match_guard_temporary`, `match_temporary_fields_drop`.
+    moved into a compiler-made local, so its other fields drop once and a failed guard restores the arm's moves. An
+    index expression is evaluated once; a tracked move uses a constant index. A runtime index is still E9000.
+    `spec/memory-rules.md` MV6/MV8 and `m05_ownership/move_index_*`, `index_evaluated_once`, `move_heap_field*`,
+    `match_heap_pointee*`, `match_guard_temporary*`, `match_temporary_fields_drop`.
   - **Generic gaps (#64).** A generic static method infers its type arguments from its own parameters; a generic
     type's bounds are checked at instantiation (E0141); a view type argument makes the instance second-class (SC3);
     an impl method is compared with the interface method including `unsafe` (E0003); `==`/`<` work on symbolic
@@ -39,14 +41,16 @@ close-out checklist in `AGENTS.md`).
     Out-parameters work through `&mut x as CPtr<...>`, and the cast ends the loan. `struct Name repr(C)` has the C
     layout and `Type.size()`/`Type.align()`; `...` declares a variadic C function; `extern "C" fn` exports a Burdin
     function under its plain C symbol with the C ABI rules (E0162). Aggregates cross the ABI through `CPtr<T>` only
-    (by value is E0162), C `_Bool` is declared `u8`, and C `char` is `CChar`. Tests: `cptr_operations`,
-    `cptr_requires_unsafe`, `c_out_parameter`, `c_abi_structs`, `cstring_clone`, `export_c_abi`,
-    `export_c_abi_invalid`; docs in `spec/stdlib.md`, `spec/grammar.md`, and `docs/error-codes.md`.
+    (by value is E0162), C `_Bool` is declared `u8`, and C `char` is `CChar`. There are no `union` declarations or
+    function-pointer types: a union is bytes behind `CPtr<T>` and a function pointer is stored as `CPtr<CVoid>`
+    (`spec/stdlib.md`). Tests: `cptr_operations`, `cptr_requires_unsafe`, `c_out_parameter`, `c_abi_structs`,
+    `cstring_clone`, `export_c_abi`, `export_c_abi_invalid`, `export_c_abi_panics`; docs in `spec/stdlib.md`,
+    `spec/grammar.md`, and `docs/error-codes.md`.
   - **Coverage (#85, #86, #87).** Run and compile-fail tests for `unsafe fn` declarations and unsafe interface
     methods (`unsafe_fn`, `unsafe_fn_call_requires_unsafe`, `unsafe_interface_method`,
     `unsafe_interface_mismatch`), and an audit of the `spec/memory-rules.md` test matrix against the suite, with US
     extended to the new pointer and unsafe-function tests.
-  - The suite is 219 tests (217 in release); `tests/check-tests.sh`, `check-unit-tests.sh`, `check-docs.sh`,
+  - The suite is 224 tests (222 in release); `tests/check-tests.sh`, `check-unit-tests.sh`, `check-docs.sh`,
     `check-error-docs.sh`, `check-diagnostics.sh`, `check-codegen-opt.sh`, `check-build-flags.sh`,
     `check-parallel.sh`, `check-test-runner.sh`, and `check-debug-info.sh` are green, and `cargo fmt --check`,
     `cargo clippy -- -D warnings`, and `cargo test` pass.

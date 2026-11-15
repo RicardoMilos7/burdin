@@ -1,0 +1,3 @@
+[package]
+name = "export_c_abi_panics"
+version = "0.1.0"

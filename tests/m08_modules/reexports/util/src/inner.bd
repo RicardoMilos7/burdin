@@ -9,3 +9,8 @@ fn helper(): i32 {
 fn extra(): i32 {
     5
 }
+
+struct Point {
+    x: i32
+    y: i32
+}

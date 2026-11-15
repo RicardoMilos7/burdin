@@ -12,8 +12,10 @@
 //> 2
 //> true
 //> true
+//> true
+//> 10
 //> 6
-// A range is an ordinary value: storable, passable, returnable, comparable, hashable, and iterable.
+// A range is an ordinary value: storable, passable, returnable, comparable, cloneable, hashable, and iterable.
 
 struct Bounds {
     span: Range<i32>
@@ -51,6 +53,12 @@ fn main() {
     let inclusive: RangeInclusive<i32> = 4..=6
     println((inclusive == (4..=6)).to_string())
     println((inclusive.hash() == (4..=6).hash()).to_string())
+    let copy = inclusive.clone()
+    println((copy == inclusive).to_string())
+
+    let mut spans = Map<Range<i32>, i32>.new()
+    spans.insert(0..3, 10)
+    println(spans.get(0..3).unwrap().to_string())
 
     let empty = List<Range<i32>>.new()
     let mut list = empty

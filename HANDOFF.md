@@ -5,7 +5,7 @@ Written at the end of the first session, updated at the end of the second, third
 ## State
 
 Updated at the end of the twentieth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed**: all 219 conformance tests pass in the debug profile and 217 in
+and the stage 0 gaps of issue #48 are closed**: all 224 conformance tests pass in the debug profile and 222 in
 release (two tests are debug-only). `burdin test` runs `test` blocks concurrently with attributes, captured output,
 and per-test isolation, and the m11 program calls the LLVM C API. The eleventh session added the macOS CI job (issues
 #16, #17, #18); the twelfth deleted the stale `Burdin Stage 0 Subset.md` root export (issue #43) and documented the
@@ -46,7 +46,7 @@ for `unsafe fn` and unsafe interface methods, and a memory-rule coverage audit.
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, and `...` in an `extern` signature |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default` behavior, including the FNV-1a values (issue #39) |
-| Conformance tests | `tests/` | 219 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
+| Conformance tests | `tests/` | 224 tests. All pass: m01 to m11 on Linux, macOS, and Windows |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check-diagnostics.sh` and `tests/check-error-docs.sh` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check-test-runner.sh` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check-tests.sh`, `tests/check-tests.ps1`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -961,12 +961,14 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   `RangeInclusive<T>`, where both endpoints have the same integer type (inferred from context or the other
   endpoint, as before). A range is evaluated once and `for i in r` does not borrow it; equality, ordering, hashing,
   cloning, and dropping are the structural versions of the two fields. `..` is the lowest-precedence operator, so a
-  range used as an operand is written in parentheses (`(4..=6) == r`).
+  range used as an operand is written in parentheses (`(4..=6) == r`); open-ended forms (`..b`, `a..`, `..`) do not
+  exist.
 - **The move checker tracks constant indices and heap fields, not runtime indices.** A constant array or `List`
   index (`xs[0]`) is a path step, and a field of a heap pointee (`(*h).a`) extends the path through the `MOVED_DEREF`
   step. A moving pattern on a temporary `match` scrutinee is safe: the scrutinee is moved into a compiler-made local
-  of the statement, so untouched fields drop once and a failed guard restores what an earlier arm bound. A runtime
-  index remains E9000: without knowing the element, the drop flag cannot be placed, and miscompiling is worse.
+  of the statement, so untouched fields drop once and a failed guard restores what an earlier arm bound. An index
+  expression is evaluated once. A runtime index remains E9000: without knowing the element, the drop flag cannot be
+  placed, and miscompiling is worse.
 - **Generic gaps use the existing rules.** A static method of a generic type unifies `Self`'s arguments with the
   method's parameters (so `Holder.make(x)` infers `T`); a generic type's bounds are checked when it is instantiated
   (E0141), not only in the symbolic check; a view type argument makes the instance second-class (SC3), so it is
