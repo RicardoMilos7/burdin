@@ -472,6 +472,18 @@ impl<'a> Checker<'a> {
                     self.expr(a, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
                 }
             }
+            // Boxing moves (or copies) the value into the heap allocation; `downcast` consumes the box.
+            K::BoxAny { value, .. } => self.expr(value, Mode::Move),
+            K::AnyIs { value, .. } => self.expr(value, Mode::Use),
+            K::AnyDowncast { value, .. } => self.expr(value, Mode::Move),
+            // A dynamic call borrows the box (it can never take `own self`); its arguments follow the interface
+            // method's conventions.
+            K::AnyCall { recv, params, args, .. } => {
+                self.expr(recv, Mode::Use);
+                for (a, p) in args.iter().zip(params) {
+                    self.expr(a, if p.own { Mode::Move } else { Mode::Use });
+                }
+            }
             // Building a closure moves each moved-in capture and reads each borrowed one (CL2-CL4).
             K::Closure { captures, .. } => {
                 for c in captures {

@@ -1,0 +1,22 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+fn main() {
+    let shape: any Shape = Rect { w: 1, h: 2 }
+    let _ = shape.perimeter() //~ E0002
+    let _ = shape.downcast() //~ E0003
+}

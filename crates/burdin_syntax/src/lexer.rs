@@ -156,9 +156,11 @@ impl Lexer<'_> {
             TokenKind::Underscore
         } else {
             match TokenKind::keyword(word) {
-                // A member name after `.` is its own namespace: `.any()` stays spellable even while `any` is
-                // reserved as an identifier (spec/grammar.md, "Keywords").
-                Some(TokenKind::Reserved(_)) if self.after_dot() => TokenKind::Ident(word.to_string()),
+                // A member name after `.` is its own namespace: `.any()` stays spellable even though `any` is a
+                // keyword (spec/grammar.md, "Keywords").
+                Some(TokenKind::Reserved(_) | TokenKind::Any | TokenKind::Impl) if self.after_dot() => {
+                    TokenKind::Ident(word.to_string())
+                }
                 Some(keyword) => keyword,
                 None => TokenKind::Ident(word.to_string()),
             }
@@ -574,6 +576,7 @@ mod tests {
     #[test]
     fn every_keyword_has_its_own_token() {
         let cases: &[(&str, TokenKind)] = &[
+            ("any", Any),
             ("as", As),
             ("break", Break),
             ("const", Const),
@@ -585,6 +588,7 @@ mod tests {
             ("fn", Fn),
             ("for", For),
             ("if", If),
+            ("impl", Impl),
             ("in", In),
             ("interface", Interface),
             ("let", Let),
@@ -604,10 +608,8 @@ mod tests {
             ("use", Use),
             ("where", Where),
             ("while", While),
-            ("any", Reserved("any".into())),
             ("comptime", Reserved("comptime".into())),
             ("derive", Reserved("derive".into())),
-            ("impl", Reserved("impl".into())),
         ];
         for (word, want) in cases {
             let mut d = Diagnostics::default();
@@ -683,11 +685,15 @@ mod tests {
     }
 
     #[test]
-    fn a_reserved_word_after_a_dot_is_a_member_name() {
+    fn a_keyword_after_a_dot_is_a_member_name() {
         assert_eq!(kinds("x.any"), vec![Ident("x".into()), Dot, Ident("any".into()), Eof]);
-        // Everywhere else the word stays reserved.
-        assert_eq!(kinds("any"), vec![Reserved("any".into()), Eof]);
-        assert_eq!(kinds("any.x"), vec![Reserved("any".into()), Dot, Ident("x".into()), Eof]);
+        assert_eq!(kinds("x.impl"), vec![Ident("x".into()), Dot, Ident("impl".into()), Eof]);
+        // Everywhere else the words stay keywords.
+        assert_eq!(kinds("any"), vec![Any, Eof]);
+        assert_eq!(kinds("impl"), vec![Impl, Eof]);
+        assert_eq!(kinds("any.x"), vec![Any, Dot, Ident("x".into()), Eof]);
+        // A word reserved for a later version after a dot is a member name too.
+        assert_eq!(kinds("x.derive"), vec![Ident("x".into()), Dot, Ident("derive".into()), Eof]);
     }
 
     #[test]

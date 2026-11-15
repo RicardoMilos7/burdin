@@ -357,6 +357,37 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   registry, `docs/error-codes.md`, CI's milestone list, `tests/README.md`, `CLAUDE.md`, `HANDOFF.md`, and this file
   are updated with them.
 
+### Milestone 15 — `any` and `impl` (issue #117)
+
+- The decision (`spec/existentials.md`, AN1-AN12): `any Interface` is an owned, first-class two-word heap box
+  `{data, vtable}` that owns its allocation and drops the boxed value through the vtable. A concrete value is boxed
+  implicitly wherever an `any I` is the expected type (annotation, argument, return, field, element, `Some`/`Ok`/
+  `Err` payload, match arm); the value must implement `I` (E0141) and be first-class, so boxing a view is E0120.
+  `any I` satisfies `I` and every interface `I requires`, is never `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or
+  `Default`, and formats through the vtable as `any Display`/`any Debug`.
+- Object safety (E0202): an interface is usable as `any` only when no method has its own type parameters, every
+  method has a `self` receiver that is not `own self`, no method mentions `Self` outside the receiver or returns a
+  view, and every `requires` interface is object-safe. A generic interface instance (`any Store<i32>`) is allowed
+  because the instance fixes its arguments. `impl Interface` is accepted only in a parameter list (E0201 anywhere
+  else) and is sugar for one hidden type parameter with the interface as its bound, so dispatch is static and `I`
+  need not be object-safe.
+- Calls and downcasts: `x.m(args)` on `any I` lowers to an indirect call through the vtable slot, with the
+  interface's `mut`/`own`/`unsafe` conventions applied. The compiler-known `x.is<T>(): bool` and
+  `x.downcast<T>(): Option<T>` take a member type argument (`x.downcast<Circle>()`, the generic-argument spelling of
+  grammar rule 8.2); `downcast` consumes the box, moves the value out on a match, and frees the allocation without
+  running the drop again. A primitive's compiler-provided `Display`/`Debug` implementation has no vtable function, so
+  boxing it is E0204.
+- Code generation emits one private vtable constant per `(T, I)` pair with a program-wide type id, the drop glue, and
+  one slot per interface method; calls are indirect through the slot. `is` and `downcast` compare the type id, and a
+  downcast transfers ownership out of the allocation.
+- Tests: `tests/m15_any/` adds 24 conformance tests (run and compile-fail) covering boxing at every expected
+  position, a heterogeneous `List<any Shape>`, dispatch and `requires` methods, generic interface instances,
+  `Display` through the box, moves and drops, downcasts (generic targets included), object safety, and the new
+  diagnostics E0200, E0201, E0202, and E0204. The suite is 354 tests (352 in release).
+- Documentation: `spec/existentials.md` (new), `spec/grammar.md` sections 1, 4, and 6, `spec/stage1-subset.md`,
+  `tests/README.md` decision 20 and the error-code registry, `docs/error-codes.md`, the CI milestone list,
+  `CLAUDE.md`, and this file.
+
 ## Stage 0 — 2026-11-14
 
 - Milestones 1-11 complete: lexer and parser, primitives and control flow, type checking, structs/enums/match,

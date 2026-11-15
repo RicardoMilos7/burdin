@@ -1,0 +1,6 @@
+//@ compile-fail
+
+fn main() {
+    let text: any Display = 3 //~ E0204
+    let _ = text
+}

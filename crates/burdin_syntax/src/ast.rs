@@ -244,6 +244,11 @@ pub enum FnKind {
 #[derive(Debug)]
 pub enum TypeKind {
     Path(Vec<PathSegment>),
+    /// `any Interface`: the owned boxed existential (spec/existentials.md).
+    Any(Box<Type>),
+    /// `impl Interface`. Only a parameter list accepts it; the parser turns it into a hidden generic parameter,
+    /// so anywhere else it reaches the checker as written and is rejected (spec/existentials.md, AN4).
+    Impl(Box<Type>),
     /// `Fn(A, B): R`, `FnMut(A): R`, or `FnOnce(): R`.
     Fn {
         kind: FnKind,
@@ -415,6 +420,8 @@ pub enum ExprKind {
     OrElse(Box<Expr>, Box<Expr>),
     Try(Box<Expr>),
     Field(Box<Expr>, Ident),
+    /// `recv.name<T>`: type arguments on a member, as in `x.downcast<Circle>()` (spec/existentials.md, AN6).
+    TypeArgs(Box<Expr>, Vec<Type>),
     TupleField(Box<Expr>, u32, Span),
     Call(Box<Expr>, Vec<Arg>),
     Index(Box<Expr>, Box<Expr>),

@@ -1,10 +1,11 @@
-# Burdin grammar (stage 0, plus stage 1 closures, iterators, and formatting)
+# Burdin grammar (stage 0, plus stage 1 closures, iterators, formatting, and existentials)
 
 This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures,
-milestone 13's member names, and milestone 14's string interpolation (the details are in `format.md`). It is derived
-from the conformance tests in `tests/`, so every construct below is used by at least one test, and every construct
-those tests use is here. Features deferred to later stage 1 milestones (`any`/`impl` types, `error` declarations,
-comptime, derive declarations, default and named arguments, extension methods, tasks) are reserved but not parsed.
+milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), and milestone 15's
+`any`/`impl` existential types (the details are in `existentials.md`). It is derived from the conformance tests in
+`tests/`, so every construct below is used by at least one test, and every construct those tests use is here.
+Features deferred to later stage 1 milestones (`error` declarations, comptime, derive declarations, default and
+named arguments, extension methods, tasks) are reserved but not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).
@@ -21,13 +22,14 @@ and `/* ... */` (block comments do not nest).
 **Keywords** (reserved):
 
 ```
-as  break  const  continue  else  enum  extern  false  fn  for  if  in  interface  let  loop  match
-mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
+any  as  break  const  continue  else  enum  extern  false  fn  for  if  impl  in  interface  let  loop
+match  mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
 ```
 
-Reserved for stage 1, rejected as identifiers now: `any  comptime  derive  impl`. A reserved word is not an
-identifier, except immediately after a `.` in a member position, where it is a member name: that is how
-`.any(...)` reaches the `Iterator` default method declared as `any_item` (`iterators.md`, IT9).
+Reserved for stage 1, rejected as identifiers now: `comptime  derive`. No keyword is an identifier, except
+immediately after a `.` in a member position, where it is a member name: that is how `.any(...)` reaches the
+`Iterator` default method declared as `any_item` (`iterators.md`, IT9), and why a member may be spelled `any` or
+`impl` now that both are keywords.
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct
@@ -178,6 +180,8 @@ package-private item, and a public signature or field naming a package-private t
 
 ```
 Type          = TypePath
+              | "any" TypePath                          (* stage 1, milestone 15 *)
+              | "impl" TypePath                         (* stage 1, milestone 15; only in a parameter list *)
               | ClosureType                             (* stage 1, milestone 12 *)
               | "(" ")"                                 (* unit *)
               | "(" Type "," [ Type { "," Type } [ "," ] ] ")"   (* tuple of two or more, or one with a trailing comma *)
@@ -199,6 +203,22 @@ owned; only a type parameter's `Fn` bound keeps the closure's concrete capture m
 the call (`memory-rules.md` CL9). A non-generic function name, a built-in function name, or `Some` is an expression of
 a closure type when the context expects one (`memory-rules.md` CL11); `f(args)` calls any expression of a closure
 type, including a field, an element, or a call result.
+
+`any I` is an owned, first-class existential: a two-word box whose data is a heap allocation and whose vtable points
+at the constant table for `(T, I)`. It is stored, moved, and dropped like any other owned value, satisfies `I` and
+every interface `I requires`, and is never `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`
+(`existentials.md` AN1, AN8). A concrete value is boxed implicitly wherever an `any I` is the expected type (an
+annotation, an argument, a return, a field, an element, a `Some`/`Ok`/`Err` payload, or a match arm); the value must
+implement `I` (E0141) and be first-class, so a view is E0120 (AN3). `any I` is allowed only for an object-safe
+interface: no generic methods, no method without a `self` receiver, no `own self`, no `Self` outside the receiver, no
+view return, and every `requires` interface object-safe (E0202; AN2). `I` may be an interface path with type
+arguments (`any Store<i32>`); `any` applied to a type, a type parameter, or a built-in bound such as `Copy` is E0200,
+and boxing a primitive's compiler-provided `Display`/`Debug` implementation is E0204 (AN12).
+
+`impl I` is accepted only in a parameter list (E0201 anywhere else) and is sugar for one hidden type parameter with
+`I` as its bound, so `fn f(x: impl I)` is `fn f<T: I>(x: T)`, dispatch is static, and `I` need not be object-safe
+(AN4). `any I` cannot appear in an `extern "C"` signature, as an `impl` target of a block, or in a pattern; use
+`is`/`downcast` instead (AN10).
 
 `i32`, `str`, `bool`, `String`, `Range<T>`, `RangeInclusive<T>`, `Self` and the other built-in names are ordinary
 type paths resolved in the prelude. `Self` means the type of the enclosing impl block, there and in expressions and
@@ -251,7 +271,7 @@ Precedence from loosest to tightest:
 
 ```
 UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | PostfixExpr ;
-PostfixExpr   = Primary { "?" | "." IDENT | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
+PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
 ArgList       = Arg { "," Arg } [ "," ] ;
 Arg           = [ "mut" ] Expr ;                        (* "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)
 
@@ -297,6 +317,11 @@ Both are first-class, `Copy`, and iterable by `for`, and may be stored in a bind
 endpoints must be integers, and both take their type from context, from the other endpoint, or default to `i32`.
 The range operators bind looser than comparison, so `r == (0..4)` needs the parentheses. Both endpoints are
 required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are a syntax error.
+
+Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6). The `<` starts a type
+list when one parses and its closing `>` is followed by `(`, `.`, or `{` — the same look-ahead as rule 8.2, without
+the uppercase-name requirement; otherwise it is a comparison. Member type arguments are accepted only for the
+compiler-known `is` and `downcast` methods of an `any I` value; any other member with type arguments is E0002.
 
 ## 7. Patterns
 

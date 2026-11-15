@@ -5,7 +5,7 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (`any`, `error` declarations,
+Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (`error` declarations,
 comptime, tasks, leak detection, allocator parameters) has **no tests here** yet.
 
 ## Layout
@@ -26,6 +26,7 @@ tests/
   m12_closures/        closures, captures, closure types and bounds
   m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops
   m14_format/          interpolation, `Display`/`Debug`, format specifiers, `format`, output
+  m15_any/             `any`/`impl` existentials, boxing, dispatch, downcast
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -196,6 +197,10 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0192 | Argument of a format call that the format string does not use |
 | E0193 | Value in a placeholder whose type does not implement `Display` (`Debug` for `{:?}`) |
 | E0194 | A format call with arguments whose format string is not a string literal |
+| E0200 | `any` or `impl` applied to something that is not an interface (a type, a type parameter, or a built-in bound such as `Copy`) |
+| E0201 | `impl Interface` outside a parameter list (a return type, a local annotation, a field, an element, a bound, or an `extern` signature) |
+| E0202 | An interface that cannot be used as `any` because it is not object-safe |
+| E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
 
 ### Codes without a compile-fail test
 
@@ -304,6 +309,18 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     value by copying). `Display` and `Debug` are ordinary `std` interfaces implemented by the compiler for the
     built-in types and by an impl block (or `derives (Debug)`) for a user type. A one-argument output call takes no
     format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
+20. **Existential types.** `any Interface` is an owned two-word heap box `{data, vtable}`; a concrete value is boxed
+    implicitly wherever an expected type is known (an annotation, an argument, a return, a field, an element, a
+    `Some`/`Ok`/`Err` payload, a match arm). `any I` satisfies `I` and every interface `I requires`, is never
+    `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`, and calls `I`'s methods through the vtable (so `any Display`
+    prints through it). It is allowed only for an object-safe `I`: no generic method, no method without a `self`
+    receiver, no `own self`, no `Self` outside the receiver, no view return, and object-safe `requires` interfaces
+    (E0202). `impl Interface` is accepted only in a parameter list (E0201 anywhere else) and is sugar for one hidden
+    generic parameter with the interface as its bound. `x.is<T>(): bool` and `x.downcast<T>(): Option<T>` are
+    compiler-known on `any I`, written with member type arguments; the downcast consumes the box. The boxed type
+    must implement the interface (E0141) and be first-class (E0120); boxing a primitive's compiler-provided
+    `Display`/`Debug` implementation is E0204, because there is no function to dispatch to.
+    `spec/existentials.md` AN1-AN12, `tests/m15_any/`.
 
 ## Review of the expected outputs
 

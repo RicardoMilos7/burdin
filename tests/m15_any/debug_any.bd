@@ -1,0 +1,11 @@
+//@ run
+//> D { v: 3 }
+
+struct D derives (Debug) {
+    v: i32
+}
+
+fn main() {
+    let boxed: any Debug = D { v: 3 }
+    println("{boxed:?}")
+}

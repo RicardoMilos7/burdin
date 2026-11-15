@@ -1,0 +1,24 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+fn main() {
+    let rect = Rect { w: 1, h: 2 }
+    let boxed: any Shape = rect
+    let again = rect //~ E0100
+    let _ = boxed
+    let _ = again
+}

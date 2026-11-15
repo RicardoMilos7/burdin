@@ -1,0 +1,33 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Plain {
+    x: i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+fn take(shape: impl Shape) {
+    let _ = shape.area()
+}
+
+fn main() {
+    let boxed: any Shape = Plain { x: 1 } //~ E0141
+    let rect: any Shape = Rect { w: 1, h: 2 }
+    let target = rect.downcast<Plain>() //~ E0141
+    take(Plain { x: 2 }) //~ E0141
+    let _ = boxed
+    let _ = target
+}

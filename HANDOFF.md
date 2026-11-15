@@ -1,12 +1,13 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, and twenty-seventh. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, and twenty-eighth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the twenty-seventh session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), and 14 (formatting) are
-done**: all 330 conformance tests pass in the debug profile and 328 in release (two tests are debug-only).
+Updated at the end of the twenty-eighth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
+and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), and 15
+(`any` and `impl`) are done**: 354 conformance tests; the debug profile passes 353 with one host skip, and release
+passes 352 (two tests are debug-only).
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -79,7 +80,20 @@ built-in types with helpers in the new `std/src/fmt.bd`, and checks E0190-E0194.
 Burdin source at parse time. `tests/m14_format` adds 17 tests. Code generation now emits a body only for reachable
 functions (`burdin_codegen/src/emit/reach.rs`), so the embedded standard library stops adding dead drop flags and
 bounds checks to every program; the same session fixed a `-g` verifier failure where a function's parameter stores
-inherited the previous function's debug location. The remaining milestones are m15 (any/impl) onward.
+inherited the previous function's debug location.
+
+The twenty-eighth session implemented milestone 15, `any` and `impl` (issue #117, sub-issues #119-#125). It decided
+first (`spec/existentials.md`, AN1-AN12) that `any Interface` is an owned, first-class two-word heap box
+`{data, vtable}`, that a concrete value is boxed implicitly wherever `any I` is the expected type, that an interface
+used as `any` must be object-safe (E0202), that `impl Interface` is a hidden generic parameter allowed only in a
+parameter list (E0201), and that `x.is<T>()`/`x.downcast<T>()` are compiler-known methods with member type arguments.
+The syntax is `any`/`impl` as keywords and `[ GenericArgs ]` after a member name; sema interns interface instances,
+their vtable method lists, type identities, and vtables, defers object-safety reports until every interface signature
+is resolved, and boxes at every expected-type position; the move, borrow, and origin checks understand the four new
+expression forms; code generation emits `{ ptr, ptr }` values, one private constant vtable per `(T, I)` pair
+`{ i64 type_id, ptr drop, ptr method... }`, indirect calls, and type-id-checked downcasts that move the value out and
+free the allocation without dropping it again. The new diagnostics are E0200, E0201, E0202, and E0204. The tests are
+`tests/m15_any/` with 24 tests. The remaining milestones are m16 (`error` declarations) onward.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -89,12 +103,13 @@ inherited the previous function's debug location. The remaining milestones are m
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
 | Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the deferred differential tests (issue #444) |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
-| Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, `...` in an `extern` signature, interpolated and raw strings, and the format-specifier grammar |
+| Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), member type arguments (`x.downcast<T>()`), `any`/`impl` types, `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, `...` in an `extern` signature, interpolated and raw strings, and the format-specifier grammar |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default`/`Debug` behavior, including the FNV-1a values (issue #39) |
 | Formatting | `spec/format.md`, `std/src/fmt.bd`, `crates/burdin_syntax/src/derive.rs`, `crates/burdin_sema/src/fncx/format.rs` | Milestone 14 (issue #109). Interpolated literals, `Display`/`Debug`, the specifiers, `format` and the generalized output functions, all checked at compile time and lowered to `Formatter` calls; `derives (Debug)` generates an impl block as Burdin source. The tests are `tests/m14_format/` |
+| Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
-| Conformance tests | `tests/` | 330 tests. All pass: m01 to m14 on Linux; 328 in release (two debug-only) |
+| Conformance tests | `tests/` | 354 tests. All pass: m01 to m15 (353 in the debug profile with one host skip); 352 in release (two debug-only) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -108,7 +123,7 @@ inherited the previous function's debug location. The remaining milestones are m
 | Reachability | `crates/burdin_codegen/src/emit/reach.rs` | Only functions reachable from `main`, the tests, exported functions, `Drop` implementations, and closure bodies get a real body; the rest are emitted as `unreachable` so the standard library does not bloat every program's IR |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, the directive check, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check_platform.py`, `tests/check_platform_support.py`, and conformance m01-m14 in both the debug and release profiles (`tests/run_tests.py --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check_ci.py` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench_regression.py`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.py --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, the directive check, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check_platform.py`, `tests/check_platform_support.py`, and conformance m01-m15 in both the debug and release profiles (`tests/run_tests.py --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check_ci.py` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench_regression.py`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.py --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
 | Fuzzing | `crates/burdin_fuzz/` | Dependency-free deterministic lexer/parser fuzzing. `corpus/syntax/` holds the edge cases and every input that found a panic; `tests/corpus.rs` replays it plus 20,000 mutations during `cargo test --workspace`, which is the check that fails when a panic is reintroduced. `tests/fuzz.py` runs a longer session (the watchdog fails a stalled input) and the scheduled `fuzz` CI job uploads found inputs; a found input is committed under the corpus with its fix (issues #288, #447) |
 | Release pipeline | `.github/workflows/release.yml`, `tests/build_release.py`, `tests/release_notes.py`, `tests/check_release.py` | Implemented, no release cut (issue #452, sub-issues #453-#456). The workflow builds the six supported targets on native runners, smoke-tests each, writes `burdin-<version>-<target>.tar.gz` plus SHA-256 checksums, verifies Linux reproducibility from two checkout paths, and publishes only from a tag or an explicit manual `publish`; the schedule and a plain manual run are dry runs. `tests/build_release.py` also packages an existing binary (`--binary`) for the check, and its archive is deterministic (sorted entries, fixed mtimes, uid/gid 0, `gzip -n`). `tests/check_release.py` runs in every CI job |
 | Installers | `install.sh`, `install.ps1`, `docs/releasing.md` | One-line installers for Unix and Windows. Both verify `SHA256SUMS` before unpacking, install to a user directory, run `--version` and warn when the LLVM 21 runtime is missing, and support `BURDIN_VERSION`, `BURDIN_CHANNEL`, `BURDIN_INSTALL_DIR`, `BURDIN_BASE_URL`, and `BURDIN_RELEASE_DIR` (the local rehearsal path). A package-manager formula is not written yet |
@@ -319,6 +334,27 @@ how to call WSL from PowerShell.
   record as its first parameter, and emits an indirect call; the record's destructor drops moved-in captures and
   frees it, and a `FnOnce` body frees the record after dropping what it did not move out. `tests/m12_closures/`
   covers the behavior.
+- **Milestone 15 added `any` and `impl`.** `any` and `impl` are keywords (`TokenKind::Any`/`Impl`) and ordinary
+  member names after `.`; `TypeKind::Any`/`Impl` parse the interface after the keyword. `fn_decl_opt` desugars a
+  parameter written `impl I` into a hidden generic parameter (`impl0`, `impl1`, ...) with `I` as its bound and
+  replaces the parameter's type with a path to it, so inference, monomorphization, bounds, and the symbolic check
+  are the ordinary generic ones; any remaining `TypeKind::Impl` is E0201 at `resolve_type_in`. `ty.rs` adds
+  `Ty::Any(AnyRef { id, name, iface, args })`, `tree.rs` adds `ExprKind::BoxAny`, `AnyCall` (receiver, interface id,
+  slot, parameter conventions, arguments), `AnyIs`, and `AnyDowncast`, and `Program` carries `any_ifaces`,
+  `any_vtables`, and `any_type_ids`. `burdin_sema/src/any.rs` interns interface instances by `(interface, args)`,
+  computes their vtable slots lazily (own methods, then the transitive `requires` methods, deduplicated by name),
+  checks object safety, interns type identities and vtables, and records every written `any` for the deferred
+  E0202 report at the end of `resolve_all`; `has_eq_in`/`is_copy`/`is_clone` are false and `needs_drop` is true.
+  `fncx/expr.rs` boxes a value whenever the expected type is `Ty::Any` (`coerce_any`: E0120 for a view, E0141 for a
+  missing implementation, E0204 when the compiler provides the implementation without a method), and
+  `fncx/any.rs` checks dynamic calls and `x.is<T>()`/`x.downcast<T>()`; the parser accepts `[ GenericArgs ]` after a
+  member name using the rule-8.2 look-ahead without the uppercase restriction. `burdin_check` moves the boxed value,
+  consumes the box on `downcast`, takes the receiver's shared/exclusive loan on a dynamic call, and treats a box as
+  an owned value for origins. `burdin_codegen/src/emit/any.rs` emits the value as `{ ptr, ptr }`, one private
+  unnamed-addr constant `{ i64 type_id, ptr drop, ptr method... }` per vtable (memoized by `Program::any_vtables`
+  index), the indirect call `(data, args...)`, the type-id test, and the downcast (match: load and free without
+  drop; mismatch: vtable drop then free); `drop_value` runs the vtable's drop and frees, `reach.rs` roots every
+  vtable entry, and the module layout documentation is updated. `tests/m15_any/` covers the behavior.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
@@ -596,6 +632,22 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     `d.o.is_none()` and a struct whose only field is the `Option` work. No milestone test matches a Copy `Option`
     field, so the suite is green; this needs a codegen investigation before stage 1 relies on it. The same shape
     with `Option<String>` works.
+21. **A compiler-provided `Display`/`Debug` implementation cannot be boxed (E0204).** `Display` and `Debug` for the
+    primitive types and the built-in containers are answered from the type (`builtin_formattable`) and lowered to
+    `std` helpers; there is no method function, so there is no vtable entry to dispatch to. Boxing such a type as
+    `any Display`/`any Debug` is therefore E0204, while `any Display` of a user type (an impl block, or
+    `derives (Debug)`) works and formats through the vtable. A user type that wraps the primitive restores it. A
+    later milestone can generate the thunk once it has a way to lower the compiler's format calls into a function.
+22. **Explicitly typed generic struct literals keep their arguments only through inference.** `Pair<i64> { ... }` is
+    parsed with the generic arguments, but the parser's struct-literal path drops them (`struct_literal` takes only
+    the identifiers), so the instance is inferred from the field values and the annotation rather than from the
+    written arguments. `tests/m15_any/downcast_generic.bd` writes a typed local and pins the field (`2 as i64`) to
+    avoid it. This is a pre-existing parser gap (the grammar's rule 8.2 says a `{` continues the expression), not a
+    milestone 15 rule; fixing it means carrying `Vec<Type>` on `ExprKind::StructLit` and resolving it in
+    `fncx::aggregate`.
+23. **`any` cannot be matched with a pattern.** A `match` on an `any I` value accepts only `_` and a binding; there is
+    no type pattern, because a struct or enum pattern cannot name the boxed type. `is` and `downcast` are the
+    supported forms. A future `match` downcast would extend the pattern grammar and is not needed by m15.
 
 ## Decided in the third session
 
@@ -1216,21 +1268,59 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   milestone keeps stage 1's promise to extend stage 0 rules rather than add parallel ones: `to_string` is `Display`,
   the output functions keep their stage 0 flush behavior, and the new codes slot into the existing registry.
 
+## Decided in the twenty-eighth session
+
+- **`any I` is an owned heap box `{data, vtable}`.** The design's "owned type the compiler places on the heap" is
+  two words: a `malloc`ed concrete value and a pointer to a constant vtable. The box owns the allocation; drop runs
+  the concrete destructor through the vtable and frees, and a successful `downcast` moves the value out and frees
+  without dropping it again. This is `spec/existentials.md` AN1 and AN7.
+- **Boxing is implicit at every expected type, and it is the second implicit conversion.** Unlike the
+  `String`-to-`str` borrow (IC1), boxing produces an owned value and allocates, so it is allowed wherever an
+  expected type is known: annotations, arguments, returns, fields, elements, `Some`/`Ok`/`Err` payloads, and match
+  arms. A view cannot be boxed (E0120), because the box would outlive the borrow. This extends decision 2 rather
+  than adding a parallel rule (AN3).
+- **Object safety is the vtable's requirement, not the interface's.** The rule list is AN2: no generic methods, a
+  `self`/`mut self` receiver, no `Self` outside the receiver, no view return, and object-safe `requires`
+  interfaces. The reason for the view-return rule is the second-class model: a view out of the box would borrow the
+  allocation, which the receiver's `self` already covers, and rejecting it keeps every dynamic result owned. A
+  generic interface instance is object-safe once its arguments are fixed (`any Store<i32>`).
+- **`impl I` is a parameter-only hidden generic, not an opaque return type.** It desugars in the parser to one
+  hidden type parameter with `I` as its bound, so all of inference, bounds, and monomorphization are the existing
+  generic machinery, and `I` does not need object safety. Return-position `impl I` would be an opaque type, a much
+  larger feature; it is E0201 with a note to use `any I` (AN4).
+- **Downcast is a consuming method with a type argument.** `x.downcast<T>(): Option<T>` and `x.is<T>(): bool`, with
+  the type written after the member name (`x.downcast<Circle>()`), extend rule 8.2's look-ahead to member names.
+  `downcast` consumes the box so a `List<any I>` can be drained; on a mismatch it drops the value, so a failed
+  downcast loses the value, which the `Option` return makes explicit. Type identity is per monomorphized type, so
+  generic instances are distinct (AN6).
+- **The `Display`/`Debug` built-in implementations are the one absent vtable.** The compiler formats primitives and
+  built-in containers directly and has no method function for them, so boxing those is E0204 rather than a silent
+  wrong call. A user impl or `derives (Debug)` supplies the method and works (`any Display` itself formats through
+  the vtable). This is the milestone's documented limitation (known problem 21).
+- **The vtable is a private constant with a type id first.** `{ i64 type_id, ptr drop, ptr method... }`; the type
+  id is a program-wide index shared across interfaces, the drop slot is the existing drop glue, and each method
+  slot is the concrete implementation's function (object-safe receivers are already passed by address, so no thunk
+  is needed). Code generation emits one per `(T, I)` and `is`/`downcast` compare the id (AN11). Vtable entry
+  functions are reachability roots, because no direct call names them.
+
 ## What is left to do, in order
 
-1. Read `spec/stage1-subset.md` and settle the decisions for milestone 15 (`any` and `impl`: boxing or inline
-   values, object safety, downcast syntax, and whether `impl Interface` in a parameter is sugar for a generic). The
-   MIR interpreter question (comptime), the error representation, and allocator parameters shape later milestones
-   and can wait for theirs. Issue #444 (differential tests between comptime and compiled code) is blocked on the
-   milestone 20 interpreter; `spec/test-runner.md` holds its intended shape and the issue stays open until then.
-2. Write the m15 tests before the code, the same way the earlier milestones were built: `tests/m15_any` and its
-   `//@` expectations are the spec for the next stage 1 milestone.
+1. Read `spec/stage1-subset.md` and settle the decisions for milestone 16 (`error` declarations: how an `error
+   enum` lowers, how `from` is registered, the message and source chain, the trace cost in debug, the dynamic
+   `Error` representation (milestone 15's `any` is the intended basis), the default `Result<T>`, `context`, and
+   `fn main(): Result<()>`). The MIR interpreter question (comptime) and allocator parameters shape later
+   milestones and can wait for theirs. Issue #444 (differential tests between comptime and compiled code) is blocked
+   on the milestone 20 interpreter; `spec/test-runner.md` holds its intended shape and the issue stays open until
+   then.
+2. Write the m16 tests before the code, the same way the earlier milestones were built: `tests/m16_errors` and its
+   `//@` expectations are the spec for the next stage 1 milestone. The unit aliases `IoError`, `ParseIntError`, and
+   `AssertError` become real error types there, and the test-mode assertions report typed failures.
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
    C function-pointer and `union` types, by-value C aggregates, and a `priv` module marker if a project needs one.
 4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
-   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m14 in both
+   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m15 in both
    the debug and release profiles (issues #11, #16, #47, and #12), and cache cargo and LLVM 21 (issue #46).
    `tests/check_ci.py` guards that the workflow keeps covering the suite in both profiles, every job, and their
    caches; `tests/check_platform.py` guards the host triple. Every job also records and compares benchmark baselines,
@@ -1255,6 +1345,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 15, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 16, then write its tests.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

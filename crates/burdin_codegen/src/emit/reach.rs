@@ -7,8 +7,9 @@
 //! flags and bounds checks.
 //!
 //! The roots are `main`, the `test` blocks, the exported (`extern "C" fn`) functions, every `Drop` implementation,
-//! and every closure body. A closure body is a root because closures are emitted for the whole program; everything
-//! it calls is reachable as well.
+//! every closure body, and every vtable entry. A closure body is a root because closures are emitted for the whole
+//! program; a vtable entry is a root because it is reached only through an indirect call the walker cannot see.
+//! Everything they call is reachable as well.
 
 use crate::emit::Codegen;
 use burdin_tir as tir;
@@ -42,6 +43,12 @@ impl Codegen<'_, '_> {
         }
         for id in closure_calls {
             mark(id, &mut reachable, &mut pending);
+        }
+        // A vtable entry is called indirectly, through the vtable's slot.
+        for vtable in &program.any_vtables {
+            for entry in &vtable.entries {
+                mark(*entry, &mut reachable, &mut pending);
+            }
         }
         let mut calls: Vec<tir::FuncId> = Vec::new();
         while let Some(i) = pending.pop() {
@@ -150,6 +157,11 @@ impl Walker<'_> {
                 self.expr(callee);
                 self.all(args);
             }
+            K::AnyCall { recv, args, .. } => {
+                self.expr(recv);
+                self.all(args);
+            }
+            K::BoxAny { value, .. } | K::AnyIs { value, .. } | K::AnyDowncast { value, .. } => self.expr(value),
             K::StringAsStr(inner)
             | K::Unary(_, inner)
             | K::Cast(inner)

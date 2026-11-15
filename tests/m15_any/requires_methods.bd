@@ -1,0 +1,39 @@
+//@ run
+//> 5
+//> drawn
+//> 5
+
+interface Named {
+    fn value(self): i32
+}
+
+interface Drawable requires Named {
+    fn draw(self)
+}
+
+struct Box {
+    v: i32
+}
+
+Box: Named {
+    fn value(self): i32 {
+        self.v
+    }
+}
+
+Box: Drawable {
+    fn draw(self) {
+        println("drawn")
+    }
+}
+
+fn show(item: impl Named) {
+    println(item.value().to_string())
+}
+
+fn main() {
+    let d: any Drawable = Box { v: 5 }
+    println(d.value().to_string())
+    d.draw()
+    show(d)
+}

@@ -150,6 +150,9 @@ impl Sema<'_> {
         for (id, _, sig) in signatures {
             self.globals.externs[id].sig = sig;
         }
+        // Object safety is checked once every interface signature is resolved, so the reasons are final
+        // (spec/existentials.md, AN2).
+        self.globals.check_any_uses(diags);
     }
 }
 
@@ -224,6 +227,8 @@ fn alias_refs(ty: &ast::Type, module: usize, globals: &Globals, out: &mut Vec<us
         ast::TypeKind::Array(e, _) | ast::TypeKind::Slice(e) | ast::TypeKind::Ref { ty: e, .. } => {
             alias_refs(e, module, globals, out)
         }
+        // `any I` and a parameter `impl I` name an interface, not a type alias, but their arguments may name one.
+        ast::TypeKind::Any(e) | ast::TypeKind::Impl(e) => alias_refs(e, module, globals, out),
         ast::TypeKind::SelfType | ast::TypeKind::Unit | ast::TypeKind::Never => {}
     }
 }

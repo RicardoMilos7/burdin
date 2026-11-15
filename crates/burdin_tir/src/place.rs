@@ -112,8 +112,15 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::Ok(inner)
         | K::Err(inner)
         | K::Return(Some(inner))
-        | K::Cast(inner) => {
+        | K::Cast(inner)
+        | K::BoxAny { value: inner, .. }
+        | K::AnyIs { value: inner, .. }
+        | K::AnyDowncast { value: inner, .. } => {
             place_mentions(inner, out);
+        }
+        K::AnyCall { recv, args, .. } => {
+            place_mentions(recv, out);
+            args.iter().for_each(|x| place_mentions(x, out));
         }
         K::Unary(_, inner) | K::ArrayRepeat(inner, _) => place_mentions(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| place_mentions(x, out)),

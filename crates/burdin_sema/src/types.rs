@@ -41,6 +41,17 @@ impl Globals {
         match &ty.kind {
             ast::TypeKind::Unit => Ty::Unit,
             ast::TypeKind::Never => Ty::Never,
+            // `any Interface`: the owned boxed existential (spec/existentials.md, AN1).
+            ast::TypeKind::Any(inner) => self.resolve_any(inner, ty.span, subst, module, diags),
+            // The parser desugars `impl` in a parameter list; anywhere else it reaches here (AN4).
+            ast::TypeKind::Impl(_) => {
+                diags.error(
+                    Code::IMPL_NOT_PARAMETER,
+                    ty.span,
+                    "`impl Interface` is only allowed on a parameter; use `any Interface` for a stored value",
+                );
+                Ty::Error
+            }
             ast::TypeKind::SelfType => match self_ty {
                 Some(t) => t.clone(),
                 None => {
@@ -314,7 +325,8 @@ impl Globals {
             | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
             | Ty::MapIntoIter(..)
-            | Ty::RangeIter(..) => false,
+            | Ty::RangeIter(..)
+            | Ty::Any(_) => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,
         }
     }

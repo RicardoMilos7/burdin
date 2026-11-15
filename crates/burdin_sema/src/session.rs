@@ -270,6 +270,7 @@ impl<'t> Sema<'t> {
         check_public_signatures(&self.globals, &self.fn_items, &mut checks);
         validate_derives(&self.globals, &mut checks);
         diags.absorb(checks);
+        let (any_ifaces, any_vtables, any_type_ids) = self.globals.any_program_ifaces();
         let Globals { structs, enums, sigs, externs, .. } = self.globals;
         let externs = externs
             .into_iter()
@@ -280,7 +281,20 @@ impl<'t> Sema<'t> {
                 vararg: e.vararg,
             })
             .collect();
-        tir::Program { functions, closures, consts, structs, enums, signatures: sigs, externs, main, tests: self.tests }
+        tir::Program {
+            functions,
+            closures,
+            consts,
+            structs,
+            enums,
+            signatures: sigs,
+            externs,
+            main,
+            tests: self.tests,
+            any_ifaces,
+            any_vtables,
+            any_type_ids,
+        }
     }
 
     fn find_main(&self, diags: &mut Diagnostics) -> Option<FuncId> {

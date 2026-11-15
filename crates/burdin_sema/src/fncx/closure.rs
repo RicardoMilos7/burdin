@@ -208,7 +208,8 @@ impl FnCx<'_> {
         let module = self.module;
         let is_unsafe = self.unsafe_depth > 0;
         let child_ret = declared_ret.clone().unwrap_or(Ty::Error);
-        let mut child = FnCx::new(self.globals, &mut *self.diags, child_ret, self_ty, module, is_unsafe, closures);
+        let mut child =
+            FnCx::new(self.globals, &mut *self.diags, child_ret, self_ty, module, is_unsafe, self.symbolic, closures);
         child.subst = subst;
         child.bounds = bounds;
         child.capture =
@@ -494,6 +495,16 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
             }
         }
         K::StringAsStr(inner) => walk(inner, captures, globals, usage, Mode::Use),
+        // Boxing moves (or copies) the value into the box; `downcast` consumes the box; `is` only reads it.
+        K::BoxAny { value, .. } => walk(value, captures, globals, usage, Mode::Move),
+        K::AnyIs { value, .. } => walk(value, captures, globals, usage, Mode::Use),
+        K::AnyDowncast { value, .. } => walk(value, captures, globals, usage, Mode::Move),
+        K::AnyCall { recv, params, args, .. } => {
+            walk(recv, captures, globals, usage, Mode::Use);
+            for (a, p) in args.iter().zip(params) {
+                walk(a, captures, globals, usage, if p.own { Mode::Move } else { Mode::Use });
+            }
+        }
         K::ExternCall(_, args) => {
             for a in args {
                 walk(a, captures, globals, usage, Mode::Use);
@@ -707,6 +718,7 @@ impl FreeNames {
         use ast::ExprKind as K;
         match &e.kind {
             K::Name { name, .. } => self.use_name(&name.name, name.span),
+            K::TypeArgs(base, _) => self.expr(base),
             K::SelfValue => self.use_name("self", e.span),
             K::Unit | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Bool(_) | K::Break | K::Continue => {}
             K::Interp(parts) => {
@@ -867,6 +879,7 @@ fn contains_return(e: &ast::Expr) -> bool {
         }),
         K::Tuple(es) | K::Array(es) => es.iter().any(contains_return),
         K::ArrayRepeat(a, b) => contains_return(a) || contains_return(b),
+        K::TypeArgs(base, _) => contains_return(base),
         K::Block(b) | K::UnsafeBlock(b) | K::Loop(b) => block_has_return(b),
         K::If { cond, then_block, else_expr } => {
             contains_return(cond) || block_has_return(then_block) || else_expr.as_deref().is_some_and(contains_return)

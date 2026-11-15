@@ -1,0 +1,57 @@
+//@ run
+//> rect 6
+//> sq 9
+//> sq 16
+
+interface Shape {
+    fn area(self): i32
+    fn name(self): String
+    fn grow(mut self, by: i32)
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+    fn name(self): String {
+        String.from("rect")
+    }
+    fn grow(mut self, by: i32) {
+        self.w = self.w + by
+        self.h = self.h + by
+    }
+}
+
+struct Square {
+    side: i32
+}
+
+Square: Shape {
+    fn area(self): i32 {
+        self.side * self.side
+    }
+    fn name(self): String {
+        String.from("sq")
+    }
+    fn grow(mut self, by: i32) {
+        self.side = self.side + by
+    }
+}
+
+fn show(shape: any Shape) {
+    println("{shape.name()} {shape.area()}")
+}
+
+fn main() {
+    let r: any Shape = Rect { w: 2, h: 3 }
+    let mut s: any Shape = Square { side: 3 }
+    show(r)
+    show(s)
+    s.grow(1)
+    show(s)
+}

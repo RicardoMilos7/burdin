@@ -413,6 +413,19 @@ impl<'a> Analyzer<'a> {
                     self.place_origin(inner)
                 }
             }
+            // A box, a type test, and a downcast are owned values; they carry no view out of the value.
+            K::BoxAny { value, .. } | K::AnyIs { value, .. } | K::AnyDowncast { value, .. } => {
+                self.expr(value);
+                Origin::default()
+            }
+            // A dynamic call's result is an owned type (object safety), so it derives from no argument.
+            K::AnyCall { recv, args, .. } => {
+                self.expr(recv);
+                for a in args {
+                    self.expr(a);
+                }
+                Origin::default()
+            }
             K::Some(inner)
             | K::Ok(inner)
             | K::Err(inner)

@@ -2,6 +2,7 @@
 //! file per theme.
 
 mod aggregate;
+mod any;
 mod builtins;
 mod closure;
 pub(crate) use debug::DebugInfo;
@@ -34,7 +35,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{TargetData, TargetMachine};
 use inkwell::types::{BasicTypeEnum, IntType, StructType};
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue, StructValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue, PointerValue, StructValue};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) type GenResult<T> = Result<T, String>;
@@ -105,6 +106,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     string_ty: StructType<'ctx>,
     /// `{ code: ptr, env: ptr, drop: ptr }`: every closure value's layout.
     closure_ty: StructType<'ctx>,
+    /// `{ data: ptr, vtable: ptr }`: every `any I` value's layout.
+    any_ty: StructType<'ctx>,
     rt: Runtime<'ctx>,
     functions: Vec<FunctionValue<'ctx>>,
     /// The body function of each entry of `Program::closures`, in the same order.
@@ -113,6 +116,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     closure_drops: Vec<FunctionValue<'ctx>>,
     /// The declarations of `Program::externs`, in the same order.
     externs: Vec<FunctionValue<'ctx>>,
+    /// The private constant vtable of each `Program::any_vtables` entry, created on first use.
+    vtables: Vec<Option<GlobalValue<'ctx>>>,
     str_literals: HashMap<Vec<u8>, StructValue<'ctx>>,
     /// Drop and clone glue functions generated so far, and the ones still to generate.
     /// Drop and clone glue functions generated so far: the kind, the structural key that decides sharing, the
@@ -169,6 +174,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let str_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into()], false);
         let string_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into()], false);
         let closure_ty = cx.struct_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false);
+        let any_ty = cx.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
         let triple = machine.get_triple().as_str().to_string_lossy().to_string();
         let windows = triple.contains("windows");
         let darwin = triple.contains("darwin") || triple.contains("apple");
@@ -186,11 +192,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             str_ty,
             string_ty,
             closure_ty,
+            any_ty,
             rt,
             functions: Vec::new(),
             closure_funcs: Vec::new(),
             closure_drops: Vec::new(),
             externs: Vec::new(),
+            vtables: vec![None; program.any_vtables.len()],
             str_literals: HashMap::new(),
             glue: Vec::new(),
             pending_glue: Vec::new(),

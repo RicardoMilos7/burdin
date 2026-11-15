@@ -149,6 +149,8 @@ pub(crate) struct Globals {
     pub(crate) method_instances: HashMap<(usize, Vec<Ty>), FuncId>,
     /// The lazily created default-method templates of interface methods for built-in receiver types.
     pub(crate) builtin_method_templates: HashMap<(usize, usize, Ty, Vec<Ty>), crate::generics::GenericMethod>,
+    /// The `any Interface` instances, vtables, and type identities (`any.rs`).
+    pub(crate) any: RefCell<crate::any::AnyState>,
 }
 
 pub(crate) fn adt_key(ty: &Ty) -> Option<(bool, usize)> {

@@ -1,6 +1,7 @@
 //! Function bodies: blocks, statements, expressions, and patterns.
 
 use crate::ops::*;
+use crate::program::ParamSig;
 use crate::ty::*;
 use burdin_diag::Span;
 
@@ -154,6 +155,34 @@ pub enum ExprKind {
         callee: Box<Expr>,
         args: Vec<Expr>,
         kind: FnKind,
+    },
+    /// `value` moved (or copied) into a fresh heap allocation, paired with `vtable` (an index into
+    /// [`crate::Program::any_vtables`]). The expression's type is `any I` (spec/existentials.md, AN1/AN3).
+    BoxAny {
+        value: Box<Expr>,
+        vtable: usize,
+    },
+    /// A method call through an `any` value's vtable: `iface` indexes [`crate::Program::any_ifaces`], `slot` its
+    /// method list, and `params` are the method's parameter conventions without the receiver (AN5).
+    AnyCall {
+        recv: Box<Expr>,
+        iface: usize,
+        slot: usize,
+        params: Vec<ParamSig>,
+        args: Vec<Expr>,
+    },
+    /// `x.is<T>()` on an `any` value: whether the box holds exactly `target` (AN6). `type_id` indexes
+    /// [`crate::Program::any_type_ids`].
+    AnyIs {
+        value: Box<Expr>,
+        target: Ty,
+        type_id: usize,
+    },
+    /// `x.downcast<T>()` on an `any` value: the value, or `None` (AN6). The receiver is consumed.
+    AnyDowncast {
+        value: Box<Expr>,
+        target: Ty,
+        type_id: usize,
     },
     /// Borrows a `String` as a `str` (the one implicit coercion, tests/README.md assumption 2).
     StringAsStr(Box<Expr>),

@@ -15,6 +15,7 @@ pub enum TokenKind {
     Interp(Vec<InterpPiece>),
 
     // Keywords
+    Any,
     As,
     Break,
     Const,
@@ -26,6 +27,7 @@ pub enum TokenKind {
     Fn,
     For,
     If,
+    Impl,
     In,
     Interface,
     Let,
@@ -45,7 +47,7 @@ pub enum TokenKind {
     Use,
     Where,
     While,
-    /// A word reserved for stage 1 (`any`, `comptime`, `derive`, `impl`).
+    /// A word reserved for a later version (`comptime`, `derive`).
     Reserved(String),
     /// `_`
     Underscore,
@@ -97,6 +99,7 @@ impl TokenKind {
     pub fn keyword(word: &str) -> Option<TokenKind> {
         use TokenKind::*;
         Some(match word {
+            "any" => Any,
             "as" => As,
             "break" => Break,
             "const" => Const,
@@ -108,6 +111,7 @@ impl TokenKind {
             "fn" => Fn,
             "for" => For,
             "if" => If,
+            "impl" => Impl,
             "in" => In,
             "interface" => Interface,
             "let" => Let,
@@ -127,7 +131,7 @@ impl TokenKind {
             "use" => Use,
             "where" => Where,
             "while" => While,
-            "any" | "comptime" | "derive" | "impl" => Reserved(word.to_string()),
+            "comptime" | "derive" => Reserved(word.to_string()),
             _ => return None,
         })
     }
@@ -151,6 +155,7 @@ impl TokenKind {
     pub fn text(&self) -> &'static str {
         use TokenKind::*;
         match self {
+            Any => "any",
             As => "as",
             Break => "break",
             Const => "const",
@@ -162,6 +167,7 @@ impl TokenKind {
             Fn => "fn",
             For => "for",
             If => "if",
+            Impl => "impl",
             In => "in",
             Interface => "interface",
             Let => "let",

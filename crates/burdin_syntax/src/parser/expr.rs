@@ -146,7 +146,12 @@ impl Parser<'_> {
                             let t = self.bump();
                             let span = e.span.to(t.span);
                             e = Expr { kind: ExprKind::Field(Box::new(e), Ident { name, span: t.span }), span };
-                            if self.at_struct_literal(r)
+                            // `x.downcast<Circle>()`: type arguments on a member name (spec/existentials.md, AN6).
+                            if self.at(&TokenKind::Lt) && self.member_type_args_ahead() {
+                                let args = self.expr_generic_args()?;
+                                let span = e.span.to(self.prev_span());
+                                e = Expr { kind: ExprKind::TypeArgs(Box::new(e), args), span };
+                            } else if self.at_struct_literal(r)
                                 && let Some(path) = expr_path(&e)
                             {
                                 let start = e.span;
@@ -188,6 +193,49 @@ impl Parser<'_> {
             }
         }
         Ok(e)
+    }
+
+    /// Whether the current `<` (right after a member name) starts a type-argument list rather than a comparison:
+    /// a type list parses and its `>` is followed by `(`, `.`, or `{`. Comparison operators do not chain
+    /// (spec/grammar.md), so `a.b < c > (d)` is already invalid and cannot be made ambiguous by this rule.
+    fn member_type_args_ahead(&self) -> bool {
+        if !matches!(self.kind(), TokenKind::Lt) {
+            return false;
+        }
+        let continues = |i: usize| {
+            matches!(self.toks.get(i).map(|t| &t.kind), Some(TokenKind::Dot | TokenKind::LParen | TokenKind::LBrace))
+        };
+        let mut depth = 0i32;
+        let mut parens = 0i32;
+        let mut i = self.pos;
+        while let Some(t) = self.toks.get(i) {
+            match &t.kind {
+                TokenKind::Lt => depth += 1,
+                TokenKind::Gt => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return depth == 0 && continues(i + 1);
+                    }
+                }
+                TokenKind::Shr => {
+                    depth -= 2;
+                    if depth <= 0 {
+                        return depth == 0 && continues(i + 1);
+                    }
+                }
+                TokenKind::LParen | TokenKind::LBracket => parens += 1,
+                TokenKind::RParen | TokenKind::RBracket => {
+                    if parens == 0 {
+                        return false;
+                    }
+                    parens -= 1;
+                }
+                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace if parens == 0 => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
     }
 
     pub(super) fn can_start_expr(kind: &TokenKind) -> bool {

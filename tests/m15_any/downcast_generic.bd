@@ -1,0 +1,40 @@
+//@ run
+//> 10
+//> none
+//> 20
+
+interface Tagged {
+    fn tag(self): i32
+}
+
+struct Pair<T> {
+    first: T
+    tag: i32
+}
+
+Pair<T>: Tagged {
+    fn tag(self): i32 {
+        self.tag
+    }
+}
+
+fn main() {
+    let pair32: Pair<i32> = Pair { first: 1, tag: 10 }
+    let a: any Tagged = pair32
+    match a.downcast<Pair<i32>>() {
+        Some(pair) => println(pair.tag().to_string()),
+        None => println("none"),
+    }
+    let pair64: Pair<i64> = Pair { first: 2 as i64, tag: 20 }
+    let b: any Tagged = pair64
+    match b.downcast<Pair<i32>>() {
+        Some(pair) => println(pair.tag().to_string()),
+        None => println("none"),
+    }
+    let other64: Pair<i64> = Pair { first: 3 as i64, tag: 20 }
+    let c: any Tagged = other64
+    match c.downcast<Pair<i64>>() {
+        Some(pair) => println(pair.tag().to_string()),
+        None => println("none"),
+    }
+}

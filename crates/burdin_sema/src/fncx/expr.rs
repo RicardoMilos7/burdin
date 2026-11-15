@@ -12,6 +12,11 @@ impl FnCx<'_> {
     /// US; issue #74). `CPtr` types in signatures and `extern` declarations are not values and are not affected.
     pub(super) fn expr(&mut self, e: &ast::Expr, expect: Option<&Ty>) -> tir::Expr {
         let checked = self.expr_inner(e, expect);
+        // A value used where `any Interface` is expected is boxed (spec/existentials.md, AN3).
+        let checked = match expect {
+            Some(want @ Ty::Any(_)) => self.coerce_any(checked, want),
+            _ => checked,
+        };
         // An `unsafe` block is checked with the depth raised; the block itself is the boundary and its result
         // may be a raw pointer.
         let boundary = matches!(e.kind, ast::ExprKind::UnsafeBlock(_));
@@ -36,6 +41,16 @@ impl FnCx<'_> {
             // A generic type path only means something as the left side of an associated call.
             K::Name { name, args: _ } => {
                 self.diags.error(Code::TYPE_MISMATCH, span, format!("`{}` is a type, not a value", name.name));
+                error_expr(span)
+            }
+            // `x.downcast<T>` is only meaningful when called; `call` handles the callee before reaching here.
+            K::TypeArgs(base, _) => {
+                self.expr(base, None);
+                self.diags.error(
+                    Code::UNKNOWN_NAME,
+                    span,
+                    "type arguments on a member name are only allowed in a call, as in `x.downcast<T>()`",
+                );
                 error_expr(span)
             }
             K::Block(b) => {

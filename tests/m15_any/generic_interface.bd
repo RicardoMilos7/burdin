@@ -1,0 +1,28 @@
+//@ run
+//> 7
+//> 8
+
+interface Store<T> {
+    fn get(self): T
+    fn set(mut self, value: T)
+}
+
+struct Cell {
+    v: i32
+}
+
+Cell: Store<i32> {
+    fn get(self): i32 {
+        self.v
+    }
+    fn set(mut self, value: i32) {
+        self.v = value
+    }
+}
+
+fn main() {
+    let mut cell: any Store<i32> = Cell { v: 7 }
+    println(cell.get().to_string())
+    cell.set(8)
+    println(cell.get().to_string())
+}
