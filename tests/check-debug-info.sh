@@ -49,6 +49,9 @@ find_tool() {   # $1 name: prints a usable tool, preferring the LLVM 21 spelling
     return 1
 }
 
+windows_host=0
+case "$(uname -s)" in MSYS*|MINGW*|CYGWIN*) windows_host=1 ;; esac
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/burdin-dbg.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT
 
@@ -89,8 +92,6 @@ if [ -z "${dwarfdump:-}" ]; then
 else
     "$dwarfdump" --debug-info "$exe" > info.txt 2>/dev/null
     "$dwarfdump" --debug-line "$exe" > lines.txt 2>/dev/null
-    windows_host=0
-    case "$(uname -s)" in MSYS*|MINGW*|CYGWIN*) windows_host=1 ;; esac
     if [ "$windows_host" -eq 1 ] && ! grep -Fq "DW_TAG_compile_unit" info.txt; then
         # MSVC's link.exe does not carry the DWARF sections into the image, and the driver does not produce a
         # PDB; the Linux and macOS jobs are where the DWARF sections are verified.
@@ -130,7 +131,10 @@ else
 fi
 
 gdb_tool=$(command -v gdb || true)
-if [ -n "$gdb_tool" ]; then
+if [ "$windows_host" -eq 1 ] && [ -n "$gdb_tool" ]; then
+    # MSVC's link.exe kept no DWARF, so gdb has nothing to read.
+    echo "note: the Windows linker kept no DWARF sections; skipping the gdb checks" >&2
+elif [ -n "$gdb_tool" ]; then
     "$gdb_tool" -q -batch -nx \
         -ex "set debuginfod enabled off" \
         -ex "break dbg.bd:7" \

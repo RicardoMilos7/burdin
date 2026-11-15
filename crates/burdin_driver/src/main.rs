@@ -686,6 +686,7 @@ pub(crate) fn compile(
     };
     let link_opts = LinkOptions {
         export_dynamic: cfg!(target_os = "linux"),
+        debug: options.debug,
         strip: options.strip,
         lto: options.lto,
         pgo_generate: options.pgo_generate,
@@ -809,6 +810,8 @@ fn llvm_tool(name: &str) -> Option<PathBuf> {
 struct LinkOptions {
     /// Put the program's symbols in the dynamic symbol table (ELF), for panic backtraces.
     export_dynamic: bool,
+    /// Keep the DWARF from the object in the executable (`-g`). Apple's linker drops it without this.
+    debug: bool,
     /// Strip the executable (`--strip`).
     strip: bool,
     /// The input is LLVM bitcode and the linker must run LTO (`--lto`).
@@ -895,6 +898,9 @@ fn msvc_link_args(object: &Path, output: &Path, libs: &[String], llvm_libdir: Op
         "libcmt.lib".into(),
         "libucrt.lib".into(),
         "libvcruntime.lib".into(),
+        // The runtime calls `CaptureStackBackTrace` for panic backtraces. An object emitted by LLVM carries no
+        // default-library directives, so name kernel32 explicitly; `cl` does not add it for a bare object.
+        "kernel32.lib".into(),
     ];
     if let Some(dir) = llvm_libdir {
         args.push(format!("/LIBPATH:{}", dir.display()).into());
@@ -907,6 +913,10 @@ fn msvc_link_args(object: &Path, output: &Path, libs: &[String], llvm_libdir: Op
 
 fn unix_link_args(object: &Path, output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["-o".into(), output.into(), object.into()];
+    if opts.debug {
+        // ld64 keeps debug sections only when the link names -g; GNU ld ignores the flag.
+        args.push("-g".into());
+    }
     if opts.export_dynamic {
         args.push("-rdynamic".into());
     }
@@ -1093,6 +1103,7 @@ mod tests {
         assert!(args.contains(&"libcmt.lib".to_string()));
         assert!(args.contains(&"libucrt.lib".to_string()));
         assert!(args.contains(&"libvcruntime.lib".to_string()));
+        assert!(args.contains(&"kernel32.lib".to_string()));
         assert!(args.contains(&"LLVM-C.lib".to_string()));
         assert!(!args.iter().any(|arg| arg.starts_with("/LIBPATH:")));
     }
@@ -1149,6 +1160,13 @@ mod tests {
             &LinkOptions::default(),
         ));
         assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
+    }
+
+    #[test]
+    fn unix_link_args_keep_debug_information() {
+        let opts = LinkOptions { debug: true, ..Default::default() };
+        let args = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &[], &opts));
+        assert!(args.contains(&"-g".to_string()), "{args:?}");
     }
 
     #[test]

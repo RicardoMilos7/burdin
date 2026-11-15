@@ -33,15 +33,15 @@ jobs:
 
       # LLVM 21 is the slowest download in this job. actions/cache restores as the runner
       # user and cannot write under /usr, so the installed tree is kept in $HOME and copied
-      # into place with sudo. A distribution that splits libLLVM into the multiarch
-      # directory leaves /usr/lib/llvm-21/lib/libLLVM*.so pointing outside the tree, so the
-      # resolved real files are cached under their absolute paths too (issue #46).
+      # into place with sudo. A distribution that splits libLLVM or libclang-cpp into the
+      # multiarch directory leaves /usr/lib/llvm-21/lib/*.so pointing outside the tree, so
+      # the resolved real files are cached under their absolute paths too (issue #46).
       - name: Cache LLVM 21
         id: cache-llvm
         uses: actions/cache@v4
         with:
           path: ~/.cache/burdin/llvm-21
-          key: ${{ runner.os }}-llvm-21
+          key: ${{ runner.os }}-llvm-21-v2
 
       - name: Install LLVM 21
         run: |
@@ -66,7 +66,7 @@ jobs:
             for extra in /usr/include/llvm-21 /usr/include/llvm-c-21; do
               if [ -e "$extra" ]; then sudo cp -a --parents "$extra" "$cache/root"; fi
             done
-            for link in /usr/lib/llvm-21/lib/libLLVM*.so*; do
+            for link in /usr/lib/llvm-21/lib/libLLVM*.so* /usr/lib/llvm-21/lib/libclang-cpp*.so*; do
               if [ -L "$link" ]; then readlink -f "$link"; fi
             done | sort -u | while read -r target; do
               case "$target" in
