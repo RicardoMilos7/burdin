@@ -207,8 +207,8 @@ EOF
     rm -rf "$dir"
 }
 
-normalize_mtimes() {   # $1 directory
-    local epoch=$1 stamp
+normalize_mtimes() {   # $1 directory, $2 epoch
+    local dir=$1 epoch=$2 stamp
     if date -u -d "@$epoch" +%Y%m%d%H%M.%S >/dev/null 2>&1; then
         stamp=$(date -u -d "@$epoch" +%Y%m%d%H%M.%S)
     elif date -u -r "$epoch" +%Y%m%d%H%M.%S >/dev/null 2>&1; then
@@ -216,7 +216,7 @@ normalize_mtimes() {   # $1 directory
     else
         die "cannot format the source epoch $epoch"
     fi
-    find "$1" -exec env TZ=UTC touch -t "$stamp" {} + || die "cannot normalize file times"
+    find "$dir" -exec env TZ=UTC touch -t "$stamp" {} + || die "cannot normalize file times"
 }
 
 make_archive() {   # $1 staging directory, $2 root directory name, $3 archive path, $4 epoch
@@ -252,7 +252,7 @@ package_binary() {   # $1 binary, $2 output dir
     chmod 755 "$stage/$root/burdin$(exe_suffix "$TARGET")"
     cp "$ROOT/README.md" "$ROOT/CHANGELOG.md" "$stage/$root/" || die "cannot copy the documentation"
     cp "$ROOT/docs/error-codes.md" "$stage/$root/docs/" || die "cannot copy the error-code reference"
-    normalize_mtimes "$stage"
+    normalize_mtimes "$stage" "$SOURCE_EPOCH"
     make_archive "$stage" "$root" "$archive" "$SOURCE_EPOCH"
     [ -s "$archive" ] || die "the archive is empty: $archive"
     hash=$(sha256_of "$archive")
