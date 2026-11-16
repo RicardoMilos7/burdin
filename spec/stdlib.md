@@ -436,7 +436,7 @@ Keys need `==` (`Eq`). `for (k, v) in map` borrows the map for the loop; iterati
 program must not depend on it. The implementation is an open-addressing hash table: lookup, insert, and remove are
 expected O(1), the table keeps a 3/4 load factor and rehashes as it grows, and removing a key shifts the rest of its
 probe cluster back instead of leaving tombstones. Keys are hashed structurally — integers, `bool`, `char`, floats,
-`String` by its bytes, tuples, structs, enums, `Option`, `Result`, and ranges — so a key needs only `==`, not
+`String` by its bytes, tuples, fixed-size arrays, structs, enums, `Option`, `Result`, and ranges — so a key needs only `==`, not
 `Hash`.
 
 ### Map entry operations (issue #482)
@@ -665,7 +665,7 @@ struct Reverse<T> derives (Copy, Clone, Eq, Debug) { value: T }   // `<` is `T`'
 ```
 
 `a.cmp(b): Ordering` is provided by the compiler for every type that satisfies `Ord`: the integers, `char`, `bool`,
-`str`, `String`, `()`, tuples and ranges of ordered parts, a struct or enum that derives `Ord`, a type parameter with
+`str`, `String`, `()`, tuples, fixed-size arrays, and ranges of ordered parts, a struct or enum that derives `Ord`, a type parameter with
 an `Ord` bound, and `Reverse<T>`. It calls the private `std.cmp.__ord_cmp`, which is `if a < b { Less } else if b < a
 { Greater } else { Equal }`. `Option<T>` and `Result<T, E>` get `cmp` from extension methods in `std.cmp` (`None`
 before every `Some`; every `Ok` before every `Err`; contents compared when the kinds match): they are not `Ord`, so

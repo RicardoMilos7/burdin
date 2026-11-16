@@ -33,6 +33,34 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 Ok(acc)
             }
+            Ty::Array(elem, n) => {
+                let Some(elem_t) = self.llvm_ty(elem) else { return Ok(yes) };
+                let head = self.new_block("eq.array.head");
+                let body = self.new_block("eq.array.body");
+                let end = self.new_block("eq.array.end");
+                let before = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(head).map_err(llvm_err)?;
+                self.builder.position_at_end(head);
+                let i = self.builder.build_phi(self.usize_ty, "i").map_err(llvm_err)?;
+                let index = i.as_basic_value().into_int_value();
+                let n_v = self.usize_ty.const_int(*n, false);
+                let more = self.builder.build_int_compare(IntPredicate::ULT, index, n_v, "").map_err(llvm_err)?;
+                self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                // SAFETY (LLVM): index < n.
+                let a = unsafe { self.builder.build_in_bounds_gep(elem_t, l, &[index], "") }.map_err(llvm_err)?;
+                let b = unsafe { self.builder.build_in_bounds_gep(elem_t, r, &[index], "") }.map_err(llvm_err)?;
+                let same = self.eq_at(a, b, elem)?;
+                let next =
+                    self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                let body_end = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_conditional_branch(same, head, end).map_err(llvm_err)?;
+                i.add_incoming(&[(&self.usize_ty.const_zero(), before), (&next, body_end)]);
+                self.builder.position_at_end(end);
+                let result = self.builder.build_phi(bool_ty, "eq").map_err(llvm_err)?;
+                result.add_incoming(&[(&yes, head), (&bool_ty.const_zero(), body_end)]);
+                Ok(result.as_basic_value().into_int_value())
+            }
             Ty::Range(inner, _) => {
                 let st = t.into_struct_type();
                 let a = self.builder.build_struct_gep(st, l, 0, "").map_err(llvm_err)?;
@@ -197,6 +225,38 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.first_difference(&orders)
             }
+            Ty::Array(elem, n) => {
+                let Some(elem_t) = self.llvm_ty(elem) else { return Ok(i32_ty.const_zero()) };
+                let head = self.new_block("cmp.array.head");
+                let body = self.new_block("cmp.array.body");
+                let end = self.new_block("cmp.array.end");
+                let before = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(head).map_err(llvm_err)?;
+                self.builder.position_at_end(head);
+                let i = self.builder.build_phi(self.usize_ty, "i").map_err(llvm_err)?;
+                let index = i.as_basic_value().into_int_value();
+                let n_v = self.usize_ty.const_int(*n, false);
+                let more = self.builder.build_int_compare(IntPredicate::ULT, index, n_v, "").map_err(llvm_err)?;
+                self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                // SAFETY (LLVM): index < n.
+                let a = unsafe { self.builder.build_in_bounds_gep(elem_t, l, &[index], "") }.map_err(llvm_err)?;
+                let b = unsafe { self.builder.build_in_bounds_gep(elem_t, r, &[index], "") }.map_err(llvm_err)?;
+                let order = self.cmp_at(a, b, elem)?;
+                let next =
+                    self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                let body_end = self.builder.get_insert_block().expect("positioned");
+                let equal = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, order, i32_ty.const_zero(), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(equal, head, end).map_err(llvm_err)?;
+                i.add_incoming(&[(&self.usize_ty.const_zero(), before), (&next, body_end)]);
+                self.builder.position_at_end(end);
+                let result = self.builder.build_phi(i32_ty, "order").map_err(llvm_err)?;
+                result.add_incoming(&[(&i32_ty.const_zero(), head), (&order, body_end)]);
+                Ok(result.as_basic_value().into_int_value())
+            }
             Ty::Range(inner, _) => {
                 let st = t.into_struct_type();
                 let mut orders = Vec::new();
@@ -331,6 +391,34 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     acc = self.hash_at(f, fty, acc)?;
                 }
                 Ok(acc)
+            }
+            Ty::Array(elem, n) => {
+                let Some(elem_t) = self.llvm_ty(elem) else { return Ok(acc) };
+                let head = self.new_block("hash.array.head");
+                let body = self.new_block("hash.array.body");
+                let end = self.new_block("hash.array.end");
+                let before = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(head).map_err(llvm_err)?;
+                self.builder.position_at_end(head);
+                let i = self.builder.build_phi(self.usize_ty, "i").map_err(llvm_err)?;
+                let running = self.builder.build_phi(self.cx.i64_type(), "hash").map_err(llvm_err)?;
+                let index = i.as_basic_value().into_int_value();
+                let n_v = self.usize_ty.const_int(*n, false);
+                let more = self.builder.build_int_compare(IntPredicate::ULT, index, n_v, "").map_err(llvm_err)?;
+                self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                // SAFETY (LLVM): index < n.
+                let element =
+                    unsafe { self.builder.build_in_bounds_gep(elem_t, ptr, &[index], "") }.map_err(llvm_err)?;
+                let mixed = self.hash_at(element, elem, running.as_basic_value().into_int_value())?;
+                let next =
+                    self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                let body_end = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(head).map_err(llvm_err)?;
+                i.add_incoming(&[(&self.usize_ty.const_zero(), before), (&next, body_end)]);
+                running.add_incoming(&[(&acc, before), (&mixed, body_end)]);
+                self.builder.position_at_end(end);
+                Ok(running.as_basic_value().into_int_value())
             }
             Ty::Range(inner, _) => {
                 let st = t.into_struct_type();

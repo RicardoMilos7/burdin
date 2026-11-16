@@ -820,6 +820,8 @@ impl Globals {
             Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Ord, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
+            // A fixed-size array orders lexicographically.
+            Ty::Array(t, _) => self.has_ord_in(t, env),
             Ty::Range(t, _) => self.has_ord_in(t, env),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -862,6 +864,8 @@ impl Globals {
             Ty::Range(t, _) => self.has_hash_in(t, env),
             Ty::Result(t, e) => self.has_hash_in(t, env) && self.has_hash_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
+            // A fixed-size array hashes its elements in order.
+            Ty::Array(t, _) => self.has_hash_in(t, env),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
                 s.derives.hash && s.fields.iter().all(|f| self.has_hash_in(&f.ty, env))

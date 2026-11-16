@@ -1,0 +1,51 @@
+//@ run
+//> true false true
+//> true true false false
+//> true true
+//> true
+//> true
+//> Some(6) None 2
+//> Equal Less Greater
+//> true
+//> true
+
+// Fixed-size arrays compare element by element: `==`, `<`, the `Eq` and `Ord` bounds, `cmp`, and hashing for `Set` and `Map` keys.
+
+fn same<T: Eq>(a: T, b: T): bool {
+    a == b
+}
+
+fn least<T: Ord>(a: T, b: T): T {
+    if a < b { a } else { b }
+}
+
+struct Grid derives (Eq, Ord, Hash) {
+    cells: [i32; 3]
+    tag: char
+}
+
+fn main() {
+    let a: [i32; 3] = [1, 2, 3]
+    let b: [i32; 3] = [1, 2, 4]
+    println("{} {} {}", a == [1, 2, 3], a == b, a != b)
+    println("{} {} {} {}", a < b, a <= b, a > b, a >= b)
+    println("{} {}", same(a, [1, 2, 3]), same(["a", "b"], ["a", "b"]))
+    println("{}", least(a, b) == a)
+    let nested: [[i32; 2]; 2] = [[1, 2], [3, 4]]
+    println("{}", nested == [[1, 2], [3, 4]])
+
+    let mut m = Map<[i32; 2], i32>.new()
+    m.insert([1, 2], 5)
+    m.insert([2, 1], 6)
+    m.insert([1, 2], 7)
+    m.insert([1, 3], 8)
+    m.remove([1, 3])
+    println("{:?} {:?} {}", m.get([2, 1]), m.get([9, 9]), m.len())
+
+    println("{:?} {:?} {:?}", a.cmp(a), a.cmp(b), b.cmp(a))
+
+    let mut s = Set<Grid>.new()
+    s.insert(Grid { cells: [1, 2, 3], tag: 'g' })
+    println("{}", s.contains(Grid { cells: [1, 2, 3], tag: 'g' }))
+    println("{}", Grid { cells: [1, 2, 3], tag: 'g' } < Grid { cells: [1, 2, 4], tag: 'a' })
+}
