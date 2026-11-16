@@ -1,0 +1,26 @@
+//@ run
+//> false None
+//> computing 21
+//> 42
+//> 42
+//> true Some(42)
+//> 6
+
+// `lazy(init)` computes its value the first time `force` asks, and keeps it. `peek` looks without computing.
+
+fn expensive(n: i32): i32 {
+    println("computing {n}")
+    n * 2
+}
+
+fn main() {
+    let base = 21
+    let mut l = lazy(|| expensive(base))
+    println("{} {:?}", l.is_forced(), l.peek())
+    println("{}", *l.force())
+    println("{}", *l.force())
+    println("{} {:?}", l.is_forced(), l.peek())
+    let mut text = lazy(|| String.from("cached"))
+    let t = text.force()
+    println("{}", t.len())
+}

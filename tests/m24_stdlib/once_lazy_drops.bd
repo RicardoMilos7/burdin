@@ -1,0 +1,38 @@
+//@ run
+//> true
+//> drop 2
+//> false
+//> after set
+//> taken
+//> false
+//> 4
+//> end
+//> drop 4
+//> drop 1
+
+// A value that `Once.set` refuses is dropped at once, a stored one with its cell or when it is taken, and a `Lazy` that
+// was never forced never builds its value.
+
+struct Tag {
+    id: i32
+}
+
+Tag: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut o = Once<Tag>.new()
+    println("{}", o.set(Tag { id: 1 }))
+    println("{}", o.set(Tag { id: 2 }))
+    println("after set")
+    let taken = o.take()
+    println("taken")
+    let mut unforced = lazy(|| Tag { id: 3 })
+    println("{}", unforced.is_forced())
+    let mut forced = lazy(|| Tag { id: 4 })
+    println("{}", forced.force().id)
+    println("end")
+}
