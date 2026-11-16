@@ -24,8 +24,9 @@ tuples and arrays of `Copy` types, `&T`, `str`, `[T]`, and `CPtr<T>` are `Copy` 
 
 `==` and `!=` compare values. The derive requires every field to support `==`. Structs and tuples compare fields in
 declaration order and are equal when every field is equal. Enums are equal only in the same variant with equal
-payload fields. `Option` and `Result` support `==` when their parts do; arrays, slices, references, `List`, `Map`,
-`Heap`, and `Chars` do not support `==` in stage 0.
+payload fields. `Option` and `Result` support `==` when their parts do. A fixed-size array `[T; N]` supports `==` when
+`T` does, comparing element by element (milestone 24, issue #484); slices, references, `List`, `Map`, `Heap`, and
+`Chars` do not support `==`.
 
 ## `Ord`
 
@@ -33,13 +34,14 @@ payload fields. `Option` and `Result` support `==` when their parts do; arrays, 
 Comparison is lexicographic:
 
 - a struct or tuple compares its fields in declaration order, the first unequal field deciding;
+- a fixed-size array `[T; N]` compares its elements in index order, the first unequal element deciding;
 - an enum compares variant declaration index first (`0` is the first variant written), then, for the same variant,
   its payload fields in declaration order;
 - integers compare numerically (signed or unsigned as written), `bool` as `false < true`, `char` by scalar value,
   `String` and `str` byte by byte.
 
 `Ord` does not imply `Eq`; a type that needs both lists both. A float field has no derived ordering, so a struct with
-an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option`, `Result`, arrays,
+an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option`, `Result`,
 and references do not support `<` in stage 0.
 
 ## `Hash`
@@ -58,7 +60,7 @@ are zero-extended. Then
 acc = (acc XOR w) * 0x00000100000001b3        (mod 2^64)
 ```
 
-The parts are: a struct's or tuple's fields in declaration order; an enum's variant declaration index (as an `i32`
+The parts are: a struct's or tuple's fields in declaration order; an array's elements in index order; an enum's variant declaration index (as an `i32`
 word) followed by the active variant's payload fields in declaration order; an `Option`'s tag (`false` = `None`,
 `true` = `Some`) followed by the payload when `Some`. The derive requires every field to be `Hash`. Equal values hash
 equally; the values themselves are pinned by `m07_generics/derive_values`.

@@ -387,6 +387,8 @@ impl Globals {
             Ty::Range(t, _) => self.has_eq_in(t, env),
             Ty::Result(t, e) => self.has_eq_in(t, env) && self.has_eq_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
+            // A fixed-size array compares element by element.
+            Ty::Array(t, _) => self.has_eq_in(t, env),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
                 s.derives.eq && s.fields.iter().all(|f| self.has_eq_in(&f.ty, env))
@@ -395,8 +397,7 @@ impl Globals {
                 let e = &self.enums[a.id];
                 e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq_in(&f.ty, env)))
             }
-            Ty::Array(..)
-            | Ty::Heap(_, _)
+            Ty::Heap(_, _)
             | Ty::CPtr(_)
             | Ty::CString
             | Ty::List(_, _)
