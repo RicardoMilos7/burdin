@@ -1,0 +1,52 @@
+//@ run
+//> false false true true true
+//> Some("C:") None
+//> ["Users", "me", "a.txt"]
+//> a.txt a txt
+//> Some(Path("C:\\Users")) Some(Path("C:\\")) None
+//> C:\Users\me C:\Users\me\x D:\other C:\x C:x C:\a/b\c
+//> true
+//> ok
+
+// Windows rules: `/` and `\` both separate, a drive such as `C:` is a prefix, and only a drive with a separator (or a
+// share) is absolute. The rules are chosen with `Path.windows`, so this runs on every system.
+
+fn show(own name: Option<String>): String {
+    match name {
+        Some(s) => s,
+        None => "none".to_string(),
+    }
+}
+
+fn main() {
+    println(
+        "{} {} {} {} {}",
+        Path.windows("\\temp").is_absolute(),
+        Path.windows("C:temp").is_absolute(),
+        Path.windows("C:\\temp").is_absolute(),
+        Path.windows("C:/temp").is_absolute(),
+        Path.windows("\\\\server\\share").is_absolute(),
+    )
+    println("{:?} {:?}", Path.windows("C:\\a").drive(), Path.windows("a\\b").drive())
+    let p = Path.windows("C:\\Users/me\\a.txt")
+    println("{:?}", p.components())
+    println("{} {} {}", show(p.file_name()), show(p.file_stem()), show(p.extension()))
+    println(
+        "{:?} {:?} {:?}",
+        p.parent().unwrap().parent(),
+        Path.windows("C:\\Users").parent(),
+        Path.windows("C:\\").parent(),
+    )
+    let base = Path.windows("C:\\Users")
+    println(
+        "{} {} {} {} {} {}",
+        Path.windows("C:\\Users\\me").as_str(),
+        base.join("me\\x").as_str(),
+        base.join("D:\\other").as_str(),
+        base.join("\\x").as_str(),
+        Path.windows("C:").join("x").as_str(),
+        Path.windows("C:\\a/b").join("c").as_str(),
+    )
+    println("{}", Path.windows("a\\b") == Path.windows("a\\b"))
+    println("ok")
+}

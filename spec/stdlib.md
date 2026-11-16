@@ -602,6 +602,46 @@ that lives in a local or a struct and is passed to whatever needs it, and `Once`
 that. A value that is known at compile time is a `const` or a `comptime` expression instead. The concurrency-safe
 `Once` and `Lazy` (a cell several threads can race to fill) arrive with threads in stage 2.
 
+## Paths (issue #194)
+
+```
+struct Path derives (Clone, Eq) {
+    fn new(text: str): Path                 // the rules of the system the program is compiled for
+    fn unix(text: str): Path                // Unix rules       fn windows(text: str): Path     // Windows rules
+    fn as_str(self): str                    fn separator(self): char
+    fn is_absolute(self): bool              fn is_relative(self): bool       fn drive(self): Option<String>
+    fn components(self): List<String>       // names only: no separators, empty pieces, or `.`; `..` is kept
+    fn join(self, other: str): Path
+    fn parent(self): Option<Path>           fn file_name(self): Option<String>
+    fn file_stem(self): Option<String>      fn extension(self): Option<String>
+    fn with_file_name(self, name: str): Path        fn with_extension(self, extension: str): Path
+    fn normalize(self): Path
+    fn exists(self): bool                   // the only function that asks the operating system
+}
+Path: Display    Path: Debug                // `Path("a/b")`
+```
+
+**Platform split.** There is one module. A `Path` carries the rules that read its text, so `Path.unix` and
+`Path.windows` work on every system and the tests exercise both; `Path.new` chooses the host's. Unix rules: `/` is the
+only separator and a path is absolute when it starts with one. Windows rules: `/` and `\` both separate; a drive
+(`C:`) is a prefix; a path is absolute only with a drive and a separator (`C:\x`) or as a share (`\\server\share`), so
+`\x` and `C:x` are relative; `join` writes `\`. Nothing but `exists` touches the file system, and none of this
+resolves symbolic links.
+
+- `join`: an absolute `other` (on Windows also one with a drive) replaces the path; on Windows a rooted `other` such as
+  `\x` keeps the drive; an empty path or empty `other` adds no separator; otherwise `other` follows one separator.
+- `parent` drops the last name (`a/b` is `a`, `/a` is `/`, `a` is the empty path); a path with no names has none.
+  `file_name` is the last name, `None` for `..` or no names; trailing separators and `.` pieces are ignored.
+- `extension` is the text after the last dot of the file name, unless the name starts with that dot (`.profile` has
+  none); `file_stem` is the rest (`archive.tar.gz` is `archive.tar` and `gz`). `with_extension("")` removes it.
+- `normalize` removes `.` and empty pieces, cancels `name/..`, keeps a leading `..` of a relative path, drops `..` at a
+  root, and writes the rules' separator; an empty result is `.`. It is lexical, so it can change what a path with
+  symbolic links names.
+- `exists` is true when the system can see the path (the C library's `access` with no mode bits). It is impure, so a
+  comptime evaluation that reaches it fails with E0224. Directory listing and metadata are #411.
+
+Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists`.
+
 ## `Heap<T>`
 
 ```
@@ -970,6 +1010,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
+| Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

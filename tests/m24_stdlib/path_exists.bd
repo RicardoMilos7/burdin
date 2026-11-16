@@ -1,0 +1,16 @@
+//@ run
+//> true false
+//> true
+//> true
+
+// `exists` asks the operating system: the current directory is there, a made-up name is not, and a file that was just
+// written is. `Path.new` follows the rules of the system the test runs on.
+
+fn main() {
+    let name = "path_exists_probe.tmp"
+    let probe = Path.new(name)
+    println("{} {}", Path.new(".").exists(), probe.exists())
+    write_file(name, "x").unwrap()
+    println("{}", probe.exists())
+    println("{}", Path.new("a").join("b").parent().unwrap() == Path.new("a"))
+}
