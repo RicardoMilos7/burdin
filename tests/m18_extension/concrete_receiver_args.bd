@@ -1,0 +1,20 @@
+//@ run
+//> 5
+//> 0
+
+// A receiver's type arguments may be concrete types: `Option<i32>` has no type parameters of its own, so the
+// extension applies to exactly that type (EX1, EX3).
+
+fn Option<i32>.or_zero(self): i32 {
+    match self {
+        Some(v) => v,
+        None => 0,
+    }
+}
+
+fn main() {
+    let a: Option<i32> = Some(5)
+    let b: Option<i32> = None
+    println(a.or_zero().to_string())
+    println(b.or_zero().to_string())
+}

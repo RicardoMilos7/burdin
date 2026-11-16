@@ -271,6 +271,58 @@ mod tests {
     }
 
     #[test]
+    fn extension_declarations_parse() {
+        // `fn Type.name(...)`: the receiver is the type path before the last dot, including its type
+        // arguments, and a `<...>` after the method name is the method's own generic list (spec/extensions.md).
+        let (file, out) = render(
+            "fn String.shout(self): String { self }\n\
+             fn List<T>.largest(self): T where T: Copy + Ord { self[0] }\n\
+             fn sh.Square.area(self): i32 { 1 }\n\
+             fn Holder.pair<U>(self, own other: U): (i32, U) { (0, other) }\n\
+             fn plain() {}\n",
+        );
+        assert_eq!(out, "");
+        assert_eq!(fn_names(&file), ["plain"]);
+        let extensions: Vec<&ExtensionDecl> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Extension(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(extensions.len(), 4);
+
+        let shout = extensions[0];
+        assert_eq!(shout.func.name.name, "shout");
+        let TypeKind::Path(segments) = &shout.recv.kind else { panic!("the receiver is a path") };
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].name.name, "String");
+        assert!(matches!(shout.func.params[0].kind, ParamKind::SelfParam));
+
+        let largest = extensions[1];
+        let TypeKind::Path(segments) = &largest.recv.kind else { panic!("the receiver is a path") };
+        assert_eq!(segments[0].name.name, "List");
+        assert_eq!(segments[0].args.len(), 1, "`List<T>` declares the receiver's parameter");
+        assert!(largest.func.generics.is_empty(), "`T` is not a method parameter");
+        assert_eq!(largest.func.where_clause.len(), 1);
+
+        let area = extensions[2];
+        let TypeKind::Path(segments) = &area.recv.kind else { panic!("the receiver is a path") };
+        assert_eq!(segments.iter().map(|s| s.name.name.as_str()).collect::<Vec<_>>(), ["sh", "Square"]);
+
+        let pair = extensions[3];
+        let TypeKind::Path(segments) = &pair.recv.kind else { panic!("the receiver is a path") };
+        assert!(segments[0].args.is_empty());
+        assert_eq!(
+            pair.func.generics.iter().map(|g| g.name.name.as_str()).collect::<Vec<_>>(),
+            ["U"],
+            "`<U>` after the method name is the method's generic list"
+        );
+        assert!(matches!(pair.func.params[1].convention, Convention::Own));
+    }
+
+    #[test]
     fn recovers_at_the_next_statement() {
         let (file, out) = render("fn main() {\n    let = 5\n    let x = 1\n    let y = x + 1\n}\n");
         assert_eq!(out, "t.bd:2:9: error[E0001]: expected a pattern, found `=`\n");

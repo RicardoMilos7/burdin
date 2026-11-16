@@ -52,6 +52,10 @@ pub enum TestAttrValue {
 #[derive(Debug)]
 pub enum Item {
     Fn(FnDecl),
+    /// `fn Type.name(self, ...) { ... }`: an extension method (`spec/extensions.md`). The receiver type is
+    /// resolved in the declaring module; the function itself is an ordinary one whose first parameter is
+    /// `self`.
+    Extension(ExtensionDecl),
     Const(ConstDecl),
     Struct(StructDecl),
     Enum(EnumDecl),
@@ -64,6 +68,15 @@ pub enum Item {
     Extern(ExternBlock),
     /// `extern "C" fn ... { ... }`: a Burdin function exported with the C ABI (issue #489).
     ExternFn(ExternFnDecl),
+}
+
+/// `fn Type.name(self, ...)`: an extension method. `func` holds the signature and body exactly as an ordinary
+/// function's; `recv` is the receiver type written before the method name, including the type parameters the
+/// receiver declares (`fn List<T>.sum(self)`).
+#[derive(Debug)]
+pub struct ExtensionDecl {
+    pub recv: Type,
+    pub func: FnDecl,
 }
 
 #[derive(Debug)]

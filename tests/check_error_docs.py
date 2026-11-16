@@ -8,9 +8,11 @@ What it checks:
   * docs/error-codes.md has exactly one section for every code in the tests/README.md registry, no extra
     codes, and no duplicate headings;
   * every section has a "How to fix" paragraph and at least one checked example;
-  * every `burdin` snippet on the page is inside an `error-example`, and the page has no unchecked snippets;
+  * every `burdin` snippet on the page is inside an `error-example` or a `warning-example`, and the page has no
+    unchecked snippets;
   * every example is a complete program (or package) that the driver compiles and rejects with exactly the
-    `//~ E0000` diagnostics marked in it, all of the section's code;
+    `//~ E0000` diagnostics marked in it, all of the section's code; a `warning-example` compiles successfully
+    and emits exactly the marked warnings;
   * the page is linked from README.md and from tests/README.md;
   * `burdin explain <code>` prints every section, `burdin explain` lists every code, and an unknown code
     exits 2.
@@ -94,7 +96,7 @@ for code in registry_codes:
         continue
     if "**How to fix:**" not in section:
         add_problem(f"docs/error-codes.md: {code} has no '**How to fix:**' paragraph")
-    if f"error-example: {code}" not in section:
+    if f"error-example: {code}" not in section and f"warning-example: {code}" not in section:
         add_problem(f"docs/error-codes.md: {code} has no checked example")
 
 for index in (harness.ROOT / "README.md", REGISTRY):
@@ -105,7 +107,7 @@ for index in (harness.ROOT / "README.md", REGISTRY):
 # --- Example extraction ------------------------------------------------------
 
 
-def check_example(directory: Path, code: str, target: str, mode: str, files, contents) -> None:
+def check_example(directory: Path, code: str, target: str, mode: str, warning: bool, files, contents) -> None:
     # Materialize the captured sources before looking for the target.
     for path in files:
         destination = directory / path
@@ -128,7 +130,12 @@ def check_example(directory: Path, code: str, target: str, mode: str, files, con
     command = [burdin, "test" if mode == "test" else "build", target, "--no-color", "--diagnostic-format=short"]
     result = harness.run(command, cwd=directory, merge=True)
     output = harness.text(harness.normalize(result.stdout))
-    if result.returncode == 0:
+    if warning:
+        # A warning is printed, but compilation succeeds: that is what makes it a warning.
+        if result.returncode != 0:
+            add_problem(f"warning example {code}: compilation failed, but a warning example must compile")
+            return
+    elif result.returncode == 0:
         add_problem(f"example {code}: compiled successfully, but the section expects {code}")
         return
 
@@ -151,12 +158,14 @@ def check_example(directory: Path, code: str, target: str, mode: str, files, con
             add_problem(f"example {code}: {path}:{number} marks {marker} instead of {code}")
 
     actual = []
+    severity = "warning" if warning else "error"
+    diagnostic = re.compile(r":[0-9]+:[0-9]+: " + severity + r"\[E[0-9]{4}\]")
     for line in output.split("\n"):
-        if not re.search(r":[0-9]+:[0-9]+: error\[E[0-9]{4}\]", line):
+        if not diagnostic.search(line):
             continue
-        actual_file = re.sub(r":[0-9]+:[0-9]+: error\[E[0-9]{4}\].*$", "", line)
-        line_match = re.search(r".*:([0-9]+):[0-9]+: error\[E[0-9]{4}\]", line)
-        marker_match = re.search(r"error\[(E[0-9]{4})\]", line)
+        actual_file = re.sub(r":[0-9]+:[0-9]+: " + severity + r"\[E[0-9]{4}\].*$", "", line)
+        line_match = re.search(r".*:([0-9]+):[0-9]+: " + severity + r"\[E[0-9]{4}\]", line)
+        marker_match = re.search(severity + r"\[(E[0-9]{4})\]", line)
         if not line_match or not marker_match:
             continue
         line_number = line_match.group(1)
@@ -193,10 +202,16 @@ with harness.temporary_dir("burdin-error-docs-") as work:
     files = []
     contents = {}
 
+    kind = "error"
     for line in docs_lines:
         if state == "idle":
-            if line.startswith("<!-- error-example:"):
-                attrs = line[len("<!-- error-example:"):]
+            opener = next(
+                (name for name in ("error-example:", "warning-example:") if line.startswith(f"<!-- {name}")),
+                None,
+            )
+            if opener is not None:
+                kind = opener.split("-")[0]
+                attrs = line[len(f"<!-- {opener}"):]
                 if attrs.endswith("-->"):
                     attrs = attrs[:-3]
                 attrs = attrs.strip()
@@ -221,7 +236,7 @@ with harness.temporary_dir("burdin-error-docs-") as work:
                 path = ""
                 state = "await_fence"
             elif line.startswith("```"):
-                add_problem(f"docs/error-codes.md: fenced block outside an error-example: {line}")
+                add_problem(f"docs/error-codes.md: fenced block outside an example: {line}")
 
         elif state == "await_fence":
             if line == "```burdin":
@@ -258,8 +273,8 @@ with harness.temporary_dir("burdin-error-docs-") as work:
                 contents.setdefault(path, []).append(line)
 
         elif state == "await_end":
-            if line == "<!-- /error-example -->":
-                check_example(directory, code, target, mode, files, contents)
+            if line == f"<!-- /{kind}-example -->":
+                check_example(directory, code, target, mode, kind == "warning", files, contents)
                 state = "idle"
             else:
                 add_problem(
@@ -267,7 +282,7 @@ with harness.temporary_dir("burdin-error-docs-") as work:
                 )
 
     if state != "idle":
-        add_problem("docs/error-codes.md: unterminated error-example")
+        add_problem("docs/error-codes.md: unterminated example")
 
 # --- burdin explain ----------------------------------------------------------
 

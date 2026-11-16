@@ -1,0 +1,15 @@
+//@ run
+//> 3
+
+// An extension may be `unsafe fn`; calling it needs an `unsafe` block, like any other unsafe function (EX1,
+// EX6).
+
+unsafe fn String.raw_len(self): usize {
+    self.len()
+}
+
+fn main() {
+    let s = String.from("abc")
+    let n = unsafe { s.raw_len() }
+    println(n.to_string())
+}

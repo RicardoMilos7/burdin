@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// Two modules may declare extensions with the same name for the same receiver; importing both names into one
+// module is a duplicate import (EX5).
+
+use a.shout
+use b.shout //~ E0007
+
+fn main() {}

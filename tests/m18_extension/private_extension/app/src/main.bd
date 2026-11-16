@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `priv` on an extension is package-private, like every other declaration: another package cannot import it
+// (EX2; E0150).
+
+use lib.secret //~ E0150
+
+fn main() {}

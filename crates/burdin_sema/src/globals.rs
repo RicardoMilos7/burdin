@@ -47,15 +47,47 @@ pub(crate) struct ModuleInfo {
     pub(crate) ifaces: HashMap<String, usize>,
     /// Modules imported with `use`, by the name they are used with.
     pub(crate) modules: HashMap<String, usize>,
+    /// Extension methods visible in this module, by method name. Several entries under one name apply to
+    /// different receiver types (`spec/extensions.md`).
+    pub(crate) extensions: HashMap<String, Vec<usize>>,
     /// Package-private declarations, for E0150 when another package imports them.
     pub(crate) value_priv: HashMap<String, bool>,
     pub(crate) type_priv: HashMap<String, bool>,
     pub(crate) iface_priv: HashMap<String, bool>,
+    /// The extension names this module declares, with the `priv` flag. An imported extension is in
+    /// `extensions` but not here: like every other item, an import is not re-exported.
+    pub(crate) extension_priv: HashMap<String, bool>,
     /// Names this module re-exports with `pub use`, in each namespace, and the module aliases it re-exports.
     pub(crate) pub_values: std::collections::HashSet<String>,
     pub(crate) pub_types: std::collections::HashSet<String>,
     pub(crate) pub_ifaces: std::collections::HashSet<String>,
     pub(crate) pub_modules: std::collections::HashSet<String>,
+    pub(crate) pub_extensions: std::collections::HashSet<String>,
+}
+
+/// One extension method declaration: `fn Type.name(self, ...)`.
+#[derive(Clone)]
+pub(crate) struct ExtensionInfo {
+    /// The method name after the receiver type.
+    pub(crate) name: String,
+    /// The receiver type as written, with the declaration's type parameters as `Ty::Param`.
+    pub(crate) recv: Ty,
+    /// The module that declares the extension, whose names its receiver and body use.
+    pub(crate) module: usize,
+    /// Every type parameter of the declaration: the receiver's, then the method's own.
+    pub(crate) params: Vec<String>,
+    /// The parameters that occur in `recv`, in order. A call binds all of them from the receiver.
+    pub(crate) recv_params: Vec<String>,
+    /// The bounds of each parameter in `params`.
+    pub(crate) bounds: Vec<Vec<crate::generics::Bound>>,
+    /// The [`Globals::generic_fns`] template when the declaration has type parameters, and therefore is
+    /// instantiated per call like a generic function.
+    pub(crate) generic: Option<usize>,
+    /// The one function of a non-generic extension, or the identity function of a generic one. `None` when the
+    /// declaration is invalid and was reported.
+    pub(crate) func: Option<FuncId>,
+    /// The method name, where diagnostics point.
+    pub(crate) span: burdin_diag::Span,
 }
 
 /// One package of the compilation: the package being built and its dependencies.
@@ -99,6 +131,8 @@ pub(crate) struct Globals {
     pub(crate) enum_pkg: Vec<usize>,
     /// Whether each struct or enum (an instance included) is package-private.
     pub(crate) adt_priv: HashMap<(bool, usize), bool>,
+    /// Every extension method declaration of the program, in declaration order.
+    pub(crate) extensions: Vec<ExtensionInfo>,
     /// Methods by the type they belong to (`(false, struct)` or `(true, enum)`) and name.
     pub(crate) methods: HashMap<((bool, usize), String), FuncId>,
     /// Whether each method is package-private.
@@ -228,6 +262,16 @@ impl Globals {
             return None;
         }
         self.iface_name(module, name)
+    }
+
+    /// The extensions named `name` if the module declares or re-exports them. A name may have several
+    /// declarations, one per receiver type.
+    pub(crate) fn exported_extension(&self, module: usize, name: &str) -> Option<Vec<usize>> {
+        let info = &self.modules[module];
+        if !info.extension_priv.contains_key(name) && !info.pub_extensions.contains(name) {
+            return None;
+        }
+        info.extensions.get(name).cloned()
     }
 
     /// The struct `name` of the standard library, as a type.

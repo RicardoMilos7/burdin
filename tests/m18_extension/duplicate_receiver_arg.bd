@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// The receiver's type arguments declare the extension's type parameters, and each is declared once (EX1, EX5).
+
+struct Duo<A, B> {
+    first: A,
+    second: B,
+}
+
+fn Duo<T, T>.first(self): T where T: Copy { //~ E0007
+    self.first
+}
+
+fn main() {}

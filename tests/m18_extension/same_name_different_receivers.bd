@@ -1,0 +1,23 @@
+//@ run
+//> string
+//> gadget
+
+// One module may declare several extensions with one method name when their receiver types differ; each call
+// picks the one its receiver matches (EX5).
+
+struct Gadget {
+    n: i32,
+}
+
+fn String.label(self): String {
+    String.from("string")
+}
+
+fn Gadget.label(self): String {
+    String.from("gadget")
+}
+
+fn main() {
+    println(String.from("x").label())
+    println(Gadget { n: 1 }.label())
+}

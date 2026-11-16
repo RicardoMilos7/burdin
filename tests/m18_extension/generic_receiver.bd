@@ -1,0 +1,32 @@
+//@ run
+//> 9
+//> 0
+
+// A generic receiver declares the extension's type parameters: `List<T>` makes `T` a parameter, and a call
+// instantiates the extension from the receiver's type (EX1, EX6).
+
+fn List<T>.largest(self): T where T: Copy + Ord {
+    let mut best = self[0]
+    let mut i: usize = 1
+    while i < self.len() {
+        if self[i] > best {
+            best = self[i]
+        }
+        i = i + 1
+    }
+    best
+}
+
+fn List<T>.count_text(self): String {
+    self.len().to_string()
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(3)
+    xs.push(9)
+    xs.push(4)
+    println(xs.largest().to_string())
+    let ys = List<String>.new()
+    println(ys.count_text())
+}

@@ -25,7 +25,8 @@ not updated and may disagree with the repository.
    behavior of `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`, `spec/existentials.md` is the behavior of `any`
    and `impl` existential types, object safety, boxing, and downcasts, `spec/errors.md` is `error` declarations, the
    dynamic `Error`, `Result<T>`, `context`, traces, and `main(): Result<T>`, `spec/arguments.md` is default and named
-   arguments, and `spec/test-runner.md` is the behavior of `burdin test`.
+   arguments, `spec/extensions.md` is extension methods and their resolution order, and `spec/test-runner.md` is the
+   behavior of `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -111,8 +112,8 @@ docs/                     the user-facing error-code reference (checked by tests
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)
 .github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
-spec/                     grammar, memory rules, standard-library surface, iteration protocol, derives, test
-                          runner, stage 0 scope, stage 1 plan
+spec/                     grammar, memory rules, standard-library surface, iteration protocol, derives, extension
+                          methods, test runner, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts
 ```
 

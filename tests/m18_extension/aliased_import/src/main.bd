@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// An extension is called by its declared name, so it cannot be imported under another name (EX2).
+
+use text.shout as yell //~ E0216
+
+fn main() {}

@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// Calling an unsafe extension outside an `unsafe` block is E0161, the same rule as any unsafe function (EX6).
+
+unsafe fn String.raw_len(self): usize {
+    self.len()
+}
+
+fn main() {
+    let s = String.from("abc")
+    let n = s.raw_len() //~ E0161
+    println(n.to_string())
+}

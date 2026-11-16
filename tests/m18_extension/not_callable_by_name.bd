@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// An extension method is called with dot syntax only; it is not a function in the module's value namespace
+// (EX8).
+
+fn String.shout(self): String {
+    String.from("!")
+}
+
+fn main() {
+    let s = shout(String.from("x")) //~ E0002
+    println(s)
+}

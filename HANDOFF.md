@@ -1,13 +1,13 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, and thirtieth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, and thirty-first. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirtieth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-first session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
-(`any` and `impl`), 16 (errors), and 17 (default and named arguments) are done**: 404 conformance tests; all pass
-in debug and release (the release run skips the debug-only tests).
+(`any` and `impl`), 16 (errors), 17 (default and named arguments), and 18 (extension methods) are done**: 436
+conformance tests; all pass in debug and release (the release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -93,7 +93,7 @@ is resolved, and boxes at every expected-type position; the move, borrow, and or
 expression forms; code generation emits `{ ptr, ptr }` values, one private constant vtable per `(T, I)` pair
 `{ i64 type_id, ptr drop, ptr method... }`, indirect calls, and type-id-checked downcasts that move the value out and
 free the allocation without dropping it again. The new diagnostics are E0200, E0201, E0202, and E0204. The tests are
-`tests/m15_any/` with 24 tests. The remaining milestones are m18 (extension methods) onward.
+`tests/m15_any/` with 24 tests. The remaining milestones are m19 (operator overloading) onward.
 
 The twenty-ninth session implemented milestone 16, errors (issue #126). It decided first (`spec/errors.md`,
 ERR1-ERR10) that an `error enum` lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`
@@ -112,6 +112,26 @@ diagnostics are E0210, E0211, and E0212. The session also fixed a code-generatio
 a temporary created inside one branch had an uninitialized drop flag at the statement's drop site, which an
 optimizer could treat as an undefined free and use to delete the rest of the function; the flag now starts `false`
 in the entry block. The tests are `tests/m16_errors/` with 25 tests.
+
+The thirty-first session implemented milestone 18, extension methods (issue #143, sub-issues #144-#149). It
+decided first (`spec/extensions.md`, EX1-EX8) that `fn Type.name(self, ...)` at module scope adds a method to any
+type name in scope (local, imported, or built-in); the receiver's type arguments declare the extension's type
+parameters and a `<...>` after the method name adds method-level ones, with bounds from inline parameters and
+`where` predicates. An extension is visible in its declaring module and in modules that import it **by name**
+(`use text.shout`, `use text.{shout}`); importing the module or another item does not bring it, an import is not
+re-exported, `pub use` re-exports it, and `priv` is package-private (E0150). `x.f()` tries the type's methods
+(inherent and interface, including the methods the compiler provides for built-in types) before a visible
+extension, so a method always wins; a same-named extension gets the new warning E0215 at its declaration and the
+program still compiles. A second extension for the same receiver in one module, and a second import of one
+extension name, are E0007; a declaration without `self` first, a malformed receiver path, a `where` predicate
+naming a non-parameter, and an import under another name are the new E0216. The parser reads the receiver path
+without backtracking (`generic_list_end`), and sema registers each extension as an ordinary function whose first
+parameter is the receiver, so `self`/`mut self`/`own self`, drop and clone behavior, views, and code generation are
+the ordinary ones; a generic extension is monomorphized per instantiation. The driver now prints warnings on a
+successful build, and `//@ stderr:` works on `run` tests so the warning is asserted. `docs/error-codes.md` gained
+the first `warning-example` block, checked by `tests/check_error_docs.py`. The tests are `tests/m18_extension/`
+with 32 tests, including package tests for imports, a dependency's extension and receiver type, a `pub use`
+re-export, duplicates, an alias, and `priv`.
 
 The thirtieth session implemented milestone 17, default and named arguments (issue #137, sub-issues #138-#142). It
 decided first (`spec/arguments.md`, AG1-AG7) that a parameter written `name: Type = expr` may be omitted at the
@@ -144,8 +164,9 @@ tests cover the syntax.
 | Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
 | Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, Error>`, error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
 | Arguments | `spec/arguments.md`, `crates/burdin_syntax`, `crates/burdin_tir` (`ParamSig.name`/`.default`), `crates/burdin_sema/src/fncx/{call,generic,item}.rs` | Milestone 17 (issue #137). `name: Type = expr` declares a constant default checked at the declaration and inserted at each call that omits it; `f(name: value)` matches a parameter by name in any order before generic inference; arguments evaluate in parameter order. New codes E0213 and E0214; the tests are `tests/m17_arguments/` |
+| Extension methods | `spec/extensions.md`, `crates/burdin_syntax/src/ast.rs` (`Item::Extension`), `crates/burdin_sema/src/extensions.rs`, `crates/burdin_sema/src/{declare,imports,prelude,resolve}.rs`, `crates/burdin_sema/src/fncx/call.rs` | Milestone 18 (issue #143). `fn Type.name(self, ...)` adds a method to a local, imported, or built-in type; visible in its module and where imported by name; methods win over a same-named extension, which gets the warning E0215 at its declaration. Generic receivers and method parameters are monomorphized. New codes E0215 (warning) and E0216; the tests are `tests/m18_extension/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
-| Conformance tests | `tests/` | 404 tests. All pass: m01 to m17 (all pass in debug; release passes all except the debug-only tests) |
+| Conformance tests | `tests/` | 436 tests. All pass: m01 to m18 (all pass in debug; release passes all except the debug-only tests) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -408,6 +429,19 @@ how to call WSL from PowerShell.
   `{ value: any Error, frames: List<TraceFrame>, context: String }`, `TraceFrame`, the `context`/`is`/`downcast`
   helpers, and the `IoError`, `ParseIntError`, and `AssertError` enums; a debug build records creation and
   propagation frames and a release build records none. `tests/m16_errors/` covers the behavior.
+- **Milestone 18 added extension methods.** `ast::Item::Extension` holds an `ExtensionDecl { recv, func }`; the
+  parser recognizes `fn Type.name` by scanning the receiver path (including a generic list whose closing `>` is
+  followed by `.`) before consuming anything, so an ordinary function and an extension never need backtracking, and
+  `fn_rest` is shared by both. `Globals::extensions` holds one `ExtensionInfo` per declaration (receiver pattern,
+  parameters, bounds, optional `generic_fns` template, function), and each module has an extension namespace copied
+  by `use module.name` exactly like other items (`pub use`, `priv`, E0150, E0007, E0216 for an alias). The receiver
+  is resolved in `declare_values`/`register_extensions` and again in each `resolve_all` pass, because a generic
+  receiver's instance may not exist yet; `GenericFn.recv` makes `allocate_fn` give a generic extension instance its
+  `self` type. A call checks the type's methods and the compiler-provided methods first and falls back to
+  `FnCx::extension_call`, which matches the receiver pattern (`extensions::extension_applies`) and then calls the
+  ordinary function or `generic_call_with_receiver`. `check_extension_problems` reports a duplicate same-receiver
+  declaration (E0007) and a shadowed extension (E0215 warning) once the methods exist. Code generation needs no
+  change: the extension is an ordinary function with a `self` parameter, reachable through the call.
 - **Milestone 17 added default and named arguments.** `ast::Param.default` and `ast::Arg.name` carry the syntax,
   and `tir::ParamSig` gained `name` and `default`. In `resolve_all`, `fncx::check_defaults` checks each default in
   a fresh `FnCx` with the function's module, subst, and `self_ty` but no parameters or locals, stores the typed

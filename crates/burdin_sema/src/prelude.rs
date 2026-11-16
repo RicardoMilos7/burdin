@@ -63,7 +63,8 @@ impl Sema<'_> {
             })
             .collect();
         // The public names each standard module exports.
-        type Exports = (Vec<(String, Global)>, Vec<(String, TypeName)>, Vec<(String, usize)>);
+        type Exports =
+            (Vec<(String, Global)>, Vec<(String, TypeName)>, Vec<(String, usize)>, Vec<(String, Vec<usize>)>);
         let mut exports: Vec<Exports> = Vec::new();
         for &src in &std_modules {
             let values = self.globals.modules[src]
@@ -84,7 +85,13 @@ impl Sema<'_> {
                 .filter(|name| !self.globals.modules[src].iface_priv.get(*name).copied().unwrap_or(false))
                 .filter_map(|name| self.globals.exported_iface(src, name).map(|i| (name.clone(), i)))
                 .collect();
-            exports.push((values, types, ifaces));
+            let extensions = self.globals.modules[src]
+                .extensions
+                .keys()
+                .filter(|name| !self.globals.modules[src].extension_priv.get(*name).copied().unwrap_or(false))
+                .filter_map(|name| self.globals.exported_extension(src, name).map(|e| (name.clone(), e)))
+                .collect();
+            exports.push((values, types, ifaces, extensions));
         }
         for module in 0..self.globals.modules.len() {
             if self.globals.modules[module].package == std_id {
@@ -93,7 +100,7 @@ impl Sema<'_> {
             for (name, target) in &aliases {
                 self.globals.modules[module].modules.entry(name.clone()).or_insert(*target);
             }
-            for (values, types, ifaces) in &exports {
+            for (values, types, ifaces, extensions) in &exports {
                 for (name, global) in values {
                     self.globals.modules[module].values.entry(name.clone()).or_insert(*global);
                 }
@@ -102,6 +109,9 @@ impl Sema<'_> {
                 }
                 for (name, iface) in ifaces {
                     self.globals.modules[module].ifaces.entry(name.clone()).or_insert(*iface);
+                }
+                for (name, exts) in extensions {
+                    self.globals.modules[module].extensions.entry(name.clone()).or_insert_with(|| exts.clone());
                 }
             }
         }

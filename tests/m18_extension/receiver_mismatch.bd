@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// An extension applies only to the receiver type it names (EX3).
+
+fn i32.doubled(self): i32 {
+    self * 2
+}
+
+fn main() {
+    let s = String.from("x")
+    println(s.doubled().to_string()) //~ E0002
+}

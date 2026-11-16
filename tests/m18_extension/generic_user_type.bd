@@ -1,0 +1,24 @@
+//@ run
+//> 7
+//> right 8
+
+struct Pair<T> {
+    left: T,
+    right: T,
+}
+
+fn Pair<T>.first(self): T where T: Copy {
+    self.left
+}
+
+fn Pair<T>.second_label(self): String where T: Copy + Display {
+    let mut out = String.from("right ")
+    out.push_str(self.right.to_string())
+    out
+}
+
+fn main() {
+    let p = Pair { left: 7, right: 8 }
+    println(p.first().to_string())
+    println(p.second_label())
+}

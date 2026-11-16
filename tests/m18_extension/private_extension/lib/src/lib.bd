@@ -1,0 +1,3 @@
+priv fn String.secret(self): String {
+    String.from("secret")
+}

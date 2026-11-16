@@ -271,6 +271,7 @@ impl<'t> Sema<'t> {
                                 bounds,
                                 decl: self.tpl.fns.len(),
                                 identity,
+                                recv: None,
                             });
                             self.generic_fn_bounds.push((index, f, module));
                             self.tpl.fns.push(f);
@@ -294,6 +295,7 @@ impl<'t> Sema<'t> {
                         self.globals.const_tys.push(Ty::Error);
                         self.const_decls.push(NamedSrc { decl: c, module });
                     }
+                    ast::Item::Extension(e) => self.declare_extension_name(module, e, diags),
                     ast::Item::Extern(block) => self.declare_extern(module, block, diags),
                     ast::Item::ExternFn(e) => {
                         let name = &e.decl.name.name;
@@ -367,6 +369,38 @@ impl<'t> Sema<'t> {
                 }
             }
         }
+    }
+
+    /// An extension method's name joins the module's extension namespace (`spec/extensions.md`, EX1). Several
+    /// declarations may share a name when their receiver types differ; the receiver and the function itself are
+    /// resolved by [`Sema::register_extensions`] once imports are known.
+    fn declare_extension_name(&mut self, module: usize, e: &'t ast::ExtensionDecl, diags: &mut Diagnostics) {
+        let name = e.func.name.name.clone();
+        let is_priv = e.func.is_priv;
+        if let Some(&previous) = self.globals.modules[module].extension_priv.get(&name)
+            && previous != is_priv
+        {
+            diags.error(
+                Code::DUPLICATE_NAME,
+                e.func.name.span,
+                format!("the extension method `{name}` is declared both `priv` and public in this module"),
+            );
+        }
+        self.globals.modules[module].extension_priv.entry(name.clone()).or_insert(is_priv);
+        let id = self.globals.extensions.len();
+        self.globals.extensions.push(crate::globals::ExtensionInfo {
+            name: name.clone(),
+            recv: Ty::Error,
+            module,
+            params: Vec::new(),
+            recv_params: Vec::new(),
+            bounds: Vec::new(),
+            generic: None,
+            func: None,
+            span: e.func.name.span,
+        });
+        self.globals.modules[module].extensions.entry(name).or_default().push(id);
+        self.extension_srcs.push(crate::session::ExtensionSrc { decl: e, module });
     }
 
     /// Registers the functions of an `extern "C"` block. A symbol is declared once: a second declaration with the

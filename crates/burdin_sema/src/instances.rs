@@ -87,12 +87,16 @@ impl<'t> Sema<'t> {
     /// Makes the function for a generic function and these arguments.
     fn allocate_fn(&mut self, template: usize, args: Vec<Ty>) {
         let g = &self.globals.generic_fns[template];
+        let subst: Vec<(String, Ty)> = g.params.iter().cloned().zip(args.iter().cloned()).collect();
+        // A generic extension method is an ordinary function whose first parameter is `self`; its instance
+        // takes the receiver type with the arguments substituted (`spec/extensions.md`, EX7).
+        let self_ty = g.recv.as_ref().map(|recv| self.globals.subst_ty(recv, &subst));
         let item = FnItem {
             decl: self.tpl.fns[g.decl],
             name: Globals::instance_name(&g.name, &args),
             module: g.module,
-            self_ty: None,
-            subst: g.params.iter().cloned().zip(args.iter().cloned()).collect(),
+            self_ty,
+            subst,
             bounds: Vec::new(),
             symbolic: false,
             check_body: true,

@@ -29,6 +29,7 @@ tests/
   m15_any/             `any`/`impl` existentials, boxing, dispatch, downcast
   m16_errors/          `error` declarations, messages, `from`, dynamic `Error`, `context`, traces, `main`
   m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
+  m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -208,6 +209,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `Error` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
 | E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, depending on a type parameter, or not a constant expression |
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
+| E0215 | Warning: an extension method is shadowed by a method of its receiver type; calls use the method |
+| E0216 | Invalid extension method declaration: no `self` first parameter, a receiver path with type arguments on a segment other than the type, a `where` clause naming something that is not one of its type parameters, or an extension imported under another name |
 
 ### Codes without a compile-fail test
 
@@ -218,6 +221,7 @@ here names an unknown code, a code that already has a test, or no reason.
 
 | Code | Why it has no compile-fail test |
 | --- | --- |
+| E0215 | A warning, so compilation continues. `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, and `shadowed_interface_method.bd` assert it with `//@ stderr: warning[E0215]`. |
 
 ## Decisions the tests encode
 
@@ -351,6 +355,18 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     closure values, and `extern` declarations take no named arguments. Every argument is evaluated left to
     right in parameter order, a default in the position of its parameter.
     `spec/arguments.md` AG1-AG7, `tests/m17_arguments/`.
+
+23. **Extension methods.** `fn Type.name(self, ...)` at module scope declares a method on any type name in scope,
+    local, imported, or built-in; the receiver's type arguments declare its type parameters (`fn List<T>.sum(self)`),
+    and a `<...>` after the method name adds method-level ones. `self` must be first, and `mut self`/`own self`
+    follow the method conventions. An extension is visible in its declaring module and in modules that import it by
+    name (`use text.shout`, `use text.{shout}`); importing the module, an alias, or `use text.other` does not bring
+    it, and `priv` is package-private (E0150). `x.f()` tries the type's methods first (inherent and interface, and
+    the methods the compiler provides for built-in types) and a visible extension last; a same-named extension
+    always loses and gets E0215 at its declaration. A second extension for the same receiver in one module, and a
+    second import of one extension name, are E0007; an extension without `self`, a malformed receiver path, a
+    `where` naming a non-parameter, and an import under another name are E0216.
+    `spec/extensions.md` EX1-EX8, `tests/m18_extension/`.
 
 ## Review of the expected outputs
 
