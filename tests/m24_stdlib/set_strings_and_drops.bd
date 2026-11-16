@@ -1,0 +1,36 @@
+//@ run
+//> true
+//> false
+//> true
+//> 1
+//> drop 1
+//> false
+//> 1
+//> drop 1
+
+// A set owns its elements. A value that is inserted twice is kept once and the second copy is dropped on the
+// spot; the set drops what it still holds when it goes out of scope.
+
+struct Tag derives (Eq) {
+    id: i32
+}
+
+Tag: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut words = Set<String>.new()
+    println("{words.insert(String.from("alpha"))}")
+    println("{words.insert(String.from("alpha"))}")
+    println("{words.contains(String.from("alpha"))}")
+    println("{words.len()}")
+
+    let mut tags = Set<Tag>.new()
+    tags.insert(Tag { id: 1 })
+    let again = tags.insert(Tag { id: 1 })
+    println("{again}")
+    println("{tags.len()}")
+}

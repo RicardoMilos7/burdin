@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A set element needs `==`, so a type without `Eq` is rejected where the set type is written.
+
+struct Plain {
+    id: i32
+}
+
+fn take(s: Set<Plain>) { //~ E0141
+}
+
+fn main() {
+}

@@ -1,0 +1,38 @@
+//@ run
+//> 6
+//> 1 2 3
+//> 3
+
+// `for` walks a set through `Iterable`, and `iter()` gives the iterator; the order is not specified, so the
+// elements are sorted before they are shown.
+
+fn main() {
+    let mut s = Set<i32>.new()
+    s.insert(3)
+    s.insert(1)
+    s.insert(2)
+
+    let mut total = 0
+    for x in s {
+        total = total + *x
+    }
+    println("{total}")
+
+    let mut seen = List<i32>.new()
+    for x in s {
+        seen.push(*x)
+    }
+    seen.sort()
+    let mut out = String.new()
+    let mut first = true
+    for x in seen {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(x.to_string())
+        first = false
+    }
+    println(out)
+
+    println("{s.iter().count()}")
+}

@@ -1,0 +1,237 @@
+// `Set<T>`: a collection of distinct values (spec/stdlib.md).
+//
+// A set is a `Map<T, bool>` whose values are ignored, so it follows the map's rules exactly: an element needs only
+// `==`, lookup, insert, and remove are expected O(1), and the iteration order is not specified. Like `List` and
+// `Map`, a set takes an allocator as its last type argument and stores it (spec/allocators.md).
+
+use alloc.{Allocator, Global}
+use fmt.{Debug, Formatter}
+use iter.{Iterable, Iterator}
+use ops.PartialEq
+
+/// A set of distinct values.
+struct Set<T: Eq, A: Allocator = Global> {
+    map: Map<T, bool, A>
+}
+
+/// The iterator of `set.iter()`: it yields a view of each element, once, in no particular order. It borrows the
+/// set, so it is second-class like every iterator over borrowed storage.
+struct SetIter<I, T> {
+    inner: I
+}
+
+Set<T> where T: Eq {
+    /// An empty set that uses the default allocator.
+    fn new(): Set<T> {
+        Set { map: Map<T, bool>.new() }
+    }
+
+    /// A set of the elements of `items`; a repeated element is stored once.
+    fn from_list(own items: List<T>): Set<T> {
+        let mut set = Set<T>.new()
+        set.extend(items)
+        set
+    }
+}
+
+Set<T, A> where T: Eq, A: Allocator {
+    /// An empty set that stores `alloc` and takes its memory from it.
+    fn new_in(own alloc: A): Set<T, A> {
+        Set { map: Map<T, bool, A>.new_in(alloc) }
+    }
+
+    /// The number of elements.
+    fn len(self): usize {
+        self.map.len()
+    }
+
+    /// Whether the set has no elements.
+    fn is_empty(self): bool {
+        self.map.len() == 0
+    }
+
+    /// Whether `value` is an element.
+    fn contains(self, value: T): bool {
+        self.map.contains_key(value)
+    }
+
+    /// Adds `value`. Returns `true` when it was not there yet; an element that is already there is kept and the
+    /// new value is dropped.
+    fn insert(mut self, own value: T): bool {
+        let present = self.map.contains_key(value)
+        if present {
+            return false
+        }
+        self.map.insert(value, true)
+        true
+    }
+
+    /// Removes `value`. Returns `true` when it was an element.
+    fn remove(mut self, value: T): bool {
+        match self.map.remove(value) {
+            Some(_) => true,
+            None => false,
+        }
+    }
+
+    /// Removes every element.
+    fn clear(mut self) {
+        self.map.clear()
+    }
+
+    /// Adds every element of `items`.
+    fn extend(mut self, own items: List<T>) {
+        let mut items = items
+        loop {
+            match items.pop() {
+                Some(x) => {
+                    let _ = self.insert(x)
+                },
+                None => break,
+            }
+        }
+    }
+
+    /// The elements as a list, in no particular order. The set is consumed.
+    fn into_list(own self): List<T> {
+        let mut out = List<T>.new()
+        let mut entries = self.map.into_iter()
+        loop {
+            match entries.next() {
+                Some((key, _)) => out.push(key),
+                None => break,
+            }
+        }
+        out
+    }
+}
+
+Set<T, A>: Iterable<&T> where T: Eq, A: Allocator {
+    /// An iterator over views of the elements.
+    fn iter(self): SetIter<MapEntries<T, bool>, T> {
+        SetIter { inner: self.map.iter() }
+    }
+}
+
+SetIter<I, T>: Iterator<&T> where I: Iterator<(&T, &bool)> {
+    fn next(mut self): Option<&T> {
+        match self.inner.next() {
+            Some((key, _)) => Some(key),
+            None => None,
+        }
+    }
+}
+
+// Operations that build a new set copy elements, so they need `Clone`; the result uses the default allocator.
+Set<T> where T: Eq + Clone {
+    /// The elements of `self`, as a list of clones.
+    fn to_list(self): List<T> {
+        let mut out = List<T>.new()
+        for (key, _) in self.map {
+            out.push(key.clone())
+        }
+        out
+    }
+
+    /// A copy of the set.
+    fn clone(self): Set<T> {
+        let mut out = Set<T>.new()
+        for (key, _) in self.map {
+            let _ = out.insert(key.clone())
+        }
+        out
+    }
+
+    /// The elements that are in `self`, in `other`, or in both.
+    fn union(self, other: Set<T>): Set<T> {
+        let mut out = self.clone()
+        for (key, _) in other.map {
+            let _ = out.insert(key.clone())
+        }
+        out
+    }
+
+    /// The elements that are in both sets.
+    fn intersection(self, other: Set<T>): Set<T> {
+        let mut out = Set<T>.new()
+        for (key, _) in self.map {
+            if other.contains(key) {
+                let _ = out.insert(key.clone())
+            }
+        }
+        out
+    }
+
+    /// The elements of `self` that are not in `other`.
+    fn difference(self, other: Set<T>): Set<T> {
+        let mut out = Set<T>.new()
+        for (key, _) in self.map {
+            if !other.contains(key) {
+                let _ = out.insert(key.clone())
+            }
+        }
+        out
+    }
+
+    /// The elements that are in exactly one of the two sets.
+    fn symmetric_difference(self, other: Set<T>): Set<T> {
+        let mut out = self.difference(other)
+        for (key, _) in other.map {
+            if !self.contains(key) {
+                let _ = out.insert(key.clone())
+            }
+        }
+        out
+    }
+}
+
+Set<T> where T: Eq {
+    /// Whether every element of `self` is in `other`.
+    fn is_subset(self, other: Set<T>): bool {
+        if self.map.len() > other.map.len() {
+            return false
+        }
+        for (key, _) in self.map {
+            if !other.contains(key) {
+                return false
+            }
+        }
+        true
+    }
+
+    /// Whether every element of `other` is in `self`.
+    fn is_superset(self, other: Set<T>): bool {
+        other.is_subset(self)
+    }
+
+    /// Whether the two sets have no element in common.
+    fn is_disjoint(self, other: Set<T>): bool {
+        for (key, _) in self.map {
+            if other.contains(key) {
+                return false
+            }
+        }
+        true
+    }
+}
+
+Set<T>: PartialEq where T: Eq {
+    fn eq(self, other: Set<T>): bool {
+        self.map.len() == other.map.len() && self.is_subset(other)
+    }
+}
+
+Set<T>: Debug where T: Eq + Debug {
+    fn debug(self, mut f: Formatter) {
+        f.write_str("{{")
+        let mut first = true
+        for (key, _) in self.map {
+            if !first {
+                f.write_str(", ")
+            }
+            first = false
+            key.debug(mut f)
+        }
+        f.write_str("}}")
+    }
+}

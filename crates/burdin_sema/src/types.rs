@@ -302,6 +302,12 @@ impl Globals {
                 check_storable(&inner, args[0].span, "a `Shared` value", diags);
                 Ty::Shared(Box::new(inner))
             }
+            // The iterator `map.iter()` returns, which yields `(&K, &V)`. `std` needs its name to write the
+            // iterator of a type built on a map (`Set`); `MapIter` itself is the standard library's adapter.
+            ("MapEntries", 2) => Ty::MapIter(
+                Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
+                Box::new(self.resolve_type_in(&args[1], self_ty, subst, module, diags)),
+            ),
             ("CPtr", 1) => Ty::CPtr(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
             ("Range", 1) | ("RangeInclusive", 1) => {
                 let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
