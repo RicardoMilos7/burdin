@@ -319,6 +319,139 @@ fn String.repeat(self, count: usize): String {
     self.as_str().repeat(count)
 }
 
+// ---- Characters of a text ----
+//
+// The scope of Unicode support is the scalar value: these helpers count, index, and rebuild text by `char`. They do
+// not normalize and they do not group characters into grapheme clusters, so `é` written as `e` plus a combining
+// accent is two characters.
+
+/// The number of characters (Unicode scalar values) in the text; `len` counts bytes.
+fn str.char_count(self): usize {
+    let mut n: usize = 0
+    for c in self.chars() {
+        n = n + 1
+    }
+    n
+}
+
+/// Whether byte offset `i` is the start of a character or the end of the text.
+fn str.is_char_boundary(self, i: usize): bool {
+    let mut at: usize = 0
+    for c in self.chars() {
+        if at == i {
+            return true
+        }
+        at = at + c.len_utf8()
+    }
+    at == i
+}
+
+/// The `n`th character (counting from 0), or `None` when the text is shorter.
+fn str.nth_char(self, n: usize): Option<char> {
+    let mut i: usize = 0
+    for c in self.chars() {
+        if i == n {
+            return Some(c)
+        }
+        i = i + 1
+    }
+    None
+}
+
+/// The characters as a list.
+fn str.to_char_list(self): List<char> {
+    let mut out = List<char>.new()
+    for c in self.chars() {
+        out.push(c)
+    }
+    out
+}
+
+/// Each character with the byte offset where it starts.
+fn str.char_indices(self): List<(usize, char)> {
+    let mut out = List<(usize, char)>.new()
+    let mut at: usize = 0
+    for c in self.chars() {
+        out.push((at, c))
+        at = at + c.len_utf8()
+    }
+    out
+}
+
+/// A copy with the characters in the opposite order.
+fn str.reverse_chars(self): String {
+    let mut chars = self.to_char_list()
+    let mut out = String.new()
+    loop {
+        match chars.pop() {
+            Some(c) => out.push(c),
+            None => break,
+        }
+    }
+    out
+}
+
+/// The characters from index `start` up to (not including) `end`, counting characters, not bytes. An index past the
+/// end stops at the end.
+fn str.slice_chars(self, start: usize, end: usize): String {
+    let mut out = String.new()
+    let mut i: usize = 0
+    for c in self.chars() {
+        if i >= end {
+            break
+        }
+        if i >= start {
+            out.push(c)
+        }
+        i = i + 1
+    }
+    out
+}
+
+/// The characters of the list as a string.
+fn List<char>.collect_string(self): String {
+    let mut out = String.new()
+    for c in self {
+        out.push(c)
+    }
+    out
+}
+
+/// The number of characters in the string.
+fn String.char_count(self): usize {
+    self.as_str().char_count()
+}
+
+/// Whether byte offset `i` is the start of a character or the end of the string.
+fn String.is_char_boundary(self, i: usize): bool {
+    self.as_str().is_char_boundary(i)
+}
+
+/// The `n`th character, or `None`.
+fn String.nth_char(self, n: usize): Option<char> {
+    self.as_str().nth_char(n)
+}
+
+/// The characters as a list.
+fn String.to_char_list(self): List<char> {
+    self.as_str().to_char_list()
+}
+
+/// Each character with the byte offset where it starts.
+fn String.char_indices(self): List<(usize, char)> {
+    self.as_str().char_indices()
+}
+
+/// A copy with the characters in the opposite order.
+fn String.reverse_chars(self): String {
+    self.as_str().reverse_chars()
+}
+
+/// The characters from index `start` up to `end`.
+fn String.slice_chars(self, start: usize, end: usize): String {
+    self.as_str().slice_chars(start, end)
+}
+
 // ---- join ----
 
 /// The strings of the list with `sep` between them: `["a", "b"].join(", ")` is `"a, b"`.
