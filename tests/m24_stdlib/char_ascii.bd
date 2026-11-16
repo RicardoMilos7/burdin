@@ -1,0 +1,18 @@
+//@ run
+//> true true false false
+//> true false true false
+//> true false true
+//> true true false
+//> A z 3
+//> true false
+
+// The ASCII predicates and conversions are exact and never accept a non-ASCII character.
+
+fn main() {
+    println("{'a'.is_ascii_alphabetic()} {'Z'.is_ascii_alphabetic()} {'5'.is_ascii_alphabetic()} {'é'.is_ascii_alphabetic()}")
+    println("{'7'.is_ascii_digit()} {'a'.is_ascii_digit()} {'F'.is_ascii_hexdigit()} {'g'.is_ascii_hexdigit()}")
+    println("{' '.is_ascii_whitespace()} {'x'.is_ascii_whitespace()} {'!'.is_ascii_punctuation()}")
+    println("{'a'.is_ascii_lowercase()} {'A'.is_ascii_uppercase()} {'é'.is_ascii()}")
+    println("{'a'.to_ascii_uppercase()} {'Z'.to_ascii_lowercase()} {'3'.to_ascii_uppercase()}")
+    println("{'q'.eq_ignore_ascii_case('Q')} {'q'.eq_ignore_ascii_case('r')}")
+}

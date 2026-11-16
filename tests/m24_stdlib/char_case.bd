@@ -1,0 +1,14 @@
+//@ run
+//> A É Λ Я Ÿ
+//> a é λ я ÿ
+//> σ Σ ß
+//> true true true false
+
+// Case conversion is the one-to-one mapping: Latin, Greek, and Cyrillic letters change, everything else stays.
+
+fn main() {
+    println("{'a'.to_uppercase()} {'é'.to_uppercase()} {'λ'.to_uppercase()} {'я'.to_uppercase()} {'ÿ'.to_uppercase()}")
+    println("{'A'.to_lowercase()} {'É'.to_lowercase()} {'Λ'.to_lowercase()} {'Я'.to_lowercase()} {'Ÿ'.to_lowercase()}")
+    println("{'Σ'.to_lowercase()} {'ς'.to_uppercase()} {'ß'.to_uppercase()}")
+    println("{'a'.is_lowercase()} {'É'.is_uppercase()} {'ß'.is_lowercase()} {'1'.is_uppercase()}")
+}
