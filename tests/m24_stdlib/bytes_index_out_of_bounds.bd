@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: BytesMut index out of bounds
+//> before
+
+fn main() {
+    let mut b = BytesMut.new()
+    b.push(1)
+    println("before")
+    println("{}", b[3])
+}

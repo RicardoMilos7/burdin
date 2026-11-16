@@ -544,6 +544,7 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::MapGet
                         | tir::Method::MapGetMut
                         | tir::Method::MapGetOrInsert
+                        | tir::Method::SharedGet
                         | tir::Method::Chars
                         | tir::Method::Iter
                         | tir::Method::IterNext
@@ -562,6 +563,7 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::MapGet
                     | tir::Method::MapGetMut
                     | tir::Method::MapGetOrInsert
+                    | tir::Method::SharedGet
                     | tir::Method::Chars
                     // An iterator borrows the collection it walks; the items it yields point into it.
                     | tir::Method::Iter

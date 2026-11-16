@@ -1,0 +1,39 @@
+//@ run
+//> Ok("hello") Ok("world")
+//> Ok("orl") 3
+//> 5 7
+//> Ok(", world")
+//> 104 100
+//> Some(104) None
+//> true false
+//> true
+//> Bytes[104, 105]
+//> 5
+//> Ok("he")
+
+// `Bytes` shares its storage: a clone or a slice copies no bytes, and each handle stays valid on its own.
+
+fn main() {
+    let mut b = BytesMut.new()
+    b.extend(BytesMut.from_text("hello, world").as_slice())
+    let all = b.freeze()
+    let hello = all.slice(0, 5)
+    let world = all.slice(7, 12)
+    println("{:?} {:?}", hello.to_text(), world.to_text())
+    let inner = world.slice(1, 4)
+    println("{:?} {}", inner.to_text(), inner.len())
+    let (left, right) = all.split_at(5)
+    println("{} {}", left.len(), right.len())
+    println("{:?}", right.to_text())
+    println("{} {}", hello[0], world[4])
+    println("{:?} {:?}", all.get(0), all.get(12))
+    let copy = all.clone()
+    println("{} {}", copy == all, copy == hello)
+    println("{}", Bytes.new().is_empty())
+    println("{:?}", Bytes.from_text("hi"))
+    let owned = hello.to_list()
+    println("{}", owned.len())
+    // The original handle can go while the slices live on.
+    let kept = all.slice(0, 2)
+    println("{:?}", kept.to_text())
+}
