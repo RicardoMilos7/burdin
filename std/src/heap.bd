@@ -1,0 +1,168 @@
+// `PriorityHeap<T>`: a priority queue ordered by `Ord` (spec/stdlib.md).
+//
+// The elements are kept in ascending order in one list, so the highest priority is the last element: `peek` and `pop`
+// are O(1), `push` finds its place with a binary search (O(log n) comparisons) and moves the elements above it, and
+// iterating in priority order is walking the list backwards. It favors a simple, correct structure over a binary
+// heap's O(log n) push, because a swap of two elements of one list cannot be written without a placeholder value.
+// Elements that compare equal come out in the order they were pushed.
+
+use fmt.{Debug, Formatter}
+use iter.{Iterable, Iterator}
+use ops.Index
+
+/// A priority queue: `pop` returns the greatest element.
+struct PriorityHeap<T: Ord> {
+    items: List<T>
+}
+
+/// The iterator of `heap.iter()`: it yields a view of each element from the highest priority to the lowest. `D` is the
+/// view of the heap it walks, so the iterator is second-class like every iterator over borrowed storage.
+struct PriorityHeapIter<D, T> {
+    source: D
+    next_index: usize
+}
+
+/// What `PriorityHeapIter` needs from the heap it walks.
+interface HeapLen {
+    fn heap_len(self): usize
+}
+
+PriorityHeap<T>: HeapLen where T: Ord {
+    fn heap_len(self): usize {
+        self.items.len()
+    }
+}
+
+/// The index of the first element of `items` that is not less than `value`.
+priv fn __lower_bound<T: Ord>(items: List<T>, value: T): usize {
+    let mut low: usize = 0
+    let mut high = items.len()
+    while low < high {
+        let mid = low + (high - low) / 2
+        if items[mid].cmp(value).is_lt() {
+            low = mid + 1
+        } else {
+            high = mid
+        }
+    }
+    low
+}
+
+PriorityHeap<T> where T: Ord {
+    /// An empty heap.
+    fn new(): PriorityHeap<T> {
+        PriorityHeap { items: List<T>.new() }
+    }
+
+    /// A heap of the elements of `items`.
+    fn from_list(own items: List<T>): PriorityHeap<T> {
+        let mut out = PriorityHeap<T>.new()
+        out.extend(items)
+        out
+    }
+
+    /// The number of elements.
+    fn len(self): usize {
+        self.items.len()
+    }
+
+    /// Whether the heap has no elements.
+    fn is_empty(self): bool {
+        self.items.len() == 0
+    }
+
+    /// Adds `value`.
+    fn push(mut self, own value: T) {
+        let at = __lower_bound(self.items, value)
+        self.items.insert(at, value)
+    }
+
+    /// Adds every element of `items`.
+    fn extend(mut self, own items: List<T>) {
+        for x in items.into_iter() {
+            self.push(x)
+        }
+    }
+
+    /// Removes and returns the greatest element.
+    fn pop(mut self): Option<T> {
+        self.items.pop()
+    }
+
+    /// A view of the greatest element.
+    fn peek(self): Option<&T> {
+        self.items.last()
+    }
+
+    /// Removes every element.
+    fn clear(mut self) {
+        self.items.clear()
+    }
+
+    /// The elements as a list, from the highest priority to the lowest. The heap is consumed.
+    fn into_sorted_list(own self): List<T> {
+        let mut heap = self
+        let mut out = List<T>.new()
+        loop {
+            match heap.items.pop() {
+                Some(x) => out.push(x),
+                None => break,
+            }
+        }
+        out
+    }
+}
+
+/// `heap[0]` is the element `pop` returns next, `heap[1]` the one after it, and so on.
+PriorityHeap<T>: Index<T> where T: Ord {
+    fn index(self, i: usize): &T {
+        if i >= self.items.len() {
+            panic("PriorityHeap index out of bounds")
+        }
+        &self.items[self.items.len() - 1 - i]
+    }
+}
+
+PriorityHeap<T>: Iterable<&T> where T: Ord {
+    /// An iterator over views of the elements, from the highest priority to the lowest.
+    fn iter(self): PriorityHeapIter<&PriorityHeap<T>, T> {
+        PriorityHeapIter { source: &self, next_index: 0 }
+    }
+}
+
+PriorityHeapIter<D, T>: Iterator<&T> where D: Index<T> + HeapLen {
+    fn next(mut self): Option<&T> {
+        if self.next_index >= self.source.heap_len() {
+            return None
+        }
+        let k = self.next_index
+        self.next_index = self.next_index + 1
+        Some(&self.source[k])
+    }
+}
+
+PriorityHeap<T> where T: Ord + Clone {
+    /// A copy of the heap.
+    fn clone(self): PriorityHeap<T> {
+        let mut out = PriorityHeap<T>.new()
+        for x in self.items {
+            out.items.push(x.clone())
+        }
+        out
+    }
+}
+
+PriorityHeap<T>: Debug where T: Ord + Debug {
+    fn debug(self, mut f: Formatter) {
+        f.write_str("[")
+        let mut first = true
+        for x in self {
+            if !first {
+                f.write_str(", ")
+            }
+            first = false
+            x.debug(mut f)
+        }
+        f.write_str("]")
+    }
+}

@@ -1,0 +1,34 @@
+//@ run
+//> 9 5 5 3 1
+//> [9, 5, 5, 3, 1]
+//> [9, 5, 5, 3, 1]
+//> 1
+//> [9, 5, 5, 3, 1]
+
+// Iteration, `Debug`, `clone`, and `into_sorted_list` all go from the highest priority to the lowest; none of them
+// removes anything except `into_sorted_list`, which consumes the heap.
+
+fn main() {
+    let mut h = PriorityHeap<i32>.new()
+    for x in [5, 1, 9, 5, 3] {
+        h.push(x)
+    }
+    let mut out = String.new()
+    let mut first = true
+    for x in h {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(x.to_string())
+        first = false
+    }
+    println(out)
+    println("{h:?}")
+
+    let copy = h.clone()
+    println("{copy:?}")
+    let _ = h.pop()
+    let _ = h.pop()
+    println("{copy.len() - h.len() - 1}")
+    println("{copy.into_sorted_list():?}")
+}

@@ -1,0 +1,20 @@
+//@ run
+//> true
+//> 5 Some(9) 9 1
+//> Some(9) Some(5) Some(5) Some(3) Some(1) None
+//> true
+
+// `pop` returns the greatest element each time, whatever order the values were pushed in.
+
+fn main() {
+    let mut h = PriorityHeap<i32>.new()
+    println("{h.is_empty()}")
+    h.push(5)
+    h.push(1)
+    h.push(9)
+    h.push(5)
+    h.push(3)
+    println("{h.len()} {h.peek():?} {h[0]} {h[4]}")
+    println("{h.pop():?} {h.pop():?} {h.pop():?} {h.pop():?} {h.pop():?} {h.pop():?}")
+    println("{h.is_empty()}")
+}

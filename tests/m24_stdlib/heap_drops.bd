@@ -1,0 +1,35 @@
+//@ run
+//> drop 3
+//> kept 2
+//> drop 1
+//> drop 2
+
+// A heap owns its elements: `pop` hands one back, and the rest are dropped with the heap.
+
+struct Token {
+    id: i32
+}
+
+Token: PartialOrd {
+    fn lt(self, other: Token): bool {
+        self.id < other.id
+    }
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut h = PriorityHeap<Token>.new()
+    h.push(Token { id: 2 })
+    h.push(Token { id: 3 })
+    h.push(Token { id: 1 })
+    let _ = h.pop()
+    match h.peek() {
+        Some(t) => println("kept {t.id}"),
+        None => println("empty"),
+    }
+}

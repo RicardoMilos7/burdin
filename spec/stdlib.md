@@ -282,6 +282,39 @@ shared view `&X` satisfies an interface bound that `X` satisfies.
 
 Tests: `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds`.
 
+## `PriorityHeap<T>` (issue #192)
+
+`std.heap` is a priority queue ordered by `Ord`. The elements are kept in ascending order in one list, so the greatest
+element is the last one: `peek` and `pop` are O(1), `push` finds its place with a binary search (O(log n)
+comparisons) and moves the elements above it, and iterating in priority order is walking the list backwards. It is
+not a binary heap: swapping two elements of one list needs a placeholder value the language does not have, and the
+sorted list gives iteration in priority order for free. Elements that compare equal come out in the order they were
+pushed. The element type only needs an `Ord` bound, which a type with a `PartialOrd` impl also satisfies.
+
+```
+struct PriorityHeap<T: Ord> {
+    fn new(): PriorityHeap<T>
+    fn from_list(own items: List<T>): PriorityHeap<T>
+    fn len(self): usize
+    fn is_empty(self): bool
+    fn push(mut self, own value: T)
+    fn extend(mut self, own items: List<T>)
+    fn pop(mut self): Option<T>                       // the greatest element
+    fn peek(self): Option<&T>
+    fn clear(mut self)
+    fn into_sorted_list(own self): List<T>            // highest priority first
+    fn iter(self): PriorityHeapIter<&PriorityHeap<T>, T>   // yields &T, highest priority first
+    fn clone(self): PriorityHeap<T>                   // T: Clone
+}
+```
+
+`PriorityHeap<T>` implements `Index<T>` (`h[0]` is the element `pop` returns next; past the end it panics with
+`PriorityHeap index out of bounds`), `Debug` (`[9, 5, 1]`, highest priority first), and `Iterable<&T>`. To get a
+min-heap, wrap the elements in `Reverse<T>`.
+
+Tests: `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`,
+`heap_needs_ord`.
+
 ## `Heap<T>`
 
 ```
@@ -616,6 +649,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
 | `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
