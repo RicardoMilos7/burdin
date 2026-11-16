@@ -1,0 +1,21 @@
+//@ run
+//> Some(1)
+//> None
+//> Some(4)
+//> Some(0)
+//> None
+
+// `position` finds the first match and `rposition` the last.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [5, 7, 9, 7, 8, 5] {
+        xs.push(x)
+    }
+    println("{xs.position(|x| *x == 7):?}")
+    println("{xs.position(|x| *x == 100):?}")
+    println("{xs.rposition(|x| *x == 8):?}")
+    println("{xs.rposition(|x| *x == 5).and_then(|i| if i == 5 { Some(0) } else { None }):?}")
+    let empty = List<i32>.new()
+    println("{empty.rposition(|x| *x == 1):?}")
+}

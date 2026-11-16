@@ -1,0 +1,30 @@
+//@ run
+//> drop 2
+//> drop 4
+//> kept 1
+//> kept 3
+//> drop 1
+//> drop 3
+
+// The methods move elements and never duplicate one: each element is dropped exactly once.
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut xs = List<Token>.new()
+    for i in 1..=4 {
+        xs.push(Token { id: i })
+    }
+    xs.retain(|t| t.id % 2 == 1)
+    for t in xs {
+        println("kept {t.id}")
+    }
+}

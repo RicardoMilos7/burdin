@@ -1,0 +1,156 @@
+// Convenience methods for `List<T>` (spec/stdlib.md).
+//
+// They are extension methods on `List<T>`, a list that uses the default allocator (spec/extensions.md): the
+// prelude makes them visible in every module, and the methods the compiler provides (`push`, `pop`, `sort`, `map`,
+// `find`, ...) win. Each one moves elements with `pop`/`push`, so an element is never cloned and a `List` of
+// non-`Copy` values works.
+
+use mem
+
+/// A list holding `list`'s elements in the opposite order.
+priv fn __reversed<T>(own list: List<T>): List<T> {
+    let mut list = list
+    let mut out = List<T>.new()
+    loop {
+        match list.pop() {
+            Some(x) => out.push(x),
+            None => break,
+        }
+    }
+    out
+}
+
+/// Whether the last element of `list` equals `x`.
+priv fn __last_equals<T: Eq>(list: List<T>, x: T): bool {
+    match list.last() {
+        Some(previous) => *previous == x,
+        None => false,
+    }
+}
+
+/// Calls the predicate `f` on `x`. `x` is passed as a plain (borrowed) parameter, because a `&x` written in a loop
+/// body keeps its loan until the end of the iteration and would block moving `x` into the result list.
+priv fn __test<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
+    f(&x)
+}
+
+/// Whether the list has no elements.
+fn List<T>.is_empty(self): bool {
+    self.len() == 0
+}
+
+/// Keeps the elements `f` accepts, in order, and drops the rest. `f` sees a view of each element.
+fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
+    let mut f = f
+    let mut items = __reversed(mem.replace(mut self, List<T>.new()))
+    loop {
+        match items.pop() {
+            Some(x) => {
+                let keep = __test(mut f, x)
+                if keep {
+                    self.push(x)
+                }
+            },
+            None => break,
+        }
+    }
+}
+
+/// The index of the first element `f` accepts.
+fn List<T>.position<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
+    let mut f = f
+    let mut i: usize = 0
+    while i < self.len() {
+        if f(&self[i]) {
+            return Some(i)
+        }
+        i = i + 1
+    }
+    None
+}
+
+/// The index of the last element `f` accepts.
+fn List<T>.rposition<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
+    let mut f = f
+    let mut i = self.len()
+    while i > 0 {
+        i = i - 1
+        if f(&self[i]) {
+            return Some(i)
+        }
+    }
+    None
+}
+
+/// Reverses the order of the elements in place.
+fn List<T>.reverse(mut self) {
+    let mut reversed = __reversed(mem.replace(mut self, List<T>.new()))
+    mem.swap(mut self, mut reversed)
+}
+
+/// Removes every element that equals the one before it, keeping the first of each run.
+fn List<T>.dedup(mut self) where T: Eq {
+    let mut items = __reversed(mem.replace(mut self, List<T>.new()))
+    loop {
+        match items.pop() {
+            Some(x) => {
+                let same = __last_equals(self, x)
+                if !same {
+                    self.push(x)
+                }
+            },
+            None => break,
+        }
+    }
+}
+
+/// Moves every element of `other` to the end of the list, in order.
+fn List<T>.extend(mut self, own other: List<T>) {
+    let mut items = __reversed(other)
+    loop {
+        match items.pop() {
+            Some(x) => self.push(x),
+            None => break,
+        }
+    }
+}
+
+/// Appends a clone of every element of `other`.
+fn List<T>.extend_from(mut self, other: List<T>) where T: Clone {
+    for x in other {
+        self.push(x.clone())
+    }
+}
+
+/// Makes the list `new_len` long: drops elements past it, or appends clones of `value` until it is long enough.
+fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone {
+    while self.len() > new_len {
+        let _ = self.pop()
+    }
+    while self.len() < new_len {
+        self.push(value.clone())
+    }
+}
+
+/// Drops the elements from index `len` on. A list that is already shorter is unchanged.
+fn List<T>.truncate(mut self, len: usize) {
+    while self.len() > len {
+        let _ = self.pop()
+    }
+}
+
+/// Exchanges the elements at `a` and `b`. Panics when either index is out of bounds.
+fn List<T>.swap(mut self, a: usize, b: usize) {
+    if a >= self.len() || b >= self.len() {
+        panic("swap: index out of bounds")
+    }
+    if a == b {
+        return
+    }
+    let low = if a < b { a } else { b }
+    let high = if a < b { b } else { a }
+    let second = self.remove(high)
+    let first = self.remove(low)
+    self.insert(low, second)
+    self.insert(high, first)
+}

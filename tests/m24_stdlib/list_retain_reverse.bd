@@ -1,0 +1,44 @@
+//@ run
+//> 2 4 6
+//> 6 4 2
+//> 
+//> b d
+//> d b
+
+// `retain` keeps the accepted elements in order; `reverse` works in place; both work on non-`Copy` elements.
+
+fn show(xs: List<i32>) {
+    let mut out = String.new()
+    let mut first = true
+    for x in xs {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(x.to_string())
+        first = false
+    }
+    println(out)
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for i in 1..=6 {
+        xs.push(i)
+    }
+    xs.retain(|x| *x % 2 == 0)
+    show(xs)
+    xs.reverse()
+    show(xs)
+    xs.retain(|x| *x > 100)
+    show(xs)
+
+    let mut names = List<String>.new()
+    names.push(String.from("a"))
+    names.push(String.from("b"))
+    names.push(String.from("c"))
+    names.push(String.from("d"))
+    names.retain(|s| s.as_str() != "a" && s.as_str() != "c")
+    println("{names[0]} {names[1]}")
+    names.reverse()
+    println("{names[0]} {names[1]}")
+}

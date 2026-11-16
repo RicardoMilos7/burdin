@@ -214,7 +214,9 @@ impl<'a> FnCx<'a> {
     /// Whether a path starts with a module rather than a local or a value.
     fn starts_with_module(&self, path: &[ast::Ident]) -> bool {
         path.first().is_some_and(|first| {
-            self.lookup(&first.name).is_none() && self.globals.value(self.module, &first.name).is_none()
+            // A local of the enclosing function that the closure captures shadows a module of the same name.
+            let captured = self.captures_name(&first.name);
+            self.lookup(&first.name).is_none() && !captured && self.globals.value(self.module, &first.name).is_none()
         })
     }
 

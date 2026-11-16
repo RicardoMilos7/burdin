@@ -1,0 +1,68 @@
+//@ run
+//> 1 2 3 4
+//> 1 2 3 4 1 2
+//> 1 2 3
+//> 1 2 3 0 0
+//> 0 2 3 0 1
+//> 1 2
+//> 1 2
+//> x y z
+
+// `extend` moves the elements of another list, `extend_from` clones them, `resize` and `truncate` change the
+// length, and `swap` exchanges two elements.
+
+fn show(xs: List<i32>) {
+    let mut out = String.new()
+    let mut first = true
+    for x in xs {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(x.to_string())
+        first = false
+    }
+    println(out)
+}
+
+fn main() {
+    let mut a = List<i32>.new()
+    a.push(1)
+    a.push(2)
+    let mut b = List<i32>.new()
+    b.push(3)
+    b.push(4)
+    a.extend(b)
+    show(a)
+
+    let mut c = List<i32>.new()
+    c.push(1)
+    c.push(2)
+    a.extend_from(c)
+    show(a)
+
+    a.truncate(3)
+    show(a)
+    a.resize(5, 0)
+    show(a)
+    a.swap(0, 4)
+    show(a)
+    a.truncate(100)
+    a.resize(2, 7)
+    a.swap(0, 1)
+    a.swap(1, 1)
+    let mut d = List<i32>.new()
+    d.push(1)
+    d.push(2)
+    d.swap(0, 1)
+    d.swap(0, 1)
+    show(d)
+    show(d)
+
+    let mut words = List<String>.new()
+    words.push(String.from("x"))
+    let mut more = List<String>.new()
+    more.push(String.from("y"))
+    more.push(String.from("z"))
+    words.extend(more)
+    println("{words[0]} {words[1]} {words[2]}")
+}

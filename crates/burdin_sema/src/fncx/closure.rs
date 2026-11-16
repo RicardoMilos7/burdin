@@ -34,6 +34,11 @@ pub(super) struct CaptureCx {
 }
 
 impl FnCx<'_> {
+    /// Whether the enclosing function has a local called `name` that this closure can capture.
+    pub(super) fn captures_name(&self, name: &str) -> bool {
+        self.capture.as_ref().is_some_and(|ctx| ctx.outer.iter().any(|o| o.name == name))
+    }
+
     /// Resolves a name in a closure body: the closure's own bindings first, then the enclosing function's visible
     /// locals, which are captured on first use (CL1). `None` when the name is not an enclosing local.
     pub(super) fn capture_name(&mut self, name: &str, span: Span) -> Option<tir::Expr> {
