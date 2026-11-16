@@ -1,0 +1,12 @@
+// A generated module can hold `test` blocks; `burdin test` compiles them with the package's own tests
+// (spec/build-scripts.md, BS4).
+
+fn main() {
+    let args = env.args()
+    let out = args[2]
+    let source = "fn answer(): i32 {{\n    42\n}}\n\ntest \"generated answer\" {{\n    assert_eq(answer(), 42)?\n}}\n"
+    match write_file("{out}/src/generated_tests.bd", source) {
+        Ok(_) => {}
+        Err(_) => panic("cannot write the generated module"),
+    }
+}

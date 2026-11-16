@@ -1,0 +1,6 @@
+//~ E0260
+//@ compile-fail
+
+// `[build] allow` names a package that is not a dependency in this build (spec/build-scripts.md, BS2).
+
+fn main() {}

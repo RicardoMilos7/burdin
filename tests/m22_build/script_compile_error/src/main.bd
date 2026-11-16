@@ -1,0 +1,7 @@
+//~ E0261
+//@ compile-fail
+
+// A build script with a type error never runs; the build reports the script's diagnostics and E0261 for the package
+// (spec/build-scripts.md, BS3 and BS6).
+
+fn main() {}

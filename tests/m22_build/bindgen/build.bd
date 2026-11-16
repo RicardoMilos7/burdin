@@ -1,0 +1,12 @@
+// `burdin bindgen` is on `PATH` for a build script, so it can generate raw declarations from a header
+// (spec/build-scripts.md, BS7). The full tool is stage 3; this one handles the simple forms.
+
+fn main() {
+    let args = env.args()
+    let out = args[2]
+    match process.run("burdin bindgen c/strings.h --out \"{out}/src/bindings.bd\"") {
+        Ok(0) => {}
+        Ok(code) => process.exit(code)
+        Err(_) => process.exit(1)
+    }
+}

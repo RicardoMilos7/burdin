@@ -1,0 +1,7 @@
+// A build script that does not compile fails the build too. Its own diagnostics are reported for this file, and
+// the package gets E0261 (spec/build-scripts.md, BS3 and BS6).
+
+fn main() {
+    let broken: i32 = "not a number"
+    println(broken)
+}

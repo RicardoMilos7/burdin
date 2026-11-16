@@ -26,6 +26,9 @@ pub struct PackageFiles {
     pub modules: Vec<ModuleFile>,
     /// `(name used by `use`, package index)`.
     pub deps: Vec<(String, usize)>,
+    /// The dependency package names whose `build.bd` this package's manifest allows (`[build] allow`). Only the
+    /// entry package's list is consulted; a package's own script is trusted (`spec/build-scripts.md`, BS2).
+    pub build_allow: Vec<String>,
     /// The module other packages reach as `use <package>`.
     pub root_module: Option<usize>,
 }
@@ -81,6 +84,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
             dir: None,
             modules: vec![ModuleFile { path: Vec::new(), file: target.to_path_buf(), text: None }],
             deps: Vec::new(),
+            build_allow: Vec::new(),
             root_module: Some(0),
         };
         let mut packages = vec![package];
@@ -114,7 +118,7 @@ fn std_package() -> PackageFiles {
         })
         .collect();
     let root_module = modules.iter().position(|m| m.path == ["std"]);
-    PackageFiles { name: "std".to_string(), dir: None, modules, deps: Vec::new(), root_module }
+    PackageFiles { name: "std".to_string(), dir: None, modules, deps: Vec::new(), build_allow: Vec::new(), root_module }
 }
 
 /// Adds the embedded standard library as a dependency of every package, unless a package already uses the
@@ -178,6 +182,7 @@ impl Loader {
             dir: Some(dir.to_path_buf()),
             modules,
             deps: Vec::new(),
+            build_allow: manifest.build_allow,
             root_module,
         });
         self.loaded.insert(dir.to_path_buf(), id);
@@ -206,10 +211,13 @@ struct Manifest {
     name: String,
     /// `(dependency name, path relative to the manifest)`.
     deps: Vec<(String, String)>,
+    /// The dependency names whose build scripts the manifest grants (`[build] allow`).
+    build_allow: Vec<String>,
 }
 
-/// The minimal `burdin.toml` this stage needs: `[package] name = "..."` and `[dependencies]` entries with a
-/// `path`. Unknown sections and keys are ignored, so a newer manifest does not break an older compiler.
+/// The minimal `burdin.toml` this stage needs: `[package] name = "..."`, `[dependencies]` entries with a
+/// `path`, and `[build] allow = [...]` grants. Unknown sections and keys are ignored, so a newer manifest does
+/// not break an older compiler.
 fn parse_manifest(path: &Path) -> Result<Manifest, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     parse_manifest_text(&text, path)
@@ -219,6 +227,7 @@ fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
     let mut section = String::new();
     let mut name: Option<String> = None;
     let mut deps: Vec<(String, String)> = Vec::new();
+    let mut build_allow: Vec<String> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
@@ -249,6 +258,20 @@ fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
                 let dep_path = parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))?;
                 deps.push((key.to_string(), dep_path));
             }
+            "build" if key == "allow" => {
+                let names = parse_string_array(value).map_err(|e| format!("{}: {e}", where_()))?;
+                for allowed in names {
+                    if !is_ident(&allowed) {
+                        return Err(format!(
+                            "{}: `{allowed}` is not a valid package name in `[build] allow`",
+                            where_()
+                        ));
+                    }
+                    if !build_allow.contains(&allowed) {
+                        build_allow.push(allowed);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -258,7 +281,22 @@ fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    Ok(Manifest { name, deps })
+    Ok(Manifest { name, deps, build_allow })
+}
+
+/// A `["a", "b"]` array of quoted strings, also accepting a single `"a"`.
+fn parse_string_array(value: &str) -> Result<Vec<String>, String> {
+    if value.starts_with('"') {
+        return Ok(vec![parse_string(value)?]);
+    }
+    if !(value.starts_with('[') && value.ends_with(']')) {
+        return Err("`allow` must be an array of quoted package names, for example [\"lib\"]".to_string());
+    }
+    let mut names = Vec::new();
+    for part in split_table(&value[1..value.len() - 1]) {
+        names.push(parse_string(part.trim())?);
+    }
+    Ok(names)
 }
 
 /// A `"..."` string, with `\"`, `\\`, `\n`, and `\t` escapes.
@@ -360,11 +398,18 @@ fn discover_modules(dir: &Path) -> Result<Vec<ModuleFile>, String> {
     if !src.is_dir() {
         return Err(format!("package {} has no `src` directory", dir.display()));
     }
-    let mut modules = Vec::new();
-    walk(&src, &mut Vec::new(), &mut modules)?;
+    let modules = discover_modules_under(&src)?;
     if modules.is_empty() {
         return Err(format!("package {} has no `.bd` files under `src`", dir.display()));
     }
+    Ok(modules)
+}
+
+/// Every `.bd` file under one source root, as modules. Used for a package's `src/` and for the generated modules
+/// under its build output directory (`spec/build-scripts.md`, BS4).
+pub(crate) fn discover_modules_under(src: &Path) -> Result<Vec<ModuleFile>, String> {
+    let mut modules = Vec::new();
+    walk(src, &mut Vec::new(), &mut modules)?;
     modules.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(modules)
 }
@@ -440,6 +485,17 @@ mod tests {
             m.deps,
             vec![("lib".to_string(), "../lib".to_string()), ("other".to_string(), "../other".to_string())]
         );
+    }
+
+    #[test]
+    fn build_allow_grants_are_parsed_and_deduplicated() {
+        let m =
+            manifest("[package]\nname = \"app\"\n[build]\nallow = [\"lib\", \"other\"]\nallow = [\"lib\"]\n").unwrap();
+        assert_eq!(m.build_allow, vec!["lib".to_string(), "other".to_string()]);
+        let single = manifest("[package]\nname = \"app\"\n[build]\nallow = \"lib\"\n").unwrap();
+        assert_eq!(single.build_allow, vec!["lib".to_string()]);
+        assert!(manifest("[package]\nname = \"app\"\n[build]\nallow = 3\n").is_err());
+        assert!(manifest("[package]\nname = \"app\"\n[build]\nallow = [\"not an ident\"]\n").is_err());
     }
 
     #[test]

@@ -228,6 +228,35 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Milestone 22 — build scripts (issue #173, sub-issues #174-#179)
+
+- Decision (#174): `build.bd` next to a package's manifest is a standalone Burdin program the driver compiles and
+  runs before the package's sources are read. The entry package's own script is trusted; a dependency's runs only
+  when the entry package's manifest names it in `[build] allow`, because a script is arbitrary code execution. The
+  grant is the whole permission: there is no OS sandbox, and only the generated-source directory is tracked
+  (`spec/build-scripts.md`, BS1-BS8).
+- Run before compilation (#175): the script is compiled in the build's profile, runs with the package directory as
+  its working directory and `argv[1]`, the output directory `<package>/target/burdin/<profile>` as `argv[2]`, and
+  the driver's directory first on `PATH`; its output goes to the compiler's stderr. A script that does not compile,
+  cannot start, or ends non-zero stops the build with E0261. A package without a script builds as before.
+- Generated modules (#176): every `.bd` under `<out>/src` is a module of the package under its relative path, with
+  the package's own imports and visibility. A generated module that repeats a source module's path is E0262.
+- Caching (#177): a content key per package and profile over the script, the manifest, the compiler binary, the
+  files the script lists in `<out>/inputs`, the files its `embed` calls read, and the generated outputs. A changed
+  or missing input or output reruns; touching does not. The declared inputs join `--emit-deps`.
+- Minimal `bindgen` (#178): `burdin bindgen <header> --out <file>` generates `extern "C"` declarations, `repr(C)`
+  structs, typedefs, enum constants, and object-like `#define`s. `#include`, function-pointer types, and unions are
+  skipped with a comment; the full tool remains stage 3.
+- Tests (#179): `tests/m22_build/` adds nine conformance tests (a generated module the package imports, a generated
+  `test` block, a granted dependency, the compile-fail cases of E0260-E0262, a failing and a non-compiling script,
+  and a bindgen run that calls libc `strlen`), with unit tests for the cache key and the header parser, and
+  `tests/check_build_scripts.py` black-boxes the cache, `--emit-deps`, and the `bindgen` command line. The new
+  diagnostics are E0260 (invalid build configuration), E0261 (a failed build script), and E0262 (invalid generated
+  modules).
+- Documentation: `spec/build-scripts.md` (new), `spec/stage1-subset.md`, `tests/README.md` (decision 29, the three
+  codes), `docs/error-codes.md` (E0260-E0262), `README.md` (the driver contract and `[build] allow`),
+  `CLAUDE.md`, `HANDOFF.md`, and CI's milestone list.
+
 ### Milestone 21 — reflection, user derives, const generics, and `embed` (issue #166, sub-issues #167-#172)
 
 - Decisions (#167): reflection is five compile-time members of every type (`Type.name`, `.size`, `.align`, `.fields`,

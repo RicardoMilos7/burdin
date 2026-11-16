@@ -1,0 +1,12 @@
+// The package's own build script is trusted and writes a module into the output directory. The generated module is
+// loaded under its own name and imported like any other module of the package (spec/build-scripts.md, BS3-BS4).
+
+fn main() {
+    let args = env.args()
+    let out = args[2]
+    let source = "const ANSWER: i32 = 42\n\nfn triple(n: i32): i32 {{\n    n * 3\n}}\n\nstruct Point {{\n    x: i32\n    y: i32\n}}\n"
+    match write_file("{out}/src/generated.bd", source) {
+        Ok(_) => {}
+        Err(_) => panic("cannot write the generated module"),
+    }
+}

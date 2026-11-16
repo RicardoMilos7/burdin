@@ -1,0 +1,9 @@
+//~ E0260
+//@ compile-fail
+
+// A dependency has a `build.bd`, but the entry package does not grant it. The build stops before compiling rather
+// than silently skipping the script (spec/build-scripts.md, BS2).
+
+fn main() {
+    println("{}", lib.VALUE)
+}

@@ -143,6 +143,18 @@ generics), and E0143 (overlapping impls). The `type-array-length`, `array-repeat
 `impl-specific-args`, and `impl-builtin-generic` E9000 sites are gone. The one built-in-interface row left is
 `impl-builtin-hand` (#402), which applies to a plain type and a generic one alike.
 
+Milestone 22 is complete: `tests/m22_build` and every earlier folder pass in debug and release, and the rules are
+recorded in `spec/build-scripts.md` BS1-BS8. The decisions: `build.bd` is a standalone program at the package root,
+compiled by the driver in the build profile and run before the sources are read; the package's own script is trusted
+while a dependency's runs only when the entry package's manifest names it in `[build] allow` (E0260 otherwise); the
+script receives the package directory as its working directory and as `argv[1]`, the output directory
+`<package>/target/burdin/<profile>` as `argv[2]`, and the driver's directory first on `PATH`; every `.bd` under
+`<out>/src` is a module of the package and a path that repeats a source module is E0262; a script failure is E0261
+at the entry source; the cache is a content key per package and profile over the script, the manifest, the compiler
+binary, the inputs listed in `<out>/inputs`, the script's `embed` files, and the generated outputs; and
+`burdin bindgen <header> --out <file>` is the minimal C declaration generator a script may invoke (the full bindgen
+remains stage 3). A build script is native code with no OS sandbox; the grant is the trust boundary.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -154,7 +166,8 @@ registry code, a test, and a spec update **before** the code, per the working ru
    field are tracked; `let x = xs[i]` with a non-constant `i` is still E9000 because the checker cannot tell which
    element moves. Extend the move checker (or the typed tree) instead of rejecting the program.
 2. **C function pointers and unions.** `repr(C)` structs have a decided layout and cross the ABI through `CPtr<T>`;
-   function-pointer types and `union` declarations wait for the bindgen target (m22) that needs them.
+   function-pointer types and `union` declarations are still missing. The minimal bindgen of milestone 22 skips
+   them (a function pointer is a `CPtr<CVoid>` and a union is not generated), so they remain stage 1/3 work.
 3. **Private modules.** Stage 0 has no syntax for a private module. The rule is that a dependency's non-root
    modules are hidden: only its root (`src/<package>.bd` or `src/lib.bd`) is reachable, and it re-exports what it
    wants with `pub use` (`m08_modules/reexports*`). A `priv` marker on a module can refine this in stage 1 if a

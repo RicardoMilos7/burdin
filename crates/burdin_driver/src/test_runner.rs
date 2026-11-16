@@ -95,6 +95,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,
+        run_build_scripts: true,
     };
     let mut compiled = Vec::new();
     for &index in &selected {
@@ -459,6 +460,7 @@ mod tests {
             dir: dir.map(PathBuf::from),
             modules: Vec::new(),
             deps: Vec::new(),
+            build_allow: Vec::new(),
             root_module: None,
         }
     }

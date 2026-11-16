@@ -34,6 +34,7 @@ tests/
   m20_comptime/        comptime expressions and parameters, comptime if/for, const evaluation, comptime assert
   m21_reflect/         reflection members, user derives, const generics, embed, generic aliases, impls for
                        specific instances
+  m22_build/           build.bd, dependency grants, generated modules, the minimal bindgen
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -95,6 +96,7 @@ python3 tests/check_parallel.py           # parallel parsing and deterministic d
 python3 tests/check_diagnostics.py        # check color, width, formats, error limits, and ordering (needs a built driver)
 python3 tests/check_error_docs.py         # check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py        # check `burdin test` attributes, parallelism, output, isolation, discovery
+python3 tests/check_build_scripts.py      # check build-script caching, declared inputs, --emit-deps, and bindgen
 ```
 
 CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and
@@ -231,6 +233,9 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0250 | Invalid const generic declaration or argument: a type where a value is expected or the other way round, a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit |
 | E0251 | A const expression (an array length or const argument) that cannot be computed: an unknown name, overflow, a division by zero, or a length out of range |
 | E0252 | A const generic argument that cannot be inferred from the call |
+| E0260 | Invalid build configuration: a dependency has a `build.bd` that the entry package's `[build] allow` list does not name, or the list names a package that is not a dependency |
+| E0261 | A build script failed: it did not compile, could not be run, or ended with a non-zero status |
+| E0262 | Invalid generated modules: a generated path is not a module name, a generated module repeats a source module's name, or the output directory cannot be read |
 
 ### Codes without a compile-fail test
 
@@ -444,6 +449,21 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     header has no concrete arguments and no `where` clause (E0131). A derive on a generic type holds for the
     instances whose parts allow it, and a built-in interface written by hand is still E9000 (#402).
     `spec/impls.md` IM1-IM9, `tests/m21_reflect/`.
+
+29. **Build scripts.** `build.bd` sits next to `burdin.toml` and is compiled and run by the driver before the
+    package's sources are read. The package's own script is trusted; a dependency's script runs only when the
+    **entry package's** manifest names it in `[build] allow`, because running a script is arbitrary code execution
+    (E0260 otherwise, and for an allow entry that names no dependency). The script is an ordinary Burdin program
+    compiled in the build's profile and run with the package directory as its working directory and `argv[1]`,
+    the output directory as `argv[2]`, and the driver's own directory first on `PATH`. Its stdout and stderr go to
+    the compiler's stderr. The output directory is `<package>/target/burdin/<profile>`; the driver clears its `src/`
+    before a run, and every `.bd` file under it becomes a module of the package under its path relative to `src/`
+    (E0262 when it repeats a source module). A script failure is E0261 at the entry package's first source line. The
+    driver reruns the script only when the script, the manifest, the compiler binary, or an input changed; the
+    inputs are the files the script lists in `<out>/inputs` plus the files its `embed` calls read, and the cache key
+    records their contents per package and profile. `burdin bindgen <header> --out <file>` is the minimal C
+    declaration generator a script may invoke: functions as `extern "C"`, `repr(C)` structs, typedefs, enums and
+    object-like `#define`s. `spec/build-scripts.md` BS1-BS8, `tests/m22_build/`.
 
 ## Review of the expected outputs
 

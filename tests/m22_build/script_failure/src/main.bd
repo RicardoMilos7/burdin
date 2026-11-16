@@ -1,0 +1,6 @@
+//~ E0261
+//@ compile-fail
+
+// A failing build script stops the build with E0261 at the entry source (spec/build-scripts.md, BS6).
+
+fn main() {}

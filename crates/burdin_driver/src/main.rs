@@ -1,10 +1,12 @@
-//! The `burdin` command: `build`, `run`, and `test`. The contract is documented in `README.md` at the repository
-//! root (`The driver contract`) and summarized at the top of tests/run_tests.py.
+//! The `burdin` command: `build`, `run`, `test`, `explain`, and `bindgen`. The contract is documented in `README.md`
+//! at the repository root (`The driver contract`) and summarized at the top of tests/run_tests.py.
 
+mod bindgen;
+mod build;
 mod package;
 mod test_runner;
 
-use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, SourceMap};
+use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, SourceMap, Span};
 use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -21,6 +23,7 @@ usage:
               [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
               [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
+  burdin bindgen <header> --out <file>
   burdin --version
 
 compile options:
@@ -344,6 +347,9 @@ fn driver_main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("explain") {
         return explain(&argv[1..]);
     }
+    if argv.first().map(String::as_str) == Some("bindgen") {
+        return bindgen::run(&argv[1..]);
+    }
     let args = match parse_args(&argv) {
         Ok(a) => a,
         Err(msg) => {
@@ -364,6 +370,7 @@ fn driver_main() -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: args.emit_deps.as_deref(),
+        run_build_scripts: true,
     };
     match args.command.as_str() {
         "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
@@ -572,12 +579,17 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) comptime_steps: Option<u64>,
     /// Where to list the files `embed` read; `None` writes nothing.
     pub(crate) emit_deps: Option<&'a Path>,
+    /// Run the package's `build.bd` (and its granted dependencies' scripts) before reading sources. A build
+    /// script's own compilation passes `false`, so a script cannot run another script (BS3).
+    pub(crate) run_build_scripts: bool,
 }
 
-/// What a successful compilation produced: the executable and its `test` blocks (empty for a normal build).
+/// What a successful compilation produced: the executable, its `test` blocks (empty for a normal build), and the
+/// files a build script declared as its inputs (empty when there was no script).
 pub(crate) struct Compiled {
     pub(crate) exe: PathBuf,
     pub(crate) tests: Vec<burdin_tir::TestEntry>,
+    pub(crate) build_inputs: Vec<String>,
 }
 
 /// Compiles `target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On failure
@@ -590,13 +602,25 @@ pub(crate) fn compile(
     options: &CompileOptions,
 ) -> Result<Compiled, ExitCode> {
     let test_mode = options.test_mode;
-    let loaded = match if test_mode { package::load_for_tests(target) } else { package::load(target) } {
+    let mut loaded = match if test_mode { package::load_for_tests(target) } else { package::load(target) } {
         Ok(loaded) => loaded,
         Err(message) => {
             eprintln!("error: {message}");
             return Err(ExitCode::from(1));
         }
     };
+    // Build scripts run first: a generated module must exist before the modules are read (`spec/build-scripts.md`,
+    // BS3-BS4). A script's own compilation sets this flag to false, so there is no recursion.
+    let mut script_inputs: Vec<String> = Vec::new();
+    if options.run_build_scripts {
+        match build::run(&mut loaded, options.release, options) {
+            Ok(inputs) => script_inputs = inputs,
+            Err(failure) => {
+                report_build_failure(&loaded, failure, options);
+                return Err(ExitCode::from(1));
+            }
+        }
+    }
 
     // File ids are assigned in module order and kept through parsing; the source map is built from the same texts
     // afterwards, so the ids it hands out match and no source text is copied.
@@ -702,7 +726,9 @@ pub(crate) fn compile(
         }
         return Err(ExitCode::from(1));
     }
-    let program = program.expect("no errors means checking produced a program");
+    let mut program = program.expect("no errors means checking produced a program");
+    // A build system watching `--emit-deps` must rebuild when a header the script declared changes too.
+    program.build_inputs.extend(script_inputs);
     if let Some(path) = options.emit_deps {
         let mut text = String::new();
         for input in &program.build_inputs {
@@ -769,7 +795,24 @@ pub(crate) fn compile(
         pgo_generate: options.pgo_generate,
     };
     link(&object, &output, options.link_libs, &link_opts).map_err(fail)?;
-    Ok(Compiled { exe: output, tests: program.tests })
+    Ok(Compiled { exe: output, tests: program.tests, build_inputs: program.build_inputs })
+}
+
+/// Reports a build-script failure at the entry package's first source line. The failure is about the package, not
+/// a particular expression, so the span is the start of the file the test marks; the message names the script and
+/// any note says how to fix it (`spec/build-scripts.md`, BS6).
+fn report_build_failure(loaded: &package::Workspace, failure: build::Failure, options: &CompileOptions) {
+    let entry = &loaded.packages[loaded.entry_package].modules[loaded.entry_module];
+    let text = std::fs::read_to_string(&entry.file).unwrap_or_default();
+    let mut sources = SourceMap::default();
+    let file = sources.add(entry.file.display().to_string(), text);
+    let mut diags = Diagnostics::default();
+    let diagnostic = diags.error(failure.code, Span::new(file, 0, 0), failure.message);
+    if let Some(note) = failure.note {
+        diagnostic.note_without_span(note);
+    }
+    let render = render_options(options.diagnostics, std::io::stderr().is_terminal());
+    eprint!("{}", diags.render_with(&sources, &render).text);
 }
 
 /// The rendering choices for this run: the format from the command line, color from the choice, the environment,

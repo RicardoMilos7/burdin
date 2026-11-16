@@ -1,0 +1,16 @@
+//@ run
+//> 42
+//> 9
+//> 7
+
+// A package's own `build.bd` runs before compilation and its generated module can be imported (spec/build-scripts.md,
+// BS1-BS4).
+
+use generated.{ANSWER, Point, triple}
+
+fn main() {
+    println("{}", ANSWER)
+    println("{}", triple(3))
+    let p = Point { x: 3, y: 4 }
+    println("{}", p.x + p.y)
+}
