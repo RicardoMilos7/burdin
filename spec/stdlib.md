@@ -515,6 +515,27 @@ payload does, and `Hash` when its payload does. `.context(message)` prefixes a c
 `Result<T, Error>`; it is E0212 when the error type does not implement `Error` (`errors.md`, ERR6). The combinators of the next section are
 stage 1 (issue #481).
 
+### Sorting with a comparator (issue #418)
+
+`List.sort` (compiler-implemented) sorts ascending and needs a derived `Ord`. `std.sort` declares extension methods on
+`List<T>` that sort with any comparison. The algorithm is a top-down merge sort that moves elements with `push` and
+`pop` only, so nothing is cloned and each element is dropped exactly once, and it is stable: elements that compare
+equal keep their relative order. The `_unstable` names promise nothing more and use the same algorithm.
+
+```
+fn List<T>.sort_by<F: FnMut(&T, &T): Ordering>(mut self, f: F)
+fn List<T>.sort_by_key<K: Ord, F: FnMut(&T): K>(mut self, key: F)
+fn List<T>.sort_unstable_by<F: FnMut(&T, &T): Ordering>(mut self, f: F)
+fn List<T>.sort_unstable_by_key<K: Ord, F: FnMut(&T): K>(mut self, key: F)
+fn List<T>.is_sorted_by<F: FnMut(&T, &T): Ordering>(self, f: F): bool
+```
+
+The comparator receives two views; write `a.cmp(*b)` for whole elements, or compare fields (`a.age.cmp(b.age)`). A
+comparator that is not a total order (it says both `a < b` and `b < a`, or is not transitive) cannot lose, duplicate, or
+corrupt an element and cannot panic or loop: the result is some permutation of the input, in an unspecified order.
+
+Tests: `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops`.
+
 ### `Option` and `Result` combinators (issue #481)
 
 `std.option` declares them as extension methods (`extensions.md`), which the prelude makes visible in every module;
@@ -748,6 +769,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
 | Characters of a text | `m24_stdlib/text_characters` |
+| Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

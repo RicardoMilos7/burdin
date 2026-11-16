@@ -1,0 +1,142 @@
+// Sorting a `List<T>` with a comparator (spec/stdlib.md).
+//
+// The compiler's own `List.sort` needs a derived `Ord` and cannot take a closure. These extension methods
+// (spec/extensions.md) sort with any comparison. The algorithm is a top-down merge sort that moves elements with
+// `push` and `pop` only, so nothing is cloned, every element is dropped exactly once, and the sort is stable: an
+// element that compares equal to another stays after it if it was after it. The `_unstable` names promise nothing
+// more and use the same algorithm.
+//
+// A comparator that is not a total order (it says `a < b` and `b < a`, or is not transitive) cannot lose, duplicate,
+// or corrupt an element and cannot panic or loop: the result is some permutation of the input, in an unspecified
+// order.
+
+use cmp.Ordering
+use mem
+
+/// The elements of `list` in the opposite order.
+priv fn __sort_reversed<T>(own list: List<T>): List<T> {
+    let mut list = list
+    let mut out = List<T>.new()
+    loop {
+        match list.pop() {
+            Some(x) => out.push(x),
+            None => break,
+        }
+    }
+    out
+}
+
+/// Whether the front of `right` must come before the front of `left`: `right` is strictly less. Each list holds its
+/// elements in reverse, so `last` is the front.
+priv fn __right_first<T, F: FnMut(&T, &T): bool>(left: List<T>, right: List<T>, mut less: F): bool {
+    match left.last() {
+        Some(l) => match right.last() {
+            Some(r) => less(r, l),
+            None => false,
+        },
+        None => true,
+    }
+}
+
+/// Merges two sorted lists into one; an element of `left` goes first unless one of `right` is strictly less.
+priv fn __merge<T, F: FnMut(&T, &T): bool>(own left: List<T>, own right: List<T>, mut less: F): List<T> {
+    let mut left = __sort_reversed(left)
+    let mut right = __sort_reversed(right)
+    let mut out = List<T>.new()
+    while left.len() > 0 && right.len() > 0 {
+        let take_right = __right_first(left, right, mut less)
+        if take_right {
+            match right.pop() {
+                Some(x) => out.push(x),
+                None => {},
+            }
+        } else {
+            match left.pop() {
+                Some(x) => out.push(x),
+                None => {},
+            }
+        }
+    }
+    loop {
+        match left.pop() {
+            Some(x) => out.push(x),
+            None => break,
+        }
+    }
+    loop {
+        match right.pop() {
+            Some(x) => out.push(x),
+            None => break,
+        }
+    }
+    out
+}
+
+/// `list` sorted by `less`, which says whether its first argument is strictly less than its second.
+priv fn __merge_sort<T, F: FnMut(&T, &T): bool>(own list: List<T>, mut less: F): List<T> {
+    if list.len() <= 1 {
+        return list
+    }
+    let half = list.len() / 2
+    let mut rest = __sort_reversed(list)
+    let mut left = List<T>.new()
+    while left.len() < half {
+        match rest.pop() {
+            Some(x) => left.push(x),
+            None => break,
+        }
+    }
+    let mut right = List<T>.new()
+    loop {
+        match rest.pop() {
+            Some(x) => right.push(x),
+            None => break,
+        }
+    }
+    let sorted_left = __merge_sort(left, mut less)
+    let sorted_right = __merge_sort(right, mut less)
+    __merge(sorted_left, sorted_right, mut less)
+}
+
+/// Sorts the list with the comparator `f`, which returns how its first argument orders against its second. The sort is
+/// stable.
+fn List<T>.sort_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
+    let mut f = f
+    let mut less = |a: &T, b: &T| f(a, b).is_lt()
+    let mut sorted = __merge_sort(mem.replace(mut self, List<T>.new()), mut less)
+    mem.swap(mut self, mut sorted)
+}
+
+/// Sorts the list by the key `key` computes for each element; keys compare with `Ord`. The sort is stable.
+fn List<T>.sort_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
+    let mut key = key
+    let mut less = |a: &T, b: &T| key(a).cmp(key(b)).is_lt()
+    let mut sorted = __merge_sort(mem.replace(mut self, List<T>.new()), mut less)
+    mem.swap(mut self, mut sorted)
+}
+
+/// Like `sort_by`, with no promise about the order of equal elements.
+fn List<T>.sort_unstable_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
+    self.sort_by(f)
+}
+
+/// Like `sort_by_key`, with no promise about the order of equal elements.
+fn List<T>.sort_unstable_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
+    let mut key = key
+    let mut less = |a: &T, b: &T| key(a).cmp(key(b)).is_lt()
+    let mut sorted = __merge_sort(mem.replace(mut self, List<T>.new()), mut less)
+    mem.swap(mut self, mut sorted)
+}
+
+/// Whether every element is not greater than the next one under the comparator `f`.
+fn List<T>.is_sorted_by<F: FnMut(&T, &T): Ordering>(self, own f: F): bool {
+    let mut f = f
+    let mut i: usize = 1
+    while i < self.len() {
+        if f(&self[i - 1], &self[i]).is_gt() {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}

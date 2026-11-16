@@ -1,0 +1,33 @@
+//@ run
+//> 1 2 3
+//> drop 1
+//> drop 2
+//> drop 3
+
+// Sorting moves the elements: nothing is cloned and each element is dropped once, with the list.
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut xs = List<Token>.new()
+    xs.push(Token { id: 3 })
+    xs.push(Token { id: 1 })
+    xs.push(Token { id: 2 })
+    xs.sort_by(|a, b| a.id.cmp(b.id))
+    let mut out = String.new()
+    for t in xs {
+        if out.len() > 0 {
+            out.push(' ')
+        }
+        out.push_str(t.id.to_string())
+    }
+    println(out)
+}

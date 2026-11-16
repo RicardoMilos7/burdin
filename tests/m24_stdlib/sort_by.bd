@@ -1,0 +1,38 @@
+//@ run
+//> [9, 6, 5, 5, 2, 1]
+//> ["apple", "fig", "pear"]
+//> ["fig", "pear", "apple"]
+//> true false
+//> []
+//> [7]
+
+// `sort_by` takes a closure that compares two elements through views. The comparator can use `cmp`, any field, or
+// anything else that gives an `Ordering`.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [5, 2, 9, 1, 5, 6] {
+        xs.push(x)
+    }
+    xs.sort_by(|a, b| b.cmp(*a))
+    println("{xs:?}")
+
+    let mut words = List<String>.new()
+    words.push(String.from("pear"))
+    words.push(String.from("fig"))
+    words.push(String.from("apple"))
+    words.sort_by(|a, b| a.cmp(*b))
+    println("{words:?}")
+    words.sort_by(|a, b| a.len().cmp(b.len()))
+    println("{words:?}")
+
+    println("{xs.is_sorted_by(|a, b| b.cmp(*a))} {xs.is_sorted_by(|a, b| a.cmp(*b))}")
+
+    let mut none = List<i32>.new()
+    none.sort_by(|a, b| a.cmp(*b))
+    println("{none:?}")
+    let mut one = List<i32>.new()
+    one.push(7)
+    one.sort_by(|a, b| a.cmp(*b))
+    println("{one:?}")
+}
