@@ -1,0 +1,20 @@
+//@ run
+//> [hé llo]
+//> [x ]
+//> [  x]
+//> []
+//> [a]
+//> [中文]
+
+// `trim` removes Unicode white space from the ends, character by character, so a multi-byte character next to the
+// white space is kept whole.
+
+fn main() {
+    println("[{"  hé llo \n".trim()}]")
+    println("[{"  x ".trim_start()}]")
+    println("[{"  x ".trim_end()}]")
+    println("[{"   ".trim()}]")
+    let s = String.from("\t a \r\n")
+    println("[{s.trim()}]")
+    println("[{"　中文　".trim()}]")
+}

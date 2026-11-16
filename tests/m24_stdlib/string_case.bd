@@ -1,0 +1,17 @@
+//@ run
+//> straße école
+//> HÉLLO ЖЗ
+//> hello wörld
+//> HELLO WöRLD
+//> true false
+
+// Whole-string case conversion applies the character mappings; the ASCII versions leave every other character alone.
+
+fn main() {
+    println("{"Straße ÉCOLE".to_lowercase()}")
+    println("{"héllo жз".to_uppercase()}")
+    println("{"Hello WöRLD".to_ascii_lowercase()}")
+    let s = String.from("Hello wöRLD")
+    println("{s.to_ascii_uppercase()}")
+    println("{"Hello".eq_ignore_ascii_case("hELLO")} {"Hello".eq_ignore_ascii_case("hELLa")}")
+}

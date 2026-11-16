@@ -1,4 +1,4 @@
-// Character classification and conversion (spec/stdlib.md).
+// Character classification and conversion, and the case conversion of whole texts (spec/stdlib.md).
 //
 // Every function is an extension method on `char` or `u32` (spec/extensions.md), so the prelude makes them visible
 // everywhere. The ASCII functions are exact. The Unicode functions work from code point ranges that cover the Latin,
@@ -298,3 +298,72 @@ fn u32.digit_char(self, radix: u32): Option<char> {
     }
     Some((97 + self - 10) as char)
 }
+
+// ---- Text ----
+
+/// A copy with every character made lowercase (`char.to_lowercase`).
+fn str.to_lowercase(self): String {
+    let mut out = String.new()
+    for c in self.chars() {
+        out.push(c.to_lowercase())
+    }
+    out
+}
+
+/// A copy with every character made uppercase (`char.to_uppercase`).
+fn str.to_uppercase(self): String {
+    let mut out = String.new()
+    for c in self.chars() {
+        out.push(c.to_uppercase())
+    }
+    out
+}
+
+/// A copy with `A`-`Z` made lowercase and every other character unchanged.
+fn str.to_ascii_lowercase(self): String {
+    let mut out = String.new()
+    for c in self.chars() {
+        out.push(c.to_ascii_lowercase())
+    }
+    out
+}
+
+/// A copy with `a`-`z` made uppercase and every other character unchanged.
+fn str.to_ascii_uppercase(self): String {
+    let mut out = String.new()
+    for c in self.chars() {
+        out.push(c.to_ascii_uppercase())
+    }
+    out
+}
+
+/// Whether the two texts are equal after `to_ascii_lowercase`.
+fn str.eq_ignore_ascii_case(self, other: str): bool {
+    self.to_ascii_lowercase() == other.to_ascii_lowercase()
+}
+
+/// A copy with every character made lowercase.
+fn String.to_lowercase(self): String {
+    self.as_str().to_lowercase()
+}
+
+/// A copy with every character made uppercase.
+fn String.to_uppercase(self): String {
+    self.as_str().to_uppercase()
+}
+
+/// A copy with `A`-`Z` made lowercase.
+fn String.to_ascii_lowercase(self): String {
+    self.as_str().to_ascii_lowercase()
+}
+
+/// A copy with `a`-`z` made uppercase.
+fn String.to_ascii_uppercase(self): String {
+    self.as_str().to_ascii_uppercase()
+}
+
+/// Whether the two texts are equal after `to_ascii_lowercase`.
+fn String.eq_ignore_ascii_case(self, other: str): bool {
+    self.as_str().eq_ignore_ascii_case(other)
+}
+

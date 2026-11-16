@@ -121,6 +121,9 @@ impl Sema<'_> {
             if self.globals.modules[module].package == std_id {
                 continue;
             }
+            // The extension names the module declares or imports itself; the prelude never adds to those.
+            let own_extensions: std::collections::HashSet<String> =
+                self.globals.modules[module].extensions.keys().cloned().collect();
             for (name, target) in &aliases {
                 self.globals.modules[module].modules.entry(name.clone()).or_insert(*target);
             }
@@ -134,8 +137,18 @@ impl Sema<'_> {
                 for (name, iface) in ifaces {
                     self.globals.modules[module].ifaces.entry(name.clone()).or_insert(*iface);
                 }
+                // Two standard modules may extend different receivers under one name (`Option.replace` and
+                // `str.replace`), so the prelude collects the extensions of all of them.
                 for (name, exts) in extensions {
-                    self.globals.modules[module].extensions.entry(name.clone()).or_insert_with(|| exts.clone());
+                    if own_extensions.contains(name) {
+                        continue;
+                    }
+                    let known = self.globals.modules[module].extensions.entry(name.clone()).or_default();
+                    for ext in exts {
+                        if !known.contains(ext) {
+                            known.push(*ext);
+                        }
+                    }
                 }
             }
         }

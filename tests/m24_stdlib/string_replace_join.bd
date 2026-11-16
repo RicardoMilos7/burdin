@@ -1,0 +1,30 @@
+//@ run
+//> a--b--c
+//> hello
+//> aaa
+//> abc
+//> a, b, c
+//> abc
+//> []
+//> x
+
+// `replace` swaps every non-overlapping occurrence, left to right; `join` puts a separator between the strings of a
+// list; `repeat` writes the text several times.
+
+fn main() {
+    println("{"aXbXc".replace("X", "--")}")
+    println("{"héllo".replace("é", "e")}")
+    println("{"aaaa".replace("aa", "a")}a")
+    println("{"abc".replace("z", "y")}")
+
+    let mut parts = List<String>.new()
+    parts.push(String.from("a"))
+    parts.push(String.from("b"))
+    parts.push(String.from("c"))
+    println("{parts.join(", ")}")
+    println("{parts.join("")}")
+    println("[{List<String>.new().join(", ")}]")
+    let mut one = List<String>.new()
+    one.push(String.from("x"))
+    println("{one.join("--")}")
+}

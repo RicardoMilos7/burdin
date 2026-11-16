@@ -1,0 +1,8 @@
+//@ run-abort
+//@ stderr: split: the separator is empty
+//> before
+
+fn main() {
+    println("before")
+    println("{"abc".split(""):?}")
+}
