@@ -368,7 +368,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.seq_store(&seq)?;
                 Ok(None)
             }
-            (Ty::Map(key, value, _), Method::MapInsert) => {
+            (Ty::Map(key, value, _), Method::MapInsert | Method::MapGetOrInsert) => {
+                // `get_or_insert` keeps an existing value (dropping the incoming key and value) and yields a
+                // mutable view of the value either way.
+                let keep_existing = m == Method::MapGetOrInsert;
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -417,11 +420,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let entry_t = self.llvm_ty(&entry).expect("an entry has a type").into_struct_type();
                 let p = self.map_slot(&seq, &entry, at)?;
                 let old = self.map_field(entry_t, p, 1, "map.value")?;
-                self.drop_value(old, &value_ty)?;
-                if let Some(v_slot) = v_slot {
-                    let vt = self.llvm_ty(&value_ty).unwrap_or_else(|| self.cx.bool_type().into());
-                    let nv = self.builder.build_load(vt, v_slot, "").map_err(llvm_err)?;
-                    self.builder.build_store(old, nv).map_err(llvm_err)?;
+                if keep_existing {
+                    if let Some(v_slot) = v_slot {
+                        self.drop_value(v_slot, &value_ty)?;
+                    }
+                } else {
+                    self.drop_value(old, &value_ty)?;
+                    if let Some(v_slot) = v_slot {
+                        let vt = self.llvm_ty(&value_ty).unwrap_or_else(|| self.cx.bool_type().into());
+                        let nv = self.builder.build_load(vt, v_slot, "").map_err(llvm_err)?;
+                        self.builder.build_store(old, nv).map_err(llvm_err)?;
+                    }
                 }
                 // The map already owns an equal key, so the incoming one is dropped.
                 if let Some(k_slot) = k_slot {
@@ -429,6 +438,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 // Growing happens before the probe, so even a replacement must publish the new buffer.
                 self.seq_store(&seq)?;
+                let found_end = self.builder.get_insert_block().expect("positioned");
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(insert_bb);
                 let entry_t = self.llvm_ty(&entry).expect("an entry has a type").into_struct_type();
@@ -439,8 +449,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let kv = self.builder.build_load(kt, k_slot, "").map_err(llvm_err)?;
                     self.builder.build_store(kf, kv).map_err(llvm_err)?;
                 }
+                let vf = self.map_field(entry_t, p, 1, "map.value")?;
                 if let Some(v_slot) = v_slot {
-                    let vf = self.map_field(entry_t, p, 1, "map.value")?;
                     let vt = self.llvm_ty(&value_ty).unwrap_or_else(|| self.cx.bool_type().into());
                     let vv = self.builder.build_load(vt, v_slot, "").map_err(llvm_err)?;
                     self.builder.build_store(vf, vv).map_err(llvm_err)?;
@@ -450,16 +460,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 seq.len =
                     self.builder.build_int_add(seq.len, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
                 self.seq_store(&seq)?;
+                let insert_end = self.builder.get_insert_block().expect("positioned");
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                Ok(None)
+                if !keep_existing {
+                    return Ok(None);
+                }
+                let at_value = self.builder.build_phi(self.ptr_ty(), "map.value").map_err(llvm_err)?;
+                at_value.add_incoming(&[(&old, found_end), (&vf, insert_end)]);
+                Ok(Some(at_value.as_basic_value()))
             }
-            (Ty::Map(key, value, _), Method::MapGet) => {
+            (Ty::Map(key, value, _), Method::MapGet | Method::MapGetMut) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
                 let k_slot = self.place_ptr(&args[1])?;
-                let view = Ty::Ref { mutable: false, inner: Box::new(value_ty.clone()) };
+                let view = Ty::Ref { mutable: m == Method::MapGetMut, inner: Box::new(value_ty.clone()) };
                 let slot = match self.llvm_ty(ty) {
                     Some(t) => Some(self.alloca(t, "get.out")?),
                     None => None,

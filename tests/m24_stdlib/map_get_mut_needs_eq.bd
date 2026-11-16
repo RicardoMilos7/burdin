@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// `get_mut` and `get_or_insert` need a key with `==`, like every map operation.
+
+struct Plain {
+    id: i32
+}
+
+fn main() {
+    let mut m = Map<Plain, i32>.new()
+    let v = m.get_or_insert(Plain { id: 1 }, 0) //~ E0141
+}

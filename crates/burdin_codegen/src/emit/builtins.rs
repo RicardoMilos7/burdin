@@ -518,7 +518,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::ListSort
                 | Method::Clear
                 | Method::MapInsert
+                | Method::MapGetOrInsert
                 | Method::MapGet
+                | Method::MapGetMut
                 | Method::MapRemove
                 | Method::MapContainsKey
         ) {

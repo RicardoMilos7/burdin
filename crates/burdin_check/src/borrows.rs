@@ -367,6 +367,11 @@ impl<'a> Checker<'a> {
             K::Method(m, args) => {
                 if m.mutates_receiver() {
                     self.access_place(&args[0], Access::BorrowMut);
+                    // A mutable view of a map value keeps the map exclusively borrowed (`Iterator.next` also
+                    // mutates its receiver and returns a view, but the loan of its source is already held).
+                    if matches!(m, tir::Method::MapGetMut | tir::Method::MapGetOrInsert) {
+                        self.add_loan(&args[0], true);
+                    }
                     for (i, arg) in args.iter().enumerate().skip(1) {
                         self.expr(arg, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
                     }
