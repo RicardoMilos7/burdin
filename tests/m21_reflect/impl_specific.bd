@@ -1,0 +1,120 @@
+//@ run
+//> 6
+//> 3
+//> 2
+//> stack of ints
+//> stack of bools
+//> 8
+//> 4
+//> 2
+
+// An impl block can name specific type arguments: `Stack<i32> { ... }` adds methods that only that instance has,
+// `Stack<i32>: Describe { ... }` implements an interface for it alone, and an impl can mix concrete arguments with
+// names (`Pair<i32, B>`) or nest a name inside a type (`Holder<List<T>>`).
+// The instances an impl applies to are the ones its arguments match (spec/impls.md, IM1-IM6).
+
+struct Stack<T> {
+    items: List<T>
+}
+
+Stack<T> {
+    fn new(): Stack<T> {
+        Stack { items: List<T>.new() }
+    }
+
+    fn push(mut self, value: T) {
+        self.items.push(value)
+    }
+
+    fn len(self): usize {
+        self.items.len()
+    }
+}
+
+Stack<i32> {
+    fn sum(self): i32 {
+        let mut total = 0
+        for i in 0..self.items.len() {
+            total = total + self.items[i]
+        }
+        total
+    }
+}
+
+Stack<bool> {
+    fn count_true(self): i32 {
+        let mut n = 0
+        for i in 0..self.items.len() {
+            if self.items[i] {
+                n = n + 1
+            }
+        }
+        n
+    }
+}
+
+interface Describe {
+    fn describe(self): String
+}
+
+Stack<i32>: Describe {
+    fn describe(self): String {
+        String.from("stack of ints")
+    }
+}
+
+Stack<bool>: Describe {
+    fn describe(self): String {
+        String.from("stack of bools")
+    }
+}
+
+fn show<T: Describe>(x: T) {
+    println(x.describe())
+}
+
+struct Pair<A, B> {
+    a: A
+    b: B
+}
+
+Pair<i32, B> {
+    fn double_first(self): i32 {
+        self.a * 2
+    }
+}
+
+struct Holder<T> {
+    value: T
+}
+
+Holder<List<T>> {
+    fn count(self): usize {
+        self.value.len()
+    }
+}
+
+fn main() {
+    let mut s = Stack<i32>.new()
+    s.push(1)
+    s.push(2)
+    s.push(3)
+    println("{}", s.sum())
+    println("{}", s.len())
+
+    let mut b = Stack<bool>.new()
+    b.push(true)
+    b.push(false)
+    b.push(true)
+    println("{}", b.count_true())
+    show(s)
+    show(b)
+
+    println("{}", Pair { a: 4, b: true }.double_first())
+    println("{}", Pair { a: 2, b: 2 }.double_first())
+
+    let mut l = List<i32>.new()
+    l.push(7)
+    l.push(8)
+    println("{}", Holder { value: l }.count())
+}

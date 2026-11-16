@@ -5,7 +5,12 @@ use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, Ty};
 
-pub(crate) fn parse_derives(list: &[ast::Type], diags: &mut Diagnostics) -> tir::Derives {
+/// The derives the compiler implements itself. A `derive` declaration cannot take one of these names.
+pub(crate) const BUILTIN_DERIVES: [&str; 7] = ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug"];
+
+/// Reads the built-in derives of a `derives (...)` clause. A name `user` accepts is a `derive` declaration, which
+/// `Sema::register_user_derives` expands; any other name is unknown.
+pub(crate) fn parse_derives(list: &[ast::Type], user: &dyn Fn(&str) -> bool, diags: &mut Diagnostics) -> tir::Derives {
     let mut d = tir::Derives::default();
     for t in list {
         let name = match &t.kind {
@@ -20,11 +25,13 @@ pub(crate) fn parse_derives(list: &[ast::Type], diags: &mut Diagnostics) -> tir:
             "Hash" => &mut d.hash,
             "Default" => &mut d.default,
             "Debug" => &mut d.debug,
+            _ if user(name) => continue,
             _ => {
                 diags.error(
                     Code::UNKNOWN_NAME,
                     t.span,
-                    "only `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug` can be derived",
+                    "only `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`, and the `derive` declarations in \
+                     scope can be derived",
                 );
                 continue;
             }

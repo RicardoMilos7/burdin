@@ -1,0 +1,40 @@
+//@ run
+//> Point
+//> 16 8
+//> x: f64, y: f64
+//> Shape has 3 variants
+//> Circle Rect Unit
+//> arity 1 2 0
+
+// `Type.name`, `.size`, `.align`, `.fields`, and `.variants` are compile-time members of every type
+// (spec/reflection.md, RFL2).
+
+struct Point {
+    x: f64
+    y: f64
+}
+
+enum Shape {
+    Circle(f64)
+    Rect { w: f64, h: f64 }
+    Unit
+}
+
+fn main() {
+    println(Point.name)
+    println("{Point.size} {Point.align}")
+    let mut text = String.new()
+    for f in Point.fields {
+        if f.index > 0 {
+            text.push_str(", ")
+        }
+        text.push_str(f.name)
+        text.push_str(": ")
+        text.push_str(f.type_name)
+    }
+    println(text)
+    println("{Shape.name} has {Shape.variants.len()} variants")
+    let variants = Shape.variants
+    println("{variants[0].name} {variants[1].name} {variants[2].name}")
+    println("arity {variants[0].arity} {variants[1].arity} {variants[2].arity}")
+}

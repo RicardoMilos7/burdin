@@ -135,6 +135,8 @@ impl Code {
     pub const MISSING_INTERFACE_METHOD: Code = Code("E0140");
     pub const BOUND_NOT_SATISFIED: Code = Code("E0141");
     pub const ORPHAN_RULE: Code = Code("E0142");
+    /// Two implementations of one interface for one type that apply to a common instance.
+    pub const OVERLAPPING_IMPLS: Code = Code("E0143");
     pub const PRIVATE_ITEM: Code = Code("E0150");
     pub const QUESTION_OUTSIDE: Code = Code("E0160");
     pub const UNSAFE_REQUIRED: Code = Code("E0161");
@@ -201,6 +203,32 @@ impl Code {
     pub const COMPTIME_IMPURE: Code = Code("E0224");
     /// Compile-time evaluation exceeded its step budget, call depth, or specialization limit (CT11).
     pub const COMPTIME_BUDGET: Code = Code("E0225");
+    /// A reflection member used where it does not apply: `fields` or `variants` on a type that is neither a struct
+    /// nor an enum (`spec/reflection.md`, RFL2).
+    pub const INVALID_REFLECTION: Code = Code("E0230");
+    /// A type declares a name the reflection members reserve: an associated function or an enum variant named
+    /// `name`, `size`, `align`, `fields`, or `variants` (RFL3).
+    pub const RESERVED_MEMBER: Code = Code("E0231");
+    /// A computed field access `x.{name}` whose name is not a compile-time string (RFL5).
+    pub const INVALID_COMPUTED_FIELD: Code = Code("E0232");
+    /// An invalid derive declaration or use: a derive named like a built-in derive, or `derives (Name)` with no
+    /// interface `Name` in scope (RFL8, RFL9).
+    pub const INVALID_DERIVE: Code = Code("E0233");
+    /// `embed` could not read its file: the file is missing, unreadable, or not UTF-8 text (`spec/comptime.md`,
+    /// CT15).
+    pub const EMBED_FAILED: Code = Code("E0240");
+    /// An invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected
+    /// `[u8; N]` is not the file's length (CT15).
+    pub const INVALID_EMBED: Code = Code("E0241");
+    /// An invalid const generic declaration or argument: a type where a value is expected or the other way round,
+    /// a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit the
+    /// parameter's type (`spec/const-generics.md`, CG1-CG2).
+    pub const INVALID_CONST_GENERIC: Code = Code("E0250");
+    /// A const expression that cannot be evaluated at compile time: an unknown name, overflow, or a division by
+    /// zero (CG4).
+    pub const CONST_EVAL: Code = Code("E0251");
+    /// A const argument that cannot be inferred from the call (CG6).
+    pub const CONST_INFER: Code = Code("E0252");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

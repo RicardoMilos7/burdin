@@ -95,10 +95,15 @@ impl FnCx<'_> {
             match bindings.iter().find(|(n, _)| n == pname) {
                 Some((_, t)) => targs.push(t.clone()),
                 None => {
+                    let k = info.params.iter().position(|p| p == pname).unwrap_or(0);
+                    let is_const =
+                        info.bounds.get(k).is_some_and(|bs| crate::globals::Globals::const_param_ty(bs).is_some());
+                    let (code, what) =
+                        if is_const { (Code::CONST_INFER, "const argument ") } else { (Code::TYPE_MISMATCH, "") };
                     self.diags.error(
-                        Code::TYPE_MISMATCH,
+                        code,
                         span,
-                        format!("cannot tell what `{pname}` stands for in this call to `{}`", id.name),
+                        format!("cannot tell what {what}`{pname}` stands for in this call to `{}`", id.name),
                     );
                     return error_expr(span);
                 }

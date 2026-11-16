@@ -127,7 +127,7 @@ implement; the conformance runner (`tests/run_tests.py`) and the documentation c
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--link-lib <name>]... [--comptime-steps <n>] [diagnostics]
+               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
@@ -138,6 +138,7 @@ usage:
 
 compile options:
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
+  --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
 
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
@@ -202,7 +203,7 @@ A single `.bd` file is a package with one module (its module path is empty) and 
 ```
 burdin build <target> [--release] [-g] [--strip] [--lto]
              [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-             [--link-lib <name>]... [--comptime-steps <n>] [diagnostics]```
+             [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]```
 
 Compiles the target to a native executable. On success it prints nothing and exits 0.
 
@@ -234,6 +235,8 @@ Compiles the target to a native executable. On success it prints nothing and exi
   must be a positive integer. `burdin run` and `burdin test` accept it too.
 - `--emit-ir <file.ll>` also writes the module's textual LLVM IR to that path, as generated and before the release
   optimization passes.
+- `--emit-deps <file>` writes the files the build read besides the sources, one path per line: the files `embed`
+  embedded (`spec/comptime.md`, CT15). A build system uses it to rebuild when one of them changes.
 
 ```console
 $ ./target/debug/burdin build hello.bd

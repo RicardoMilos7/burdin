@@ -28,6 +28,9 @@ pub struct Program {
     pub any_vtables: Vec<AnyVTable>,
     /// The types with a runtime identity (boxed concrete types and downcast targets), indexed by their id.
     pub any_type_ids: Vec<Ty>,
+    /// The files the compilation read besides the sources: what `embed` embedded, in the order they were first
+    /// read. `--emit-deps` lists them.
+    pub build_inputs: Vec<String>,
 }
 
 /// The vtable layout of one interface instance (`any I`), in the order of `spec/existentials.md`, AN2/AN11.

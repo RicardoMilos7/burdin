@@ -24,7 +24,7 @@ impl<'t> Sema<'t> {
 
     /// Registers an impl block. Methods of an impl on a generic type are registered when each instance of the
     /// type is allocated.
-    fn register_impl(&mut self, imp: &'t ast::ImplBlock, module: usize, diags: &mut Diagnostics) {
+    pub(crate) fn register_impl(&mut self, imp: &'t ast::ImplBlock, module: usize, diags: &mut Diagnostics) {
         let Some((kind, iface_seg)) = self.impl_kind(imp, module, diags) else { return };
 
         // An impl on a generic type, written plainly or through a module: `Stack<T> { ... }`,
@@ -58,6 +58,15 @@ impl<'t> Sema<'t> {
         if !imp.where_clause.is_empty() {
             diags.error(Code::UNSUPPORTED, imp.span, "`where` clauses are not implemented in this compiler yet"); // e9000: impl-where-concrete
         }
+        // Aliases are resolved after the impl blocks are registered, so methods cannot be added through one.
+        if let Some(name) = self.impl_target_alias(imp, module) {
+            diags.error(
+                Code::TYPE_MISMATCH,
+                imp.ty.span,
+                format!("`{name}` is a type alias: an impl block names the type itself, not an alias of it"),
+            );
+            return;
+        }
         let self_ty = self.globals.resolve_type(&imp.ty, None, module, diags);
         let Some(key) = adt_key(&self_ty) else {
             if matches!(kind, ImplKind::Builtin | ImplKind::From) && self_ty != Ty::Error {
@@ -84,13 +93,7 @@ impl<'t> Sema<'t> {
             _ => None,
         };
         match kind {
-            ImplKind::Builtin => {
-                diags.error(
-                    Code::UNSUPPORTED, // e9000: impl-builtin-hand
-                    imp.span,
-                    "implementing a built-in interface by hand is not implemented in this compiler yet; use `derives`",
-                );
-            }
+            ImplKind::Builtin => builtin_by_hand(imp.span, diags),
             ImplKind::From => {
                 let source = iface_seg
                     .and_then(|s| s.args.first())
@@ -98,7 +101,7 @@ impl<'t> Sema<'t> {
                     .unwrap_or(Ty::Error);
                 self.register_from_impl(imp, module, &self_ty, key, source, diags);
             }
-            ImplKind::Drop => self.register_drop_impl(imp, module, &self_ty, key, diags),
+            ImplKind::Drop => self.register_drop_impl(imp, module, &self_ty, key, &MethodScope::plain(), diags),
             ImplKind::Inherent | ImplKind::User(_) => {
                 let iface_args = iface.as_ref().map(|(_, args)| args.clone()).unwrap_or_default();
                 if let Some((i, args)) = iface {
@@ -108,6 +111,7 @@ impl<'t> Sema<'t> {
                         iface: i,
                         iface_args: args,
                         params: Vec::new(),
+                        args: Vec::new(),
                         wheres: Vec::new(),
                         span: imp.span,
                     });
@@ -275,8 +279,8 @@ impl<'t> Sema<'t> {
         resolved
     }
 
-    /// An impl on a generic type, written with the names it gives the type's arguments: it becomes a template that
-    /// is instantiated with every instance of the type.
+    /// An impl on a generic type: it becomes a template that is instantiated with every instance its arguments
+    /// match, which are concrete (`Stack<i32>`), names (`Pair<i32, B>`), or both (`Holder<List<T>>`).
     #[allow(clippy::too_many_arguments)]
     fn register_generic_impl(
         &mut self,
@@ -288,61 +292,78 @@ impl<'t> Sema<'t> {
         iface_seg: Option<&ast::PathSegment>,
         diags: &mut Diagnostics,
     ) {
+        // The names the impl gives the type's arguments: every name in them that is not a type. `Stack<T>` has
+        // one, `Pair<i32, B>` has one, and `Stack<i32>` has none (`spec/impls.md`, IM1).
         let mut params = Vec::new();
+        let mut repeated = false;
         for arg in &seg.args {
-            match &arg.kind {
-                ast::TypeKind::Path(s)
-                    if s.len() == 1
-                        && s[0].args.is_empty()
-                        && self.globals.type_name(module, &s[0].name.name).is_none()
-                        && builtin_type(&s[0].name.name).is_none() =>
-                {
-                    params.push(s[0].name.name.clone());
-                }
-                _ => {
-                    diags.error(
-                        Code::UNSUPPORTED, // e9000: impl-specific-args
-                        arg.span,
-                        "an impl block for specific type arguments is not implemented in this compiler yet",
-                    );
-                    return;
-                }
-            }
+            repeated |= !self.collect_impl_params(arg, module, &mut params, diags);
         }
-        let wanted = self.globals.generic_adts[g].params.len();
-        if params.len() != wanted {
+        if repeated {
+            return;
+        }
+        let adt_bounds = self.globals.generic_adts[g].bounds.clone();
+        if seg.args.len() != adt_bounds.len() {
             diags.error(
                 Code::TYPE_MISMATCH,
                 imp.ty.span,
-                format!("`{}` takes {wanted} type argument(s), but {} were given", seg.name.name, params.len()),
+                format!(
+                    "`{}` takes {} type argument(s), but {} were given",
+                    seg.name.name,
+                    adt_bounds.len(),
+                    seg.args.len()
+                ),
             );
             return;
         }
-        for (i, p) in params.iter().enumerate() {
-            if params[..i].contains(p) {
-                diags.error(Code::DUPLICATE_NAME, seg.args[i].span, format!("type parameter `{p}` is declared twice"));
-            }
+        let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
+        let pattern: Vec<Ty> = seg
+            .args
+            .iter()
+            .zip(&adt_bounds)
+            .map(|(a, bounds)| match Globals::const_param_ty(bounds) {
+                Some(declared) => self.globals.eval_const_arg(a, declared, &subst, module, diags),
+                None => self.globals.resolve_type_in(a, None, &subst, module, diags),
+            })
+            .collect();
+        if pattern.contains(&Ty::Error) {
+            return;
         }
-        if matches!(kind, ImplKind::Drop | ImplKind::Builtin) {
+        // The arguments meet the type's bounds, as at any other use of it (E0141).
+        self.globals.check_adt_bounds(g, &pattern, imp.ty.span, diags);
+        let plain = crate::impl_match::is_plain_pattern(&pattern);
+        if matches!(kind, ImplKind::Builtin) {
+            builtin_by_hand(imp.span, diags);
+            return;
+        }
+        // A `Drop` implementation covers every instance: the drop glue of one instance cannot differ from the
+        // type's others (`spec/impls.md`, IM7).
+        if matches!(kind, ImplKind::Drop) && (!plain || !imp.where_clause.is_empty()) {
             diags.error(
-                Code::UNSUPPORTED, // e9000: impl-builtin-generic
+                Code::INVALID_DROP_IMPL,
                 imp.span,
-                "implementing a built-in interface for a generic type is not implemented in this compiler yet",
+                "a `Drop` implementation covers every instance of its type, so it cannot name specific type \
+                 arguments or have a `where` clause",
             );
             return;
         }
         let wheres = self.impl_wheres(imp, module, &params, diags);
-        let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
         let iface = kind.user_interface();
         let iface_args = match iface {
             Some(i) => {
                 check_missing_methods(&self.globals, imp, i, diags);
                 let args = self.resolve_iface_args(i, iface_seg, &subst, &wheres, module, imp.span, diags);
+                // The later of two overlapping impls is left out, so its methods do not also clash with the
+                // earlier one's on the instances both apply to.
+                if self.check_impl_overlap(g, i, &pattern, &args, imp.span, diags) {
+                    return;
+                }
                 self.globals.impls.push(ImplInfo {
                     head: Head::Generic(g),
                     iface: i,
                     iface_args: args.clone(),
                     params: params.clone(),
+                    args: pattern.clone(),
                     wheres: wheres.clone(),
                     span: imp.span,
                 });
@@ -350,7 +371,118 @@ impl<'t> Sema<'t> {
             }
             None => Vec::new(),
         };
-        self.tpl.impls.push(ImplTemplate { decl: imp, module, template: g, params, wheres, iface, iface_args });
+        // The instance an impl on specific arguments is checked on: the one whose arguments are its pattern. It is
+        // symbolic when the pattern has names left (`Pair<i32, B>`), and its methods' bodies are checked there.
+        if !plain {
+            self.globals.requests.borrow_mut().push(crate::generics::Request::Adt(g, pattern.clone()));
+        }
+        let is_drop = matches!(kind, ImplKind::Drop);
+        self.tpl.impls.push(ImplTemplate {
+            decl: imp,
+            module,
+            template: g,
+            params,
+            args: pattern,
+            wheres,
+            iface,
+            iface_args,
+            is_drop,
+        });
+    }
+
+    /// The type alias an impl block's type is written through, if it is one.
+    fn impl_target_alias(&self, imp: &ast::ImplBlock, module: usize) -> Option<String> {
+        let ast::TypeKind::Path(segs) = &imp.ty.kind else { return None };
+        let last = segs.last()?;
+        let found = if segs.len() == 1 {
+            self.globals.type_name(module, &last.name.name)
+        } else {
+            let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
+            let target = self.globals.resolve_module_path(module, &names)?;
+            self.globals.exported_type(target, &last.name.name)
+        };
+        match found {
+            Some(TypeName::Alias(_) | TypeName::GenericAlias(_)) => Some(last.name.name.clone()),
+            _ => None,
+        }
+    }
+
+    /// The names in an impl's type arguments that no type goes by: they stand for whatever the argument is. A name
+    /// stands for one argument, so a name written twice is E0007 (`spec/impls.md`, IM1); the result is false then.
+    fn collect_impl_params(
+        &self,
+        ty: &ast::Type,
+        module: usize,
+        out: &mut Vec<String>,
+        diags: &mut Diagnostics,
+    ) -> bool {
+        match &ty.kind {
+            ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => {
+                let name = &segs[0].name.name;
+                if self.globals.type_name(module, name).is_some() || builtin_type(name).is_some() {
+                    return true;
+                }
+                if out.contains(name) {
+                    diags.error(Code::DUPLICATE_NAME, ty.span, format!("type parameter `{name}` is declared twice"));
+                    return false;
+                }
+                out.push(name.clone());
+                true
+            }
+            ast::TypeKind::Path(segs) => {
+                let mut ok = true;
+                for arg in segs.iter().flat_map(|seg| &seg.args) {
+                    ok = self.collect_impl_params(arg, module, out, diags) && ok;
+                }
+                ok
+            }
+            ast::TypeKind::Tuple(items) => {
+                let mut ok = true;
+                for t in items {
+                    ok = self.collect_impl_params(t, module, out, diags) && ok;
+                }
+                ok
+            }
+            ast::TypeKind::Slice(t) | ast::TypeKind::Array(t, _) | ast::TypeKind::Ref { ty: t, .. } => {
+                self.collect_impl_params(t, module, out, diags)
+            }
+            _ => true,
+        }
+    }
+
+    /// E0143: two impls of one interface for one generic type apply to a common instance when their argument
+    /// patterns and interface arguments unify (`spec/impls.md`, IM4). `where` clauses do not tell them apart.
+    /// Returns whether the impl overlaps an earlier one.
+    fn check_impl_overlap(
+        &self,
+        template: usize,
+        iface: usize,
+        pattern: &[Ty],
+        iface_args: &[Ty],
+        span: Span,
+        diags: &mut Diagnostics,
+    ) -> bool {
+        let mut mine = pattern.to_vec();
+        mine.extend(iface_args.iter().cloned());
+        let earlier = self.globals.impls.iter().find(|info| {
+            info.iface == iface && info.head == Head::Generic(template) && {
+                let mut theirs = info.args.clone();
+                theirs.extend(info.iface_args.iter().cloned());
+                self.globals.impl_patterns_overlap(&mine, &theirs)
+            }
+        });
+        if earlier.is_none() {
+            return false;
+        }
+        diags.error(
+            Code::OVERLAPPING_IMPLS,
+            span,
+            format!(
+                "this implementation of `{}` overlaps an earlier one: some instance of the type would have both",
+                self.globals.interfaces[iface].name
+            ),
+        );
+        true
     }
 
     /// The bounds an impl block's `where` clause puts on the names it gives the type's arguments.
@@ -430,6 +562,19 @@ impl<'t> Sema<'t> {
         self.globals.from_impls.push(FromImpl { target: self_ty.clone(), source, func });
     }
 
+    /// `Type<T>: Drop { ... }` for one instance of the generic type, with what the block's names stand for.
+    pub(crate) fn register_generic_drop(
+        &mut self,
+        imp: &'t ast::ImplBlock,
+        module: usize,
+        self_ty: &Ty,
+        scope: &MethodScope,
+        diags: &mut Diagnostics,
+    ) {
+        let Some(key) = adt_key(self_ty) else { return };
+        self.register_drop_impl(imp, module, self_ty, key, scope, diags);
+    }
+
     /// `Type: Drop { fn drop(mut self) { ... } }`: the one method the drop glue calls.
     fn register_drop_impl(
         &mut self,
@@ -437,6 +582,7 @@ impl<'t> Sema<'t> {
         module: usize,
         self_ty: &Ty,
         key: (bool, usize),
+        scope: &MethodScope,
         diags: &mut Diagnostics,
     ) {
         if imp.methods.len() != 1 {
@@ -467,7 +613,12 @@ impl<'t> Sema<'t> {
             );
             return;
         }
-        let id = self.push_fn(FnItem::plain(m, format!("{self_ty}.drop"), module, Some(self_ty.clone())));
+        let mut item = FnItem::plain(m, format!("{self_ty}.drop"), module, Some(self_ty.clone()));
+        item.subst = scope.subst.to_vec();
+        item.bounds = scope.bounds.to_vec();
+        item.symbolic = scope.symbolic;
+        item.check_body = scope.check_body;
+        let id = self.push_fn(item);
         self.globals.drop_methods.insert(key, id);
         match key.0 {
             false => self.globals.structs[key.1].drop_method = Some(id),
@@ -475,6 +626,15 @@ impl<'t> Sema<'t> {
         }
         self.drop_checks.push((id, m.span));
     }
+}
+
+/// A built-in interface other than `Drop` written by hand (`Type: Eq { ... }`), for a generic type or not.
+fn builtin_by_hand(span: Span, diags: &mut Diagnostics) {
+    diags.error(
+        Code::UNSUPPORTED, // e9000: impl-builtin-hand
+        span,
+        "implementing a built-in interface by hand is not implemented in this compiler yet; use `derives`",
+    );
 }
 
 /// What an impl block implements.
@@ -596,6 +756,21 @@ impl<'t> Sema<'t> {
         scope: &MethodScope,
         diags: &mut Diagnostics,
     ) {
+        // `Type.name`, `.size`, `.align`, `.fields`, and `.variants` are the reflection members, so a function
+        // without `self` cannot take one of those names (`spec/reflection.md`, RFL3). A method with `self` is
+        // called on a value and does not conflict.
+        let has_self = matches!(decl.params.first().map(|p| &p.kind), Some(ast::ParamKind::SelfParam));
+        if !has_self && crate::fncx::RESERVED_MEMBERS.contains(&decl.name.name.as_str()) {
+            diags.error(
+                Code::RESERVED_MEMBER,
+                decl.name.span,
+                format!(
+                    "`{}` is reserved for reflection, so `{self_ty}.{}` cannot be a function; give it another name",
+                    decl.name.name, decl.name.name
+                ),
+            );
+            return;
+        }
         let clashes_with_variant = match self_ty {
             Ty::Enum(a) => self.src.enums[a.id].decl.variants.iter().any(|v| v.name.name == decl.name.name),
             _ => false,

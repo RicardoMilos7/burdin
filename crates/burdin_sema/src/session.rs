@@ -69,10 +69,15 @@ pub(crate) struct ImplTemplate<'t> {
     pub(crate) template: usize,
     /// The names the block gives the type's arguments.
     pub(crate) params: Vec<String>,
+    /// The type's arguments as the block writes them (`[i32, B]` for `Pair<i32, B>`); the block applies to the
+    /// instances these match.
+    pub(crate) args: Vec<Ty>,
     pub(crate) wheres: Vec<(String, Vec<Bound>)>,
     pub(crate) iface: Option<usize>,
     /// The interface's type arguments, resolved with the impl's parameter names.
     pub(crate) iface_args: Vec<Ty>,
+    /// `Type<T>: Drop { ... }`: the block's one method is the drop glue of every instance.
+    pub(crate) is_drop: bool,
 }
 
 /// A struct or enum declaration, with what its type parameters stand for and the module it was written in.
@@ -101,6 +106,11 @@ pub(crate) struct ExtensionSrc<'t> {
     pub(crate) module: usize,
 }
 
+/// One `derive` declaration (`spec/reflection.md`, RFL8).
+pub(crate) struct DeriveSrc<'t> {
+    pub(crate) decl: &'t ast::DeriveDecl,
+}
+
 /// Everything the checker knows while it works on the program.
 pub(crate) struct Sema<'t> {
     pub(crate) globals: Globals,
@@ -117,6 +127,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) extern_srcs: Vec<crate::declare::ExternSrc<'t>>,
     /// The extension method declarations, parallel to [`Globals::extensions`].
     pub(crate) extension_srcs: Vec<ExtensionSrc<'t>>,
+    /// The `derive` declarations, by the index [`crate::globals::ModuleInfo::derives`] stores.
+    pub(crate) derive_srcs: Vec<DeriveSrc<'t>>,
     /// The `extern "C" fn` definitions, for their C-ABI signature checks.
     pub(crate) export_srcs: Vec<(FuncId, &'t ast::ExternFnDecl)>,
     /// Generic functions whose bounds are resolved once imports are known.
@@ -167,6 +179,9 @@ impl<'t> Sema<'t> {
                     ifaces: Default::default(),
                     modules: Default::default(),
                     extensions: Default::default(),
+                    derives: Default::default(),
+                    derive_priv: Default::default(),
+                    pub_derives: Default::default(),
                     value_priv: Default::default(),
                     type_priv: Default::default(),
                     iface_priv: Default::default(),
@@ -196,6 +211,7 @@ impl<'t> Sema<'t> {
             alias_decls: Vec::new(),
             extern_srcs: Vec::new(),
             extension_srcs: Vec::new(),
+            derive_srcs: Vec::new(),
             export_srcs: Vec::new(),
             generic_fn_bounds: Vec::new(),
             drop_checks: Vec::new(),
@@ -249,11 +265,14 @@ impl<'t> Sema<'t> {
         let file = self.entry_file();
         let mut sig_diags;
         let mut body_diags;
+        // What allocating an instance reports (a duplicate method, a bound that fails) is reported once, by the
+        // pass that allocated it: the passes after it start from clean diagnostics.
+        let mut alloc_diags = Diagnostics::default();
         let checked = loop {
             loop {
                 sig_diags = Diagnostics::default();
                 self.resolve_all(&mut sig_diags);
-                if !self.drain(file, &mut sig_diags) {
+                if !self.drain(file, &mut alloc_diags) {
                     break;
                 }
             }
@@ -263,10 +282,11 @@ impl<'t> Sema<'t> {
             // what they request is allocated by the drain below and checked again on the next pass.
             crate::validate::check_impl_requirements(&self.globals, &mut body_diags);
             crate::validate::check_impl_signatures(&self.globals, &mut body_diags);
-            if !self.drain(file, &mut body_diags) {
+            if !self.drain(file, &mut alloc_diags) {
                 break checked;
             }
         };
+        diags.absorb(alloc_diags);
         diags.absorb(sig_diags);
         diags.absorb(body_diags);
         checked
@@ -291,7 +311,7 @@ impl<'t> Sema<'t> {
         validate_derives(&self.globals, &mut checks);
         diags.absorb(checks);
         let (any_ifaces, any_vtables, any_type_ids) = self.globals.any_program_ifaces();
-        let Globals { structs, enums, sigs, externs, .. } = self.globals;
+        let Globals { structs, enums, sigs, externs, embedded, .. } = self.globals;
         let externs = externs
             .into_iter()
             .map(|e| tir::ExternFn {
@@ -314,6 +334,7 @@ impl<'t> Sema<'t> {
             any_ifaces,
             any_vtables,
             any_type_ids,
+            build_inputs: embedded.into_inner(),
         }
     }
 

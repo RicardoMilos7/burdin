@@ -6,13 +6,24 @@ use crate::session::AdtSrc;
 use burdin_diag::{Code, Diagnostics};
 use burdin_tir::Ty;
 
+/// The struct or enum an impl's own methods are registered on: the type itself, the instance whose arguments are
+/// the impl's pattern (the identity instance for an impl that names the type's parameters), or `None` when no such
+/// instance exists.
+fn impl_instance(globals: &Globals, info: &crate::generics::ImplInfo) -> Option<(bool, usize)> {
+    match info.head {
+        Head::Plain(key) => Some(key),
+        Head::Generic(template) => {
+            let identity = globals.generic_adts[template].identity;
+            let own = globals.adt_instances.get(&(template, info.args.clone())).copied();
+            own.or_else(|| crate::impl_match::is_plain_pattern(&info.args).then_some(identity))
+        }
+    }
+}
+
 /// E0141: an impl of an interface must also implement everything the interface requires.
 pub(crate) fn check_impl_requirements(globals: &Globals, diags: &mut Diagnostics) {
     for info in &globals.impls {
-        let (is_enum, id) = match info.head {
-            Head::Plain(key) => key,
-            Head::Generic(template) => globals.generic_adts[template].identity,
-        };
+        let Some((is_enum, id)) = impl_instance(globals, info) else { continue };
         let ty =
             if is_enum { Ty::Enum(globals.enum_refs[id].clone()) } else { Ty::Struct(globals.struct_refs[id].clone()) };
         let iface = &globals.interfaces[info.iface];
@@ -39,10 +50,7 @@ pub(crate) fn check_impl_requirements(globals: &Globals, diags: &mut Diagnostics
 /// receiver and conventions, the same parameter types, and the same return type (issue #68).
 pub(crate) fn check_impl_signatures(globals: &Globals, diags: &mut Diagnostics) {
     for info in &globals.impls {
-        let (is_enum, id) = match info.head {
-            Head::Plain(key) => key,
-            Head::Generic(template) => globals.generic_adts[template].identity,
-        };
+        let Some((is_enum, id)) = impl_instance(globals, info) else { continue };
         let key = (is_enum, id);
         let self_ty =
             if is_enum { Ty::Enum(globals.enum_refs[id].clone()) } else { Ty::Struct(globals.struct_refs[id].clone()) };

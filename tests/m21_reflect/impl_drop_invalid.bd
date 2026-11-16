@@ -1,0 +1,34 @@
+//@ compile-fail
+
+// A `Drop` implementation covers every instance of its type: it cannot name specific arguments or add a `where`
+// clause that some instances fail (E0131), and a type has one (spec/impls.md, IM7).
+
+struct Guard<T> {
+    value: T
+}
+
+Guard<i32>: Drop { //~ E0131
+    fn drop(mut self) {}
+}
+
+struct Tag<T> {
+    value: T
+}
+
+Tag<T>: Drop where T: Copy { //~ E0131
+    fn drop(mut self) {}
+}
+
+struct Twice<T> {
+    value: T
+}
+
+Twice<T>: Drop {
+    fn drop(mut self) {}
+}
+
+Twice<T>: Drop {
+    fn drop(mut self) {} //~ E0007
+}
+
+fn main() {}

@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A const argument that no argument or expected type determines is E0252 (spec/const-generics.md, CG6).
+
+fn make<const N: usize>(): usize { N }
+
+fn main() {
+    let n = make() //~ E0252
+    println("{}", n)
+}

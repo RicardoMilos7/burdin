@@ -63,7 +63,8 @@ impl<'t> Sema<'t> {
         self.globals.adt_origin.insert(key, (template, args.clone()));
         let impls: Vec<ImplTemplate<'t>> = self.tpl.impls.iter().filter(|i| i.template == template).cloned().collect();
         for imp in &impls {
-            let isubst: Vec<(String, Ty)> = imp.params.iter().cloned().zip(args.iter().cloned()).collect();
+            // The block applies to the instances its arguments match (`spec/impls.md`, IM1).
+            let Some(isubst) = self.globals.match_impl_args(&imp.params, &imp.args, &args) else { continue };
             let met = symbolic
                 || imp.wheres.iter().all(|(n, bounds)| {
                     let arg = isubst.iter().find(|(m, _)| m == n).map(|(_, t)| t);
@@ -72,14 +73,30 @@ impl<'t> Sema<'t> {
             if !met {
                 continue;
             }
-            let mut env: Vec<(String, Vec<Bound>)> =
-                imp.params.iter().cloned().zip(adt_bounds.iter().cloned()).collect();
+            // A name the block gives a whole argument carries that parameter's declared bounds.
+            let mut env: Vec<(String, Vec<Bound>)> = Vec::new();
+            for (written, bounds) in imp.args.iter().zip(&adt_bounds) {
+                if let Ty::Param(n) = written
+                    && !env.iter().any(|(m, _)| m == &**n)
+                {
+                    env.push((n.to_string(), bounds.clone()));
+                }
+            }
             env.extend(imp.wheres.iter().cloned());
+            // The instance an impl on specific arguments is declared for is the one that checks its bodies; the
+            // type's identity instance checks the impls that cover every instance.
+            let own = !crate::impl_match::is_plain_pattern(&imp.args) && imp.args == args;
+            let check_body = !symbolic || identity || own;
+            if imp.is_drop {
+                let scope = MethodScope { subst: &isubst, bounds: &env, symbolic, check_body };
+                self.register_generic_drop(imp.decl, imp.module, &ty, &scope, diags);
+                continue;
+            }
             let iface = imp.iface.map(|i| {
                 let args: Vec<Ty> = imp.iface_args.iter().map(|a| self.globals.subst_ty(a, &isubst)).collect();
                 (i, args)
             });
-            let scope = MethodScope { subst: &isubst, bounds: &env, symbolic, check_body: !symbolic || identity };
+            let scope = MethodScope { subst: &isubst, bounds: &env, symbolic, check_body };
             self.register_methods(imp.decl, imp.module, iface, &ty, scope, diags);
         }
     }

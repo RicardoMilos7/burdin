@@ -20,10 +20,8 @@ page.
 | --- | --- | --- | --- | --- |
 | `move-runtime-index-match` | `crates/burdin_check/src/moves.rs` | Matching a pattern that moves out of a non-`Copy` element through a runtime index (`match xs[i] { ... }`, non-constant `i`) | Stage 1 | #493 |
 | `move-runtime-index-place` | `crates/burdin_check/src/moves.rs` | Moving a non-`Copy` value through a runtime index (`let x = xs[i]`, non-constant `i`) | Stage 1 | #493 |
-| `declare-generic-alias` | `crates/burdin_sema/src/declare.rs` | A generic type alias (`type Pair<T> = (T, T)`) | m21 | #392 |
 | `declare-where-non-param` | `crates/burdin_sema/src/declare.rs` | A `where` predicate on something other than a type parameter, such as an associated-type projection | Stage 1 | #394 |
 | `function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using a generic or `extern` function as a value | Stage 1 | #493 |
-| `array-repeat-length` | `crates/burdin_sema/src/fncx/expr.rs` | `[value; count]` where `count` is not an integer literal | m21 | #403 |
 | `unsupported-helper` | `crates/burdin_sema/src/fncx/mod.rs` | The shared `unsupported()` helper that reports the `E9000` sites in expression checking; not a construct | helper | - |
 | `pattern-constant` | `crates/burdin_sema/src/fncx/pattern.rs` | A constant used as a pattern | Stage 1 | #493 |
 | `pattern-or-binding` | `crates/burdin_sema/src/fncx/pattern.rs` | A binding inside an alternative of an or-pattern | Stage 1 | #493 |
@@ -33,11 +31,8 @@ page.
 | `impl-where-concrete` | `crates/burdin_sema/src/impls.rs` | A `where` clause on a non-generic impl block | Stage 1 | #394 |
 | `impl-builtin-hand` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented by hand (`Type: Eq { ... }`) | Stage 1 | #402 |
 | `impl-interface-path-kind` | `crates/burdin_sema/src/impls.rs` | An interface path that is not a type path | Stage 1 | #400 |
-| `impl-specific-args` | `crates/burdin_sema/src/impls.rs` | An impl block for specific type arguments (`Stack<i32> { ... }`) | m21 | #395 |
-| `impl-builtin-generic` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented for a generic type | m21 | #401 |
 | `impl-where-non-param` | `crates/burdin_sema/src/impls.rs` | A `where` predicate on something other than a type parameter in an impl block | Stage 1 | #394 |
 | `instances-limit` | `crates/burdin_sema/src/instances.rs` | The monomorphization limit (the diagnostic fires when a generic type or function instantiates itself without end). This is a compiler safety limit, not a language construct, so it has no feature issue; the limit should get a permanent code when it is next reworked | Stage 1 | #493 |
-| `type-array-length` | `crates/burdin_sema/src/types.rs` | An array type length that is not an integer literal (`[i32; N]`, `[i32; R * C]`) | m21 | #403 |
 
 ## Why the owners differ
 
@@ -50,8 +45,10 @@ page.
   family, whose rule #402 decides as part of the generic and type-system work under #389.
 - `m20` (comptime) owned arbitrary constant expressions; #163 unified `const` evaluation with comptime, and the
   `const-expression` site is gone.
-- `m21` (reflection, user derives, const generics) owns the remaining type-system forms: generic aliases, impls for
-  specific instances, built-in interfaces for generic types, and const-generic array lengths.
+- `m21` (reflection, user derives, const generics, `embed`) shipped const-generic array lengths and the `x.{name}`
+  computed access, and then, with the type-system issues that had moved to `Stage 1`, generic type aliases (#392),
+  impl blocks for specific instances (#395), and built-in interfaces on generic types (#401). Those sites are gone
+  (`spec/type-aliases.md`, `spec/impls.md`); the one built-in interface still unimplemented by hand is #402, below.
 - `Stage 1` is the milestone for the cross-cutting work with no single feature milestone: the remaining pattern
   forms (a constant pattern and a binding shared by or-alternatives), the unsupported bound forms, associated-type
   `where` clauses, and the runtime-index move forms. Their issue links are specific where one exists, and #493 is

@@ -40,7 +40,8 @@ impl Sema<'_> {
                 })
                 .collect();
             check_unique_fields(entry.decl.fields.iter().map(|f| &f.name), diags);
-            let derives = parse_derives(&entry.decl.derives, diags);
+            let derives =
+                parse_derives(&entry.decl.derives, &|n| self.globals.modules[module].derives.contains_key(n), diags);
             let s = &mut self.globals.structs[id];
             s.fields = fields;
             s.derives = derives;
@@ -50,6 +51,16 @@ impl Sema<'_> {
             let module = entry.module;
             let mut variants: Vec<tir::VariantDef> = Vec::new();
             for v in &entry.decl.variants {
+                if crate::fncx::RESERVED_MEMBERS.contains(&v.name.name.as_str()) {
+                    diags.error(
+                        Code::RESERVED_MEMBER,
+                        v.name.span,
+                        format!(
+                            "`{}` is reserved for reflection, so `{}.{}` cannot be a variant; give it another name",
+                            v.name.name, entry.decl.name.name, v.name.name
+                        ),
+                    );
+                }
                 if variants.iter().any(|o| o.name == v.name.name) {
                     diags.error(
                         Code::DUPLICATE_NAME,
@@ -86,7 +97,8 @@ impl Sema<'_> {
                 };
                 variants.push(tir::VariantDef { name: v.name.name.clone(), shape, fields });
             }
-            let derives = parse_derives(&entry.decl.derives, diags);
+            let derives =
+                parse_derives(&entry.decl.derives, &|n| self.globals.modules[module].derives.contains_key(n), diags);
             let e = &mut self.globals.enums[id];
             e.variants = variants;
             e.derives = derives;
@@ -209,7 +221,7 @@ pub(crate) fn resolve_alias(
     // Resolve the aliases this alias names first, including the ones reached through a module path: aliases are
     // values of their own and would otherwise be read before they are resolved (in module order).
     let mut refs = Vec::new();
-    alias_refs(&decl.ty, module, globals, &mut refs);
+    alias_refs(&decl.ty, module, globals, 0, &mut refs);
     for j in refs {
         resolve_alias(j, decls, globals, state, diags);
     }
@@ -219,43 +231,55 @@ pub(crate) fn resolve_alias(
     state[i] = 2;
 }
 
-/// The type aliases a written type mentions, whether by a plain name or through a module path.
-fn alias_refs(ty: &ast::Type, module: usize, globals: &Globals, out: &mut Vec<usize>) {
+/// The type aliases a written type mentions, whether by a plain name or through a module path. A generic alias is
+/// expanded where it is used, so the aliases its definition mentions count too (`depth` stops an alias that names
+/// itself; the expansion reports that).
+fn alias_refs(ty: &ast::Type, module: usize, globals: &Globals, depth: usize, out: &mut Vec<usize>) {
     match &ty.kind {
         ast::TypeKind::Path(segments) if segments.len() == 1 => {
             let seg = &segments[0];
-            if let Some(TypeName::Alias(j)) = globals.type_name(module, &seg.name.name) {
-                out.push(j);
+            match globals.type_name(module, &seg.name.name) {
+                Some(TypeName::Alias(j)) => out.push(j),
+                Some(TypeName::GenericAlias(g)) if depth < 8 => {
+                    let alias = &globals.generic_aliases[g];
+                    alias_refs(&alias.decl.ty, alias.module, globals, depth + 1, out);
+                }
+                _ => {}
             }
             for arg in &seg.args {
-                alias_refs(arg, module, globals, out);
+                alias_refs(arg, module, globals, depth, out);
             }
         }
         ast::TypeKind::Path(segments) => {
             let names: Vec<String> = segments[..segments.len() - 1].iter().map(|s| s.name.name.clone()).collect();
             if let Some(target) = globals.resolve_module_path(module, &names) {
                 let last = segments.last().expect("the path has a last segment");
-                if let Some(TypeName::Alias(j)) = globals.exported_type(target, &last.name.name) {
-                    out.push(j);
+                match globals.exported_type(target, &last.name.name) {
+                    Some(TypeName::Alias(j)) => out.push(j),
+                    Some(TypeName::GenericAlias(g)) if depth < 8 => {
+                        let alias = &globals.generic_aliases[g];
+                        alias_refs(&alias.decl.ty, alias.module, globals, depth + 1, out);
+                    }
+                    _ => {}
                 }
                 for arg in &last.args {
-                    alias_refs(arg, target, globals, out);
+                    alias_refs(arg, module, globals, depth, out);
                 }
             }
         }
-        ast::TypeKind::Tuple(elems) => elems.iter().for_each(|e| alias_refs(e, module, globals, out)),
+        ast::TypeKind::Tuple(elems) => elems.iter().for_each(|e| alias_refs(e, module, globals, depth, out)),
         ast::TypeKind::Fn { params, ret, .. } => {
-            params.iter().for_each(|e| alias_refs(e, module, globals, out));
+            params.iter().for_each(|e| alias_refs(e, module, globals, depth, out));
             if let Some(ret) = ret {
-                alias_refs(ret, module, globals, out);
+                alias_refs(ret, module, globals, depth, out);
             }
         }
         ast::TypeKind::Array(e, _) | ast::TypeKind::Slice(e) | ast::TypeKind::Ref { ty: e, .. } => {
-            alias_refs(e, module, globals, out)
+            alias_refs(e, module, globals, depth, out)
         }
         // `any I` and a parameter `impl I` name an interface, not a type alias, but their arguments may name one.
-        ast::TypeKind::Any(e) | ast::TypeKind::Impl(e) => alias_refs(e, module, globals, out),
-        ast::TypeKind::SelfType | ast::TypeKind::Unit | ast::TypeKind::Never => {}
+        ast::TypeKind::Any(e) | ast::TypeKind::Impl(e) => alias_refs(e, module, globals, depth, out),
+        ast::TypeKind::SelfType | ast::TypeKind::Unit | ast::TypeKind::Never | ast::TypeKind::Const(_) => {}
     }
 }
 

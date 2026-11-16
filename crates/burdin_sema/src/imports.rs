@@ -65,6 +65,7 @@ impl Sema<'_> {
             || self.globals.exported_type(module, name).is_some()
             || self.globals.exported_iface(module, name).is_some()
             || self.globals.exported_extension(module, name).is_some()
+            || self.globals.exported_derive(module, name).is_some()
     }
 
     fn resolve_use(&mut self, module: usize, u: &ast::UseDecl, diags: &mut Diagnostics) {
@@ -163,7 +164,9 @@ impl Sema<'_> {
         let iface = self.globals.exported_iface(target, &item.name);
         // An extension is imported by its method name; every declaration with that name comes along.
         let extensions = self.globals.exported_extension(target, &item.name);
-        if value.is_none() && type_name.is_none() && iface.is_none() && extensions.is_none() {
+        // A derive is imported by its name, together with the interface of that name (`spec/reflection.md`, RFL8).
+        let derive = self.globals.exported_derive(target, &item.name);
+        if value.is_none() && type_name.is_none() && iface.is_none() && extensions.is_none() && derive.is_none() {
             let module_name = self.globals.module_display(target);
             diags.error(Code::UNKNOWN_NAME, item.span, format!("module `{module_name}` has no item `{}`", item.name));
             return;
@@ -173,7 +176,8 @@ impl Sema<'_> {
             let private = info.value_priv.get(&item.name).copied().unwrap_or(false)
                 || info.type_priv.get(&item.name).copied().unwrap_or(false)
                 || info.iface_priv.get(&item.name).copied().unwrap_or(false)
-                || info.extension_priv.get(&item.name).copied().unwrap_or(false);
+                || info.extension_priv.get(&item.name).copied().unwrap_or(false)
+                || info.derive_priv.get(&item.name).copied().unwrap_or(false);
             if private {
                 diags.error(
                     Code::PRIVATE_ITEM,
@@ -190,7 +194,8 @@ impl Sema<'_> {
         let declared_private = info.value_priv.get(&item.name).copied().unwrap_or(false)
             || info.type_priv.get(&item.name).copied().unwrap_or(false)
             || info.iface_priv.get(&item.name).copied().unwrap_or(false)
-            || info.extension_priv.get(&item.name).copied().unwrap_or(false);
+            || info.extension_priv.get(&item.name).copied().unwrap_or(false)
+            || info.derive_priv.get(&item.name).copied().unwrap_or(false);
         let mut reexport = is_pub;
         if is_pub && declared_private {
             diags.error(
@@ -252,6 +257,16 @@ impl Sema<'_> {
                 }
             }
         }
+        let mut has_derive = false;
+        if let Some(derive) = derive {
+            has_derive = true;
+            match self.globals.modules[module].derives.entry(name_text.clone()) {
+                Entry::Occupied(_) => duplicate = true,
+                Entry::Vacant(slot) => {
+                    slot.insert(derive);
+                }
+            }
+        }
         if duplicate {
             diags.error(Code::DUPLICATE_NAME, name.span, format!("`{name_text}` is defined more than once"));
         }
@@ -268,6 +283,9 @@ impl Sema<'_> {
             }
             if has_extensions {
                 module_info.pub_extensions.insert(name_text.clone());
+            }
+            if has_derive {
+                module_info.pub_derives.insert(name_text.clone());
             }
         }
     }

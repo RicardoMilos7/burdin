@@ -97,7 +97,7 @@ impl Globals {
                         }
                         crate::generics::Head::Generic(template) => match self.adt_origin.get(&key) {
                             Some((t, args)) if *t == template => {
-                                info.params.iter().cloned().zip(args.iter().cloned()).collect()
+                                self.match_impl_args(&info.params, &info.args, args)?
                             }
                             _ => return None,
                         },

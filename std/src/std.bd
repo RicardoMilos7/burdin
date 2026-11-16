@@ -25,6 +25,22 @@ struct TraceFrame {
     col: i32
 }
 
+/// One field of a struct, as `Type.fields` describes it (`spec/reflection.md`, RFL2). `type_name` is the field's
+/// type as the checker prints it. The names are `String`s because a struct cannot hold a view.
+struct FieldInfo derives (Clone, Eq, Debug) {
+    name: String
+    type_name: String
+    index: usize
+}
+
+/// One variant of an enum, as `Type.variants` describes it (`spec/reflection.md`, RFL2). `arity` is the number
+/// of fields the variant carries.
+struct VariantInfo derives (Clone, Eq, Debug) {
+    name: String
+    index: usize
+    arity: usize
+}
+
 Error: Display {
     fn fmt(self, mut f: Formatter) {
         if self.context.len() > 0 {

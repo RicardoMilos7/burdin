@@ -103,6 +103,10 @@ impl FnCx<'_> {
 
     /// `comptime for pattern in iter { body }` (CT6).
     fn comptime_for(&mut self, pattern: &ast::Pattern, iter: &ast::Expr, body: &ast::Block, span: Span) -> tir::Expr {
+        // A loop over a type's fields or variants is unrolled here, where `x.{field.name}` can be resolved (RFL4).
+        if let Some(unrolled) = self.comptime_for_reflect(pattern, iter, body, span) {
+            return unrolled;
+        }
         let checked = self.expr(iter, None);
         let item = match &checked.ty {
             Ty::Range(t, _) if t.is_int() => Some((**t).clone()),

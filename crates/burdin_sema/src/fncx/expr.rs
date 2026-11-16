@@ -138,14 +138,14 @@ impl FnCx<'_> {
                     _ => None,
                 };
                 let value = self.expr(value, elem_expect);
-                let n = match count.kind {
-                    K::Int(n) if n <= u128::from(u32::MAX) => n as u64,
-                    _ => return self.unsupported(count.span, "array lengths other than integer literals"), // e9000: array-repeat-length
+                let Some(n) = self.globals.eval_array_len(count, &self.subst, self.module, self.diags) else {
+                    return error_expr(span);
                 };
                 let ty = Ty::Array(Box::new(value.ty.clone()), n);
                 mk(tir::ExprKind::ArrayRepeat(Box::new(value), n), ty, span)
             }
             K::Field(base, name) => self.field(base, name, expect, span),
+            K::DynField(base, name) => self.dyn_field(base, name, expect, span),
             K::TupleField(base, index, index_span) => {
                 let base = self.expr(base, None);
                 let base = self.auto_deref(base);

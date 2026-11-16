@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// An array length or a const argument is computed while compiling; what cannot be computed is E0251
+// (spec/const-generics.md, CG4).
+
+const TWELVE: usize = 12
+const TWICE: usize = TWELVE * 2
+
+fn takes_a(values: [i32; 1 / 0]) {} //~ E0251
+
+fn takes_b(values: [i32; MISSING]) {} //~ E0251
+
+fn takes_c(values: [i32; 4294967296]) {} //~ E0251
+
+fn main() {
+    let ok: [i32; TWICE] = [0; 24]
+    println("{}", ok.len())
+}

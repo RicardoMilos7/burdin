@@ -1,0 +1,81 @@
+//@ compile-fail
+
+// The arguments of a specific impl meet the type's bounds (E0141) and have its arity (E0003), two impls of one
+// interface cannot apply to the same instance (E0143), and neither can two methods of one name (E0007). The body of
+// an impl is checked even when no value of its instance is made (spec/impls.md, IM3-IM6).
+
+interface Describe {
+    fn describe(self): String
+}
+
+struct Plain {
+    n: i32
+}
+
+struct Sorted<T: Ord> {
+    items: List<T>
+}
+
+Sorted<Plain> { //~ E0141
+    fn bad(self) {}
+}
+
+Sorted<i32, i32> { //~ E0003
+    fn bad(self) {}
+}
+
+struct Pair<A, B> {
+    a: A
+    b: B
+}
+
+Pair<i32, B>: Describe {
+    fn describe(self): String { String.from("first") }
+}
+
+Pair<A, i32>: Describe { //~ E0143
+    fn describe(self): String { String.from("second") }
+}
+
+struct Stack<T> {
+    items: List<T>
+}
+
+Stack<T>: Describe {
+    fn describe(self): String { String.from("any") }
+}
+
+Stack<i32>: Describe { //~ E0143
+    fn describe(self): String { String.from("ints") }
+}
+
+struct Counter<T> {
+    value: T
+}
+
+Counter<T> {
+    fn bump(self): i32 { 1 }
+}
+
+Counter<i32> {
+    fn bump(self): i32 { 2 } //~ E0007
+}
+
+struct Cell<T> {
+    value: T
+}
+
+Cell<i32> {
+    fn wrong(self): bool { self.value } //~ E0003
+}
+
+struct Duo<A, B> {
+    a: A
+    b: B
+}
+
+Duo<i32, B> {
+    fn bad(self): bool { self.b } //~ E0003
+}
+
+fn main() {}

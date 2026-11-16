@@ -300,6 +300,9 @@ initialized.
 Tests: `m05_ownership/partial_move_ok`, `m05_ownership/drop_conditional_move`.
 
 **DR8 Types with Drop.** A type that implements `Drop` cannot be Copy (E0130), and its fields cannot be moved out (E0103).
+A generic type implements `Drop` once for every instance (`Type<T>: Drop { ... }`), and each instance's drop glue calls
+it; the block cannot name specific arguments or take a `where` clause, because the glue of one instance cannot differ
+from the type's others (`impls.md` IM7, E0131).
 Test: `m05_ownership/copy_with_drop`.
 
 **DR9 Shadowing.** `let x = ...` over an existing `x` does not drop the old value; both live to the end of the scope.

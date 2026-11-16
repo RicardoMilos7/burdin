@@ -1,0 +1,48 @@
+//@ run
+//> Point(x=3, y=4)
+//> Pair(a=1, b=hello)
+//> Empty()
+
+// A derive written in Burdin: `derive Describe` generates `Type: Describe { ... }` for every type whose `derives`
+// clause names it, and its body reads the type through `Self.fields` and `self.{field.name}` (spec/reflection.md,
+// RFL4, RFL5, RFL8).
+
+interface Describe {
+    fn describe(self): String
+}
+
+derive Describe {
+    fn describe(self): String {
+        let mut out = String.from(Self.name)
+        out.push_str("(")
+        comptime for field in Self.fields {
+            if field.index > 0 {
+                out.push_str(", ")
+            }
+            out.push_str(field.name)
+            out.push_str("=")
+            out.push_str(format("{}", self.{field.name}))
+        }
+        out.push_str(")")
+        out
+    }
+}
+
+struct Point derives (Describe) {
+    x: i32
+    y: i32
+}
+
+struct Pair derives (Describe) {
+    a: i32
+    b: String
+}
+
+struct Empty derives (Describe) {
+}
+
+fn main() {
+    println(Point { x: 3, y: 4 }.describe())
+    println(Pair { a: 1, b: String.from("hello") }.describe())
+    println(Empty { }.describe())
+}

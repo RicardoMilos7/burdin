@@ -27,7 +27,11 @@ not updated and may disagree with the repository.
    dynamic `Error`, `Result<T>`, `context`, traces, and `main(): Result<T>`, `spec/arguments.md` is default and named
    arguments, `spec/extensions.md` is extension methods and their resolution order, `spec/operators.md` is operator
    overloading and `Index`/`IndexMut`, `spec/comptime.md` is compile-time evaluation (`comptime` expressions,
-   parameters, `if`, `for`, `assert`, and constants), and `spec/test-runner.md` is the behavior of `burdin test`.
+   parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
+   `x.{name}`, and user `derive` declarations, `spec/const-generics.md` is const parameters, const arguments, and array
+   lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
+   `Drop` on a generic type, and the built-in interfaces on one, and `spec/test-runner.md` is the behavior of
+   `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.

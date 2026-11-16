@@ -34,6 +34,10 @@ impl<'t> Sema<'t> {
     }
 
     fn declare_type_item(&mut self, module: usize, item: &'t ast::Item, diags: &mut Diagnostics) {
+        if let ast::Item::Derive(d) = item {
+            self.declare_derive(module, d, diags);
+            return;
+        }
         if let ast::Item::Interface(i) = item {
             let name = &i.name.name;
             let module_info = &self.globals.modules[module];
@@ -77,9 +81,6 @@ impl<'t> Sema<'t> {
             ast::Item::TypeAlias(a) => (&a.name, &a.generics, a.is_priv),
             _ => return,
         };
-        if matches!(item, ast::Item::TypeAlias(_)) && !generics.is_empty() {
-            diags.error(Code::UNSUPPORTED, name.span, "generic type aliases are not implemented in this compiler yet"); // e9000: declare-generic-alias
-        }
         let module_info = &self.globals.modules[module];
         // The interface namespace is separate (see above): a type may share a name with an interface.
         if module_info.types.contains_key(&name.name) || builtin_type(&name.name).is_some() {
@@ -160,6 +161,13 @@ impl<'t> Sema<'t> {
                 });
                 self.tpl.enums.push(e);
             }
+            ast::Item::TypeAlias(a) if !generics.is_empty() => {
+                let index = self.globals.generic_aliases.len();
+                self.globals.modules[module].types.insert(name.name.clone(), TypeName::GenericAlias(index));
+                // A copy that lives as long as the compilation: every use of the alias expands it again.
+                let decl: &'static ast::TypeAliasDecl = Box::leak(Box::new(a.clone()));
+                self.globals.generic_aliases.push(crate::aliases::GenericAlias { module, decl });
+            }
             ast::Item::TypeAlias(a) => {
                 let index = self.alias_decls.len();
                 self.globals.modules[module].types.insert(name.name.clone(), TypeName::Alias(index));
@@ -170,6 +178,28 @@ impl<'t> Sema<'t> {
         }
     }
 
+    /// `derive Name { ... }`: its name must not be a built-in derive's, and is unique among the module's derives
+    /// (`spec/reflection.md`, RFL8).
+    fn declare_derive(&mut self, module: usize, d: &'t ast::DeriveDecl, diags: &mut Diagnostics) {
+        let name = &d.name.name;
+        if crate::derives::BUILTIN_DERIVES.contains(&name.as_str()) {
+            diags.error(
+                Code::INVALID_DERIVE,
+                d.name.span,
+                format!("`{name}` is a built-in derive, so a `derive {name}` declaration cannot replace it"),
+            );
+            return;
+        }
+        if self.globals.modules[module].derives.contains_key(name) {
+            diags.error(Code::DUPLICATE_NAME, d.name.span, format!("derive `{name}` is defined more than once"));
+            return;
+        }
+        let index = self.derive_srcs.len();
+        self.derive_srcs.push(crate::session::DeriveSrc { decl: d });
+        self.globals.modules[module].derives.insert(name.clone(), index);
+        self.globals.modules[module].derive_priv.insert(name.clone(), d.is_priv);
+    }
+
     /// What interfaces require, and the bounds of generic types.
     pub(crate) fn declare_bounds(&mut self, diags: &mut Diagnostics) {
         for i in 0..self.tpl.ifaces.len() {
@@ -177,11 +207,8 @@ impl<'t> Sema<'t> {
             let module = self.globals.interfaces[i].module;
             let params = self.globals.interfaces[i].params.clone();
             let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
-            let bounds: Vec<Vec<Bound>> = decl
-                .generics
-                .iter()
-                .map(|p| p.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags)).collect())
-                .collect();
+            let bounds: Vec<Vec<Bound>> =
+                decl.generics.iter().map(|p| self.globals.generic_param_bounds(p, &subst, module, diags)).collect();
             let requires =
                 decl.requires.iter().filter_map(|t| self.globals.resolve_bound(t, &subst, module, diags)).collect();
             let methods = decl
@@ -215,10 +242,7 @@ impl<'t> Sema<'t> {
                 if info.is_enum { &self.tpl.enums[info.decl].generics } else { &self.tpl.structs[info.decl].generics };
             let subst: Vec<(String, Ty)> =
                 generics.iter().map(|g| (g.name.name.clone(), crate::generics::param_ty(&g.name.name))).collect();
-            let bounds = generics
-                .iter()
-                .map(|p| p.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags)).collect())
-                .collect();
+            let bounds = generics.iter().map(|p| self.globals.generic_param_bounds(p, &subst, module, diags)).collect();
             self.globals.generic_adts[g].bounds = bounds;
         }
     }
@@ -293,6 +317,10 @@ impl<'t> Sema<'t> {
                             .insert(name.clone(), Global::Const(ConstId(self.const_decls.len())));
                         self.globals.modules[module].value_priv.insert(name.clone(), c.is_priv);
                         self.globals.const_tys.push(Ty::Error);
+                        // A copy that lives as long as the compilation: array lengths and const arguments read
+                        // the initializers of the constants they name (`crate::consteval`).
+                        let init: &'static ast::Expr = Box::leak(Box::new(c.value.clone()));
+                        self.globals.const_inits.push((module, init));
                         self.const_decls.push(NamedSrc { decl: c, module });
                     }
                     ast::Item::Extension(e) => self.declare_extension_name(module, e, diags),
@@ -318,6 +346,7 @@ impl<'t> Sema<'t> {
                     | ast::Item::ErrorEnum(_)
                     | ast::Item::TypeAlias(_)
                     | ast::Item::Interface(_)
+                    | ast::Item::Derive(_)
                     | ast::Item::Impl(_) => {}
                 }
             }
@@ -517,11 +546,8 @@ pub(crate) fn method_bounds(
     let mut subst: Vec<(String, Ty)> =
         f.generics.iter().map(|g| (g.name.name.clone(), param_ty(&g.name.name))).collect();
     subst.extend(base.iter().cloned());
-    let mut all: Vec<Vec<Bound>> = f
-        .generics
-        .iter()
-        .map(|p| p.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect())
-        .collect();
+    let mut all: Vec<Vec<Bound>> =
+        f.generics.iter().map(|p| globals.generic_param_bounds(p, &subst, module, diags)).collect();
     for pred in &f.where_clause {
         let index = match &pred.ty.kind {
             ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => {

@@ -1,0 +1,32 @@
+//@ compile-fail
+
+// A generic alias needs the right number of arguments, its bounds hold for them, and it cannot expand into
+// itself (spec/type-aliases.md, AL3, AL4).
+
+type Pair<T> = (T, T)
+type Sorted<T: Ord> = List<T>
+type Loop<T> = Loop<T> //~ E0009
+
+struct Unordered {
+    a: i32
+}
+
+fn two(p: Pair<i32, i32>) {} //~ E0003
+
+fn none(p: Pair) {} //~ E0003
+
+fn bound(s: Sorted<Unordered>) {} //~ E0141
+
+fn forever(l: Loop<i32>) {}
+
+struct Stack<T> {
+    items: List<T>
+}
+
+type Stacked<T> = Stack<T>
+
+Stacked<i32> { //~ E0003
+    fn size(self): i32 { 0 }
+}
+
+fn main() {}

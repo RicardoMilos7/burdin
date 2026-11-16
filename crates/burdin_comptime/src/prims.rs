@@ -186,7 +186,7 @@ pub(crate) fn layout(p: &Program, ty: &Ty) -> (u64, u64) {
 /// The size and alignment of a type's runtime value, or `None` for a type without one.
 fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
     Some(match ty {
-        Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) => return None,
+        Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) => return None,
         Ty::Bool => (1, 1),
         Ty::Char => (4, 4),
         Ty::Int(i) => {
@@ -1072,6 +1072,7 @@ mod tests {
             any_ifaces: vec![],
             any_vtables: vec![],
             any_type_ids: vec![],
+            build_inputs: vec![],
         };
         let h = hash(&p, &Value::str("a"), &Ty::Str, FNV_OFFSET);
         assert_eq!(h, (FNV_OFFSET ^ 0x61).wrapping_mul(FNV_PRIME));

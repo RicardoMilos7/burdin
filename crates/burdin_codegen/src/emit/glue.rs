@@ -226,7 +226,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
             // The endpoints of a range are integers, so a range owns nothing.
             Ty::Range(..) => Ok(()),
-            Ty::Param(_) => Ok(()),
+            Ty::Param(_) | Ty::Const(_) => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
             // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map.
             Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) | Ty::Chars | Ty::MapIter(..) | Ty::RangeIter(..) => Ok(()),

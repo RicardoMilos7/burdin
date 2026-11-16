@@ -779,6 +779,10 @@ impl FreeNames {
         match &e.kind {
             K::Name { name, .. } => self.use_name(&name.name, name.span),
             K::TypeArgs(base, _) => self.expr(base),
+            K::DynField(base, name) => {
+                self.expr(base);
+                self.expr(name);
+            }
             K::SelfValue => self.use_name("self", e.span),
             K::Unit | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Bool(_) | K::Break | K::Continue => {}
             K::Interp(parts) => {
@@ -947,6 +951,7 @@ fn contains_return(e: &ast::Expr) -> bool {
         K::Tuple(es) | K::Array(es) => es.iter().any(contains_return),
         K::ArrayRepeat(a, b) => contains_return(a) || contains_return(b),
         K::TypeArgs(base, _) => contains_return(base),
+        K::DynField(a, b) => contains_return(a) || contains_return(b),
         K::Block(b) | K::UnsafeBlock(b) | K::Loop(b) => block_has_return(b),
         K::If { cond, then_block, else_expr } => {
             contains_return(cond) || block_has_return(then_block) || else_expr.as_deref().is_some_and(contains_return)

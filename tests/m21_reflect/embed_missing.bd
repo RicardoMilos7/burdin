@@ -1,0 +1,9 @@
+//@ compile-fail
+//@ stderr: cannot read
+
+// A file that does not exist is E0240 at the path, not a crash (spec/comptime.md, CT15).
+
+fn main() {
+    let text = embed("data/missing.txt") //~ E0240
+    println(text)
+}

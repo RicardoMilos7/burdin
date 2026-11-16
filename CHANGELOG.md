@@ -228,6 +228,47 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Milestone 21 — reflection, user derives, const generics, and `embed` (issue #166, sub-issues #167-#172)
+
+- Decisions (#167): reflection is five compile-time members of every type (`Type.name`, `.size`, `.align`, `.fields`,
+  `.variants`), `x.{name}` is the field access by a compile-time name, and a user derive is `derive Name { fn ... }`,
+  the methods of an impl block that `derives (Name)` registers (`spec/reflection.md` RFL1-RFL10).
+- Reflection (#168): sema evaluates the members while it checks a body. `Type.fields` and `Type.variants` are arrays
+  of the new `std` structs `FieldInfo` and `VariantInfo`; a `comptime for` over them is unrolled in sema, with the
+  loop variable's `name`, `type_name`, `index`, and `arity` folded to literals; `x.{name}` resolves to the field.
+  A function without `self` or a variant named like a member is E0231; a member of a type with neither fields nor
+  variants is E0230; a computed name that is not a compile-time string is E0232.
+- User derives (#169): the `derive` item, imports and `pub use` of derives next to their interface, and the
+  generated impl (`Type<A>: Name where A: Name`) on structs and enums, generic or not. The built-in derives are
+  unchanged, and a user derive cannot take their names (E0233).
+- Const generics (#170): `const N: usize` parameters (integer, `bool`, `char`) on structs, enums, and functions;
+  const arguments as literals, names, or `{ expr }`; a new `Ty::Const` so instances, keys, and inference work as for
+  types; array lengths (`[T; R * C]`, `[0; N]`) are const expressions over numbers, const parameters, and constants;
+  a const parameter is a value in its body and is inferred from an array argument, a generic type, or the expected
+  type. E0250-E0252. The `type-array-length` and `array-repeat-length` E9000 sites are gone. An array literal passed
+  to a generic function no longer takes the callee's unbound `T` as its element type (a bug const generics exposed).
+- `embed` (#171): `embed("path")` is the file's contents as `str` or, with the expected type `[u8; N]`, as bytes,
+  relative to the source file. The file is a build input: `burdin build --emit-deps <file>` lists them. A missing
+  file is E0240 and a bad path or length is E0241 (`spec/comptime.md` CT15).
+- Generic type aliases (#392): `type Pair<T> = (T, T)`, with parameters, bounds, and const parameters, expanded in
+  every type position; an alias is the aliased type, so an impl block written through one is E0003
+  (`spec/type-aliases.md` AL1-AL6). The `declare-generic-alias` E9000 site is gone.
+- Impls for specific instances (#395): the arguments of an impl block are a pattern (`Stack<i32>`, `Pair<i32, B>`,
+  `Holder<List<T>>`) and the block covers the instances it matches; the later of two overlapping impls of one
+  interface is E0143, and a `Drop` block covers every instance (E0131 for one that names specific arguments)
+  (`spec/impls.md` IM1-IM9). The `impl-specific-args` and `impl-builtin-generic` E9000 sites are gone.
+- Built-in interfaces on generic types (#401): a derive holds for the instances whose parts allow it, which IM8
+  records; writing one by hand stays E9000 under #402 for a plain and a generic type alike.
+- Tests (#172): `tests/m21_reflect/` adds 25 conformance tests (a Burdin-written derive, reflection over fields and
+  variants, a const-generic matrix, `embed`, generic aliases, impls for specific instances, and the compile-fail cases
+  of E0230-E0233, E0240-E0241, E0250-E0252, E0131, and E0143), plus unit tests for the constant evaluator, the
+  parser, impl matching, and the front end on source text. The suite is 537 tests.
+- Documentation: `spec/reflection.md`, `spec/const-generics.md`, `spec/type-aliases.md`, and `spec/impls.md` (new),
+  `spec/comptime.md` (CT15), `spec/grammar.md` (the `derive` item, const parameters and arguments, `x.{name}`, the
+  type of an impl block), `spec/stage1-subset.md`, `spec/e9000-audit.md` (five rows removed),
+  `tests/README.md` (decisions 26-28, the ten codes), `docs/error-codes.md` (E0143), `README.md` (`--emit-deps`),
+  `Burdin Language Design.md`, `HANDOFF.md`, and `CLAUDE.md`.
+
 ### Milestone 20 — comptime (issue #157, sub-issues #158-#165 and #305-#308)
 
 - Decision (#158): the comptime engine interprets the checked typed tree; there is no MIR (#159 closed as not

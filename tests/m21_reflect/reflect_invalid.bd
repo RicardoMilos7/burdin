@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// `Type.fields` and `Type.variants` list the members of a struct or an enum; any other type has none to list
+// (spec/reflection.md, RFL2).
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn main() {
+    let a = i32.fields //~ E0230
+    let b = bool.variants //~ E0230
+    let c = str.fields //~ E0230
+    let ok = Point.variants
+    println("{}", ok.len())
+}

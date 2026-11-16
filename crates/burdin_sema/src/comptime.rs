@@ -59,7 +59,8 @@ impl Globals {
             | Ty::MapIter(..)
             | Ty::MapIntoIter(..)
             | Ty::RangeIter(..)
-            | Ty::Param(_) => false,
+            | Ty::Param(_)
+            | Ty::Const(_) => false,
         }
     }
 }

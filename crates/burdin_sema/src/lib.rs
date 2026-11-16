@@ -14,10 +14,12 @@
 //!    `instances` until no generic instance is missing.
 //! 4. `validate` and `derives`: checks that need the whole program.
 
+mod aliases;
 mod any;
 mod bodies;
 mod builtins;
 mod comptime;
+mod consteval;
 mod consts;
 mod declare;
 mod derives;
@@ -26,6 +28,9 @@ mod extensions;
 mod fncx;
 mod generics;
 mod globals;
+mod impl_match;
+#[cfg(test)]
+mod impl_tests;
 mod impls;
 mod imports;
 mod instances;
@@ -34,6 +39,7 @@ mod prelude;
 mod resolve;
 mod session;
 mod types;
+mod user_derives;
 mod validate;
 
 use burdin_diag::{Diagnostics, FileId, SourceMap};
@@ -84,6 +90,7 @@ pub fn check<'a>(
     sema.install_prelude();
     sema.declare_bounds(diags);
     sema.register_impls(diags);
+    sema.register_user_derives(diags);
     sema.declare_identities(diags);
     sema.register_extensions(diags);
     let (functions, consts, closures) = sema.settle(diags);

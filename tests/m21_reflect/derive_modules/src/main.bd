@@ -1,0 +1,24 @@
+//@ run
+//> User: id, name
+//> Point: x, y
+
+// A derive is imported like any other item, together with the interface it implements (spec/reflection.md, RFL10).
+
+use describe.{Describe}
+
+struct User derives (Describe) {
+    id: i32
+    name: String
+}
+
+struct Point derives (Describe) {
+    x: i32
+    y: i32
+}
+
+fn main() {
+    let user = User { id: 1, name: String.from("ada") }
+    println(user.describe())
+    let p = Point { x: 1, y: 2 }
+    println(p.describe())
+}

@@ -80,6 +80,7 @@ impl FnCx<'_> {
                     None if id.name == "replace" || id.name == "__replace" => {
                         return self.replace_call(args, span);
                     }
+                    None if id.name == "embed" => return self.embed_call(args, span, expect),
                     None if id.name == "format" && self.lookup("format").is_none() => {
                         return self.format_call(args, span);
                     }

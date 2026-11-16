@@ -1,13 +1,13 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, and thirty-third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, and thirty-fourth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirty-third session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-fourth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
-overloading and `Index`), and 20 (comptime) are done**: 512 conformance tests; all pass in debug and release (the
+overloading and `Index`), 20 (comptime), and 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances) are done**: 537 conformance tests; all pass in debug and release (the
 release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -115,6 +115,28 @@ diagnostics are E0210, E0211, and E0212. The session also fixed a code-generatio
 a temporary created inside one branch had an uninitialized drop flag at the statement's drop site, which an
 optimizer could treat as an undefined free and use to delete the rest of the function; the flag now starts `false`
 in the entry block. The tests are `tests/m16_errors/` with 25 tests.
+
+The thirty-fourth session implemented milestone 21, reflection, user derives, const generics, and `embed` (issue
+#166, sub-issues #167-#172). It decided first (`spec/reflection.md` RFL1-RFL10, `spec/const-generics.md` CG1-CG9,
+`spec/comptime.md` CT15) that reflection is five compile-time members of every type that sema evaluates while it
+checks a body, that a `comptime for` over `Type.fields`/`variants` is unrolled in sema rather than in
+`burdin_comptime` (because `x.{field.name}` needs the name to type the access), that a user derive is `derive Name {
+fn ... }` registered as the impl block `Type: Name` for each type that lists it in `derives (...)`, that a const
+argument is a `Ty::Const` value so the instance, substitution, and inference code for types serves values too, and
+that `embed` reads the file in sema and records it as a build input. New in the compiler: the `derive` item and the
+`x.{name}` postfix in `burdin_syntax`; `crates/burdin_sema/src/fncx/reflect.rs` (members, the unrolled loop, computed
+access), `user_derives.rs` (the generated impl), `consteval.rs` (const expressions, symbolic lengths interned as
+`Ty::Const`/array lengths from `SYM_CONST`/`SYM_LEN`), and `fncx/embed.rs`; `Ty::Const`, `Bound::ConstOf`, and the
+`Program::build_inputs` list with the `--emit-deps <file>` driver flag. `std` gained `FieldInfo` and `VariantInfo`.
+The new diagnostics are E0230-E0233, E0240-E0241, E0250-E0252, and E0143. The tests are `tests/m21_reflect/` with 25
+tests. The milestone did not split. Five E9000 sites are gone (`type-array-length`, `array-repeat-length`, and the
+three type-system rows the audit had moved to `Stage 1`: generic aliases #392, impls for specific instances #395, and
+built-in interfaces for generic types #401). Those three were then implemented in the same session: `aliases.rs`
+expands `type Pair<T> = (T, T)` where it is used (`spec/type-aliases.md` AL1-AL6); `impl_match.rs` matches an impl
+block's argument pattern against an instance (`Stack<i32>`, `Pair<i32, B>`, `Holder<List<T>>`), reports the later of
+two overlapping impls of one interface as E0143, and `Drop` covers every instance (E0131 when it names specific
+arguments) (`spec/impls.md` IM1-IM9); a derive on a generic type holds for the instances whose parts allow it (IM8),
+and writing a built-in interface by hand is the one m21-family site left, E9000 under #402.
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -796,6 +818,24 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     no type pattern, because a struct or enum pattern cannot name the boxed type. `is` and `downcast` are the
     supported forms. A future `match` downcast would extend the pattern grammar and is not needed by m15.
 
+24. **User derives are not hygienic, and derive impls are checked per type.** The methods of `derive Name` are
+    copied into the impl block of each type that applies it and checked in that type's module, so names in the body
+    resolve there (the derive's own module is not consulted). An error in a derive body is reported at the derive's
+    lines. A derive on a generic type needs `T: Name` for every type parameter, so a derive whose body formats a
+    field with `{}` is only usable where the field types implement `Display` too: write such a derive over a type that
+    implements what the body needs, or make the derive's interface require it.
+25. **Symbolic array lengths compare by spelling.** While a generic body is checked, `[T; R * C]` and `[T; C * R]`
+    are different types (CG5); only the instances, where the numbers are known, are compared by value. A
+    `where R > 0`-style predicate and calls inside a const expression do not exist.
+26. **Moving a non-`Copy` field out of an untracked temporary frees the whole temporary.** `println(make().name)` or
+    `[a, b][0].name`, with a `String` field, double-frees: `place_ptr`'s `_` arm registers the temporary for drop and
+    `expr_place` only marks tracked places as moved. It is a pre-existing code generation bug that m21 worked around
+    (a reflection loop variable's `name` is folded to a literal, and the test binds `Shape.variants` to a local
+    first). Fixing it means marking the moved field of a temporary slot, or dropping only the other fields.
+27. **`derives (Debug)` on a type with an array field prints an empty value for a generic type.** A non-generic type
+    is E0130, but the derived `debug` of `Gen<T> { data: [T; 3] }` prints `data: ` and nothing else (arrays have no
+    `Debug`). It predates m21; `derive_generic` and `const_params` avoid printing arrays.
+
 ## Decided in the third session
 
 - Diagnostics without a registry code use these for now: `break`/`continue` outside a loop is E0001; assigning to
@@ -1455,17 +1495,16 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 ## What is left to do, in order
 
-1. Milestone 20 is complete (thirty-third session): `spec/comptime.md` CT1-CT14 are the decisions and
-   `tests/m20_comptime/` has 40 tests. The next milestone is 21 (reflection members, user derive bodies, const
-   generics, `embed`), which builds on the comptime engine: types as compile-time values need a value for a type and
-   reflection queries in `burdin_comptime`, and its E9000 rows in `spec/e9000-audit.md` are the starting list.
-   Issue #444 (differential tests between comptime and compiled code) is unblocked; `spec/test-runner.md` holds its
-   intended shape.
-2. Write the m21 tests before the code, the same way the earlier milestones were built: `tests/m21_reflect` and its
-   `//@` expectations are the spec for the next stage 1 milestone. Known comptime limits to keep in mind: a closure
-   defined inside a function with comptime parameters is shared by its specializations, so a comptime expression in
-   that closure cannot use the parameter; `Map` iteration at compile time is insertion order (CT9); and comptime
-   results are not cached across builds (CT14).
+1. Milestone 21 is complete (thirty-fourth session): `spec/reflection.md` RFL1-RFL10, `spec/const-generics.md`
+   CG1-CG9, `spec/comptime.md` CT15, `spec/type-aliases.md` AL1-AL6, and `spec/impls.md` IM1-IM9 are the decisions
+   and `tests/m21_reflect/` has 25 tests. The next milestone is 22 (`build.bd`, dependency grants, generated sources,
+   `bindgen`); `embed`'s `--emit-deps` list is the build input record it can reuse. Issue #444 (differential tests
+   between comptime and compiled code) is unblocked; `spec/test-runner.md` holds its intended shape.
+2. Write the m22 tests before the code, the same way the earlier milestones were built. Known limits to keep in
+   mind: the comptime ones (a closure inside a function with comptime parameters is shared by its specializations;
+   `Map` iteration at compile time is insertion order, CT9; comptime results are not cached, CT14) and the m21 ones
+   (problems 24-27 above). Writing a built-in interface by hand (#402) is the open type-system issue under
+   `Stage 1`; it applies to a plain type and a generic one alike.
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
@@ -1496,6 +1535,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 21, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 22, then write its tests.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

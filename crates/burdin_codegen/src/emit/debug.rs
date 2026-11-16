@@ -240,7 +240,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     fn debug_type_uncached(&mut self, ty: &Ty) -> DIType<'ctx> {
         match ty {
-            Ty::Unit | Ty::Never | Ty::Param(_) | Ty::Error | Ty::Chars => {
+            Ty::Unit | Ty::Never | Ty::Param(_) | Ty::Const(_) | Ty::Error | Ty::Chars => {
                 self.debug_unspecified(&Self::debug_name(ty))
             }
             Ty::Bool => self.debug_basic("bool", 8, DW_ATE_BOOLEAN),
