@@ -251,11 +251,11 @@ def test_run(case: Case, burdin: str, release: bool, timeout: int):
         else:
             if proc.returncode == 0:
                 return False, "expected an abort but the program exited with 0", ""
-            for value in directive_values(directives, b"stderr"):
-                if not value:
-                    continue
-                if value not in proc.stderr:
-                    return False, f"stderr does not contain: {text(value)}", head_bytes(proc.stderr)
+        for value in directive_values(directives, b"stderr"):
+            if not value:
+                continue
+            if value not in proc.stderr:
+                return False, f"stderr does not contain: {text(value)}", head_bytes(proc.stderr)
 
         actual = normalize(proc.stdout)
         if actual != case.expected_bytes:

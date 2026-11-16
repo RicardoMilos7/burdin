@@ -1,0 +1,25 @@
+//@ run
+//@ stderr: warning[E0215]
+//> method
+
+// An extension whose receiver type has a method of the same name is shadowed: the method is called, and the
+// compiler warns at the extension's declaration (EX4).
+
+struct Gadget {
+    n: i32,
+}
+
+Gadget {
+    fn label(self): String {
+        String.from("method")
+    }
+}
+
+fn Gadget.label(self): String {
+    String.from("extension")
+}
+
+fn main() {
+    let g = Gadget { n: 1 }
+    println(g.label())
+}

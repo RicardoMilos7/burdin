@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// An extension method's first parameter is `self` (EX1).
+
+fn String.bad(): String { //~ E0216
+    String.from("x")
+}
+
+fn main() {}

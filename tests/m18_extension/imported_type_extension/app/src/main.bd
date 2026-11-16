@@ -1,0 +1,17 @@
+//@ run
+//> 3,4 sum 7
+
+// An extension may be declared for a type from another package; it is visible in the module that declares it
+// and in modules that import it (EX1, EX2).
+
+use lib
+use lib.Point
+
+fn Point.manhattan(self): i32 {
+    self.x.abs() + self.y.abs()
+}
+
+fn main() {
+    let p = lib.make(3, 4)
+    println("{p.x},{p.y} sum {p.manhattan()}")
+}

@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A view returned by an extension of a temporary cannot be stored: the temporary is dropped at the end of the
+// statement (spec/memory-rules.md RT5, E0123).
+
+fn String.head(self): str {
+    self.as_str()
+}
+
+fn main() {
+    let h = String.from("hello").head() //~ E0123
+    println(h)
+}

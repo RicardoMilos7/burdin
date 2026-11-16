@@ -1,0 +1,22 @@
+//@ run
+//> 2 two
+//> 2 0
+
+// The extension's own `<...>` list after the method name declares parameters the receiver does not bind; they
+// are inferred from the arguments, like a generic function's (EX1, EX6).
+
+struct Holder {
+    value: i32,
+}
+
+fn Holder.pair<U>(self, own other: U): (i32, U) {
+    (self.value, other)
+}
+
+fn main() {
+    let h = Holder { value: 2 }
+    let (n, s) = h.pair("two")
+    println("{n} {s}")
+    let (n, list) = h.pair(List<i32>.new())
+    println("{n} {list.len()}")
+}

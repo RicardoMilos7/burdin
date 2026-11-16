@@ -1,0 +1,8 @@
+//@ run
+//> hey!
+
+use lib.shout
+
+fn main() {
+    println(String.from("hey").shout())
+}

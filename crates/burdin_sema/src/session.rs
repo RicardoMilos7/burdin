@@ -95,6 +95,12 @@ pub(crate) struct NamedSrc<'t, T> {
     pub(crate) module: usize,
 }
 
+/// One extension method declaration, parallel to [`Globals::extensions`].
+pub(crate) struct ExtensionSrc<'t> {
+    pub(crate) decl: &'t ast::ExtensionDecl,
+    pub(crate) module: usize,
+}
+
 /// Everything the checker knows while it works on the program.
 pub(crate) struct Sema<'t> {
     pub(crate) globals: Globals,
@@ -109,6 +115,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) alias_decls: Vec<NamedSrc<'t, ast::TypeAliasDecl>>,
     /// The `extern` declarations whose signatures are resolved once types and imports are known.
     pub(crate) extern_srcs: Vec<crate::declare::ExternSrc<'t>>,
+    /// The extension method declarations, parallel to [`Globals::extensions`].
+    pub(crate) extension_srcs: Vec<ExtensionSrc<'t>>,
     /// The `extern "C" fn` definitions, for their C-ABI signature checks.
     pub(crate) export_srcs: Vec<(FuncId, &'t ast::ExternFnDecl)>,
     /// Generic functions whose bounds are resolved once imports are known.
@@ -158,13 +166,16 @@ impl<'t> Sema<'t> {
                     types: Default::default(),
                     ifaces: Default::default(),
                     modules: Default::default(),
+                    extensions: Default::default(),
                     value_priv: Default::default(),
                     type_priv: Default::default(),
                     iface_priv: Default::default(),
+                    extension_priv: Default::default(),
                     pub_values: Default::default(),
                     pub_types: Default::default(),
                     pub_ifaces: Default::default(),
                     pub_modules: Default::default(),
+                    pub_extensions: Default::default(),
                 });
                 module_asts.push(module.ast);
             }
@@ -184,6 +195,7 @@ impl<'t> Sema<'t> {
             const_decls: Vec::new(),
             alias_decls: Vec::new(),
             extern_srcs: Vec::new(),
+            extension_srcs: Vec::new(),
             export_srcs: Vec::new(),
             generic_fn_bounds: Vec::new(),
             drop_checks: Vec::new(),

@@ -1,0 +1,4 @@
+// A dependency's non-root modules are reachable only through its root; the root re-exports the extension by
+// name, which is what makes `use lib.shout` work in another package (EX2).
+
+pub use text.shout

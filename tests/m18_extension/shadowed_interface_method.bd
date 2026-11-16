@@ -1,0 +1,29 @@
+//@ run
+//@ stderr: warning[E0215]
+//> iface
+
+// An interface method an impl block provides is an ordinary method of the type, so it shadows an extension of
+// the same name too (EX3, EX4).
+
+interface Named {
+    fn name(self): String
+}
+
+struct Gadget {
+    n: i32,
+}
+
+Gadget: Named {
+    fn name(self): String {
+        String.from("iface")
+    }
+}
+
+fn Gadget.name(self): String {
+    String.from("extension")
+}
+
+fn main() {
+    let g = Gadget { n: 1 }
+    println(g.name())
+}

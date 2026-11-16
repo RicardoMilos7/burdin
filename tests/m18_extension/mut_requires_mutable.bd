@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// `mut self` borrows the receiver exclusively, so it needs a mutable place (EX6; spec/memory-rules.md EX1).
+
+struct Counter {
+    n: i32,
+}
+
+fn Counter.step(mut self) {
+    self.n = self.n + 1
+}
+
+fn main() {
+    let c = Counter { n: 1 }
+    c.step() //~ E0113
+    println(c.n.to_string())
+}

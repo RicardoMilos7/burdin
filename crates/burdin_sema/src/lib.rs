@@ -21,6 +21,7 @@ mod consts;
 mod declare;
 mod derives;
 mod exhaust;
+mod extensions;
 mod fncx;
 mod generics;
 mod globals;
@@ -83,6 +84,7 @@ pub fn check<'a>(
     sema.declare_bounds(diags);
     sema.register_impls(diags);
     sema.declare_identities(diags);
+    sema.register_extensions(diags);
     let (functions, consts, closures) = sema.settle(diags);
     sema.finish(functions, consts, closures, diags)
 }

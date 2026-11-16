@@ -3,10 +3,11 @@
 This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures,
 milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), milestone 15's
 `any`/`impl` existential types (the details are in `existentials.md`), milestone 16's `error` declarations
-(the details are in `errors.md`), and milestone 17's default and named arguments (the details are in
-`arguments.md`). It is derived from the conformance tests in `tests/`, so every construct below is
-used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
-milestones (comptime, derive declarations, extension methods, tasks) are reserved but not parsed.
+(the details are in `errors.md`), milestone 17's default and named arguments (the details are in
+`arguments.md`), and milestone 18's extension methods (the details are in `extensions.md`). It is derived from the
+conformance tests in `tests/`, so every construct below is used by at least one test, and every construct those
+tests use is here. Features deferred to later stage 1 milestones (comptime, derive declarations, tasks) are
+reserved but not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).
@@ -95,10 +96,15 @@ foo()
 File          = { Item } ;
 
 Item          = TestItem | UseItem | ImplBlock
-              | [ "priv" ] ( FnItem | StructItem | EnumItem | ErrorItem | InterfaceItem | TypeAlias | ConstItem | ExternItem ) ;
+              | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
 FnItem        = FnSig Block ;
+
+(* `fn Type.name(self, ...)`: an extension method. The receiver is the type path before the last dot, including
+   the type parameters it declares (`List<T>`); `<...>` after the method name declares method-level parameters.
+   `spec/extensions.md`, EX1. *)
+ExtensionItem = [ "unsafe" ] "fn" TypePath "." IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
 ParamList     = Param { "," Param } [ "," ] ;
 Param         = SelfParam | [ Convention ] IDENT ":" Type [ "=" Expr ] ;
 SelfParam     = [ Convention ] "self" ;                 (* only as the first parameter, only inside impl/interface *)
@@ -159,7 +165,7 @@ expression must be a constant expression checked at the declaration (`arguments.
 signatures and `extern` declarations cannot (E0213).
 
 **Unique names and cycles.** A name is unique in its namespace: a repeated type, interface, function, constant,
-test, type parameter, field, variant, method, or import is E0007. A declaration may not depend on itself: a constant
+test, type parameter, field, variant, method, extension method for the same receiver, or import is E0007. A declaration may not depend on itself: a constant
 whose value mentions it, a type alias that resolves to itself, and a struct or enum that contains itself by value
 are E0009 (put a recursive value behind `Heap<T>`).
 
@@ -189,6 +195,14 @@ function's generic or variadic form is E0162.
 another module or package can import them. `use <package>` names a dependency's root module (`src/<package>.bd` or
 `src/lib.bd`); the dependency's other modules are hidden unless the root re-exports them. `pub use` of a
 package-private item, and a public signature or field naming a package-private type, are E0150.
+
+**Extension methods.** `fn Type.name(self, ...)` declares an extension method: the receiver is the type path before
+the last dot, including the type arguments that declare its type parameters (`fn List<T>.sum(self)`), and a
+`<...>` list after the method name declares method-level ones. An extension is visible in its declaring module and
+in modules that import it by name (`use text.shout`, `use text.{shout}`); importing the module alone does not bring
+it, and it cannot be imported `as` another name (E0216). A call tries the receiver type's methods first and a
+visible extension last; a shadowed extension gets the warning E0215 at its declaration. The rules are in
+`extensions.md` EX1-EX8.
 
 ## 4. Types
 

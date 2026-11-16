@@ -19,6 +19,9 @@ impl Sema<'_> {
         for i in 0..self.alias_decls.len() {
             resolve_alias(i, &self.alias_decls, &mut self.globals, &mut state, diags);
         }
+        // An extension's receiver may name a generic type, whose instance appears only after the previous pass's
+        // requests were allocated; resolve it before the signatures that use it (`spec/extensions.md`).
+        self.refresh_extensions(diags);
         for id in 0..self.globals.structs.len() {
             let entry = &self.src.structs[id];
             let module = entry.module;
@@ -166,6 +169,9 @@ impl Sema<'_> {
         // Object safety is checked once every interface signature is resolved, so the reasons are final
         // (spec/existentials.md, AN2).
         self.globals.check_any_uses(diags);
+        // Duplicate declarations and shadowed extensions need the resolved receiver and every method in place
+        // (`spec/extensions.md`, EX4 and EX5).
+        self.check_extension_problems(diags);
     }
 }
 

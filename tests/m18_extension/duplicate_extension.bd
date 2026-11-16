@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// Two extensions in one module may share a name only when their receiver types differ; the same receiver twice
+// is a duplicate declaration (EX5).
+
+struct Gadget {
+    n: i32,
+}
+
+fn Gadget.m(self): i32 {
+    self.n
+}
+
+fn Gadget.m(self): i32 { //~ E0007
+    self.n + 1
+}
+
+fn main() {}

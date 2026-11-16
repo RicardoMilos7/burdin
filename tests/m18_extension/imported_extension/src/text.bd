@@ -1,0 +1,13 @@
+// Extensions on built-in types, declared in a module of their own. A module that wants them imports them by
+// name (spec/extensions.md, EX2).
+
+fn String.shout(self): String {
+    let mut out = String.new()
+    out.push_str(self)
+    out.push_str("!")
+    out
+}
+
+fn i32.doubled(self): i32 {
+    self * 2
+}

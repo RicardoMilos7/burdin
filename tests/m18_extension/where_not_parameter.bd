@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A `where` clause of an extension names one of the extension's type parameters (EX1, EX5).
+
+fn String.x(self): String where i32: Ord { //~ E0216
+    String.from("x")
+}
+
+fn main() {}

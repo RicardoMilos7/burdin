@@ -228,6 +228,37 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Milestone 18 — extension methods (issue #143, sub-issues #144-#149)
+
+- Declarations: `fn Type.name(self, ...)` at module scope adds a method to any type name in scope, local, imported,
+  or built-in, without an impl block. The receiver's type arguments declare the extension's type parameters
+  (`fn List<T>.largest(self): T where T: Copy + Ord`) and a `<...>` after the method name adds method-level ones;
+  bounds come from inline method parameters and `where` predicates. `self`, `mut self`, and `own self` follow the
+  method conventions. `priv` and `unsafe` apply as on any item. The parser recognizes the receiver path before the
+  method name without backtracking (`generic_list_end`), and sema registers the declaration as an ordinary function
+  whose first parameter is the receiver, monomorphized per instantiation like a generic function.
+- Visibility and resolution: an extension is visible in its declaring module and in modules that import it by name
+  (`use text.shout`, `use text.{shout}`); importing the module or another item does not bring it, an import is not
+  re-exported, `pub use` re-exports it, and `priv` is package-private (E0150). `x.f()` tries the type's methods
+  (inherent and interface, including the methods the compiler provides for built-in types) first and a visible
+  extension last; the lookup stays local to the calling module.
+- Shadowing: an extension whose receiver type already has a method of the same name is unreachable through dot
+  syntax; the compiler reports the new warning E0215 at the extension's declaration, and the program still
+  compiles. The driver now prints warnings and continues, and `//@ stderr:` works on `run` tests so a warning can be
+  asserted.
+- Diagnostics: E0216 (an extension without `self` first, type arguments on an intermediate receiver segment, a
+  `where` predicate naming a non-parameter, or an import under another name) and E0007 for a second extension with
+  the same receiver or a second import of one name. The registry, `docs/error-codes.md` (with the first
+  `warning-example` block), and `burdin explain` cover both codes.
+- Tests: `tests/m18_extension/` adds 32 conformance tests, including seven extension package targets: extensions
+  on `String`, `i32`, `Option<i32>`, a user struct, an enum, a user generic type, and `List<T>`; `mut`/`own`
+  receivers; view returns and their lifetime error; imports across modules and packages, a dependency's extension
+  and a `pub use` re-export, an imported receiver type, duplicate and aliased imports, and the shadowing warning for
+  an inherent, an interface, and a compiler-provided method. Parser unit tests cover the declaration syntax and sema
+  unit tests cover receiver matching. The suite is 436 tests.
+- Documentation: `spec/extensions.md` (new, EX1-EX8), `spec/grammar.md`, `spec/stage1-subset.md`, `tests/README.md`
+  decision 23 and the registry, `docs/error-codes.md`, `tests/run_tests.py`, `HANDOFF.md`, and this file.
+
 ### Milestone 16 — errors (issue #126)
 
 - `error enum` declarations: `error` is a keyword followed by `enum`; the declaration takes an ordinary enum's

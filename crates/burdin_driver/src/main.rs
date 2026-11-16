@@ -655,6 +655,12 @@ pub(crate) fn compile(
         return Err(ExitCode::from(1));
     }
     let program = program.expect("no errors means checking produced a program");
+    // Warnings do not stop compilation, but they are printed before the build goes on (`spec/extensions.md`,
+    // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
+    if diags.has_warnings() {
+        let render = render_options(options.diagnostics, std::io::stderr().is_terminal());
+        eprint!("{}", diags.render_with(&sources, &render).text);
+    }
 
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -1406,7 +1412,11 @@ mod tests {
             assert!(section.contains(&format!("## {code}:")), "{code} has no heading: {section}");
             assert!(section.contains("**How to fix:**"), "{code} has no fix");
             assert!(section.contains(&format!("//~ {code}")), "{code} prints no checked example");
-            assert!(ERROR_DOCS.contains(&format!("error-example: {code}")), "{code} has no checked example");
+            assert!(
+                ERROR_DOCS.contains(&format!("error-example: {code}"))
+                    || ERROR_DOCS.contains(&format!("warning-example: {code}")),
+                "{code} has no checked example"
+            );
         }
         let listing = code_list();
         let listed: Vec<&str> = listing.lines().filter_map(|line| line.split(':').next()).collect();

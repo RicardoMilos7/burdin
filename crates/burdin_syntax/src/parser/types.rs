@@ -176,6 +176,11 @@ impl Parser<'_> {
 
     pub(super) fn path_segment(&mut self) -> PResult<PathSegment> {
         let name = self.ident("a type name")?;
+        if self.at(&TokenKind::Lt) { self.path_segment_args(name) } else { Ok(PathSegment { name, args: Vec::new() }) }
+    }
+
+    /// A path segment whose name is already read, with its `<...>` type arguments when they follow.
+    pub(super) fn path_segment_args(&mut self, name: Ident) -> PResult<PathSegment> {
         let mut args = Vec::new();
         if self.at(&TokenKind::Lt) {
             self.open(&TokenKind::Lt, false)?;

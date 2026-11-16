@@ -1,0 +1,28 @@
+//@ run
+//> consuming abc
+//> dropped abc
+//> abc
+
+// `own self` takes the receiver by value; the extension's receiver is dropped when it returns, like any other
+// owned parameter (EX6, EX7).
+
+struct Noisy {
+    name: String,
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("dropped {self.name}")
+    }
+}
+
+fn Noisy.consume(own self): String {
+    println("consuming {self.name}")
+    self.name.clone()
+}
+
+fn main() {
+    let n = Noisy { name: String.from("abc") }
+    let copy = n.consume()
+    println(copy)
+}

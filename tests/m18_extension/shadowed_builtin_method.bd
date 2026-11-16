@@ -1,0 +1,14 @@
+//@ run
+//@ stderr: warning[E0215]
+//> 3
+
+// A method the compiler provides for a built-in type counts as the type's method: `String.len` wins over the
+// extension, and the extension's declaration gets the warning (EX4).
+
+fn String.len(self): i32 {
+    999
+}
+
+fn main() {
+    println(String.from("abc").len().to_string())
+}

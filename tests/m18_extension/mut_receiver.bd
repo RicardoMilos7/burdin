@@ -1,0 +1,23 @@
+//@ run
+//> 1
+//> 2
+//> 3
+
+// `mut self` takes the receiver's place, so the extension changes the caller's value (EX6).
+
+struct Counter {
+    n: i32,
+}
+
+fn Counter.step(mut self) {
+    self.n = self.n + 1
+}
+
+fn main() {
+    let mut c = Counter { n: 1 }
+    println(c.n.to_string())
+    c.step()
+    println(c.n.to_string())
+    c.step()
+    println(c.n.to_string())
+}

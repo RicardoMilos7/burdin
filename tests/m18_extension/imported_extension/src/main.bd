@@ -1,0 +1,10 @@
+//@ run
+//> hi!
+//> 42
+
+use text.{shout, doubled}
+
+fn main() {
+    println(String.from("hi").shout())
+    println(21.doubled().to_string())
+}

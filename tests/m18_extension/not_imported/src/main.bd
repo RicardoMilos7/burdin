@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Importing a module does not import its extensions: only `use text.shout` does (EX2). The call sees no method
+// `shout` on `String`.
+
+use text
+
+fn main() {
+    println(String.from("hi").shout()) //~ E0002
+}

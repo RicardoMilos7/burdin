@@ -1,0 +1,20 @@
+//@ run
+//> hello
+//> ell
+
+// An extension returns a view of its receiver through its `self` parameter, with the ordinary return-origin
+// rules (EX6; spec/memory-rules.md RT1-RT4).
+
+fn String.head(self): str {
+    self.as_str()
+}
+
+fn String.middle(self): str {
+    self[1..4]
+}
+
+fn main() {
+    let s = String.from("hello")
+    println(s.head())
+    println(s.middle())
+}

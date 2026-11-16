@@ -1,0 +1,28 @@
+//@ run
+//> 11
+
+// A generic body checked against its bounds may call a visible extension; the extension's receiver parameters
+// are bound from the receiver's type, which is itself a type parameter here (EX3, EX6).
+
+fn List<T>.largest(self): T where T: Copy + Ord {
+    let mut best = self[0]
+    let mut i: usize = 1
+    while i < self.len() {
+        if self[i] > best {
+            best = self[i]
+        }
+        i = i + 1
+    }
+    best
+}
+
+fn biggest<T: Copy + Ord>(xs: List<T>): T {
+    xs.largest()
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(4)
+    xs.push(11)
+    println(biggest(xs).to_string())
+}

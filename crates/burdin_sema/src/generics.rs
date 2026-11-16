@@ -85,6 +85,9 @@ pub(crate) struct GenericFn {
     pub decl: usize,
     /// The symbolic instance; its signature is the pattern that call arguments are matched against.
     pub identity: FuncId,
+    /// The receiver type of a generic extension method, with the parameters as `Ty::Param`; `None` for an
+    /// ordinary generic function. An instance's `self` type is this with the arguments substituted.
+    pub recv: Option<Ty>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

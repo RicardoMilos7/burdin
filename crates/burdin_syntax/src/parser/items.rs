@@ -49,6 +49,9 @@ impl Parser<'_> {
         let start = self.span();
         let is_priv = self.eat(&TokenKind::Priv);
         match self.kind() {
+            TokenKind::Fn | TokenKind::Unsafe if self.extension_ahead() => {
+                Ok(Some(Item::Extension(self.extension_decl(is_priv, start)?)))
+            }
             TokenKind::Fn | TokenKind::Unsafe => Ok(Some(Item::Fn(self.fn_decl(is_priv, start)?))),
             TokenKind::Struct => Ok(Some(Item::Struct(self.struct_decl(is_priv, start)?))),
             TokenKind::Enum => Ok(Some(Item::Enum(self.enum_decl(is_priv, start)?))),
@@ -471,6 +474,110 @@ impl Parser<'_> {
         Ok(InterfaceDecl { is_priv, name, generics, requires, methods, span: start.to(self.prev_span()) })
     }
 
+    /// Whether the `fn` (or `unsafe fn`) at the current position is an extension method: an identifier, then
+    /// either a `.` or a generic argument list followed by a `.`, as in `fn String.shout(...)` or
+    /// `fn List<T>.sum(...)`. The scan does not consume anything.
+    fn extension_ahead(&self) -> bool {
+        let kind_at = |i: usize| self.toks.get(i).map(|t| &t.kind);
+        let mut i = self.pos;
+        if matches!(kind_at(i), Some(TokenKind::Unsafe)) {
+            i += 1;
+        }
+        if !matches!(kind_at(i), Some(TokenKind::Fn)) {
+            return false;
+        }
+        i += 1;
+        if !matches!(kind_at(i), Some(TokenKind::Ident(_))) {
+            return false;
+        }
+        i += 1;
+        match kind_at(i) {
+            Some(TokenKind::Dot) => true,
+            Some(TokenKind::Lt) => {
+                self.generic_list_end(i).is_some_and(|end| matches!(kind_at(end), Some(TokenKind::Dot)))
+            }
+            _ => false,
+        }
+    }
+
+    /// The token index just past the `>` that closes the generic list opening at `start` (a `<`). `>>` closes two
+    /// levels; `>=` closes none. `None` when the list does not close cleanly.
+    fn generic_list_end(&self, start: usize) -> Option<usize> {
+        let mut depth = 0i32;
+        let mut parens = 0i32;
+        let mut i = start;
+        while let Some(t) = self.toks.get(i) {
+            match &t.kind {
+                TokenKind::Lt => depth += 1,
+                TokenKind::Gt => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                TokenKind::Shr => {
+                    depth -= 2;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                TokenKind::LParen | TokenKind::LBracket => parens += 1,
+                TokenKind::RParen | TokenKind::RBracket => {
+                    if parens == 0 {
+                        return None;
+                    }
+                    parens -= 1;
+                }
+                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace if parens == 0 => return None,
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// `fn Type.name(self, ...) { ... }`: the receiver type, then the method name and an ordinary function
+    /// signature. The receiver declares the type parameters it needs (`fn List<T>.sum(self)`); a `<...>` after
+    /// the method name is the method's own generic parameter list.
+    pub(super) fn extension_decl(&mut self, is_priv: bool, start: Span) -> PResult<ExtensionDecl> {
+        let is_unsafe = self.eat(&TokenKind::Unsafe);
+        self.expect(&TokenKind::Fn)?;
+        let recv_start = self.span();
+        let mut segments: Vec<PathSegment> = Vec::new();
+        let (name, generics) = loop {
+            let name = self.ident("a type name")?;
+            if self.at(&TokenKind::Lt) {
+                let receiver_args = self
+                    .generic_list_end(self.pos)
+                    .is_some_and(|end| matches!(self.toks.get(end).map(|t| &t.kind), Some(TokenKind::Dot)));
+                if receiver_args {
+                    segments.push(self.path_segment_args(name)?);
+                    self.expect(&TokenKind::Dot)?;
+                    continue;
+                }
+                break (name, self.generic_params()?);
+            }
+            if self.eat(&TokenKind::Dot) {
+                segments.push(PathSegment { name, args: Vec::new() });
+                continue;
+            }
+            break (name, Vec::new());
+        };
+        let recv_span = {
+            let last = segments.last().expect("an extension method has a receiver type");
+            recv_start.to(last.name.span)
+        };
+        let recv = Type { kind: TypeKind::Path(segments), span: recv_span };
+        let (func, _) = self.fn_rest(is_priv, is_unsafe, start, name, generics, false)?;
+        Ok(ExtensionDecl { recv, func })
+    }
+
     pub(super) fn fn_decl(&mut self, is_priv: bool, start: Span) -> PResult<FnDecl> {
         Ok(self.fn_decl_opt(is_priv, start, false)?.0)
     }
@@ -481,7 +588,21 @@ impl Parser<'_> {
         let is_unsafe = self.eat(&TokenKind::Unsafe);
         self.expect(&TokenKind::Fn)?;
         let name = self.ident("a function name")?;
-        let mut generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        self.fn_rest(is_priv, is_unsafe, start, name, generics, body_optional)
+    }
+
+    /// The rest of a function after `fn name [generics]`: parameters, return type, bounds, and body. An
+    /// extension method shares it with an ordinary function.
+    fn fn_rest(
+        &mut self,
+        is_priv: bool,
+        is_unsafe: bool,
+        start: Span,
+        name: Ident,
+        mut generics: Vec<GenericParam>,
+        body_optional: bool,
+    ) -> PResult<(FnDecl, bool)> {
         self.open(&TokenKind::LParen, false)?;
         let mut params = Vec::new();
         let mut is_vararg = false;

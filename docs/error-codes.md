@@ -1,13 +1,15 @@
 # Error code reference
 
 Every Burdin diagnostic carries a code from the registry in [`tests/README.md`](../tests/README.md#error-codes).
-This page explains each code, shows a program that triggers it, and says how to fix it.
+This page explains each code, shows a program that triggers it, and says how to fix it. Errors stop compilation;
+E0215 is a warning and does not.
 
 The page and its examples are checked by `tests/check_error_docs.py` in CI: the codes must match the registry
 exactly, every `burdin` snippet below is a complete program that the check compiles and expects to fail with
 exactly the marked diagnostics, and `burdin explain <code>` (which reads this page) must print every entry. The
 `//~ E0000` comment at the end of a line marks the line the diagnostic is reported on. An example marked
-`mode=test` is compiled with `burdin test`, because a test attribute is checked only in test mode.
+`mode=test` is compiled with `burdin test`, because a test attribute is checked only in test mode. An example in a
+`warning-example` block must compile and emit exactly the marked warnings.
 
 Run `burdin explain E0003` to print one entry in the terminal, or `burdin explain` to list the codes.
 
@@ -1130,3 +1132,57 @@ fn main() {
 **How to fix:** use the parameter's spelling from the declaration, remove the duplicate argument, move every
 positional argument before the named ones, or pass the arguments positionally to a callee that has no parameter
 names.
+
+## E0215: Shadowed extension method
+
+An extension method `fn Type.name(self, ...)` is visible in its module and in modules that import it by name.
+When the receiver type already has a method of that name — declared by an impl block, provided by an interface
+implementation, or provided by the compiler for a built-in type — the method is called at every use and the
+extension is unreachable through dot syntax. The compiler warns at the extension's declaration so the dead
+extension is not a surprise. The program still compiles and runs. `spec/extensions.md` EX3, EX4.
+
+<!-- warning-example: E0215 -->
+```burdin
+struct Gadget { n: i32 }
+
+Gadget {
+    fn label(self): String {
+        String.from("method")
+    }
+}
+
+fn Gadget.label(self): String { //~ E0215
+    String.from("extension")
+}
+
+fn main() {
+    let g = Gadget { n: 1 }
+    println(g.label())
+}
+```
+<!-- /warning-example -->
+
+**How to fix:** rename the extension, or delete it if the type's method now does the work. If the extension is
+meant to replace the method, remove the method or call a differently named extension.
+
+## E0216: Invalid extension method declaration
+
+An extension method is `fn Type.name(self, ...)`: the receiver is a type path in scope and `self` is its first
+parameter. This error reports a declaration without `self` first, type arguments on a segment of the receiver path
+other than the type itself, a `where` predicate naming something that is not one of the extension's type
+parameters, and importing an extension under another name (its calls always use the declared name).
+`spec/extensions.md` EX1, EX2, EX5.
+
+<!-- error-example: E0216 -->
+```burdin
+fn String.bad(): String { //~ E0216
+    String.from("x")
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** write `self` as the first parameter (`fn String.bad(self)`), put the type arguments on the type name
+at the end of the receiver (`fn List<T>.bad(self)`, not `fn List<i32>.Inner.bad(self)`), move the `where` predicate
+to an extension type parameter, or import the extension by its declared method name.

@@ -1,0 +1,29 @@
+//@ run
+//> circle 4
+//> square 9
+
+enum Shape {
+    Circle(i32),
+    Square(i32),
+}
+
+fn Shape.area(self): i32 {
+    match self {
+        Shape.Circle(radius) => radius * radius,
+        Shape.Square(side) => side * side,
+    }
+}
+
+fn Shape.describe(self): String {
+    match self {
+        Shape.Circle(_) => String.from("circle"),
+        Shape.Square(_) => String.from("square"),
+    }
+}
+
+fn main() {
+    let c = Shape.Circle(2)
+    let q = Shape.Square(3)
+    println("{c.describe()} {c.area()}")
+    println("{q.describe()} {q.area()}")
+}

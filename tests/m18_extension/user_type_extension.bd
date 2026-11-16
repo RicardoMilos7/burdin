@@ -1,0 +1,30 @@
+//@ run
+//> gear/3/a
+//> gear/3/b
+
+struct Gadget {
+    name: String,
+    label: char,
+    count: i32,
+}
+
+fn Gadget.describe(self): String {
+    let mut out = self.name.clone()
+    out.push_str("/")
+    out.push_str(self.count.to_string())
+    out.push_str("/")
+    out.push(self.label)
+    out
+}
+
+// `Self` means the receiver type in an extension's signature and body, as in a method.
+fn Gadget.with_label(self, label: char): Self {
+    Gadget { name: self.name.clone(), label, count: self.count }
+}
+
+fn main() {
+    let g = Gadget { name: String.from("gear"), label: 'a', count: 3 }
+    println(g.describe())
+    let relabeled = g.with_label('b')
+    println(relabeled.describe())
+}

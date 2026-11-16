@@ -181,6 +181,12 @@ impl Code {
     /// An invalid named argument: a name no parameter has, a parameter named twice, or a positional argument
     /// after a named one.
     pub const INVALID_NAMED_ARGUMENT: Code = Code("E0214");
+    /// An extension method that a method of its receiver type shadows. A warning: the method is called and the
+    /// extension is unreachable while the method exists (`spec/extensions.md`, EX4).
+    pub const EXTENSION_SHADOWED: Code = Code("E0215");
+    /// An invalid extension method declaration: no `self` first parameter, a receiver that is not a type name,
+    /// or a `where` clause naming something that is not one of its type parameters.
+    pub const INVALID_EXTENSION: Code = Code("E0216");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");
@@ -190,8 +196,8 @@ impl Code {
     pub const UNSUPPORTED: Code = Code("E9000");
 }
 
-/// How serious a diagnostic is. Only errors are produced today; the data model carries the severity so the
-/// JSON output and the human header do not have to assume it.
+/// How serious a diagnostic is. A warning is printed but does not stop compilation; the one warning today is a
+/// shadowed extension method (E0215, `spec/extensions.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -279,6 +285,20 @@ impl Diagnostics {
         self.list.last_mut().expect("a diagnostic was just pushed")
     }
 
+    /// Records a warning. A warning is printed like an error but never stops compilation
+    /// (`Diagnostics::has_errors` ignores it).
+    pub fn warning(&mut self, code: Code, span: Span, message: impl Into<String>) -> &mut Diagnostic {
+        self.list.push(Diagnostic {
+            code,
+            severity: Severity::Warning,
+            span,
+            message: message.into(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
+        self.list.last_mut().expect("a diagnostic was just pushed")
+    }
+
     /// Moves every diagnostic of `other` into this list, skipping one that has the same code and span as a
     /// diagnostic already here. A generic body is checked once against its bounds and once per instantiation, so
     /// the same mistake can be found more than once.
@@ -292,6 +312,11 @@ impl Diagnostics {
 
     pub fn has_errors(&self) -> bool {
         self.list.iter().any(|d| d.severity == Severity::Error)
+    }
+
+    /// Whether at least one warning is waiting to be printed. Compilation continues.
+    pub fn has_warnings(&self) -> bool {
+        self.list.iter().any(|d| d.severity == Severity::Warning)
     }
 
     pub fn len(&self) -> usize {

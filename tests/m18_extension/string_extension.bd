@@ -1,0 +1,45 @@
+//@ run
+//> hello!
+//> hello!!
+//> 6
+//> 4
+//> wow!
+
+// An extension method on a built-in type is called with dot syntax, exactly like a method of the type
+// (spec/extensions.md, EX1 and EX3). `str` and `String` are distinct receiver types.
+
+fn String.shout(self): String {
+    let mut out = String.new()
+    out.push_str(self)
+    out.push_str("!")
+    out
+}
+
+fn String.shout_len(self): usize {
+    self.len() + 1
+}
+
+fn str.odd_len(self): usize {
+    self.len() + 1
+}
+
+fn String.append_bang(mut self) {
+    self.push_str("!")
+}
+
+// An extension body calls another visible extension the same way any other body does.
+fn String.shout_twice(self): String {
+    let mut out = self.shout()
+    out.push_str("!")
+    out
+}
+
+fn main() {
+    println(String.from("hello").shout())
+    println(String.from("hello").shout_twice())
+    println(String.from("hello").shout_len().to_string())
+    println("abc".odd_len().to_string())
+    let mut wow = String.from("wow")
+    wow.append_bang()
+    println(wow)
+}

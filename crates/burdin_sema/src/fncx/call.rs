@@ -901,8 +901,14 @@ impl FnCx<'_> {
         if name.name == "context" && matches!(recv.ty, Ty::Result(..)) {
             return self.context_call(recv, args, span);
         }
+        let recv_ty = recv.ty.clone();
         let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
-            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{}`", name.name, recv.ty));
+            // No method the type declares and none the compiler provides: a visible extension method may apply
+            // (`spec/extensions.md`, EX3). It is tried last, so a method always wins.
+            if let Some(e) = self.extension_call(recv, name, args, span) {
+                return e;
+            }
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{recv_ty}`", name.name));
             return self.args_then_error(args, span);
         };
         if m.mutates_receiver() && !matches!(recv.ty, Ty::Error) {
@@ -959,6 +965,64 @@ impl FnCx<'_> {
         };
         checked.insert(0, recv);
         mk(tir::ExprKind::Method(m, checked), ret, span)
+    }
+
+    /// `x.name(args)` through an extension method visible in this module (`spec/extensions.md`, EX3). The
+    /// extension must be declared here or imported by name; the caller reports the missing method when `None`.
+    pub(super) fn extension_call(
+        &mut self,
+        recv: tir::Expr,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<tir::Expr> {
+        let candidates = self.globals.modules[self.module].extensions.get(&name.name)?.clone();
+        for id in candidates {
+            let ext = self.globals.extensions[id].clone();
+            if !crate::extensions::extension_applies(self.globals, &ext, &recv.ty) {
+                continue;
+            }
+            return Some(self.extension_call_inner(&ext, recv, name, args, span));
+        }
+        None
+    }
+
+    fn extension_call_inner(
+        &mut self,
+        ext: &crate::globals::ExtensionInfo,
+        recv: tir::Expr,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        // A generic extension is instantiated from the receiver and the arguments, exactly like a generic
+        // function whose first parameter is the receiver.
+        if let Some(g) = ext.generic {
+            return self.generic_call_with_receiver(g, recv, &name.name, args, span);
+        }
+        let Some(f) = ext.func else { return error_expr(span) };
+        self.check_unsafe_call(f, &name.name, name.span);
+        let sig = self.globals.sigs[f.0].clone();
+        let Some(receiver) = sig.params.first().cloned() else {
+            return self.args_then_error(args, span);
+        };
+        // `mut self` borrows the receiver exclusively, like a method's (`spec/extensions.md`, EX6).
+        if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
+            let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+            let whose = local.unwrap_or_else(|| "this receiver".to_string());
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
+            );
+        }
+        let rest = sig.params[1..].to_vec();
+        let receiver_place = Some((&recv, receiver.exclusive));
+        let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
+            return error_expr(span);
+        };
+        checked.insert(0, recv);
+        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
     }
 
     /// A struct field of closure type named `name`, for calling `holder.f(x)`. A field whose type is a type

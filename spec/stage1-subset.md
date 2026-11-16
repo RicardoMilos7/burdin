@@ -102,6 +102,12 @@ declaration and materialized at the call site, that arguments are evaluated left
 named arguments are matched to parameter names, and that interface signatures and `extern` declarations take no
 defaults). The new diagnostics are E0213 (invalid default) and E0214 (invalid named argument).
 
+Milestone 18 is complete: `tests/m18_extension` and every earlier folder pass in debug and release, and the rules
+are recorded in `spec/extensions.md` EX1-EX8 (the decisions that an extension is visible in its declaring module and
+in modules that import it by name, that a call tries the type's methods before a visible extension, and that a
+shadowed extension gets a warning at its declaration). The new diagnostics are E0215 (a warning: a shadowed
+extension method) and E0216 (an invalid extension declaration or import).
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -206,8 +212,12 @@ code; do not invent them inside the implementation.
    `Not`, comparisons, `Index`/`IndexMut`), whether compound assignment is included (currently "when wanted"), and
    how an overloaded operator interacts with the built-in one during type checking.
 
-9. **Extension methods.** Where an extension is visible (imports), resolution after inherent and interface methods,
-   and the diagnostic for shadowing.
+9. **Extension methods — settled with milestone 18.** An extension `fn Type.name(self, ...)` is visible in its
+   declaring module and in modules that import it by name; importing a module or another item does not bring it.
+   A call tries the type's methods (inherent and interface, including compiler-provided ones) before a visible
+   extension. A method always wins over a same-named extension, which gets the warning E0215 at its declaration;
+   E0216 reports an invalid declaration, and E0007 a duplicate receiver or import. The rules are
+   `spec/extensions.md` EX1-EX8 and the tests are `tests/m18_extension/`.
 
 ## Not in stage 1
 
