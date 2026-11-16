@@ -6,7 +6,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 Updated at the end of the twenty-ninth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
-(`any` and `impl`), and 16 (errors) are done**: 376 conformance tests; all pass in debug with one host skip, and all
+(`any` and `impl`), and 16 (errors) are done**: 379 conformance tests; all pass in debug with one host skip, and all
 pass in release except the debug-only tests.
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -111,7 +111,7 @@ implicit conversion, `context`, and E0212. `std/src/std.bd` declares the `Error`
 diagnostics are E0210, E0211, and E0212. The session also fixed a code-generation bug the release profile exposed:
 a temporary created inside one branch had an uninitialized drop flag at the statement's drop site, which an
 optimizer could treat as an undefined free and use to delete the rest of the function; the flag now starts `false`
-in the entry block. The tests are `tests/m16_errors/` with 22 tests.
+in the entry block. The tests are `tests/m16_errors/` with 25 tests.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ in the entry block. The tests are `tests/m16_errors/` with 22 tests.
 | Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
 | Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, Error>`, error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
-| Conformance tests | `tests/` | 376 tests. All pass: m01 to m16 (all pass in debug with one host skip, and all pass in release except the debug-only tests) |
+| Conformance tests | `tests/` | 379 tests. All pass: m01 to m16 (all pass in debug with one host skip, and all pass in release except the debug-only tests) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -1348,7 +1348,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 ## What is left to do, in order
 
 1. Milestone 16 is complete (twenty-ninth session): `spec/errors.md` ERR1-ERR10 are the decisions and
-   `tests/m16_errors/` has 22 tests. The next milestone is 17 (default and named arguments): settle the evaluation
+   `tests/m16_errors/` has 25 tests. The next milestone is 17 (default and named arguments): settle the evaluation
    order, the interaction with `mut`/`own` conventions and exclusivity, and the rule that interface signatures
    cannot declare defaults. The MIR interpreter question (comptime) and allocator parameters shape later
    milestones and can wait for theirs. Issue #444 (differential tests between comptime and compiled code) is blocked

@@ -40,9 +40,18 @@ fn lower_error_enum(e: ErrorEnumDecl, id: FileId, diags: &mut Diagnostics) -> Ve
             conversions.push((v.name.name.clone(), source));
         }
     }
-    let mut sources = vec![display_impl(&e, &messages), error_impl(&e)];
-    for (variant, source) in &conversions {
-        sources.push(from_impl(&e.name.name, variant, source));
+    // A repeated variant name is E0007 from the checker. The generated impls would then match the same variant
+    // twice (and report a spurious non-exhaustive match), so they are left out and the declaration is reported
+    // once, at the name.
+    let duplicate =
+        e.variants.iter().enumerate().any(|(i, v)| e.variants[..i].iter().any(|other| other.name.name == v.name.name));
+    let mut sources = Vec::new();
+    if !duplicate {
+        sources.push(display_impl(&e, &messages));
+        sources.push(error_impl(&e));
+        for (variant, source) in &conversions {
+            sources.push(from_impl(&e.name.name, variant, source));
+        }
     }
 
     let mut items = Vec::with_capacity(1 + sources.len());

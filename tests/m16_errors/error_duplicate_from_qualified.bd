@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Two `from` variants are the same conversion even when one source is written through a qualified path
+// (spec/errors.md, ERR3).
+
+error enum Twice { //~ E0211
+    First(std.IoError) from "first: {0}"
+    Second(IoError) from "second: {0}"
+}
+
+fn main() {}

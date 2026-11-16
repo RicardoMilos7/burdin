@@ -272,9 +272,9 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   return the real error variants with their messages; the compiler primitives behind them produce a placeholder
   that the `std` wrappers replace. `orelse` accepts a closure handler: `|e| ...` for a `Result` and `|| ...` for
   an `Option` (issue #488).
-- Tests: `tests/m16_errors/` adds 22 conformance tests covering `error` declarations and messages, `from` and `?`,
+- Tests: `tests/m16_errors/` adds 25 conformance tests covering `error` declarations and messages, `from` and `?`,
   the dynamic error and downcasts, `context` chains, debug traces, `main(): Result<T>`, typed assertions, the
-  standard-library errors, the `orelse` handlers, and every new diagnostic. The suite is 376 tests (all pass in
+  standard-library errors, the `orelse` handlers, and every new diagnostic. The suite is 379 tests (all pass in
   debug with one host skip; release passes all except the debug-only tests).
 - Documentation: `spec/errors.md` (new), `spec/grammar.md`, `spec/stdlib.md`, `spec/test-runner.md`,
   `spec/stage1-subset.md`, `std/README.md`, `tests/README.md` decision 21 and the registry, `docs/error-codes.md`,
