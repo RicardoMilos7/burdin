@@ -1,0 +1,43 @@
+//@ run
+//> 1 2
+//> 4 7
+//> 5 3 9
+//> b a
+//> bb a
+//> a bb
+//> (1, 9) (3, 2)
+//> first second
+//> tied-first tied-second
+
+// `min`, `max`, `clamp`, and the `_by` and `_by_key` forms (`spec/stdlib.md`, `Ordering`).
+
+fn main() {
+    println("{cmp.min(1, 2)} {cmp.max(1, 2)}")
+    println("{cmp.min(4, 7)} {cmp.max(4, 7)}")
+    println("{cmp.clamp(5, 0, 10)} {cmp.clamp(-3, 3, 9)} {cmp.clamp(20, 0, 9)}")
+
+    let hi_s = cmp.max(String.from("b"), String.from("a"))
+    let lo_s = cmp.min(String.from("b"), String.from("a"))
+    println("{hi_s} {lo_s}")
+
+    // `_by` takes a comparator that sees views of both values.
+    let longer = cmp.max_by(String.from("bb"), String.from("a"), |x, y| x.len().cmp(y.len()))
+    let shorter = cmp.min_by(String.from("bb"), String.from("a"), |x, y| x.len().cmp(y.len()))
+    println("{longer} {shorter}")
+    let lo_len = cmp.min_by(String.from("a"), String.from("bb"), |x, y| x.len().cmp(y.len()))
+    let hi_len = cmp.max_by(String.from("a"), String.from("bb"), |x, y| x.len().cmp(y.len()))
+    println("{lo_len} {hi_len}")
+
+    // `_by_key` compares the keys the closure computes.
+    let lo = cmp.min_by_key((3, 2), (1, 9), |p| p.0)
+    let hi = cmp.max_by_key((3, 2), (1, 9), |p| p.0)
+    println("{lo:?} {hi:?}")
+
+    // A tie keeps the first value for `min` and the second for `max`, as for `min`/`max` themselves.
+    let a = cmp.min_by_key(String.from("first"), String.from("second"), |s| 0)
+    let b = cmp.max_by_key(String.from("first"), String.from("second"), |s| 0)
+    println("{a} {b}")
+    let c = cmp.min_by(String.from("tied-first"), String.from("tied-second"), |_x, _y| Ordering.Equal)
+    let d = cmp.max_by(String.from("tied-first"), String.from("tied-second"), |_x, _y| Ordering.Equal)
+    println("{c} {d}")
+}

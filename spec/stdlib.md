@@ -241,6 +241,51 @@ types `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter`. A program implements 
 work with `for` and the adapters. The rules, the item types, and the second-class restrictions are in
 [`iterators.md`](iterators.md).
 
+## `Ordering`, `cmp`, and `Reverse<T>` (issue #705)
+
+`std.cmp` declares the three-way comparison. The prelude makes its names visible in every module, and `cmp.min(a, b)`
+names the module.
+
+```
+enum Ordering derives (Copy, Clone, Eq, Ord, Hash, Debug) { Less  Equal  Greater }
+
+fn Ordering.reverse(self): Ordering
+fn Ordering.then(self, other: Ordering): Ordering
+fn Ordering.then_with<F: FnOnce(): Ordering>(self, f: F): Ordering
+fn Ordering.is_lt(self): bool      is_le   is_eq   is_ne   is_gt   is_ge
+
+fn cmp.min<T: Ord>(a: T, b: T): T                      // `a` when they are equal
+fn cmp.max<T: Ord>(a: T, b: T): T                      // `b` when they are equal
+fn cmp.clamp<T: Ord>(value: T, low: T, high: T): T     // panics when `low > high`
+fn cmp.min_by<T, F: FnMut(&T, &T): Ordering>(a: T, b: T, compare: F): T
+fn cmp.max_by<T, F: FnMut(&T, &T): Ordering>(a: T, b: T, compare: F): T
+fn cmp.min_by_key<T, K: Ord, F: FnMut(&T): K>(a: T, b: T, key: F): T
+fn cmp.max_by_key<T, K: Ord, F: FnMut(&T): K>(a: T, b: T, key: F): T
+
+struct Reverse<T> derives (Copy, Clone, Eq, Debug) { value: T }   // `<` is `T`'s `>`; `T: Ord` through `PartialOrd`
+```
+
+`a.cmp(b): Ordering` is provided by the compiler for every type that satisfies `Ord`: the integers, `char`, `bool`,
+`str`, `String`, `()`, tuples and ranges of ordered parts, a struct or enum that derives `Ord`, a type parameter with
+an `Ord` bound, and `Reverse<T>`. It calls the private `std.cmp.__ord_cmp`, which is `if a < b { Less } else if b < a
+{ Greater } else { Equal }`. `Option<T>` and `Result<T, E>` get `cmp` from extension methods in `std.cmp` (`None`
+before every `Some`; every `Ok` before every `Err`; contents compared when the kinds match): they are not `Ord`, so
+`<` still does not apply to them. Floats have `<` but no total order, so `f64.cmp` is E0002 (`total_cmp` is the float
+order, issue #703). The decisions behind it:
+
+- **`cmp` is not an interface method.** `PartialOrd` keeps `lt`/`le`/`gt`/`ge` and `Ord` stays the compiler-known
+  bound, so a derive generates nothing new: `cmp` is `<` read twice. `Ord` and `Eq` remain independent derives.
+- **A hand-written `PartialOrd` satisfies an `Ord` bound.** A type that implements `PartialOrd` (its `lt` is the
+  order) is accepted wherever `T: Ord` is required, which is how `Reverse<T>` works with `cmp.min`, `max_by_key`, and
+  later `PriorityHeap` and `sort_by_key`. The built-in `<` does not apply to such a type (`has_ord` is false), so a
+  generic body instantiated for it calls `lt`; the compiler-implemented `List.sort` still wants a derived `Ord`
+  (E0141). Hand-written `Eq`/`Ord`/`Hash` beyond this stay E9000 under #402.
+- A closure comparator or key function sees views of the values (`&T`), so the helpers return an owned `T`: `min`
+  and friends cannot be called on two `str` views (E0121, a view cannot come from two parameters); use `String`.
+
+Tests: `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`,
+`reverse`, `cmp_float_has_no_cmp`, `cmp_needs_ord`.
+
 ## `Option<T>` and `Result<T, E>`
 
 `Option<T>` is built in with the variants `Some(T)` and `None`; `None` takes its type from context. `Result<T, E>`
@@ -436,6 +481,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`) |
+| `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |

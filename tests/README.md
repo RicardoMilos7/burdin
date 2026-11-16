@@ -36,6 +36,7 @@ tests/
                        specific instances
   m22_build/           build.bd, dependency grants, generated modules, the minimal bindgen
   m23_allocators/      allocator parameters, Arena, Shared<T>, leak detection, allocator-aware containers
+  m24_stdlib/          the standard-library roundout: Ordering, containers, text, numbers, I/O, time, random
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.

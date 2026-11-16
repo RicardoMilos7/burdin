@@ -1,0 +1,61 @@
+//@ run
+//> Less
+//> Greater
+//> Equal
+//> Less
+//> Greater
+//> Equal
+//> Less
+//> Greater
+//> Less
+//> Greater
+//> Equal
+//> Less
+//> Greater
+//> Less
+//> Greater
+//> Less
+//> Less
+
+// `a.cmp(b)` on every type that supports `<` through `Ord`: integers, `char`, `bool`, strings, tuples, ranges,
+// and types that derive `Ord` (`spec/stdlib.md`, `Ordering`).
+
+struct Version derives (Ord, Eq) {
+    major: i32
+    minor: i32
+}
+
+enum Level derives (Ord, Eq) {
+    Low
+    Mid
+    High(i32)
+}
+
+fn show(o: Ordering) {
+    println("{o:?}")
+}
+
+fn main() {
+    show((1).cmp(2))
+    show((-1 as i8).cmp(-5))
+    show((7 as u64).cmp(7))
+    show('a'.cmp('b'))
+    show(true.cmp(false))
+    show(false.cmp(false))
+    show("apple".cmp("banana"))
+    show(String.from("pear").cmp(String.from("fig")))
+
+    show((Version { major: 1, minor: 2 }).cmp(Version { major: 1, minor: 3 }))
+    show((Version { major: 2, minor: 0 }).cmp(Version { major: 1, minor: 9 }))
+    show((Level.High(3)).cmp(Level.High(3)))
+    show(Level.Mid.cmp(Level.High(0)))
+    show((Level.High(2)).cmp(Level.High(1)))
+
+    show((1, "b").cmp((1, "c")))
+    show((2, 0).cmp((1, 5)))
+
+    let a: Range<i32> = 0..4
+    let b: Range<i32> = 1..2
+    show(a.cmp(b))
+    show((1 as i64).cmp(1 + 1))
+}

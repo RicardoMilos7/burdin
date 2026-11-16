@@ -1,0 +1,26 @@
+//@ run
+//> 2
+//> Greater
+//> true
+//> 1 3
+//> 3
+
+// `Reverse<T>` reverses the order of `T`, so it works where `T: Ord` is asked for and a minimum becomes a
+// maximum (`spec/stdlib.md`, `Ordering`).
+
+fn smallest<T: Ord>(own a: T, own b: T): T {
+    cmp.min(a, b)
+}
+
+fn main() {
+    let r = smallest(Reverse { value: 1 }, Reverse { value: 2 })
+    println("{r.value}")
+    println("{(Reverse { value: 1 }).cmp(Reverse { value: 2 }):?}")
+    println("{Reverse { value: 5 } < Reverse { value: 4 }}")
+
+    // A key wrapped in `Reverse` flips what `min_by_key`/`max_by_key` pick.
+    let by_key_lo = cmp.min_by_key(1, 3, |x| Reverse { value: *x })
+    let by_key_hi = cmp.max_by_key(1, 3, |x| Reverse { value: *x })
+    println("{by_key_hi} {by_key_lo}")
+    println("{cmp.max(Reverse { value: 9 }, Reverse { value: 3 }).value}")
+}

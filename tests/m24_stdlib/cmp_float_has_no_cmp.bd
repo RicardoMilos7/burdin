@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// Floats have `<` but no total order, so they have no `cmp`; `total_cmp` is their order.
+
+fn main() {
+    let a = 1.0
+    let o = a.cmp(2.0) //~ E0002
+}

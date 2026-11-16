@@ -1,0 +1,48 @@
+//@ run
+//> Greater
+//> Less
+//> Equal
+//> Less
+//> Greater
+//> Less
+//> true false false true false
+//> true true false false true
+//> false false true true false false
+//> false
+
+// `Ordering` and its helpers (`spec/stdlib.md`, `Ordering`): `reverse`, `then`, `then_with`, and the predicates.
+
+fn show(o: Ordering) {
+    println("{o:?}")
+}
+
+fn main() {
+    show(Ordering.Less.reverse())
+    show(Ordering.Greater.reverse())
+    show(Ordering.Equal.reverse())
+
+    // `then` keeps the first order unless it is `Equal`.
+    show(Ordering.Less.then(Ordering.Greater))
+    show(Ordering.Equal.then(Ordering.Greater))
+
+    // `then_with` runs its closure only when the first order is `Equal`.
+    let mut calls = 0
+    show(Ordering.Less.then_with(|| Ordering.Greater))
+    let o = Ordering.Equal.then_with(|| Ordering.Less)
+    if o.is_lt() {
+        calls = calls + 1
+    }
+
+    let l = Ordering.Less
+    println("{l.is_lt()} {l.is_eq()} {l.is_gt()} {l.is_ne()} {l.is_ge()}")
+    let e = Ordering.Equal
+    println("{e.is_le()} {e.is_ge()} {e.is_lt()} {e.is_gt()} {e.is_eq()}")
+    let g = Ordering.Greater
+    println("{g.is_lt()} {g.is_le()} {g.is_ne()} {g.is_ge()} {g.is_eq()} {g.is_le() && g.is_lt()}")
+
+    // `Ordering` itself is ordered `Less < Equal < Greater`.
+    println("{Ordering.Greater < Ordering.Less}")
+    if calls != 1 {
+        panic("then_with did not run its closure")
+    }
+}
