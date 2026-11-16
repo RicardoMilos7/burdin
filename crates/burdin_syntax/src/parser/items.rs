@@ -434,7 +434,7 @@ impl Parser<'_> {
         Ok(TestDecl { name, name_span, attrs, func, body_func, span })
     }
 
-    /// The optional attribute list of a test item: `[ignore, timeout(500), should_panic("boom")]`. The values are
+    /// The optional attribute list of a test item: `[ignore, timeout(500), should_panic("boom"), differential]`. The values are
     /// parsed but not checked here; `burdin_sema` validates the names, values, duplicates, and combinations (E0170).
     fn test_attrs(&mut self) -> PResult<Vec<TestAttr>> {
         let mut attrs = Vec::new();

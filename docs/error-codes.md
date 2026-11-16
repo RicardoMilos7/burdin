@@ -790,8 +790,9 @@ fn main() {}
 ## E0170: Invalid test attribute
 
 A `test` item's attribute list is checked when the test is compiled. The list may name `ignore`, `timeout`,
-`should_panic`, or `should_fail`, each once. The message names the unknown or repeated attribute, the value the
-attribute does not take, or the `should_panic`/`should_fail` combination.
+`should_panic`, `should_fail`, or `differential`, each once. The message names the unknown or repeated attribute,
+the value the attribute does not take, or an incompatible combination: `should_panic` with `should_fail`, and
+`differential` with either of them (a differential test takes its expectation from the compile-time run).
 
 <!-- error-example: E0170 mode=test -->
 ```burdin
@@ -801,9 +802,10 @@ test "repeated" [ignore, ignore] { //~ E0170
 ```
 <!-- /error-example -->
 
-**How to fix:** write each attribute once, with the value it takes: `ignore`, `timeout(500)`, `should_panic`, or
-`should_panic("message")`. Use `should_fail` on its own rather than together with `should_panic`; the first expects
-a returned error and the second a panic abort.
+**How to fix:** write each attribute once, with the value it takes: `ignore`, `timeout(500)`, `should_panic`,
+`should_panic("message")`, `should_fail`, or `differential`. Use `should_fail` on its own rather than together with
+`should_panic`; the first expects a returned error and the second a panic abort. Use `differential` on its own
+rather than with either; its expectation is the compile-time outcome.
 
 ## E0171: A second-class closure escapes
 

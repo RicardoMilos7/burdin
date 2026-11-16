@@ -768,6 +768,17 @@ impl<'p, 'c> Interp<'p, 'c> {
 
     // ----- calls ---------------------------------------------------------------------------------------
 
+    /// Calls `f` with no arguments as a complete evaluation, for a `[differential]` test body
+    /// (`spec/test-runner.md`). A `break` or `continue` that leaves the call is an internal error, as it is for a
+    /// comptime expression; a `return` is the call's value.
+    pub(crate) fn call_root(&mut self, f: FuncId, span: Span) -> Result<Value, Fault> {
+        match self.call(f, None, &[], span) {
+            Ok(v) => Ok(v),
+            Err(Unwind::Fault(fault)) => Err(fault),
+            Err(_) => Err(Fault::Internal("control flow left a differential test".into(), span)),
+        }
+    }
+
     /// Calls function `f`. `recv` is the place of a receiver passed by address (a dynamic call's box); the
     /// arguments follow the callee's conventions.
     pub(crate) fn call(&mut self, f: FuncId, recv: Option<Place>, args: &'p [Expr], span: Span) -> R<Value> {

@@ -7,7 +7,7 @@
 
 use crate::package::{self, Workspace};
 use crate::{Args, CompileOptions, TempDir, USAGE, compile};
-use burdin_tir::TestAttrs;
+use burdin_tir::{TestAttrs, TestOutcome};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::sync::Mutex;
@@ -23,8 +23,18 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// One planned test: an ignored test is reported but not run; a runnable test names the binary, the dispatcher
 /// index, and the attributes that decide what counts as a pass.
 enum PlannedTest {
-    Ignored { display: String },
-    Run { display: String, exe: PathBuf, index: usize, timeout: Option<Duration>, attrs: TestAttrs },
+    Ignored {
+        display: String,
+    },
+    Run {
+        display: String,
+        exe: PathBuf,
+        index: usize,
+        timeout: Option<Duration>,
+        attrs: TestAttrs,
+        /// The compile-time outcome of a `[differential]` test; `None` for an ordinary test.
+        comptime: Option<TestOutcome>,
+    },
 }
 
 /// What one test process did. `note` explains a failure the output alone does not (a timeout, or an unmet
@@ -220,7 +230,14 @@ fn plan_tests(args: &Args, compiled: &[(String, PathBuf, Vec<burdin_tir::TestEnt
                 Some(ms) => Some(Duration::from_millis(ms)),
                 None => global_timeout,
             };
-            plan.push(PlannedTest::Run { display, exe: exe.clone(), index, timeout, attrs: test.attrs.clone() });
+            plan.push(PlannedTest::Run {
+                display,
+                exe: exe.clone(),
+                index,
+                timeout,
+                attrs: test.attrs.clone(),
+                comptime: test.comptime,
+            });
         }
     }
     (plan, ignored)
@@ -248,10 +265,10 @@ fn execute(
                 loop {
                     let slot = next.fetch_add(1, Ordering::Relaxed);
                     let Some(&plan_index) = runnable.get(slot) else { break };
-                    let PlannedTest::Run { display, exe, index, timeout, attrs } = &plan[plan_index] else {
+                    if !matches!(&plan[plan_index], PlannedTest::Run { .. }) {
                         continue;
-                    };
-                    match run_one(exe, *index, display, *timeout, attrs, capture_dir, plan_index) {
+                    }
+                    match run_one(&plan[plan_index], capture_dir, plan_index) {
                         Ok(outcome) => outcomes.lock().unwrap()[plan_index] = Some(outcome),
                         Err(error) => {
                             *failure.lock().unwrap() = Some(error);
@@ -276,15 +293,10 @@ fn default_jobs() -> usize {
 /// files outside the test's working directory: a pipe would deadlock when a test writes more than the pipe buffer
 /// holds (unless a reader thread drains it), and a grandchild that inherits a pipe can keep the reader blocked after
 /// a timeout kills the test.
-fn run_one(
-    exe: &Path,
-    index: usize,
-    display: &str,
-    timeout: Option<Duration>,
-    attrs: &TestAttrs,
-    capture_dir: &Path,
-    slot: usize,
-) -> Result<Outcome, String> {
+fn run_one(test: &PlannedTest, capture_dir: &Path, slot: usize) -> Result<Outcome, String> {
+    let PlannedTest::Run { display, exe, index, timeout, attrs, comptime } = test else {
+        unreachable!("only runnable tests are executed");
+    };
     let work = TempDir::new().map_err(|e| format!("cannot create a temporary directory: {e}"))?;
     let stdout_path = capture_dir.join(format!("capture-{slot}.out"));
     let stderr_path = capture_dir.join(format!("capture-{slot}.err"));
@@ -302,7 +314,7 @@ fn run_one(
     isolate(&mut command, &work.path, display);
     let mut child = command.spawn().map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
     let mut timed_out_after = None;
-    let status = match timeout {
+    let status = match *timeout {
         None => child.wait().map_err(|e| format!("cannot wait for {}: {e}", exe.display()))?,
         Some(limit) => {
             let start = Instant::now();
@@ -325,7 +337,7 @@ fn run_one(
     let stderr = std::fs::read(&stderr_path).unwrap_or_default();
     let note = match timed_out_after {
         Some(ms) => Some(format!("timed out after {ms} ms")),
-        None => verdict(ending(&status), attrs, &String::from_utf8_lossy(&stderr)).err(),
+        None => verdict(ending(&status), attrs, *comptime, &String::from_utf8_lossy(&stderr)).err(),
     };
     Ok(Outcome { passed: note.is_none(), stdout, stderr, note })
 }
@@ -368,8 +380,27 @@ fn isolation_env(workdir: &Path, display: &str) -> Vec<(&'static str, std::ffi::
     vars
 }
 
-/// Whether the test's ending satisfies its attributes.
-fn verdict(ending: Ending, attrs: &TestAttrs, stderr: &str) -> Result<(), String> {
+/// Whether the test's ending satisfies its attributes. For a `[differential]` test, `comptime` is the outcome of
+/// the same body run by the interpreter while the package was compiled; the compiled test must produce it too
+/// (`spec/test-runner.md`).
+fn verdict(ending: Ending, attrs: &TestAttrs, comptime: Option<TestOutcome>, stderr: &str) -> Result<(), String> {
+    if let Some(expected) = comptime {
+        return match (ending, expected) {
+            (Ending::Success, TestOutcome::Ok) | (Ending::ReturnedError, TestOutcome::Err) => Ok(()),
+            (Ending::Success, TestOutcome::Err) => {
+                Err("the compiled test returned `Ok`, but the comptime interpreter returned `Err`".to_string())
+            }
+            (Ending::ReturnedError, TestOutcome::Ok) => {
+                Err("the compiled test returned `Err`, but the comptime interpreter returned `Ok`".to_string())
+            }
+            (Ending::Abnormal, TestOutcome::Ok) => {
+                Err("the compiled test aborted, but the comptime interpreter returned `Ok`".to_string())
+            }
+            (Ending::Abnormal, TestOutcome::Err) => {
+                Err("the compiled test aborted, but the comptime interpreter returned `Err`".to_string())
+            }
+        };
+    }
     if attrs.should_panic {
         return match ending {
             Ending::Abnormal => match &attrs.should_panic_message {
@@ -516,30 +547,54 @@ mod tests {
         let mut with_message = attrs();
         with_message.should_panic = true;
         with_message.should_panic_message = Some("boom".to_string());
-        assert!(verdict(Ending::Abnormal, &with_message, "panic: boom\n").is_ok());
-        assert!(verdict(Ending::Abnormal, &with_message, "panic: other\n").is_err());
-        assert!(verdict(Ending::Success, &with_message, "").is_err());
-        assert!(verdict(Ending::ReturnedError, &with_message, "").is_err());
+        assert!(verdict(Ending::Abnormal, &with_message, None, "panic: boom\n").is_ok());
+        assert!(verdict(Ending::Abnormal, &with_message, None, "panic: other\n").is_err());
+        assert!(verdict(Ending::Success, &with_message, None, "").is_err());
+        assert!(verdict(Ending::ReturnedError, &with_message, None, "").is_err());
 
         let mut plain = attrs();
         plain.should_panic = true;
-        assert!(verdict(Ending::Abnormal, &plain, "").is_ok());
+        assert!(verdict(Ending::Abnormal, &plain, None, "").is_ok());
     }
 
     #[test]
     fn should_fail_requires_a_returned_error() {
         let mut fail = attrs();
         fail.should_fail = true;
-        assert!(verdict(Ending::ReturnedError, &fail, "").is_ok());
-        assert!(verdict(Ending::Success, &fail, "").is_err());
-        assert!(verdict(Ending::Abnormal, &fail, "").is_err());
+        assert!(verdict(Ending::ReturnedError, &fail, None, "").is_ok());
+        assert!(verdict(Ending::Success, &fail, None, "").is_err());
+        assert!(verdict(Ending::Abnormal, &fail, None, "").is_err());
     }
 
     #[test]
     fn a_normal_test_passes_only_on_success() {
-        assert!(verdict(Ending::Success, &attrs(), "").is_ok());
-        assert_eq!(verdict(Ending::ReturnedError, &attrs(), ""), Err(String::new()));
-        assert_eq!(verdict(Ending::Abnormal, &attrs(), ""), Err(String::new()));
+        assert!(verdict(Ending::Success, &attrs(), None, "").is_ok());
+        assert_eq!(verdict(Ending::ReturnedError, &attrs(), None, ""), Err(String::new()));
+        assert_eq!(verdict(Ending::Abnormal, &attrs(), None, ""), Err(String::new()));
+    }
+
+    #[test]
+    fn a_differential_test_must_match_the_compile_time_outcome() {
+        // Agreement passes whether the body returns `Ok` or `Err`; agreement is the expectation, not success.
+        assert!(verdict(Ending::Success, &attrs(), Some(TestOutcome::Ok), "").is_ok());
+        assert!(verdict(Ending::ReturnedError, &attrs(), Some(TestOutcome::Err), "").is_ok());
+        // A different outcome, or a compiled run that aborts, is a divergence and fails with an explanation.
+        assert_eq!(
+            verdict(Ending::Success, &attrs(), Some(TestOutcome::Err), ""),
+            Err("the compiled test returned `Ok`, but the comptime interpreter returned `Err`".to_string())
+        );
+        assert_eq!(
+            verdict(Ending::ReturnedError, &attrs(), Some(TestOutcome::Ok), ""),
+            Err("the compiled test returned `Err`, but the comptime interpreter returned `Ok`".to_string())
+        );
+        assert_eq!(
+            verdict(Ending::Abnormal, &attrs(), Some(TestOutcome::Ok), ""),
+            Err("the compiled test aborted, but the comptime interpreter returned `Ok`".to_string())
+        );
+        assert_eq!(
+            verdict(Ending::Abnormal, &attrs(), Some(TestOutcome::Err), ""),
+            Err("the compiled test aborted, but the comptime interpreter returned `Err`".to_string())
+        );
     }
 
     #[test]
@@ -588,7 +643,9 @@ mod tests {
             burdin_tir::TestEntry {
                 name: name.to_string(),
                 func: burdin_tir::FuncId(0),
+                body: burdin_tir::FuncId(0),
                 attrs: TestAttrs { ignore, ..TestAttrs::default() },
+                comptime: None,
             }
         }
         let compiled = vec![(
