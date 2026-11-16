@@ -7,7 +7,7 @@ use crate::derives::validate_derives;
 use crate::generics::Bound;
 use crate::globals::{Global, Globals, ModuleInfo, PackageInfo};
 use crate::validate::check_public_signatures;
-use burdin_diag::{Code, Diagnostics, FileId, Span};
+use burdin_diag::{Code, Diagnostics, FileId, SourceMap, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, FuncId, Signature, Ty};
 
@@ -119,6 +119,10 @@ pub(crate) struct Sema<'t> {
     pub(crate) test_mode: bool,
     /// The `test` blocks that were declared, in declaration order.
     pub(crate) tests: Vec<tir::TestEntry>,
+    /// Record the source locations of dynamic-error conversions (a debug build; `spec/errors.md`, ERR7).
+    pub(crate) traces: bool,
+    /// Where the paths, lines, and columns of trace frames come from.
+    pub(crate) sources: &'t SourceMap,
 }
 
 impl<'t> Sema<'t> {
@@ -129,6 +133,8 @@ impl<'t> Sema<'t> {
         entry_package: usize,
         entry_module: usize,
         test_mode: bool,
+        traces: bool,
+        sources: &'t SourceMap,
     ) -> Self {
         let mut globals = Globals::default();
         let mut module_asts = Vec::new();
@@ -183,6 +189,8 @@ impl<'t> Sema<'t> {
             drop_checks: Vec::new(),
             test_mode,
             tests: Vec::new(),
+            traces,
+            sources,
         }
     }
 
@@ -302,8 +310,20 @@ impl<'t> Sema<'t> {
         match module.values.get("main") {
             Some(&Global::Func(id)) => {
                 let f = self.fn_items[id.0].decl;
-                if !f.params.is_empty() || self.globals.sigs[id.0].ret != Ty::Unit {
-                    diags.error(Code::TYPE_MISMATCH, f.name.span, "`main` must take no parameters and return nothing");
+                // `fn main(): Result<...>` is the other accepted form (`spec/errors.md`, ERR8), but only when the
+                // `Result` is written directly: an alias that resolves to one is still E0003.
+                let result_main = f.ret.as_ref().is_some_and(|ty| {
+                    matches!(&ty.kind, ast::TypeKind::Path(segs)
+                        if segs.len() == 1 && segs[0].name.name == "Result")
+                });
+                let ret = &self.globals.sigs[id.0].ret;
+                let returns_ok = *ret == Ty::Unit || (result_main && matches!(ret, Ty::Result(..) | Ty::Error));
+                if !f.params.is_empty() || !returns_ok {
+                    diags.error(
+                        Code::TYPE_MISMATCH,
+                        f.name.span,
+                        "`main` must take no parameters and return nothing, or return a `Result<...>` written directly",
+                    );
                 }
                 Some(id)
             }

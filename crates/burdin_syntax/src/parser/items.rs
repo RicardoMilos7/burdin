@@ -52,6 +52,7 @@ impl Parser<'_> {
             TokenKind::Fn | TokenKind::Unsafe => Ok(Some(Item::Fn(self.fn_decl(is_priv, start)?))),
             TokenKind::Struct => Ok(Some(Item::Struct(self.struct_decl(is_priv, start)?))),
             TokenKind::Enum => Ok(Some(Item::Enum(self.enum_decl(is_priv, start)?))),
+            TokenKind::Error => Ok(Some(Item::ErrorEnum(self.error_enum_decl(is_priv, start)?))),
             TokenKind::Interface => Ok(Some(Item::Interface(self.interface_decl(is_priv, start)?))),
             TokenKind::Type => Ok(Some(Item::TypeAlias(self.type_alias(is_priv, start)?))),
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
@@ -233,22 +234,7 @@ impl Parser<'_> {
         if !self.at(&TokenKind::RBrace) {
             loop {
                 let vname = self.ident("a variant name")?;
-                let kind = if self.at(&TokenKind::LParen) {
-                    self.open(&TokenKind::LParen, false)?;
-                    let mut tys = Vec::new();
-                    while !self.at(&TokenKind::RParen) {
-                        tys.push(self.ty()?);
-                        if !self.eat(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    self.close(&TokenKind::RParen)?;
-                    VariantKind::Tuple(tys)
-                } else if self.at(&TokenKind::LBrace) && !self.tok().nl_before {
-                    VariantKind::Struct(self.field_list()?)
-                } else {
-                    VariantKind::Unit
-                };
+                let kind = self.variant_kind()?;
                 variants.push(Variant { name: vname, kind });
                 if !self.brace_list_sep("variant")? {
                     break;
@@ -257,6 +243,73 @@ impl Parser<'_> {
         }
         self.close(&TokenKind::RBrace)?;
         Ok(EnumDecl { is_priv, name, generics, derives, variants, span: start.to(self.prev_span()) })
+    }
+
+    /// The optional payload of a variant: `(Type, ...)` or `{ field: Type, ... }`. A `{` on a new line starts the
+    /// next variant rather than a struct payload.
+    fn variant_kind(&mut self) -> PResult<VariantKind> {
+        if self.at(&TokenKind::LParen) {
+            self.open(&TokenKind::LParen, false)?;
+            let mut tys = Vec::new();
+            while !self.at(&TokenKind::RParen) {
+                tys.push(self.ty()?);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.close(&TokenKind::RParen)?;
+            Ok(VariantKind::Tuple(tys))
+        } else if self.at(&TokenKind::LBrace) && !self.tok().nl_before {
+            Ok(VariantKind::Struct(self.field_list()?))
+        } else {
+            Ok(VariantKind::Unit)
+        }
+    }
+
+    /// `error enum Name [generics] [derives] { [Variant [from] "message", ...] }` (spec/errors.md, ERR1). The
+    /// variant layout is the ordinary enum's; the message is a required string literal that may be interpolated
+    /// and the optional contextual `from` comes between the payload and the message. Everything is lowered to an
+    /// ordinary enum in `crate::error_item`, after this parser is done.
+    pub(super) fn error_enum_decl(&mut self, is_priv: bool, start: Span) -> PResult<ErrorEnumDecl> {
+        self.expect(&TokenKind::Error)?;
+        self.expect(&TokenKind::Enum)?;
+        let name = self.ident("an error enum name")?;
+        let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        let derives = self.derives()?;
+        self.open(&TokenKind::LBrace, true)?;
+        let mut variants = Vec::new();
+        if !self.at(&TokenKind::RBrace) {
+            loop {
+                let vname = self.ident("a variant name")?;
+                let kind = self.variant_kind()?;
+                let from = if matches!(self.kind(), TokenKind::Ident(word) if word == "from") {
+                    let span = self.span();
+                    self.bump();
+                    Some(span)
+                } else {
+                    None
+                };
+                let (message, message_span) = match self.kind().clone() {
+                    TokenKind::Str(text) => {
+                        let span = self.span();
+                        self.bump();
+                        (vec![InterpPart::Lit(text)], span)
+                    }
+                    TokenKind::Interp(pieces) => {
+                        let span = self.span();
+                        self.bump();
+                        (self.interp_parts(pieces), span)
+                    }
+                    _ => return Err(self.unexpected("a message string")),
+                };
+                variants.push(ErrorVariant { name: vname, kind, from, message, message_span });
+                if !self.brace_list_sep("error variant")? {
+                    break;
+                }
+            }
+        }
+        self.close(&TokenKind::RBrace)?;
+        Ok(ErrorEnumDecl { is_priv, name, generics, derives, variants, span: start.to(self.prev_span()) })
     }
 
     pub(super) fn type_alias(&mut self, is_priv: bool, start: Span) -> PResult<TypeAliasDecl> {
@@ -290,9 +343,9 @@ impl Parser<'_> {
     }
 
     /// `test "name" { ... }` or `test "name" [attrs] { ... }`. The test is compiled as a function with no
-    /// parameters that returns `Result<(), AssertError>`: its body is the block followed by `Ok(())`, so
-    /// `assert(...)?` in the body propagates the failure to the runner. Tests are only declared and checked by
-    /// `burdin test`.
+    /// parameters that returns `Result<()>`, the dynamic error: its body is the block followed by `Ok(())`, so
+    /// `assert(...)?` and any other `?` in the body propagate the failure to the runner (spec/errors.md, ERR9).
+    /// Tests are only declared and checked by `burdin test`.
     pub(super) fn test_decl(&mut self) -> PResult<TestDecl> {
         let start = self.span();
         self.bump(); // `test`
@@ -315,7 +368,7 @@ impl Parser<'_> {
             kind: TypeKind::Path(vec![PathSegment { name: Ident { name: name.to_string(), span }, args }]),
             span,
         };
-        let ret = path("Result", vec![Type { kind: TypeKind::Unit, span }, path("AssertError", Vec::new())]);
+        let ret = path("Result", vec![Type { kind: TypeKind::Unit, span }]);
         let unit = Expr { kind: ExprKind::Unit, span };
         let ok = Expr { kind: ExprKind::Name { name: Ident { name: "Ok".to_string(), span }, args: Vec::new() }, span };
         let tail = Expr {
@@ -336,7 +389,22 @@ impl Parser<'_> {
             body: Block { stmts, span: body_span },
             span,
         };
-        Ok(TestDecl { name, name_span, attrs, func, span })
+        // `crate::error_item::wrap_test_failures` splits the function above into the body
+        // (`__burdin_test_N_body`) and the wrapper that prints the error, so this second declaration is filled in
+        // there; the parser has only one block and cannot duplicate it.
+        let body_func = FnDecl {
+            is_priv: true,
+            is_unsafe: false,
+            name: Ident { name: format!("__burdin_test_{index}_body"), span: name_span },
+            generics: Vec::new(),
+            params: Vec::new(),
+            is_vararg: false,
+            ret: None,
+            where_clause: Vec::new(),
+            body: Block { stmts: Vec::new(), span: body_span },
+            span,
+        };
+        Ok(TestDecl { name, name_span, attrs, func, body_func, span })
     }
 
     /// The optional attribute list of a test item: `[ignore, timeout(500), should_panic("boom")]`. The values are

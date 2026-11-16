@@ -389,9 +389,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone(), live));
     }
 
-    /// The live flag of a new temporary, set on the current path.
+    /// The live flag of a new temporary, set on the current path. The flag is initialized to `false` in the entry
+    /// block: a temporary created inside a branch is checked at the end of the enclosing statement, which a path
+    /// that never entered that branch also reaches. An uninitialized flag would be `undef` there, and an optimizer
+    /// may then "prove" the drop unreachable and delete the rest of the function.
     fn mark_temp_live(&mut self) -> GenResult<PointerValue<'ctx>> {
         let live = self.alloca(self.cx.bool_type().into(), "tmp.live")?;
+        self.entry_builder.build_store(live, self.cx.bool_type().const_zero()).map_err(llvm_err)?;
         self.builder.build_store(live, self.cx.bool_type().const_int(1, false)).map_err(llvm_err)?;
         Ok(live)
     }

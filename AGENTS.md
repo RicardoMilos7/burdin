@@ -11,11 +11,12 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
-3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md` — the standard-library surface, the exact derived
-   members, and formatting.
-4. `spec/stage0-subset.md` (complete), `spec/stage1-subset.md` (the current plan), and `spec/test-runner.md` (the
-   behavior of `burdin test`).
-5. `HANDOFF.md` for the current state; `Burdin Language Design.md` for the full rationale.
+3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md` — the standard-library surface, the
+   exact derived members, formatting, and error handling.
+4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`, and
+   `spec/test-runner.md` describe the iteration protocol, `any`/`impl`, and `burdin test`.
+5. `spec/stage0-subset.md` (complete) and `HANDOFF.md` for the current state; `Burdin Language Design.md` for the
+   full rationale.
 6. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
 
 The files in this repository are the only maintained copies. Documents hosted on claude.ai are historical: they are

@@ -143,6 +143,22 @@ pub(crate) struct Globals {
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,
+    /// The `std.Error` interface (the marker that makes a type an error type) and the `std.Error` struct (the
+    /// dynamic error value). Both are `None` when the standard library does not declare them (`spec/errors.md`,
+    /// ERR4).
+    pub(crate) error_iface: Option<usize>,
+    pub(crate) error_ty: Option<Ty>,
+    /// The standard library's dynamic-error constructors (`spec/errors.md`, ERR4 and ERR7).
+    pub(crate) error_plain: Option<FuncId>,
+    pub(crate) error_at: Option<FuncId>,
+    pub(crate) error_frame: Option<FuncId>,
+    pub(crate) error_context: Option<FuncId>,
+    /// The typed `assert` and `assert_eq` of a `burdin test` build (`spec/errors.md`, ERR9).
+    pub(crate) test_assert: Option<FuncId>,
+    pub(crate) test_assert_eq: Option<usize>,
+    /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10).
+    pub(crate) io_error_ty: Option<Ty>,
+    pub(crate) parse_int_error_ty: Option<Ty>,
     /// The generic method template each registered generic method stands for.
     pub(crate) method_templates: HashMap<FuncId, crate::generics::GenericMethod>,
     /// The instance of each generic method for its method-level type arguments.
@@ -220,6 +236,29 @@ impl Globals {
             TypeName::Struct(i) => Some(Ty::Struct(self.struct_refs[i].clone())),
             _ => None,
         })
+    }
+
+    /// The struct or enum `name` of the standard library, as a type.
+    pub(crate) fn std_adt_ty(&self, name: &str) -> Option<Ty> {
+        self.std_modules.iter().find_map(|&module| match self.type_name(module, name)? {
+            TypeName::Struct(i) => Some(Ty::Struct(self.struct_refs[i].clone())),
+            TypeName::Enum(i) => Some(Ty::Enum(self.enum_refs[i].clone())),
+            _ => None,
+        })
+    }
+
+    /// Whether `ty` is the dynamic error value `std.Error` (`spec/errors.md`, ERR4).
+    pub(crate) fn is_error_ty(&self, ty: &Ty) -> bool {
+        self.error_ty.as_ref().is_some_and(|error| error == ty)
+    }
+
+    /// Whether `ty` is an error type: it implements the standard library's `Error` interface, which requires
+    /// `Display` (`spec/errors.md`, ERR4).
+    pub(crate) fn implements_error(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
+        match self.error_iface {
+            Some(iface) => self.satisfies(ty, &crate::generics::Bound::User(iface, Vec::new()), env),
+            None => false,
+        }
     }
 
     /// The non-generic function `name` of the standard library (the formatting helpers are `priv`, so the

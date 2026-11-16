@@ -572,19 +572,24 @@ impl Globals {
                 );
                 return Ty::Error;
             }
-            if subst.iter().any(|(n, _)| n == name)
-                || self.type_name(module, name).is_some()
+            if subst.iter().any(|(n, _)| n == name) {
+                diags.error(Code::NOT_AN_INTERFACE, span, format!("`{name}` is a type, not an interface"));
+                return Ty::Error;
+            }
+            // A name may be both an interface and a type (`std.Error` is): `any Name` names the interface, so the
+            // interface lookup comes first; only when there is no interface is the type rejection reported.
+            if let Some(iface) = self.iface_name(module, name) {
+                return self.any_type_of(iface, &first.args, subst, module, span, diags);
+            }
+            if self.type_name(module, name).is_some()
                 || crate::builtins::builtin_type(name).is_some()
                 || matches!(name, "Option" | "Result" | "List" | "Map" | "Heap" | "CPtr" | "Range" | "RangeInclusive")
             {
                 diags.error(Code::NOT_AN_INTERFACE, span, format!("`{name}` is a type, not an interface"));
                 return Ty::Error;
             }
-            let Some(iface) = self.iface_name(module, name) else {
-                diags.error(Code::UNKNOWN_NAME, span, format!("unknown interface `{name}`"));
-                return Ty::Error;
-            };
-            return self.any_type_of(iface, &first.args, subst, module, span, diags);
+            diags.error(Code::UNKNOWN_NAME, span, format!("unknown interface `{name}`"));
+            return Ty::Error;
         }
         let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
         let Some(target) = self.resolve_module_path(module, &names) else {

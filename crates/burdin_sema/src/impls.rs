@@ -412,6 +412,18 @@ impl<'t> Sema<'t> {
             );
             return;
         }
+        // Each target converts from a source type once (`spec/errors.md`, ERR3). The two generated blocks are
+        // separate impl blocks, so the duplicate is detected here rather than as a duplicate member: a source
+        // written through a qualified path (`std.IoError` and `IoError`) is the same type here but not in the
+        // source text the syntax check compares.
+        if self.globals.from_impls.iter().any(|i| i.target == *self_ty && i.source == source) {
+            diags.error(
+                Code::DUPLICATE_FROM,
+                imp.span,
+                format!("`{self_ty}` already converts from `{source}`; a type converts from each source type once"),
+            );
+            return;
+        }
         self.register_methods(imp, module, None, self_ty, MethodScope::plain(), diags);
         let Some(&func) = self.globals.methods.get(&(key, "from".to_string())) else { return };
         self.globals.from_methods.push(func);

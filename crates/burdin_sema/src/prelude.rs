@@ -29,6 +29,31 @@ impl Sema<'_> {
         self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
         self.globals.display_iface = find_iface(&self.globals, "Display");
         self.globals.debug_iface = find_iface(&self.globals, "Debug");
+        // The error surface: the `Error` marker interface, the dynamic `Error` value, and the helpers that build
+        // one (`spec/errors.md`, ERR4). Everything is optional, so a program without `std` still checks.
+        self.globals.error_iface = find_iface(&self.globals, "Error");
+        let error_ty = self.globals.std_adt_ty("Error");
+        self.globals.error_ty = error_ty;
+        if let Some(&std_module) = std_modules.iter().find(|&&m| self.globals.modules[m].path == ["std"]) {
+            // `exported_value` also finds `priv` declarations, which is how the compiler reaches these helpers.
+            let func = |globals: &crate::globals::Globals, name: &str| match globals.exported_value(std_module, name) {
+                Some(Global::Func(f)) => Some(f),
+                _ => None,
+            };
+            self.globals.error_plain = func(&self.globals, "__error_plain");
+            self.globals.error_at = func(&self.globals, "__error_at");
+            self.globals.error_frame = func(&self.globals, "__error_frame");
+            self.globals.error_context = func(&self.globals, "__error_context");
+            if self.test_mode {
+                self.globals.test_assert = func(&self.globals, "__test_assert");
+                self.globals.test_assert_eq = match self.globals.exported_value(std_module, "__test_assert_eq") {
+                    Some(Global::Generic(g)) => Some(g),
+                    _ => None,
+                };
+            }
+        }
+        self.globals.io_error_ty = self.globals.std_adt_ty("IoError");
+        self.globals.parse_int_error_ty = self.globals.std_adt_ty("ParseIntError");
         // The one-segment standard modules are usable as modules: `env.args()`, `mem.swap(...)`.
         let aliases: Vec<(String, usize)> = std_modules
             .iter()

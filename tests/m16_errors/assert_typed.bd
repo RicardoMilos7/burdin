@@ -1,0 +1,20 @@
+//@ burdin-test passed=1 failed=2
+//@ failed-test: eq fails
+//@ failed-test: condition fails
+
+// In a test build `assert` and `assert_eq` return a typed `AssertError`; the test binary prints it when the
+// test fails (spec/errors.md, ERR9).
+
+fn main() {}
+
+test "passes" {
+    assert_eq(1 + 1, 2)?
+}
+
+test "eq fails" {
+    assert_eq(1 + 1, 3)?
+}
+
+test "condition fails" {
+    assert(false)?
+}

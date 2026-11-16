@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// `?` needs a conversion: a `From` block, or an error type for the dynamic `Error` (spec/errors.md, ERR4-ERR5).
+
+fn number(): Result<i32, i32> {
+    Ok(1)
+}
+
+fn run(): Result<i32, Error> {
+    let n = number()? //~ E0212
+    Ok(n)
+}
+
+fn other(): Result<i32, String> {
+    let n = number()? //~ E0212
+    Ok(n)
+}
+
+fn main() {}

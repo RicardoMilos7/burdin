@@ -167,6 +167,14 @@ impl Code {
     pub const IMPL_NOT_PARAMETER: Code = Code("E0201");
     /// An interface that cannot be used as `any` because it is not object-safe.
     pub const NOT_OBJECT_SAFE: Code = Code("E0202");
+    /// An invalid `error` declaration: a `from` variant without exactly one tuple field, `from` on a generic
+    /// error enum, or a message placeholder that does not name a payload field.
+    pub const INVALID_ERROR: Code = Code("E0210");
+    /// Two variants of one error enum converting from the same source type.
+    pub const DUPLICATE_FROM: Code = Code("E0211");
+    /// A missing error conversion: `?` between two error types with no `From` block, or a conversion into the
+    /// dynamic `Error` from a type that does not implement it.
+    pub const ERROR_CONVERSION: Code = Code("E0212");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

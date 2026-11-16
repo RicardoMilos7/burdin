@@ -12,9 +12,12 @@ impl FnCx<'_> {
     /// US; issue #74). `CPtr` types in signatures and `extern` declarations are not values and are not affected.
     pub(super) fn expr(&mut self, e: &ast::Expr, expect: Option<&Ty>) -> tir::Expr {
         let checked = self.expr_inner(e, expect);
-        // A value used where `any Interface` is expected is boxed (spec/existentials.md, AN3).
+        // A value used where `any Interface` is expected is boxed (spec/existentials.md, AN3), and an error type
+        // used where the dynamic `Error` is expected becomes one (spec/errors.md, ERR4). The dynamic error value
+        // is a struct, not `Ty::Any`, so the two cases are separate.
         let checked = match expect {
             Some(want @ Ty::Any(_)) => self.coerce_any(checked, want),
+            Some(want) if self.globals.is_error_ty(want) => self.coerce_error(checked, want),
             _ => checked,
         };
         // An `unsafe` block is checked with the depth raised; the block itself is the boundary and its result

@@ -1,0 +1,60 @@
+//@ run
+//> true
+//> wrong
+//> cannot read cfg.toml
+//> missing key port
+//> key port
+//> true
+//> key y
+
+// A dynamic error keeps the original error boxed, so `is` and `downcast` inspect it (spec/errors.md, ERR4).
+
+error enum ConfigError {
+    Missing(String) "missing key {0}"
+}
+
+fn into_dynamic(ok: bool): Result<i32> {
+    if ok {
+        Ok(7)
+    } else {
+        Err(ConfigError.Missing("port".to_string()))
+    }
+}
+
+fn main() {
+    let io: Error = IoError.Read { path: "cfg.toml".to_string() }
+    println("{}", io.is<IoError>())
+    match io.downcast<ConfigError>() {
+        Some(_) => println("config"),
+        None => println("wrong"),
+    }
+
+    let io2: Error = IoError.Read { path: "cfg.toml".to_string() }
+    match io2.downcast<IoError>() {
+        Some(e) => println("{e}"),
+        None => println("no"),
+    }
+
+    match into_dynamic(false) {
+        Ok(_) => println("ok"),
+        Err(e) => {
+            println("{e}")
+            match e.downcast<ConfigError>() {
+                Some(ConfigError.Missing(key)) => println("key {key}"),
+                Some(_) => println("other"),
+                None => println("no"),
+            }
+        }
+    }
+
+    let mut values: List<Error> = List<Error>.new()
+    values.push(ConfigError.Missing("x".to_string()))
+    let first = values.pop().unwrap()
+    println("{}", first.is<ConfigError>())
+
+    let boxed: Error = ConfigError.Missing("y".to_string())
+    match boxed.downcast<ConfigError>() {
+        Some(ConfigError.Missing(key)) => println("key {key}"),
+        _ => println("no"),
+    }
+}

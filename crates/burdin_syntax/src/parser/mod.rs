@@ -177,7 +177,7 @@ impl Parser<'_> {
     /// brackets.
     fn starts_item_only(kind: &TokenKind) -> bool {
         use TokenKind::*;
-        matches!(kind, Fn | Struct | Enum | Interface | Type | Const | Use | Extern | Priv)
+        matches!(kind, Fn | Struct | Enum | Error | Interface | Type | Const | Use | Extern | Priv)
     }
 
     /// Skips to the start of the next item: an item keyword at the start of a line.
@@ -457,6 +457,11 @@ mod tests {
             "struct",
             "struct S {",
             "enum E {",
+            "error",
+            "error enum",
+            "error enum E {",
+            "error enum E { V }",
+            "error enum E { V from }",
             "fn f() { match x {",
             "fn f() { if",
             "fn f() { for",
@@ -485,6 +490,38 @@ mod tests {
             let (_, out) = render(src);
             assert!(!out.is_empty() || src.is_empty(), "no diagnosis for {src:?}");
         }
+    }
+
+    #[test]
+    fn error_enums_parse() {
+        // `parse_file` does not lower: the error declaration stays its own item until `parse` lowers it.
+        let (file, out) = render(
+            "priv error enum E<T> derives (Debug) {\n\
+             Unit \"u\"\n\
+             Tuple(i32, T) from \"t {0} {1}\"\n\
+             Struct { line: i32 } \"s {line}\"\n\
+             }\n",
+        );
+        assert_eq!(out, "");
+        let Item::ErrorEnum(e) = &file.items[0] else { panic!("not an error enum") };
+        assert!(e.is_priv);
+        assert_eq!(e.name.name, "E");
+        assert_eq!(e.generics.len(), 1);
+        assert_eq!(e.derives.len(), 1);
+        assert_eq!(e.variants.len(), 3);
+        assert!(e.variants[0].from.is_none());
+        assert!(e.variants[1].from.is_some());
+        assert!(matches!(e.variants[1].kind, VariantKind::Tuple(ref tys) if tys.len() == 2));
+        assert!(matches!(e.variants[2].kind, VariantKind::Struct(ref fields) if fields.len() == 1));
+        assert_eq!(e.variants[2].message.len(), 2);
+        assert!(matches!(e.variants[2].message[1], InterpPart::Hole(_)));
+    }
+
+    #[test]
+    fn an_error_variant_needs_a_message() {
+        let (_, out) = render("error enum E {\n    A\n}\n");
+        assert!(out.contains("E0001"), "{out}");
+        assert!(out.contains("a message string"), "{out}");
     }
 
     #[test]

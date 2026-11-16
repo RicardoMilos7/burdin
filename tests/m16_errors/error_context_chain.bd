@@ -1,0 +1,27 @@
+//@ run
+//> loading settings: parsing config: cannot read cfg.toml
+//> true
+//> false
+
+// `context` keeps the boxed source and adds a message in front; printing shows the chain in order
+// (spec/errors.md, ERR6).
+
+fn read(): Result<i32, IoError> {
+    Err(IoError.Read { path: "cfg.toml".to_string() })
+}
+
+fn load(): Result<i32> {
+    let n = read().context("parsing config").context("loading settings")?
+    Ok(n)
+}
+
+fn main() {
+    match load() {
+        Ok(n) => println("ok {n}"),
+        Err(e) => {
+            println("{e}")
+            println("{}", e.is<IoError>())
+            println("{}", e.is<ParseIntError>())
+        }
+    }
+}

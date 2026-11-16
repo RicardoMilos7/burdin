@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A repeated variant name is E0007, and the generated impls are left out so the declaration is reported once
+// (spec/errors.md, ERR1; issue #128).
+
+error enum Twice {
+    Value(i32) "value {0}"
+    Value(i32) "value again {0}" //~ E0007
+}
+
+fn main() {}

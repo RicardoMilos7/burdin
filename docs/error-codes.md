@@ -1020,3 +1020,68 @@ fn main() {
 
 **How to fix:** format the value directly (`println("{}", 3)`), or wrap it in a user type that implements the
 interface with a method and box that. `any Interface` needs a callable implementation for every vtable slot.
+
+## E0210: Invalid error declaration
+
+An `error enum` variant's message template names its payload fields, and a `from` variant must be a tuple variant
+with exactly one field (that field's type is the conversion's source). A placeholder that names no payload field
+(an index out of range, a name that is not a field, a placeholder on a unit variant, or an expression), a `from` on
+a variant with zero or several fields, or a `from` on a generic error enum is this error. The message's fill
+character may not be `{`, `}`, `"`, or `\`, because the message is written back as a string literal.
+
+<!-- error-example: E0210 -->
+```burdin
+error enum Bad {
+    Pair(i32, i32) from "pair {0}" //~ E0210
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** give a `from` variant exactly one tuple field, use only payload field names or positions in the
+message, and write no `from` on a generic error enum. `spec/errors.md` ERR1-ERR3.
+
+## E0211: Duplicate `from` conversion
+
+One error enum may convert from a given source type only once: the generated `Type: From<Source>` blocks would
+collide, and `?` would not know which variant to build.
+
+<!-- error-example: E0211 -->
+```burdin
+error enum Twice {
+    First(IoError) from "first: {0}"
+    Second(IoError) from "second: {0}" //~ E0211
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** keep one `from` variant per source type; convert the other source types with a hand-written
+`Type: From<Source>` block if they must map to a different variant.
+
+## E0212: Missing error conversion
+
+`?` converts the error of a `Result` into the enclosing function's error type through a `Type: From<Source>` block,
+or into the dynamic `Error` when the function returns `Result<...>` and the value's type is an error type (a type
+implementing `Error`, which requires `Display`). An integer, a `String`, or any other non-error type cannot be
+converted this way, and `.context(...)` needs an error type too.
+
+<!-- error-example: E0212 -->
+```burdin
+fn load(): Result<i32, i32> {
+    Ok(1)
+}
+
+fn run(): Result<i32, Error> {
+    let n = load()? //~ E0212
+    Ok(n)
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** give the inner function an error type (use an `error enum` or `Error`), or add a
+`Type: From<Source> { fn from(value: Source): Type { ... } }` block that converts it.

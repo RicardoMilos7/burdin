@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: syntax error on line 9
+
+// A typed error returned from `main` prints through its generated `Display` (spec/errors.md, ERR8).
+
+error enum Problem {
+    Syntax { line: i32 } "syntax error on line {line}"
+}
+
+fn main(): Result<()> {
+    Err(Problem.Syntax { line: 9 })
+}

@@ -1,5 +1,6 @@
 //! The built-in functions, types, and methods.
 
+use crate::globals::Globals;
 use burdin_tir::{Builtin, FloatTy, IntTy, Method, ParamSig, Signature, Ty};
 
 pub(crate) fn builtin(name: &str) -> Option<Builtin> {
@@ -19,15 +20,18 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
     })
 }
 
-pub(crate) fn builtin_sig(b: Builtin) -> Signature {
+pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
+    // The I/O primitives report the standard library's `IoError` when it is there (`spec/errors.md`, ERR10). The
+    // primitives produce a zeroed error value; the `std` wrappers replace it with the real variant.
+    let io_error = || globals.io_error_ty.clone().unwrap_or(Ty::Unit);
     let ret = match b {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
         Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
         Builtin::CStringFrom => Ty::CString,
-        Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit)),
-        Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(Ty::Unit)),
+        Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
+        Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(io_error())),
         Builtin::EnvArgs => Ty::List(Box::new(Ty::String)),
-        Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(Ty::Unit)),
+        Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
         _ => Ty::Unit,
     };
     let params = match b {
@@ -185,6 +189,30 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::globals::Globals;
+
+    #[test]
+    fn io_primitive_signatures_use_the_std_error() {
+        let error = Ty::Int(IntTy::I64);
+        let globals = Globals { io_error_ty: Some(error.clone()), ..Globals::default() };
+        assert_eq!(
+            builtin_sig(Builtin::ReadToString, &globals).ret,
+            Ty::Result(Box::new(Ty::String), Box::new(error.clone()))
+        );
+        assert_eq!(
+            builtin_sig(Builtin::WriteFile, &globals).ret,
+            Ty::Result(Box::new(Ty::Unit), Box::new(error.clone()))
+        );
+        assert_eq!(
+            builtin_sig(Builtin::RunCommand, &globals).ret,
+            Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(error))
+        );
+        // Without a standard library the primitive falls back to the unit placeholder rather than failing.
+        assert_eq!(
+            builtin_sig(Builtin::ReadToString, &Globals::default()).ret,
+            Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit))
+        );
+    }
 
     #[test]
     fn builtin_type_names_resolve() {

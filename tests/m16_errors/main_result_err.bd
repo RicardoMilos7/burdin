@@ -1,0 +1,15 @@
+//@ run-abort
+//@ stderr: loading settings: cannot read cfg.toml
+//> before
+
+// An `Err` from `main` prints its chain to standard error and exits non-zero (spec/errors.md, ERR8).
+
+fn read(): Result<i32, IoError> {
+    Err(IoError.Read { path: "cfg.toml".to_string() })
+}
+
+fn main(): Result<i32> {
+    println("before")
+    let n = read().context("loading settings")?
+    Ok(n)
+}

@@ -9,5 +9,8 @@ fn exit(code: i32): ! {
 
 /// Runs `command` through the system shell and waits for it. The result is the shell's status.
 fn run(command: str): Result<i32, IoError> {
-    __run(command)
+    match __run(command) {
+        Ok(status) => Ok(status),
+        Err(_) => Err(IoError.Run { command: command.to_string() }),
+    }
 }

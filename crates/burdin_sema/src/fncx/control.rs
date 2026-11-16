@@ -4,8 +4,9 @@ use super::{FnCx, error_expr, mk};
 use crate::types::compatible;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
-use burdin_tir::{self as tir, LocalId, LocalKind, Pat, Ty};
+use burdin_tir::{self as tir, FnKind, FnSig, IntTy, LocalId, LocalKind, Pat, Ty};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 /// Which kind of `for` loop a non-literal-range iterable produces.
 enum ForKind {
@@ -337,22 +338,8 @@ impl FnCx<'_> {
                 let (id, mode) = self.payload_local("ok", ok.clone(), owned);
                 let (eid, emode) = self.payload_local("err", err.clone(), owned);
                 let body = mk(tir::ExprKind::Local(id), ok.clone(), span);
-                let converted = if err == ret_err {
-                    mk(tir::ExprKind::Local(eid), err.clone(), span)
-                } else if let Some(f) = self.globals.conversion(&err, &ret_err) {
-                    mk(
-                        tir::ExprKind::Call(f, vec![mk(tir::ExprKind::Local(eid), err.clone(), span)]),
-                        ret_err.clone(),
-                        span,
-                    )
-                } else {
-                    self.diags.error(
-                        Code::TYPE_MISMATCH,
-                        span,
-                        format!("the error type `{err}` does not convert into `{ret_err}`; add a `{ret_err}: From<{err}>` implementation"),
-                    );
-                    return error_expr(span);
-                };
+                let error = mk(tir::ExprKind::Local(eid), err.clone(), span);
+                let converted = self.convert_error(error, &err, &ret_err, span, true);
                 let err_value = mk(tir::ExprKind::Err(Box::new(converted)), ret.clone(), span);
                 let early = mk(tir::ExprKind::Return(Some(Box::new(err_value))), Ty::Never, span);
                 let arms = vec![
@@ -381,6 +368,51 @@ impl FnCx<'_> {
         }
     }
 
+    /// The error conversion of `?` (`spec/errors.md`, ERR3-ERR5):
+    ///
+    /// - the same type passes through, and a `?` that propagates the dynamic `Error` records a trace frame when
+    ///   tracing is on (ERR7);
+    /// - a user `Type: From<Source>` block converts one error type into another (ERR3);
+    /// - an error type becomes the dynamic `Error`, boxed at this creation site (ERR4);
+    /// - anything else is E0212.
+    fn convert_error(&mut self, value: tir::Expr, from: &Ty, to: &Ty, span: Span, propagate: bool) -> tir::Expr {
+        if from == to {
+            if !(propagate && self.traces && self.globals.is_error_ty(to)) {
+                return value;
+            }
+            let Some(frame) = self.globals.error_frame else { return value };
+            // A propagation frame points at the `?` itself, not at the start of the operand expression.
+            let at = if span.hi > span.lo { burdin_diag::Span::new(span.file, span.hi - 1, span.hi) } else { span };
+            let (path, line, col) = self.location(at);
+            let args = vec![
+                value,
+                mk(tir::ExprKind::Str(path), Ty::Str, span),
+                mk(tir::ExprKind::Int(i128::from(line)), Ty::Int(IntTy::I32), span),
+                mk(tir::ExprKind::Int(i128::from(col)), Ty::Int(IntTy::I32), span),
+            ];
+            return mk(tir::ExprKind::Call(frame, args), to.clone(), span);
+        }
+        // The enclosing function's return type did not resolve; its own diagnostic is enough.
+        if matches!(from, Ty::Error) || matches!(to, Ty::Error) {
+            return value;
+        }
+        if let Some(f) = self.globals.conversion(from, to) {
+            return mk(tir::ExprKind::Call(f, vec![value]), to.clone(), span);
+        }
+        if self.globals.is_error_ty(to) && self.globals.implements_error(from, &self.bounds) {
+            return self.coerce_error(value, to);
+        }
+        self.diags.error(
+            Code::ERROR_CONVERSION,
+            span,
+            format!(
+                "the error type `{from}` does not convert into `{to}`; add a `{to}: From<{from}>` implementation, \
+                 or make `{from}` an error type"
+            ),
+        );
+        error_expr(span)
+    }
+
     /// `value orelse default`: the payload of an `Option` or a `Result`, or `default` when it is empty.
     pub(super) fn orelse(&mut self, value: &ast::Expr, default: &ast::Expr, span: Span) -> tir::Expr {
         let value = self.expr(value, None);
@@ -396,8 +428,19 @@ impl FnCx<'_> {
                 let inner = (*inner).clone();
                 let owned = self.owns_scrutinee(&value);
                 let (id, mode) = self.payload_local("some", inner.clone(), owned);
-                let other = self.expr(default, Some(&inner));
-                let other = self.expect_ty(other, &inner);
+                // `value orelse || ...` is a handler: the closure replaces the empty case (`issue #488`).
+                let other = if matches!(default.kind, ast::ExprKind::Closure { .. }) {
+                    let expected = Ty::Fn {
+                        sig: Rc::new(FnSig { params: Vec::new(), ret: Box::new(inner.clone()) }),
+                        kind: FnKind::FnOnce,
+                        borrowed: false,
+                    };
+                    let handler = self.expr(default, Some(&expected));
+                    self.closure_call_typed(handler, Vec::new(), span)
+                } else {
+                    let other = self.expr(default, Some(&inner));
+                    self.expect_ty(other, &inner)
+                };
                 let body = mk(tir::ExprKind::Local(id), inner.clone(), span);
                 let arms = vec![
                     tir::Arm { pat: Pat::Some(Box::new(Pat::Binding(id, mode))), guard: None, body },
@@ -411,9 +454,21 @@ impl FnCx<'_> {
                 let owned = self.owns_scrutinee(&value);
                 let (id, mode) = self.payload_local("ok", ok.clone(), owned);
                 // The error is bound so that it is dropped when the arm ends.
-                let (eid, emode) = self.payload_local("err", err, owned);
-                let other = self.expr(default, Some(&ok));
-                let other = self.expect_ty(other, &ok);
+                let (eid, emode) = self.payload_local("err", err.clone(), owned);
+                // `value orelse |e| ...` is a handler that receives the error (`issue #488`).
+                let other = if matches!(default.kind, ast::ExprKind::Closure { .. }) {
+                    let expected = Ty::Fn {
+                        sig: Rc::new(FnSig { params: vec![err.clone()], ret: Box::new(ok.clone()) }),
+                        kind: FnKind::FnOnce,
+                        borrowed: false,
+                    };
+                    let handler = self.expr(default, Some(&expected));
+                    let error = mk(tir::ExprKind::Local(eid), err, span);
+                    self.closure_call_typed(handler, vec![error], span)
+                } else {
+                    let other = self.expr(default, Some(&ok));
+                    self.expect_ty(other, &ok)
+                };
                 let body = mk(tir::ExprKind::Local(id), ok.clone(), span);
                 let arms = vec![
                     tir::Arm { pat: Pat::Ok(Box::new(Pat::Binding(id, mode))), guard: None, body },
@@ -438,7 +493,7 @@ impl FnCx<'_> {
     }
 
     /// A local a synthesized `match` binds. It is not in any user scope, so the name cannot be observed.
-    fn payload_local(&mut self, name: &str, ty: Ty, owned: bool) -> (LocalId, tir::BindMode) {
+    pub(super) fn payload_local(&mut self, name: &str, ty: Ty, owned: bool) -> (LocalId, tir::BindMode) {
         let mode = self.bind_mode(&ty, owned);
         let kind = if mode == tir::BindMode::View { LocalKind::View } else { LocalKind::Owned };
         let id = LocalId(self.locals.len());
@@ -482,7 +537,7 @@ impl FnCx<'_> {
 
     /// Moves a temporary match scrutinee into a compiler-made local, so that moving bindings can track its parts
     /// and the rest of the value still drops once. Returns the local expression and the initializer to bind.
-    fn own_scrutinee_temp(&mut self, value: tir::Expr) -> (tir::Expr, Option<(LocalId, tir::Expr)>) {
+    pub(super) fn own_scrutinee_temp(&mut self, value: tir::Expr) -> (tir::Expr, Option<(LocalId, tir::Expr)>) {
         if burdin_tir::place::place_root(&value).is_some() {
             return (value, None);
         }
@@ -500,7 +555,12 @@ impl FnCx<'_> {
     }
 
     /// Wraps a lowered `match` in the block that declares its scrutinee local, when there is one.
-    fn wrap_scrutinee(&self, matched: tir::Expr, owned_temp: Option<(LocalId, tir::Expr)>, span: Span) -> tir::Expr {
+    pub(super) fn wrap_scrutinee(
+        &self,
+        matched: tir::Expr,
+        owned_temp: Option<(LocalId, tir::Expr)>,
+        span: Span,
+    ) -> tir::Expr {
         let Some((id, value)) = owned_temp else { return matched };
         let ty = matched.ty.clone();
         let stmt = tir::Stmt::Let(Pat::Binding(id, tir::BindMode::Move), value, None);

@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod derive;
+pub mod error_item;
 pub mod lexer;
 pub mod parser;
 pub mod token;
@@ -12,7 +13,10 @@ use burdin_diag::{Diagnostics, FileId};
 pub fn parse(file: FileId, text: &str, diags: &mut Diagnostics) -> ast::File {
     let lexed = lexer::lex(file, text, diags);
     let mut parsed = parser::parse_file(file, lexed, diags);
+    error_item::lower_error_enums(&mut parsed, file, diags);
     derive::expand_derives(&mut parsed, file, diags);
+    error_item::wrap_result_main(&mut parsed, file, diags);
+    error_item::wrap_test_failures(&mut parsed, file, diags);
     parsed
 }
 

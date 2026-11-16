@@ -1,0 +1,20 @@
+//@ run
+//> value 5
+//> empty
+//> value x
+
+// An error enum may be generic; its generated `Display` and `Error` impls require `Display` of each parameter
+// (spec/errors.md, ERR1).
+
+error enum Slot<T> {
+    Value(T) "value {0}"
+    Empty "empty"
+}
+
+fn main() {
+    println("{Slot.Value(5)}")
+    let empty: Slot<String> = Slot.Empty
+    println("{empty}")
+    let text: Slot<String> = Slot.Value("x".to_string())
+    println("{text}")
+}

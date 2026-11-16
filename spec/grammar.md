@@ -1,11 +1,12 @@
 # Burdin grammar (stage 0, plus stage 1 closures, iterators, formatting, and existentials)
 
 This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures,
-milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), and milestone 15's
-`any`/`impl` existential types (the details are in `existentials.md`). It is derived from the conformance tests in
-`tests/`, so every construct below is used by at least one test, and every construct those tests use is here.
-Features deferred to later stage 1 milestones (`error` declarations, comptime, derive declarations, default and
-named arguments, extension methods, tasks) are reserved but not parsed.
+milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), milestone 15's
+`any`/`impl` existential types (the details are in `existentials.md`), and milestone 16's `error` declarations
+(the details are in `errors.md`). It is derived from the conformance tests in `tests/`, so every construct below is
+used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
+milestones (comptime, derive declarations, default and named arguments, extension methods, tasks) are reserved but
+not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).
@@ -22,7 +23,7 @@ and `/* ... */` (block comments do not nest).
 **Keywords** (reserved):
 
 ```
-any  as  break  const  continue  else  enum  extern  false  fn  for  if  impl  in  interface  let  loop
+any  as  break  const  continue  else  enum  error  extern  false  fn  for  if  impl  in  interface  let  loop
 match  mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
 ```
 
@@ -33,7 +34,8 @@ immediately after a `.` in a member position, where it is a member name: that is
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct
-name), `pub` (immediately before `use`), and `Fn`/`FnMut`/`FnOnce` (a closure type when followed by `(`). The attribute
+name), `from` (after an error variant's payload), `pub` (immediately before `use`), and `Fn`/`FnMut`/`FnOnce` (a
+closure type when followed by `(`). The attribute
 names of a
 test item (`ignore`, `timeout`, `should_panic`, `should_fail`) are contextual only inside the `[...]` after the test
 name; the checker rejects an unknown name with E0170 ([`test-runner.md`](test-runner.md)).
@@ -93,7 +95,7 @@ foo()
 File          = { Item } ;
 
 Item          = TestItem | UseItem | ImplBlock
-              | [ "priv" ] ( FnItem | StructItem | EnumItem | InterfaceItem | TypeAlias | ConstItem | ExternItem ) ;
+              | [ "priv" ] ( FnItem | StructItem | EnumItem | ErrorItem | InterfaceItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
 FnItem        = FnSig Block ;
@@ -116,6 +118,12 @@ Derives       = "derives" "(" TypePath { "," TypePath } [ "," ] ")" ;
 EnumItem      = "enum" IDENT [ GenericParams ] [ Derives ] "{" [ VariantList ] "}" ;
 VariantList   = Variant { Sep Variant } [ Sep ] ;
 Variant       = IDENT [ "(" Type { "," Type } [ "," ] ")" | "{" [ FieldList ] "}" ] ;
+
+(* An error enum is an ordinary enum whose variants also carry a required message template, and optionally a
+   `from` (the variant must then be a tuple variant with exactly one field). `spec/errors.md`, ERR1-ERR3. *)
+ErrorItem     = "error" "enum" IDENT [ GenericParams ] [ Derives ] "{" [ ErrorVariantList ] "}" ;
+ErrorVariantList = ErrorVariant { Sep ErrorVariant } [ Sep ] ;
+ErrorVariant  = Variant [ "from" ] STRING ;
 
 InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceFn } "}" ;
 InterfaceFn   = FnSig [ Block ] ;                       (* a body makes it a default method *)
@@ -150,8 +158,9 @@ test, type parameter, field, variant, method, or import is E0007. A declaration 
 whose value mentions it, a type alias that resolves to itself, and a struct or enum that contains itself by value
 are E0009 (put a recursive value behind `Heap<T>`).
 
-**`main`.** In stage 0 the entry point is an ordinary function `fn main()`: it takes no parameters and returns
-nothing. A parameter or a non-unit return type is E0003. Stage 1 adds `fn main(): Result<...>` (m16).
+**`main`.** The entry point is an ordinary function `fn main()` that takes no parameters and returns nothing, or
+`fn main(): Result<...>` (written directly, not through an alias): an `Err` prints its message to standard error and
+exits 1 (`spec/errors.md`, ERR8). A parameter or any other return type is E0003.
 
 **`Drop`.** The only way to declare a drop method is `Type: Drop { fn drop(mut self) { ... } }`. The block has
 exactly one method named `drop`; anything else is E0131. `drop` takes `mut self` and returns nothing, and any other

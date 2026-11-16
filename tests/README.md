@@ -5,8 +5,8 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (`error` declarations,
-comptime, tasks, leak detection, allocator parameters) has **no tests here** yet.
+Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (comptime, tasks, leak detection,
+allocator parameters) has **no tests here** yet.
 
 ## Layout
 
@@ -27,6 +27,7 @@ tests/
   m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops
   m14_format/          interpolation, `Display`/`Debug`, format specifiers, `format`, output
   m15_any/             `any`/`impl` existentials, boxing, dispatch, downcast
+  m16_errors/          `error` declarations, messages, `from`, dynamic `Error`, `context`, traces, `main`
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -201,6 +202,9 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0201 | `impl Interface` outside a parameter list (a return type, a local annotation, a field, an element, a bound, or an `extern` signature) |
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
 | E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
+| E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
+| E0211 | Two variants of one error enum convert from the same source type |
+| E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `Error` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
 
 ### Codes without a compile-fail test
 
@@ -321,6 +325,18 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     must implement the interface (E0141) and be first-class (E0120); boxing a primitive's compiler-provided
     `Display`/`Debug` implementation is E0204, because there is no function to dispatch to.
     `spec/existentials.md` AN1-AN12, `tests/m15_any/`.
+
+21. **Errors.** `error enum` is an ordinary enum plus generated impls: `Display` from each variant's message
+    template (whose placeholders name payload fields), `Error` (the std marker interface, which requires
+    `Display`), and one `From<Source>` per `from` variant (a tuple variant with exactly one field). `Result<T>`
+    is `Result<T, Error>`, where `std.Error` is an owned box (`any Error`) plus the recorded trace frames. An
+    error type is boxed implicitly wherever `Error` is expected; `?` converts through `from` or into the dynamic
+    error; `.context("...")` wraps the source and keeps the chain; `is`/`downcast` inspect the box. Debug builds
+    record creation and propagation frames; release builds record none. `fn main(): Result<T>` prints an `Err`
+    with `Display` to stderr and exits 1. In a `burdin test` build, `assert`/`assert_eq` return a typed
+    `AssertError` carrying the call text, the values, and the location, and the test binary prints it when the
+    test fails.
+    `spec/errors.md` ERR1-ERR10, `tests/m16_errors/`.
 
 ## Review of the expected outputs
 
@@ -465,17 +481,17 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
 
 ### Errors and testing
 
-- **Explicit error types (deviation).** `Result<T, E>` always names `E`; dynamic `Result<T>`, the `error` keyword,
-  `.context(...)`, and traces are stage 1. Decision 8; `m09_stdlib/question_and_from.bd`.
-- **`?` converts through a hand-written `From` impl (deviation).** The design's `from` clause inside an `error enum`
-  is not available, so the test writes `AppError: From<ParseError> { fn from(...) }`
-  (`m09_stdlib/question_and_from.bd`).
-- **Error payloads are unit aliases (deviation).** `IoError`, `ParseIntError`, and `AssertError` are `type ... = ()`
-  until stage 1. Tests only match `Err(_)` (`m09_stdlib/*`). `HANDOFF.md` known problem 15.
-- **`assert` has two modes (deviation).** In a normal build it panics; in a `burdin test` build the prelude binds
-  `__test_assert`/`__test_assert_eq`, which return `Result<(), AssertError>` so a failed test is reported instead of
-  aborting. The design describes the test form only. Decision 9, `HANDOFF.md` known problem 18;
-  `m10_test_runner/*`.
+- **Error types are real.** `Result<T>` is `Result<T, Error>` (a boxed dynamic error), and `Result<T, E>` names a
+  typed error; `error enum` declarations generate their `Display`, `Error`, and `From` impls, `.context(...)`
+  keeps a chain, and debug builds record trace frames. `spec/errors.md` ERR1-ERR10; `m16_errors/*`.
+- **`?` converts through `from` or into the dynamic `Error`.** An `error enum` variant written `from` registers the
+  conversion automatically, a hand-written `Type: From<Source>` block still works, and an error type converts into
+  `Result<T>`'s dynamic error without a block (`m16_errors/error_from_conversion.bd`, `error_missing_conversion.bd`).
+  The stage 0 hand-written example remains in `m09_stdlib/question_and_from.bd`.
+- **`assert` has two modes.** In a normal build it panics; in a `burdin test` build the prelude binds
+  `__test_assert`/`__test_assert_eq`, which build a typed `AssertError` carrying the call text, the values, and the
+  location, so a failed test is reported with its message instead of aborting. The design describes the test form
+  only. Decision 9, `spec/errors.md` ERR9, `m10_test_runner/*`, `m16_errors/assert_typed.bd`.
 - **No leak-detecting allocator (deviation).** The design runs every test under one; allocators are stage 1, so no
   test asserts that a leaked allocation fails. `spec/stage0-subset.md`.
 - **Panic wording is chosen by the runtime.** The design requires a message, the file, and the line; it does not fix

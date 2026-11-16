@@ -1,0 +1,21 @@
+//@ run
+//> invalid integer
+//> true
+//> cannot read missing.txt
+//> true
+
+// The standard-library errors are real error types with messages (spec/errors.md, ERR10).
+
+fn main() {
+    match i32.parse("nope") {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("{e}"),
+    }
+    println("{}", i32.parse("nope").is_err())
+
+    match read_to_string("missing.txt") {
+        Ok(text) => println("read {text.len()}"),
+        Err(e) => println("{e}"),
+    }
+    println("{}", read_to_string("missing.txt").is_err())
+}

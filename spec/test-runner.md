@@ -7,8 +7,11 @@ This file is the behavior of `burdin test` and of the attributes on a `test` ite
 [`tests/m10_test_runner`](../tests/m10_test_runner).
 
 The runner builds the selected packages in test mode. A test body is compiled as a function that returns
-`Result<(), AssertError>`; `assert` and `assert_eq` return an error in test mode, and a helper can propagate it with
-`?`. A test that returns `Err` is reported as failed; the generated dispatcher exits 1 for `Err` and 0 for `Ok`.
+`Result<()>`, the dynamic error type, so `?` accepts both an assertion failure and any other error type; `assert`
+and `assert_eq` return a typed error in test mode, and a helper can propagate it with `?`. A failing assertion's
+message (the condition text, the values, and the location) is printed to standard
+error before the exit status, so it appears in the captured stderr section of the failure report. A test that
+returns `Err` is reported as failed; the generated dispatcher exits 1 for `Err` and 0 for `Ok`.
 
 ## Test items and attributes
 
@@ -32,7 +35,7 @@ stripped from a normal build). The accepted attributes are:
 | `timeout(ms)` | The test process must finish within `ms` milliseconds. `0` means no limit. The attribute overrides the runner's `--timeout` default for this test. A test past its deadline is killed and reported as failed. |
 | `should_panic` | The test must end in a panic abort. |
 | `should_panic("text")` | The same, and `text` must appear in the test's stderr. |
-| `should_fail` | The test must return an error (`Err`), which the dispatcher reports with exit status 1. A panic does not satisfy it. An expected error *value* is not available in stage 0: `AssertError` is a unit alias, so every failure is the same value. Matching a payload waits for the typed errors of milestone 16. |
+| `should_fail` | The test must return an error (`Err`), which the dispatcher reports with exit status 1. A panic does not satisfy it. The failure is a typed `AssertError` (`spec/errors.md`, ERR9), and the test binary prints its message (the condition text, the values, and the location) to standard error before exiting, so it appears under the captured stderr heading. `should_fail` itself checks only the exit status, not the error value. |
 
 A test with none of these passes exactly when its process exits 0. A panic is any ending other than exit 0 or 1: a
 signal, an abort, or another exit status. `should_panic` and `should_fail` are opposite expectations and cannot be

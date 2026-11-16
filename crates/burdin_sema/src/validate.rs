@@ -125,6 +125,12 @@ pub(crate) fn check_public_signatures(
         if item.decl.is_priv {
             continue;
         }
+        // A method or associated function of a package-private type is unreachable from another package: that
+        // package cannot name the type, so nothing in its signature can leak. This is what makes an impl on a
+        // `priv` type (the standard library's `ContextError: Display`, or a `priv error enum`) legal.
+        if item.self_ty.as_ref().is_some_and(|ty| globals.private_adt(ty).is_some()) {
+            continue;
+        }
         let Some(sig) = globals.sigs.get(i) else { continue };
         let private =
             sig.params.iter().find_map(|p| globals.private_adt(&p.ty)).or_else(|| globals.private_adt(&sig.ret));

@@ -1,0 +1,9 @@
+//@ run
+//> done
+
+// `main` may return a `Result`: `Ok` prints nothing and exits 0 (spec/errors.md, ERR8).
+
+fn main(): Result<()> {
+    println("done")
+    Ok(())
+}

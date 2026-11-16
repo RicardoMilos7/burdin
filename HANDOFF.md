@@ -1,13 +1,13 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, and twenty-eighth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, and twenty-ninth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the twenty-eighth session (2026-11-15). **Milestones 1 to 11 are done, so stage 0 is complete,
-and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), and 15
-(`any` and `impl`) are done**: 354 conformance tests; the debug profile passes 353 with one host skip, and release
-passes 352 (two tests are debug-only).
+Updated at the end of the twenty-ninth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
+(`any` and `impl`), and 16 (errors) are done**: 379 conformance tests; all pass in debug with one host skip, and all
+pass in release except the debug-only tests.
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -93,7 +93,25 @@ is resolved, and boxes at every expected-type position; the move, borrow, and or
 expression forms; code generation emits `{ ptr, ptr }` values, one private constant vtable per `(T, I)` pair
 `{ i64 type_id, ptr drop, ptr method... }`, indirect calls, and type-id-checked downcasts that move the value out and
 free the allocation without dropping it again. The new diagnostics are E0200, E0201, E0202, and E0204. The tests are
-`tests/m15_any/` with 24 tests. The remaining milestones are m16 (`error` declarations) onward.
+`tests/m15_any/` with 24 tests. The remaining milestones are m17 (default and named arguments) onward.
+
+The twenty-ninth session implemented milestone 16, errors (issue #126). It decided first (`spec/errors.md`,
+ERR1-ERR10) that an `error enum` lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`
+impls, that `Result<T>` means `Result<T, Error>`, where the dynamic `Error` is
+`{ value: any Error, frames: List<TraceFrame>, context: String }`, and that an error type is boxed implicitly
+wherever `Error` is expected. A `?` converts through `from` or into the dynamic error, `.context(message)` prefixes
+the chain while keeping the boxed source, `is`/`downcast` inspect the box, and a debug build records creation and
+propagation frames while a release build records none. The parser lowers `error` declarations in the new
+`crates/burdin_syntax/src/error_item.rs` before derive expansion and wraps `fn main(): Result<T>`; it also splits
+each test body into a `Result<()>` body plus a wrapper that prints the error, so a failing typed assertion reports
+its message while `?` still accepts other error types in a test; sema checks the one-argument `Result<T>`, the
+implicit conversion, `context`, and E0212. `std/src/std.bd` declares the `Error` interface and struct,
+`TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, and `__test_assert`/`__test_assert_eq`;
+`orelse` now accepts a closure handler for a `Result` and a no-argument one for an `Option` (issue #488). The new
+diagnostics are E0210, E0211, and E0212. The session also fixed a code-generation bug the release profile exposed:
+a temporary created inside one branch had an uninitialized drop flag at the statement's drop site, which an
+optimizer could treat as an undefined free and use to delete the rest of the function; the flag now starts `false`
+in the entry block. The tests are `tests/m16_errors/` with 25 tests.
 
 | What | Where | Status |
 | --- | --- | --- |
@@ -108,15 +126,16 @@ free the allocation without dropping it again. The new diagnostics are E0200, E0
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default`/`Debug` behavior, including the FNV-1a values (issue #39) |
 | Formatting | `spec/format.md`, `std/src/fmt.bd`, `crates/burdin_syntax/src/derive.rs`, `crates/burdin_sema/src/fncx/format.rs` | Milestone 14 (issue #109). Interpolated literals, `Display`/`Debug`, the specifiers, `format` and the generalized output functions, all checked at compile time and lowered to `Formatter` calls; `derives (Debug)` generates an impl block as Burdin source. The tests are `tests/m14_format/` |
 | Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
+| Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, Error>`, error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
-| Conformance tests | `tests/` | 354 tests. All pass: m01 to m15 (353 in the debug profile with one host skip); 352 in release (two debug-only) |
+| Conformance tests | `tests/` | 379 tests. All pass: m01 to m16 (all pass in debug with one host skip, and all pass in release except the debug-only tests) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check_unit_tests.py` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
-| Standard library | `std/` | The stage 0 std, written in Burdin and embedded in the driver: `std.bd` (error aliases, `CStr`, `assert`, `assert_eq`, `unreachable`, the test-mode assertions), `io.bd`, `env.bd`, `process.bd`, `mem.bd`, `iter.bd`, `fmt.bd` (formatting). Every package gets it as an implicit dependency and every module gets its public names as a prelude |
+| Standard library | `std/` | The std, written in Burdin and embedded in the driver: `std.bd` (the `Error` interface and dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`/`__test_assert_eq`, `unreachable`), `io.bd`, `env.bd`, `process.bd`, `mem.bd`, `iter.bd`, `fmt.bd` (formatting). Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
 | Dependencies and licenses | `Cargo.lock`, `tests/dependencies.txt`, `tests/check_deps.py`, `docs/dependencies.md` | 18 external crates (`inkwell` plus everything it pulls in through `llvm-sys` 211); all licenses permissive (mostly MIT OR Apache-2.0; `inkwell` is Apache-2.0); exact `=x.y.z` pins with crates.io source and checksum; `tests/check_deps.py` checks all of it offline and re-verifies the licenses through `cargo metadata` after the build. Every CI job runs it (issue #449) |
@@ -251,10 +270,11 @@ how to call WSL from PowerShell.
   is only an iterable: `for c in s.chars()` decodes
   UTF-8 in code generation. The prelude also provides file I/O (`read_to_string`, `write_file`), `env.args()`,
   `process.exit`, `process.run`, `assert`, `assert_eq`, `unreachable`, `mem.swap`, and `mem.replace`. The
-  `IoError`, `ParseIntError`, and `AssertError` names are aliases for unit in `std`; the `error` declarations of
-  stage 1 will give them payloads. The compiler's own primitives behind the std wrappers are the underscored
-  built-ins `__read_to_string`, `__write_file`, `__args`, `__exit`, `__run`, `__swap`, and `__replace`, plus a
-  small runtime of C calls (`fopen`/`fread`/`fwrite`/`fclose`, `system`, `exit`, `strlen`, `memcmp`, `realloc`).
+  `IoError`, `ParseIntError`, and `AssertError` names were aliases for unit in `std` at milestone 9; milestone 16
+  replaced them with real error types (see the milestone 16 note). The compiler's own primitives behind the std
+  wrappers are the underscored built-ins `__read_to_string`, `__write_file`, `__args`, `__exit`, `__run`, `__swap`,
+  and `__replace`, plus a small runtime of C calls (`fopen`/`fread`/`fwrite`/`fclose`, `system`, `exit`, `strlen`,
+  `memcmp`, `realloc`).
   The driver embeds `std/` with `include_str!` and adds it as a dependency of every package; `prelude.rs` copies
   its public names and module aliases into every module, keeping a module's own declarations.
 - Milestone 10 added the test runner. The parser reads `test "name" [attrs] { ... }` into `ast::File.tests`, apart
@@ -262,7 +282,8 @@ how to call WSL from PowerShell.
   `Result<(), AssertError>` whose body is the block followed by `Ok(())`. Normal builds never declare or check them
   (tests are stripped); with `burdin_sema::check(..., test_mode, ...)`, the entry package's tests are declared and
   checked, the prelude replaces `assert`/`assert_eq` with `std`'s `__test_assert`/`__test_assert_eq` (which return
-  `Err(())` instead of panicking), and `main` is not required. `Program.tests` carries each test's display name,
+  an error instead of panicking; milestone 16 made it the typed `AssertError`), and `main` is not required.
+  `Program.tests` carries each test's display name,
   `FuncId`, and validated attributes (`tir::TestAttrs`). Code generation then emits a dispatcher `main` instead of
   calling the program's `main`: it reads the test index from `argv[1]` with `atoi`, calls that test, and returns 0
   when its `Result` is `Ok` and 1 when it is `Err`.
@@ -355,6 +376,21 @@ how to call WSL from PowerShell.
   index), the indirect call `(data, args...)`, the type-id test, and the downcast (match: load and free without
   drop; mismatch: vtable drop then free); `drop_value` runs the vtable's drop and frees, `reach.rs` roots every
   vtable entry, and the module layout documentation is updated. `tests/m15_any/` covers the behavior.
+- **Milestone 16 added errors.** `error enum` declarations parse into `ast::ErrorEnumDecl` and lower in
+  `crates/burdin_syntax/src/error_item.rs`, before `derive::expand_derives`, into an ordinary `EnumDecl` plus
+  generated `Display`, `Error`, and `From<Source>` impl blocks written as Burdin source with the declaration name's
+  span. The lowering checks each message template (a placeholder must name a payload field) and each `from` (a
+  one-field tuple variant, one conversion per source type, and none on a generic error enum), reporting E0210 and
+  E0211. At parse time the same module renames a written `fn main(): Result<...>` to `__burdin_main_result` and
+  appends a `main` that prints an `Err` with `Display` to standard error and exits 1; it also wraps each test body
+  as `__burdin_test_N_body` with a `__burdin_test_N` that prints the `AssertError` before returning it, and the
+  compiler appends the condition's source text and the call's location to every test-mode assertion. Sema resolves
+  the one-argument `Result<T>` as `Result<T, Error>`, boxes an error type implicitly where `Error` is expected,
+  checks `.context` and the `?` conversion (E0212), and `orelse` takes a closure handler (issue #488). The checker
+  and code generation see only ordinary values. `std/src/std.bd` declares the `Error` interface and struct
+  `{ value: any Error, frames: List<TraceFrame>, context: String }`, `TraceFrame`, the `context`/`is`/`downcast`
+  helpers, and the `IoError`, `ParseIntError`, and `AssertError` enums; a debug build records creation and
+  propagation frames and a release build records none. `tests/m16_errors/` covers the behavior.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,
@@ -604,10 +640,12 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     hashing of keys) without changing the type, its methods, or the unspecified iteration order. Lookup, insert, and
     remove are expected O(1); a key still needs only `==`, not `Hash`. `spec/stdlib.md` states the implementation and
     `m09_stdlib/map_key_types`, `map_remove_and_clear`, and `map_many_keys` witness it.
-15. **The error types are aliases for unit.** `std` declares `IoError`, `ParseIntError`, and `AssertError` as
-    `type ... = ()`; `read_to_string`, `write_file`, `process.run`, and the integer parsers return
-    `Result<T, ()>` under those names. Tests only match `Err(_)`, and the `error` declarations of stage 1 are the
-    place to give them payloads. This is also why the names were removed from the compiler's `builtin_type`.
+15. **The error types are real error enums now; milestone 16 closed this.** `std` declares `IoError`,
+    `ParseIntError`, and `AssertError` as `error enum`s with payloads and messages (`spec/errors.md`, ERR9 and
+    ERR10). `read_to_string`, `write_file`, `process.run`, and the integer parsers return `Result<T, E>` under
+    those names; the compiler primitives behind them produce a placeholder error value, and a program calls the
+    `std` wrappers, which build the real variant. The assertion errors carry the call text, the values, and the
+    location.
 16. **Ranges are values now (#53).** `a..b` is a `Range<T>` and `a..=b` a `RangeInclusive<T>`: they are stored,
     passed, put in fields and containers, compared, cloned, and hashed, and `for` iterates a stored range without
     borrowing it. Endpoints are integers of one type; the exclusive/inclusive bounds and the overflow behavior of
@@ -618,10 +656,12 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     name it uses). The prelude copies public names into every module including dependency packages, so a
     dependency that declares `args` or `read_to_string` keeps its own and the program may see two different
     meanings for the same spelling.
-18. **`assert` has two modes.** A normal build uses the panicking `assert`/`assert_eq` from `std`. A `burdin test`
-    build replaces those prelude names with `__test_assert`/`__test_assert_eq`, which return
-    `Result<(), AssertError>`, so `assert(...)?` reports a failed test and helper functions can propagate it. Stage 1's
-    `error` declarations replace the unit aliases and make the failure messages part of the error type.
+18. **`assert` has two modes, and the test mode is typed.** A normal build uses the panicking `assert`/`assert_eq`
+    from `std`. A `burdin test` build replaces those prelude names with `__test_assert`/`__test_assert_eq`, which
+    return `Result<(), AssertError>`, so `assert(...)?` reports a failed test and helper functions can propagate it.
+    The compiler appends the call's source text and location at the call site, `assert_eq` stores both values
+    formatted with `Debug`, and the test binary prints the message to standard error before reporting the failure
+    (`spec/errors.md`, ERR9).
 19. **`for` now borrows its collection for the whole loop.** A `mut` method on the same collection inside the body
     is E0111, which also rejects useful patterns such as appending while iterating a list; that is deliberate
     until the iteration protocol of stage 1.
@@ -799,8 +839,9 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   build never declares or checks tests, so stripping them needs no code-generation work and a broken test body cannot
   fail `burdin build`. Test items are only declared for the entry package's modules, not for dependencies.
 - Test mode is a flag on `burdin_sema::check`. It makes the prelude replace `assert` and `assert_eq` with
-  `std`'s `__test_assert`/`__test_assert_eq`, which return `Err(())` instead of panicking; a module's own `assert`
-  keeps its meaning. `main` is not required and `Program.main` is `None`.
+  `std`'s `__test_assert`/`__test_assert_eq`, which return an error instead of panicking (the typed `AssertError`
+  since milestone 16); a module's own `assert` keeps its meaning. `main` is not required and `Program.main` is
+  `None`.
 - The test binary is one executable with a generated dispatcher `main`: it reads the test index from `argv[1]`
   (`atoi`), calls that test, and returns 0 for `Ok` and 1 for `Err`. `burdin test` runs one process per test, so a
   panic abort fails only that test without restarting or skipping lists. This matches the design's observable
@@ -949,8 +990,9 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 - **`should_panic` and `should_fail` are separate endings.** The dispatcher returns 0 for `Ok` and 1 for `Err`, so a
   returned error is exit 1, a panic is any other abnormal ending, and `should_fail` accepts only exit 1. A test that
   calls `process.exit(n)` with another value is indistinguishable from an abort; that is documented rather than
-  given a new protocol. An expected error *value* waits for milestone 16: `AssertError` is a unit alias in stage 0, so
-  `should_fail` takes no payload.
+  given a new protocol. At milestone 10 an expected error *value* waited for milestone 16: `AssertError` was a unit
+  alias, so `should_fail` took no payload. Milestone 16 made the failure typed (`spec/errors.md`, ERR9), while
+  `should_fail` still checks only the exit status.
 - **Tests run in one process each, concurrently.** `-j`/`--jobs` defaults to the CPU count, `-j 1` is sequential,
   and the report is collected and printed in declaration order. One test binary is compiled per selected package,
   so a dependency's tests are checked against their own package.
@@ -1305,16 +1347,15 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 ## What is left to do, in order
 
-1. Read `spec/stage1-subset.md` and settle the decisions for milestone 16 (`error` declarations: how an `error
-   enum` lowers, how `from` is registered, the message and source chain, the trace cost in debug, the dynamic
-   `Error` representation (milestone 15's `any` is the intended basis), the default `Result<T>`, `context`, and
-   `fn main(): Result<()>`). The MIR interpreter question (comptime) and allocator parameters shape later
+1. Milestone 16 is complete (twenty-ninth session): `spec/errors.md` ERR1-ERR10 are the decisions and
+   `tests/m16_errors/` has 25 tests. The next milestone is 17 (default and named arguments): settle the evaluation
+   order, the interaction with `mut`/`own` conventions and exclusivity, and the rule that interface signatures
+   cannot declare defaults. The MIR interpreter question (comptime) and allocator parameters shape later
    milestones and can wait for theirs. Issue #444 (differential tests between comptime and compiled code) is blocked
    on the milestone 20 interpreter; `spec/test-runner.md` holds its intended shape and the issue stays open until
    then.
-2. Write the m16 tests before the code, the same way the earlier milestones were built: `tests/m16_errors` and its
-   `//@` expectations are the spec for the next stage 1 milestone. The unit aliases `IoError`, `ParseIntError`, and
-   `AssertError` become real error types there, and the test-mode assertions report typed failures.
+2. Write the m17 tests before the code, the same way the earlier milestones were built: `tests/m17_arguments` and
+   its `//@` expectations are the spec for the next stage 1 milestone.
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
@@ -1345,6 +1386,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 16, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 17, then write its tests.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// A message placeholder must name a payload field (spec/errors.md, ERR2); each case is E0210.
+
+error enum Index {
+    A(i32) "bad {1}" //~ E0210
+}
+
+error enum Name {
+    B(i32) "bad {value}" //~ E0210
+}
+
+error enum Unit {
+    C "bad {0}" //~ E0210
+}
+
+error enum Expr {
+    D(i32) "bad {0.abs()}" //~ E0210
+}
+
+fn main() {}
