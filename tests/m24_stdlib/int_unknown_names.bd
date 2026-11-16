@@ -1,0 +1,8 @@
+//@ compile-fail
+
+fn main() {
+    println("{}", u32.NOPE) //~ E0002
+    println("{}", u32.from_le_bytes([1, 2])) //~ E0003
+    let x: u32 = 3
+    println("{}", x.nope()) //~ E0002
+}

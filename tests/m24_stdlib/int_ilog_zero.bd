@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: ilog2 of a number that is not positive
+//> before
+
+fn main() {
+    let z: u32 = 0
+    println("before")
+    println("{}", z.ilog2())
+}

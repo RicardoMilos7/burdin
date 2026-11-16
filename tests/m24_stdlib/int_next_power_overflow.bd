@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: next_power_of_two overflowed
+//> before
+
+fn main() {
+    let n: u8 = 200
+    println("before")
+    println("{}", n.next_power_of_two())
+}

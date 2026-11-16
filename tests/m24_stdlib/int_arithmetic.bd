@@ -1,0 +1,67 @@
+//@ run
+//> 1024
+//> Some(2147483648)
+//> None
+//> 0
+//> 4294967295
+//> -27
+//> -2147483648
+//> 2147483647
+//> 255 0
+//> (4, true) (249, false)
+//> 255
+//> -128 -128
+//> None None
+//> -128 128
+//> None None
+//> Some(-1) Some(-1)
+//> -3 2
+//> 3 2
+//> -2 1
+//> 1 -1
+//> true true
+//> 14 14
+//> 4 2
+//> None Some(0)
+//> Some(0)
+//> true true
+//> 14 3
+
+fn main() {
+    let two: u32 = 2
+    println("{}", two.pow(10))
+    println("{:?}", two.checked_pow(31))
+    println("{:?}", two.checked_pow(32))
+    println("{}", two.wrapping_pow(33))
+    println("{}", two.saturating_pow(40))
+    let neg: i32 = -3
+    println("{}", neg.pow(3))
+    println("{}", neg.saturating_pow(41))
+    println("{}", neg.saturating_pow(40))
+    let hi: u8 = 250
+    println("{} {}", hi.saturating_add(10), hi.saturating_sub(251))
+    println("{:?} {:?}", hi.overflowing_add(10), hi.overflowing_sub(1))
+    println("{}", hi.saturating_mul(2))
+    let lo: i8 = -128
+    println("{} {}", lo.saturating_sub(1), lo.saturating_add(-1))
+    println("{:?} {:?}", lo.checked_neg(), lo.checked_div(-1))
+    println("{} {}", lo.wrapping_neg(), lo.unsigned_abs())
+    let zero: i32 = 0
+    println("{:?} {:?}", neg.checked_div(zero), neg.checked_rem(zero))
+    println("{:?} {:?}", neg.checked_div(2), neg.checked_rem(2))
+    let n7: i32 = -7
+    println("{} {}", n7.div_euclid(3), n7.rem_euclid(3))
+    println("{} {}", n7.div_euclid(-3), n7.rem_euclid(-3))
+    let p7: i32 = 7
+    println("{} {}", p7.div_euclid(-3), p7.rem_euclid(-3))
+    println("{} {}", p7.signum(), n7.signum())
+    println("{} {}", p7.is_positive(), n7.is_negative())
+    println("{} {}", n7.abs_diff(p7), p7.abs_diff(n7))
+    let a: u8 = 5
+    println("{} {}", a.abs_diff(9), a.div_euclid(2))
+    println("{:?} {:?}", a.checked_neg(), zero.checked_neg())
+    let u0: u32 = 0
+    println("{:?}", u0.checked_neg())
+    println("{} {}", p7.checked_shl(31).is_some(), p7.checked_shl(32).is_none())
+    println("{} {}", p7.wrapping_shl(33), p7.wrapping_shr(33))
+}

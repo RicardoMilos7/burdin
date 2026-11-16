@@ -424,6 +424,11 @@ impl Globals {
     }
 
     /// The generic function `name` of the standard library.
+    pub(crate) fn std_value(&self, name: &str) -> Option<Global> {
+        self.std_modules.iter().find_map(|&module| self.value(module, name))
+    }
+
+    /// The generic function `name` declared in the standard library, if any.
     pub(crate) fn std_generic(&self, name: &str) -> Option<usize> {
         self.std_modules.iter().find_map(|&module| match self.value(module, name)? {
             Global::Generic(g) => Some(g),
