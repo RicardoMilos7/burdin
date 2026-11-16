@@ -1,0 +1,14 @@
+//@ run
+//> true true true false
+//> true true false
+//> Some("bar") None Some("foo") None
+//> [ababab] []
+
+// `contains`, `ends_with`, and the prefix and suffix helpers work on whole strings, including multi-byte ones.
+
+fn main() {
+    println("{"hello".contains("ell")} {"hello".ends_with("llo")} {"".contains("")} {"hello".contains("xyz")}")
+    println("{"añb".contains("ñ")} {"añb".ends_with("ñb")} {"añb".ends_with("a")}")
+    println("{"foobar".strip_prefix("foo"):?} {"foobar".strip_prefix("bar"):?} {"foobar".strip_suffix("bar"):?} {"foobar".strip_suffix("foo"):?}")
+    println("[{"ab".repeat(3)}] [{"ab".repeat(0)}]")
+}

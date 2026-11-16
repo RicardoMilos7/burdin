@@ -1,0 +1,18 @@
+//@ run
+//> ["a", "b", "c"]
+//> ["x", "y", "", "z"]
+//> ["only"]
+//> []
+//> ["hé", "llo"]
+
+// `split_whitespace` drops the white space and the empty runs; `lines` splits at line feeds, removes a carriage return
+// in front of one, and does not make a last empty line out of a final line break.
+
+fn main() {
+    println("{" a  b\tc ".split_whitespace():?}")
+    println("{"x\r\ny\n\nz\n".lines():?}")
+    println("{"only".lines():?}")
+    println("{"".lines():?}")
+    let s = String.from("hé llo")
+    println("{s.split_whitespace():?}")
+}

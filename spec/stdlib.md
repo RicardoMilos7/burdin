@@ -162,6 +162,45 @@ split a multi-byte character: the language does not check UTF-8 boundaries.
 values or two `String` values lexicographically by bytes. The operands must have the same type; `s == "x"` does not
 convert, and there is no `Ord` for a mixed pair.
 
+### Text helpers (issue #415)
+
+`std.text` (and the case conversion in `std.unicode`) declare extension methods on `str` and `String`
+(`extensions.md`), so the prelude makes them visible everywhere and the compiler's own methods (`len`, `find`,
+`starts_with`, `chars`, ...) win. Offsets are byte offsets. A match of a valid separator in valid text always starts
+and ends on a character boundary, and `trim` and the case conversions walk whole characters, so the functions keep
+UTF-8 intact. The pieces they return are `String`s because a `List` cannot hold views; `trim*` return a `str` view
+of the receiver.
+
+```
+fn str.is_empty(self): bool
+fn str.contains(self, needle: str): bool                // "" is contained everywhere
+fn str.ends_with(self, suffix: str): bool
+fn str.trim(self): str                                  // also trim_start, trim_end; Unicode white space
+fn str.split(self, sep: str): List<String>              // keeps empty pieces; an empty `sep` panics
+fn str.split_char(self, c: char): List<String>
+fn str.rsplit(self, sep: str): List<String>             // the same pieces, last first
+fn str.rsplit_char(self, c: char): List<String>
+fn str.split_whitespace(self): List<String>             // runs of non-white-space characters
+fn str.lines(self): List<String>                        // at line feeds; a carriage return before one is removed
+fn str.replace(self, from: str, to: str): String        // an empty `from` panics
+fn str.strip_prefix(self, prefix: str): Option<String>
+fn str.strip_suffix(self, suffix: str): Option<String>
+fn str.repeat(self, count: usize): String
+fn str.to_lowercase(self): String                       // char.to_lowercase on each character
+fn str.to_uppercase(self): String
+fn str.to_ascii_lowercase(self): String
+fn str.to_ascii_uppercase(self): String
+fn str.eq_ignore_ascii_case(self, other: str): bool
+fn List<String>.join(self, sep: str): String
+```
+
+`String` has the same methods with the same behavior. When two standard modules extend different receivers under one
+name (`Option.replace`, `str.replace`), the prelude keeps all of them; a module's own declaration or `use` of that
+name still hides the prelude's.
+
+Tests: `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`,
+`string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern`.
+
 ## Allocators
 
 ```
@@ -686,6 +725,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |

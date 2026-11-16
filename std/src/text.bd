@@ -1,0 +1,336 @@
+// Text helpers for `str` and `String` (spec/stdlib.md).
+//
+// They are extension methods (spec/extensions.md), so the prelude makes them visible everywhere and the compiler's own
+// methods (`len`, `find`, `starts_with`, ...) win. Offsets are byte offsets, and every function keeps UTF-8 intact: a
+// match of a valid separator in valid text always starts and ends on a character boundary, and `trim` walks whole
+// characters. The pieces a function returns are `String`s, because a `List` cannot hold views.
+
+use unicode.{is_whitespace, len_utf8}
+
+/// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
+priv fn __index_of(text: str, needle: str, from: usize): usize {
+    let n = needle.len()
+    let mut i = from
+    while i + n <= text.len() {
+        if text[i..i + n] == needle {
+            return i
+        }
+        i = i + 1
+    }
+    text.len()
+}
+
+/// A copy of `text[from..to]`.
+priv fn __copy(text: str, from: usize, to: usize): String {
+    String.from(text[from..to])
+}
+
+/// The pieces of `text` between occurrences of `sep`, in order.
+priv fn __split(text: str, sep: str): List<String> {
+    if sep.len() == 0 {
+        panic("split: the separator is empty")
+    }
+    let mut out = List<String>.new()
+    let mut start: usize = 0
+    loop {
+        let at = __index_of(text, sep, start)
+        if at >= text.len() {
+            break
+        }
+        out.push(__copy(text, start, at))
+        start = at + sep.len()
+    }
+    out.push(__copy(text, start, text.len()))
+    out
+}
+
+/// A string holding the one character `c`.
+priv fn __one(c: char): String {
+    let mut s = String.new()
+    s.push(c)
+    s
+}
+
+/// The strings of `parts` in the opposite order.
+priv fn __reverse_strings(own parts: List<String>): List<String> {
+    let mut parts = parts
+    let mut out = List<String>.new()
+    loop {
+        match parts.pop() {
+            Some(x) => out.push(x),
+            None => break,
+        }
+    }
+    out
+}
+
+// ---- str ----
+
+/// Whether the text has no bytes.
+fn str.is_empty(self): bool {
+    self.len() == 0
+}
+
+/// Whether `needle` occurs in the text. The empty string occurs everywhere.
+fn str.contains(self, needle: str): bool {
+    needle.len() == 0 || __index_of(self, needle, 0) < self.len()
+}
+
+/// Whether the text ends with `suffix`.
+fn str.ends_with(self, suffix: str): bool {
+    suffix.len() <= self.len() && self[self.len() - suffix.len()..self.len()] == suffix
+}
+
+/// The text without leading and trailing white space (`char.is_whitespace`).
+fn str.trim(self): str {
+    let mut start: usize = 0
+    let mut end: usize = 0
+    let mut at: usize = 0
+    let mut seen = false
+    for c in self.chars() {
+        let next = at + c.len_utf8()
+        if !c.is_whitespace() {
+            if !seen {
+                start = at
+                seen = true
+            }
+            end = next
+        }
+        at = next
+    }
+    self[start..end]
+}
+
+/// The text without leading white space.
+fn str.trim_start(self): str {
+    let mut at: usize = 0
+    for c in self.chars() {
+        if !c.is_whitespace() {
+            return self[at..self.len()]
+        }
+        at = at + c.len_utf8()
+    }
+    self[self.len()..self.len()]
+}
+
+/// The text without trailing white space.
+fn str.trim_end(self): str {
+    let mut end: usize = 0
+    let mut at: usize = 0
+    for c in self.chars() {
+        at = at + c.len_utf8()
+        if !c.is_whitespace() {
+            end = at
+        }
+    }
+    self[0..end]
+}
+
+/// The pieces between occurrences of `sep`, in order: `"a,b,,c".split(",")` is `["a", "b", "", "c"]`. An empty `sep`
+/// panics.
+fn str.split(self, sep: str): List<String> {
+    __split(self, sep)
+}
+
+/// The pieces between occurrences of the character `c`, in order.
+fn str.split_char(self, c: char): List<String> {
+    __split(self, __one(c).as_str())
+}
+
+/// The pieces between occurrences of `sep`, last piece first.
+fn str.rsplit(self, sep: str): List<String> {
+    __reverse_strings(__split(self, sep))
+}
+
+/// The pieces between occurrences of the character `c`, last piece first.
+fn str.rsplit_char(self, c: char): List<String> {
+    __reverse_strings(__split(self, __one(c).as_str()))
+}
+
+/// The runs of non-white-space characters, in order.
+fn str.split_whitespace(self): List<String> {
+    let mut out = List<String>.new()
+    let mut word = String.new()
+    for c in self.chars() {
+        if c.is_whitespace() {
+            if word.len() > 0 {
+                out.push(word)
+                word = String.new()
+            }
+        } else {
+            word.push(c)
+        }
+    }
+    if word.len() > 0 {
+        out.push(word)
+    }
+    out
+}
+
+/// The lines of the text, split at a line feed, with a carriage return before it removed. A final line break does not
+/// start a new line.
+fn str.lines(self): List<String> {
+    let mut out = List<String>.new()
+    let mut start: usize = 0
+    let mut i: usize = 0
+    while i < self.len() {
+        if self[i..i + 1] == "\n" {
+            let mut end = i
+            if end > start && self[end - 1..end] == "\r" {
+                end = end - 1
+            }
+            out.push(__copy(self, start, end))
+            start = i + 1
+        }
+        i = i + 1
+    }
+    if start < self.len() {
+        out.push(__copy(self, start, self.len()))
+    }
+    out
+}
+
+/// A copy with every occurrence of `from` replaced by `to`. An empty `from` panics.
+fn str.replace(self, from: str, to: str): String {
+    if from.len() == 0 {
+        panic("replace: the pattern is empty")
+    }
+    let mut out = String.new()
+    let mut start: usize = 0
+    loop {
+        let at = __index_of(self, from, start)
+        if at >= self.len() {
+            break
+        }
+        out.push_str(self[start..at])
+        out.push_str(to)
+        start = at + from.len()
+    }
+    out.push_str(self[start..self.len()])
+    out
+}
+
+/// The text after `prefix`, or `None` when it does not start with `prefix`.
+fn str.strip_prefix(self, prefix: str): Option<String> {
+    if self.starts_with(prefix) {
+        return Some(__copy(self, prefix.len(), self.len()))
+    }
+    None
+}
+
+/// The text before `suffix`, or `None` when it does not end with `suffix`.
+fn str.strip_suffix(self, suffix: str): Option<String> {
+    if self.ends_with(suffix) {
+        return Some(__copy(self, 0, self.len() - suffix.len()))
+    }
+    None
+}
+
+/// The text `count` times in a row.
+fn str.repeat(self, count: usize): String {
+    let mut out = String.new()
+    let mut i: usize = 0
+    while i < count {
+        out.push_str(self)
+        i = i + 1
+    }
+    out
+}
+
+// ---- String ----
+
+/// Whether the string has no bytes.
+fn String.is_empty(self): bool {
+    self.len() == 0
+}
+
+/// Whether `needle` occurs in the string.
+fn String.contains(self, needle: str): bool {
+    self.as_str().contains(needle)
+}
+
+/// Whether the string ends with `suffix`.
+fn String.ends_with(self, suffix: str): bool {
+    self.as_str().ends_with(suffix)
+}
+
+/// The string without leading and trailing white space.
+fn String.trim(self): str {
+    self.as_str().trim()
+}
+
+/// The string without leading white space.
+fn String.trim_start(self): str {
+    self.as_str().trim_start()
+}
+
+/// The string without trailing white space.
+fn String.trim_end(self): str {
+    self.as_str().trim_end()
+}
+
+/// The pieces between occurrences of `sep`, in order.
+fn String.split(self, sep: str): List<String> {
+    __split(self.as_str(), sep)
+}
+
+/// The pieces between occurrences of the character `c`, in order.
+fn String.split_char(self, c: char): List<String> {
+    __split(self.as_str(), __one(c).as_str())
+}
+
+/// The pieces between occurrences of `sep`, last piece first.
+fn String.rsplit(self, sep: str): List<String> {
+    __reverse_strings(__split(self.as_str(), sep))
+}
+
+/// The pieces between occurrences of the character `c`, last piece first.
+fn String.rsplit_char(self, c: char): List<String> {
+    __reverse_strings(__split(self.as_str(), __one(c).as_str()))
+}
+
+/// The runs of non-white-space characters, in order.
+fn String.split_whitespace(self): List<String> {
+    self.as_str().split_whitespace()
+}
+
+/// The lines of the string.
+fn String.lines(self): List<String> {
+    self.as_str().lines()
+}
+
+/// A copy with every occurrence of `from` replaced by `to`.
+fn String.replace(self, from: str, to: str): String {
+    self.as_str().replace(from, to)
+}
+
+/// The string after `prefix`, or `None`.
+fn String.strip_prefix(self, prefix: str): Option<String> {
+    self.as_str().strip_prefix(prefix)
+}
+
+/// The string before `suffix`, or `None`.
+fn String.strip_suffix(self, suffix: str): Option<String> {
+    self.as_str().strip_suffix(suffix)
+}
+
+/// The string `count` times in a row.
+fn String.repeat(self, count: usize): String {
+    self.as_str().repeat(count)
+}
+
+// ---- join ----
+
+/// The strings of the list with `sep` between them: `["a", "b"].join(", ")` is `"a, b"`.
+fn List<String>.join(self, sep: str): String {
+    let mut out = String.new()
+    let mut first = true
+    for part in self {
+        if !first {
+            out.push_str(sep)
+        }
+        out.push_str(part.as_str())
+        first = false
+    }
+    out
+}
