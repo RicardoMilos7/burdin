@@ -1,0 +1,33 @@
+//@ run
+//> b
+//> a
+//> c
+//> d
+
+// A type that is only `PartialOrd` works as a priority. Elements of equal priority come out in the order they were
+// pushed.
+
+struct Job {
+    priority: i32
+    name: String
+}
+
+Job: PartialOrd {
+    fn lt(self, other: Job): bool {
+        self.priority < other.priority
+    }
+}
+
+fn main() {
+    let mut h = PriorityHeap<Job>.new()
+    h.push(Job { priority: 1, name: String.from("d") })
+    h.push(Job { priority: 2, name: String.from("a") })
+    h.push(Job { priority: 3, name: String.from("b") })
+    h.push(Job { priority: 2, name: String.from("c") })
+    loop {
+        match h.pop() {
+            Some(job) => println("{job.name}"),
+            None => break,
+        }
+    }
+}

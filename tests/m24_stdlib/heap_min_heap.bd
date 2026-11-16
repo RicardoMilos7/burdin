@@ -1,0 +1,19 @@
+//@ run
+//> 1
+//> 3
+//> 8
+
+// `Reverse` turns the max-heap into a min-heap.
+
+fn main() {
+    let mut h = PriorityHeap<Reverse<i32>>.new()
+    h.push(Reverse { value: 3 })
+    h.push(Reverse { value: 8 })
+    h.push(Reverse { value: 1 })
+    loop {
+        match h.pop() {
+            Some(r) => println("{r.value}"),
+            None => break,
+        }
+    }
+}

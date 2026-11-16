@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: PriorityHeap index out of bounds
+//> before
+
+fn main() {
+    let mut h = PriorityHeap<i32>.new()
+    h.push(1)
+    println("before")
+    println("{h[1]}")
+}

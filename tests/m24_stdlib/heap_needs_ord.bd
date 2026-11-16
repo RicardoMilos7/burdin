@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A priority needs an ordering, so a type without `Ord` is rejected where the heap type is written.
+
+struct Plain {
+    id: i32
+}
+
+fn take(h: PriorityHeap<Plain>) { //~ E0141
+}
+
+fn main() {
+}

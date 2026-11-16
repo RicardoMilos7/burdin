@@ -98,7 +98,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
 /// The standard library, embedded in the driver so that every program has it without a manifest entry.
 /// A project that declares its own `std` package keeps it instead.
 fn std_package() -> PackageFiles {
-    let sources: [(&str, &'static str); 15] = [
+    let sources: [(&str, &'static str); 16] = [
         ("std", include_str!("../../../std/src/std.bd")),
         ("alloc", include_str!("../../../std/src/alloc.bd")),
         ("io", include_str!("../../../std/src/io.bd")),
@@ -113,6 +113,7 @@ fn std_package() -> PackageFiles {
         ("option", include_str!("../../../std/src/option.bd")),
         ("set", include_str!("../../../std/src/set.bd")),
         ("deque", include_str!("../../../std/src/deque.bd")),
+        ("heap", include_str!("../../../std/src/heap.bd")),
         ("list", include_str!("../../../std/src/list.bd")),
     ];
     let modules: Vec<ModuleFile> = sources
