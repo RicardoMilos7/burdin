@@ -1,0 +1,47 @@
+//@ run
+//> /a/b/new.txt /a/b/c.rs /a/b/c /a/b/c.tar.d /a/b/.hidden.x x
+//> /a/b/c.tar.gz /a/b/c.gz x.rs
+//> /c /c ../a/../.. . .. ../.. a/c /
+//> C:\a\c C:\ \\server\share C:\a\b a\c C:..\x
+//> true false
+
+// `with_file_name` and `with_extension` rewrite the last name, and `normalize` cancels `.` and `name/..` lexically.
+
+fn main() {
+    println(
+        "{} {} {} {} {} {}",
+        Path.unix("/a/b/old.txt").with_file_name("new.txt"),
+        Path.unix("/a/b/c.txt").with_extension("rs"),
+        Path.unix("/a/b/c.txt").with_extension(""),
+        Path.unix("/a/b/c.tar").with_extension("tar.d"),
+        Path.unix("/a/b/.hidden").with_extension("x"),
+        Path.unix("").with_file_name("x"),
+    )
+    println(
+        "{} {} {}",
+        Path.unix("/a/b/c").with_extension("tar.gz"),
+        Path.unix("/a/b/c.tar.xz").with_extension("gz").with_file_name("c.gz"),
+        Path.unix("x").with_extension("rs"),
+    )
+    println(
+        "{} {} {} {} {} {} {} {}",
+        Path.unix("/a/./b/../../..//c/").normalize(),
+        Path.unix("//../c").normalize(),
+        Path.unix("a/../..").normalize().join("a/../.."),
+        Path.unix("./").normalize(),
+        Path.unix("a/../..").normalize(),
+        Path.unix("../a/../..").normalize(),
+        Path.unix("a/b/../c").normalize(),
+        Path.unix("/a/..").normalize(),
+    )
+    println(
+        "{} {} {} {} {} {}",
+        Path.windows("C:/a/./b/../c").normalize(),
+        Path.windows("C:\\a\\..").normalize(),
+        Path.windows("\\\\server\\share").normalize(),
+        Path.windows("C:\\a/b").normalize(),
+        Path.windows("a/b/../c").normalize(),
+        Path.windows("C:..\\x").normalize(),
+    )
+    println("{} {}", Path.unix("a/./b") == Path.unix("a/./b"), Path.unix("a/./b") == Path.unix("a/b"))
+}

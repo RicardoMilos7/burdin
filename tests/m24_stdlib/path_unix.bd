@@ -1,0 +1,67 @@
+//@ run
+//> true false true
+//> ["usr", "local", "lib", "libfoo.so.1"]
+//> /usr/local/lib/libfoo.so.1 | libfoo.so.1 | libfoo.so | 1
+//> Some(Path("/usr/local/lib")) Some(Path("/")) Some(Path("")) None None
+//> /a/b/c a/b /c a/x /a
+//> none none none none
+//> .profile b Some(".profile") none
+//> archive.tar gz | Makefile none | trailing.
+//> true
+
+// Path text is read with Unix rules: `/` separates, a path is absolute when it starts with one, and every operation is
+// lexical.
+
+fn show(own name: Option<String>): String {
+    match name {
+        Some(s) => s,
+        None => "none".to_string(),
+    }
+}
+
+fn main() {
+    let p = Path.unix("/usr/local/lib/libfoo.so.1")
+    println("{} {} {}", p.is_absolute(), p.is_relative(), Path.unix("a/b").is_relative())
+    println("{:?}", p.components())
+    println(
+        "{} | {} | {} | {}",
+        p,
+        show(p.file_name()),
+        show(p.file_stem()),
+        show(p.extension()),
+    )
+    println(
+        "{:?} {:?} {:?} {:?} {:?}",
+        p.parent(),
+        Path.unix("/a").parent(),
+        Path.unix("a").parent(),
+        Path.unix("/").parent(),
+        Path.unix("").parent(),
+    )
+    println(
+        "{} {} {} {} {}",
+        Path.unix("/a/b").join("c"),
+        Path.unix("a").join("b"),
+        Path.unix("a/b").join("/c"),
+        Path.unix("a/").join("x"),
+        Path.unix("/a").join("b").parent().unwrap(),
+    )
+    println(
+        "{} {} {} {}",
+        show(Path.unix("/").file_name()),
+        show(Path.unix("a/..").file_name()),
+        show(Path.unix("").file_name()),
+        show(Path.unix("/").extension()),
+    )
+    let hidden = Path.unix("/home/me/.profile")
+    println("{} {} {:?} {}", show(hidden.file_name()), Path.unix("a/b/.").file_name().unwrap(), hidden.file_stem(), show(hidden.extension()))
+    println(
+        "{} {} | {} {} | {}",
+        show(Path.unix("archive.tar.gz").file_stem()),
+        show(Path.unix("archive.tar.gz").extension()),
+        show(Path.unix("no.ext/Makefile").file_name()),
+        show(Path.unix("no.ext/Makefile").extension()),
+        show(Path.unix("trailing.").file_name()),
+    )
+    println("{}", Path.unix("x/file.").extension() == Some("".to_string()))
+}
