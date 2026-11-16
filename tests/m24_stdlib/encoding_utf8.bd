@@ -1,0 +1,62 @@
+//@ run
+//> 10 61c3a9e282acf09f8e89
+//> Ok("aé€🎉")
+//> 2
+//> err invalid UTF-8 at byte 1
+//> err invalid UTF-8 at byte 1
+//> err invalid UTF-8 at byte 0
+//> err invalid UTF-8 at byte 0
+//> err invalid UTF-8 at byte 0
+//> err invalid UTF-8 at byte 0
+//> ok [aé€🎉]
+//> ok []
+
+// `to_utf8` and `from_utf8`: multi-byte characters, and the ways a byte sequence is not UTF-8 (a stray continuation
+// byte, a cut-off sequence, an overlong form, a surrogate, a value past U+10FFFF, a bad lead byte).
+
+fn show(data: [u8]) {
+    match from_utf8(data) {
+        Ok(s) => {
+            println("ok [{s}]")
+        }
+        Err(e) => {
+            println("err {e}")
+        }
+    }
+}
+
+fn main() {
+    let bytes = "aé€🎉".to_utf8()
+    println("{} {}", bytes.len(), bytes.to_hex())
+    println("{:?}", bytes.to_text())
+    println("{}", String.from("é").to_utf8().len())
+    let mut bad = List<u8>.new()
+    bad.push(97)
+    bad.push(255)
+    show(bad[0..2])
+    let mut cut = List<u8>.new()
+    cut.push(98)
+    cut.push(226)
+    cut.push(130)
+    show(cut[0..3])
+    let mut overlong = List<u8>.new()
+    overlong.push(192)
+    overlong.push(128)
+    show(overlong[0..2])
+    let mut surrogate = List<u8>.new()
+    surrogate.push(237)
+    surrogate.push(160)
+    surrogate.push(128)
+    show(surrogate[0..3])
+    let mut stray = List<u8>.new()
+    stray.push(128)
+    show(stray[0..1])
+    let mut too_big = List<u8>.new()
+    too_big.push(244)
+    too_big.push(144)
+    too_big.push(128)
+    too_big.push(128)
+    show(too_big[0..4])
+    show(bytes[0..bytes.len()])
+    show(bytes[0..0])
+}

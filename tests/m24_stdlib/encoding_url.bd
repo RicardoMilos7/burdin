@@ -1,0 +1,34 @@
+//@ run
+//> plain-text_1.0~
+//> a%20b%26c%3Dd%2Fe%3Ff%23g
+//> %C3%A9%E2%82%AC%F0%9F%8E%89
+//> []
+//> Ok("a b&c=d/")
+//> Ok("é€🎉")
+//> Ok("a+b")
+//> Err(InvalidCharacter { index: 1 })
+//> Err(InvalidLength)
+//> Err(InvalidLength)
+//> Err(InvalidUtf8 { index: 0 })
+//> Err(InvalidUtf8 { index: 0 })
+//> true
+
+// Percent-encoding: unreserved characters stay, every other UTF-8 byte becomes `%XX`; decoding rejects a bad escape
+// and bytes that are not UTF-8, and leaves `+` alone.
+
+fn main() {
+    println("{}", url_encode("plain-text_1.0~"))
+    println("{}", url_encode("a b&c=d/e?f#g"))
+    println("{}", url_encode("é€🎉"))
+    println("[{}]", url_encode(""))
+    println("{:?}", url_decode("a%20b%26c%3dd%2F"))
+    println("{:?}", url_decode("%C3%A9%E2%82%AC%F0%9F%8E%89"))
+    println("{:?}", url_decode("a+b"))
+    println("{:?}", url_decode("%zz"))
+    println("{:?}", url_decode("ab%4"))
+    println("{:?}", url_decode("ab%"))
+    println("{:?}", url_decode("%FF"))
+    println("{:?}", url_decode("%C3"))
+    let text = String.from("round trip: ñ/ü?&=#")
+    println("{}", url_decode(url_encode(text)).unwrap() == text)
+}
