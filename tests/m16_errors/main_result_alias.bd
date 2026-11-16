@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `main` may return unit or a `Result` written directly; an alias is not wrapped and is E0003
+// (spec/errors.md, ERR8).
+
+type Outcome = Result<(), IoError>
+
+fn main(): Outcome { //~ E0003
+    Ok(())
+}

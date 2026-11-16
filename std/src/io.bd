@@ -4,10 +4,16 @@ use std.IoError
 
 /// Reads the whole file at `path` as text.
 fn read_to_string(path: str): Result<String, IoError> {
-    __read_to_string(path)
+    match __read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(_) => Err(IoError.Read { path: path.to_string() }),
+    }
 }
 
 /// Writes `text` to `path`, replacing what was there.
 fn write_file(path: str, text: str): Result<(), IoError> {
-    __write_file(path, text)
+    match __write_file(path, text) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(IoError.Write { path: path.to_string() }),
+    }
 }

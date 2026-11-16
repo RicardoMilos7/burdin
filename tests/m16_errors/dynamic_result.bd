@@ -1,0 +1,38 @@
+//@ run
+//> ok 5
+//> err missing key port
+//> true true
+//> 5
+//> -1
+//> 10
+
+// `Result<T>` means `Result<T, Error>` (spec/errors.md, ERR5), and an error type converts into the dynamic
+// error wherever `Error` is expected.
+
+error enum ConfigError {
+    Missing(String) "missing key {0}"
+}
+
+fn get(ok: bool): Result<i32> {
+    if ok { Ok(5) } else { Err(ConfigError.Missing("port".to_string())) }
+}
+
+fn twice(ok: bool): Result<i32> {
+    let n = get(ok)?
+    Ok(n * 2)
+}
+
+fn main() {
+    match get(true) {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("err {e}"),
+    }
+    match get(false) {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("err {e}"),
+    }
+    println("{} {}", get(true).is_ok(), get(false).is_err())
+    println("{}", get(true).unwrap())
+    println("{}", get(false) orelse -1)
+    println("{}", twice(true) orelse -1)
+}

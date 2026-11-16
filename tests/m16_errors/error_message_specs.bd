@@ -1,0 +1,25 @@
+//@ run
+//> n=   7
+//> [10 ff]
+//> {x}
+//> v=00000042
+//> 3.14
+
+// Message templates are interpolated strings, so the format specifiers work as they do anywhere else
+// (spec/errors.md, ERR2, and spec/format.md).
+
+error enum Fancy {
+    Num(i32) "n={0:>4}"
+    Pair(i32, i32) "[{0:?} {1:x}]"
+    Json(String) "{{{0}}}"
+    Named { value: i32 } "v={value:08}"
+    Float(f64) "{0:.2}"
+}
+
+fn main() {
+    println("{Fancy.Num(7)}")
+    println("{Fancy.Pair(10, 255)}")
+    println("{Fancy.Json("x".to_string())}")
+    println("{Fancy.Named { value: 42 }}")
+    println("{Fancy.Float(3.14159)}")
+}

@@ -228,6 +228,58 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Milestone 16 — errors (issue #126)
+
+- `error enum` declarations: `error` is a keyword followed by `enum`; the declaration takes an ordinary enum's
+  permissive layout, package visibility, `derives (...)`, and generics. Every variant carries a required message
+  template whose `{...}` placeholders name its payload fields (positional for a tuple variant, by name for a struct
+  variant; a unit variant has none), with the full format-specifier grammar. A tuple variant with one field may add
+  `from`, which registers a conversion from that field's type.
+- Lowering (`crates/burdin_syntax/src/error_item.rs`): an `error enum` becomes the same enum plus `Display` (from
+  the templates), `Error` (the `std` marker interface, which requires `Display`), and one `From<Source>` impl per
+  `from` variant, all generated as Burdin source before derive expansion. The checker, the memory checks, and code
+  generation see only ordinary items, so an error value is moved, dropped, matched, stored, and printed like any
+  enum. The new codes are E0210 (an invalid declaration: a `from` that is not a one-field tuple variant, `from` on
+  a generic error enum, a placeholder that does not name a payload field) and E0211 (two variants converting from
+  one source type).
+- The dynamic `Error`: `std` declares `interface Error requires Display { }`, the struct
+  `Error { value: any Error, frames: List<TraceFrame>, context: String }`, and
+  `TraceFrame { file: String, line: i32, col: i32 }`. `Result<T>` written with one argument means
+  `Result<T, Error>`; an error type is boxed implicitly wherever `Error` is expected (a value that does not
+  implement `Error` is the ordinary E0003 mismatch there, and E0212 at `?`), so `?`, `Err(...)`, an annotation, and
+  `.context(...)` all produce the dynamic error while keeping the original boxed value. `e.is<T>()`,
+  `e.downcast<T>()` (which consumes the box), and `{}` inspect and print it.
+- `.context(message)`: a compiler-known method on `Result<T, E>` returning `Result<T, Error>`; `Ok` passes through,
+  and an `Err` records the message in front of the existing chain, keeps the boxed source, and returns E0212 when
+  `E` is not an error type. `Option` has no `context`.
+- Traces: a debug build records a `TraceFrame` when an error type converts into `Error` and at every `?` that
+  propagates a `Result<..., Error>`, creation first; `.context` keeps the frames it receives. A release build
+  allocates none and leaves `frames` empty, with the same `Error` layout in both profiles. `error.frames` is
+  public and `TraceFrame` prints as `file:line:col`.
+- `fn main(): Result<T>`: the parser renames the function to `__burdin_main_result` and appends a wrapper `main`
+  that prints an `Err` with `Display` to standard error and exits 1; `Ok` prints nothing and exits 0. The `Result`
+  must be written directly (an alias is E0003), and a `main` with parameters or another return type is still
+  E0003.
+- Typed test failures: in a `burdin test` build `assert`/`assert_eq` return `Result<(), AssertError>` and build
+  `AssertError.Failed`/`FailedEq` with the call's source text, the values (formatted with `Debug`), and the call's
+  `path:line:col`; the compiler appends the text and location at the call site, and the generated test wrapper
+  prints the error to standard error before the runner reports the failure. A test body is compiled as a function
+  returning `Result<()>`, the dynamic error, so the same `?` also accepts a file or parsing error; a normal build
+  keeps the panicking assertions.
+- Standard library: `std/src/std.bd` declares `Error`, `TraceFrame`, the `context`/`is`/`downcast` helpers, the
+  `IoError` (`Read`/`Write`/`Run`), `ParseIntError` (`Invalid`), and `AssertError` error enums, and
+  `__test_assert`/`__test_assert_eq`. `read_to_string`, `write_file`, `process.run`, and the integer parsers
+  return the real error variants with their messages; the compiler primitives behind them produce a placeholder
+  that the `std` wrappers replace. `orelse` accepts a closure handler: `|e| ...` for a `Result` and `|| ...` for
+  an `Option` (issue #488).
+- Tests: `tests/m16_errors/` adds 22 conformance tests covering `error` declarations and messages, `from` and `?`,
+  the dynamic error and downcasts, `context` chains, debug traces, `main(): Result<T>`, typed assertions, the
+  standard-library errors, the `orelse` handlers, and every new diagnostic. The suite is 376 tests (all pass in
+  debug with one host skip; release passes all except the debug-only tests).
+- Documentation: `spec/errors.md` (new), `spec/grammar.md`, `spec/stdlib.md`, `spec/test-runner.md`,
+  `spec/stage1-subset.md`, `std/README.md`, `tests/README.md` decision 21 and the registry, `docs/error-codes.md`,
+  `HANDOFF.md`, and this file.
+
 ### Milestone 12 — closures (issue #88, sub-issues #89-#97)
 
 - Closure expressions: `|a, b| expr`, `|a: i32|: bool { ... }`, and `||` (zero parameters), parsed at primary

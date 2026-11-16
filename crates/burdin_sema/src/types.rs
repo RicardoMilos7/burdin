@@ -254,6 +254,11 @@ impl Globals {
                 Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
                 Box::new(self.resolve_type_in(&args[1], self_ty, subst, module, diags)),
             ),
+            // `Result<T>` is the default-error form: `Result<T, Error>` (`spec/errors.md`, ERR5).
+            ("Result", 1) => Ty::Result(
+                Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
+                Box::new(self.error_ty.clone().unwrap_or(Ty::Error)),
+            ),
             ("Heap", 1) => {
                 let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
                 check_storable(&inner, args[0].span, "a `Heap` element", diags);

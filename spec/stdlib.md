@@ -50,7 +50,7 @@ fn parse(s: str): Result<Self, ParseIntError>
 Floats have `to_string(self): String`, through `Display` (`format.md`, FM8); `f64` and `f32` have no other
 methods in stage 0. `bool`, `char`, and `str` have `to_string(self): String`. `bool` also works in `if`/`while` conditions. `parse` is
 the associated function `i32.parse(s)`; it accepts an optional leading `-` and digits in the base 10 and returns
-`Err(())` (`ParseIntError` is a unit alias in stage 0) for anything else.
+`Err(ParseIntError.Invalid)`, whose message is `invalid integer`, for anything else.
 
 Arithmetic is the built-in operators only: `+ - * / %`, `<< >>`, `& | ^`, unary `-`. Overflow panics in debug and
 wraps in release for `+ - *` and unary `-`; division by zero and out-of-range shifts always panic. `/` and `%`
@@ -179,18 +179,73 @@ work with `for` and the adapters. The rules, the item types, and the second-clas
 ## `Option<T>` and `Result<T, E>`
 
 `Option<T>` is built in with the variants `Some(T)` and `None`; `None` takes its type from context. `Result<T, E>`
-is built in with `Ok(T)` and `Err(E)`; stage 0 always names `E`.
+is built in with `Ok(T)` and `Err(E)`. `Result<T>` written with one argument means `Result<T, Error>`, the dynamic
+error type described below (`errors.md`, ERR5).
 
 ```
 Option<T>:  unwrap(), expect(msg: str): T, is_some(): bool, is_none(): bool
 Result<T, E>: unwrap(), expect(msg: str): T, is_ok(): bool, is_err(): bool
+Result<T, E>: context(message: str): Result<T, Error>
 ```
 
 `unwrap` panics on `None`/`Err`; `expect(msg)` panics with `msg`. `expr?` returns early through the enclosing
-`Option` or `Result` function (E0160 outside one) and converts the error through a user `Type: From<Source>` block.
-`expr orelse fallback` supplies a value for `None` or `Err`. `match` handles both types; `Option` also supports
-`==`/`!=` when its payload does, and `Hash` when its payload does. Stage 0 has no `map`, `and_then`, `unwrap_or`,
-`ok_or`, or other combinators (stage 1, issue #481).
+`Option` or `Result` function (E0160 outside one) and converts the error through a user `Type: From<Source>` block;
+in a function returning `Result<U>` / `Result<U, Error>`, any error type is boxed into the dynamic `Error`
+(`errors.md`, ERR4). `expr orelse fallback` supplies a value for `None` or `Err`; a closure handler receives the
+`Err` payload (`|e| ...`) and takes no argument for `None` (`|| ...`, issue #488). `match` handles both types; `Option` also supports `==`/`!=` when its
+payload does, and `Hash` when its payload does. `.context(message)` prefixes a context message and returns
+`Result<T, Error>`; it is E0212 when the error type does not implement `Error` (`errors.md`, ERR6). Stage 0 has no
+`map`, `and_then`, `unwrap_or`, `ok_or`, or other combinators (stage 1, issue #481).
+
+## Errors
+
+`std` declares the marker interface `Error requires Display { }` and, under the same name in the type namespace,
+the dynamic error value:
+
+```
+struct Error {
+    value: any Error
+    frames: List<TraceFrame>
+    context: String
+}
+
+struct TraceFrame {
+    file: String
+    line: i32
+    col: i32
+}
+```
+
+A type is an error type when it implements `Error`, which requires `Display`. The dynamic `Error` is an owned
+`any Error` box together with the context messages `.context` added (outermost first) and the frames a debug build
+records. An error type is boxed implicitly wherever `Error` is expected; `e.is<T>()` reports whether the box holds
+a `T`, `e.downcast<T>()` consumes the box and yields `Some(value)` on a match (both need `T: Error`), and `{}`
+prints the wrapped error's `Display` (`errors.md`, ERR4). `TraceFrame` implements `Display` as `file:line:col`, and
+`error.frames` is its public `List<TraceFrame>`; a debug build records a creation frame at each conversion into
+`Error` and a propagation frame at each `?` that passes a `Result<..., Error>` outward, and a release build records
+none (`errors.md`, ERR7).
+
+`std` declares its error types (`errors.md`, ERR10):
+
+```
+error enum IoError {
+    Read { path: String }    "cannot read {path}"
+    Write { path: String }   "cannot write {path}"
+    Run { command: String }  "cannot run {command}"
+}
+
+error enum ParseIntError {
+    Invalid  "invalid integer"
+}
+```
+
+`read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
+`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`.
+
+An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
+template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
+function written `fn main(): Result<T>` prints an `Err` with `Display` to standard error and exits 1; `Ok` prints
+nothing and exits 0 (`errors.md`, ERR8).
 
 ## Files, processes, and environment
 
@@ -205,7 +260,8 @@ fn process.run(command: str): Result<i32, IoError>
 `read_to_string` and `write_file` read and write raw bytes: there is no newline translation on Windows and no UTF-8
 normalization, so a string written and read back is byte-identical (`len` is the byte count). `process.run` runs the
 command through the system shell and returns its status: the POSIX wait status is shifted, the Windows status is
-returned as is. `IoError` is `()` in stage 0.
+returned as is. On failure each returns the matching `IoError` variant, and an integer `parse` returns
+`ParseIntError.Invalid` (`errors.md`, ERR10).
 
 ## Memory helpers and assertions
 
@@ -221,7 +277,11 @@ fn unreachable(): !
 `swap` and `replace` take places and are checked for exclusivity like any other call. `panic` prints its message and
 location and aborts (`memory-rules.md`, DR10); `unreachable()` panics with `unreachable`; `assert` panics with
 `assertion failed`; `assert_eq` panics when the values differ. In a `burdin test` build the prelude replaces
-`assert`/`assert_eq` with versions that return `Err(())` instead of panicking.
+`assert`/`assert_eq` with `__test_assert`/`__test_assert_eq`, which return `Result<(), AssertError>` instead of
+panicking: a failure is `AssertError.Failed { condition, location }` or
+`AssertError.FailedEq { condition, left, right, location }`, where `condition` is the call's source text, `left`
+and `right` are its values formatted with `Debug`, and `location` is its `path:line:col` (`errors.md`, ERR9). A
+normal build keeps the panicking assertions.
 
 ## C bridge
 
@@ -296,8 +356,10 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`) |
 | `Heap` | `m05_ownership/heap_tree_eval` |
-| `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from` |
-| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run` |
-| Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*` |
+| `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
+| Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |
+| Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |
+| Dynamic errors, `main`, assertions | `m16_errors/dynamic_error_downcast`, `error_context_chain`, `error_context_non_error`, `traces_debug`, `main_result_ok`, `main_result_err`, `main_result_typed`, `main_result_alias`, `assert_typed`, `std_errors` |
 | C bridge | `m08_modules/extern_libc`, `cstr_roundtrip`, `cptr_operations`, `cptr_null_arguments`, `c_out_parameter`, `c_abi_structs`, `cstring_clone`, `cstr_is_an_alias`, `export_c_abi`, `m11_llvm/llvm_return_42` |
 | Rejected names, arities, and C ABI types | `m09_stdlib/unknown_stdlib_names` (E0002, E0004), `m08_modules/cptr_null_arguments` (E0004), `extern_signature` (E0162), `export_c_abi_invalid` (E0162), `cstr_no_implicit_conversion` (E0003), `cstr_is_not_a_str` (E0002, E0003) |

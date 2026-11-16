@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// `error` is a keyword now, so it cannot be a function name (spec/grammar.md, keywords).
+
+fn error() {} //~ E0001
+
+fn main() {}

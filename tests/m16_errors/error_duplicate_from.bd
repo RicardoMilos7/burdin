@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Two variants of one error enum cannot convert from the same source type (spec/errors.md, ERR3).
+
+error enum Twice {
+    First(IoError) from "first: {0}"
+    Second(IoError) from "second: {0}" //~ E0211
+}
+
+fn main() {}

@@ -1,7 +1,7 @@
 //! Closures: capturing from the enclosing function, checking the body, and classifying how it uses its captures
 //! (`spec/memory-rules.md` CL1-CL10, `spec/grammar.md` section 4).
 
-use super::{FnCx, mk};
+use super::{FnCx, error_expr, mk};
 use crate::globals::Globals;
 use crate::types::compatible;
 use burdin_diag::{Code, Span};
@@ -208,8 +208,18 @@ impl FnCx<'_> {
         let module = self.module;
         let is_unsafe = self.unsafe_depth > 0;
         let child_ret = declared_ret.clone().unwrap_or(Ty::Error);
-        let mut child =
-            FnCx::new(self.globals, &mut *self.diags, child_ret, self_ty, module, is_unsafe, self.symbolic, closures);
+        let mut child = FnCx::new(
+            self.globals,
+            &mut *self.diags,
+            child_ret,
+            self_ty,
+            module,
+            is_unsafe,
+            self.symbolic,
+            closures,
+            self.sources,
+            self.traces,
+        );
         child.subst = subst;
         child.bounds = bounds;
         child.capture =
@@ -397,6 +407,40 @@ impl FnCx<'_> {
         };
         let ret = (*sig.ret).clone();
         mk(tir::ExprKind::ClosureCall { callee: Box::new(callee), args: checked, kind }, ret, span)
+    }
+
+    /// A call whose callee and arguments are already typed: the handler a `value orelse |e| ...` lowers to. There
+    /// are no AST arguments to check, so only the arity and the `FnMut` receiver rule apply (CL6).
+    pub(super) fn closure_call_typed(&mut self, callee: tir::Expr, args: Vec<tir::Expr>, span: Span) -> tir::Expr {
+        let callee = self.auto_deref(callee);
+        let Some((sig, kind)) = self.globals.fn_call_sig(&callee.ty, &self.bounds) else {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                span,
+                format!("`{}` is not callable; only a closure or a function can be called", callee.ty),
+            );
+            return error_expr(span);
+        };
+        if kind == FnKind::FnMut && !matches!(callee.ty, Ty::Error) {
+            // An `FnMut` call borrows the closure exclusively: the receiver must be a mutable place (CL6).
+            if !burdin_tir::place::is_place_expr(&callee) || !self.place_mutable(&callee) {
+                self.diags.error(
+                    Code::MUT_OF_IMMUTABLE,
+                    callee.span,
+                    "calling this `FnMut` closure changes it, so it must be a mutable place",
+                );
+            }
+        }
+        if sig.params.len() != args.len() {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("this closure takes {} argument(s), but {} were given", sig.params.len(), args.len()),
+            );
+            return error_expr(span);
+        }
+        let ret = (*sig.ret).clone();
+        mk(tir::ExprKind::ClosureCall { callee: Box::new(callee), args, kind }, ret, span)
     }
 }
 

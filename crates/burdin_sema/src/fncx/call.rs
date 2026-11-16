@@ -6,7 +6,7 @@ use crate::globals::{Callee, Global, adt_key};
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{Place, is_place_expr, place_mentions, place_root, places_overlap};
-use burdin_tir::{self as tir, Builtin, IntTy, Method, ParamSig, Ty};
+use burdin_tir::{self as tir, Builtin, FuncId, IntTy, Method, ParamSig, Pat, Ty};
 
 impl FnCx<'_> {
     pub(super) fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
@@ -53,11 +53,20 @@ impl FnCx<'_> {
             {
                 match self.globals.value(self.module, &id.name) {
                     Some(Global::Func(f)) => {
+                        // In a test build the prelude's `assert` is the typed one (`spec/errors.md`, ERR9).
+                        if self.globals.test_assert == Some(f) {
+                            return self.test_assert_call(f, args, span);
+                        }
                         self.check_unsafe_call(f, &id.name, id.span);
                         let sig = &self.globals.sigs[f.0];
                         (sig.params.clone(), sig.ret.clone(), Callee::User(f))
                     }
-                    Some(Global::Generic(g)) => return self.generic_call(g, id, args, span, expect),
+                    Some(Global::Generic(g)) => {
+                        if self.globals.test_assert_eq == Some(g) {
+                            return self.test_assert_eq_call(g, id, args, span, expect);
+                        }
+                        return self.generic_call(g, id, args, span, expect);
+                    }
                     Some(Global::Extern(e)) => return self.extern_call(id, e, args, span),
                     Some(Global::Const(_)) => {
                         self.diags.error(
@@ -84,7 +93,7 @@ impl FnCx<'_> {
                             return mk(tir::ExprKind::Builtin(b, vec![text]), Ty::Unit, span);
                         }
                         Some(b) => {
-                            let sig = builtin_sig(b);
+                            let sig = builtin_sig(b, self.globals);
                             (sig.params, sig.ret, Callee::Builtin(b))
                         }
                         None if id.name == "Some" => return self.some(args, expect, span),
@@ -218,6 +227,135 @@ impl FnCx<'_> {
         let value = self.coerce_arg(value, &payload_expect);
         let kind = if ok { tir::ExprKind::Ok(Box::new(value)) } else { tir::ExprKind::Err(Box::new(value)) };
         mk(kind, result_ty, span)
+    }
+
+    /// The test-build `assert`: the argument is the condition, and the compiler appends its source text and the
+    /// call's location, which the `AssertError` message reports (`spec/errors.md`, ERR9).
+    fn test_assert_call(&mut self, f: FuncId, args: &[ast::Arg], span: Span) -> tir::Expr {
+        let sig = self.globals.sigs[f.0].clone();
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`assert` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let cond = self.expr(&args[0].expr, Some(&Ty::Bool));
+        let cond = self.expect_ty(cond, &Ty::Bool);
+        let (condition, location) = self.assertion_texts(span);
+        let augmented = vec![checked_arg(&args[0], span), string_arg(condition, span), string_arg(location, span)];
+        let Some(checked) = self.args_pre("assert", &sig.params, &augmented, None, span, Some(vec![cond])) else {
+            return error_expr(span);
+        };
+        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+    }
+
+    /// The test-build `assert_eq`: the two values are checked here so that `T` is inferred from them, and the
+    /// call's source text and location are appended (`spec/errors.md`, ERR9). The generic call then infers `T`,
+    /// checks its `Eq + Debug` bounds, and instantiates the standard library's function.
+    fn test_assert_eq_call(
+        &mut self,
+        g: usize,
+        id: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
+        if args.len() != 2 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`assert_eq` takes 2 arguments, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        // Check the left value first; the right one takes its type, so a literal right side fits a typed left
+        // side, exactly as the ordinary `assert_eq` call does.
+        let a = self.expr(&args[0].expr, None);
+        let a = self.auto_deref(a);
+        let b = self.expr(&args[1].expr, Some(&a.ty));
+        let b = self.coerce_arg(b, &a.ty);
+        let (condition, location) = self.assertion_texts(span);
+        let condition_value = mk(tir::ExprKind::Str(condition.clone()), Ty::Str, span);
+        let location_value = mk(tir::ExprKind::Str(location.clone()), Ty::Str, span);
+        let augmented = vec![
+            checked_arg(&args[0], span),
+            checked_arg(&args[1], span),
+            string_arg(condition, span),
+            string_arg(location, span),
+        ];
+        let checked = vec![a, b, condition_value, location_value];
+        self.generic_call_checked(g, id, &augmented, checked, span, expect)
+    }
+
+    /// The source text of the whole call at `span` and its `path:line:col`, for a typed assertion (`ERR9`).
+    fn assertion_texts(&self, span: Span) -> (String, String) {
+        let file = self.sources.get(span.file);
+        let text = file.text.get(span.lo as usize..span.hi as usize).map(str::trim).filter(|text| !text.is_empty());
+        // The call's own text is what a failure shows; the fallback only covers an empty span.
+        let condition = text.unwrap_or("assert").to_string();
+        let (path, line, col) = self.location(span);
+        (condition, format!("{path}:{line}:{col}"))
+    }
+
+    /// `res.context(message)`: `Ok` passes through; `Err(e)` becomes an `Err` whose dynamic `Error` wraps `e` and
+    /// prints `message: e`. The message is checked in the `Err` arm only, so it is evaluated only on an error, and
+    /// the source error's trace frames are kept (`spec/errors.md`, ERR6).
+    fn context_call(&mut self, recv: tir::Expr, args: &[ast::Arg], span: Span) -> tir::Expr {
+        let Ty::Result(ok, err) = recv.ty.clone() else { unreachable!("`context` is intercepted only on a `Result`") };
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`.context` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let Some(error_ty) = self.globals.error_ty.clone() else {
+            self.diags.error(Code::ERROR_CONVERSION, span, "`.context` needs the standard library's `Error` type");
+            return self.args_then_error(args, span);
+        };
+        let Some(context) = self.globals.error_context else {
+            self.diags.error(
+                Code::ERROR_CONVERSION,
+                span,
+                "`.context` needs the standard library's `__error_context` helper",
+            );
+            return self.args_then_error(args, span);
+        };
+        let err_ty = (*err).clone();
+        if err_ty != error_ty && !self.globals.implements_error(&err_ty, &self.bounds) {
+            self.diags.error(
+                Code::ERROR_CONVERSION,
+                span,
+                format!("`.context` needs an error type, but `{err_ty}` does not implement `Error`"),
+            );
+            return self.args_then_error(args, span);
+        }
+        // A temporary receiver is moved into a compiler-made local, so its parts move and drop correctly.
+        let (value, owned_temp) = self.own_scrutinee_temp(recv);
+        let owned = self.owns_scrutinee(&value);
+        let (ok_id, ok_mode) = self.payload_local("ok", (*ok).clone(), owned);
+        let (err_id, err_mode) = self.payload_local("err", err_ty.clone(), owned);
+        let result_ty = Ty::Result(ok.clone(), Box::new(error_ty.clone()));
+        let ok_body = mk(
+            tir::ExprKind::Ok(Box::new(mk(tir::ExprKind::Local(ok_id), (*ok).clone(), span))),
+            result_ty.clone(),
+            span,
+        );
+        let message = self.expr(&args[0].expr, Some(&Ty::Str));
+        let message = self.coerce_arg(message, &Ty::Str);
+        let source = mk(tir::ExprKind::Local(err_id), err_ty.clone(), span);
+        let source = if err_ty == error_ty { source } else { self.coerce_error(source, &error_ty) };
+        let call = mk(tir::ExprKind::Call(context, vec![source, message]), error_ty.clone(), span);
+        let err_body = mk(tir::ExprKind::Err(Box::new(call)), result_ty.clone(), span);
+        let arms = vec![
+            tir::Arm { pat: Pat::Ok(Box::new(Pat::Binding(ok_id, ok_mode))), guard: None, body: ok_body },
+            tir::Arm { pat: Pat::Err(Box::new(Pat::Binding(err_id, err_mode))), guard: None, body: err_body },
+        ];
+        let matched = mk(tir::ExprKind::Match(Box::new(value), arms), result_ty, span);
+        self.wrap_scrutinee(matched, owned_temp, span)
     }
 
     /// `assert_eq(a, b)`: both values must have the same `Eq` type.
@@ -461,7 +599,7 @@ impl FnCx<'_> {
                 return mk(tir::ExprKind::Builtin(Builtin::EnvArgs, Vec::new()), ty, span);
             }
             if id.name == "process" && name.name == "exit" {
-                let sig = builtin_sig(Builtin::ProcessExit);
+                let sig = builtin_sig(Builtin::ProcessExit, self.globals);
                 let Some(checked) =
                     self.args("process.exit", &[ParamSig::plain(Ty::Int(IntTy::I32))], args, None, span)
                 else {
@@ -595,6 +733,10 @@ impl FnCx<'_> {
         // The iteration protocol: `next`, `sum`, the eager `List` helpers, and the `Iterator` default methods.
         if let Some(e) = self.iterator_method(recv.clone(), name, args, span) {
             return e;
+        }
+        // `res.context(message)` is compiler-known on `Result` (`spec/errors.md`, ERR6).
+        if name.name == "context" && matches!(recv.ty, Ty::Result(..)) {
+            return self.context_call(recv, args, span);
         }
         let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{}`", name.name, recv.ty));
@@ -780,7 +922,7 @@ impl FnCx<'_> {
                 return mk(tir::ExprKind::Builtin(Builtin::CPtrNull, Vec::new()), ty.clone(), span);
             }
             if name.name == "to_string" && **inner == Ty::Int(IntTy::I8) {
-                let sig = builtin_sig(Builtin::CStrToString);
+                let sig = builtin_sig(Builtin::CStrToString, self.globals);
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                     return error_expr(span);
                 };
@@ -821,7 +963,8 @@ impl FnCx<'_> {
             let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
                 return error_expr(span);
             };
-            let ret = Ty::Result(Box::new(ty.clone()), Box::new(Ty::Unit));
+            let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
+            let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
             return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
         }
         // The associated functions of `String` (the only built-in owning type with any so far).
@@ -838,7 +981,7 @@ impl FnCx<'_> {
                     return self.args_then_error(args, span);
                 }
             };
-            let sig = builtin_sig(b);
+            let sig = builtin_sig(b, self.globals);
             let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                 return error_expr(span);
             };
@@ -847,7 +990,7 @@ impl FnCx<'_> {
         // The C string bridge.
         if *ty == Ty::CString {
             if name.name == "from" {
-                let sig = builtin_sig(Builtin::CStringFrom);
+                let sig = builtin_sig(Builtin::CStringFrom, self.globals);
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                     return error_expr(span);
                 };
@@ -893,5 +1036,20 @@ impl FnCx<'_> {
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
         let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };
         mk(tir::ExprKind::Call(f, checked), ret, span)
+    }
+}
+
+/// A synthetic argument of a lowered call: the string literal `text`.
+fn string_arg(text: String, span: Span) -> ast::Arg {
+    ast::Arg { mut_marker: false, mut_span: None, expr: ast::Expr { kind: ast::ExprKind::Str(text), span } }
+}
+
+/// The placeholder for an argument whose checked expression the caller supplies separately. It keeps the `mut`
+/// marker so the convention diagnostics are the same as for the written argument.
+fn checked_arg(original: &ast::Arg, span: Span) -> ast::Arg {
+    ast::Arg {
+        mut_marker: original.mut_marker,
+        mut_span: original.mut_span,
+        expr: ast::Expr { kind: ast::ExprKind::Unit, span },
     }
 }

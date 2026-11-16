@@ -158,7 +158,8 @@ pub fn check(generated: &Generated) -> (Program, Diagnostics) {
         modules: vec![burdin_sema::Module { file: generated.file, path: Vec::new(), ast: &generated.ast }],
     }];
     let mut diags = Diagnostics::default();
-    let program = burdin_sema::check(&packages, 0, 0, false, &mut diags);
+    // The generated programs have no standard library and record no trace frames.
+    let program = burdin_sema::check(&packages, 0, 0, false, false, &generated.sources, &mut diags);
     (program, diags)
 }
 

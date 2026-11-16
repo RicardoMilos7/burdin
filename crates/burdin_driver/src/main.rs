@@ -613,8 +613,16 @@ pub(crate) fn compile(
                     .collect(),
             })
             .collect();
-        let mut program =
-            burdin_sema::check(&packages, loaded.entry_package, loaded.entry_module, test_mode, &mut diags);
+        // A debug build records error trace frames; `--release` records none (`spec/errors.md`, ERR7).
+        let mut program = burdin_sema::check(
+            &packages,
+            loaded.entry_package,
+            loaded.entry_module,
+            test_mode,
+            !options.release,
+            &sources,
+            &mut diags,
+        );
         // The memory checks run even when type checking failed, to report every error in the program.
         let mut memory = Diagnostics::default();
         burdin_check::check(&mut program, &mut memory);

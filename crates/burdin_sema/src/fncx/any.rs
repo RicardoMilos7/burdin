@@ -71,6 +71,18 @@ impl FnCx<'_> {
         span: Span,
     ) -> tir::Expr {
         let recv = self.auto_deref(recv);
+        // The dynamic `Error` is a struct wrapping `any Error`: `is` and `downcast` inspect the box
+        // (spec/errors.md, ERR4), so they delegate to the field.
+        if self.globals.is_error_ty(&recv.ty)
+            && (name.name == "is" || name.name == "downcast")
+            && let Ty::Struct(a) = &recv.ty
+            && let Some((index, field)) =
+                self.globals.structs[a.id].fields.iter().enumerate().find(|(_, f)| f.name == "value")
+        {
+            let field_ty = field.ty.clone();
+            let value = mk(tir::ExprKind::Field(Box::new(recv), index), field_ty, name.span);
+            return self.member_type_args_call(value, name, type_args, args, span);
+        }
         let Ty::Any(any) = recv.ty.clone() else {
             self.diags.error(
                 Code::UNKNOWN_NAME,

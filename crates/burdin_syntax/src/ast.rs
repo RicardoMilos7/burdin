@@ -28,6 +28,9 @@ pub struct TestDecl {
     pub attrs: Vec<TestAttr>,
     /// The function the test is compiled as.
     pub func: FnDecl,
+    /// The test block itself, renamed `__burdin_test_N_body`. The wrapper in `func` calls it and prints the error
+    /// before returning it (spec/errors.md, ERR9). `burdin test` declares both functions.
+    pub body_func: FnDecl,
     pub span: Span,
 }
 
@@ -52,6 +55,9 @@ pub enum Item {
     Const(ConstDecl),
     Struct(StructDecl),
     Enum(EnumDecl),
+    /// `error enum ...`: lowered to an ordinary enum plus generated impls by `crate::error_item`, so later stages
+    /// never see this variant (spec/errors.md).
+    ErrorEnum(ErrorEnumDecl),
     TypeAlias(TypeAliasDecl),
     Impl(ImplBlock),
     Interface(InterfaceDecl),
@@ -130,6 +136,30 @@ pub struct EnumDecl {
     pub derives: Vec<Type>,
     pub variants: Vec<Variant>,
     pub span: Span,
+}
+
+/// `error enum Name { Variant(payload) from "message", ... }`: an enum whose variants carry a required message
+/// template and an optional `from` conversion (spec/errors.md, ERR1).
+#[derive(Debug)]
+pub struct ErrorEnumDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub derives: Vec<Type>,
+    pub variants: Vec<ErrorVariant>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct ErrorVariant {
+    pub name: Ident,
+    pub kind: VariantKind,
+    /// The `from` marker, when written. Its span is where a diagnostic about the conversion is reported.
+    pub from: Option<Span>,
+    /// The message template: a string literal with `{...}` placeholders that name the payload fields.
+    pub message: Vec<InterpPart>,
+    /// The span of the whole message string literal.
+    pub message_span: Span,
 }
 
 #[derive(Debug)]

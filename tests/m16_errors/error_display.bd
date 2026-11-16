@@ -1,0 +1,21 @@
+//@ run
+//> cannot read config: cannot read cfg.toml
+//> syntax error on line 7
+//> missing key port
+//> unknown configuration
+
+// Every variant shape gets a generated `Display` from its message template (spec/errors.md, ERR1-ERR2).
+
+error enum ConfigError {
+    Io(IoError) from "cannot read config: {0}"
+    Syntax { line: i32 } "syntax error on line {line}"
+    Missing(String) "missing key {0}"
+    Unknown "unknown configuration"
+}
+
+fn main() {
+    println("{ConfigError.Io(IoError.Read { path: "cfg.toml".to_string() })}")
+    println("{ConfigError.Syntax { line: 7 }}")
+    println("{ConfigError.Missing("port".to_string())}")
+    println("{ConfigError.Unknown}")
+}

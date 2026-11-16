@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// A `from` variant must be a tuple variant with exactly one field, and a generic error enum cannot declare
+// `from` (spec/errors.md, ERR3). Each is E0210.
+
+error enum Two {
+    A(i32, i32) from "two {0}" //~ E0210
+}
+
+error enum Named {
+    B { x: i32 } from "named {x}" //~ E0210
+}
+
+error enum None {
+    C from "none" //~ E0210
+}
+
+error enum Generic<T> {
+    D(T) from "generic {0}" //~ E0210
+}
+
+fn main() {}

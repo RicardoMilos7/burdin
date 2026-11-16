@@ -19,6 +19,33 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
+        self.generic_call_impl(g, id, args, None, span, expect)
+    }
+
+    /// A call to a generic function whose arguments are already checked, one expression per `args` entry (the
+    /// typed `assert_eq`). The checked expressions drive the inference and the argument conventions; the AST
+    /// entries are only placeholders for them.
+    pub(super) fn generic_call_checked(
+        &mut self,
+        g: usize,
+        id: &ast::Ident,
+        args: &[ast::Arg],
+        checked: Vec<tir::Expr>,
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
+        self.generic_call_impl(g, id, args, Some(checked), span, expect)
+    }
+
+    fn generic_call_impl(
+        &mut self,
+        g: usize,
+        id: &ast::Ident,
+        args: &[ast::Arg],
+        pre: Option<Vec<tir::Expr>>,
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
         let globals = self.globals;
         let info = &globals.generic_fns[g];
         if info.is_unsafe && self.unsafe_depth == 0 {
@@ -38,9 +65,12 @@ impl FnCx<'_> {
         // `Fn(&T): U`.
         let mut checked = Vec::new();
         let mut bindings = Vec::new();
-        for (a, p) in args.iter().zip(&pattern.params) {
+        for (i, (a, p)) in args.iter().zip(&pattern.params).enumerate() {
             let hint = generic_hint(globals, &p.ty, &info.params, &info.bounds, &bindings);
-            let e = self.expr(&a.expr, hint.as_ref());
+            let e = match pre.as_ref().and_then(|pre| pre.get(i)) {
+                Some(e) => e.clone(),
+                None => self.expr(&a.expr, hint.as_ref()),
+            };
             globals.unify(&p.ty, &e.ty, &mut bindings);
             checked.push(e);
         }

@@ -23,10 +23,10 @@ use crate::builtins::builtin_type;
 use crate::generics::Bound;
 use crate::globals::{Globals, TypeName};
 use crate::types::compatible;
-use burdin_diag::{Code, Diagnostics, Span};
+use burdin_diag::{Code, Diagnostics, SourceMap, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{place_root, through_view};
-use burdin_tir::{self as tir, LocalId, LocalKind, Pat, Ty};
+use burdin_tir::{self as tir, IntTy, LocalId, LocalKind, Pat, Ty};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -60,6 +60,10 @@ struct FnCx<'a> {
     /// Set while checking a closure body: the enclosing function's visible locals, for capture-on-use, and the
     /// captures discovered so far.
     capture: Option<closure::CaptureCx>,
+    /// Where the paths, lines, and columns of trace frames and typed assertions come from.
+    sources: &'a SourceMap,
+    /// Record the source location of a dynamic-error conversion (a debug build; `spec/errors.md`, ERR7).
+    traces: bool,
 }
 
 /// What a path in expression position can name before its last segment: a type, or a generic type whose
@@ -90,6 +94,8 @@ impl<'a> FnCx<'a> {
         is_unsafe: bool,
         symbolic: bool,
         closures: Rc<RefCell<Vec<tir::Closure>>>,
+        sources: &'a SourceMap,
+        traces: bool,
     ) -> Self {
         FnCx {
             globals,
@@ -107,7 +113,16 @@ impl<'a> FnCx<'a> {
             symbolic,
             closures,
             capture: None,
+            sources,
+            traces,
         }
+    }
+
+    /// The source path, line, and column of `span`, for a trace frame or a typed assertion's location.
+    pub(super) fn location(&self, span: Span) -> (String, i32, i32) {
+        let file = self.sources.get(span.file);
+        let (line, col) = file.line_col(span.lo);
+        (file.path.clone(), line as i32, col as i32)
     }
 
     fn package(&self) -> usize {
@@ -459,6 +474,46 @@ impl<'a> FnCx<'a> {
         };
         let ty = want.clone();
         mk(tir::ExprKind::BoxAny { value: Box::new(e), vtable }, ty, span)
+    }
+
+    /// Converts an error type into the dynamic `Error` where that type is expected (`spec/errors.md`, ERR4): the
+    /// value is boxed as `any Error`, and a debug build records the conversion's source location (ERR7). A value
+    /// that is not an error type is returned unchanged, so the caller reports the ordinary mismatch.
+    pub(super) fn coerce_error(&mut self, e: tir::Expr, want: &Ty) -> tir::Expr {
+        let Some(error_ty) = self.globals.error_ty.clone() else { return e };
+        let Some(iface) = self.globals.error_iface else { return e };
+        if !self.globals.is_error_ty(want) || matches!(e.ty, Ty::Error | Ty::Never) || e.ty == *want {
+            return e;
+        }
+        if !self.globals.implements_error(&e.ty, &self.bounds) {
+            return e;
+        }
+        let helper = if self.traces { self.globals.error_at } else { self.globals.error_plain };
+        let Some(helper) = helper else { return e };
+        let any = self.globals.any_iface(iface, Vec::new());
+        let span = e.span;
+        // A symbolic body has no code, so it registers neither a vtable nor a type identity.
+        let vtable = if self.symbolic || self.globals.ty_has_param(&e.ty) {
+            usize::MAX
+        } else {
+            match self.globals.any_vtable(&e.ty, &any, span, self.diags) {
+                Some(vtable) => vtable,
+                None => return e,
+            }
+        };
+        let boxed = mk(tir::ExprKind::BoxAny { value: Box::new(e), vtable }, Ty::Any(any), span);
+        let args = if self.traces {
+            let (path, line, col) = self.location(span);
+            vec![
+                boxed,
+                mk(tir::ExprKind::Str(path), Ty::Str, span),
+                mk(tir::ExprKind::Int(i128::from(line)), Ty::Int(IntTy::I32), span),
+                mk(tir::ExprKind::Int(i128::from(col)), Ty::Int(IntTy::I32), span),
+            ]
+        } else {
+            vec![boxed]
+        };
+        mk(tir::ExprKind::Call(helper, args), error_ty, span)
     }
 
     /// Like `expect_ty`, but a `String` argument is borrowed where a `str` is expected.

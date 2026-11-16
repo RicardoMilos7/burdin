@@ -117,6 +117,16 @@ with harness.temporary_dir("burdin-runner-") as work:
     expect_contains("output capture (--verbose)", "PASS passes quietly", out)
     expect_contains("output capture (--verbose)", "FAIL fails loudly", out)
 
+    # --- typed test failures --------------------------------------------------------
+
+    # A failed assertion returns a typed `AssertError`; the test binary prints its message (the call text, the
+    # values, and the location) to stderr, which the runner shows with the captured output (spec/errors.md, ERR9).
+    run_driver(burdin, "test", str(fixtures / "typed_assert"), "-j", "1")
+    expect_status("typed failure", 1)
+    expect_contains("typed failure", "assertion failed: assert_eq(1 + 1, 3)", out)
+    expect_contains("typed failure", "2 != 3", out)
+    expect_contains("typed failure", "FAIL eq fails", out)
+
     # --- isolation and cleanup ------------------------------------------------------
 
     # The driver's temporary directories (the test binaries and each test's working directory) go under

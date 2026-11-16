@@ -1,0 +1,26 @@
+//@ run
+//> 3
+//> 7
+//> 9
+//> 4
+//> 11
+
+// `orelse` with a closure handler: the closure receives the error of a `Result` and no argument for an
+// `Option` (issue #488).
+
+fn parse(n: i32): Result<i32, ParseIntError> {
+    if n > 0 { Ok(n) } else { Err(ParseIntError.Invalid) }
+}
+
+fn main() {
+    println("{parse(3) orelse |e| 0}")
+    println("{parse(-1) orelse |e| 7}")
+
+    let none: Option<i32> = None
+    println("{none orelse || 9}")
+    println("{Some(4) orelse || 9}")
+
+    let mut bonus = 10
+    bonus = bonus + 1
+    println("{parse(-1) orelse |e| bonus}")
+}

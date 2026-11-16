@@ -18,7 +18,17 @@ impl Sema<'_> {
             .const_decls
             .iter()
             .enumerate()
-            .map(|(i, src)| check_const(&self.globals, src.decl, src.module, &self.globals.const_tys[i], diags))
+            .map(|(i, src)| {
+                check_const(
+                    &self.globals,
+                    src.decl,
+                    src.module,
+                    &self.globals.const_tys[i],
+                    self.sources,
+                    self.traces,
+                    diags,
+                )
+            })
             .collect();
         let closures = Rc::new(RefCell::new(Vec::new()));
         let functions = self
@@ -28,7 +38,7 @@ impl Sema<'_> {
             .map(|(i, item)| {
                 // A symbolic function has no code, so its closures must not reach the program.
                 let sink = if item.symbolic { Rc::new(RefCell::new(Vec::new())) } else { closures.clone() };
-                check_function(&self.globals, item, &self.globals.sigs[i], sink, diags)
+                check_function(&self.globals, item, &self.globals.sigs[i], sink, self.sources, self.traces, diags)
             })
             .collect();
         let closures = match Rc::try_unwrap(closures) {

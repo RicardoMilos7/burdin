@@ -3,15 +3,104 @@
 // The compiler provides the primitives that need to reach the operating system or raw memory (file I/O,
 // process control, the arguments, and the memory helpers); everything a Burdin program can express is here.
 
-/// The error type of the I/O functions. Stage 0 has no payload-carrying errors; `error` declarations
-/// arrive with stage 1.
-type IoError = ()
+use fmt.{Debug, Display, Formatter}
+
+/// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `Error`.
+interface Error requires Display { }
+
+/// The dynamic error of `Result<T>`: an owned box holding any error, the context messages `.context` added
+/// (outermost first), and the frames a debug build records when the error was created and propagated
+/// (`spec/errors.md`, ERR4 and ERR7).
+struct Error {
+    value: any Error
+    frames: List<TraceFrame>
+    /// The `message: ` prefixes of `.context`, outermost first; empty when none was added.
+    context: String
+}
+
+/// One recorded error site: the source file, line, and column.
+struct TraceFrame {
+    file: String
+    line: i32
+    col: i32
+}
+
+Error: Display {
+    fn fmt(self, mut f: Formatter) {
+        if self.context.len() > 0 {
+            f.write_str(self.context)
+            f.write_str(": ")
+        }
+        self.value.fmt(mut f)
+    }
+}
+
+Error: Error { }
+
+Error {
+    /// Whether the error holds a `T`.
+    fn is<T: Error>(self): bool {
+        self.value.is<T>()
+    }
+
+    /// The value the error holds, when it is a `T`. It consumes the error.
+    fn downcast<T: Error>(own self): Option<T> {
+        self.value.downcast<T>()
+    }
+}
+
+TraceFrame: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str("{self.file}:{self.line}:{self.col}")
+    }
+}
+
+/// A dynamic error with no frames: what a release build records, and what an error with tracing disabled uses.
+priv fn __error_plain(own value: any Error): Error {
+    Error { value, frames: List<TraceFrame>.new(), context: String.new() }
+}
+
+/// A dynamic error with a creation frame (a debug build).
+priv fn __error_at(own value: any Error, file: str, line: i32, col: i32): Error {
+    let mut frames = List<TraceFrame>.new()
+    frames.push(TraceFrame { file: file.to_string(), line, col })
+    Error { value, frames, context: String.new() }
+}
+
+/// A dynamic error with one more propagation frame (a debug build).
+priv fn __error_frame(own e: Error, file: str, line: i32, col: i32): Error {
+    let mut e = e
+    e.frames.push(TraceFrame { file: file.to_string(), line, col })
+    e
+}
+
+/// `.context(message)`: keeps the boxed source error and its frames, and adds one more context message in front.
+priv fn __error_context(own e: Error, message: str): Error {
+    let context = if e.context.len() == 0 {
+        message.to_string()
+    } else {
+        format("{message}: {e.context}")
+    }
+    Error { value: e.value, frames: e.frames, context }
+}
+
+/// The error type of the I/O functions (`spec/errors.md`, ERR10).
+error enum IoError {
+    Read { path: String } "cannot read {path}"
+    Write { path: String } "cannot write {path}"
+    Run { command: String } "cannot run {command}"
+}
 
 /// The error type of `i32.parse` and the other integer parsers.
-type ParseIntError = ()
+error enum ParseIntError {
+    Invalid "invalid integer"
+}
 
-/// The error type of `assert` and `assert_eq`.
-type AssertError = ()
+/// The error type of `assert` and `assert_eq` in a `burdin test` build.
+error enum AssertError {
+    Failed { condition: String, location: String } "assertion failed: {condition} at {location}"
+    FailedEq { condition: String, left: String, right: String, location: String } "assertion failed: {condition} at {location}: {left} != {right}"
+}
 
 /// A borrowed C string: a pointer to NUL-terminated bytes. `CStr.to_string(ptr)` copies them into a `String`.
 type CStr = CPtr<CChar>
@@ -32,21 +121,34 @@ fn assert_eq<T: Eq>(a: T, b: T) {
 
 /// The test-mode `assert`: a false condition is an error instead of a panic, so `burdin test` reports the test
 /// as failed and keeps running the others. `burdin test` binds this as `assert`; normal builds use the panicking
-/// version above.
-priv fn __test_assert(cond: bool): Result<(), AssertError> {
+/// version above. The compiler appends the condition's source text and the call's location at the call site
+/// (`spec/errors.md`, ERR9).
+priv fn __test_assert(cond: bool, condition: str, location: str): Result<(), AssertError> {
     if cond {
         Ok(())
     } else {
-        Err(())
+        Err(AssertError.Failed { condition: condition.to_string(), location: location.to_string() })
     }
 }
 
-/// The test-mode `assert_eq`.
-priv fn __test_assert_eq<T: Eq>(a: T, b: T): Result<(), AssertError> {
+/// The test-mode `assert_eq`. The compiler appends the call's source text and location, as for `assert`.
+priv fn __test_assert_eq<T: Eq + Debug>(
+    a: T,
+    b: T,
+    condition: str,
+    location: str,
+): Result<(), AssertError> {
     if a == b {
         Ok(())
     } else {
-        Err(())
+        let left = format("{a:?}")
+        let right = format("{b:?}")
+        Err(AssertError.FailedEq {
+            condition: condition.to_string(),
+            left,
+            right,
+            location: location.to_string(),
+        })
     }
 }
 

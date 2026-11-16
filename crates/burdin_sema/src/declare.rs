@@ -37,8 +37,9 @@ impl<'t> Sema<'t> {
         if let ast::Item::Interface(i) = item {
             let name = &i.name.name;
             let module_info = &self.globals.modules[module];
+            // Types and interfaces are separate namespaces: `Error` may be both a struct and an interface
+            // (spec/errors.md, ERR4). A repeated name inside one namespace is still E0007.
             if module_info.ifaces.contains_key(name)
-                || module_info.types.contains_key(name)
                 || builtin_type(name).is_some()
                 || BUILTIN_INTERFACES.contains(&name.as_str())
             {
@@ -80,10 +81,8 @@ impl<'t> Sema<'t> {
             diags.error(Code::UNSUPPORTED, name.span, "generic type aliases are not implemented in this compiler yet"); // e9000: declare-generic-alias
         }
         let module_info = &self.globals.modules[module];
-        if module_info.types.contains_key(&name.name)
-            || module_info.ifaces.contains_key(&name.name)
-            || builtin_type(&name.name).is_some()
-        {
+        // The interface namespace is separate (see above): a type may share a name with an interface.
+        if module_info.types.contains_key(&name.name) || builtin_type(&name.name).is_some() {
             diags.error(Code::DUPLICATE_NAME, name.span, format!("type `{}` is defined more than once", name.name));
             return;
         }
@@ -314,6 +313,7 @@ impl<'t> Sema<'t> {
                     }
                     ast::Item::Struct(_)
                     | ast::Item::Enum(_)
+                    | ast::Item::ErrorEnum(_)
                     | ast::Item::TypeAlias(_)
                     | ast::Item::Interface(_)
                     | ast::Item::Impl(_) => {}
@@ -325,10 +325,12 @@ impl<'t> Sema<'t> {
         }
     }
 
-    /// Declares the `test` blocks of the entry package as ordinary functions named by the parser
-    /// (`__burdin_test_N`), each returning `Result<(), AssertError>`. Tests of dependency packages are not run, so
-    /// they are not declared. A normal build ignores them entirely: they are stripped from the program. The
-    /// attributes are validated here, before the bodies, so a bad attribute is reported even if the body is fine.
+    /// Declares the `test` blocks of the entry package as ordinary functions: the parser names the wrapper
+    /// `__burdin_test_N` and its body `__burdin_test_N_body`, both returning `Result<()>` (the dynamic error, so
+    /// `?` accepts an assertion failure and any other error type). Tests of
+    /// dependency packages are not run, so they are not declared. A normal build ignores them entirely: they are
+    /// stripped from the program. The attributes are validated here, before the bodies, so a bad attribute is
+    /// reported even if the body is fine.
     fn declare_tests(&mut self, diags: &mut Diagnostics) {
         let root = self.globals.modules[self.entry].package;
         for module in 0..self.module_asts.len() {
@@ -337,17 +339,32 @@ impl<'t> Sema<'t> {
             }
             let ast = self.module_asts[module];
             for test in &ast.tests {
-                let name = test.func.name.name.clone();
                 let attrs = check_test_attrs(test, diags);
-                if self.globals.modules[module].values.contains_key(&name) || builtin(&name).is_some() {
-                    diags.error(Code::DUPLICATE_NAME, test.name_span, format!("`{name}` is defined more than once"));
-                    continue;
+                // The parser leaves the test as two functions: the wrapper named `__burdin_test_N` (which prints
+                // an error before returning it) and the renamed body `__burdin_test_N_body`. Both are declared
+                // package-private; the runner calls the wrapper.
+                let mut wrapper = None;
+                for func in [&test.func, &test.body_func] {
+                    let name = func.name.name.clone();
+                    if self.globals.modules[module].values.contains_key(&name) || builtin(&name).is_some() {
+                        diags.error(
+                            Code::DUPLICATE_NAME,
+                            test.name_span,
+                            format!("`{name}` is defined more than once"),
+                        );
+                        continue;
+                    }
+                    let full = self.globals.qualified(module, &name);
+                    let id = self.push_fn(FnItem::plain(func, full, module, None));
+                    self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
+                    self.globals.modules[module].value_priv.insert(name, true);
+                    if wrapper.is_none() {
+                        wrapper = Some(id);
+                    }
                 }
-                let full = self.globals.qualified(module, &name);
-                let id = self.push_fn(FnItem::plain(&test.func, full, module, None));
-                self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
-                self.globals.modules[module].value_priv.insert(name, true);
-                self.tests.push(tir::TestEntry { name: test.name.clone(), func: id, attrs });
+                if let Some(func) = wrapper {
+                    self.tests.push(tir::TestEntry { name: test.name.clone(), func, attrs });
+                }
             }
         }
     }

@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A message can format only values that implement `Display` (or `Debug` for `{:?}`), checked in the generated
+// `Display` impl (spec/errors.md, ERR2; spec/format.md E0193).
+
+struct Plain {
+    x: i32
+}
+
+error enum Broken { //~ E0193
+    A(Plain) "value {0}"
+}
+
+fn main() {}

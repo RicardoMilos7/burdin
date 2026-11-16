@@ -61,7 +61,7 @@ folder and every earlier folder pass in debug and release.
 | 13 | `m13_iterators` | `Iterable`/`Iterator`, `next`, `iter`/`into_iter`, user `for`, lazy and eager chains, ranges through the protocol | `for` over a user type, a lazy chain with no intermediate list, `(0..n).iter()` |
 | 14 | `m14_format` | Interpolation, `Display`/`Debug`, specifiers, `format`, generalized output | A formatted string with named and positional values; a type's `Display` used by `to_string` |
 | 15 | `m15_any` | `any` and `impl` in signatures, boxing, dynamic dispatch, downcast | A `List<any>` of mixed types and a downcast that checks its type |
-| 16 | `m16_errors` | `error` declarations, `from`, messages, dynamic `Error`, default `Result<T>`, `context`, traces, `main(): Result<()>`, typed asserts | A `?` chain that converts two error types; a printed error with a source chain; a test that fails with a message |
+| 16 | `m16_errors` | `error` declarations, `from`, messages, dynamic `Error`, `Result<T>` = `Result<T, Error>`, `context`, traces, `main(): Result<T>`, typed asserts | A `?` chain that converts two error types; a printed error with a source chain; a test that fails with a message |
 | 17 | `m17_arguments` | Default and named arguments on functions and methods | A call that omits a default; a call with reordered named arguments |
 | 18 | `m18_extension` | Extension methods, resolution order, shadowing diagnostics | An extension on `String` called with dot syntax; a method that shadows it |
 | 19 | `m19_operators` | Overloadable operators and `Index`/`IndexMut` through interfaces | A `Vec`-like type with `+` and `[]`; a built-in operator still behaving as before |
@@ -154,12 +154,16 @@ code; do not invent them inside the implementation.
    boxed, object safety is AN2, `impl Interface` in a parameter is a hidden generic, and `is`/`downcast` are the
    downcast spelling. Dynamic `Error` in milestone 16 builds on it.
 
-4. **Error representation.** How `error enum` lowers (enum with payload fields and a generated message method), how
-   `from` is registered (like `Type: From<Source>`), what a trace costs in debug, and the representation of the
-   default `Result<T>` (a boxed `Error` behind a pointer, presumably). The `IoError`/`ParseIntError`/`AssertError`
-   unit aliases become real error types here. Decided for `main`: `fn main(): Result<T>` in milestone 16 prints the
-   returned error, with its context chain, to stderr and exits with a non-zero status; `Ok` exits 0 and prints
-   nothing. Stage 0 keeps `fn main()` returning unit (issue #32; `stage0-subset.md`).
+4. **Error representation — settled with milestone 16.** An `error enum` lowers to an ordinary enum plus generated
+   `Display` (from each variant's message template), `Error`, and one `From<Source>` per `from` variant, so an error
+   value is an ordinary value for the checker, the memory checks, and code generation. `Result<T>` means
+   `Result<T, Error>` (a rule specific to `Result`, not general default type arguments), where the dynamic `Error`
+   is `{ value: any Error, frames: List<TraceFrame>, context: String }`; an error type is boxed implicitly where
+   `Error` is expected, `.context(message)` prefixes the chain and keeps the boxed source, and a debug build records
+   creation and propagation frames while a release build records none. A written `fn main(): Result<T>` prints an
+   `Err` with `Display` to stderr and exits 1, and typed `assert` failures carry the condition text, the values, and
+   the location. The rules are `spec/errors.md` ERR1-ERR10 and the tests are `tests/m16_errors/`; stage 0 keeps
+   `fn main()` returning unit (issue #32; `stage0-subset.md`).
 
 5. **Allocators.** The syntax for an allocator parameter, how it propagates through `List`/`Map`/`Heap`/`Arena`, what
    `Shared<T>` is (non-atomic `Rc` or atomic `Arc`; `Send` arrives in stage 2), and how the leak-detecting allocator

@@ -1,0 +1,49 @@
+//@ run
+//> cannot read config: cannot read cfg.toml
+//> syntax error on line -3
+//> ok 5
+
+// `from` registers an ordinary `From` conversion, so `?` converts the error automatically
+// (spec/errors.md, ERR3).
+
+error enum ConfigError {
+    Io(IoError) from "cannot read config: {0}"
+    Syntax { line: i32 } "syntax error on line {line}"
+}
+
+fn read(path: str): Result<i32, IoError> {
+    Err(IoError.Read { path: path.to_string() })
+}
+
+fn parse(line: i32): Result<i32, ConfigError> {
+    if line < 0 {
+        return Err(ConfigError.Syntax { line })
+    }
+    Ok(line)
+}
+
+fn load(): Result<i32, ConfigError> {
+    let n = read("cfg.toml")?
+    let m = parse(3)?
+    Ok(n + m)
+}
+
+fn good(): Result<i32, ConfigError> {
+    let n = parse(5)?
+    Ok(n)
+}
+
+fn main() {
+    match load() {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("{e}"),
+    }
+    match parse(-3) {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("{e}"),
+    }
+    match good() {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("{e}"),
+    }
+}

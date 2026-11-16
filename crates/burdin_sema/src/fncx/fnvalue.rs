@@ -49,7 +49,7 @@ impl FnCx<'_> {
 
     /// A built-in function used as a value (`println`, `panic`, the runtime helpers). Its signature is fixed.
     pub(super) fn builtin_value(&mut self, b: Builtin, span: Span) -> tir::Expr {
-        let sig = builtin_sig(b);
+        let sig = builtin_sig(b, self.globals);
         let fn_sig =
             FnSig { params: sig.params.iter().map(|p| p.ty.clone()).collect(), ret: Box::new(sig.ret.clone()) };
         let mutable: Vec<bool> = sig.params.iter().map(|p| p.mut_param).collect();

@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `.context` needs a `Result` whose error type implements `Error` (spec/errors.md, ERR6).
+
+fn run(): Result<i32, Error> {
+    let r: Result<i32, i32> = Ok(1)
+    let n = r.context("loading")? //~ E0212
+    Ok(n)
+}
+
+fn main() {}
