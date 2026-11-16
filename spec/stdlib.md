@@ -304,8 +304,35 @@ in a function returning `Result<U>` / `Result<U, Error>`, any error type is boxe
 (`errors.md`, ERR4). `expr orelse fallback` supplies a value for `None` or `Err`; a closure handler receives the
 `Err` payload (`|e| ...`) and takes no argument for `None` (`|| ...`, issue #488). `match` handles both types; `Option` also supports `==`/`!=` when its
 payload does, and `Hash` when its payload does. `.context(message)` prefixes a context message and returns
-`Result<T, Error>`; it is E0212 when the error type does not implement `Error` (`errors.md`, ERR6). Stage 0 has no
-`map`, `and_then`, `unwrap_or`, `ok_or`, or other combinators (stage 1, issue #481).
+`Result<T, Error>`; it is E0212 when the error type does not implement `Error` (`errors.md`, ERR6). The combinators of the next section are
+stage 1 (issue #481).
+
+### `Option` and `Result` combinators (issue #481)
+
+`std.option` declares them as extension methods (`extensions.md`), which the prelude makes visible in every module;
+the methods the compiler provides (`unwrap`, `expect`, `is_some`, `is_none`, `is_ok`, `is_err`, `context`) win.
+`own self` consumes the value, so `Option<String>.map(...)` moves the payload into the closure; `is_some_and`,
+`is_none_or`, `is_ok_and`, and `is_err_and` borrow the receiver and give the closure a view (`&T`); `take` and
+`replace` change the receiver in place.
+
+```
+Option<T>:     map, and_then, or_else, or, and, xor, zip, unwrap_or, unwrap_or_else, map_or, map_or_else,
+               ok_or, ok_or_else, filter, is_some_and, is_none_or, take, replace
+Result<T, E>:  map, map_err, and_then, or_else, unwrap_or, unwrap_or_else, map_or, ok, err, unwrap_err,
+               is_ok_and, is_err_and
+```
+
+The error-conversion helpers are `map_err` (apply a conversion to the error), `ok_or`/`ok_or_else` (an absent value
+becomes an error), `ok`/`err` (drop one side), and the `?` operator, which keeps converting through `From`. The two
+`unwrap_or_default` methods, `Option.flatten`, and `as_ref` are not provided: `T.default()` does not exist for the
+built-in types, an extension receiver may not nest a type parameter (`Option<Option<T>>`), and a view returned from
+an extension would dangle. A closure whose result mentions a type parameter that only the closure fixes
+(`and_then(|x| Some(x))`, `F: FnOnce(T): Option<U>`) is typed from its body; a body that cannot say every part of the
+type by itself (`or_else(|e| Err(e.len()))`, which leaves the `Ok` type open) needs a named function or a typed
+binding.
+
+Tests: `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators`, `unwrap_err_on_ok`,
+`option_wrong_default`, `m12_closures/closure_returns_generic_wrapper`.
 
 ## Errors
 
@@ -392,7 +419,7 @@ branch (`comptime.md`, CT5). `tests/m20_comptime/comptime_if_platform.bd`, `comp
 
 ```
 fn mem.swap(mut a: T, mut b: T)
-fn mem.replace(mut place: T, value: T): T   // returns the old value
+fn mem.replace(mut place: T, own value: T): T   // moves the value in; returns the old one
 fn panic(msg: str): !
 fn assert(cond: bool)
 fn assert_eq<T: Eq>(a: T, b: T)
@@ -484,6 +511,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |

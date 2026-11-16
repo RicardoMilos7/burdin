@@ -229,7 +229,11 @@ impl FnCx<'_> {
             param_ids.push(child.declare(&p.name.name, ty.clone(), false, LocalKind::OwnParam));
         }
 
-        let body_expect = declared_ret.clone();
+        // An expected return type that still mentions a type parameter (`Option<U>` in `F: Fn(T): Option<U>`) is
+        // only partly known, so it cannot steer the body's literals: the body's type is what the parameter
+        // stands for.
+        let open_return = annotated.is_none() && declared_ret.as_ref().is_some_and(|t| self.globals.ty_has_param(t));
+        let body_expect = if open_return { None } else { declared_ret.clone() };
         let (block, body_ty) = match &body.kind {
             ast::ExprKind::Block(b) => child.block(b, body_expect.as_ref()),
             _ => {
@@ -240,7 +244,6 @@ impl FnCx<'_> {
         };
         // An expected return type that is still a type parameter (`F: Fn(T): U` in a generic method) is an
         // inference hole: the body's value is what `U` stands for. A written annotation is always enforced.
-        let open_return = annotated.is_none() && matches!(declared_ret, Some(Ty::Param(_)));
         let ret_ty = match declared_ret.clone() {
             Some(_) if open_return && body_ty != Ty::Never => body_ty.clone(),
             Some(t) => t,

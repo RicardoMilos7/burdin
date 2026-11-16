@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// The default of `unwrap_or` must have the option's type.
+
+fn main() {
+    let a: Option<i32> = Some(1)
+    let b = a.unwrap_or("no") //~ E0003
+}

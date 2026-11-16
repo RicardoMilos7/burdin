@@ -1,0 +1,82 @@
+//@ run
+//> Some(4)
+//> None
+//> Some(6)
+//> None
+//> 7
+//> 3
+//> 9
+//> Some(3)
+//> Some(8)
+//> None
+//> Some(1)
+//> None
+//> Some((1, "hi"))
+//> None
+//> 10
+//> -1
+//> 5
+//> -5
+//> Ok(2)
+//> Err("missing")
+//> Ok(2)
+//> Err("computed")
+//> Some(4)
+//> None
+//> true
+//> false
+//> true
+//> false
+
+// The `Option` combinators (`spec/stdlib.md`, `Option` and `Result` combinators).
+
+fn double_if_big(x: i32): Option<i32> {
+    if x > 2 {
+        Some(x * 2)
+    } else {
+        None
+    }
+}
+
+fn main() {
+    let a: Option<i32> = Some(3)
+    let n: Option<i32> = None
+    println("{a.map(|x| x + 1):?}")
+    println("{n.map(|x| x + 1):?}")
+    println("{a.and_then(double_if_big):?}")
+    println("{Some(1).and_then(double_if_big):?}")
+
+    println("{n.unwrap_or(7)}")
+    println("{a.unwrap_or(7)}")
+    println("{n.unwrap_or_else(|| 9)}")
+
+    println("{n.or(Some(3)):?}")
+    println("{n.or_else(|| Some(8)):?}")
+    println("{a.and(n):?}")
+    println("{a.xor(n).and(Some(1)):?}")
+    println("{a.xor(Some(2)):?}")
+    let pair = Some(1).zip(Some(String.from("hi")))
+    println("{pair:?}")
+    println("{Some(1).zip(n):?}")
+
+    println("{a.map_or(0, |x| x * 3 + 1)}")
+    println("{n.map_or(-1, |x| x * 3 + 1)}")
+    println("{a.map_or_else(|| 0, |x| x + 2)}")
+    println("{n.map_or_else(|| -5, |x| x + 2)}")
+
+    let ok: Result<i32, String> = Some(2).ok_or(String.from("missing"))
+    let bad: Result<i32, String> = n.ok_or(String.from("missing"))
+    println("{ok:?}")
+    println("{bad:?}")
+    let ok2: Result<i32, String> = Some(2).ok_or_else(|| String.from("computed"))
+    let bad2: Result<i32, String> = n.ok_or_else(|| String.from("computed"))
+    println("{ok2:?}")
+    println("{bad2:?}")
+
+    println("{Some(4).filter(|x| *x % 2 == 0):?}")
+    println("{Some(3).filter(|x| *x % 2 == 0):?}")
+    println("{a.is_some_and(|x| *x > 2)}")
+    println("{a.is_some_and(|x| *x > 5)}")
+    println("{n.is_none_or(|x| *x > 5)}")
+    println("{a.is_none_or(|x| *x > 5)}")
+}

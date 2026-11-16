@@ -6,6 +6,6 @@ fn swap<T>(mut a: T, mut b: T) {
 }
 
 /// Stores `value` in `place` and returns the value that was there.
-fn replace<T>(mut place: T, value: T): T {
+fn replace<T>(mut place: T, own value: T): T {
     __replace(mut place, value)
 }
