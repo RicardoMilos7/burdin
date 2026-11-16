@@ -489,7 +489,8 @@ pub(super) fn can_cast(from: &Ty, to: &Ty) -> bool {
         _ if from == to => true,
         (f, t) if scalar(f) && scalar(t) => true,
         (Ty::Bool | Ty::Char, Ty::Int(_)) => true,
-        (Ty::Int(IntTy::U8), Ty::Char) => true,
+        // `u32 as char` does not check that the value is a Unicode scalar value; `u32.to_char()` does.
+        (Ty::Int(IntTy::U8 | IntTy::U32), Ty::Char) => true,
         // Raw pointers cast to and from integers, and to each other (issue #72).
         (Ty::CPtr(_), Ty::CPtr(_) | Ty::Int(_)) | (Ty::Int(_), Ty::CPtr(_)) => true,
         // The address of a place as a raw pointer, for C out-parameters.

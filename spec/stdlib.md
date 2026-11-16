@@ -54,7 +54,44 @@ the associated function `i32.parse(s)`; it accepts an optional leading `-` and d
 
 Arithmetic is the built-in operators only: `+ - * / %`, `<< >>`, `& | ^`, unary `-`. Overflow panics in debug and
 wraps in release for `+ - *` and unary `-`; division by zero and out-of-range shifts always panic. `/` and `%`
-truncate toward zero. `as` converts between numeric types (and `char` to an integer), following Rust's cast rules.
+truncate toward zero. `as` converts between numeric types (and `char` to an integer, and `u8` or `u32` to `char`), following Rust's cast rules. `u32 as char` does not check that the value is a Unicode scalar value (the result for a surrogate or a value past `0x10FFFF` is unspecified); `u32.to_char()` does.
+
+## Characters (issue #416)
+
+`std.unicode` declares extension methods on `char` and `u32` (`extensions.md`), so the prelude makes them visible
+everywhere.
+
+```
+fn char.is_ascii(self): bool
+fn char.is_ascii_alphabetic(self): bool       // also _uppercase, _lowercase, _digit, _hexdigit, _alphanumeric,
+                                              // _whitespace, _punctuation, _control
+fn char.to_ascii_lowercase(self): char
+fn char.to_ascii_uppercase(self): char
+fn char.eq_ignore_ascii_case(self, other: char): bool
+
+fn char.is_alphabetic(self): bool
+fn char.is_numeric(self): bool                // decimal digits of any covered script, and ², ³, ¹, ¼, ½, ¾
+fn char.is_alphanumeric(self): bool
+fn char.is_whitespace(self): bool             // Unicode White_Space
+fn char.is_control(self): bool                // 0-31 and 127-159
+fn char.is_uppercase(self): bool
+fn char.is_lowercase(self): bool
+fn char.to_lowercase(self): char              // one-to-one mapping
+fn char.to_uppercase(self): char
+
+fn char.is_digit(self, radix: u32): bool
+fn char.to_digit(self, radix: u32): Option<u32>   // radix 2..=36, else panics
+fn char.len_utf8(self): usize
+fn u32.to_char(self): Option<char>            // None for a surrogate or a value past 0x10FFFF
+fn u32.digit_char(self, radix: u32): Option<char>  // the digit or lowercase letter for a value; radix 2..=36
+```
+
+The ASCII functions are exact. The Unicode ones work from code point ranges that cover the Latin, Greek, Cyrillic,
+Armenian, Hebrew, Arabic, Devanagari, Thai, Hiragana, Katakana, Hangul, CJK, and fullwidth Latin blocks; a character of
+another script is not alphabetic and has no case. Case conversion maps one character to one character, so `ß` has no
+uppercase form here and `İ`/`ı` are unchanged; Latin-1, Latin Extended-A, Greek, and Cyrillic letters convert.
+
+Tests: `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix`.
 
 ## Operators
 
@@ -649,6 +686,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
 | `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |

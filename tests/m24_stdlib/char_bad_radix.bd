@@ -1,0 +1,8 @@
+//@ run-abort
+//@ stderr: to_digit: radix must be 2 to 36
+//> before
+
+fn main() {
+    println("before")
+    println("{'1'.to_digit(37):?}")
+}
