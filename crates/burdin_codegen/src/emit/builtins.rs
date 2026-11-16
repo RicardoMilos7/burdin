@@ -246,22 +246,30 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let out = self.alloca(self.cx.i64_type().into(), "parse.out")?;
                 let f = if int_ty.signed() { self.rt.parse_i64 } else { self.rt.parse_u64 };
                 let call = self.builder.build_call(f, &[ptr.into(), len.into(), out.into()], "").map_err(llvm_err)?;
-                let ok = call.try_as_basic_value().basic().expect("parse returns a flag").into_int_value();
+                let mut ok = call.try_as_basic_value().basic().expect("parse returns a flag").into_int_value();
                 let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("parse returns a Result") };
                 let rt = self.result_ty(ok_ty, err_ty);
+                let raw = self.builder.build_load(self.cx.i64_type(), out, "").map_err(llvm_err)?.into_int_value();
+                // The runtime parses into 64 bits; a number that does not fit the narrower type is an error, not a
+                // truncated value.
+                let mut narrowed = None;
+                if let Ty::Int(i) = &**ok_ty
+                    && i.bits() != 64
+                {
+                    let small = self.builder.build_int_truncate(raw, self.int_ty(*i), "").map_err(llvm_err)?;
+                    let back = if i.signed() {
+                        self.builder.build_int_s_extend(small, self.cx.i64_type(), "").map_err(llvm_err)?
+                    } else {
+                        self.builder.build_int_z_extend(small, self.cx.i64_type(), "").map_err(llvm_err)?
+                    };
+                    let fits = self.builder.build_int_compare(IntPredicate::EQ, back, raw, "").map_err(llvm_err)?;
+                    ok = self.builder.build_and(ok, fits, "").map_err(llvm_err)?;
+                    narrowed = Some(small);
+                }
                 let mut good =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
                 if self.llvm_ty(ok_ty).is_some() {
-                    let raw = self.builder.build_load(self.cx.i64_type(), out, "").map_err(llvm_err)?.into_int_value();
-                    let value = if let Ty::Int(i) = &**ok_ty {
-                        if i.bits() == 64 {
-                            raw
-                        } else {
-                            self.builder.build_int_truncate(raw, self.int_ty(*i), "").map_err(llvm_err)?
-                        }
-                    } else {
-                        raw
-                    };
+                    let value = narrowed.unwrap_or(raw);
                     good = self.builder.build_insert_value(good, value, 1, "").map_err(llvm_err)?.into_struct_value();
                 }
                 return Ok(Some(good.into()));

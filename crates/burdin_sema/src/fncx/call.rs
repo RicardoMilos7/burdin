@@ -1412,6 +1412,17 @@ impl FnCx<'_> {
             let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
             return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
         }
+        // `f64.parse(s)` and the other associated functions of a float type are `std` functions named
+        // `__<type>_<name>` (spec/stdlib.md, "Floats").
+        if let Ty::Float(_) = ty
+            && let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", ty, name.name))
+        {
+            let sig = self.globals.sigs[f.0].clone();
+            let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                return error_expr(span);
+            };
+            return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+        }
         // The associated functions of `String` (the only built-in owning type with any so far).
         if *ty == Ty::String && name.name != "default" {
             let b = match name.name.as_str() {

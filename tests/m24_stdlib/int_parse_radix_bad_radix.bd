@@ -1,0 +1,8 @@
+//@ run-abort
+//@ stderr: parse_radix: radix must be 2 to 36
+//> before
+
+fn main() {
+    println("before")
+    println("{}", i32.parse_radix("1", 1).is_ok())
+}

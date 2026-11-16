@@ -1,0 +1,24 @@
+//@ run
+//> true false
+//> true false
+//> true false
+//> true false
+//> true false
+//> true false
+//> true false
+//> true false
+//> false
+
+// `parse` rejects a number that does not fit the type instead of keeping its low bits.
+
+fn main() {
+    println("{} {}", i32.parse("2147483647").is_ok(), i32.parse("2147483648").is_ok())
+    println("{} {}", i32.parse("-2147483648").is_ok(), i32.parse("-2147483649").is_ok())
+    println("{} {}", u8.parse("255").is_ok(), u8.parse("256").is_ok())
+    println("{} {}", i8.parse("-128").is_ok(), i8.parse("-129").is_ok())
+    println("{} {}", i16.parse("32767").is_ok(), i16.parse("32768").is_ok())
+    println("{} {}", u32.parse("4294967295").is_ok(), u32.parse("4294967296").is_ok())
+    println("{} {}", i64.parse("9223372036854775807").is_ok(), i64.parse("9223372036854775808").is_ok())
+    println("{} {}", u64.parse("18446744073709551615").is_ok(), u64.parse("18446744073709551616").is_ok())
+    println("{}", i32.parse("4294967297").is_ok())
+}

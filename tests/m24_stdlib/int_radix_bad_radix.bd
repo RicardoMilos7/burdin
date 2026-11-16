@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: to_string_radix: radix must be 2 to 36
+//> before
+
+fn main() {
+    let n: i32 = 5
+    println("before")
+    println("{}", n.to_string_radix(37))
+}
