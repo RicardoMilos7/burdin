@@ -1,0 +1,37 @@
+//@ run
+//> ["b", "a", "c"]
+//> drop 1
+//> drop 2
+//> kept 3
+//> drop 3
+
+// A deque owns its elements: popping hands one back, and what is left is dropped with the deque.
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut words = Deque<String>.new()
+    words.push_back(String.from("a"))
+    words.push_front(String.from("b"))
+    words.push_back(String.from("c"))
+    println("{words:?}")
+
+    let mut tokens = Deque<Token>.new()
+    tokens.push_back(Token { id: 2 })
+    tokens.push_front(Token { id: 1 })
+    tokens.push_back(Token { id: 3 })
+    let _ = tokens.pop_front()
+    let _ = tokens.pop_front()
+    match tokens.front() {
+        Some(t) => println("kept {t.id}"),
+        None => println("empty"),
+    }
+}
