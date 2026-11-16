@@ -1,0 +1,21 @@
+//@ run
+//> true
+//> 4
+//> Some(0) Some(3) None
+//> Some(0) Some(3) Some(1) Some(2) None
+//> true
+
+// A deque takes elements at both ends and gives them back from both ends; `front`, `back`, and `get` only look.
+
+fn main() {
+    let mut d = Deque<i32>.new()
+    println("{d.is_empty()}")
+    d.push_back(2)
+    d.push_front(1)
+    d.push_back(3)
+    d.push_front(0)
+    println("{d.len()}")
+    println("{d.front():?} {d.back():?} {d.get(9):?}")
+    println("{d.pop_front():?} {d.pop_back():?} {d.pop_front():?} {d.pop_back():?} {d.pop_back():?}")
+    println("{d.is_empty()}")
+}

@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: Deque index out of bounds
+//> before
+
+fn main() {
+    let mut d = Deque<i32>.new()
+    d.push_back(1)
+    println("before")
+    println("{d[1]}")
+}

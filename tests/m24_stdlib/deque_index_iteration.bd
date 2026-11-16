@@ -1,0 +1,31 @@
+//@ run
+//> 0 1 2 3
+//> 0 10 2 3
+//> 15
+//> [0, 10, 2, 3]
+//> [0, 10, 2, 3]
+//> true
+
+// `d[i]` counts from the front and works on a deque whose elements sit in both halves; `for` walks it in order.
+
+fn main() {
+    let mut d = Deque<i32>.new()
+    d.push_back(2)
+    d.push_front(1)
+    d.push_back(3)
+    d.push_front(0)
+    println("{d[0]} {d[1]} {d[2]} {d[3]}")
+    d[1] = 10
+    println("{d[0]} {d[1]} {d[2]} {d[3]}")
+
+    let mut total = 0
+    for x in d {
+        total = total + *x
+    }
+    println("{total}")
+    println("{d:?}")
+
+    let copy = d.clone()
+    println("{copy:?}")
+    println("{copy == d}")
+}

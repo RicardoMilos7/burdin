@@ -246,6 +246,42 @@ can wrap it. Operations that copy elements need `Clone`; they return a set that 
 
 Tests: `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq`.
 
+## `Deque<T>` (issue #191)
+
+`std.deque` is a double-ended queue made of two lists: `front` holds the first elements in reverse order and `back`
+holds the rest, so a push at either end is one `List.push`. A pop from an end whose list is empty first moves the other
+list over, which makes a run of pops from one end amortized O(1); a program that alternates `pop_front` and `pop_back`
+on a deque held in one half pays O(n) for each switch. `List` is unchanged, and `Deque` always uses the default
+allocator.
+
+```
+struct Deque<T> {
+    fn new(): Deque<T>
+    fn from_list(own items: List<T>): Deque<T>
+    fn len(self): usize
+    fn is_empty(self): bool
+    fn push_front(mut self, own value: T)
+    fn push_back(mut self, own value: T)
+    fn pop_front(mut self): Option<T>
+    fn pop_back(mut self): Option<T>
+    fn front(self): Option<&T>
+    fn back(self): Option<&T>
+    fn get(self, i: usize): Option<&T>
+    fn clear(mut self)
+    fn extend(mut self, own items: List<T>)        // at the back, in order
+    fn into_list(own self): List<T>                 // front to back
+    fn iter(self): DequeIter<&Deque<T>, T>          // yields &T from the front to the back
+    fn clone(self): Deque<T>                        // T: Clone
+}
+```
+
+`Deque<T>` implements `Index<T>` and `IndexMut<T>` (`d[i]` counts from the front and panics with `Deque index out of
+bounds` past the end), `PartialEq` (same length and equal elements), `Debug` (`[1, 2, 3]`), and `Iterable<&T>`.
+`DequeIter<D, T>` is generic over the view of the deque it walks and needs `D: Index<T> + DequeLen`; for that, a
+shared view `&X` satisfies an interface bound that `X` satisfies.
+
+Tests: `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds`.
+
 ## `Heap<T>`
 
 ```
@@ -580,6 +616,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
 | `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
