@@ -183,7 +183,7 @@ impl<'a> Checker<'a> {
             tir::ExprKind::Index(base, index) => {
                 let (root, mut path) = self.place_of(base)?;
                 if is_tracked_place(base)
-                    && matches!(base.ty, Ty::Array(..) | Ty::List(_))
+                    && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
                     && let Some(index) = constant_index(index)
                 {
                     path.push(index);
@@ -192,7 +192,7 @@ impl<'a> Checker<'a> {
             }
             tir::ExprKind::Deref(base) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)) {
+                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)) {
                     path.push(tir::MOVED_DEREF);
                 }
                 Some((root, path))
@@ -293,11 +293,11 @@ impl<'a> Checker<'a> {
                 }
             }
             // A constant array or `List` index selects one element.
-            Ty::Array(elem, _) | Ty::List(elem) => {
+            Ty::Array(elem, _) | Ty::List(elem, _) => {
                 let elem = (**elem).clone();
                 self.check_partial_move(&elem, rest, span);
             }
-            Ty::Heap(inner) => {
+            Ty::Heap(inner, _) => {
                 if *first == tir::MOVED_DEREF {
                     let inner = (**inner).clone();
                     self.check_partial_move(&inner, rest, span);
@@ -456,7 +456,12 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Builtin(b, args) => match b {
-                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNewIn => {
+                    self.expr(&args[0], Mode::Move);
+                    self.expr(&args[1], Mode::Move);
+                }
                 tir::Builtin::Replace => {
                     self.expr(&args[0], Mode::Use);
                     self.expr(&args[1], Mode::Move);
@@ -522,7 +527,7 @@ impl<'a> Checker<'a> {
                 self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
                 self.scopes.push(Vec::new());
                 let elem = match &iter.ty {
-                    Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t) => (**t).clone(),
+                    Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => (**t).clone(),
                     _ => Ty::Error,
                 };
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, iter.span);
@@ -622,7 +627,7 @@ impl<'a> Checker<'a> {
                 self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
                 self.scopes.push(Vec::new());
                 let elem = match &list.ty {
-                    Ty::List(elem) => (**elem).clone(),
+                    Ty::List(elem, _) => (**elem).clone(),
                     _ => Ty::Error,
                 };
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, list.span);
@@ -637,7 +642,7 @@ impl<'a> Checker<'a> {
                 self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
                 self.scopes.push(Vec::new());
                 let pair = match &map.ty {
-                    Ty::Map(k, v) => Ty::Tuple(vec![(**k).clone(), (**v).clone()]),
+                    Ty::Map(k, v, _) => Ty::Tuple(vec![(**k).clone(), (**v).clone()]),
                     _ => Ty::Error,
                 };
                 self.bind_pattern(pat, &pair, &mut Vec::new(), None, map.span);
@@ -1059,9 +1064,11 @@ fn is_tracked_place(e: &tir::Expr) -> bool {
         tir::ExprKind::Local(_) => true,
         tir::ExprKind::Field(base, _) => is_tracked_place(base),
         tir::ExprKind::Index(base, index) => {
-            is_tracked_place(base) && matches!(base.ty, Ty::Array(..) | Ty::List(_)) && constant_index(index).is_some()
+            is_tracked_place(base)
+                && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
+                && constant_index(index).is_some()
         }
-        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)),
+        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)),
         _ => false,
     }
 }

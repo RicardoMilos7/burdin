@@ -1,0 +1,30 @@
+//@ run
+//> 3
+//> 10
+//> 20
+//> 30
+//> 30
+//> 10
+//> true
+
+// A list whose buffer comes from an arena stores the arena value, so the arena lives exactly as long as the
+// list (`spec/allocators.md`, AL5; milestone 23).
+
+fn main() {
+    let arena = Arena.new()
+    let mut xs = List<i32>.new_in(arena)
+    xs.push(10)
+    xs.push(20)
+    xs.push(30)
+    println(xs.len().to_string())
+    for x in xs.iter() {
+        println(x.to_string())
+    }
+    println(xs.pop().unwrap().to_string())
+    println(xs[0].to_string())
+
+    let arena = Arena.new()
+    let mut ys = List<i32>.new_in(arena)
+    ys.push(1)
+    println((ys.len() == 1).to_string())
+}

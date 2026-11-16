@@ -21,12 +21,12 @@ fn shape(globals: &Globals, ty: &Ty) -> Option<(String, Vec<Ty>)> {
         Ty::Ref { mutable, inner } => (format!("ref{mutable}"), vec![(**inner).clone()]),
         Ty::Slice(t) => ("slice".into(), vec![(**t).clone()]),
         Ty::Option(t) => ("option".into(), vec![(**t).clone()]),
-        Ty::List(t) => ("list".into(), vec![(**t).clone()]),
-        Ty::Heap(t) => ("heap".into(), vec![(**t).clone()]),
+        Ty::List(t, _) => ("list".into(), vec![(**t).clone()]),
+        Ty::Heap(t, _) => ("heap".into(), vec![(**t).clone()]),
         Ty::CPtr(t) => ("cptr".into(), vec![(**t).clone()]),
         Ty::Range(t, inclusive) => (format!("range{inclusive}"), vec![(**t).clone()]),
         Ty::Result(t, e) => ("result".into(), vec![(**t).clone(), (**e).clone()]),
-        Ty::Map(k, v) => ("map".into(), vec![(**k).clone(), (**v).clone()]),
+        Ty::Map(k, v, _) => ("map".into(), vec![(**k).clone(), (**v).clone()]),
         Ty::Tuple(ts) => (format!("tuple{}", ts.len()), ts.clone()),
         Ty::Array(t, n) if *n < SYM_LEN => (format!("array{n}"), vec![(**t).clone()]),
         Ty::Array(t, _) => ("array".into(), vec![(**t).clone()]),
@@ -176,7 +176,7 @@ mod tests {
     }
 
     fn list(ty: Ty) -> Ty {
-        Ty::List(Box::new(ty))
+        Ty::List(Box::new(ty), burdin_tir::Alloc::Global)
     }
 
     fn names(list: &[&str]) -> Vec<String> {

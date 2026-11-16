@@ -1,0 +1,34 @@
+//@ run
+//> 6
+//> 15
+//> 2
+//> true
+
+// The default allocator is `Global`: `List<T>` and `List<T, Global>` are the same type, and `Global` is
+// zero-sized (`spec/allocators.md`, AL2-AL3).
+
+fn total(xs: List<i32>): i32 {
+    let mut sum = 0
+    for x in xs.iter() {
+        sum = sum + x
+    }
+    sum
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    println(total(xs).to_string())
+
+    let mut ys: List<i32, Global> = List<i32, Global>.new()
+    ys.push(4)
+    ys.push(5)
+    ys.push(6)
+    println(total(ys).to_string())
+
+    let h = Heap.new(2)
+    println((*h).to_string())
+    println((Global.size() == 0).to_string())
+}

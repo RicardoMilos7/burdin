@@ -23,6 +23,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
 | [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, parallelism, output capture, isolation, and discovery. |
 | [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the minimal `bindgen`. |
+| [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |

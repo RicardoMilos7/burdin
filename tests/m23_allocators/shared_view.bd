@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A `Shared<T>` owns its value, so the value cannot be a view (E0120, `spec/allocators.md` AL8).
+
+fn main() {
+    let n = 1
+    let s = Shared.new(&n) //~ E0120
+}

@@ -204,7 +204,9 @@ impl Globals {
         diags: &mut Diagnostics,
     ) -> Ty {
         let info = &self.generic_adts[g];
-        if args.len() != info.params.len() {
+        let missing_defaulted = args.len() <= info.params.len()
+            && info.defaults[args.len().min(info.defaults.len())..].iter().all(Option::is_some);
+        if args.len() > info.params.len() || (args.len() < info.params.len() && !missing_defaulted) {
             diags.error(
                 Code::TYPE_MISMATCH,
                 span,
@@ -212,7 +214,7 @@ impl Globals {
             );
             return Ty::Error;
         }
-        let args: Vec<Ty> = args
+        let mut resolved: Vec<Ty> = args
             .iter()
             .zip(&info.bounds)
             .map(|(a, bounds)| match Globals::const_param_ty(bounds) {
@@ -220,8 +222,20 @@ impl Globals {
                 None => self.resolve_type_in(a, self_ty, subst, module, diags),
             })
             .collect();
-        self.check_adt_bounds(g, &args, span, diags);
-        self.adt_instance_ty(g, args)
+        // A trailing type argument left out takes the parameter's default (`spec/allocators.md`, AL5). The
+        // default is resolved where the type is declared, with the preceding parameters in scope.
+        let mut env: Vec<(String, Ty)> = subst.to_vec();
+        for (name, ty) in info.params.iter().zip(&resolved) {
+            env.push((name.clone(), ty.clone()));
+        }
+        for i in resolved.len()..info.params.len() {
+            let Some(default) = &info.defaults[i] else { break };
+            let ty = self.resolve_type_in(default, self_ty, &env, info.module, diags);
+            resolved.push(ty.clone());
+            env.push((info.params[i].clone(), ty));
+        }
+        self.check_adt_bounds(g, &resolved, span, diags);
+        self.adt_instance_ty(g, resolved)
     }
 
     pub(crate) fn defs(&self) -> TypeDefs<'_> {
@@ -277,10 +291,16 @@ impl Globals {
                 Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
                 Box::new(self.error_ty.clone().unwrap_or(Ty::Error)),
             ),
-            ("Heap", 1) => {
+            ("Heap", 1) | ("Heap", 2) => {
                 let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
                 check_storable(&inner, args[0].span, "a `Heap` element", diags);
-                Ty::Heap(Box::new(inner))
+                let alloc = self.container_alloc(args.get(1), subst, module, diags);
+                Ty::Heap(Box::new(inner), alloc)
+            }
+            ("Shared", 1) => {
+                let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                check_storable(&inner, args[0].span, "a `Shared` value", diags);
+                Ty::Shared(Box::new(inner))
             }
             ("CPtr", 1) => Ty::CPtr(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
             ("Range", 1) | ("RangeInclusive", 1) => {
@@ -295,20 +315,53 @@ impl Globals {
                 }
                 Ty::Range(Box::new(inner), name == "RangeInclusive")
             }
-            ("List", 1) => {
+            ("List", 1) | ("List", 2) => {
                 let elem = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
                 check_storable(&elem, args[0].span, "a `List` element", diags);
-                Ty::List(Box::new(elem))
+                let alloc = self.container_alloc(args.get(1), subst, module, diags);
+                Ty::List(Box::new(elem), alloc)
             }
-            ("Map", 2) => {
+            ("Map", 2) | ("Map", 3) => {
                 let key = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
                 let value = self.resolve_type_in(&args[1], self_ty, subst, module, diags);
                 check_storable(&key, args[0].span, "a `Map` key", diags);
                 check_storable(&value, args[1].span, "a `Map` value", diags);
-                Ty::Map(Box::new(key), Box::new(value))
+                let alloc = self.container_alloc(args.get(2), subst, module, diags);
+                Ty::Map(Box::new(key), Box::new(value), alloc)
             }
             _ => return None,
         })
+    }
+
+    /// The allocator a container type argument names (`spec/allocators.md`, AL3). A written `Global` is the
+    /// default (no value is stored), and an allocator that does not implement `Allocator` is E0270.
+    fn container_alloc(
+        &self,
+        arg: Option<&ast::Type>,
+        subst: &[(String, Ty)],
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> burdin_tir::Alloc {
+        let Some(arg) = arg else { return burdin_tir::Alloc::Global };
+        let ty = self.resolve_type_in(arg, None, subst, module, diags);
+        if ty == Ty::Error {
+            return burdin_tir::Alloc::Global;
+        }
+        check_storable(&ty, arg.span, "an allocator", diags);
+        let alloc = self.alloc_of(ty.clone());
+        // A type parameter is checked where its bounds are known (the declaration or the call site); a concrete
+        // allocator needs a visible `Allocator` implementation now.
+        if let burdin_tir::Alloc::Value(a) = &alloc
+            && !self.ty_has_param(a)
+            && !self.is_allocator(a, &[])
+        {
+            diags.error(
+                Code::NOT_AN_ALLOCATOR,
+                arg.span,
+                format!("`{a}` does not implement `Allocator`, so it cannot be a container's allocator"),
+            );
+        }
+        alloc
     }
 
     /// Whether `==` and `!=` apply to values of `ty`.
@@ -337,14 +390,15 @@ impl Globals {
                 e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq_in(&f.ty, env)))
             }
             Ty::Array(..)
-            | Ty::Heap(_)
+            | Ty::Heap(_, _)
             | Ty::CPtr(_)
             | Ty::CString
-            | Ty::List(_)
+            | Ty::List(_, _)
             | Ty::Map(..)
+            | Ty::Shared(_)
             | Ty::Chars
             | Ty::Fn { .. }
-            | Ty::ListIntoIter(_)
+            | Ty::ListIntoIter(..)
             | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
             | Ty::MapIntoIter(..)

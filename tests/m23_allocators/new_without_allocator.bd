@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A container that stores an allocator has no allocator-free constructor: `new` is E0272
+// (`spec/allocators.md` AL4).
+
+fn main() {
+    let xs: List<i32, Arena> = List<i32, Arena>.new() //~ E0272
+    let h: Heap<i32, Arena> = Heap.new(1) //~ E0272
+}

@@ -1,0 +1,42 @@
+//@ run
+//> 1
+//> 3
+//> empty
+
+// A type parameter with a default: `Buffer` means `Buffer<Global>`, and `Buffer<Arena>` stores the arena
+// (`spec/allocators.md`, AL5).
+
+struct Buffer<A: Allocator = Global> {
+    items: List<i32, A>
+}
+
+Buffer {
+    fn add(mut self, value: i32) {
+        self.items.push(value)
+    }
+
+    fn len(self): usize {
+        self.items.len()
+    }
+}
+
+Buffer: Drop {
+    fn drop(mut self) { }
+}
+
+fn main() {
+    let mut b: Buffer = Buffer { items: List<i32>.new() }
+    b.add(5)
+    println(b.len().to_string())
+
+    let mut arena_buf: Buffer<Arena> = Buffer { items: List<i32>.new_in(Arena.new()) }
+    arena_buf.add(1)
+    arena_buf.add(2)
+    arena_buf.add(3)
+    println(arena_buf.len().to_string())
+
+    let empty: Buffer = Buffer { items: List<i32>.new() }
+    if empty.len() == 0 {
+        println("empty")
+    }
+}

@@ -315,7 +315,12 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Builtin(b, args) => match b {
-                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNewIn => {
+                    self.expr(&args[0], Mode::Move);
+                    self.expr(&args[1], Mode::Move);
+                }
                 tir::Builtin::Swap => {
                     self.access_place(&args[0], Access::BorrowMut);
                     self.access_place(&args[1], Access::BorrowMut);

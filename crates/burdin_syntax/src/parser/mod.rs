@@ -666,6 +666,31 @@ mod tests {
     }
 
     #[test]
+    fn type_parameters_take_a_default() {
+        // `A: Allocator = Global`: a trailing type parameter's default (spec/allocators.md, AL5). It is a type,
+        // parsed after the bounds, and a use may omit the argument.
+        let (file, out) = render(
+            "struct Buffer<A: Allocator = Global> { items: List<i32, A> }
+",
+        );
+        assert_eq!(out, "");
+        let Item::Struct(s) = &file.items[0] else { unreachable!() };
+        let param = &s.generics[0];
+        assert_eq!(param.name.name, "A");
+        assert_eq!(param.bounds.len(), 1);
+        assert!(param.const_ty.is_none());
+        let default = param.default.as_ref().expect("the default is parsed");
+        let TypeKind::Path(segs) = &default.kind else { panic!("the default is a type path") };
+        assert_eq!(segs[0].name.name, "Global");
+
+        let (file, out) = render("struct Pair<T, U = List<T>> { a: T, b: U }\n");
+        assert_eq!(out, "");
+        let Item::Struct(s) = &file.items[0] else { unreachable!() };
+        assert!(s.generics[0].default.is_none());
+        assert!(s.generics[1].default.is_some(), "the default may name an earlier parameter");
+    }
+
+    #[test]
     fn const_arguments_are_values_not_types() {
         let (file, out) = render(
             "fn main() {

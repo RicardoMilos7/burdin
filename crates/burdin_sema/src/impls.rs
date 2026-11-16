@@ -303,7 +303,10 @@ impl<'t> Sema<'t> {
             return;
         }
         let adt_bounds = self.globals.generic_adts[g].bounds.clone();
-        if seg.args.len() != adt_bounds.len() {
+        let defaults = self.globals.generic_adts[g].defaults.clone();
+        let missing_defaulted = seg.args.len() <= adt_bounds.len()
+            && defaults[seg.args.len().min(defaults.len())..].iter().all(Option::is_some);
+        if seg.args.len() > adt_bounds.len() || (seg.args.len() < adt_bounds.len() && !missing_defaulted) {
             diags.error(
                 Code::TYPE_MISMATCH,
                 imp.ty.span,
@@ -317,7 +320,7 @@ impl<'t> Sema<'t> {
             return;
         }
         let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
-        let pattern: Vec<Ty> = seg
+        let written: Vec<Ty> = seg
             .args
             .iter()
             .zip(&adt_bounds)
@@ -326,11 +329,33 @@ impl<'t> Sema<'t> {
                 None => self.globals.resolve_type_in(a, None, &subst, module, diags),
             })
             .collect();
-        if pattern.contains(&Ty::Error) {
+        if written.contains(&Ty::Error) {
             return;
         }
-        // The arguments meet the type's bounds, as at any other use of it (E0141).
-        self.globals.check_adt_bounds(g, &pattern, imp.ty.span, diags);
+        // The written arguments meet the type's bounds, as at any other use of it (E0141). A trailing default
+        // is checked where the type is used, after every impl block (including `Global: Allocator`) exists.
+        let mut pattern = written.clone();
+        let adt = &self.globals.generic_adts[g];
+        if matches!(kind, ImplKind::Inherent | ImplKind::Drop) && seg.args.is_empty() && !adt.params.is_empty() {
+            // An inherent or `Drop` block written without arguments covers every instance, defaults included:
+            // `Buffer { fn ... }` adds methods to `Buffer<A>` for every `A` (`spec/allocators.md`, AL5).
+            pattern = adt.params.iter().map(|p| param_ty(p)).collect();
+        } else {
+            let mut env = subst.clone();
+            for (name, ty) in adt.params.iter().zip(&written) {
+                env.push((name.clone(), ty.clone()));
+            }
+            for i in written.len()..adt_bounds.len() {
+                let Some(default) = &defaults[i] else { break };
+                let ty = self.globals.resolve_type_in(default, None, &env, adt.module, diags);
+                pattern.push(ty.clone());
+                env.push((adt.params[i].clone(), ty));
+            }
+            if pattern.contains(&Ty::Error) {
+                return;
+            }
+        }
+        self.globals.check_adt_bounds(g, &written, imp.ty.span, diags);
         let plain = crate::impl_match::is_plain_pattern(&pattern);
         if matches!(kind, ImplKind::Builtin) {
             builtin_by_hand(imp.span, diags);

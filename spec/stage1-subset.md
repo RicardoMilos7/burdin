@@ -155,6 +155,21 @@ binary, the inputs listed in `<out>/inputs`, the script's `embed` files, and the
 `burdin bindgen <header> --out <file>` is the minimal C declaration generator a script may invoke (the full bindgen
 remains stage 3). A build script is native code with no OS sandbox; the grant is the trust boundary.
 
+Milestone 23 is complete: `tests/m23_allocators` and every earlier folder pass in debug and release, and the
+rules are recorded in `spec/allocators.md` AL1-AL10. The decisions: an allocator is an ordinary generic parameter
+(`A: Allocator`, or `own a: impl Allocator`), monomorphized like any other, and a container stores the allocator
+value it is given as a field it owns; `Global` is the zero-sized default allocator and is stored nowhere, so
+`List<T>`, `Map<K, V>`, and `Heap<T>` keep their stage 0 spelling and layout; a container with a stored
+allocator is made with `new_in` and `new` is E0272 there (E0270 for a type or value that is not an allocator);
+default type parameters are written on trailing struct/enum type parameters (`struct Buffer<A: Allocator =
+Global>`), resolved where the type is declared (E0271 otherwise), and a bare inherent or `Drop` impl covers every
+instance; `Arena` is a first-class bump allocator whose blocks are freed by reset and drop, not a second-class
+type, because ownership of the arena value keeps every safe buffer alive; `Shared<T>` is a non-atomic
+reference-counted cell now (atomic, with `Send`, in stage 2), cloned by sharing and dropped once by its last
+owner; and a `burdin test` build allocates through a checking allocator whose live list reports leaks with the
+source site the compiler recorded, failing an otherwise passing test. The new diagnostics are E0270, E0271, and
+E0272; there is no e9000 site for allocators.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -230,9 +245,19 @@ code; do not invent them inside the implementation.
    the location. The rules are `spec/errors.md` ERR1-ERR10 and the tests are `tests/m16_errors/`; stage 0 keeps
    `fn main()` returning unit (issue #32; `stage0-subset.md`).
 
-5. **Allocators.** The syntax for an allocator parameter, how it propagates through `List`/`Map`/`Heap`/`Arena`, what
-   `Shared<T>` is (non-atomic `Rc` or atomic `Arc`; `Send` arrives in stage 2), and how the leak-detecting allocator
-   reports the allocation site.
+5. **Allocators — settled with milestone 23.** The allocator is an ordinary generic parameter bound by
+   `Allocator` (`A: Allocator`, or `own a: impl Allocator`), monomorphized like any other, and `List<T, A>`,
+   `Map<K, V, A>`, and `Heap<T, A>` take it as a trailing type argument defaulting to `Global`. `Global` is a
+   zero-sized value stored nowhere, so the stage 0 spellings and layouts are unchanged; any other allocator
+   (`Arena`) is stored in the container as an owned field, and `new_in` is the constructor that moves it in.
+   Default type parameters on trailing struct/enum parameters make `List<T>` mean `List<T, Global>`. `Arena` is a
+   first-class bump allocator with 4096-byte blocks and `reset`, not a second-class type: every safe way to get a
+   buffer makes the container own the arena. `Shared<T>` is a non-atomic reference-counted cell in stage 1 (the
+   `Rc` option), and stage 2 makes it atomic and adds `Send` and the concurrency rules. The leak-detecting
+   allocator is used by `burdin test` builds only: it records a 40-byte header with the source site the compiler
+   assigned to the allocation, panics on a double free, and reports still-live blocks after an otherwise passing
+   test (`test leak: ...`, `allocated at path:line:column`), failing it. The rules are `spec/allocators.md`
+   AL1-AL10 and the tests are `tests/m23_allocators/`.
 
 6. **Comptime execution — settled with milestone 20 (issue #158): interpret the typed tree.** The engine is
    `burdin_comptime`, an interpreter over `burdin_tir` that runs after the memory checks; there is no `burdin_mir`

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A function's type parameters take no default; a call infers them (E0271).
+
+fn pick<T = i32>(): i32 { //~ E0271
+    0
+}
+
+fn main() { }

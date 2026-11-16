@@ -47,14 +47,15 @@ impl Globals {
             Ty::Fn { .. }
             | Ty::Ref { .. }
             | Ty::Slice(_)
-            | Ty::List(_)
+            | Ty::List(_, _)
             | Ty::Map(..)
             | Ty::Chars
-            | Ty::Heap(_)
+            | Ty::Heap(_, _)
+            | Ty::Shared(_)
             | Ty::Any(_)
             | Ty::CPtr(_)
             | Ty::CString
-            | Ty::ListIntoIter(_)
+            | Ty::ListIntoIter(..)
             | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
             | Ty::MapIntoIter(..)
@@ -84,10 +85,10 @@ mod tests {
     fn heap_values_and_views_are_not() {
         let g = Globals::default();
         let i = Ty::Int(IntTy::I32);
-        assert!(!g.materializable(&Ty::List(Box::new(i.clone()))));
-        assert!(!g.materializable(&Ty::Heap(Box::new(i.clone()))));
+        assert!(!g.materializable(&Ty::List(Box::new(i.clone()), burdin_tir::Alloc::Global)));
+        assert!(!g.materializable(&Ty::Heap(Box::new(i.clone()), burdin_tir::Alloc::Global)));
         assert!(!g.materializable(&Ty::Slice(Box::new(i.clone()))));
         assert!(!g.materializable(&Ty::Ref { mutable: false, inner: Box::new(i.clone()) }));
-        assert!(!g.materializable(&Ty::Option(Box::new(Ty::List(Box::new(i))))));
+        assert!(!g.materializable(&Ty::Option(Box::new(Ty::List(Box::new(i), burdin_tir::Alloc::Global)))));
     }
 }

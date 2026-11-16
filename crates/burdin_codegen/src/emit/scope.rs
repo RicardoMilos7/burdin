@@ -247,7 +247,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     }
                     Ok(())
                 }
-                Ty::List(elem) => {
+                Ty::List(elem, _) => {
                     let elem = (**elem).clone();
                     let ptr_ty = cg.cx.ptr_type(AddressSpace::default());
                     let ptr_field = cg.builder.build_struct_gep(cg.string_ty, addr, 0, "").map_err(llvm_err)?;
@@ -310,16 +310,27 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     cg.builder.build_call(cg.rt.free, &[data.into()], "").map_err(llvm_err)?;
                     Ok(())
                 }
-                Ty::Heap(inner) => {
+                Ty::Heap(inner, alloc) => {
                     let ptr_ty = cg.cx.ptr_type(AddressSpace::default());
-                    let p = cg.builder.build_load(ptr_ty, addr, "heap").map_err(llvm_err)?.into_pointer_value();
+                    let (slot, alloc_addr) = match alloc.allocator_ty() {
+                        None => (addr, None),
+                        Some(_) => {
+                            let heap_ty = cg.heap_ty(alloc).into_struct_type();
+                            let a = cg.builder.build_struct_gep(heap_ty, addr, 1, "heap.alloc").map_err(llvm_err)?;
+                            let p = cg.builder.build_struct_gep(heap_ty, addr, 0, "heap.ptr").map_err(llvm_err)?;
+                            (p, Some(a))
+                        }
+                    };
+                    let p = cg.builder.build_load(ptr_ty, slot, "heap").map_err(llvm_err)?.into_pointer_value();
                     let mut child = path.to_vec();
                     child.push(tir::MOVED_DEREF);
                     if cg.llvm_ty(inner).is_some() {
                         cg.drop_at_address(id, &child, inner, p)?;
                     }
-                    cg.builder.build_call(cg.rt.free, &[p.into()], "").map_err(llvm_err)?;
-                    Ok(())
+                    let size = cg.usize_ty.const_int(cg.elem_size(inner), false);
+                    let align = cg.value_align(inner);
+                    cg.dealloc_in(alloc, alloc_addr, p, size, align)?;
+                    cg.drop_stored_allocator(alloc, alloc_addr)
                 }
                 _ => cg.drop_value(addr, ty),
             }

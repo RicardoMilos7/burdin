@@ -2,6 +2,7 @@
 //! file per theme.
 
 mod aggregate;
+mod alloc;
 mod any;
 mod builtins;
 mod closure;
@@ -27,6 +28,7 @@ mod types;
 
 use crate::runtime::{self, Runtime};
 use burdin_diag::SourceMap;
+use burdin_diag::Span;
 use burdin_tir::{self as tir, Program, Ty};
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
@@ -143,6 +145,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     temps: Vec<Vec<(PointerValue<'ctx>, Ty, PointerValue<'ctx>)>>,
     /// The target is Windows (the runtime uses the Windows CRT).
     windows: bool,
+    /// The span of the expression being generated, for the allocation site a leak report names.
+    current_span: Option<Span>,
     /// `-g`: the module's debug metadata, or `None`.
     debug: Option<DebugInfo<'ctx>>,
     /// The entry block of the function being generated, where debug variables are declared.
@@ -178,7 +182,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let triple = machine.get_triple().as_str().to_string_lossy().to_string();
         let windows = triple.contains("windows");
         let darwin = triple.contains("darwin") || triple.contains("apple");
-        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin)?;
+        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, program.main.is_none())?;
         Ok(Codegen {
             cx,
             module,
@@ -212,6 +216,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             flags: Vec::new(),
             temps: Vec::new(),
             windows,
+            current_span: None,
             debug,
             debug_entry: None,
             dead_locals: HashSet::new(),

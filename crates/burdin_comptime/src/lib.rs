@@ -407,7 +407,7 @@ impl BodyCx<'_, '_, '_> {
             }
         };
         let item_ty = match &iter.ty {
-            Ty::Array(t, _) | Ty::List(t) | Ty::Range(t, _) => (**t).clone(),
+            Ty::Array(t, _) | Ty::List(t, _) | Ty::Range(t, _) => (**t).clone(),
             other => other.clone(),
         };
         let mut copies = Vec::with_capacity(items.len());

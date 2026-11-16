@@ -99,6 +99,35 @@ impl<'t> Sema<'t> {
                 );
             }
         }
+        let mut defaults: Vec<Option<ast::Type>> = generics.iter().map(|g| g.default.clone()).collect();
+        // Only a struct's or enum's type parameters take a default, and once one is left out every later one
+        // must have a default too (`spec/allocators.md`, AL5).
+        let mut default_seen = false;
+        for i in 0..defaults.len() {
+            if defaults[i].is_none() {
+                if default_seen {
+                    diags.error(
+                        Code::INVALID_TYPE_DEFAULT,
+                        generics[i].name.span,
+                        "a parameter without a default cannot follow one with, because a use fills the trailing ones",
+                    );
+                }
+                continue;
+            }
+            default_seen = true;
+            if matches!(item, ast::Item::TypeAlias(_)) {
+                diags.error(
+                    Code::INVALID_TYPE_DEFAULT,
+                    generics[i].name.span,
+                    "only a struct's or enum's type parameters take a default",
+                );
+            }
+            if generics[i].const_ty.is_some() {
+                diags.error(Code::INVALID_TYPE_DEFAULT, generics[i].name.span, "a const parameter takes no default");
+                // The default is dropped after the diagnostic, so no use can take a type for a const argument.
+                defaults[i] = None;
+            }
+        }
         self.globals.modules[module].type_priv.insert(name.name.clone(), is_priv);
         let package = self.package(module);
         match item {
@@ -141,6 +170,7 @@ impl<'t> Sema<'t> {
                     is_enum: false,
                     params,
                     bounds: Vec::new(),
+                    defaults: defaults.clone(),
                     decl: self.tpl.structs.len(),
                     identity: (false, 0),
                 });
@@ -156,6 +186,7 @@ impl<'t> Sema<'t> {
                     is_enum: true,
                     params,
                     bounds: Vec::new(),
+                    defaults: defaults.clone(),
                     decl: self.tpl.enums.len(),
                     identity: (false, 0),
                 });
@@ -204,6 +235,15 @@ impl<'t> Sema<'t> {
     pub(crate) fn declare_bounds(&mut self, diags: &mut Diagnostics) {
         for i in 0..self.tpl.ifaces.len() {
             let decl = self.tpl.ifaces[i];
+            for p in &decl.generics {
+                if p.default.is_some() {
+                    diags.error(
+                        Code::INVALID_TYPE_DEFAULT,
+                        p.name.span,
+                        "an interface's type parameters take no default",
+                    );
+                }
+            }
             let module = self.globals.interfaces[i].module;
             let params = self.globals.interfaces[i].params.clone();
             let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
@@ -285,6 +325,15 @@ impl<'t> Sema<'t> {
                                 is_unsafe: f.is_unsafe,
                                 is_exported: false,
                             });
+                            for p in &f.generics {
+                                if p.default.is_some() {
+                                    diags.error(
+                                        Code::INVALID_TYPE_DEFAULT,
+                                        p.name.span,
+                                        "a function's type parameters take no default; a call infers them",
+                                    );
+                                }
+                            }
                             let index = self.globals.generic_fns.len();
                             self.globals.modules[module].values.insert(name.clone(), Global::Generic(index));
                             self.globals.generic_fns.push(GenericFn {

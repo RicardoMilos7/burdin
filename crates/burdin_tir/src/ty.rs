@@ -3,6 +3,40 @@
 use std::fmt;
 use std::rc::Rc;
 
+/// The allocator an allocator-aware type stores (`spec/allocators.md`, AL3).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Alloc {
+    /// The program's default allocator, `Global`. No value is stored: the container's buffer belongs to the
+    /// C heap and is managed by the runtime.
+    Global,
+    /// A stored allocator value of this type, moved in when the container is created.
+    Value(Box<Ty>),
+}
+
+impl Alloc {
+    /// The stored allocator's type, or `None` for the default allocator.
+    pub fn allocator_ty(&self) -> Option<&Ty> {
+        match self {
+            Alloc::Global => None,
+            Alloc::Value(t) => Some(t),
+        }
+    }
+
+    /// Whether this is the default allocator.
+    pub fn is_global(&self) -> bool {
+        matches!(self, Alloc::Global)
+    }
+}
+
+impl fmt::Display for Alloc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Alloc::Global => f.write_str("Global"),
+            Alloc::Value(t) => write!(f, "{t}"),
+        }
+    }
+}
+
 /// A user-defined struct or enum: its index in `Program::structs` or `Program::enums`, and its name for messages.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AdtRef {
@@ -149,14 +183,17 @@ pub enum Ty {
     Option(Box<Ty>),
     /// The prelude's `Result<T, E>`: `Ok(T)` or `Err(E)`.
     Result(Box<Ty>, Box<Ty>),
-    /// `List<T>`: a growable, owned array in the C heap.
-    List(Box<Ty>),
+    /// `List<T>`: a growable, owned array in the C heap. The allocator is `Global` unless the list was made with
+    /// `new_in` (`spec/allocators.md`).
+    List(Box<Ty>, Alloc),
     /// `Map<K, V>`: an owned collection of key/value pairs.
-    Map(Box<Ty>, Box<Ty>),
+    Map(Box<Ty>, Box<Ty>, Alloc),
     /// The iterator `str.chars()` returns, only usable in a `for` loop.
     Chars,
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
-    Heap(Box<Ty>),
+    Heap(Box<Ty>, Alloc),
+    /// `Shared<T>`: a non-atomic, reference-counted owner of one heap value (`spec/allocators.md`, AL8).
+    Shared(Box<Ty>),
     /// `any I`: an owned value boxed behind the interface's vtable (spec/existentials.md, AN1).
     Any(AnyRef),
     /// `CPtr<T>`: a raw C pointer. It has no destructor and is copied like a number.
@@ -166,15 +203,16 @@ pub enum Ty {
     /// `Range<T>` (exclusive) or `RangeInclusive<T>` (inclusive): the two integer endpoints. The flag is true for
     /// the inclusive form.
     Range(Box<Ty>, bool),
-    /// The owning iterator of a `List<T>`: the buffer, its length and capacity, and the next index.
-    ListIntoIter(Box<Ty>),
+    /// The owning iterator of a `List<T>`: the buffer, its length and capacity, and the next index. It carries
+    /// the list's allocator value, because it frees the buffer when it is dropped.
+    ListIntoIter(Box<Ty>, Alloc),
     /// The owning iterator of an array `[T; N]`: the array value and the next index.
     ArrayIntoIter(Box<Ty>, u64),
     /// A borrowing iterator over a `Map<K, V>`: a copy of the map's three words and the next slot. It yields
     /// `(&K, &V)` and holds a loan on the map for its whole life.
     MapIter(Box<Ty>, Box<Ty>),
-    /// The owning iterator of a `Map<K, V>`: the map's buffer, moved entry by entry.
-    MapIntoIter(Box<Ty>, Box<Ty>),
+    /// The owning iterator of a `Map<K, V>`: the map's buffer, moved entry by entry, and the map's allocator.
+    MapIntoIter(Box<Ty>, Box<Ty>, Alloc),
     /// The iterator of a range: the two endpoints and whether the range is exhausted. The flag is true for the
     /// inclusive form.
     RangeIter(Box<Ty>, bool),
@@ -214,12 +252,14 @@ impl Ty {
             Ty::Str | Ty::Slice(_) | Ty::Ref { .. } => true,
             // A closure with borrow captures points at the storage it captured (CL3).
             Ty::Fn { borrowed, .. } => *borrowed,
-            Ty::Array(t, _) | Ty::Option(t) | Ty::List(t) => t.is_second_class(),
+            Ty::Array(t, _) | Ty::Option(t) | Ty::List(t, _) => t.is_second_class(),
             // An owning iterator holds its elements; a borrowing one points at its source.
             Ty::MapIter(..) => true,
-            Ty::ListIntoIter(t) | Ty::ArrayIntoIter(t, _) | Ty::RangeIter(t, _) => t.is_second_class(),
+            Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _) | Ty::RangeIter(t, _) => t.is_second_class(),
             Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
-            Ty::Map(k, v) | Ty::MapIntoIter(k, v) => k.is_second_class() || v.is_second_class(),
+            Ty::Map(k, v, _) | Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
+            // A `Shared<T>` owns its heaped value, like a `Heap`.
+            Ty::Shared(_) => false,
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
             Ty::Struct(a) | Ty::Enum(a) => a.second_class,
             // A box owns its heaped value; an `any I` type argument is never a view of the box (AN1, AN3).
@@ -257,19 +297,25 @@ impl fmt::Display for Ty {
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
             Ty::Option(t) => write!(f, "Option<{t}>"),
             Ty::Result(t, e) => write!(f, "Result<{t}, {e}>"),
-            Ty::List(t) => write!(f, "List<{t}>"),
-            Ty::Map(k, v) => write!(f, "Map<{k}, {v}>"),
+            Ty::List(t, Alloc::Global) => write!(f, "List<{t}>"),
+            Ty::List(t, a) => write!(f, "List<{t}, {a}>"),
+            Ty::Map(k, v, Alloc::Global) => write!(f, "Map<{k}, {v}>"),
+            Ty::Map(k, v, a) => write!(f, "Map<{k}, {v}, {a}>"),
             Ty::Chars => f.write_str("Chars"),
-            Ty::Heap(t) => write!(f, "Heap<{t}>"),
+            Ty::Heap(t, Alloc::Global) => write!(f, "Heap<{t}>"),
+            Ty::Heap(t, a) => write!(f, "Heap<{t}, {a}>"),
+            Ty::Shared(t) => write!(f, "Shared<{t}>"),
             Ty::Any(a) => write!(f, "any {}", a.name),
             Ty::CPtr(t) => write!(f, "CPtr<{t}>"),
             Ty::CString => f.write_str("CString"),
             Ty::Range(t, false) => write!(f, "Range<{t}>"),
             Ty::Range(t, true) => write!(f, "RangeInclusive<{t}>"),
-            Ty::ListIntoIter(t) => write!(f, "ListIntoIter<{t}>"),
+            Ty::ListIntoIter(t, Alloc::Global) => write!(f, "ListIntoIter<{t}>"),
+            Ty::ListIntoIter(t, a) => write!(f, "ListIntoIter<{t}, {a}>"),
             Ty::ArrayIntoIter(t, n) => write!(f, "ArrayIntoIter<{t}, {n}>"),
             Ty::MapIter(k, v) => write!(f, "MapIter<{k}, {v}>"),
-            Ty::MapIntoIter(k, v) => write!(f, "MapIntoIter<{k}, {v}>"),
+            Ty::MapIntoIter(k, v, Alloc::Global) => write!(f, "MapIntoIter<{k}, {v}>"),
+            Ty::MapIntoIter(k, v, a) => write!(f, "MapIntoIter<{k}, {v}, {a}>"),
             Ty::RangeIter(t, false) => write!(f, "RangeIter<{t}>"),
             Ty::RangeIter(t, true) => write!(f, "RangeIterInclusive<{t}>"),
             Ty::Tuple(elems) => {
@@ -329,11 +375,12 @@ mod tests {
         assert!(Ty::Option(Box::new(Ty::Str)).is_second_class());
         assert!(Ty::Array(Box::new(Ty::Str), 2).is_second_class());
         assert!(Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Str)).is_second_class());
-        assert!(Ty::Map(Box::new(Ty::Str), Box::new(Ty::Bool)).is_second_class());
+        assert!(Ty::Map(Box::new(Ty::Str), Box::new(Ty::Bool), Alloc::Global).is_second_class());
         // Owned types are not views.
         assert!(!Ty::String.is_second_class());
-        assert!(!Ty::Heap(Box::new(i32_.clone())).is_second_class());
-        assert!(!Ty::List(Box::new(i32_.clone())).is_second_class());
+        assert!(!Ty::Heap(Box::new(i32_.clone()), Alloc::Global).is_second_class());
+        assert!(!Ty::List(Box::new(i32_.clone()), Alloc::Global).is_second_class());
+        assert!(!Ty::Shared(Box::new(i32_.clone())).is_second_class());
         assert!(!i32_.is_second_class());
     }
 
@@ -366,6 +413,7 @@ mod tests {
     #[test]
     fn display_spells_types_like_the_source() {
         let i32_ = Ty::Int(IntTy::I32);
+        let arena = || Ty::Struct(AdtRef { id: 0, name: "Arena".into(), second_class: false });
         let cases = [
             (Ty::Unit, "()"),
             (Ty::Bool, "bool"),
@@ -381,10 +429,16 @@ mod tests {
             (Ty::Array(Box::new(i32_.clone()), 4), "[i32; 4]"),
             (Ty::Option(Box::new(i32_.clone())), "Option<i32>"),
             (Ty::Result(Box::new(i32_.clone()), Box::new(Ty::Str)), "Result<i32, str>"),
-            (Ty::List(Box::new(i32_.clone())), "List<i32>"),
-            (Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone())), "Map<str, i32>"),
+            (Ty::List(Box::new(i32_.clone()), Alloc::Global), "List<i32>"),
+            (Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Global), "Map<str, i32>"),
             (Ty::Chars, "Chars"),
-            (Ty::Heap(Box::new(i32_.clone())), "Heap<i32>"),
+            (Ty::Heap(Box::new(i32_.clone()), Alloc::Global), "Heap<i32>"),
+            (Ty::List(Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))), "List<i32, Arena>"),
+            (
+                Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))),
+                "Map<str, i32, Arena>",
+            ),
+            (Ty::Heap(Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))), "Heap<i32, Arena>"),
             (Ty::Any(AnyRef { id: 0, name: "Shape".into(), iface: 0, args: Vec::new() }), "any Shape"),
             (Ty::CPtr(Box::new(i32_.clone())), "CPtr<i32>"),
             (Ty::CString, "CString"),
@@ -401,5 +455,16 @@ mod tests {
         for (ty, want) in cases {
             assert_eq!(ty.to_string(), want);
         }
+    }
+
+    #[test]
+    fn an_allocator_argument_is_global_or_a_stored_value() {
+        assert!(Alloc::Global.is_global());
+        assert!(Alloc::Global.allocator_ty().is_none());
+        let pool = Ty::Struct(AdtRef { id: 0, name: "Pool".into(), second_class: false });
+        let stored = Alloc::Value(Box::new(pool.clone()));
+        assert!(!stored.is_global());
+        assert_eq!(stored.allocator_ty(), Some(&pool));
+        assert_eq!(stored.to_string(), "Pool");
     }
 }

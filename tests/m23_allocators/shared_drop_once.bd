@@ -1,0 +1,28 @@
+//@ run
+//> made
+//> 2
+//> 3
+//> dropped
+
+// The value inside a `Shared<T>` is dropped once, when the last owner goes away (`spec/allocators.md`, AL8).
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("dropped")
+    }
+}
+
+fn main() {
+    let a = Shared.new(Noisy { id: 1 })
+    println("made")
+    let b = a.clone()
+    println(b.strong_count().to_string())
+    {
+        let c = b.clone()
+        println(c.strong_count().to_string())
+    }
+}

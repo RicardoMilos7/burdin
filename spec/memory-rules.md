@@ -305,6 +305,13 @@ it; the block cannot name specific arguments or take a `where` clause, because t
 from the type's others (`impls.md` IM7, E0131).
 Test: `m05_ownership/copy_with_drop`.
 
+**DR8a Containers with a stored allocator.** A container that stores its allocator (`List<T, A>`, `Map<K, V, A>`,
+`Heap<T, A>`) owns that value as an ordinary field. Dropping it drops the elements, frees the buffer through the
+allocator with the buffer's size and alignment, and then drops the allocator value; moving the container moves
+both. A `Shared<T>` owns one reference: dropping it decrements the count, and the last owner drops the value and
+frees the cell. The details are `spec/allocators.md` AL7-AL8.
+Tests: `m23_allocators/drop_through_allocator`, `m23_allocators/heap_arena_move_out`, `m23_allocators/shared_drop_once`.
+
 **DR9 Shadowing.** `let x = ...` over an existing `x` does not drop the old value; both live to the end of the scope.
 Test: `m05_ownership/drop_shadowing`.
 

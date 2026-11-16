@@ -31,6 +31,22 @@ pub struct Program {
     /// The files the compilation read besides the sources: what `embed` embedded, in the order they were first
     /// read. `--emit-deps` lists them.
     pub build_inputs: Vec<String>,
+    /// One entry per concrete allocator type a container in the program stores, with the functions of its
+    /// `Allocator` implementation (`spec/allocators.md`, AL4). Code generation allocates and frees a container's
+    /// buffer through these.
+    pub allocator_fns: Vec<AllocatorFns>,
+    /// The standard library's default allocator type `Global`, when it declares one. A container value whose
+    /// allocator became `Global` after substituting a type parameter stores nothing.
+    pub global_alloc_ty: Option<Ty>,
+}
+
+/// The three functions of one type's `Allocator` implementation.
+#[derive(Clone)]
+pub struct AllocatorFns {
+    pub ty: Ty,
+    pub allocate: FuncId,
+    pub reallocate: FuncId,
+    pub deallocate: FuncId,
 }
 
 /// The vtable layout of one interface instance (`any I`), in the order of `spec/existentials.md`, AN2/AN11.

@@ -388,7 +388,9 @@ impl<'a> FnCx<'a> {
             // pointer, and `unsafe` is what guards it (memory-rules.md, US; issue #72).
             tir::ExprKind::PtrDeref(_) => true,
             // Elements of an array or a list place are mutable with it; elements of a slice view are read-only.
-            tir::ExprKind::Index(base, _) => matches!(base.ty, Ty::Array(..) | Ty::List(_)) && self.place_mutable(base),
+            tir::ExprKind::Index(base, _) => {
+                matches!(base.ty, Ty::Array(..) | Ty::List(_, _)) && self.place_mutable(base)
+            }
             _ => false,
         }
     }

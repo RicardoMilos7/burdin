@@ -81,23 +81,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Result(ok, err) => {
                 format!("Result<{},{}>", self.structural_key_in(ok, seen), self.structural_key_in(err, seen))
             }
-            Ty::List(inner) => format!("List<{}>", self.structural_key_in(inner, seen)),
-            Ty::Map(k, v) => {
+            Ty::List(inner, _) => format!("List<{}>", self.structural_key_in(inner, seen)),
+            Ty::Map(k, v, _) => {
                 format!("Map<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
-            Ty::Heap(inner) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
+            Ty::Heap(inner, _) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
             Ty::Range(inner, inclusive) => {
                 format!("Range<{},{inclusive}>", self.structural_key_in(inner, seen))
             }
             Ty::RangeIter(inner, inclusive) => {
                 format!("RangeIter<{},{inclusive}>", self.structural_key_in(inner, seen))
             }
-            Ty::ListIntoIter(inner) => format!("ListIntoIter<{}>", self.structural_key_in(inner, seen)),
+            Ty::ListIntoIter(inner, _) => format!("ListIntoIter<{}>", self.structural_key_in(inner, seen)),
             Ty::ArrayIntoIter(inner, n) => format!("ArrayIntoIter<{},{}>", self.structural_key_in(inner, seen), n),
             Ty::MapIter(k, v) => {
                 format!("MapIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
-            Ty::MapIntoIter(k, v) => {
+            Ty::MapIntoIter(k, v, _) => {
                 format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
             Ty::Ref { mutable, inner } => {
@@ -230,13 +230,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
             // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map.
             Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) | Ty::Chars | Ty::MapIter(..) | Ty::RangeIter(..) => Ok(()),
-            Ty::ListIntoIter(elem) => {
+            Ty::ListIntoIter(elem, alloc) => {
                 let elem = (**elem).clone();
-                self.drop_list_into_iter(addr, &elem)
+                self.drop_list_into_iter(addr, &elem, alloc)
             }
-            Ty::MapIntoIter(key, value) => {
+            Ty::MapIntoIter(key, value, alloc) => {
                 let (key, value) = ((**key).clone(), (**value).clone());
-                self.drop_map_into_iter(addr, &key, &value)
+                self.drop_map_into_iter(addr, &key, &value, alloc)
             }
             Ty::ArrayIntoIter(elem, n) => {
                 let (elem, n) = ((**elem).clone(), *n);
@@ -317,18 +317,68 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_call(self.rt.string_free, &[p.into(), cap.into()], "").map_err(llvm_err)?;
                 Ok(())
             }
-            Ty::Heap(inner) => {
-                let inner = (**inner).clone();
-                let p = self.builder.build_load(ptr_ty, addr, "heap").map_err(llvm_err)?.into_pointer_value();
+            Ty::Heap(inner, alloc) => {
+                let (inner, alloc) = ((**inner).clone(), alloc.clone());
+                let (heap_ty, alloc_addr) = match alloc.allocator_ty() {
+                    None => (addr, None),
+                    Some(ty) => {
+                        let ty = ty.clone();
+                        let h = self.heap_ty(&alloc);
+                        let h = h.into_struct_type();
+                        let a = self.builder.build_struct_gep(h, addr, 1, "heap.alloc").map_err(llvm_err)?;
+                        let p = self.builder.build_struct_gep(h, addr, 0, "heap.ptr").map_err(llvm_err)?;
+                        let _ = ty;
+                        (p, Some(a))
+                    }
+                };
+                let p = self.builder.build_load(ptr_ty, heap_ty, "heap").map_err(llvm_err)?.into_pointer_value();
+                let size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1);
+                let align = self.value_align(&inner);
+                let (inner2, alloc2, alloc_addr2) = (inner.clone(), alloc.clone(), alloc_addr);
                 let is_null = self.builder.build_is_null(p, "").map_err(llvm_err)?;
                 let alive = self.builder.build_not(is_null, "").map_err(llvm_err)?;
                 self.if_then(alive, "heap.drop", move |cg| {
-                    if cg.needs_drop(&inner) {
-                        let glue = cg.drop_glue(&inner);
+                    if cg.needs_drop(&inner2) {
+                        let glue = cg.drop_glue(&inner2);
                         cg.builder.build_call(glue, &[p.into()], "").map_err(llvm_err)?;
                     }
-                    cg.builder.build_call(cg.rt.free, &[p.into()], "").map_err(llvm_err)?;
-                    Ok(())
+                    let bytes = cg.usize_ty.const_int(size, false);
+                    cg.dealloc_in(&alloc2, alloc_addr2, p, bytes, align)
+                })?;
+                self.drop_stored_allocator(&alloc, alloc_addr)
+            }
+            // A `Shared<T>` owns one reference to its cell: the last owner drops the value and frees the cell.
+            Ty::Shared(inner) => {
+                let inner = (**inner).clone();
+                let p = self.builder.build_load(ptr_ty, addr, "shared").map_err(llvm_err)?.into_pointer_value();
+                let is_null = self.builder.build_is_null(p, "").map_err(llvm_err)?;
+                let alive = self.builder.build_not(is_null, "").map_err(llvm_err)?;
+                let (inner2, p2) = (inner.clone(), p);
+                self.if_then(alive, "shared.drop", move |cg| {
+                    let count_at = cg.offset_ptr(p2, cg.usize_ty.const_zero())?;
+                    let count = cg
+                        .builder
+                        .build_load(cg.usize_ty, count_at, "shared.count")
+                        .map_err(llvm_err)?
+                        .into_int_value();
+                    let next = cg
+                        .builder
+                        .build_int_sub(count, cg.usize_ty.const_int(1, false), "shared.dec")
+                        .map_err(llvm_err)?;
+                    cg.builder.build_store(count_at, next).map_err(llvm_err)?;
+                    let last = cg
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, next, cg.usize_ty.const_zero(), "")
+                        .map_err(llvm_err)?;
+                    cg.if_then(last, "shared.last", move |cg| {
+                        if cg.needs_drop(&inner2) {
+                            let eight = cg.usize_ty.const_int(8, false);
+                            let value = cg.offset_ptr(p2, eight)?;
+                            let glue = cg.drop_glue(&inner2);
+                            cg.builder.build_call(glue, &[value.into()], "").map_err(llvm_err)?;
+                        }
+                        cg.global_dealloc(p2)
+                    })
                 })
             }
             Ty::Struct(a) => {
@@ -400,13 +450,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     Ok(())
                 })
             }
-            Ty::List(elem) => {
-                let elem = (**elem).clone();
-                self.drop_sequence(addr, &elem, "list")
+            Ty::List(elem, alloc) => {
+                let (elem, alloc) = ((**elem).clone(), alloc.clone());
+                self.drop_sequence(addr, &elem, &alloc, "list")
             }
-            Ty::Map(key, value) => {
-                let (key, value) = ((**key).clone(), (**value).clone());
-                self.drop_map(addr, &key, &value)
+            Ty::Map(key, value, alloc) => {
+                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
+                self.drop_map(addr, &key, &value, &alloc)
             }
             Ty::Array(elem, n) => {
                 let n = *n;
@@ -478,12 +528,25 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// Drops the elements of a list or map at `addr` in index order, then frees its buffer. A list and a map
     /// have the layout `{ ptr, len, cap }`, like a `String`.
-    fn drop_sequence(&mut self, addr: PointerValue<'ctx>, elem: &Ty, name: &str) -> GenResult<()> {
+    fn drop_sequence(
+        &mut self,
+        addr: PointerValue<'ctx>,
+        elem: &Ty,
+        alloc: &burdin_tir::Alloc,
+        name: &str,
+    ) -> GenResult<()> {
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
-        let ptr_field = self.builder.build_struct_gep(self.string_ty, addr, 0, "").map_err(llvm_err)?;
-        let len_field = self.builder.build_struct_gep(self.string_ty, addr, 1, "").map_err(llvm_err)?;
+        let seq_ty = self.seq_ty(alloc);
+        let ptr_field = self.builder.build_struct_gep(seq_ty, addr, 0, "").map_err(llvm_err)?;
+        let len_field = self.builder.build_struct_gep(seq_ty, addr, 1, "").map_err(llvm_err)?;
+        let cap_field = self.builder.build_struct_gep(seq_ty, addr, 2, "").map_err(llvm_err)?;
         let base = self.builder.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
         let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let cap = self.builder.build_load(self.usize_ty, cap_field, "").map_err(llvm_err)?.into_int_value();
+        let alloc_addr = match alloc.allocator_ty() {
+            Some(_) => Some(self.builder.build_struct_gep(seq_ty, addr, 3, "seq.alloc").map_err(llvm_err)?),
+            None => None,
+        };
         if self.needs_drop(elem) && self.llvm_ty(elem).is_some() {
             let elem = elem.clone();
             let elem_t = self.llvm_ty(&elem).expect("checked above");
@@ -506,8 +569,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
             self.builder.position_at_end(exit);
         }
-        self.builder.build_call(self.rt.free, &[base.into()], "").map_err(llvm_err)?;
-        Ok(())
+        let size = self.usize_ty.const_int(self.elem_size(elem), false);
+        let bytes = self.builder.build_int_mul(cap, size, "").map_err(llvm_err)?;
+        let align = self.value_align(elem);
+        self.dealloc_in(alloc, alloc_addr, base, bytes, align)?;
+        self.drop_stored_allocator(alloc, alloc_addr)
     }
 
     /// Deep-copies the value at `src` into `dst` (the compiler-derived `clone`).
@@ -531,15 +597,46 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(dst, copy).map_err(llvm_err)?;
                 Ok(())
             }
-            Ty::Heap(inner) => {
-                let inner = (**inner).clone();
-                let p = self.builder.build_load(ptr_ty, src, "heap").map_err(llvm_err)?.into_pointer_value();
+            Ty::Heap(inner, alloc) => {
+                let (inner, alloc) = ((**inner).clone(), alloc.clone());
+                let (src_ptr, dst_alloc_addr, dst_ptr) = match alloc.allocator_ty() {
+                    None => (src, None, dst),
+                    Some(ty) => {
+                        let ty = ty.clone();
+                        let h = self.heap_ty(&alloc);
+                        let h = h.into_struct_type();
+                        let s_alloc = self.builder.build_struct_gep(h, src, 1, "heap.alloc").map_err(llvm_err)?;
+                        let d_alloc = self.builder.build_struct_gep(h, dst, 1, "heap.alloc").map_err(llvm_err)?;
+                        self.clone_value(d_alloc, s_alloc, &ty)?;
+                        let s_ptr = self.builder.build_struct_gep(h, src, 0, "heap.ptr").map_err(llvm_err)?;
+                        let d_ptr = self.builder.build_struct_gep(h, dst, 0, "heap.ptr").map_err(llvm_err)?;
+                        (s_ptr, Some(d_alloc), d_ptr)
+                    }
+                };
+                let p = self.builder.build_load(ptr_ty, src_ptr, "heap").map_err(llvm_err)?.into_pointer_value();
                 let size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1);
                 let size = self.usize_ty.const_int(size, false);
-                let call = self.builder.build_call(self.rt.alloc, &[size.into()], "heap").map_err(llvm_err)?;
-                let newp = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+                let align = self.value_align(&inner);
+                let newp = self.alloc_in(&alloc, dst_alloc_addr, size, align, None)?;
                 self.clone_value(newp, p, &inner)?;
-                self.builder.build_store(dst, newp).map_err(llvm_err)?;
+                self.builder.build_store(dst_ptr, newp).map_err(llvm_err)?;
+                Ok(())
+            }
+            // Cloning a `Shared<T>` shares the cell: the reference count goes up and the pointer is copied.
+            Ty::Shared(_) => {
+                let p = self.builder.build_load(ptr_ty, src, "shared").map_err(llvm_err)?.into_pointer_value();
+                let count_at = self.offset_ptr(p, self.usize_ty.const_zero())?;
+                let count = self
+                    .builder
+                    .build_load(self.usize_ty, count_at, "shared.count")
+                    .map_err(llvm_err)?
+                    .into_int_value();
+                let next = self
+                    .builder
+                    .build_int_add(count, self.usize_ty.const_int(1, false), "shared.inc")
+                    .map_err(llvm_err)?;
+                self.builder.build_store(count_at, next).map_err(llvm_err)?;
+                self.builder.build_store(dst, p).map_err(llvm_err)?;
                 Ok(())
             }
             Ty::Struct(_) | Ty::Tuple(_) => {
@@ -618,13 +715,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 Ok(())
             }
-            Ty::List(elem) => {
-                let elem = (**elem).clone();
-                self.clone_sequence(dst, src, &elem)
+            Ty::List(elem, alloc) => {
+                let (elem, alloc) = ((**elem).clone(), alloc.clone());
+                self.clone_sequence(dst, src, &elem, &alloc)
             }
-            Ty::Map(key, value) => {
-                let (key, value) = ((**key).clone(), (**value).clone());
-                self.clone_map(dst, src, &key, &value)
+            Ty::Map(key, value, alloc) => {
+                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
+                self.clone_map(dst, src, &key, &value, &alloc)
             }
             Ty::Chars => self.copy_bits(dst, src, ty),
             // A closure is not `Clone` (CL10); this is unreachable in a checked program.
@@ -663,12 +760,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// Deep-copies a list or map buffer: allocates `cap` elements and clones the first `len`.
-    fn clone_sequence(&mut self, dst: PointerValue<'ctx>, src: PointerValue<'ctx>, elem: &Ty) -> GenResult<()> {
+    fn clone_sequence(
+        &mut self,
+        dst: PointerValue<'ctx>,
+        src: PointerValue<'ctx>,
+        elem: &Ty,
+        alloc: &burdin_tir::Alloc,
+    ) -> GenResult<()> {
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         let usize_ty = self.usize_ty;
+        let seq_ty = self.seq_ty(alloc);
         let field = |cg: &mut Self, base: PointerValue<'ctx>, i: u32| -> GenResult<PointerValue<'ctx>> {
-            cg.builder.build_struct_gep(cg.string_ty, base, i, "").map_err(llvm_err)
+            cg.builder.build_struct_gep(seq_ty, base, i, "").map_err(llvm_err)
         };
+        let mut dst_alloc_addr = None;
+        if let Some(ty) = alloc.allocator_ty() {
+            let s = field(self, src, 3)?;
+            let d = field(self, dst, 3)?;
+            self.clone_value(d, s, ty)?;
+            dst_alloc_addr = Some(d);
+        }
         let src_ptr_field = field(self, src, 0)?;
         let src_len_field = field(self, src, 1)?;
         let src_cap_field = field(self, src, 2)?;
@@ -687,8 +798,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             )
             .map_err(llvm_err)?
             .into_int_value();
-        let call = self.builder.build_call(self.rt.alloc, &[at_least_one.into()], "copy").map_err(llvm_err)?;
-        let new_base = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+        let align = self.value_align(elem);
+        let size = self.usize_ty.const_int(self.elem_size(elem), false);
+        let _ = size;
+        let new_base = self.alloc_in(alloc, dst_alloc_addr, at_least_one, align, None)?;
         if let Some(elem_t) = self.llvm_ty(elem) {
             let index = self.alloca(usize_ty.into(), "clone.i")?;
             self.builder.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;

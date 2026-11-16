@@ -7,9 +7,9 @@ Written at the end of the first session, updated at the end of the second, third
 Updated at the end of the thirty-sixth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
-overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), and 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`) are done**: 549 conformance tests; all pass in debug and release (the
+overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 576 conformance tests; all pass in debug and release (the
 release run skips the debug-only tests).
-`burdin test` runs `test` blocks concurrently with attributes, captured output,
+`burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
 by `tests/check_docs.py` (issue #42); the thirteenth retired the claude.ai copies of the design and stage 0
@@ -152,8 +152,36 @@ structs, typedefs, enum constants, and object-like `#define`s; `#include`, funct
 for stage 3). The manifest parser gained `[build] allow`. The new diagnostics are E0260 (invalid build configuration),
 E0261 (a failed script), and E0262 (invalid generated modules), reported at the entry package's first source line.
 The tests are `tests/m22_build/` with nine conformance tests, driver unit tests for the cache key and the header
-parser, and `tests/check_build_scripts.py` for the cache, `--emit-deps`, and the `bindgen` command line. The suite
-is 546 tests.
+parser, and `tests/check_build_scripts.py` for the cache, `--emit-deps`, and the `bindgen` command line.
+
+The thirty-sixth session implemented milestone 23, allocators, `Arena`, and `Shared<T>` (issue #180, sub-issues
+#181-#188). It decided first (`spec/allocators.md` AL1-AL10) that the allocator is an ordinary value and an
+ordinary generic parameter — `A: Allocator`, or `own a: impl Allocator` — that `List<T, A = Global>`,
+`Map<K, V, A = Global>`, and `Heap<T, A = Global>` take as their trailing type argument, and that `Global` is a
+zero-sized value stored nowhere, so the stage 0 spellings and layouts do not change. Any other allocator is
+stored in the container as an owned field and given to `new_in`; `new` has no value to store there (E0272), and a
+type or value that is not an allocator is E0270. Default type parameters are written on trailing struct/enum
+parameters (`struct Buffer<A: Allocator = Global>`), resolved where the type is declared, with E0271 for a
+non-trailing default, a const parameter's default, and a default on a function, interface, or alias; a bare
+inherent or `Drop` impl covers every instance. `Arena` is a first-class bump allocator with 4096-byte blocks,
+`bytes_allocated`, and `reset`; dropping it frees every block, and it is not second-class because every safe way
+to get an arena-backed buffer makes the container own the arena. `Shared<T>` is a non-atomic reference-counted
+cell allocated through `Global`: `.clone()` shares it, `.get()` borrows its value, `.strong_count()` counts, the
+last handle drops the value and frees the cell, and it is `Clone` for every `T` but never `Copy`; stage 2 makes the
+count atomic and adds `Send`. A `burdin test` build allocates through a checking allocator with a 40-byte header
+and a live list: a double free panics, and an allocation still live when an otherwise passing test returns is
+reported as `test leak: <n> allocation(s) leaked, <bytes> byte(s)` with the source site the compiler recorded, and
+fails that test; `burdin build`/`run` use the plain C heap. In the compiler, `burdin_tir` gained the `Alloc`
+marker on `List`/`Map`/`Heap` and the owning iterators, `Ty::Shared`, the allocator builtins and methods, and
+`Program::allocator_fns`; sema resolves allocator arguments, the default type parameters, and the `new_in` calls;
+`burdin_codegen/src/emit/alloc.rs` calls the allocator implementation (every argument by address) and the runtime
+gained the checking allocator and the leak check; `burdin_comptime` models `Shared` as its value and rejects
+explicit allocation as impure (E0224). `std/src/alloc.bd` adds `Allocator`, `Global`, and `Arena`. The new
+diagnostics are E0270, E0271, and E0272. The tests are `tests/m23_allocators/` with 27 conformance tests, the
+`tests/runner/leaks/` fixture, and the leak-detection checks in `tests/check_test_runner.py`; the suite is 576
+tests. The checking allocator also exposed a latent temporary-drop leak in the non-consuming `Option`/`Result`
+methods (`is_some`, `is_ok`, ...), fixed by reading the receiver through a place so its temporary is registered;
+two runner fixtures reported it before the fix.
 
 The thirty-sixth session implemented the differential tests of issue #444, the last sub-issue of #438: a test
 item may carry `[differential]`, and the runner then compares the `Ok`/`Err` outcome of the same body run by the
@@ -873,6 +901,16 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     bookkeeping gap as problem 26 and was not introduced by m22; the build-script tests and `spec/build-scripts.md`
     use the bound form. Fixing it means registering the temporary as a tracked place (or marking its moved element)
     in the memory checker and code generation.
+29. **Leak detection is a `burdin test` feature and does not detect every error.** The checking allocator catches a
+    leak and a double free or a pointer it did not hand out; it does not catch a use-after-free, and an allocator
+    that reaches the OS heap through its own `extern` calls is invisible to it. `burdin build`/`run` use the plain
+    C heap with no tracking (`spec/allocators.md` AL9).
+30. **`Shared<T>` is a non-atomic `Rc` in stage 1.** The count is a plain `usize`, there are no weak handles, a
+    `Shared` cycle leaks, and the cell always comes from `Global` (no arena-backed `Shared`). Stage 2 makes the
+    count atomic, adds `Send`, and revisits sharing across threads (`spec/allocators.md` AL8).
+31. **An arena reset cannot be checked.** `Arena` is first-class and `allocate` returns a raw `CPtr`; the compiler
+    does not track which buffers a `reset` invalidates. Safe container code keeps the arena alive by owning it, but
+    manual allocation and reset are `unsafe` (`spec/allocators.md` AL6).
 
 ## Decided in the third session
 
@@ -1537,22 +1575,23 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 ## What is left to do, in order
 
-1. Milestone 22 is complete (thirty-fifth session): `spec/build-scripts.md` BS1-BS8 is the decision and
-   `tests/m22_build/` has nine tests. The next milestone is 23 (allocator parameters, `Arena`, `Shared<T>`, leak
-   detection in tests, and allocator-aware containers). Issue #444 (differential tests between comptime and compiled
-   code) is done (thirty-sixth session): `spec/test-runner.md` holds its behavior. The full bindgen, C
-   function-pointer types, and `union` declarations remain stage 3 / the stage 1 "Fixes" list.
-2. Write the m23 tests before the code, the same way the earlier milestones were built. Known limits to keep in
-   mind: the comptime ones (a closure inside a function with comptime parameters is shared by its specializations;
-   `Map` iteration at compile time is insertion order, CT9; comptime results are not cached, CT14), the m21 ones
-   (problems 24-27 above), and the temporary-move bug (problem 28). Writing a built-in interface by hand (#402) is
-   the open type-system issue under `Stage 1`; it applies to a plain type and a generic one alike.
+1. Milestone 23 is complete (thirty-sixth session): `spec/allocators.md` AL1-AL10 is the decision and
+   `tests/m23_allocators/` has 27 tests. The next milestone is 24 (`m24_stdlib`: `Set`, `Deque`, a priority heap,
+   Unicode helpers, paths, time, random, and the formatting foundation), which may split as the standard library
+   grows. Issue #444 (differential tests between comptime and compiled code) is done (thirty-sixth session);
+   `spec/test-runner.md` holds its behavior. The full bindgen, C function-pointer types, and `union` declarations
+   remain stage 3 / the stage 1 "Fixes" list.
+2. The remaining stage 1 work is milestone 24 and the open type-system item: writing a built-in interface by
+   hand (#402). Known limits to keep in mind: the comptime ones (a closure inside a function with comptime
+   parameters is shared by its specializations; `Map` iteration at compile time is insertion order, CT9;
+   comptime results are not cached, CT14), the m21 ones (problems 24-27 above), the temporary-move bug (problem
+   28), and the allocator limits (problems 29-31).
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
    C function-pointer and `union` types, by-value C aggregates, and a `priv` module marker if a project needs one.
 4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
-   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m15 in both
+   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m23 in both
    the debug and release profiles (issues #11, #16, #47, and #12), and cache cargo and LLVM 21 (issue #46).
    `tests/check_ci.py` guards that the workflow keeps covering the suite in both profiles, every job, and their
    caches; `tests/check_platform.py` guards the host triple. Every job also records and compares benchmark baselines,
@@ -1577,6 +1616,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 23, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 24, then write its tests.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

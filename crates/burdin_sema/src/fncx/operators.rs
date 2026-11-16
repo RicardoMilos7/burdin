@@ -389,7 +389,7 @@ impl FnCx<'_> {
             ast::UnOp::Deref => {
                 let e = self.expr(operand, None);
                 match &e.ty {
-                    Ty::Heap(inner) => {
+                    Ty::Heap(inner, _) => {
                         let inner = (**inner).clone();
                         mk(tir::ExprKind::Deref(Box::new(e)), inner, span)
                     }

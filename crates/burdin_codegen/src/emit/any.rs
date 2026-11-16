@@ -62,8 +62,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // vtable's drop does nothing.
         let size = self.llvm_ty(&value.ty).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1);
         let size = self.usize_ty.const_int(size, false);
-        let call = self.builder.build_call(self.rt.alloc, &[size.into()], "any.box").map_err(llvm_err)?;
-        let data = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+        let data = self.global_alloc(size, None)?;
         if self.llvm_ty(&value.ty).is_some() {
             let v = self.need(v, &value.ty);
             self.builder.build_store(data, v).map_err(llvm_err)?;

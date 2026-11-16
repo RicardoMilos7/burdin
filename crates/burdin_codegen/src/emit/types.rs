@@ -31,12 +31,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // An `any I` box is the data pointer and the vtable pointer.
             Ty::Any(_) => self.any_ty.into(),
             Ty::Chars => self.str_ty.into(),
-            // A list and a map have the same three-word shape as a `String`: pointer, length, capacity.
-            Ty::String | Ty::List(_) | Ty::Map(..) => self.string_ty.into(),
+            // A list and a map have the same three-word shape as a `String`: pointer, length, capacity. A stored
+            // allocator value follows them (`spec/allocators.md`, AL3), and the default one stores nothing.
+            Ty::String => self.string_ty.into(),
+            Ty::List(_, alloc) | Ty::Map(_, _, alloc) => self.seq_ty(alloc).into(),
             Ty::Result(ok, err) => self.result_ty(ok, err).into(),
             // A `CString` is the address of its NUL-terminated buffer; a `CPtr` is a raw address.
             Ty::CString | Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
-            Ty::Heap(_) => self.cx.ptr_type(AddressSpace::default()).into(),
+            // A `Shared<T>` value is the address of its reference-counted cell.
+            Ty::Shared(_) => self.cx.ptr_type(AddressSpace::default()).into(),
+            Ty::Heap(_, alloc) => self.heap_ty(alloc),
             // A reference is the address of the referent; a slice is a pointer and a length, like a `str`.
             Ty::Ref { .. } => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Slice(_) => self.str_ty.into(),
@@ -46,12 +50,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A range is two copied endpoints.
             Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
             // An iterator over a list or a map keeps the collection's three words and the next index.
-            Ty::ListIntoIter(_) | Ty::MapIter(..) | Ty::MapIntoIter(..) => {
-                let ptr = self.cx.ptr_type(AddressSpace::default());
-                self.cx
-                    .struct_type(&[ptr.into(), self.usize_ty.into(), self.usize_ty.into(), self.usize_ty.into()], false)
-                    .into()
-            }
+            Ty::ListIntoIter(_, alloc) | Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
+            Ty::MapIter(..) => self.iter_seq_ty().into(),
             // The array owns its elements inline; the index says which one comes next.
             Ty::ArrayIntoIter(inner, n) => self.iter_array_ty(inner, *n).into(),
             // The range iterator keeps both endpoints and whether the range is exhausted.
@@ -63,6 +63,45 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The type of a member of an aggregate: like `llvm_ty`, but a value-less type is an empty struct.
     pub(super) fn storage_ty(&self, ty: &Ty) -> BasicTypeEnum<'ctx> {
         self.llvm_ty(ty).unwrap_or_else(|| self.cx.struct_type(&[], false).into())
+    }
+
+    /// The `{ ptr, len, cap }` layout of a list or map, with its stored allocator value appended.
+    pub(super) fn seq_ty(&self, alloc: &burdin_tir::Alloc) -> StructType<'ctx> {
+        match alloc.allocator_ty() {
+            None => self.string_ty,
+            Some(a) => {
+                let ptr = self.cx.ptr_type(AddressSpace::default());
+                let a = self.storage_ty(a);
+                self.cx.struct_type(&[ptr.into(), self.usize_ty.into(), self.usize_ty.into(), a], false)
+            }
+        }
+    }
+
+    /// The `{ ptr, len, cap, index }` layout of the owning list and map iterators, with the stored allocator.
+    pub(super) fn iter_seq_ty_for(&self, alloc: &burdin_tir::Alloc) -> StructType<'ctx> {
+        match alloc.allocator_ty() {
+            None => self.iter_seq_ty(),
+            Some(a) => {
+                let ptr = self.cx.ptr_type(AddressSpace::default());
+                let a = self.storage_ty(a);
+                self.cx.struct_type(
+                    &[ptr.into(), self.usize_ty.into(), self.usize_ty.into(), self.usize_ty.into(), a],
+                    false,
+                )
+            }
+        }
+    }
+
+    /// A `Heap<T>` is its pointer, or `{ ptr, allocator }` when the allocator is stored.
+    pub(super) fn heap_ty(&self, alloc: &burdin_tir::Alloc) -> BasicTypeEnum<'ctx> {
+        let ptr = self.cx.ptr_type(AddressSpace::default()).into();
+        match alloc.allocator_ty() {
+            None => ptr,
+            Some(a) => {
+                let a = self.storage_ty(a);
+                self.cx.struct_type(&[ptr, a], false).into()
+            }
+        }
     }
 
     pub(super) fn product_ty(&self, fields: &[Ty]) -> StructType<'ctx> {

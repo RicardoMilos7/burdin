@@ -82,16 +82,113 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let inner = args[0].ty.clone();
                 let size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0);
                 let size = self.usize_ty.const_int(size.max(1), false);
-                let call = self.builder.build_call(self.rt.alloc, &[size.into()], "heap").map_err(llvm_err)?;
-                let ptr = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+                let align = self.value_align(&inner);
+                let ptr = self.global_alloc(size, Some(span))?;
                 if self.llvm_ty(&inner).is_some() {
                     let v = self.need(value, &inner);
                     self.builder.build_store(ptr, v).map_err(llvm_err)?;
                 }
+                let _ = align;
                 return Ok(Some(ptr.into()));
+            }
+            // `Heap.new_in(alloc, value)`: the allocator value is stored beside the pointer.
+            Builtin::HeapNewIn => {
+                let alloc_ty = args[0].ty.clone();
+                let inner = args[1].ty.clone();
+                let alloc_value = self.expr_mode(&args[0], Mode::Move)?;
+                // A generic body instantiated with `Global` names the default allocator here: the value is
+                // zero-sized and nothing is stored (`spec/allocators.md`, AL3).
+                if self.is_global_allocator(&alloc_ty) {
+                    let value = self.expr_mode(&args[1], Mode::Move)?;
+                    let _ = value;
+                    let size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1);
+                    let size = self.usize_ty.const_int(size, false);
+                    let ptr = self.global_alloc(size, Some(span))?;
+                    return Ok(Some(ptr.into()));
+                }
+                let value = self.expr_mode(&args[1], Mode::Move)?;
+                let _ = alloc_value;
+                let alloc = burdin_tir::Alloc::Value(Box::new(alloc_ty));
+                let heap_ty = self.heap_ty(&alloc).into_struct_type();
+                let slot = self.alloca(heap_ty.into(), "heap.value")?;
+                let alloc_field = self.builder.build_struct_gep(heap_ty, slot, 1, "heap.alloc").map_err(llvm_err)?;
+                let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
+                self.builder.build_store(alloc_field, alloc_value).map_err(llvm_err)?;
+                let size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1);
+                let size = self.usize_ty.const_int(size, false);
+                let align = self.value_align(&inner);
+                let ptr = self.alloc_in(&alloc, Some(alloc_field), size, align, Some(span))?;
+                if self.llvm_ty(&inner).is_some() {
+                    let v = self.need(value, &inner);
+                    self.builder.build_store(ptr, v).map_err(llvm_err)?;
+                }
+                let ptr_field = self.builder.build_struct_gep(heap_ty, slot, 0, "heap.ptr").map_err(llvm_err)?;
+                self.builder.build_store(ptr_field, ptr).map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_load(heap_ty, slot, "").map_err(llvm_err)?));
             }
             Builtin::ListNew | Builtin::MapNew => {
                 return Ok(Some(self.string_ty.const_zero().into()));
+            }
+            // `List<T>.new_in(alloc)` and `Map<K, V>.new_in(alloc)`: the empty container with the allocator value.
+            Builtin::ListNewIn | Builtin::MapNewIn => {
+                let alloc_ty = args[0].ty.clone();
+                let alloc_value = self.expr_mode(&args[0], Mode::Move)?;
+                let global = self.is_global_allocator(&alloc_ty);
+                let alloc =
+                    if global { burdin_tir::Alloc::Global } else { burdin_tir::Alloc::Value(Box::new(alloc_ty)) };
+                let seq_ty = self.seq_ty(&alloc);
+                let agg = seq_ty.const_zero();
+                if global {
+                    let _ = alloc_value;
+                    return Ok(Some(agg.into()));
+                }
+                let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
+                let agg =
+                    self.builder.build_insert_value(agg, alloc_value, 3, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(agg.into()));
+            }
+            // The `Global` allocator's primitives. The site is the call's span, which points into the allocator's
+            // implementation, so a leak of a container's buffer names the code that allocated it.
+            Builtin::RawAlloc => {
+                let size = self.expr_mode(&args[0], Mode::Use)?;
+                let size = self.need_int(size, &Ty::Int(burdin_tir::IntTy::Usize));
+                let _align = self.expr_mode(&args[1], Mode::Use)?;
+                let p = self.global_alloc(size, Some(span))?;
+                return Ok(Some(p.into()));
+            }
+            Builtin::RawRealloc => {
+                let p = self.expr_mode(&args[0], Mode::Use)?;
+                let p = self.need(p, &args[0].ty).into_pointer_value();
+                let _old = self.expr_mode(&args[1], Mode::Use)?;
+                let new_size = self.expr_mode(&args[2], Mode::Use)?;
+                let new_size = self.need_int(new_size, &Ty::Int(burdin_tir::IntTy::Usize));
+                let _align = self.expr_mode(&args[3], Mode::Use)?;
+                let p = self.global_realloc(p, new_size, Some(span))?;
+                return Ok(Some(p.into()));
+            }
+            Builtin::RawDealloc => {
+                let p = self.expr_mode(&args[0], Mode::Use)?;
+                let p = self.need(p, &args[0].ty).into_pointer_value();
+                let _size = self.expr_mode(&args[1], Mode::Use)?;
+                let _align = self.expr_mode(&args[2], Mode::Use)?;
+                self.global_dealloc(p)?;
+                return Ok(None);
+            }
+            // `Shared.new(value)`: a cell `{ count: usize, value }`.
+            Builtin::SharedNew => {
+                let value = self.expr_mode(&args[0], Mode::Move)?;
+                let inner = args[0].ty.clone();
+                let inner_size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0);
+                let size = self.usize_ty.const_int(8 + inner_size.max(1), false);
+                let p = self.global_alloc(size, Some(span))?;
+                self.builder.build_store(p, self.usize_ty.const_int(1, false)).map_err(llvm_err)?;
+                if self.llvm_ty(&inner).is_some() {
+                    let eight = self.usize_ty.const_int(8, false);
+                    let value_at = self.offset_ptr(p, eight)?;
+                    let v = self.need(value, &inner);
+                    self.builder.build_store(value_at, v).map_err(llvm_err)?;
+                }
+                return Ok(Some(p.into()));
             }
             Builtin::Swap => {
                 let ty = args[0].ty.clone();
@@ -325,6 +422,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let p = self.builder.build_load(ptr_ty, storage, "cstring.ptr").map_err(llvm_err)?;
             return Ok(Some(p));
         }
+        if m == Method::SharedGet {
+            let p = self.shared_pointer(&args[0])?;
+            let eight = self.usize_ty.const_int(8, false);
+            return Ok(Some(self.offset_ptr(p, eight)?.into()));
+        }
+        if m == Method::SharedStrongCount {
+            let p = self.shared_pointer(&args[0])?;
+            let count = self.builder.build_load(self.usize_ty, p, "shared.count").map_err(llvm_err)?;
+            return Ok(Some(count));
+        }
         if m == Method::Clone {
             let recv_ty = args[0].ty.clone();
             // A place is cloned from its storage. A reference dereference is a place even when the reference
@@ -448,7 +555,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }
-                Ty::List(_) | Ty::Map(..) => {
+                Ty::List(_, _) | Ty::Map(..) => {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }

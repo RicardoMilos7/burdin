@@ -1,0 +1,15 @@
+//@ run
+//> 9
+//> 11
+//> true
+
+// `Heap.new_in` allocates the pointee through the allocator value, which the heap owns
+// (`spec/allocators.md`, AL5).
+
+fn main() {
+    let mut h = Heap.new_in(Arena.new(), 9)
+    println((*h).to_string())
+    *h = 11
+    println((*h).to_string())
+    println((*h == 11).to_string())
+}

@@ -1,0 +1,13 @@
+//@ run
+//> 5
+//> true
+
+// Moving the pointee out of an allocator-aware `Heap` frees the allocation through the heap's allocator, once
+// (`spec/allocators.md`, AL5; `spec/memory-rules.md`, MV6).
+
+fn main() {
+    let h = Heap.new_in(Arena.new(), 5)
+    let value = *h
+    println(value.to_string())
+    println((value == 5).to_string())
+}

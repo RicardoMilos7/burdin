@@ -1,0 +1,35 @@
+//@ run
+//> 3
+//> 3
+//> 3
+
+// A container with a stored allocator is cloned when the allocator is `Clone`: the clone allocates through a
+// clone of the allocator value and frees through it (`spec/allocators.md`, AL7).
+
+struct Pool derives (Clone) { }
+
+Pool: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe { __dealloc(ptr, size, align) }
+    }
+}
+
+fn main() {
+    let mut xs = List<i32>.new_in(Pool { })
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    println(xs.len().to_string())
+    let ys = xs.clone()
+    println(ys.len().to_string())
+    let zs = ys.clone()
+    println(zs.len().to_string())
+}

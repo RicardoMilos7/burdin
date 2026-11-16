@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A const parameter takes a value rather than a type, so it takes no default (E0271, `spec/allocators.md` AL5).
+
+struct Grid<const N: usize = 4> { //~ E0271
+    cells: [i32; N]
+}
+
+fn main() { }

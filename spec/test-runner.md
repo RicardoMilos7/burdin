@@ -51,6 +51,10 @@ declared, so one bad attribute does not cascade into follow-on diagnostics.
 ## Execution
 
 - Each test runs in its own process, so a panic or abort fails only that test.
+- A `burdin test` build allocates through the checking allocator: a test that returns success but leaves
+  allocations live is reported with `test leak: <n> allocation(s) leaked, <bytes> byte(s)` and one
+  `allocated at <path>:<line>:<column>` line per block, and fails. A test that already failed keeps its own
+  verdict. `spec/allocators.md` AL9.
 - One test binary is built per selected package. It contains that package's tests in declaration order; the index on
   the command line selects one. Only the selected package's tests are declared and checked, so a dependency's tests
   never leak into the entry package's build.

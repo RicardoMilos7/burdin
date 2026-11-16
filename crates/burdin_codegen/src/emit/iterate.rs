@@ -40,29 +40,34 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .into_struct_value();
                 Ok(Some(agg.into()))
             }
-            (Ty::List(_), _) => {
-                // `into_iter` takes the list, so the collection is moved and its drop flag cleared; `iter` only
-                // borrows it.
+            (Ty::List(_, alloc), _) | (Ty::Map(_, _, alloc), _) => {
+                // `into_iter` takes the collection, so the collection (and a stored allocator) is moved and its
+                // drop flag cleared; `iter` only borrows it.
+                let alloc = alloc.clone();
                 let v = self.expr_mode(recv, if into { Mode::Move } else { Mode::Use })?;
+                let st = self.llvm_ty(&recv_ty).expect("a container has a type").into_struct_type();
                 let s = self.need(v, &recv_ty).into_struct_value();
                 let base = self.builder.build_extract_value(s, 0, "iter.ptr").map_err(llvm_err)?;
                 let len = self.builder.build_extract_value(s, 1, "iter.len").map_err(llvm_err)?;
                 if into {
                     let cap = self.builder.build_extract_value(s, 2, "iter.cap").map_err(llvm_err)?;
                     let zero = self.usize_ty.const_zero().into();
-                    Ok(Some(self.seq_value(&[(0, base), (1, len), (2, cap), (3, zero)])?.into()))
+                    let mut fields = vec![(0, base), (1, len), (2, cap), (3, zero)];
+                    if alloc.allocator_ty().is_some() {
+                        let a = self.builder.build_extract_value(s, 3, "iter.alloc").map_err(llvm_err)?;
+                        fields.push((4, a));
+                    }
+                    Ok(Some(self.seq_value(&alloc, &fields)?.into()))
+                } else if matches!(recv_ty, Ty::Map(..)) {
+                    let cap = self.builder.build_extract_value(s, 2, "iter.cap").map_err(llvm_err)?;
+                    let zero = self.usize_ty.const_zero().into();
+                    Ok(Some(
+                        self.seq_value(&burdin_tir::Alloc::Global, &[(0, base), (1, len), (2, cap), (3, zero)])?.into(),
+                    ))
                 } else {
+                    let _ = st;
                     Ok(Some(self.make_str(base, len)?.into()))
                 }
-            }
-            (Ty::Map(..), _) => {
-                let v = self.expr_mode(recv, if into { Mode::Move } else { Mode::Use })?;
-                let s = self.need(v, &recv_ty).into_struct_value();
-                let base = self.builder.build_extract_value(s, 0, "iter.ptr").map_err(llvm_err)?;
-                let len = self.builder.build_extract_value(s, 1, "iter.len").map_err(llvm_err)?;
-                let cap = self.builder.build_extract_value(s, 2, "iter.cap").map_err(llvm_err)?;
-                let zero = self.usize_ty.const_zero().into();
-                Ok(Some(self.seq_value(&[(0, base), (1, len), (2, cap), (3, zero)])?.into()))
             }
             (Ty::Range(elem, _), _) => {
                 let v = self.expr_mode(recv, Mode::Use)?;
@@ -85,8 +90,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// A `{ ptr, len, cap, index }` value of the list and map iterators.
-    fn seq_value(&mut self, fields: &[(u32, BasicValueEnum<'ctx>)]) -> GenResult<StructValue<'ctx>> {
-        let mut agg = undef(self.iter_seq_ty().into()).into_struct_value();
+    fn seq_value(
+        &mut self,
+        alloc: &burdin_tir::Alloc,
+        fields: &[(u32, BasicValueEnum<'ctx>)],
+    ) -> GenResult<StructValue<'ctx>> {
+        let mut agg = undef(self.iter_seq_ty_for(alloc).into()).into_struct_value();
         for (i, v) in fields {
             agg = self.builder.build_insert_value(agg, *v, *i, "").map_err(llvm_err)?.into_struct_value();
         }
@@ -108,9 +117,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.next_slice(&args[0], &elem, &item, ty)
             }
             Ty::Chars => self.next_chars(&args[0], ty),
-            Ty::ListIntoIter(elem) => {
-                let elem = (**elem).clone();
-                self.next_list_into(&args[0], &elem, ty)
+            Ty::ListIntoIter(elem, alloc) => {
+                let (elem, alloc) = ((**elem).clone(), alloc.clone());
+                self.next_list_into(&args[0], &elem, &alloc, ty)
             }
             Ty::ArrayIntoIter(elem, n) => {
                 let elem = (**elem).clone();
@@ -118,11 +127,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             Ty::MapIter(k, v) => {
                 let (k, v) = ((**k).clone(), (**v).clone());
-                self.next_map(&args[0], &k, &v, &item, ty, false)
+                self.next_map(&args[0], &k, &v, &item, ty, false, &burdin_tir::Alloc::Global)
             }
-            Ty::MapIntoIter(k, v) => {
-                let (k, v) = ((**k).clone(), (**v).clone());
-                self.next_map(&args[0], &k, &v, &item, ty, true)
+            Ty::MapIntoIter(k, v, alloc) => {
+                let (k, v, alloc) = ((**k).clone(), (**v).clone(), alloc.clone());
+                self.next_map(&args[0], &k, &v, &item, ty, true, &alloc)
             }
             Ty::RangeIter(elem, inclusive) => {
                 let elem = (**elem).clone();
@@ -342,13 +351,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         &mut self,
         recv: &'a burdin_tir::Expr,
         elem: &Ty,
+        alloc: &burdin_tir::Alloc,
         ty: &Ty,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let Some(slot) = self.place_ptr(recv)? else {
             self.expr_mode(recv, Mode::Use)?;
             return Ok(None);
         };
-        let seq_ty = self.iter_seq_ty();
+        let seq_ty = self.iter_seq_ty_for(alloc);
         let data_field = self.builder.build_struct_gep(seq_ty, slot, 0, "iter.ptr").map_err(llvm_err)?;
         let base = self.builder.build_load(self.ptr_ty(), data_field, "").map_err(llvm_err)?.into_pointer_value();
         let len_field = self.builder.build_struct_gep(seq_ty, slot, 1, "iter.len").map_err(llvm_err)?;
@@ -441,6 +451,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// `MapIter` and `MapIntoIter`: scans for the next live slot. The borrowing form yields `(&K, &V)`; the
     /// owning form moves the key and value out and zeroes the slot's hash word.
+    #[allow(clippy::too_many_arguments)]
     fn next_map(
         &mut self,
         recv: &'a burdin_tir::Expr,
@@ -449,12 +460,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         item: &Ty,
         ty: &Ty,
         owning: bool,
+        alloc: &burdin_tir::Alloc,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let Some(slot) = self.place_ptr(recv)? else {
             self.expr_mode(recv, Mode::Use)?;
             return Ok(None);
         };
-        let seq_ty = self.iter_seq_ty();
+        let seq_ty = self.iter_seq_ty_for(alloc);
         let data_field = self.builder.build_struct_gep(seq_ty, slot, 0, "iter.ptr").map_err(llvm_err)?;
         let base = self.builder.build_load(self.ptr_ty(), data_field, "").map_err(llvm_err)?.into_pointer_value();
         let cap_field = self.builder.build_struct_gep(seq_ty, slot, 2, "iter.cap").map_err(llvm_err)?;

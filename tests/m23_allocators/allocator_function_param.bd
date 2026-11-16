@@ -1,0 +1,31 @@
+//@ run
+//> 42
+//> 42
+//> 41
+
+// An allocator parameter is an ordinary generic parameter bound by `Allocator`, monomorphized per type
+// (`spec/allocators.md`, AL4). `impl Allocator` names it without a visible type parameter.
+
+fn sum_with(own alloc: impl Allocator): i32 {
+    let mut xs = List<i32>.new_in(alloc)
+    xs.push(10)
+    xs.push(32)
+    let mut total = 0
+    for x in xs.iter() {
+        total = total + x
+    }
+    total
+}
+
+fn build<A: Allocator>(own alloc: A): List<i32, A> {
+    let mut xs = List<i32>.new_in(alloc)
+    xs.push(41)
+    xs
+}
+
+fn main() {
+    println(sum_with(Global { }).to_string())
+    println(sum_with(Arena.new()).to_string())
+    let xs = build(Arena.new())
+    println(xs[0].to_string())
+}

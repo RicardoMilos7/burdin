@@ -3,6 +3,7 @@
 use super::{FnCx, PathTy, error_expr, mk};
 use crate::builtins::{builtin, builtin_sig, method};
 use crate::globals::{Callee, Global, adt_key};
+use crate::types::check_storable;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{Place, is_place_expr, place_mentions, place_root, places_overlap};
@@ -761,7 +762,7 @@ impl FnCx<'_> {
                     self.diags.error(Code::ARG_COUNT, span, "`env.args` takes no arguments");
                     return self.args_then_error(args, span);
                 }
-                let ty = Ty::List(Box::new(Ty::String));
+                let ty = Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global);
                 return mk(tir::ExprKind::Builtin(Builtin::EnvArgs, Vec::new()), ty, span);
             }
             if id.name == "process" && name.name == "exit" {
@@ -774,16 +775,22 @@ impl FnCx<'_> {
                 return mk(tir::ExprKind::Builtin(Builtin::ProcessExit, checked), sig.ret, span);
             }
         }
-        // `Heap.new(value)`: the only associated function of a built-in type that is not written as a type path,
-        // because `Heap` alone is not a type.
+        // `Heap.new(value)` and `Heap.new_in(alloc, value)`: the associated functions of a built-in type that is
+        // not written as a type path, because `Heap` alone is not a type.
         if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
             && type_args.is_empty()
-            && id.name == "Heap"
-            && name.name == "new"
-            && self.lookup("Heap").is_none()
-            && self.globals.value(self.module, "Heap").is_none()
+            && self.lookup(&id.name).is_none()
+            && self.globals.value(self.module, &id.name).is_none()
         {
-            return self.heap_new(args, expect, span);
+            if id.name == "Heap" && name.name == "new" {
+                return self.heap_new(args, expect, span);
+            }
+            if id.name == "Heap" && name.name == "new_in" {
+                return self.heap_new_in(args, span);
+            }
+            if id.name == "Shared" && name.name == "new" {
+                return self.shared_new(args, span);
+            }
         }
         // `CPtr.null()`, typed by the expected type.
         if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
@@ -932,7 +939,7 @@ impl FnCx<'_> {
             }
         }
         match (&m, &recv.ty) {
-            (Method::ListSort, Ty::List(elem)) => {
+            (Method::ListSort, Ty::List(elem, _)) => {
                 if !self.globals.has_ord_in(elem, &self.bounds) {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
@@ -941,7 +948,7 @@ impl FnCx<'_> {
                     );
                 }
             }
-            (Method::ListContains, Ty::List(elem)) => {
+            (Method::ListContains, Ty::List(elem, _)) => {
                 if !self.globals.has_eq_in(elem, &self.bounds) {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
@@ -950,7 +957,7 @@ impl FnCx<'_> {
                     );
                 }
             }
-            (Method::MapGet | Method::MapRemove | Method::MapContainsKey | Method::MapInsert, Ty::Map(k, _))
+            (Method::MapGet | Method::MapRemove | Method::MapContainsKey | Method::MapInsert, Ty::Map(k, _, _))
                 if !self.globals.has_eq_in(k, &self.bounds) =>
             {
                 self.diags.error(
@@ -1106,8 +1113,22 @@ impl FnCx<'_> {
     /// `Heap.new(value)`.
     pub(super) fn heap_new(&mut self, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
         self.reject_named_args("Heap.new", args);
+        if let Some(Ty::Heap(_, alloc)) = expect
+            && !alloc.is_global()
+        {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            let heap_ty = expect.map(|t| t.to_string()).unwrap_or_default();
+            self.diags.error(
+                Code::MISSING_ALLOCATOR,
+                span,
+                format!("`Heap.new` stores no allocator; a `{heap_ty}` is made with `Heap.new_in(alloc, value)`"),
+            );
+            return error_expr(span);
+        }
         let inner = match expect {
-            Some(Ty::Heap(t)) => Some((**t).clone()),
+            Some(Ty::Heap(t, _)) => Some((**t).clone()),
             _ => None,
         };
         if args.len() != 1 {
@@ -1122,8 +1143,150 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let value = self.expr(&args[0].expr, inner.as_ref());
-        let ty = Ty::Heap(Box::new(value.ty.clone()));
+        let ty = Ty::Heap(Box::new(value.ty.clone()), burdin_tir::Alloc::Global);
         mk(tir::ExprKind::Builtin(Builtin::HeapNew, vec![value]), ty, span)
+    }
+
+    /// Whether an expression may be stored as a container's allocator: it is not a view and its type implements
+    /// `Allocator` (`spec/allocators.md`, AL3).
+    fn allocator_value_ok(&mut self, ty: &Ty, span: Span) -> bool {
+        if ty.is_second_class() {
+            self.diags.error(
+                Code::SECOND_CLASS_POSITION,
+                span,
+                format!("`{ty}` is a view of other storage, so it cannot be stored as an allocator"),
+            );
+            return false;
+        }
+        if !self.globals.is_allocator(ty, &self.bounds) {
+            self.diags.error(Code::NOT_AN_ALLOCATOR, span, format!("`{ty}` does not implement `Allocator`"));
+            return false;
+        }
+        true
+    }
+
+    /// The single allocator argument of `List.new_in` or `Map.new_in`, checked and moved into the container.
+    fn new_in_allocator(&mut self, what: &str, args: &[ast::Arg], span: Span) -> Option<tir::Expr> {
+        self.reject_named_args(what, args);
+        if args.len() != 1 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{what}` takes 1 argument, but {} were given", args.len()),
+            );
+            return None;
+        }
+        let value = self.expr(&args[0].expr, None);
+        if value.ty == Ty::Error {
+            return None;
+        }
+        if !self.allocator_value_ok(&value.ty, value.span) {
+            return None;
+        }
+        Some(value)
+    }
+
+    /// `List<T>.new_in(alloc)`: an empty list whose buffer uses the allocator value.
+    pub(super) fn list_new_in(
+        &mut self,
+        elem: &Ty,
+        written: &burdin_tir::Alloc,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        let Some(value) = self.new_in_allocator("List.new_in", args, span) else {
+            return error_expr(span);
+        };
+        let alloc = self.globals.alloc_of(value.ty.clone());
+        if let burdin_tir::Alloc::Value(want) = written
+            && let burdin_tir::Alloc::Value(got) = &alloc
+            && want != got
+        {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                value.span,
+                format!("this list stores a `{want}` allocator, but the argument is `{got}`"),
+            );
+            return error_expr(span);
+        }
+        let ty = Ty::List(Box::new(elem.clone()), alloc);
+        mk(tir::ExprKind::Builtin(Builtin::ListNewIn, vec![value]), ty, span)
+    }
+
+    /// `Map<K, V>.new_in(alloc)`.
+    pub(super) fn map_new_in(
+        &mut self,
+        key: &Ty,
+        value_ty: &Ty,
+        written: &burdin_tir::Alloc,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        let Some(value) = self.new_in_allocator("Map.new_in", args, span) else {
+            return error_expr(span);
+        };
+        let alloc = self.globals.alloc_of(value.ty.clone());
+        if let burdin_tir::Alloc::Value(want) = written
+            && let burdin_tir::Alloc::Value(got) = &alloc
+            && want != got
+        {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                value.span,
+                format!("this map stores a `{want}` allocator, but the argument is `{got}`"),
+            );
+            return error_expr(span);
+        }
+        let ty = Ty::Map(Box::new(key.clone()), Box::new(value_ty.clone()), alloc);
+        mk(tir::ExprKind::Builtin(Builtin::MapNewIn, vec![value]), ty, span)
+    }
+
+    /// `Heap.new_in(alloc, value)`: one heap allocation through the allocator value.
+    pub(super) fn heap_new_in(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("Heap.new_in", args);
+        if args.len() != 2 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`Heap.new_in` takes 2 arguments, but {} were given", args.len()),
+            );
+            return error_expr(span);
+        }
+        let alloc_value = self.expr(&args[0].expr, None);
+        if !self.allocator_value_ok(&alloc_value.ty, alloc_value.span) {
+            return error_expr(span);
+        }
+        let alloc = self.globals.alloc_of(alloc_value.ty.clone());
+        let value = self.expr(&args[1].expr, None);
+        check_storable(&value.ty, value.span, "a `Heap` element", self.diags);
+        let ty = Ty::Heap(Box::new(value.ty.clone()), alloc);
+        mk(tir::ExprKind::Builtin(Builtin::HeapNewIn, vec![alloc_value, value]), ty, span)
+    }
+
+    /// `Shared.new(value)`: a reference-counted cell holding `value` (`spec/allocators.md`, AL8).
+    pub(super) fn shared_new(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("Shared.new", args);
+        if args.len() != 1 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`Shared.new` takes 1 argument, but {} were given", args.len()),
+            );
+            return error_expr(span);
+        }
+        let value = self.expr(&args[0].expr, None);
+        check_storable(&value.ty, value.span, "a `Shared` value", self.diags);
+        let ty = Ty::Shared(Box::new(value.ty.clone()));
+        mk(tir::ExprKind::Builtin(Builtin::SharedNew, vec![value]), ty, span)
     }
 
     /// `Type.function(...)`, `Enum.Variant(...)`, and the built-in types' associated functions.
@@ -1163,24 +1326,49 @@ impl FnCx<'_> {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`CPtr` has no function `{}`", name.name));
             return self.args_then_error(args, span);
         }
-        // `List<T>.new()` and `Map<K, V>.new()`.
-        if let Ty::List(_) = ty
-            && name.name == "new"
-        {
-            if !args.is_empty() {
-                self.diags.error(Code::ARG_COUNT, span, "`List.new` takes no arguments");
-                return self.args_then_error(args, span);
+        // `List<T>.new()`, `List<T>.new_in(alloc)`, and the same for a map.
+        if let Ty::List(elem, written_alloc) = ty {
+            if name.name == "new" {
+                if !args.is_empty() {
+                    self.diags.error(Code::ARG_COUNT, span, "`List.new` takes no arguments");
+                    return self.args_then_error(args, span);
+                }
+                if !written_alloc.is_global() {
+                    self.diags.error(
+                        Code::MISSING_ALLOCATOR,
+                        span,
+                        format!("a `{ty}` stores an allocator, so it is made with `List.new_in(alloc)`"),
+                    );
+                    return error_expr(span);
+                }
+                return mk(tir::ExprKind::Builtin(Builtin::ListNew, Vec::new()), ty.clone(), span);
             }
-            return mk(tir::ExprKind::Builtin(Builtin::ListNew, Vec::new()), ty.clone(), span);
+            if name.name == "new_in" {
+                let elem = (**elem).clone();
+                let written = written_alloc.clone();
+                return self.list_new_in(&elem, &written, args, span);
+            }
         }
-        if let Ty::Map(..) = ty
-            && name.name == "new"
-        {
-            if !args.is_empty() {
-                self.diags.error(Code::ARG_COUNT, span, "`Map.new` takes no arguments");
-                return self.args_then_error(args, span);
+        if let Ty::Map(key, value, written_alloc) = ty {
+            if name.name == "new" {
+                if !args.is_empty() {
+                    self.diags.error(Code::ARG_COUNT, span, "`Map.new` takes no arguments");
+                    return self.args_then_error(args, span);
+                }
+                if !written_alloc.is_global() {
+                    self.diags.error(
+                        Code::MISSING_ALLOCATOR,
+                        span,
+                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)`"),
+                    );
+                    return error_expr(span);
+                }
+                return mk(tir::ExprKind::Builtin(Builtin::MapNew, Vec::new()), ty.clone(), span);
             }
-            return mk(tir::ExprKind::Builtin(Builtin::MapNew, Vec::new()), ty.clone(), span);
+            if name.name == "new_in" {
+                let (key, value, written) = ((**key).clone(), (**value).clone(), written_alloc.clone());
+                return self.map_new_in(&key, &value, &written, args, span);
+            }
         }
         // `i32.parse(s)`: the number in the text, or an error.
         if let Ty::Int(i) = ty {

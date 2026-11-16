@@ -239,6 +239,15 @@ impl Code {
     /// A build script's generated modules are invalid: a path that is not a module name, a module that
     /// conflicts with a source module, or an output directory that cannot be read (BS4).
     pub const BUILD_OUTPUT: Code = Code("E0262");
+    /// A type argument of an allocator-aware container that does not implement `Allocator`
+    /// (`spec/allocators.md`, AL3).
+    pub const NOT_AN_ALLOCATOR: Code = Code("E0270");
+    /// An invalid default type parameter: one on a parameter that is not trailing, or on a declaration that does
+    /// not take defaults (`spec/allocators.md`, AL5).
+    pub const INVALID_TYPE_DEFAULT: Code = Code("E0271");
+    /// A container with a stored allocator created with `new`, which has no allocator value to store; the
+    /// program must call `new_in` (`spec/allocators.md`, AL4).
+    pub const MISSING_ALLOCATOR: Code = Code("E0272");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

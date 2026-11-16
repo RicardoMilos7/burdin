@@ -46,7 +46,7 @@ impl FnCx<'_> {
             return Some(self.iterator_sum(recv, &item, span));
         }
         // The eager `List` methods are generic functions in `std`; the receiver is their first argument.
-        if let Ty::List(_) = &recv_ty
+        if let Ty::List(_, _) = &recv_ty
             && let Some(g) = self.globals.eager_list_fn(&name.name)
         {
             return Some(self.generic_call_with_receiver(g, recv, &name.name, args, span));

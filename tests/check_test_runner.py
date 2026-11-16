@@ -150,6 +150,17 @@ with harness.temporary_dir("burdin-runner-") as work:
     expect_contains("typed failure", "2 != 3", out)
     expect_contains("typed failure", "FAIL eq fails", out)
 
+    # --- leak detection -------------------------------------------------------------
+
+    # A `burdin test` build allocates through the checking allocator. A test that leaves an allocation live fails,
+    # and the report names the allocation site the compiler recorded (`spec/allocators.md`, AL9).
+    run_driver(burdin, "test", str(fixtures / "leaks"), "-j", "1")
+    expect_status("leak detection", 1)
+    expect_contains("leak detection", "test leak: 1 allocation(s) leaked, 16 byte(s)", out)
+    expect_contains("leak detection", "FAIL leaks", out)
+    expect_contains("leak detection", f"allocated at {fixtures / 'leaks' / 'src' / 'main.bd'}:9:18", out)
+    expect_contains("leak detection", "test result: 1 passed, 1 failed", out)
+
     # --- isolation and cleanup ------------------------------------------------------
 
     # The driver's temporary directories (the test binaries and each test's working directory) go under

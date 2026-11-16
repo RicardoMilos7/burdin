@@ -1,0 +1,30 @@
+//@ run
+//> 0
+//> false
+//> true
+//> true
+//> 0
+//> false
+//> true
+
+// `Arena.reset` frees every block and leaves the arena usable; `bytes_allocated` counts what it handed out
+// (`spec/allocators.md`, AL6).
+
+fn main() {
+    let mut a = Arena.new()
+    println(a.bytes_allocated().to_string())
+    unsafe {
+        let p = a.allocate(100, 8)
+        println(p.is_null().to_string())
+        let q = a.allocate(8, 8)
+        println((q - p >= 100).to_string())
+    }
+    println((a.bytes_allocated() >= 108).to_string())
+    a.reset()
+    println(a.bytes_allocated().to_string())
+    unsafe {
+        let p = a.allocate(16, 8)
+        println(p.is_null().to_string())
+    }
+    println((a.bytes_allocated() >= 16).to_string())
+}

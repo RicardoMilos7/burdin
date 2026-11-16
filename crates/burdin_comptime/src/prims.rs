@@ -5,7 +5,7 @@
 use crate::interp::{Fault, Interp, Mode, R, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
-use burdin_tir::{self as tir, BinOp, Builtin, Expr, ExprKind as K, FloatTy, IntTy, Method, Program, Ty, UnOp};
+use burdin_tir::{self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatTy, IntTy, Method, Program, Ty, UnOp};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -183,6 +183,14 @@ pub(crate) fn layout(p: &Program, ty: &Ty) -> (u64, u64) {
     storage(p, ty).unwrap_or((0, 1))
 }
 
+/// A container's layout with its allocator value appended, when it stores one.
+fn container(p: &Program, base: (u64, u64), alloc: &Alloc) -> (u64, u64) {
+    match alloc.allocator_ty() {
+        Some(t) => product(&[base, member(p, t)]),
+        None => base,
+    }
+}
+
 /// The size and alignment of a type's runtime value, or `None` for a type without one.
 fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
     Some(match ty {
@@ -196,8 +204,12 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::Float(FloatTy::F32) => (4, 4),
         Ty::Float(FloatTy::F64) => (8, 8),
         Ty::Str | Ty::Chars | Ty::Slice(_) | Ty::Any(_) => (16, 8),
-        Ty::Fn { .. } | Ty::String | Ty::List(_) | Ty::Map(..) => (24, 8),
-        Ty::CString | Ty::CPtr(_) | Ty::Heap(_) | Ty::Ref { .. } => (8, 8),
+        Ty::Fn { .. } | Ty::String => (24, 8),
+        // A container with a stored allocator carries its value after its buffer words (`spec/allocators.md`).
+        Ty::List(_, a) => container(p, (24, 8), a),
+        Ty::Map(_, _, a) => container(p, (24, 8), a),
+        Ty::Heap(_, a) => container(p, (8, 8), a),
+        Ty::CString | Ty::CPtr(_) | Ty::Ref { .. } | Ty::Shared(_) => (8, 8),
         Ty::Array(elem, n) => {
             let (size, align) = storage(p, elem)?;
             (size * n, align)
@@ -211,7 +223,8 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::Struct(a) => product(&p.structs[a.id].fields.iter().map(|f| member(p, &f.ty)).collect::<Vec<_>>()),
         Ty::Range(inner, _) => product(&[member(p, inner), member(p, inner)]),
         Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
-        Ty::ListIntoIter(_) | Ty::MapIter(..) | Ty::MapIntoIter(..) => (32, 8),
+        Ty::ListIntoIter(_, a) | Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
+        Ty::MapIter(..) => (32, 8),
         Ty::ArrayIntoIter(inner, n) => product(&[member(p, &Ty::Array(inner.clone(), *n)), (8, 8)]),
         Ty::Enum(a) => {
             let mut size = 0;
@@ -260,7 +273,7 @@ pub(crate) fn zero_value(p: &Program, ty: &Ty) -> Value {
         Ty::Float(_) => Value::Float(0.0),
         Ty::Str => Value::str(""),
         Ty::String => Value::String(Vec::new()),
-        Ty::List(_) => Value::List(Vec::new()),
+        Ty::List(_, _) => Value::List(Vec::new()),
         Ty::Map(..) => Value::Map(Vec::new()),
         Ty::Tuple(ts) => Value::Tuple(ts.iter().map(|t| zero_value(p, t)).collect()),
         Ty::Struct(a) => Value::Tuple(p.structs[a.id].fields.iter().map(|f| zero_value(p, &f.ty)).collect()),
@@ -444,6 +457,17 @@ impl<'p> Interp<'p, '_> {
                 Value::String(text.into_bytes())
             }
             Builtin::HeapNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
+            Builtin::SharedNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
+            // Allocation is a run-time operation: the interpreter models containers abstractly and has no
+            // allocator (`spec/allocators.md`, AL10).
+            Builtin::RawAlloc
+            | Builtin::RawRealloc
+            | Builtin::RawDealloc
+            | Builtin::ListNewIn
+            | Builtin::MapNewIn
+            | Builtin::HeapNewIn => {
+                return Err(impure("allocating memory with an explicit allocator", span));
+            }
             Builtin::ListNew => Value::List(Vec::new()),
             Builtin::MapNew => Value::Map(Vec::new()),
             Builtin::IntParse(int_ty) => {
@@ -614,7 +638,7 @@ impl<'p> Interp<'p, '_> {
                 let v = self.eval(&args[2], Mode::Move)?;
                 self.charge(1, span)?;
                 let (kt, vt) = match &recv.ty {
-                    Ty::Map(k, v) => ((**k).clone(), (**v).clone()),
+                    Ty::Map(k, v, _) => ((**k).clone(), (**v).clone()),
                     _ => (Ty::Unit, Ty::Unit),
                 };
                 let map = map_mut(self.place_mut(&place, span)?, span)?;
@@ -650,7 +674,7 @@ impl<'p> Interp<'p, '_> {
                 match map.iter().position(|(key, _)| value_eq(key, &k)) {
                     Some(i) => {
                         let (key, v) = map.remove(i);
-                        if let Ty::Map(kt, _) = &recv.ty {
+                        if let Ty::Map(kt, _, _) = &recv.ty {
                             let kt = (**kt).clone();
                             self.drop_value(key, &kt, span)?;
                         }
@@ -714,6 +738,14 @@ impl<'p> Interp<'p, '_> {
             }
             Method::Iter | Method::IntoIter => self.iter_value(recv, m == Method::IntoIter, span)?,
             Method::IterNext => self.iter_next(recv, ty, span)?,
+            Method::SharedGet => {
+                let inner = self.peek(recv, |v| match v {
+                    Value::Heap(b) => (**b).clone(),
+                    other => other.clone(),
+                })?;
+                Value::Borrow(Box::new(inner))
+            }
+            Method::SharedStrongCount => Value::Int(1),
         })
     }
 
@@ -721,7 +753,7 @@ impl<'p> Interp<'p, '_> {
         let v = self.eval(recv, if into { Mode::Move } else { Mode::Use })?.deref();
         Ok(match (&recv.ty, v) {
             (Ty::Slice(_) | Ty::Chars, v) => v,
-            (Ty::Array(..) | Ty::List(_), Value::Array(xs) | Value::List(xs)) => {
+            (Ty::Array(..) | Ty::List(_, _), Value::Array(xs) | Value::List(xs)) => {
                 if into {
                     Value::Items(VecDeque::from(xs))
                 } else {
@@ -1073,6 +1105,8 @@ mod tests {
             any_vtables: vec![],
             any_type_ids: vec![],
             build_inputs: vec![],
+            allocator_fns: vec![],
+            global_alloc_ty: None,
         };
         let h = hash(&p, &Value::str("a"), &Ty::Str, FNV_OFFSET);
         assert_eq!(h, (FNV_OFFSET ^ 0x61).wrapping_mul(FNV_PRIME));
