@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A default is checked in the declaration's context: the function's parameters are not in scope, so a
+// default cannot name one (spec/arguments.md, AG2).
+
+fn f(a: i32, b: i32 = a): i32 { b } //~ E0002
+
+fn main() { }

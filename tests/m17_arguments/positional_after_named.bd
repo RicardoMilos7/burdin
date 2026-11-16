@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// Once an argument is named, every later one must be named too; otherwise the positional ones would fill
+// parameters out of the reader's sight (spec/arguments.md, AG4).
+
+fn f(a: i32, b: i32): i32 { a + b }
+
+fn main() {
+    let _ = f(a: 1, 2) //~ E0214
+}

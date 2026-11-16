@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A closure type has no parameter names, only types, so its call takes no named arguments
+// (spec/arguments.md, AG4).
+
+fn main() {
+    let f = |x: i32|: i32 { x }
+    let _ = f(x: 1) //~ E0214
+}

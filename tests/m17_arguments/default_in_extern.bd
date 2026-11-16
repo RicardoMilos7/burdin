@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A C function always receives every parameter, so an `extern` declaration takes no default
+// (spec/arguments.md, AG1).
+
+extern "C" { fn abs(x: i32 = 1): i32 } //~ E0213
+
+fn main() { }

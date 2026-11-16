@@ -99,7 +99,7 @@ pub(crate) fn builtin_type(name: &str) -> Option<Ty> {
 /// A parameter the callee takes ownership of (the element of `List.push`, the key and value of
 /// `Map.insert`).
 fn value_param(ty: Ty) -> ParamSig {
-    ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true }
+    ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true, name: None, default: None }
 }
 
 /// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the

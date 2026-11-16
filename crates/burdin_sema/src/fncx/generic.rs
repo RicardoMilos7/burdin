@@ -56,27 +56,37 @@ impl FnCx<'_> {
             );
         }
         let pattern = &globals.sigs[info.identity.0];
-        if pattern.params.len() != args.len() {
-            let _ = self.args(&id.name, &pattern.params, args, None, span);
+        // Named arguments are matched to parameters before inference (`spec/arguments.md`, AG4). A parameter
+        // filled by its default takes no argument and contributes nothing to inference; a default never
+        // depends on a type parameter (AG3).
+        let Some(slots) = self.arg_slots(&id.name, &pattern.params, args, span) else {
+            // The name or count error is already reported; check the expressions for their own errors.
+            for a in args {
+                self.expr(&a.expr, None);
+            }
             return error_expr(span);
-        }
-        // Arguments are checked in order: what an earlier argument binds (`max_of(3, 9)` gives `T = i32`)
-        // specializes the hint for the later ones, which is what lets a closure see `Fn(&i32): U` instead of
-        // `Fn(&T): U`.
-        let mut checked = Vec::new();
+        };
+        // Arguments are checked in parameter order: what an earlier argument binds (`max_of(3, 9)` gives
+        // `T = i32`) specializes the hint for the later ones, which is what lets a closure see `Fn(&i32): U`
+        // instead of `Fn(&T): U`.
+        let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
         let mut bindings = Vec::new();
-        for (i, (a, p)) in args.iter().zip(&pattern.params).enumerate() {
+        for (i, p) in pattern.params.iter().enumerate() {
+            let Some(ai) = slots[i] else { continue };
             let hint = generic_hint(globals, &p.ty, &info.params, &info.bounds, &bindings);
-            let e = match pre.as_ref().and_then(|pre| pre.get(i)) {
+            let e = match pre.as_ref().and_then(|pre| pre.get(ai)) {
                 Some(e) => e.clone(),
-                None => self.expr(&a.expr, hint.as_ref()),
+                None => self.expr(&args[ai].expr, hint.as_ref()),
             };
             globals.unify(&p.ty, &e.ty, &mut bindings);
-            checked.push(e);
+            checked[ai] = Some(e);
         }
         // A type parameter that only appears in another parameter's `Fn` bound (`fn map<U, F: Fn(T): U>`) is
-        // bound by matching that bound's signature with the closure it received.
-        bound_fn_inference(globals, &info.params, &info.bounds, &pattern.params, &checked, &mut bindings);
+        // bound by matching that bound's signature with the closure it received. The hook takes the arguments
+        // in parameter order, so a named argument written elsewhere still meets its own parameter.
+        let per_param: Vec<Option<tir::Expr>> =
+            slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
+        bound_fn_inference(globals, &info.params, &info.bounds, &pattern.params, &per_param, &mut bindings);
         if let Some(expected) = expect {
             globals.unify(&pattern.ret, expected, &mut bindings);
         }
@@ -135,7 +145,9 @@ impl FnCx<'_> {
                 }
             }
         };
-        let Some(checked) = self.args_pre(&id.name, &params, args, None, span, Some(checked)) else {
+        // The checked expressions, in written order, one per written argument; `args_pre` fills the defaults.
+        let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
+        let Some(checked) = self.args_pre(&id.name, &params, args, None, span, Some(written)) else {
             return error_expr(span);
         };
         mk(tir::ExprKind::Call(callee, checked), ret, span)
@@ -493,17 +505,12 @@ impl FnCx<'_> {
         let pattern = globals.sigs[info.identity.0].clone();
         let params = info.params.clone();
         let bounds = info.bounds.clone();
-        if pattern.params.len() != args.len() + 1 {
+        let Some(slots) = self.arg_slots(name, &pattern.params[1..], args, span) else {
             for a in args {
                 self.expr(&a.expr, None);
             }
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`{name}` takes {} argument(s), but {} were given", pattern.params.len() - 1, args.len()),
-            );
             return error_expr(span);
-        }
+        };
         let receiver = pattern.params[0].clone();
         if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
             let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
@@ -516,14 +523,18 @@ impl FnCx<'_> {
         }
         let mut bindings = Vec::new();
         globals.unify(&receiver.ty, &recv.ty, &mut bindings);
-        let mut checked = Vec::new();
-        for (a, p) in args.iter().zip(&pattern.params[1..]) {
+        let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
+        for (i, p) in pattern.params[1..].iter().enumerate() {
+            let Some(ai) = slots[i] else { continue };
             let hint = generic_hint(globals, &p.ty, &params, &bounds, &bindings);
-            let e = self.expr(&a.expr, hint.as_ref());
+            let e = self.expr(&args[ai].expr, hint.as_ref());
             globals.unify(&p.ty, &e.ty, &mut bindings);
-            checked.push(e);
+            checked[ai] = Some(e);
         }
-        bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &checked, &mut bindings);
+        let per_param: Vec<Option<tir::Expr>> =
+            slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
+        bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &per_param, &mut bindings);
+        let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
         let mut targs = Vec::new();
         for pname in &params {
             match bindings.iter().find(|(n, _)| n == pname) {
@@ -571,7 +582,7 @@ impl FnCx<'_> {
             let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);
             let receiver_place = Some((&recv, receiver.exclusive));
-            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
                 return error_expr(span);
             };
             checked.insert(0, recv);
@@ -584,7 +595,7 @@ impl FnCx<'_> {
         let sig = globals.sigs[f.0].clone();
         let rest = sig.params[1..].to_vec();
         let receiver_place = Some((&recv, receiver.exclusive));
-        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
             return error_expr(span);
         };
         checked.insert(0, recv);
@@ -613,17 +624,12 @@ impl FnCx<'_> {
                 format!("calling the unsafe function `{name}` requires an `unsafe` block"),
             );
         }
-        if pattern.params.len() != args.len() + 1 {
+        let Some(slots) = self.arg_slots(name, &pattern.params[1..], args, span) else {
             for a in args {
                 self.expr(&a.expr, None);
             }
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`{name}` takes {} argument(s), but {} were given", pattern.params.len() - 1, args.len()),
-            );
             return error_expr(span);
-        }
+        };
         let receiver = pattern.params[0].clone();
         if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
             let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
@@ -636,14 +642,18 @@ impl FnCx<'_> {
         }
         let mut bindings = Vec::new();
         globals.unify(&receiver.ty, &recv.ty, &mut bindings);
-        let mut checked = Vec::new();
-        for (a, p) in args.iter().zip(&pattern.params[1..]) {
+        let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
+        for (i, p) in pattern.params[1..].iter().enumerate() {
+            let Some(ai) = slots[i] else { continue };
             let hint = generic_hint(globals, &p.ty, &params, &bounds, &bindings);
-            let e = self.expr(&a.expr, hint.as_ref());
+            let e = self.expr(&args[ai].expr, hint.as_ref());
             globals.unify(&p.ty, &e.ty, &mut bindings);
-            checked.push(e);
+            checked[ai] = Some(e);
         }
-        bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &checked, &mut bindings);
+        let per_param: Vec<Option<tir::Expr>> =
+            slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
+        bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &per_param, &mut bindings);
+        let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
         let mut targs = Vec::new();
         for pname in &params {
             match bindings.iter().find(|(n, _)| n == pname) {
@@ -691,7 +701,7 @@ impl FnCx<'_> {
         if symbolic {
             let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);
-            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
                 return error_expr(span);
             };
             checked.insert(0, recv);
@@ -703,7 +713,7 @@ impl FnCx<'_> {
         };
         let sig = globals.sigs[f.0].clone();
         let rest = sig.params[1..].to_vec();
-        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(checked)) else {
+        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
             return error_expr(span);
         };
         checked.insert(0, recv);
@@ -749,7 +759,7 @@ fn bound_fn_inference(
     params: &[String],
     bounds: &[Vec<Bound>],
     pattern: &[ParamSig],
-    checked: &[tir::Expr],
+    checked: &[Option<tir::Expr>],
     bindings: &mut Vec<(String, Ty)>,
 ) {
     for (k, pname) in params.iter().enumerate() {
@@ -762,6 +772,7 @@ fn bound_fn_inference(
             continue;
         };
         for (e, p) in checked.iter().zip(pattern) {
+            let Some(e) = e else { continue };
             if !matches!(&p.ty, Ty::Param(n) if n.as_ref() == pname.as_str()) {
                 continue;
             }

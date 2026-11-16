@@ -2,11 +2,11 @@
 
 This is the grammar the compiler accepts. It covers exactly the stage 0 subset plus milestone 12's closures,
 milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), milestone 15's
-`any`/`impl` existential types (the details are in `existentials.md`), and milestone 16's `error` declarations
-(the details are in `errors.md`). It is derived from the conformance tests in `tests/`, so every construct below is
+`any`/`impl` existential types (the details are in `existentials.md`), milestone 16's `error` declarations
+(the details are in `errors.md`), and milestone 17's default and named arguments (the details are in
+`arguments.md`). It is derived from the conformance tests in `tests/`, so every construct below is
 used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
-milestones (comptime, derive declarations, default and named arguments, extension methods, tasks) are reserved but
-not parsed.
+milestones (comptime, derive declarations, extension methods, tasks) are reserved but not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).
@@ -100,7 +100,7 @@ Item          = TestItem | UseItem | ImplBlock
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
 FnItem        = FnSig Block ;
 ParamList     = Param { "," Param } [ "," ] ;
-Param         = SelfParam | [ Convention ] IDENT ":" Type ;
+Param         = SelfParam | [ Convention ] IDENT ":" Type [ "=" Expr ] ;
 SelfParam     = [ Convention ] "self" ;                 (* only as the first parameter, only inside impl/interface *)
 Convention    = "mut" | "own" ;                         (* no convention = read-only *)
 
@@ -152,6 +152,11 @@ recommended style put one struct field, one enum variant, and one struct-literal
 both forms, so `struct P { x: i32, y: i32 }` and the one-per-line version mean the same thing. Struct literals,
 variant constructors, argument lists, generic arguments, tuples, and arrays also use commas. Interface methods,
 `extern` declarations, and top-level items need no separator: each one ends where the next begins.
+
+**Default arguments.** A named parameter may end with `= Expr`, the value a call may omit. Only a function or
+method with one implementation may declare one, the parameters with defaults must be the trailing ones, and the
+expression must be a constant expression checked at the declaration (`arguments.md`, AG1-AG3). Interface method
+signatures and `extern` declarations cannot (E0213).
 
 **Unique names and cycles.** A name is unique in its namespace: a repeated type, interface, function, constant,
 test, type parameter, field, variant, method, or import is E0007. A declaration may not depend on itself: a constant
@@ -282,7 +287,7 @@ Precedence from loosest to tightest:
 UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | PostfixExpr ;
 PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
 ArgList       = Arg { "," Arg } [ "," ] ;
-Arg           = [ "mut" ] Expr ;                        (* "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)
+Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the parameter; "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)
 
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
@@ -363,15 +368,20 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
    This is why `List<i32>.new()` and `Stack<i32>.new().push(1)` parse, and `Level.Low < Level.High` is a comparison.
 3. **Paths in expressions** are parsed as an identifier followed by field accesses. Whether `a.b.c` is a module path,
    an associated function, a variant, or a field access is decided during name resolution, not parsing.
-4. **Call-site markers.** A named `mut` parameter is passed with `mut` before the argument (`add_to(mut c, 4)`); an
-   `own` parameter and every read-only parameter are passed plainly. Receivers of `mut self` methods are borrowed
-   mutably implicitly (`c.bump()`); a `mut` marker in receiver position is a syntax error. A missing marker for a
-   `mut` parameter is E0114; a `mut` marker on an argument whose parameter is not `mut` (including `own`) is E0115.
+4. **Call-site markers.** A named `mut` parameter is passed with `mut` before the argument (`add_to(mut c, 4)`);
+   with a named argument the marker still comes first (`add_to(mut c: value)`). An `own` parameter and every
+   read-only parameter are passed plainly. Receivers of `mut self` methods are borrowed mutably implicitly
+   (`c.bump()`); a `mut` marker in receiver position is a syntax error. A missing marker for a `mut` parameter is
+   E0114; a `mut` marker on an argument whose parameter is not `mut` (including `own`) is E0115.
 5. **Closures** (`|x| ...`) are not parsed in stage 0; a leading `|` in expression position is a syntax error (E0001).
 6. **An item that starts with an identifier** is an impl block. The parser decides between `Type: Interface {` and
    `Type {` by the token after the type.
 7. **`else` after `let`** (`let Some(v) = e else { ... }`) is only valid when the pattern is refutable, and the block must diverge
    (`return`, `break`, `continue`, or a call that never returns). These two checks are semantic, not syntactic.
+8. **Named arguments.** Inside an argument list (the `(...)` after a callee), an identifier followed by `:` names
+   the parameter the argument fills: no expression of the grammar starts with `IDENT ":"`, so the look-ahead is
+   unambiguous. `f(x: 1)` is a named argument, while `f(P { x: 1 })` passes a struct literal and `f(a.b)` passes
+   a path. The name is matched and checked in `burdin_sema` (`arguments.md`, AG4).
 
 ## 9. What the parser does not decide
 

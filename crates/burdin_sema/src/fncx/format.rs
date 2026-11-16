@@ -55,7 +55,7 @@ fn expr(kind: ast::ExprKind, span: Span) -> ast::Expr {
 }
 
 fn arg(kind: ast::ExprKind, span: Span) -> ast::Arg {
-    ast::Arg { mut_marker: false, mut_span: None, expr: expr(kind, span) }
+    ast::Arg { name: None, mut_marker: false, mut_span: None, expr: expr(kind, span) }
 }
 
 impl FnCx<'_> {
@@ -67,6 +67,8 @@ impl FnCx<'_> {
 
     /// `format(fmt, args...)`, and the string part of `print(fmt, args...)`.
     pub(super) fn format_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        // Format placeholders name the call's arguments by position, not by parameter name.
+        self.reject_named_args("format", args);
         let Some(first) = args.first() else {
             self.diags.error(Code::ARG_COUNT, span, "`format` needs a format string");
             return error_expr(span);

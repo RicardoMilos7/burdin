@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A parameter without a default is required; naming the others does not fill it (spec/arguments.md, AG7).
+
+fn f(a: i32, b: i32): i32 { a + b }
+
+fn main() {
+    let _ = f(a: 1) //~ E0004
+}

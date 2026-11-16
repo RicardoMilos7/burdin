@@ -172,8 +172,19 @@ impl Parser<'_> {
                     let mut args = Vec::new();
                     while !self.at(&TokenKind::RParen) {
                         let mut_span = self.at(&TokenKind::Mut).then(|| self.bump().span);
+                        // `name: value` names the parameter this argument fills (spec/arguments.md, AG4).
+                        // Inside an argument list, an identifier followed by `:` cannot start any other
+                        // expression, so the look-ahead is unambiguous.
+                        let name = match self.kind().clone() {
+                            TokenKind::Ident(name) if self.nth_kind(1) == &TokenKind::Colon => {
+                                let t = self.bump();
+                                self.bump(); // `:`
+                                Some(Ident { name, span: t.span })
+                            }
+                            _ => None,
+                        };
                         let expr = self.expr()?;
-                        args.push(Arg { mut_marker: mut_span.is_some(), mut_span, expr });
+                        args.push(Arg { name, mut_marker: mut_span.is_some(), mut_span, expr });
                         if !self.eat(&TokenKind::Comma) {
                             break;
                         }

@@ -1,0 +1,32 @@
+//@ run
+//> 9
+//> named
+//> 1
+//> 42
+//> 7
+
+// Named arguments and defaults on generic functions and generic methods. A default cannot depend on a type
+// parameter (spec/arguments.md, AG3), but the other parameters of a generic function may have one.
+
+struct Wrap<T> { value: T }
+
+Wrap<T> {
+    fn keep<U>(self, first: T, second: U, times: i32 = 1): i32 { times }
+}
+
+fn pick<T>(value: T, count: i32 = 2): T { value }
+
+fn repeat<T>(value: T, times: i32 = 2): T { value }
+
+fn max_of<T: Ord>(own a: T, own b: T): T {
+    if a > b { a } else { b }
+}
+
+fn main() {
+    println("{}", max_of(b: 9, a: 3))
+    println(pick(count: 5, value: "named"))
+    let w = Wrap { value: 4 }
+    println("{}", w.keep(second: "s", first: 2))
+    println("{}", repeat(times: 1, value: 42))
+    println("{}", repeat(7))
+}

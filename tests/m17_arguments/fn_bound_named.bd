@@ -1,0 +1,21 @@
+//@ run
+//> 10
+//> 20
+//> 5
+//> 13
+
+// A named argument reaches its parameter before `Fn`-bound inference answers the closure's own type, for a
+// generic function and for the eager `List` helpers (spec/arguments.md, AG4).
+
+fn apply<F: Fn(i32): i32>(x: i32, f: F): i32 { f(x) }
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    let ys = xs.map(f: |x: &i32|: i32 { *x * 10 })
+    println("{}", ys[0])
+    println("{}", ys[1])
+    println("{}", apply(f: |n: i32|: i32 { n + 1 }, x: 4))
+    println("{}", xs.fold(f: |acc: i32, x: &i32|: i32 { acc + *x }, init: 10))
+}

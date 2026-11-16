@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A built-in method declares no parameter names, so it takes no named arguments (spec/arguments.md, AG4).
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(item: 1) //~ E0214
+}

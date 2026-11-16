@@ -1085,3 +1085,48 @@ fn main() {}
 
 **How to fix:** give the inner function an error type (use an `error enum` or `Error`), or add a
 `Type: From<Source> { fn from(value: Source): Type { ... } }` block that converts it.
+
+## E0213: Invalid default argument
+
+A parameter written `name: Type = expr` declares a value the call may omit. The default is checked once at the
+declaration against the parameter's type, so it must be a constant expression (a literal, another constant, an
+operator on constants, or a cast), and the function's parameters and `self` are not in scope in it. A default may
+not depend on a type parameter, may not be declared on a `mut` parameter (which is the caller's place, not a
+value), may not appear in an interface method signature (shared by every implementation), and may not appear in
+an `extern "C"` declaration. The parameters with defaults must be the trailing ones: a default before a required
+parameter would make a positional call ambiguous. `spec/arguments.md` AG1-AG3 and AG5.
+
+<!-- error-example: E0213 -->
+```burdin
+fn update(mut total: i32 = 0) { //~ E0213
+    total = total + 1
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** write the value at the call site, declare the parameter without `mut` if it does not need to
+write back, move the parameters with defaults to the end of the list, and use only constants from the enclosing
+module in the default.
+
+## E0214: Invalid named argument
+
+A call may write `name: value` to fill a parameter by name. The name must be one of the callee's parameters, may
+be given only once, and once one argument is named every later argument must be named too. A callee without
+parameter names takes no named arguments: a built-in function or method, `Some`/`Ok`/`Err`, a variant
+constructor, a closure value, and an `extern` declaration. `spec/arguments.md` AG4.
+
+<!-- error-example: E0214 -->
+```burdin
+fn move_to(x: i32, y: i32) {}
+
+fn main() {
+    move_to(y: 1, z: 2) //~ E0214
+}
+```
+<!-- /error-example -->
+
+**How to fix:** use the parameter's spelling from the declaration, remove the duplicate argument, move every
+positional argument before the named ones, or pass the arguments positionally to a callee that has no parameter
+names.

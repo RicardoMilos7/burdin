@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// One parameter may take only one argument (spec/arguments.md, AG4).
+
+fn f(a: i32): i32 { a }
+
+fn main() {
+    let _ = f(1, a: 2) //~ E0214
+}

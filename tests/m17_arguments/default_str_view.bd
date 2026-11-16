@@ -1,0 +1,17 @@
+//@ run
+//> abc
+//> xyz
+//> abcbc
+
+// A `str` default is a static view, so returning it is allowed and it stays valid at the call site
+// (spec/arguments.md, AG2; spec/memory-rules.md RT1-RT4).
+
+fn first(s: str = "abc"): str { s }
+
+fn twice(s: str = "abc"): str { "abcbc" }
+
+fn main() {
+    println(first())
+    println(first(s: "xyz"))
+    println(twice())
+}

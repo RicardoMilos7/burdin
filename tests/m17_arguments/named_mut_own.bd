@@ -1,0 +1,38 @@
+//@ run
+//> 6
+//> 2
+//> 2
+//> 4
+//> 4
+
+// A named `mut` argument still needs its call-site marker, and a named `own` argument still moves its value
+// (spec/arguments.md, AG4; spec/memory-rules.md CV2-CV4).
+
+struct Counter { value: i32 }
+
+Counter {
+    fn add(mut self, amount: i32): i32 {
+        self.value = self.value + amount
+        self.value
+    }
+}
+
+fn fill(mut list: List<i32>, first: i32, second: i32) {
+    list.push(first)
+    list.push(second)
+}
+
+fn take(own s: String, extra: i32 = 1): i32 {
+    s.len() as i32 + extra
+}
+
+fn main() {
+    let mut c = Counter { value: 1 }
+    println("{}", c.add(amount: 5))
+    let mut xs = List<i32>.new()
+    fill(mut xs, second: 2, first: 1)
+    println("{}", xs.len())
+    println("{}", xs[1])
+    println("{}", take(s: String.from("abc")))
+    println("{}", take(String.from("ab"), extra: 2))
+}

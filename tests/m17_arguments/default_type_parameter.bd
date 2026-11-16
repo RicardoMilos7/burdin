@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A default is inserted at a concrete call, so the parameter it fills must have a concrete type
+// (spec/arguments.md, AG3).
+
+fn f<T>(a: T = 1): T { a } //~ E0213
+
+fn main() { }

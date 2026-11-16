@@ -1,0 +1,23 @@
+//@ run
+//> 6
+//> 8
+
+// An interface signature cannot declare a default (E0213), but its parameters have names, so named
+// arguments work on a static and on a dynamic (`any`) call (spec/arguments.md, AG4-AG5).
+
+interface Adder {
+    fn add(self, x: i32): i32
+}
+
+struct Base { }
+
+Base: Adder {
+    fn add(self, x: i32): i32 { x + 1 }
+}
+
+fn main() {
+    let b = Base { }
+    println("{}", b.add(x: 5))
+    let a: any Adder = Base { }
+    println("{}", a.add(x: 7))
+}

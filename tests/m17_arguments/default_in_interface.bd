@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// An interface method signature is shared by every implementation, so it cannot declare a default
+// (spec/arguments.md, AG5).
+
+interface Shape {
+    fn area(self, scale: i32 = 1): i32 //~ E0213
+}
+
+fn main() { }
