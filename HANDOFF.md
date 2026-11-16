@@ -1,14 +1,14 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, and thirty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, and thirty-third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirty-second session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-third session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
-(`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), and 19 (operator
-overloading and `Index`) are done**: 472 conformance tests; all pass in debug and release (the release run skips
-the debug-only tests).
+(`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
+overloading and `Index`), and 20 (comptime) are done**: 512 conformance tests; all pass in debug and release (the
+release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -96,7 +96,7 @@ is resolved, and boxes at every expected-type position; the move, borrow, and or
 expression forms; code generation emits `{ ptr, ptr }` values, one private constant vtable per `(T, I)` pair
 `{ i64 type_id, ptr drop, ptr method... }`, indirect calls, and type-id-checked downcasts that move the value out and
 free the allocation without dropping it again. The new diagnostics are E0200, E0201, E0202, and E0204. The tests are
-`tests/m15_any/` with 24 tests. The remaining milestones are m20 (comptime) onward.
+`tests/m15_any/` with 24 tests. The remaining milestones are m21 (reflection, derives, const generics) onward.
 
 The twenty-ninth session implemented milestone 16, errors (issue #126). It decided first (`spec/errors.md`,
 ERR1-ERR10) that an `error enum` lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`
@@ -115,6 +115,28 @@ diagnostics are E0210, E0211, and E0212. The session also fixed a code-generatio
 a temporary created inside one branch had an uninitialized drop flag at the statement's drop site, which an
 optimizer could treat as an undefined free and use to delete the rest of the function; the flag now starts `false`
 in the entry block. The tests are `tests/m16_errors/` with 25 tests.
+
+The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
+decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
+the new crate `crates/burdin_comptime` (depending only on `burdin_tir` and `burdin_diag`), run by the driver after
+the memory checks and before code generation; there is no MIR, and #159 is closed as not chosen. `comptime` is a
+keyword: `comptime E` and `comptime { ... }`, `comptime name: T` parameters, `comptime if`, `comptime for`, and
+`comptime assert(cond, "msg")` (also as a module item). Sema checks the visibility rule (only constants, comptime
+parameters, `comptime for` bindings, and the expression's own locals; E0220), the materializable types (E0221), and
+the forms that cannot be comptime (E0220); a `const` initializer is now any materializable expression (the
+`const-expression` E9000 site is gone), and the memory checks also run on const initializers. The interpreter
+(`interp.rs`, `prims.rs`) runs every expression form with owned values and places for `&mut`/`mut` parameters, moves
+where the tree moves, runs user `Drop` implementations where compiled code would, follows the profile's overflow
+rule, and matches the runtime's float text, integer parsing, hashing, and `size()`/`align()` layout; output, files,
+the environment, processes, and C are E0224, panics are E0222, a failed assertion is E0223, and the step budget
+(10,000,000, `--comptime-steps N`), call depth 512, and 1024 specializations per function are E0225. The pass
+(`lib.rs`) evaluates every constant in declaration order (a cycle through calls is E0009), replaces each comptime
+expression by its materialized literal (`reify.rs`), keeps only the selected `comptime if` branch, unrolls
+`comptime for`, and specializes each call of a function with comptime parameters per argument value.
+`std/src/target.bd` adds `target.os()`/`target.arch()` for platform branches. The driver runs the compiler on a
+thread with a 1 GiB stack (reserved, not committed) so deep comptime recursion does not overflow. The tests are
+`tests/m20_comptime/` with 40 tests, including `interp_*` tests that compare a comptime result with the same code
+run at run time.
 
 The thirty-second session implemented milestone 19, operator overloading and `Index` (issue #150, sub-issues
 #151-#156). It decided first (`spec/operators.md`, OP1-OP13) that the operator interfaces are ordinary `std`
@@ -189,16 +211,17 @@ tests cover the syntax.
 | Arguments | `spec/arguments.md`, `crates/burdin_syntax`, `crates/burdin_tir` (`ParamSig.name`/`.default`), `crates/burdin_sema/src/fncx/{call,generic,item}.rs` | Milestone 17 (issue #137). `name: Type = expr` declares a constant default checked at the declaration and inserted at each call that omits it; `f(name: value)` matches a parameter by name in any order before generic inference; arguments evaluate in parameter order. New codes E0213 and E0214; the tests are `tests/m17_arguments/` |
 | Extension methods | `spec/extensions.md`, `crates/burdin_syntax/src/ast.rs` (`Item::Extension`), `crates/burdin_sema/src/extensions.rs`, `crates/burdin_sema/src/{declare,imports,prelude,resolve}.rs`, `crates/burdin_sema/src/fncx/call.rs` | Milestone 18 (issue #143). `fn Type.name(self, ...)` adds a method to a local, imported, or built-in type; visible in its module and where imported by name; methods win over a same-named extension, which gets the warning E0215 at its declaration. Generic receivers and method parameters are monomorphized. New codes E0215 (warning) and E0216; the tests are `tests/m18_extension/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
-| Conformance tests | `tests/` | 472 tests. All pass: m01 to m19 (all pass in debug; release passes all except the debug-only tests) |
+| Conformance tests | `tests/` | 512 tests. All pass: m01 to m20 (all pass in debug; release passes all except the debug-only tests) |
+| Comptime | `spec/comptime.md`, `crates/burdin_comptime/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CT13). Codes E0220-E0225; `--comptime-steps N`; tests in `tests/m20_comptime/` |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check_unit_tests.py` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
-| Standard library | `std/` | The std, written in Burdin and embedded in the driver: `std.bd` (the `Error` interface and dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`/`__test_assert_eq`, `unreachable`), `io.bd`, `env.bd`, `process.bd`, `mem.bd`, `iter.bd`, `fmt.bd` (formatting). Every package gets it as an implicit dependency and every module gets its public names as a prelude |
+| Standard library | `std/` | The std, written in Burdin and embedded in the driver: `std.bd` (the `Error` interface and dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`/`__test_assert_eq`, `unreachable`), `io.bd`, `env.bd`, `process.bd`, `mem.bd`, `iter.bd`, `fmt.bd` (formatting), `target.bd` (the compilation target, for `comptime if`). Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
-| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
+| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_comptime`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
 | Dependencies and licenses | `Cargo.lock`, `tests/dependencies.txt`, `tests/check_deps.py`, `docs/dependencies.md` | 18 external crates (`inkwell` plus everything it pulls in through `llvm-sys` 211); all licenses permissive (mostly MIT OR Apache-2.0; `inkwell` is Apache-2.0); exact `=x.y.z` pins with crates.io source and checksum; `tests/check_deps.py` checks all of it offline and re-verifies the licenses through `cargo metadata` after the build. Every CI job runs it (issue #449) |
 | Reachability | `crates/burdin_codegen/src/emit/reach.rs` | Only functions reachable from `main`, the tests, exported functions, `Drop` implementations, and closure bodies get a real body; the rest are emitted as `unreachable` so the standard library does not bloat every program's IR |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
@@ -1096,8 +1119,9 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 - **Every registry code needs a test.** `tests/check_tests.py` now fails on a registered code with no `//~`
   marker; a code that cannot have a compile-fail test is listed with its reason in `tests/README.md`
   (issue #445). The list is empty today.
-- **Differential tests wait for comptime.** Issue #444 cannot be implemented before milestone 20's interpreter;
-  `spec/test-runner.md` records the intended `[differential]` attribute and behavior, and the issue stays open.
+- **Differential tests can now be built.** Issue #444 waited for milestone 20's interpreter, which exists now;
+  `spec/test-runner.md` records the intended `[differential]` attribute and behavior, and the issue stays open until
+  it is implemented. The `interp_*` tests in `tests/m20_comptime/` already compare comptime and run-time results.
 - **Diagnostics are sorted once, never streamed** (issue #436). The semantic and memory checks already collect the
   whole list before the driver prints it, so the renderer sorts by file (load order), byte offset, code, message,
   and discovery order. That makes equal spans stable and the output byte-for-byte deterministic. The "report every
@@ -1431,15 +1455,17 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 ## What is left to do, in order
 
-1. Milestone 16 is complete (twenty-ninth session): `spec/errors.md` ERR1-ERR10 are the decisions and
-   `tests/m16_errors/` has 25 tests. The next milestone is 17 (default and named arguments): settle the evaluation
-   order, the interaction with `mut`/`own` conventions and exclusivity, and the rule that interface signatures
-   cannot declare defaults. The MIR interpreter question (comptime) and allocator parameters shape later
-   milestones and can wait for theirs. Issue #444 (differential tests between comptime and compiled code) is blocked
-   on the milestone 20 interpreter; `spec/test-runner.md` holds its intended shape and the issue stays open until
-   then.
-2. Write the m17 tests before the code, the same way the earlier milestones were built: `tests/m17_arguments` and
-   its `//@` expectations are the spec for the next stage 1 milestone.
+1. Milestone 20 is complete (thirty-third session): `spec/comptime.md` CT1-CT14 are the decisions and
+   `tests/m20_comptime/` has 40 tests. The next milestone is 21 (reflection members, user derive bodies, const
+   generics, `embed`), which builds on the comptime engine: types as compile-time values need a value for a type and
+   reflection queries in `burdin_comptime`, and its E9000 rows in `spec/e9000-audit.md` are the starting list.
+   Issue #444 (differential tests between comptime and compiled code) is unblocked; `spec/test-runner.md` holds its
+   intended shape.
+2. Write the m21 tests before the code, the same way the earlier milestones were built: `tests/m21_reflect` and its
+   `//@` expectations are the spec for the next stage 1 milestone. Known comptime limits to keep in mind: a closure
+   defined inside a function with comptime parameters is shared by its specializations, so a comptime expression in
+   that closure cannot use the parameter; `Map` iteration at compile time is insertion order (CT9); and comptime
+   results are not cached across builds (CT14).
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
@@ -1470,6 +1496,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 17, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 21, then write its tests.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

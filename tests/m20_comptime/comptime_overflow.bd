@@ -1,0 +1,21 @@
+//@ compile-fail
+//@ debug-only
+//@ stderr: attempt to add with overflow
+//@ stderr: division by zero
+
+// Comptime arithmetic follows the build profile: in a debug build an overflow panics, and division by zero always
+// does (spec/comptime.md, CT1, CT10).
+
+fn add(a: u8, b: u8): u8 {
+    a + b
+}
+
+const BIG: u8 = add(200, 100) //~ E0222
+
+fn divide(a: i32, b: i32): i32 {
+    a / b
+}
+
+fn main() {
+    let q = comptime divide(1, 0) //~ E0222
+}

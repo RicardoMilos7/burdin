@@ -111,13 +111,25 @@ pub struct ParamSig {
     /// `None` when the parameter is required. A default is a constant expression, so a call may insert it
     /// directly, and it may not mention a type parameter.
     pub default: Option<Expr>,
+    /// A `comptime` parameter (`spec/comptime.md`, CT4): its argument is a [`crate::ExprKind::Comptime`]
+    /// expression, and every call is specialized for the argument's value before code generation.
+    pub comptime: bool,
 }
 
 impl ParamSig {
     /// A plain read-only parameter: borrowed for the call, never dropped by the callee. Used for built-in
     /// functions and methods, whose arguments code generation evaluates directly.
     pub fn plain(ty: Ty) -> ParamSig {
-        ParamSig { ty, by_ref: false, mut_param: false, own: false, exclusive: false, name: None, default: None }
+        ParamSig {
+            ty,
+            by_ref: false,
+            mut_param: false,
+            own: false,
+            exclusive: false,
+            name: None,
+            default: None,
+            comptime: false,
+        }
     }
 }
 

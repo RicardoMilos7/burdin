@@ -407,6 +407,7 @@ impl FnCx<'_> {
                 exclusive: false,
                 name: None,
                 default: None,
+                comptime: false,
             })
             .collect();
         let receiver = Some((&callee, kind != FnKind::Fn));
@@ -657,10 +658,12 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
             walk(range, captures, globals, usage, Mode::Use);
             walk_block(body, captures, globals, usage);
         }
-        K::ForArray { array, body, .. } => {
+        K::ForArray { array, body, .. } | K::ComptimeFor { iter: array, body, .. } => {
             walk(array, captures, globals, usage, Mode::Use);
             walk_block(body, captures, globals, usage);
         }
+        // A comptime expression cannot use a capture (spec/comptime.md, CT2), but it is walked for its own code.
+        K::Comptime(inner) => walk(inner, captures, globals, usage, mode),
         K::ForSlice { slice, body, .. } => {
             walk(slice, captures, globals, usage, Mode::Use);
             walk_block(body, captures, globals, usage);
@@ -809,6 +812,13 @@ impl FreeNames {
                 self.block_body(body);
                 self.scopes.pop();
             }
+            K::Comptime(inner) => self.expr(inner),
+            K::ComptimeAssert(cond, message) => {
+                self.expr(cond);
+                if let Some(m) = message {
+                    self.expr(m);
+                }
+            }
             K::Return(value) => {
                 if let Some(v) = value {
                     self.expr(v);
@@ -943,6 +953,8 @@ fn contains_return(e: &ast::Expr) -> bool {
         }
         K::While { cond, body } => contains_return(cond) || block_has_return(body),
         K::For { iter, body, .. } => contains_return(iter) || block_has_return(body),
+        K::Comptime(inner) => contains_return(inner),
+        K::ComptimeAssert(cond, message) => contains_return(cond) || message.as_deref().is_some_and(contains_return),
         K::Assign(a, b) | K::Binary(_, a, b) | K::OrElse(a, b) => contains_return(a) || contains_return(b),
         K::Unary(_, a) | K::Cast(a, _) | K::Try(a) | K::Field(a, _) | K::TupleField(a, _, _) => contains_return(a),
         K::Range { lo, hi, .. } => contains_return(lo) || contains_return(hi),

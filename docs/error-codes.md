@@ -167,7 +167,8 @@ fn main() {
 
 ## E0009: A declaration depends on itself
 
-A constant's initializer depends on the constant itself, a type alias refers to itself (directly or through other
+A constant's initializer depends on the constant itself (directly, through other constants, or through the
+functions it calls while it is evaluated at compile time), a type alias refers to itself (directly or through other
 aliases), or a struct or enum contains itself by value, which would need infinite size.
 
 <!-- error-example: E0009 -->
@@ -1190,3 +1191,136 @@ fn main() {}
 **How to fix:** write `self` as the first parameter (`fn String.bad(self)`), put the type arguments on the type name
 at the end of the receiver (`fn List<T>.bad(self)`, not `fn List<i32>.Inner.bad(self)`), move the `where` predicate
 to an extension type parameter, or import the extension by its declared method name.
+
+## E0220: Invalid comptime construct
+
+A compile-time context (a `comptime` expression or block, a `comptime if` condition, a `comptime for` iterable,
+a `comptime assert`, or the argument of a `comptime` parameter) can only use what is known while compiling:
+constants, `comptime` parameters, `comptime for` bindings, and its own locals. Using a run-time local or `self`
+there is this error, and so are the forms that cannot be compile-time: a `comptime` parameter written `mut` or
+`own`, on `self`, an interface method, its implementation, or an `extern` declaration; a function with comptime
+parameters used as a value; `break` or `continue` leaving a `comptime for`; a `mut` `comptime for` binding; and a
+`comptime assert` message that is not a string literal. `spec/comptime.md` CT2, CT4, CT6, CT8.
+
+<!-- error-example: E0220 -->
+```burdin
+fn double(v: i32): i32 {
+    v * 2
+}
+
+fn main() {
+    let x = 4
+    let y = comptime double(x) //~ E0220
+}
+```
+<!-- /error-example -->
+
+**How to fix:** compute the value from constants or literals (`comptime double(4)`), make the input a `comptime`
+parameter of the enclosing function, or drop `comptime` and compute the value at run time.
+
+## E0221: Value that cannot be materialized
+
+A compile-time value is copied into the program, so its type must be one the compiler can write down as a literal:
+a scalar, `str`, `String`, or a tuple, array, struct, enum, `Option`, `Result`, or range of those. A `List`, `Map`,
+`Heap`, `any` value, closure, reference, slice, C type, or iterator can be created and used inside comptime code,
+but not be the value of a `const`, a comptime expression, a `comptime` parameter, or a `comptime for` item.
+`spec/comptime.md` CT3.
+
+<!-- error-example: E0221 -->
+```burdin
+const EMPTY: List<i32> = List<i32>.new() //~ E0221
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** materialize a fixed-size form instead (an array, or a `String` built from the values), or build the
+collection at run time.
+
+## E0222: Compile-time evaluation panicked
+
+Evaluating a constant, a comptime expression, or a specialization's comptime arguments panicked: an explicit
+`panic`, `unreachable`, a failed `assert`, `unwrap` on an empty value, an index out of bounds, a division by zero,
+or an integer overflow in a debug build. The message is the panic message, with a note at the operation that
+panicked. `spec/comptime.md` CT10.
+
+<!-- error-example: E0222 -->
+```burdin
+fn pick(i: usize): i32 {
+    let xs = [1, 2, 3]
+    xs[i]
+}
+
+const BAD: i32 = pick(5) //~ E0222
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** correct the computation, or check the condition the panic reports before the operation runs.
+
+## E0223: Comptime assertion failed
+
+The condition of a `comptime assert` was false when the program was compiled. The message of the assertion, when it
+has one, is part of the diagnostic. `spec/comptime.md` CT8.
+
+<!-- error-example: E0223 -->
+```burdin
+const BUFFER_SIZE: usize = 100
+
+comptime assert(BUFFER_SIZE % 64 == 0, "the buffer must be a whole number of cache lines") //~ E0223
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** change the values the assertion checks so the condition holds, or change the assertion if the
+requirement it states is no longer true.
+
+## E0224: Impure operation at compile time
+
+Compile-time evaluation is pure: it cannot print, read or write files, read the process arguments, end the process,
+run a command, call a C function, or use C pointers and C strings. The check is dynamic, so a function that could do
+one of these may still run at compile time when the path it takes does not. The same code reports an internal error
+of the comptime interpreter. `spec/comptime.md` CT9.
+
+<!-- error-example: E0224 -->
+```burdin
+fn noisy(): i32 {
+    println("hello")
+    7
+}
+
+const N: i32 = noisy() //~ E0224
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** keep the input and output at run time and pass the computed values in, or split the pure part of
+the computation into a function the constant can call.
+
+## E0225: Compile-time budget exceeded
+
+A compile-time evaluation ran for more steps than its budget (10,000,000 by default), nested more than 512 calls,
+or a function with comptime parameters needed more than 1024 specializations. The usual cause is a loop or a
+recursion that does not end; a recursion through a comptime parameter needs a `comptime if` that stops it.
+`spec/comptime.md` CT4, CT11.
+
+<!-- error-example: E0225 -->
+```burdin
+fn spin(): i32 {
+    let mut i = 0
+    loop {
+        i = (i + 1) % 10
+    }
+}
+
+const STUCK: i32 = spin() //~ E0225
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** make the computation end. If it is meant to be long, raise the budget with
+`burdin build --comptime-steps <n>`.

@@ -1,0 +1,32 @@
+// The system the program is compiled for. The compiler builds for the machine it runs on, so these are known
+// while compiling and work in `comptime if` (spec/comptime.md, CT5).
+
+/// An operating system.
+enum Os derives (Copy, Clone, Eq) {
+    Linux
+    MacOs
+    Windows
+}
+
+/// A processor architecture.
+enum Arch derives (Copy, Clone, Eq) {
+    X86_64
+    Aarch64
+}
+
+/// The operating system the program is compiled for.
+fn os(): Os {
+    match __target_os() {
+        "windows" => Os.Windows,
+        "macos" => Os.MacOs,
+        _ => Os.Linux,
+    }
+}
+
+/// The processor architecture the program is compiled for.
+fn arch(): Arch {
+    match __target_arch() {
+        "aarch64" => Arch.Aarch64,
+        _ => Arch.X86_64,
+    }
+}

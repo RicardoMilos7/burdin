@@ -555,6 +555,8 @@ impl FnCx<'_> {
                 None => p.default.clone().expect("a missing required argument was reported"),
             };
             let arg = self.coerce_arg(arg, &p.ty);
+            // The argument of a `comptime` parameter is a compile-time value (spec/comptime.md, CT4).
+            let arg = if p.comptime { self.comptime_argument(arg) } else { arg };
             if p.mut_param && !matches!(arg.ty, Ty::Error) {
                 if !is_place_expr(&arg) {
                     self.diags.error(

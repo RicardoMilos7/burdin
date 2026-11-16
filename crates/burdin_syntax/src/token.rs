@@ -18,6 +18,7 @@ pub enum TokenKind {
     Any,
     As,
     Break,
+    Comptime,
     Const,
     Continue,
     Else,
@@ -48,7 +49,7 @@ pub enum TokenKind {
     Use,
     Where,
     While,
-    /// A word reserved for a later version (`comptime`, `derive`).
+    /// A word reserved for a later version (`derive`).
     Reserved(String),
     /// `_`
     Underscore,
@@ -103,6 +104,7 @@ impl TokenKind {
             "any" => Any,
             "as" => As,
             "break" => Break,
+            "comptime" => Comptime,
             "const" => Const,
             "continue" => Continue,
             "else" => Else,
@@ -133,7 +135,7 @@ impl TokenKind {
             "use" => Use,
             "where" => Where,
             "while" => While,
-            "comptime" | "derive" => Reserved(word.to_string()),
+            "derive" => Reserved(word.to_string()),
             _ => return None,
         })
     }
@@ -160,6 +162,7 @@ impl TokenKind {
             Any => "any",
             As => "as",
             Break => "break",
+            Comptime => "comptime",
             Const => "const",
             Continue => "continue",
             Else => "else",

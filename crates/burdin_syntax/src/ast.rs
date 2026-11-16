@@ -270,6 +270,9 @@ pub struct Param {
     /// `= expr` after the type: the value a call may omit (`spec/arguments.md`, AG1). The checker validates it;
     /// a `self` parameter cannot have one.
     pub default: Option<Expr>,
+    /// `comptime name: Type`: the argument is a compile-time value and the function is specialized for it
+    /// (`spec/comptime.md`, CT4). The span is the `comptime` keyword.
+    pub comptime: Option<Span>,
     pub span: Span,
 }
 
@@ -490,6 +493,11 @@ pub enum ExprKind {
         then_block: Block,
         else_expr: Option<Box<Expr>>,
     },
+    /// `comptime E`: evaluated while compiling (`spec/comptime.md`, CT2). `comptime if` (CT5) and `comptime for`
+    /// (CT6) are this node around an `If` or a `For`.
+    Comptime(Box<Expr>),
+    /// `comptime assert(condition)` or `comptime assert(condition, "message")` (CT8).
+    ComptimeAssert(Box<Expr>, Option<Box<Expr>>),
 }
 
 /// One piece of an interpolated string literal.

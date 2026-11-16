@@ -301,6 +301,21 @@ command through the system shell and returns its status: the POSIX wait status i
 returned as is. On failure each returns the matching `IoError` variant, and an integer `parse` returns
 `ParseIntError.Invalid` (`errors.md`, ERR10).
 
+None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+
+## The compilation target
+
+```
+enum target.Os derives (Copy, Clone, Eq) { Linux  MacOs  Windows }
+enum target.Arch derives (Copy, Clone, Eq) { X86_64  Aarch64 }
+fn target.os(): target.Os                   // the operating system the program is compiled for
+fn target.arch(): target.Arch               // the processor architecture the program is compiled for
+```
+
+The compiler builds for the machine it runs on, so both are the host's. They are ordinary functions, usable at run
+time and at compile time, which is how `comptime if target.os() == target.Os.Windows { ... }` selects a platform
+branch (`comptime.md`, CT5). `tests/m20_comptime/comptime_if_platform.bd`, `comptime_target_values.bd`.
+
 ## Memory helpers and assertions
 
 ```

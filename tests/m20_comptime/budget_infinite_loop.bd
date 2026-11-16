@@ -1,0 +1,17 @@
+//@ compile-fail
+//@ stderr: --comptime-steps
+
+// A compile-time evaluation that does not finish exhausts the step budget: E0225 (spec/comptime.md, CT11).
+
+fn spin(): i32 {
+    let mut i = 0
+    loop {
+        i = (i + 1) % 10
+    }
+}
+
+const STUCK: i32 = spin() //~ E0225
+
+fn main() {
+    println("{STUCK}")
+}

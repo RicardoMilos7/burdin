@@ -16,6 +16,8 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__float_str" => Builtin::FloatStr,
         "__exit" => Builtin::ProcessExit,
         "__run" => Builtin::RunCommand,
+        "__target_os" => Builtin::TargetOs,
+        "__target_arch" => Builtin::TargetArch,
         _ => return None,
     })
 }
@@ -26,6 +28,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
     let io_error = || globals.io_error_ty.clone().unwrap_or(Ty::Unit);
     let ret = match b {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
+        Builtin::TargetOs | Builtin::TargetArch => Ty::Str,
         Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
@@ -35,7 +38,9 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         _ => Ty::Unit,
     };
     let params = match b {
-        Builtin::StringNew | Builtin::EnvArgs | Builtin::Unreachable => Vec::new(),
+        Builtin::StringNew | Builtin::EnvArgs | Builtin::Unreachable | Builtin::TargetOs | Builtin::TargetArch => {
+            Vec::new()
+        }
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
@@ -99,7 +104,7 @@ pub(crate) fn builtin_type(name: &str) -> Option<Ty> {
 /// A parameter the callee takes ownership of (the element of `List.push`, the key and value of
 /// `Map.insert`).
 fn value_param(ty: Ty) -> ParamSig {
-    ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true, name: None, default: None }
+    ParamSig { own: true, exclusive: true, ..ParamSig::plain(ty) }
 }
 
 /// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the

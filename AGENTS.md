@@ -140,14 +140,15 @@ CLAUDE.md                 Claude-specific entry point and working rules
 AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
-spec/                     grammar, memory rules, standard-library surface, derives, stage 0 scope, stage 1 plan
+spec/                     grammar, memory rules, standard-library surface, derives, comptime, stage 0 scope,
+                          stage 1 plan
 docs/                     the user-facing error-code reference (checked against tests/README.md), the platform
                           support matrix and known limitations, and the version/release policy (docs/releasing.md)
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
 .github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
 tests/                    conformance suite, README with the format and error codes, and the release scripts
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
-                          burdin_check, burdin_codegen, burdin_driver,
+                          burdin_check, burdin_comptime, burdin_codegen, burdin_driver,
                           burdin_bench (generated inputs and `cargo bench` targets),
                           burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin

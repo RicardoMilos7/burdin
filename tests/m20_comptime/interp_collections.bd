@@ -1,0 +1,77 @@
+//@ run
+//> 1,2,3,5,8 1,2,3,5,8
+//> 3 3
+//> 2 2
+//> abc-xyz abc-xyz
+//> 6 6
+
+// `List`, `Map`, `String`, and slices at compile time: the collections live inside the evaluation, and only the
+// materialized result reaches the program (spec/comptime.md, CT1, CT3).
+
+fn joined(): String {
+    let mut xs = List<i32>.new()
+    xs.push(8)
+    xs.push(3)
+    xs.push(1)
+    xs.push(5)
+    xs.push(2)
+    xs.sort()
+    let mut out = String.new()
+    for x in xs {
+        if out.len() > 0 {
+            out.push(',')
+        }
+        out.push_str(x.to_string().as_str())
+    }
+    out
+}
+
+fn lookups(): i32 {
+    let mut m = Map<String, i32>.new()
+    m.insert(String.from("a"), 1)
+    m.insert(String.from("b"), 2)
+    m.insert(String.from("a"), 3)
+    match m.get(String.from("a")) {
+        Some(v) => *v,
+        None => 0,
+    }
+}
+
+fn removed(): usize {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 10)
+    m.insert(2, 20)
+    m.insert(3, 30)
+    m.remove(2)
+    m.len()
+}
+
+fn sliced(): String {
+    let text = "abc-xyz-123"
+    let mut out = String.from(text[0..4])
+    out.push_str(text[4..=6])
+    out
+}
+
+fn slice_sum(): i32 {
+    let xs = [1, 2, 3, 4]
+    let mut sum = 0
+    for x in xs[0..3] {
+        sum = sum + x
+    }
+    sum
+}
+
+const JOINED: String = joined()
+const LOOKUP: i32 = lookups()
+const REMOVED: usize = removed()
+const SLICED: String = sliced()
+const SLICE_SUM: i32 = slice_sum()
+
+fn main() {
+    println("{JOINED} {joined()}")
+    println("{LOOKUP} {lookups()}")
+    println("{REMOVED} {removed()}")
+    println("{SLICED} {sliced()}")
+    println("{SLICE_SUM} {slice_sum()}")
+}

@@ -44,6 +44,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "burdin_comptime"
+version = "0.1.0"
+dependencies = [
+ "burdin_diag",
+ "burdin_tir",
+]
+
+[[package]]
 name = "burdin_diag"
 version = "0.1.0"
 
@@ -53,6 +61,7 @@ version = "0.1.0"
 dependencies = [
  "burdin_check",
  "burdin_codegen",
+ "burdin_comptime",
  "burdin_diag",
  "burdin_sema",
  "burdin_syntax",

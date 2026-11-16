@@ -1,0 +1,28 @@
+//@ compile-fail
+//@ stderr: index out of bounds: the index is 5 but the length is 3
+//@ stderr: called `unwrap` on a `None` value
+//@ stderr: the table is empty
+
+// A panic during compile-time evaluation is E0222 at the comptime expression or constant, with the panic message
+// (spec/comptime.md, CT10).
+
+fn pick(i: usize): i32 {
+    let xs = [1, 2, 3]
+    xs[i]
+}
+
+fn first(): i32 {
+    let xs: List<i32> = List<i32>.new()
+    *xs.last().unwrap()
+}
+
+fn check(): i32 {
+    panic("the table is empty")
+}
+
+const BAD: i32 = pick(5) //~ E0222
+
+fn main() {
+    let a = comptime first() //~ E0222
+    let b = comptime check() //~ E0222
+}

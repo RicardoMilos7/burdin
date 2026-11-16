@@ -187,6 +187,20 @@ impl Code {
     /// An invalid extension method declaration: no `self` first parameter, a receiver that is not a type name,
     /// or a `where` clause naming something that is not one of its type parameters.
     pub const INVALID_EXTENSION: Code = Code("E0216");
+    /// An invalid comptime construct (`spec/comptime.md`): a runtime local used in a compile-time context,
+    /// `comptime` on a parameter that cannot take it, a comptime-parameter function used as a value, `break` or
+    /// `continue` leaving a `comptime for`, a `mut` `comptime for` binding, or a non-literal assertion message.
+    pub const INVALID_COMPTIME: Code = Code("E0220");
+    /// A compile-time value whose type cannot be materialized in the program (CT3).
+    pub const NOT_MATERIALIZABLE: Code = Code("E0221");
+    /// Compile-time evaluation panicked (CT10).
+    pub const COMPTIME_PANIC: Code = Code("E0222");
+    /// A `comptime assert` failed (CT8).
+    pub const COMPTIME_ASSERT: Code = Code("E0223");
+    /// An impure operation during compile-time evaluation (CT9).
+    pub const COMPTIME_IMPURE: Code = Code("E0224");
+    /// Compile-time evaluation exceeded its step budget, call depth, or specialization limit (CT11).
+    pub const COMPTIME_BUDGET: Code = Code("E0225");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

@@ -5,6 +5,7 @@ mod aggregate;
 mod any;
 mod call;
 mod closure;
+mod comptime;
 mod control;
 mod expr;
 mod fnvalue;
@@ -67,6 +68,11 @@ struct FnCx<'a> {
     /// Set while checking a place that will be written: the left side of `=`, the operand of `&mut`, and the
     /// argument of a `mut` parameter. An index expression then lowers to `index_mut` (`spec/operators.md`, OP10).
     write_place: bool,
+    /// The locals whose values are known at compile time: `comptime` parameters and `comptime for` bindings
+    /// (`spec/comptime.md`, CT2).
+    comptime_known: Vec<LocalId>,
+    /// The loop depth just outside the innermost `comptime for` body, which `break`/`continue` cannot leave.
+    comptime_loop_barrier: Option<usize>,
 }
 
 /// What a path in expression position can name before its last segment: a type, or a generic type whose
@@ -119,6 +125,8 @@ impl<'a> FnCx<'a> {
             sources,
             traces,
             write_place: false,
+            comptime_known: Vec::new(),
+            comptime_loop_barrier: None,
         }
     }
 

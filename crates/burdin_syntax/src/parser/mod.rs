@@ -30,6 +30,7 @@ pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> Fi
         nl_stack: Vec::new(),
         truncated: lexed.truncated,
         test_count: 0,
+        comptime_asserts: 0,
     };
     p.file()
 }
@@ -45,6 +46,8 @@ pub(super) struct Parser<'a> {
     truncated: bool,
     /// How many `test` items this file has parsed, for their generated function names.
     test_count: usize,
+    /// How many module-scope `comptime assert` items this file has parsed, for their constant names.
+    comptime_asserts: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -117,6 +120,11 @@ impl Parser<'_> {
         Reported
     }
 
+    fn error_at(&mut self, span: Span, msg: String) -> Reported {
+        self.diags.error(Code::SYNTAX, span, msg);
+        Reported
+    }
+
     fn unexpected(&mut self, expected: &str) -> Reported {
         let found = self.kind().describe();
         self.error_here(format!("expected {expected}, found {found}"))
@@ -177,7 +185,7 @@ impl Parser<'_> {
     /// brackets.
     fn starts_item_only(kind: &TokenKind) -> bool {
         use TokenKind::*;
-        matches!(kind, Fn | Struct | Enum | Error | Interface | Type | Const | Use | Extern | Priv)
+        matches!(kind, Fn | Struct | Enum | Error | Interface | Type | Const | Use | Extern | Priv | Comptime)
     }
 
     /// Skips to the start of the next item: an item keyword at the start of a line.

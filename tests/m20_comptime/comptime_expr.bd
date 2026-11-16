@@ -1,0 +1,31 @@
+//@ run
+//> 6765
+//> 89
+//> true
+//> (3, 4)
+//> Some(5)
+
+// `comptime E` evaluates one expression while compiling and puts its value in its place (spec/comptime.md, CT2).
+// Each appearance is evaluated once, not each time the surrounding code runs.
+
+fn fib(n: u32): u32 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+    println("{comptime fib(20)}")
+    let mut total: u32 = 0
+    for _ in 0..3 {
+        total = comptime fib(11)
+    }
+    println("{total}")
+    let flag: bool = comptime fib(5) == 5
+    println("{flag}")
+    let pair: (i32, i32) = comptime (1 + 2, 2 * 2)
+    println("({pair.0}, {pair.1})")
+    let found: Option<i32> = comptime Some(fib(5) as i32)
+    match found {
+        Some(v) => println("Some({v})"),
+        None => println("None"),
+    }
+}

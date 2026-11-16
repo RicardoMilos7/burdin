@@ -36,6 +36,7 @@ impl Parser<'_> {
                     nl_stack: vec![false],
                     truncated: false,
                     test_count: 0,
+                    comptime_asserts: 0,
                 };
                 let expr = sub.expr().ok()?;
                 if !sub.at_eof() {

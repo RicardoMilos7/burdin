@@ -3,6 +3,7 @@
   * `burdin --version` prints the version, channel, target, LLVM version, commit, and profile (issues #431, #454);
   * `--strip` removes the symbol table and keeps the program's output, and the stripped sizes stay under the
     size budget recorded here (issue #430);
+  * `--comptime-steps` sets the compile-time step budget (spec/comptime.md, CT11; issue #164);
   * `--lto` links bitcode and runs, and `--pgo-generate`/`--pgo-use` round-trip a profile (issue #429), when an
     LLVM compiler driver and the LLVM tools are installed. On MSVC those two options are rejected.
 
@@ -229,6 +230,38 @@ with harness.temporary_dir("burdin-flags-") as work:
     missing = harness.run([burdin, "build", "hello.bd", "--pgo-use", "missing.profraw", "-o", "nope"], cwd=work)
     if missing.returncode == 0 or b"does not exist" not in missing.stderr:
         add_problem("a missing PGO profile was not reported")
+
+    # --- The comptime step budget (spec/comptime.md, CT11; issue #164) ---------
+    harness.write_text(
+        work / "steps.bd",
+        "fn count(n: i32): i32 {\n"
+        "    let mut i = 0\n"
+        "    while i < n {\n"
+        "        i = i + 1\n"
+        "    }\n"
+        "    i\n"
+        "}\n"
+        "const N: i32 = count(1000)\n"
+        "fn main() {\n"
+        '    println("{N}")\n'
+        "}\n",
+    )
+    steps_out = build_and_run("burdin build with the default comptime budget", "steps.bd", "steps_default")
+    if steps_out is not None and steps_out != "1000":
+        add_problem(f"the comptime constant printed '{steps_out}', not 1000")
+    checks += 1
+    small = harness.run([burdin, "build", "steps.bd", "--comptime-steps", "100", "-o", "nope"], cwd=work)
+    if small.returncode == 0 or b"E0225" not in small.stderr or b"100 steps" not in small.stderr:
+        add_problem("--comptime-steps 100 did not stop the evaluation with E0225")
+    checks += 1
+    inline = harness.run([burdin, "build", "steps.bd", "--comptime-steps=1000000", "-o", "steps_inline"], cwd=work)
+    if inline.returncode != 0:
+        add_problem(f"--comptime-steps=1000000 failed: {harness.text(inline.stderr).rstrip(chr(10))}")
+    for bad in ("0", "many"):
+        checks += 1
+        rejected = harness.run([burdin, "build", "steps.bd", "--comptime-steps", bad], cwd=work)
+        if rejected.returncode != 2 or b"--comptime-steps" not in rejected.stderr:
+            add_problem(f"--comptime-steps {bad} was not rejected as a usage error")
 
 print(f"Checked build flags and metadata ({checks} checks)")
 

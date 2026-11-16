@@ -14,6 +14,7 @@ impl Sema<'_> {
         &self,
         diags: &mut Diagnostics,
     ) -> (Vec<tir::Function>, Vec<tir::Const>, Vec<tir::Closure>) {
+        let closures = Rc::new(RefCell::new(Vec::new()));
         let consts = self
             .const_decls
             .iter()
@@ -24,13 +25,13 @@ impl Sema<'_> {
                     src.decl,
                     src.module,
                     &self.globals.const_tys[i],
+                    closures.clone(),
                     self.sources,
                     self.traces,
                     diags,
                 )
             })
             .collect();
-        let closures = Rc::new(RefCell::new(Vec::new()));
         let functions = self
             .fn_items
             .iter()

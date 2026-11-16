@@ -76,15 +76,22 @@ impl FnCx<'_> {
                 mk(tir::ExprKind::Loop(body), if has_break { Ty::Unit } else { Ty::Never }, span)
             }
             K::For { pattern, iter, body } => self.for_expr(pattern, iter, body, span),
+            K::Comptime(inner) => self.comptime_expr(inner, expect, span),
+            K::ComptimeAssert(cond, message) => self.comptime_assert(cond, message.as_deref(), span),
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, expect, span),
             K::Break | K::Continue => {
-                let Some(has_break) = self.loops.last_mut() else {
-                    let word = if matches!(e.kind, K::Break) { "break" } else { "continue" };
+                let word = if matches!(e.kind, K::Break) { "break" } else { "continue" };
+                if self.loops.is_empty() {
                     self.diags.error(Code::SYNTAX, span, format!("`{word}` outside of a loop"));
                     return error_expr(span);
-                };
+                }
+                if self.leaves_comptime_for(word, span) {
+                    return error_expr(span);
+                }
                 if matches!(e.kind, K::Break) {
-                    *has_break = true;
+                    if let Some(has_break) = self.loops.last_mut() {
+                        *has_break = true;
+                    }
                     mk(tir::ExprKind::Break, Ty::Never, span)
                 } else {
                     mk(tir::ExprKind::Continue, Ty::Never, span)

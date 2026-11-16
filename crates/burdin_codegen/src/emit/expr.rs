@@ -10,6 +10,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         use tir::ExprKind as K;
         self.debug_at(e.span);
         let v: Option<BasicValueEnum<'ctx>> = match &e.kind {
+            K::Comptime(_) | K::ComptimeFor { .. } => {
+                return Err("a comptime construct reached code generation; the comptime pass must replace it".into());
+            }
             K::Unit => None,
             K::Bool(b) => Some(self.cx.bool_type().const_int(u64::from(*b), false).into()),
             K::Int(v) => match &e.ty {

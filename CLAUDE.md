@@ -26,7 +26,8 @@ not updated and may disagree with the repository.
    and `impl` existential types, object safety, boxing, and downcasts, `spec/errors.md` is `error` declarations, the
    dynamic `Error`, `Result<T>`, `context`, traces, and `main(): Result<T>`, `spec/arguments.md` is default and named
    arguments, `spec/extensions.md` is extension methods and their resolution order, `spec/operators.md` is operator
-   overloading and `Index`/`IndexMut`, and `spec/test-runner.md` is the behavior of `burdin test`.
+   overloading and `Index`/`IndexMut`, `spec/comptime.md` is compile-time evaluation (`comptime` expressions,
+   parameters, `if`, `for`, `assert`, and constants), and `spec/test-runner.md` is the behavior of `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -99,6 +100,8 @@ crates/
                             exhaustiveness (declare, imports, impls, instances, resolve, bodies, validate; fncx/
                             checks one function body)
   burdin_check/             return-origin, move, and borrow checks over the typed tree (spec/memory-rules.md)
+  burdin_comptime/          the compile-time interpreter over the typed tree: constants, comptime expressions,
+                            specialization of comptime parameters (spec/comptime.md)
   burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime
   burdin_driver/            the `burdin` binary: build, run, test; package loading (`package.rs`: burdin.toml,
                             modules, dependencies)
@@ -117,10 +120,12 @@ spec/                     grammar, memory rules, standard-library surface, itera
 tests/                    conformance tests and scripts
 ```
 
-Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_codegen`, with `burdin_tir` as the
-shared vocabulary and `burdin_diag` under everything. `burdin_check` and `burdin_codegen` depend only on `burdin_tir`,
-not on sema. Keep everything before codegen free of LLVM so the checks can be tested without a backend. A MIR
-(`burdin_mir`) is not planned for stage 0: sema monomorphizes, and the checks read the typed tree.
+Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_comptime` to `burdin_codegen`, with
+`burdin_tir` as the shared vocabulary and `burdin_diag` under everything. `burdin_check`, `burdin_comptime`, and
+`burdin_codegen` depend only on `burdin_tir` (and `burdin_diag`), not on sema. Keep everything before codegen free of
+LLVM so the checks can be tested without a backend. There is no MIR (`burdin_mir`), decided in milestone 20 (issue
+#158): sema monomorphizes, the checks read the typed tree, and the comptime engine interprets the same tree and
+rewrites it before code generation.
 
 ## Toolchain
 
