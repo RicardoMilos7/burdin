@@ -652,7 +652,7 @@ pub(crate) fn compile(
     };
     let mut sources = SourceMap::default();
     for (file, path, text) in files {
-        let id = sources.add(path.display().to_string(), text);
+        let id = sources.add(source_path_text(&path), text);
         debug_assert_eq!(id, file, "the source map must keep the ids assigned before parsing");
     }
     // Checking a tree with syntax errors would mostly report follow-on errors.
@@ -803,6 +803,25 @@ pub(crate) fn compile(
     Ok(Compiled { exe: output, tests: program.tests, build_inputs: program.build_inputs })
 }
 
+/// A source path as diagnostics and recorded allocation sites spell it. On Windows, `fs::canonicalize` returns a
+/// verbatim path (`\\?\C:\...`); the prefix is an implementation detail, so it is removed (`\\?\UNC\server\share`
+/// becomes `\\server\share`). Every other platform keeps the path as it is.
+fn source_path_text(path: &Path) -> String {
+    let text = path.display().to_string();
+    if cfg!(windows) { strip_verbatim_prefix(&text) } else { text }
+}
+
+/// Removes the extended-length prefix Windows uses for canonical paths.
+fn strip_verbatim_prefix(text: &str) -> String {
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => text.to_string(),
+    }
+}
+
 /// Reports a build-script failure at the entry package's first source line. The failure is about the package, not
 /// a particular expression, so the span is the start of the file the test marks; the message names the script and
 /// any note says how to fix it (`spec/build-scripts.md`, BS6).
@@ -810,7 +829,7 @@ fn report_build_failure(loaded: &package::Workspace, failure: build::Failure, op
     let entry = &loaded.packages[loaded.entry_package].modules[loaded.entry_module];
     let text = std::fs::read_to_string(&entry.file).unwrap_or_default();
     let mut sources = SourceMap::default();
-    let file = sources.add(entry.file.display().to_string(), text);
+    let file = sources.add(source_path_text(&entry.file), text);
     let mut diags = Diagnostics::default();
     let diagnostic = diags.error(failure.code, Span::new(file, 0, 0), failure.message);
     if let Some(note) = failure.note {
@@ -1229,6 +1248,15 @@ mod tests {
         assert_eq!(job_count(64, 8, 1), 1, "BURDIN_JOBS=1 is sequential");
         assert_eq!(job_count(64, 8, 3), 3);
         assert_eq!(job_count(2, 8, 99), 2, "never more workers than files");
+    }
+
+    #[test]
+    fn verbatim_windows_paths_are_spelled_without_the_prefix() {
+        // `fs::canonicalize` returns `\\?\C:\...` on Windows; diagnostics and leak sites show the ordinary path.
+        assert_eq!(strip_verbatim_prefix(r"\\?\C:\a\b.bd"), r"C:\a\b.bd");
+        assert_eq!(strip_verbatim_prefix(r"\\?\UNC\server\share\a.bd"), r"\\server\share\a.bd");
+        assert_eq!(strip_verbatim_prefix(r"\\server\share\a.bd"), r"\\server\share\a.bd");
+        assert_eq!(strip_verbatim_prefix("/a/b.bd"), "/a/b.bd");
     }
 
     #[test]
