@@ -1,0 +1,21 @@
+//@ run
+//> [30, 50, 50] [10, 20]
+//> ["pear", "apple"] ["fig"]
+
+// `partition` splits the items into two lists by a predicate and keeps the order; the items are moved, not cloned.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [30, 10, 50, 20, 50] {
+        xs.push(x)
+    }
+    let (big, small) = xs.iter().partition(|x| *x >= 30)
+    println("{big:?} {small:?}")
+
+    let mut ws = List<String>.new()
+    ws.push(String.from("pear"))
+    ws.push(String.from("fig"))
+    ws.push(String.from("apple"))
+    let (long, short) = ws.into_iter().partition(|w| w.len() > 3)
+    println("{long:?} {short:?}")
+}

@@ -1,0 +1,30 @@
+//@ run
+//> Some(10) Some(50)
+//> Some("fig") Some("pear")
+//> Some(50) Some(20)
+//> Some(0) Some(3)
+//> None None
+
+// `min_by` and `max_by` use a comparator, the `_key` versions a key that has `Ord`. Equal items: `min` keeps the first,
+// `max` keeps the last.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [30, 10, 50, 20, 50] {
+        xs.push(x)
+    }
+    println("{xs.iter().min_by(|a, b| a.cmp(*b)):?} {xs.iter().max_by(|a, b| a.cmp(*b)):?}")
+
+    let mut ws = List<String>.new()
+    ws.push(String.from("pear"))
+    ws.push(String.from("fig"))
+    println("{ws.iter().min_by_key(|w| w.len()):?} {ws.iter().max_by_key(|w| w.len()):?}")
+    println("{xs.iter().min_by_key(|x| *x % 7):?} {xs.iter().max_by_key(|x| *x % 7):?}")
+
+    let mut pairs = List<(i32, i32)>.new()
+    pairs.push((1, 5))
+    pairs.push((2, 5))
+    println("{pairs.iter().min_by_key(|p| p.1).map(|p| 0):?} {pairs.iter().max_by_key(|p| p.1).map(|p| 3):?}")
+    let none = List<i32>.new()
+    println("{none.iter().min_by(|a, b| a.cmp(*b)):?} {none.iter().max_by_key(|x| *x):?}")
+}

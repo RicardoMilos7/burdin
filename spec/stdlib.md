@@ -444,7 +444,8 @@ stops after the upper endpoint without computing `upper + 1`, so it does not ove
 
 `std` declares `Iterator<T>` (`next`, plus the default methods `map`, `filter`, `take`, `skip`, `fold`, `count`,
 `any_item`, `all`, `find`, and `to_list`; and, from issue #706, `enumerate`, `take_while`, `skip_while`, `map_while`,
-`step_by`, `inspect`, and `peekable`) and the marker `Iterable<T>`. The compiler implements both for arrays,
+`step_by`, `inspect`, and `peekable`; and, from issue #707, `last`, `nth`, `position`, `for_each`, `reduce`,
+`partition`, `min_by`, `max_by`, `min_by_key`, and `max_by_key`) and the marker `Iterable<T>`. The compiler implements both for arrays,
 slices, `List`, `Map`, `Chars`, and ranges, and adds `sum` for iterators of integers; `std` declares the adapter
 types `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter`. A program implements the interfaces to make its own type
 work with `for` and the adapters. The rules, the item types, and the second-class restrictions are in
@@ -770,6 +771,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
 | Characters of a text | `m24_stdlib/text_characters` |
+| Iterator consumers | `m24_stdlib/iter_last_nth_position`, `iter_for_each_reduce`, `iter_partition`, `iter_min_max` |
 | Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |

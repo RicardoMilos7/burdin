@@ -1,0 +1,24 @@
+//@ run
+//> e30
+//> e10
+//> e50
+//> Some(90)
+//> None
+//> Some(7)
+
+// `for_each` runs a closure on every item; `reduce` folds with the first item as the start and is `None` for an empty
+// iterator.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [30, 10, 50] {
+        xs.push(x)
+    }
+    xs.iter().for_each(|x| println("e{x}"))
+    println("{xs.iter().reduce(|a, b| a + b):?}")
+    let empty = List<i32>.new()
+    println("{empty.iter().reduce(|a, b| a + b):?}")
+    let mut one = List<i32>.new()
+    one.push(7)
+    println("{one.iter().reduce(|a, b| a + b):?}")
+}
