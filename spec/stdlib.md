@@ -327,6 +327,38 @@ whole number of bytes or whose padding is wrong, or a `%` cut off by the end of 
 for a character that does not belong (`index` is its byte offset in the text); `InvalidUtf8 { index }` for the byte
 offset where the bytes stop being UTF-8.
 
+## Byte buffers (issue #413)
+
+```
+struct BytesMut {                         // a growable, owned buffer
+    fn new(): BytesMut                    fn from_list(data: List<u8>): BytesMut     fn from_text(text: str): BytesMut
+    fn len(self): usize                   fn is_empty(self): bool                    fn get(self, i: usize): Option<u8>
+    fn push(mut self, byte: u8)           fn extend(mut self, bytes: [u8])           fn push_text(mut self, text: str)
+    fn truncate(mut self, len: usize)     fn clear(mut self)
+    fn as_slice(self): [u8]               fn to_list(self): List<u8>                 fn into_list(own self): List<u8>
+    fn freeze(own self): Bytes
+}
+
+struct Bytes {                            // read-only; clones and slices share storage
+    fn new(): Bytes                       fn from_list(data: List<u8>): Bytes        fn from_text(text: str): Bytes
+    fn len(self): usize                   fn is_empty(self): bool                    fn get(self, i: usize): Option<u8>
+    fn as_slice(self): [u8]               fn to_list(self): List<u8>
+    fn slice(self, from: usize, to: usize): Bytes                fn split_at(self, mid: usize): (Bytes, Bytes)
+    fn to_text(self): Result<String, DecodeError>                fn to_hex(self): String
+}
+```
+
+`BytesMut` and `Bytes` implement `Index<u8>` (`b[i]`; an index past the end panics with `BytesMut index out of bounds` /
+`Bytes index out of bounds`), `BytesMut` also `IndexMut<u8>` (`b[i] = x`), and both implement `PartialEq` (same bytes)
+and `Debug` (`Bytes[1, 2, 3]`). `Bytes` is `Clone`.
+
+The relationship to the other byte types: `List<u8>` is the plain owned vector, and `[u8]` is a borrowed view
+(`as_slice`); both stay. `BytesMut` is a `List<u8>` with a byte-oriented surface, built to be filled and then frozen.
+`Bytes` holds one `List<u8>` in a `Shared` handle and an offset and length into it, so `clone`, `slice`, and `split_at`
+copy no bytes and the storage lives until the last handle goes. `freeze` moves a `BytesMut`'s list into a `Bytes`
+without copying; going back, `to_list` copies and `into_list` (on `BytesMut`) does not. A `slice` or `split_at` that is
+reversed or past the end panics with `Bytes slice out of bounds`. The encodings of the previous section take `as_slice()`.
+
 ## Allocators
 
 ```
@@ -908,6 +940,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
+| Byte buffers | `m24_stdlib/bytes_mut`, `bytes_share`, `bytes_slice_out_of_bounds`, `bytes_index_out_of_bounds`, `shared_get_view`, `shared_get_view_outlives` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |

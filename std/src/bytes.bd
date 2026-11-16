@@ -1,0 +1,281 @@
+// Byte buffers (issue #413; spec/stdlib.md, "Byte buffers").
+//
+// `BytesMut` is the growable buffer you write into: a `List<u8>` with a byte-oriented surface. `Bytes` is the finished,
+// read-only form: it shares one `List<u8>` through a `Shared` handle, so cloning it and slicing it copy no bytes. A
+// `BytesMut` becomes a `Bytes` with `freeze`, which moves the list in; a `Bytes` becomes a `List<u8>` again with
+// `to_list`, which copies. Everything that only reads bytes takes a `[u8]` view, which `as_slice` gives.
+
+use encoding.{DecodeError, from_utf8, hex_encode, to_utf8}
+use fmt.{Debug, Formatter}
+use ops.{Index, IndexMut, PartialEq}
+
+/// A growable, owned buffer of bytes.
+struct BytesMut {
+    data: List<u8>
+}
+
+/// A read-only run of bytes. Clones and slices share the same storage.
+struct Bytes derives (Clone) {
+    data: Shared<List<u8>>
+    start: usize
+    len: usize
+}
+
+BytesMut {
+    /// An empty buffer.
+    fn new(): BytesMut {
+        BytesMut { data: List<u8>.new() }
+    }
+
+    /// A buffer that holds `data`.
+    fn from_list(own data: List<u8>): BytesMut {
+        BytesMut { data: data }
+    }
+
+    /// A buffer that holds the UTF-8 bytes of the text.
+    fn from_text(text: str): BytesMut {
+        BytesMut { data: text.to_utf8() }
+    }
+
+    /// The number of bytes.
+    fn len(self): usize {
+        self.data.len()
+    }
+
+    /// Whether the buffer holds no bytes.
+    fn is_empty(self): bool {
+        self.data.len() == 0
+    }
+
+    /// The byte at `i`, or `None` past the end.
+    fn get(self, i: usize): Option<u8> {
+        if i >= self.data.len() {
+            return None
+        }
+        Some(self.data[i])
+    }
+
+    /// Appends one byte.
+    fn push(mut self, byte: u8) {
+        self.data.push(byte)
+    }
+
+    /// Appends every byte of the view.
+    fn extend(mut self, bytes: [u8]) {
+        let mut i: usize = 0
+        while i < bytes.len() {
+            self.data.push(bytes[i])
+            i = i + 1
+        }
+    }
+
+    /// Appends the UTF-8 bytes of the text.
+    fn push_text(mut self, text: str) {
+        for c in text.chars() {
+            let encoded = c.to_string().to_utf8()
+            let mut i: usize = 0
+            while i < encoded.len() {
+                self.data.push(encoded[i])
+                i = i + 1
+            }
+        }
+    }
+
+    /// Keeps the first `len` bytes. A `len` that is not smaller than the length changes nothing.
+    fn truncate(mut self, len: usize) {
+        while self.data.len() > len {
+            self.data.pop()
+        }
+    }
+
+    /// Removes every byte.
+    fn clear(mut self) {
+        self.data.clear()
+    }
+
+    /// A view of the bytes.
+    fn as_slice(self): [u8] {
+        self.data[0..self.data.len()]
+    }
+
+    /// The bytes as a list, without copying them.
+    fn into_list(own self): List<u8> {
+        self.data
+    }
+
+    /// A copy of the bytes as a list.
+    fn to_list(self): List<u8> {
+        let mut out = List<u8>.new()
+        let mut i: usize = 0
+        while i < self.data.len() {
+            out.push(self.data[i])
+            i = i + 1
+        }
+        out
+    }
+
+    /// The finished, read-only form. The bytes are not copied.
+    fn freeze(own self): Bytes {
+        let len = self.data.len()
+        Bytes { data: Shared.new(self.data), start: 0, len: len }
+    }
+}
+
+BytesMut: Index<u8> {
+    fn index(self, i: usize): &u8 {
+        if i >= self.data.len() {
+            panic("BytesMut index out of bounds")
+        }
+        &self.data[i]
+    }
+}
+
+BytesMut: IndexMut<u8> {
+    fn index_mut(mut self, i: usize): &mut u8 {
+        if i >= self.data.len() {
+            panic("BytesMut index out of bounds")
+        }
+        &mut self.data[i]
+    }
+}
+
+BytesMut: PartialEq {
+    fn eq(self, other: BytesMut): bool {
+        __same_bytes(self.as_slice(), other.as_slice())
+    }
+}
+
+BytesMut: Debug {
+    fn debug(self, mut f: Formatter) {
+        __debug_bytes("BytesMut", self.as_slice(), mut f)
+    }
+}
+
+Bytes {
+    /// An empty run.
+    fn new(): Bytes {
+        Bytes { data: Shared.new(List<u8>.new()), start: 0, len: 0 }
+    }
+
+    /// A run that holds `data`.
+    fn from_list(own data: List<u8>): Bytes {
+        let len = data.len()
+        Bytes { data: Shared.new(data), start: 0, len: len }
+    }
+
+    /// A run that holds the UTF-8 bytes of the text.
+    fn from_text(text: str): Bytes {
+        Bytes.from_list(text.to_utf8())
+    }
+
+    /// The number of bytes.
+    fn len(self): usize {
+        self.len
+    }
+
+    /// Whether the run holds no bytes.
+    fn is_empty(self): bool {
+        self.len == 0
+    }
+
+    /// The byte at `i`, or `None` past the end.
+    fn get(self, i: usize): Option<u8> {
+        if i >= self.len {
+            return None
+        }
+        let list = self.data.get()
+        Some(list[self.start + i])
+    }
+
+    /// A view of the bytes.
+    fn as_slice(self): [u8] {
+        let list = self.data.get()
+        list[self.start..self.start + self.len]
+    }
+
+    /// The bytes `from..to` of this run, sharing its storage. A reversed or out-of-range pair panics.
+    fn slice(self, from: usize, to: usize): Bytes {
+        if from > to || to > self.len {
+            panic("Bytes slice out of bounds")
+        }
+        Bytes { data: self.data.clone(), start: self.start + from, len: to - from }
+    }
+
+    /// The runs before and after `mid`, sharing this run's storage. A `mid` past the end panics.
+    fn split_at(self, mid: usize): (Bytes, Bytes) {
+        (self.slice(0, mid), self.slice(mid, self.len))
+    }
+
+    /// A copy of the bytes as a list.
+    fn to_list(self): List<u8> {
+        let mut out = List<u8>.new()
+        let list = self.data.get()
+        let mut i: usize = 0
+        while i < self.len {
+            out.push(list[self.start + i])
+            i = i + 1
+        }
+        out
+    }
+
+    /// The text the bytes spell (`from_utf8`).
+    fn to_text(self): Result<String, DecodeError> {
+        from_utf8(self.as_slice())
+    }
+
+    /// The bytes as lowercase hexadecimal.
+    fn to_hex(self): String {
+        hex_encode(self.as_slice())
+    }
+}
+
+Bytes: Index<u8> {
+    fn index(self, i: usize): &u8 {
+        if i >= self.len {
+            panic("Bytes index out of bounds")
+        }
+        let list = self.data.get()
+        &list[self.start + i]
+    }
+}
+
+Bytes: PartialEq {
+    fn eq(self, other: Bytes): bool {
+        __same_bytes(self.as_slice(), other.as_slice())
+    }
+}
+
+Bytes: Debug {
+    fn debug(self, mut f: Formatter) {
+        __debug_bytes("Bytes", self.as_slice(), mut f)
+    }
+}
+
+priv fn __same_bytes(a: [u8], b: [u8]): bool {
+    if a.len() != b.len() {
+        return false
+    }
+    let mut i: usize = 0
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Writes `Name[1, 2, 3]`.
+priv fn __debug_bytes(name: str, bytes: [u8], mut f: Formatter) {
+    f.write_str(name)
+    f.write_str("[")
+    let mut i: usize = 0
+    while i < bytes.len() {
+        if i > 0 {
+            f.write_str(", ")
+        }
+        bytes[i].debug(mut f)
+        i = i + 1
+    }
+    f.write_str("]")
+}

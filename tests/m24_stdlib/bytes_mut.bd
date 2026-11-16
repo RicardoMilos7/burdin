@@ -1,0 +1,41 @@
+//@ run
+//> 0 true
+//> 7 BytesMut[1, 2, 104, 101, 121, 195, 169]
+//> 9 Some(2) None
+//> BytesMut[9, 2, 104, 101]
+//> 4
+//> 4
+//> 4 09026865
+//> true
+//> true
+
+// `BytesMut` is the growable buffer: push, extend, index, truncate, and `freeze` into a `Bytes`.
+
+fn main() {
+    let mut b = BytesMut.new()
+    println("{} {}", b.len(), b.is_empty())
+    b.push(1)
+    b.push(2)
+    b.extend(BytesMut.from_text("hey").as_slice())
+    b.push_text("é")
+    println("{} {:?}", b.len(), b)
+    b[0] = 9
+    println("{} {:?} {:?}", b[0], b.get(1), b.get(99))
+    b.truncate(4)
+    println("{:?}", b)
+    b.truncate(100)
+    println("{}", b.len())
+    let copy = b.to_list()
+    println("{}", copy.len())
+    let frozen = b.freeze()
+    println("{} {}", frozen.len(), frozen.to_hex())
+    let mut c = BytesMut.from_list(copy)
+    let mut same = BytesMut.new()
+    same.push(9)
+    same.push(2)
+    same.push(104)
+    same.push(101)
+    println("{}", c == same)
+    c.clear()
+    println("{}", c.is_empty())
+}

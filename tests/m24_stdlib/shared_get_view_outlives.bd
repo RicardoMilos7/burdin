@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A view of the value inside a `Shared` handle that is a local of the function cannot be returned: the handle is
+// dropped at the end of the call.
+
+fn leak(): &i32 {
+    let s = Shared.new(5)
+    s.get() //~ E0122
+}
+
+fn main() {
+}

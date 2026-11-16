@@ -1,0 +1,20 @@
+//@ run
+//> 7 2 8
+
+// A view that `Shared.get` returns is tied to the handle it came from, so it can be kept in a local while the
+// handle is alive.
+
+fn first(s: Shared<List<i32>>): i32 {
+    let list = s.get()
+    list[0]
+}
+
+fn main() {
+    let mut l = List<i32>.new()
+    l.push(7)
+    l.push(8)
+    let s = Shared.new(l)
+    let t = s.clone()
+    let view = t.get()
+    println("{} {} {}", first(s), view.len(), view[1])
+}

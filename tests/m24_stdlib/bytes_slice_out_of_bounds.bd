@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: Bytes slice out of bounds
+//> before
+
+fn main() {
+    let b = Bytes.from_text("abc")
+    println("before")
+    let s = b.slice(2, 5)
+    println("{}", s.len())
+}
