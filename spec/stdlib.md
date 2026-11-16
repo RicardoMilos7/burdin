@@ -162,6 +162,28 @@ split a multi-byte character: the language does not check UTF-8 boundaries.
 values or two `String` values lexicographically by bytes. The operands must have the same type; `s == "x"` does not
 convert, and there is no `Ord` for a mixed pair.
 
+### Characters of a text (issue #193)
+
+The scope of Unicode support is the scalar value. These extension methods (also on `String`) count, index, and rebuild
+text by `char`, where `len` and slicing count bytes. The library does not normalize and does not group characters
+into grapheme clusters, so an `e` followed by a combining accent is two characters. `chars()` stays the basic
+UTF-8-correct iterator. Case mapping and classification are in "Characters" above and "Text helpers" below.
+
+```
+fn str.char_count(self): usize
+fn str.is_ascii(self): bool
+fn str.is_char_boundary(self, i: usize): bool         // the start of a character, or the end of the text
+fn str.nth_char(self, n: usize): Option<char>
+fn str.to_char_list(self): List<char>
+fn str.char_indices(self): List<(usize, char)>        // each character with its byte offset
+fn str.reverse_chars(self): String
+fn str.slice_chars(self, start: usize, end: usize): String   // by character index; an index past the end stops there
+fn List<char>.collect_string(self): String
+```
+
+Tests: `m24_stdlib/text_characters` (a text with one-, two-, and three-byte characters), and the non-ASCII cases of
+`string_*` and `char_*`.
+
 ### Text helpers (issue #415)
 
 `std.text` (and the case conversion in `std.unicode`) declare extension methods on `str` and `String`
@@ -725,6 +747,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| Characters of a text | `m24_stdlib/text_characters` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

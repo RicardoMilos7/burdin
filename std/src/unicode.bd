@@ -367,3 +367,18 @@ fn String.eq_ignore_ascii_case(self, other: str): bool {
     self.as_str().eq_ignore_ascii_case(other)
 }
 
+
+/// Whether every character is in the ASCII range.
+fn str.is_ascii(self): bool {
+    for c in self.chars() {
+        if !c.is_ascii() {
+            return false
+        }
+    }
+    true
+}
+
+/// Whether every character is in the ASCII range.
+fn String.is_ascii(self): bool {
+    self.as_str().is_ascii()
+}
