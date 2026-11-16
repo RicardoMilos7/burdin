@@ -22,6 +22,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
 | [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, parallelism, output capture, isolation, and discovery. |
+| [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the minimal `bindgen`. |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
@@ -120,8 +121,8 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, and `explain`. This section is the contract they
-implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
+The `burdin` command has the subcommands `build`, `run`, `test`, `explain`, and `bindgen`. This section is the
+contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
 usage:
@@ -134,6 +135,7 @@ usage:
               [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
               [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
+  burdin bindgen <header> --out <file>
   burdin --version
 
 compile options:
@@ -194,9 +196,31 @@ lib = { path = "../lib" }
   `src/lib.bd` when that file does not exist.
 - `[dependencies]` entries are path-only and are loaded recursively. A diamond reuses the package; a cycle is an
   error; two packages may not share a name.
+- `[build] allow = ["lib"]` grants permission to run the named dependencies' `build.bd` scripts (see
+  [Build scripts](#build-scripts-and-burdin-bindgen)).
 - Unknown sections and keys are ignored, so a newer manifest does not break an older compiler.
 
 A single `.bd` file is a package with one module (its module path is empty) and no manifest.
+
+### Build scripts and `burdin bindgen`
+
+`build.bd` next to a package's `burdin.toml` is an optional program the driver compiles and runs before reading the
+package's sources. The package's own script is trusted; a dependency's runs only when the entry package's manifest
+names it in `[build] allow` (otherwise E0260). The script runs with the package directory as its working directory
+and `argv[1]`, the output directory `<package>/target/burdin/<profile>` as `argv[2]`, and the driver's directory
+first on `PATH`; its output goes to the compiler's stderr. Any `.bd` file under `<out>/src/` becomes a module of the
+package under that relative path, and a generated module that repeats a source module's name is E0262. A failing
+script is E0261. The script reruns only when its source, the manifest, the compiler, or an input listed in
+`<out>/inputs` (or read by the script's `embed` calls) changes; the cache key records content per package and
+profile. `spec/build-scripts.md` is the exact rule.
+
+`burdin bindgen <header> --out <file>` writes raw C declarations as a Burdin module: functions as `extern "C"`,
+`repr(C)` structs, typedefs, enums, and object-like `#define` constants. It is the minimal generator a build script
+may invoke; the full tool is stage 3, so `#include`, function-pointer types, and unions are skipped with a comment.
+
+```console
+$ ./target/debug/burdin bindgen c/strings.h --out src/bindings.bd
+```
 
 ### `burdin build`
 

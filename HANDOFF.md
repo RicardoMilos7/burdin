@@ -4,10 +4,10 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the thirty-fourth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-fifth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
-overloading and `Index`), 20 (comptime), and 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances) are done**: 537 conformance tests; all pass in debug and release (the
+overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), and 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`) are done**: 546 conformance tests; all pass in debug and release (the
 release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -137,6 +137,22 @@ block's argument pattern against an instance (`Stack<i32>`, `Pair<i32, B>`, `Hol
 two overlapping impls of one interface as E0143, and `Drop` covers every instance (E0131 when it names specific
 arguments) (`spec/impls.md` IM1-IM9); a derive on a generic type holds for the instances whose parts allow it (IM8),
 and writing a built-in interface by hand is the one m21-family site left, E9000 under #402.
+
+The thirty-fifth session implemented milestone 22, build scripts (issue #173, sub-issues #174-#179). It decided first
+(`spec/build-scripts.md` BS1-BS8) that `build.bd` is a standalone program at the package root that the driver
+compiles in the build profile and runs before any source is read, that the entry package's own script is trusted
+while a dependency's run only when the entry package's manifest lists it in `[build] allow` (E0260), that the script
+receives the package directory (working directory and `argv[1]`) and `<package>/target/burdin/<profile>` (`argv[2]`)
+and writes modules to `<out>/src` (E0262 on a path that repeats a source module), and that reruns are decided by a
+content key per package and profile over the script, manifest, compiler binary, the `<out>/inputs` list, the script's
+`embed` files, and the generated outputs (BS5). The driver gained `build.rs` (grants, running, cache, generated
+modules) and a minimal `bindgen.rs` (`burdin bindgen <header> --out <file>`: `extern "C"` declarations, `repr(C)`
+structs, typedefs, enum constants, and object-like `#define`s; `#include`, function pointers, and unions are skipped
+for stage 3). The manifest parser gained `[build] allow`. The new diagnostics are E0260 (invalid build configuration),
+E0261 (a failed script), and E0262 (invalid generated modules), reported at the entry package's first source line.
+The tests are `tests/m22_build/` with nine conformance tests, driver unit tests for the cache key and the header
+parser, and `tests/check_build_scripts.py` for the cache, `--emit-deps`, and the `bindgen` command line. The suite
+is 546 tests.
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -835,6 +851,14 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 27. **`derives (Debug)` on a type with an array field prints an empty value for a generic type.** A non-generic type
     is E0130, but the derived `debug` of `Gen<T> { data: [T; 3] }` prints `data: ` and nothing else (arrays have no
     `Debug`). It predates m21; `derive_generic` and `const_params` avoid printing arrays.
+28. **Moving an element out of a temporary collection double-frees.** `let out = env.args()[2]` (a `List<String>`
+    temporary), `let x = make()[0]`, and `let s = [String.from("x")][0]` move the element's struct but the
+    temporary's drop glue still frees the element, so the moved value points at freed memory (the failure is silent
+    corruption or `free(): double free detected`). The same move from a **named** local is tracked and works: the
+    fix is to bind the collection first (`let args = env.args(); let out = args[2]`). This is the same temporary
+    bookkeeping gap as problem 26 and was not introduced by m22; the build-script tests and `spec/build-scripts.md`
+    use the bound form. Fixing it means registering the temporary as a tracked place (or marking its moved element)
+    in the memory checker and code generation.
 
 ## Decided in the third session
 
@@ -1495,16 +1519,16 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 ## What is left to do, in order
 
-1. Milestone 21 is complete (thirty-fourth session): `spec/reflection.md` RFL1-RFL10, `spec/const-generics.md`
-   CG1-CG9, `spec/comptime.md` CT15, `spec/type-aliases.md` AL1-AL6, and `spec/impls.md` IM1-IM9 are the decisions
-   and `tests/m21_reflect/` has 25 tests. The next milestone is 22 (`build.bd`, dependency grants, generated sources,
-   `bindgen`); `embed`'s `--emit-deps` list is the build input record it can reuse. Issue #444 (differential tests
-   between comptime and compiled code) is unblocked; `spec/test-runner.md` holds its intended shape.
-2. Write the m22 tests before the code, the same way the earlier milestones were built. Known limits to keep in
+1. Milestone 22 is complete (thirty-fifth session): `spec/build-scripts.md` BS1-BS8 is the decision and
+   `tests/m22_build/` has nine tests. The next milestone is 23 (allocator parameters, `Arena`, `Shared<T>`, leak
+   detection in tests, and allocator-aware containers). Issue #444 (differential tests between comptime and compiled
+   code) is unblocked; `spec/test-runner.md` holds its intended shape. The full bindgen, C function-pointer types,
+   and `union` declarations remain stage 3 / the stage 1 "Fixes" list.
+2. Write the m23 tests before the code, the same way the earlier milestones were built. Known limits to keep in
    mind: the comptime ones (a closure inside a function with comptime parameters is shared by its specializations;
-   `Map` iteration at compile time is insertion order, CT9; comptime results are not cached, CT14) and the m21 ones
-   (problems 24-27 above). Writing a built-in interface by hand (#402) is the open type-system issue under
-   `Stage 1`; it applies to a plain type and a generic one alike.
+   `Map` iteration at compile time is insertion order, CT9; comptime results are not cached, CT14), the m21 ones
+   (problems 24-27 above), and the temporary-move bug (problem 28). Writing a built-in interface by hand (#402) is
+   the open type-system issue under `Stage 1`; it applies to a plain type and a generic one alike.
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
@@ -1535,6 +1559,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 22, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 23, then write its tests.
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.

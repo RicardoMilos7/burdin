@@ -30,8 +30,9 @@ not updated and may disagree with the repository.
    parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
    `x.{name}`, and user `derive` declarations, `spec/const-generics.md` is const parameters, const arguments, and array
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
-   `Drop` on a generic type, and the built-in interfaces on one, and `spec/test-runner.md` is the behavior of
-   `burdin test`.
+   `Drop` on a generic type, and the built-in interfaces on one, `spec/test-runner.md` is the behavior of
+   `burdin test`, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated modules, caching, and the
+   minimal `bindgen`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -74,6 +75,7 @@ python3 tests/check_parallel.py          check parallel parsing and deterministi
 python3 tests/check_diagnostics.py       check color, width, formats, error limits, and ordering (needs a built driver)
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
+python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
@@ -107,8 +109,9 @@ crates/
   burdin_comptime/          the compile-time interpreter over the typed tree: constants, comptime expressions,
                             specialization of comptime parameters (spec/comptime.md)
   burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime
-  burdin_driver/            the `burdin` binary: build, run, test; package loading (`package.rs`: burdin.toml,
-                            modules, dependencies)
+  burdin_driver/            the `burdin` binary: build, run, test, bindgen; package loading (`package.rs`: burdin.toml,
+                            modules, dependencies), build scripts (`build.rs`), and the minimal C bindgen
+                            (`bindgen.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, and code generation
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed

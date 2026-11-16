@@ -1525,3 +1525,103 @@ fn main() {
 
 **How to fix:** pass an argument or write a type annotation that fixes the value, for example an array of the
 wanted length.
+
+## E0260: Invalid build configuration
+
+A package with a `build.bd` is a dependency of the entry package, but the entry package's manifest does not grant
+it. Running a dependency's script is arbitrary code execution, so the entry package must name every dependency
+script it trusts in `[build] allow`; an entry that names no dependency in the build is rejected too.
+`spec/build-scripts.md` BS2.
+
+<!-- error-example: E0260 target=app -->
+```burdin
+// --- app/burdin.toml ---
+[package]
+name = "app"
+
+[dependencies]
+lib = { path = "../lib" }
+
+// --- app/src/main.bd ---
+use lib.VALUE //~ E0260
+
+fn main() {
+    println("{}", VALUE)
+}
+
+// --- lib/burdin.toml ---
+[package]
+name = "lib"
+
+// --- lib/build.bd ---
+fn main() {
+    let args = env.args()
+    let out = args[2]
+    match write_file("{out}/src/generated.bd", "const VALUE: i32 = 1\n") {
+        Ok(_) => {}
+        Err(_) => panic("cannot write the generated module"),
+    }
+}
+
+// --- lib/src/lib.bd ---
+pub use generated.VALUE
+```
+<!-- /error-example -->
+
+**How to fix:** add the dependency's package name to the entry package's manifest, under `[build]`:
+`allow = ["lib"]`. Grant only the scripts you are willing to run; the line is the whole permission.
+
+## E0261: Build script failed
+
+`build.bd` did not compile, could not be started, ended with a non-zero status, or declared an input that does not
+exist. The script's working directory is its package, so a relative path in the script resolves there. The script's
+own diagnostics come first, and E0261 names the package at the entry source. `spec/build-scripts.md` BS3 and BS5.
+
+<!-- error-example: E0261 target=. -->
+```burdin
+// --- burdin.toml ---
+[package]
+name = "app"
+
+// --- build.bd ---
+fn main() {
+    process.exit(3)
+}
+
+// --- src/main.bd ---
+fn main() {} //~ E0261
+```
+<!-- /error-example -->
+
+**How to fix:** make the script compile and finish successfully. A script that discovers an unusable environment
+should print why and exit non-zero, which reports this error with its output above it.
+
+## E0262: Invalid generated modules
+
+A build script's generated files are modules of the package under `<out>/src/`. A generated path that is not a
+Burdin identifier, or a module whose path repeats one of the package's source modules, cannot be loaded. Replacing a
+source module with generated code is not allowed; a script only adds module names. `spec/build-scripts.md` BS4.
+
+<!-- error-example: E0262 target=. -->
+```burdin
+// --- burdin.toml ---
+[package]
+name = "app"
+
+// --- build.bd ---
+fn main() {
+    let args = env.args()
+    let out = args[2]
+    match write_file("{out}/src/main.bd", "fn main() {{}}\n") {
+        Ok(_) => {}
+        Err(_) => panic("cannot write the generated module"),
+    }
+}
+
+// --- src/main.bd ---
+fn main() {} //~ E0262
+```
+<!-- /error-example -->
+
+**How to fix:** give the generated module a name the package does not already use, for example
+`<out>/src/generated.bd`, and import it with that name.

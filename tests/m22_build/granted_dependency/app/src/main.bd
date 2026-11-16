@@ -1,0 +1,11 @@
+//@ run
+//> 7
+//> hand
+
+// A dependency's build script runs only when the entry package's manifest grants it with `[build] allow`
+// (spec/build-scripts.md, BS2).
+
+fn main() {
+    println("{}", lib.FROM_LIB)
+    println(lib.LABEL)
+}

@@ -1,0 +1,11 @@
+// Generated modules may add names, but they cannot replace a source module. Writing `src/main.bd` here conflicts
+// with the package's own entry module (spec/build-scripts.md, BS4).
+
+fn main() {
+    let args = env.args()
+    let out = args[2]
+    match write_file("{out}/src/main.bd", "fn main() {{}}\n") {
+        Ok(_) => {}
+        Err(_) => panic("cannot write the generated module"),
+    }
+}

@@ -1,0 +1,5 @@
+//@ burdin-test passed=1 failed=0
+
+// The test itself lives in the generated module (spec/build-scripts.md, BS4).
+
+fn main() {}

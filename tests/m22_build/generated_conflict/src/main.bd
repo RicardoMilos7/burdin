@@ -1,0 +1,6 @@
+//~ E0262
+//@ compile-fail
+
+// A generated module that repeats a source module's name is rejected (spec/build-scripts.md, BS4).
+
+fn main() {}

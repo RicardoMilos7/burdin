@@ -1,0 +1,3 @@
+// The dependency's root re-exports the generated names, like any other module of the package.
+
+pub use extra.{FROM_LIB, LABEL}

@@ -229,6 +229,16 @@ impl Code {
     pub const CONST_EVAL: Code = Code("E0251");
     /// A const argument that cannot be inferred from the call (CG6).
     pub const CONST_INFER: Code = Code("E0252");
+    /// The build configuration is invalid: a dependency has a `build.bd` that the entry package's
+    /// `[build] allow` list does not name, or the list names a package that is not a dependency
+    /// (`spec/build-scripts.md`, BS2).
+    pub const BUILD_CONFIG: Code = Code("E0260");
+    /// A build script failed: it did not compile, could not be run, or ended with a non-zero status
+    /// (`spec/build-scripts.md`, BS3).
+    pub const BUILD_SCRIPT: Code = Code("E0261");
+    /// A build script's generated modules are invalid: a path that is not a module name, a module that
+    /// conflicts with a source module, or an output directory that cannot be read (BS4).
+    pub const BUILD_OUTPUT: Code = Code("E0262");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

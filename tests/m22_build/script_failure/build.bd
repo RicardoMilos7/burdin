@@ -1,0 +1,7 @@
+// A script that ends with a non-zero status fails the build; the script's own output goes to the compiler's stderr
+// (spec/build-scripts.md, BS3).
+
+fn main() {
+    println("the script is running")
+    process.exit(3)
+}
