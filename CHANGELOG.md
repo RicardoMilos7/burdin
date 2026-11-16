@@ -6,6 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- Allocator follow-up (sub-issues #331-#333 of #182): the interface and metadata decision, the global libc allocator,
+  and drop/clone glue through a stored allocator are verified end to end.
+  - `List.contains`, `Map.get`, `Map.remove`, and `Map.contains_key` borrow their key, as `spec/stdlib.md` says,
+    but the inlined implementation spilled a temporary key without recording it for drop, so a temporary `String`
+    key leaked. The key is now read through a place: a local stays borrowed, and a temporary drops at the end of
+    its statement.
+  - `tests/m23_allocators/clone_through_allocator.bd` checks list, map, heap, and `String` clone and drop, plus
+    temporary lookup keys, under the checking allocator.
 - Differential tests between comptime and compiled code (issue #444).
   - A test item may carry `[differential]`: the compiler runs its body through the comptime interpreter after the
     CT13 rewrite, and `burdin test` requires the compiled test to produce the same `Ok`/`Err` outcome. A different
@@ -270,11 +278,11 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
 - Allocator-aware containers (#187): `List`, `Map`, and `Heap` allocate, reallocate, free, clone, and iterate
   through the stored allocator, and the owning iterators carry it. Dropping a container frees its buffer through
   the allocator and then drops the allocator; cloning requires the allocator to be `Clone`.
-- Tests (#188): `tests/m23_allocators/` adds 27 conformance tests (the default spelling and layout, allocator
+- Tests (#188): `tests/m23_allocators/` adds 28 conformance tests (the default spelling and layout, allocator
   parameters and functions, arena-backed `List`/`Map`/`Heap`, arena reset and growth, `Shared` across scopes and in
   structs, default type parameters, owning iterators, cloning, the leak report, and the compile-fail cases of
   E0270-E0272, E0120, and E0224), plus the `tests/runner/leaks/` fixture and the leak checks in
-  `tests/check_test_runner.py`. The suite is 576 tests. The checking allocator also exposed a temporary-drop leak in
+  `tests/check_test_runner.py`. The suite is 577 tests. The checking allocator also exposed a temporary-drop leak in
   the non-consuming `Option`/`Result` methods, now fixed by reading the receiver through a place.
 - Documentation: `spec/allocators.md` (new), `spec/grammar.md` (type parameter defaults), `spec/stdlib.md`,
   `spec/memory-rules.md` (DR8a), `spec/test-runner.md`, `spec/stage1-subset.md`, `tests/README.md` (decision 30),

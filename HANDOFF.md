@@ -7,7 +7,7 @@ Written at the end of the first session, updated at the end of the second, third
 Updated at the end of the thirty-sixth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
-overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 576 conformance tests; all pass in debug and release (the
+overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 577 conformance tests; all pass in debug and release (the
 release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -177,8 +177,8 @@ marker on `List`/`Map`/`Heap` and the owning iterators, `Ty::Shared`, the alloca
 `burdin_codegen/src/emit/alloc.rs` calls the allocator implementation (every argument by address) and the runtime
 gained the checking allocator and the leak check; `burdin_comptime` models `Shared` as its value and rejects
 explicit allocation as impure (E0224). `std/src/alloc.bd` adds `Allocator`, `Global`, and `Arena`. The new
-diagnostics are E0270, E0271, and E0272. The tests are `tests/m23_allocators/` with 27 conformance tests, the
-`tests/runner/leaks/` fixture, and the leak-detection checks in `tests/check_test_runner.py`; the suite is 576
+diagnostics are E0270, E0271, and E0272. The tests are `tests/m23_allocators/` with 28 conformance tests, the
+`tests/runner/leaks/` fixture, and the leak-detection checks in `tests/check_test_runner.py`; the suite is 577
 tests. The checking allocator also exposed a latent temporary-drop leak in the non-consuming `Option`/`Result`
 methods (`is_some`, `is_ok`, ...), fixed by reading the receiver through a place so its temporary is registered;
 two runner fixtures reported it before the fix.
@@ -1576,7 +1576,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 ## What is left to do, in order
 
 1. Milestone 23 is complete (thirty-sixth session): `spec/allocators.md` AL1-AL10 is the decision and
-   `tests/m23_allocators/` has 27 tests. The next milestone is 24 (`m24_stdlib`: `Set`, `Deque`, a priority heap,
+   `tests/m23_allocators/` has 28 tests. The next milestone is 24 (`m24_stdlib`: `Set`, `Deque`, a priority heap,
    Unicode helpers, paths, time, random, and the formatting foundation), which may split as the standard library
    grows. Issue #444 (differential tests between comptime and compiled code) is done (thirty-sixth session);
    `spec/test-runner.md` holds its behavior. The full bindgen, C function-pointer types, and `union` declarations

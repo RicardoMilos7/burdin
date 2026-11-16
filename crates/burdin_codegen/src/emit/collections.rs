@@ -352,8 +352,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             (Ty::List(elem, _), Method::ListContains) => {
                 let elem = (**elem).clone();
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
-                let key = self.expr_mode(&args[1], Mode::Use)?;
-                let key_ptr = self.spill(key, &elem)?;
+                let key_ptr = self.place_ptr(&args[1])?;
                 self.sequence_contains(seq.data, seq.len, &elem, key_ptr)
             }
             (Ty::List(elem, _), Method::ListSort) => {
@@ -459,8 +458,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
-                let k = self.expr_mode(&args[1], Mode::Use)?;
-                let k_slot = self.spill(k, &key_ty)?;
+                let k_slot = self.place_ptr(&args[1])?;
                 let view = Ty::Ref { mutable: false, inner: Box::new(value_ty.clone()) };
                 let slot = match self.llvm_ty(ty) {
                     Some(t) => Some(self.alloca(t, "get.out")?),
@@ -503,8 +501,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
-                let k = self.expr_mode(&args[1], Mode::Use)?;
-                let k_slot = self.spill(k, &key_ty)?;
+                let k_slot = self.place_ptr(&args[1])?;
                 let slot = match self.llvm_ty(ty) {
                     Some(t) => Some(self.alloca(t, "remove.out")?),
                     None => None,
@@ -556,8 +553,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
-                let k = self.expr_mode(&args[1], Mode::Use)?;
-                let k_slot = self.spill(k, &key_ty)?;
+                let k_slot = self.place_ptr(&args[1])?;
                 let result = self.alloca(self.cx.bool_type().into(), "map.contains")?;
                 self.builder.build_store(result, self.cx.bool_type().const_zero()).map_err(llvm_err)?;
                 let probe_bb = self.new_block("map.contains.probe");

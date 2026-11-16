@@ -1,0 +1,78 @@
+//@ burdin-test passed=2 failed=0
+
+// Drop and clone glue use the allocator stored in the value, not always `Global` (`spec/allocators.md`, AL7).
+// The test build's checking allocator fails the test on a leak, a double free, or a pointer it did not hand out.
+// `String` has no allocator argument and its buffer comes from `Global` (AL3), so its clone and drop are checked
+// on the same path.
+
+struct Pool derives (Clone) { }
+
+Pool: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe { __dealloc(ptr, size, align) }
+    }
+}
+
+test "clone and drop through the allocator" {
+    // A cloned list allocates its buffer through a clone of the stored allocator and frees it through that value.
+    let mut xs = List<i32>.new_in(Pool { })
+    xs.push(1)
+    xs.push(2)
+    let ys = xs.clone()
+    xs.push(3)
+    assert_eq(xs.len(), 3)?
+    assert_eq(ys.len(), 2)?
+    assert_eq(ys[1], 2)?
+
+    // A cloned map clones the allocator and every entry; the two maps are independent.
+    let mut m = Map<String, i32>.new_in(Pool { })
+    m.insert("a".to_string(), 1)
+    m.insert("b".to_string(), 2)
+    let n = m.clone()
+    m.remove("a".to_string())
+    assert_eq(m.len(), 1)?
+    assert_eq(n.len(), 2)?
+    assert_eq(n.contains_key("a".to_string()), true)?
+    assert_eq(*n.get("b".to_string()).unwrap(), 2)?
+
+    // A cloned heap deep-copies the pointee and keeps its own allocator value.
+    let mut h = Heap.new_in(Pool { }, 4)
+    let g = h.clone()
+    *h = 9
+    assert_eq(*h, 9)?
+    assert_eq(*g, 4)?
+
+    // `String` uses `Global`: both handles free their own buffer when they drop.
+    let s = "text".to_string()
+    let t = s.clone()
+    assert_eq(s, t)?
+    assert_eq(t.len(), 4)?
+}
+
+test "temporary lookup arguments are dropped" {
+    // `contains` and the map lookups borrow their key (`spec/stdlib.md`), but a key written as a temporary must
+    // still drop at the end of the statement that created it. A leaked temporary fails the test.
+    let mut xs = List<String>.new()
+    xs.push("x".to_string())
+    assert_eq(xs.contains("x".to_string()), true)?
+    let needle = "x".to_string()
+    assert_eq(xs.contains(needle), true)?
+    assert_eq(needle.len(), 1)?
+
+    let mut m = Map<String, i32>.new()
+    m.insert("a".to_string(), 1)
+    assert_eq(m.contains_key("a".to_string()), true)?
+    let lookup = "a".to_string()
+    assert_eq(*m.get(lookup).unwrap(), 1)?
+    assert_eq(lookup.len(), 1)?
+    assert_eq(m.contains_key(lookup), true)?
+    assert_eq(m.remove("a".to_string()).unwrap(), 1)?
+}
