@@ -223,7 +223,11 @@ mod tests {
         assert!(Method::Unwrap.owns_argument(0));
         assert!(Method::Expect.owns_argument(0));
         assert!(!Method::Len.owns_argument(0));
+        // The lookup methods borrow their key (`contains(self, value: T)`, `get(self, key: K)`).
         assert!(!Method::ListContains.owns_argument(1));
+        assert!(!Method::MapGet.owns_argument(1));
+        assert!(!Method::MapRemove.owns_argument(1));
+        assert!(!Method::MapContainsKey.owns_argument(1));
     }
 
     #[test]
