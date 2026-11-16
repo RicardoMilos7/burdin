@@ -28,6 +28,7 @@ tests/
   m14_format/          interpolation, `Display`/`Debug`, format specifiers, `format`, output
   m15_any/             `any`/`impl` existentials, boxing, dispatch, downcast
   m16_errors/          `error` declarations, messages, `from`, dynamic `Error`, `context`, traces, `main`
+  m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -205,6 +206,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
 | E0211 | Two variants of one error enum convert from the same source type |
 | E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `Error` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
+| E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, depending on a type parameter, or not a constant expression |
+| E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
 
 ### Codes without a compile-fail test
 
@@ -337,6 +340,17 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `AssertError` carrying the call text, the values, and the location, and the test binary prints it when the
     test fails.
     `spec/errors.md` ERR1-ERR10, `tests/m16_errors/`.
+
+22. **Default and named arguments.** A parameter written `name: Type = expr` may be omitted at the call site. A
+    default is a constant expression checked once at the declaration (parameters and `self` are not in scope),
+    it cannot depend on a type parameter, and only trailing parameters may have one; a `mut` parameter, an
+    interface method signature, and an `extern` declaration cannot declare one (E0213). A call may write
+    `name: value` for any function, method, interface method, associated function, or generic function/method;
+    positional arguments fill the leading parameters and may not follow a named one, an unknown or repeated
+    name is E0214, and a missing required argument is E0004. Built-in functions and methods, constructors,
+    closure values, and `extern` declarations take no named arguments. Every argument is evaluated left to
+    right in parameter order, a default in the position of its parameter.
+    `spec/arguments.md` AG1-AG7, `tests/m17_arguments/`.
 
 ## Review of the expected outputs
 

@@ -535,4 +535,43 @@ mod tests {
         let Stmt::Let { span: second, .. } = &main.body.stmts[1] else { unreachable!() };
         assert!(first.lo < second.lo && first.hi <= second.lo);
     }
+
+    #[test]
+    fn parameters_carry_their_defaults() {
+        let (file, out) = render("fn f(a: i32, b: i32 = 1, c: str = \"x\") {}\n");
+        assert_eq!(out, "");
+        let Item::Fn(f) = &file.items[0] else { unreachable!() };
+        assert_eq!(f.params.len(), 3);
+        assert!(f.params[0].default.is_none());
+        assert!(matches!(f.params[1].default.as_ref().map(|e| &e.kind), Some(ExprKind::Int(1))));
+        assert!(matches!(f.params[2].default.as_ref().map(|e| &e.kind), Some(ExprKind::Str(s)) if s == "x"));
+    }
+
+    #[test]
+    fn call_arguments_may_be_named_and_marked() {
+        let (file, out) = render("fn main() {\n    f(mut a: x, b: 2, 3)\n}\n");
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Expr(call) = &main.body.stmts[0] else { unreachable!() };
+        let ExprKind::Call(_, args) = &call.kind else { unreachable!() };
+        assert_eq!(args.len(), 3);
+        assert!(args[0].mut_marker);
+        assert_eq!(args[0].name.as_ref().map(|n| n.name.as_str()), Some("a"));
+        assert_eq!(args[1].name.as_ref().map(|n| n.name.as_str()), Some("b"));
+        assert!(args[2].name.is_none());
+    }
+
+    #[test]
+    fn a_colon_makes_a_name_only_in_an_argument_list() {
+        // A struct literal's field is not a named argument, and a path is not a name.
+        let (file, out) = render("fn main() {\n    f(P { a: 1 }, g.b)\n}\n");
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Expr(call) = &main.body.stmts[0] else { unreachable!() };
+        let ExprKind::Call(_, args) = &call.kind else { unreachable!() };
+        assert_eq!(args.len(), 2);
+        assert!(args[0].name.is_none());
+        assert!(matches!(&args[0].expr.kind, ExprKind::StructLit(..)));
+        assert!(args[1].name.is_none());
+    }
 }

@@ -399,7 +399,15 @@ impl FnCx<'_> {
         let params: Vec<tir::ParamSig> = sig
             .params
             .iter()
-            .map(|ty| tir::ParamSig { ty: ty.clone(), by_ref: false, mut_param: false, own: true, exclusive: false })
+            .map(|ty| tir::ParamSig {
+                ty: ty.clone(),
+                by_ref: false,
+                mut_param: false,
+                own: true,
+                exclusive: false,
+                name: None,
+                default: None,
+            })
             .collect();
         let receiver = Some((&callee, kind != FnKind::Fn));
         let Some(checked) = self.args_pre("this closure", &params, args, receiver, span, None) else {

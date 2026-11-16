@@ -1,0 +1,19 @@
+//@ run
+//> first
+//> second
+//> third
+//> 6
+
+// Arguments are evaluated left to right in parameter order, whatever order they are written in; a default
+// is evaluated in the position of the parameter it fills (spec/arguments.md, AG6).
+
+fn log(name: str, value: i32): i32 {
+    println(name)
+    value
+}
+
+fn combine(a: i32, b: i32, c: i32): i32 { a + b + c }
+
+fn main() {
+    println("{}", combine(c: log("third", 3), a: log("first", 1), b: log("second", 2)))
+}

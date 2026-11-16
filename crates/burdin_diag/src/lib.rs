@@ -175,6 +175,12 @@ impl Code {
     /// A missing error conversion: `?` between two error types with no `From` block, or a conversion into the
     /// dynamic `Error` from a type that does not implement it.
     pub const ERROR_CONVERSION: Code = Code("E0212");
+    /// An invalid default argument: a default before a required parameter, on a `mut` parameter, in an
+    /// interface signature, depending on a type parameter, or not a constant expression.
+    pub const INVALID_DEFAULT: Code = Code("E0213");
+    /// An invalid named argument: a name no parameter has, a parameter named twice, or a positional argument
+    /// after a named one.
+    pub const INVALID_NAMED_ARGUMENT: Code = Code("E0214");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

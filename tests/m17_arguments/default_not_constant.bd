@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A default is checked once at the declaration and inserted at every call that omits the argument, so it
+// must be a constant expression: a call is not (spec/arguments.md, AG2).
+
+fn now(): i32 { 1 }
+
+fn f(a: i32 = now()): i32 { a } //~ E0213
+
+fn main() { }

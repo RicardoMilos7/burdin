@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A parameter with a default may not precede one without: a positional argument could not tell which
+// parameter it fills (spec/arguments.md, AG1).
+
+fn f(a: i32 = 1, b: i32): i32 { a + b } //~ E0213
+
+fn main() { }

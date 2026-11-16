@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Exclusivity sees every argument's places whatever order the named arguments are written in
+// (spec/arguments.md, AG3; spec/memory-rules.md EX1).
+
+fn combine(mut total: i32, extra: i32): i32 { total + extra }
+
+fn main() {
+    let mut x = 1
+    let _ = combine(extra: x, mut total: x) //~ E0110
+}

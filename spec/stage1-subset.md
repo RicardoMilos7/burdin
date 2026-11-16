@@ -91,6 +91,17 @@ E0200 (not an interface), E0201 (`impl` outside a parameter list), E0202 (not ob
 compiler-provided implementation has no function to dispatch to); `tests/README.md`, `docs/error-codes.md`, and
 `spec/grammar.md` are updated with them.
 
+Milestone 16 is complete: `tests/m16_errors` and every earlier folder pass in debug and release, and the rules
+are recorded in `spec/errors.md` ERR1-ERR10. The new diagnostics are E0210 (invalid error declaration), E0211
+(duplicate `from` conversion), and E0212 (missing error conversion); `tests/README.md`, `docs/error-codes.md`, and
+`spec/grammar.md` are updated with them.
+
+Milestone 17 is complete: `tests/m17_arguments` and every earlier folder pass in debug and release, and the rules
+are recorded in `spec/arguments.md` AG1-AG7 (the decisions that a default is a constant expression checked at the
+declaration and materialized at the call site, that arguments are evaluated left to right in parameter order, that
+named arguments are matched to parameter names, and that interface signatures and `extern` declarations take no
+defaults). The new diagnostics are E0213 (invalid default) and E0214 (invalid named argument).
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -181,8 +192,15 @@ code; do not invent them inside the implementation.
    attribute and runner behavior are recorded in [`test-runner.md`](test-runner.md#deferred-differential-tests-issue-444),
    and they can be built only after the interpreter exists.
 
-7. **Default and named arguments.** Evaluation order, interaction with `mut`/`own` conventions and exclusivity, and
-   the rule that interface signatures cannot declare defaults.
+7. **Default and named arguments — settled with milestone 17.** A parameter written `name: Type = expr` may be
+   omitted at the call site. The default is a constant expression checked once at the declaration (the function's
+   parameters and `self` are not in scope), it cannot depend on a type parameter, and only trailing parameters may
+   have one; `mut` parameters, interface method signatures, and `extern` declarations cannot declare one (E0213).
+   A call may write `name: value` for a function, method, interface method, associated function, or generic
+   function/method; positional arguments fill the leading parameters and may not follow a named one, and an
+   unknown or repeated name is E0214. Every argument is evaluated left to right in parameter order, a default in
+   the position of its parameter. The rules are `spec/arguments.md` AG1-AG7 and the tests are
+   `tests/m17_arguments/`.
 
 8. **Operator overloading and `Index`.** The interface set and names (`Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`,
    `Not`, comparisons, `Index`/`IndexMut`), whether compound assignment is included (currently "when wanted"), and

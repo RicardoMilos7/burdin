@@ -135,6 +135,13 @@ impl FnCx<'_> {
         let sig = info.sig.clone();
         let vararg = info.vararg;
         let symbol = info.symbol.clone();
+        // A C declaration has parameters, but they are positional only (spec/arguments.md, AG4).
+        if self.reject_named_args(&symbol, args) {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            return error_expr(span);
+        }
         // Visibility is checked where the name is bound (the `use` import, or a module-qualified call), so a
         // `priv` declaration in one module does not hide a public declaration of the same symbol in another.
         if self.unsafe_depth == 0 {
@@ -175,8 +182,23 @@ impl FnCx<'_> {
         mk(tir::ExprKind::ExternCall(id, checked), sig.ret, span)
     }
 
+    /// Reports a named argument where the callee takes none: a built-in function or method, a constructor, a
+    /// closure value, or an `extern` declaration (`spec/arguments.md`, AG4). The caller keeps checking the
+    /// arguments as positional, so the same name is not reported twice.
+    pub(super) fn reject_named_args(&mut self, what: &str, args: &[ast::Arg]) -> bool {
+        let mut any = false;
+        for a in args {
+            if let Some(n) = &a.name {
+                self.diags.error(Code::INVALID_NAMED_ARGUMENT, n.span, format!("`{what}` takes no named arguments"));
+                any = true;
+            }
+        }
+        any
+    }
+
     /// `Some(value)`.
     pub(super) fn some(&mut self, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        self.reject_named_args("Some", args);
         if args.len() != 1 {
             self.diags.error(Code::ARG_COUNT, span, format!("`Some` takes 1 argument, but {} were given", args.len()));
             return self.args_then_error(args, span);
@@ -197,6 +219,7 @@ impl FnCx<'_> {
     /// `Ok(value)` and `Err(value)` of a `Result<T, E>`. The expected type gives both type arguments, so a
     /// `Result` built without one needs an annotation.
     pub(super) fn result_ctor(&mut self, ok: bool, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        self.reject_named_args(if ok { "Ok" } else { "Err" }, args);
         if args.len() != 1 {
             let name = if ok { "Ok" } else { "Err" };
             self.diags.error(
@@ -232,6 +255,7 @@ impl FnCx<'_> {
     /// The test-build `assert`: the argument is the condition, and the compiler appends its source text and the
     /// call's location, which the `AssertError` message reports (`spec/errors.md`, ERR9).
     fn test_assert_call(&mut self, f: FuncId, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("assert", args);
         let sig = self.globals.sigs[f.0].clone();
         if args.len() != 1 {
             self.diags.error(
@@ -262,6 +286,7 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
+        self.reject_named_args("assert_eq", args);
         if args.len() != 2 {
             self.diags.error(
                 Code::ARG_COUNT,
@@ -303,6 +328,7 @@ impl FnCx<'_> {
     /// prints `message: e`. The message is checked in the `Err` arm only, so it is evaluated only on an error, and
     /// the source error's trace frames are kept (`spec/errors.md`, ERR6).
     fn context_call(&mut self, recv: tir::Expr, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("context", args);
         let Ty::Result(ok, err) = recv.ty.clone() else { unreachable!("`context` is intercepted only on a `Result`") };
         if args.len() != 1 {
             self.diags.error(
@@ -360,6 +386,7 @@ impl FnCx<'_> {
 
     /// `assert_eq(a, b)`: both values must have the same `Eq` type.
     fn assert_eq(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("assert_eq", args);
         if args.len() != 2 {
             self.diags.error(
                 Code::ARG_COUNT,
@@ -384,6 +411,7 @@ impl FnCx<'_> {
 
     /// `swap(mut a, mut b)`: two places of one type, both mutable and non-overlapping.
     fn swap_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("swap", args);
         if args.len() != 2 {
             self.diags.error(Code::ARG_COUNT, span, format!("`swap` takes 2 arguments, but {} were given", args.len()));
             return self.args_then_error(args, span);
@@ -414,6 +442,7 @@ impl FnCx<'_> {
 
     /// `replace(mut place, value)`: stores `value` and returns what `place` held.
     fn replace_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("replace", args);
         if args.len() != 2 {
             self.diags.error(
                 Code::ARG_COUNT,
@@ -454,7 +483,7 @@ impl FnCx<'_> {
     }
 
     /// Like `args`, for arguments that were already checked (a generic call checks them first to infer its type
-    /// arguments).
+    /// arguments). `pre` has one entry per written argument, in written order.
     pub(super) fn args_pre(
         &mut self,
         name: &str,
@@ -462,51 +491,68 @@ impl FnCx<'_> {
         args: &[ast::Arg],
         receiver: Option<(&tir::Expr, bool)>,
         span: Span,
-        pre: Option<Vec<tir::Expr>>,
+        pre_values: Option<Vec<tir::Expr>>,
     ) -> Option<Vec<tir::Expr>> {
-        if params.len() != args.len() {
-            if pre.is_none() {
+        let Some(slots) = self.arg_slots(name, params, args, span) else {
+            if pre_values.is_none() {
                 for a in args {
                     self.expr(&a.expr, None);
                 }
             }
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`{name}` takes {} argument(s), but {} were given", params.len(), args.len()),
-            );
             return None;
-        }
-        let mut checked = Vec::new();
-        let mut pre = pre.map(|v| v.into_iter());
-        for (a, p) in args.iter().zip(params) {
-            if p.mut_param && !a.mut_marker {
-                let position = a.expr.span;
-                self.diags
-                    .error(
-                        Code::MISSING_MUT_MARKER,
-                        position,
-                        format!("this parameter of `{name}` is `mut`; pass the argument as `mut ...`"),
-                    )
-                    .suggest(
-                        Span::new(position.file, position.lo, position.lo),
-                        "add `mut` before this argument",
-                        "mut ",
-                    );
-            } else if !p.mut_param && a.mut_marker {
-                let error = self.diags.error(
-                    Code::UNNEEDED_MUT_MARKER,
-                    a.expr.span,
-                    format!("this parameter of `{name}` is not `mut`; the argument takes no `mut` marker"),
-                );
-                if let Some(mut_span) = a.mut_span {
-                    // Delete the marker and the whitespace after it, so applying the edit leaves plain `name`.
-                    error.suggest(Span::new(mut_span.file, mut_span.lo, a.expr.span.lo), "remove the `mut` marker", "");
-                }
+        };
+        // The pre-checked values fill the first written arguments; anything left is checked from the AST (the
+        // test-build `assert` supplies only the condition and leaves its two appended strings to be checked).
+        let mut pending: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
+        if let Some(values) = pre_values {
+            for (slot, value) in pending.iter_mut().zip(values) {
+                *slot = Some(value);
             }
-            let arg = match pre.as_mut().and_then(|it| it.next()) {
-                Some(arg) => arg,
-                None => self.expr(&a.expr, Some(&p.ty)),
+        }
+        let mut checked = Vec::with_capacity(params.len());
+        // Arguments and defaults are checked (and so evaluated) in parameter order, whatever order they were
+        // written in (`spec/arguments.md`, AG6).
+        for (pi, p) in params.iter().enumerate() {
+            let arg = match slots[pi] {
+                Some(ai) => {
+                    let a = &args[ai];
+                    if p.mut_param && !a.mut_marker {
+                        let position = a.expr.span;
+                        self.diags
+                            .error(
+                                Code::MISSING_MUT_MARKER,
+                                position,
+                                format!("this parameter of `{name}` is `mut`; pass the argument as `mut ...`"),
+                            )
+                            .suggest(
+                                Span::new(position.file, position.lo, position.lo),
+                                "add `mut` before this argument",
+                                "mut ",
+                            );
+                    } else if !p.mut_param && a.mut_marker {
+                        let error = self.diags.error(
+                            Code::UNNEEDED_MUT_MARKER,
+                            a.expr.span,
+                            format!("this parameter of `{name}` is not `mut`; the argument takes no `mut` marker"),
+                        );
+                        if let Some(mut_span) = a.mut_span {
+                            // Delete the marker and the whitespace after it, so applying the edit leaves plain
+                            // `name`.
+                            error.suggest(
+                                Span::new(mut_span.file, mut_span.lo, a.expr.span.lo),
+                                "remove the `mut` marker",
+                                "",
+                            );
+                        }
+                    }
+                    match pending[ai].take() {
+                        Some(arg) => arg,
+                        None => self.expr(&a.expr, Some(&p.ty)),
+                    }
+                }
+                // The argument is omitted: insert the value checked at the declaration. A missing parameter
+                // without a default was reported by `arg_slots`.
+                None => p.default.clone().expect("a missing required argument was reported"),
             };
             let arg = self.coerce_arg(arg, &p.ty);
             if p.mut_param && !matches!(arg.ty, Ty::Error) {
@@ -528,6 +574,123 @@ impl FnCx<'_> {
         }
         self.exclusivity(receiver, params, &checked, span);
         Some(checked)
+    }
+
+    /// Matches the written arguments to parameters (`spec/arguments.md`, AG4-AG7): a positional argument fills
+    /// the next parameter without one, and a named argument (`name: value`) fills the parameter with that name.
+    /// Reports an unknown or repeated name, a positional argument after a named one (E0214), and a missing or
+    /// extra argument (E0004); returns `None` when the call cannot be matched.
+    pub(super) fn arg_slots(
+        &mut self,
+        name: &str,
+        params: &[ParamSig],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<Vec<Option<usize>>> {
+        let mut slots: Vec<Option<usize>> = vec![None; params.len()];
+        let mut named_seen = false;
+        let mut name_error = false;
+        let mut extra_positional = 0usize;
+        let mut ok = true;
+        for (ai, a) in args.iter().enumerate() {
+            if let Some(n) = &a.name {
+                named_seen = true;
+                match params.iter().position(|p| p.name.as_deref() == Some(n.name.as_str())) {
+                    Some(pi) => {
+                        if let Some(first) = slots[pi] {
+                            let first_span = args[first].name.as_ref().map(|i| i.span).unwrap_or(args[first].expr.span);
+                            self.diags
+                                .error(
+                                    Code::INVALID_NAMED_ARGUMENT,
+                                    n.span,
+                                    format!("the parameter `{}` is given more than once", n.name),
+                                )
+                                .note(first_span, "the first value is here");
+                            ok = false;
+                            name_error = true;
+                        } else {
+                            slots[pi] = Some(ai);
+                        }
+                    }
+                    None => {
+                        if params.iter().all(|p| p.name.is_none()) {
+                            self.diags.error(
+                                Code::INVALID_NAMED_ARGUMENT,
+                                n.span,
+                                format!("`{name}` takes no named arguments"),
+                            );
+                        } else {
+                            let names: Vec<String> =
+                                params.iter().filter_map(|p| p.name.as_deref()).map(|n| format!("`{n}`")).collect();
+                            self.diags.error(
+                                Code::INVALID_NAMED_ARGUMENT,
+                                n.span,
+                                format!(
+                                    "`{name}` has no parameter named `{}`; its parameters are {}",
+                                    n.name,
+                                    join_names(&names)
+                                ),
+                            );
+                        }
+                        ok = false;
+                        name_error = true;
+                    }
+                }
+            } else {
+                if named_seen {
+                    self.diags.error(
+                        Code::INVALID_NAMED_ARGUMENT,
+                        a.expr.span,
+                        "a positional argument cannot follow a named one; name every later argument",
+                    );
+                    ok = false;
+                    name_error = true;
+                }
+                match slots.iter().position(|s| s.is_none()) {
+                    Some(pi) => slots[pi] = Some(ai),
+                    None => extra_positional += 1,
+                }
+            }
+        }
+        // A name error already says the call cannot be matched; the count message would only repeat it.
+        if !name_error {
+            let missing: Vec<&ParamSig> = params
+                .iter()
+                .enumerate()
+                .filter(|(i, p)| slots[*i].is_none() && p.default.is_none())
+                .map(|(_, p)| p)
+                .collect();
+            if !missing.is_empty() {
+                if params.iter().all(|p| p.name.is_none()) {
+                    self.diags.error(
+                        Code::ARG_COUNT,
+                        span,
+                        format!("`{name}` takes {} argument(s), but {} were given", params.len(), args.len()),
+                    );
+                } else {
+                    let names: Vec<String> =
+                        missing.iter().map(|p| format!("`{}`", p.name.as_deref().unwrap_or("self"))).collect();
+                    self.diags.error(
+                        Code::ARG_COUNT,
+                        span,
+                        format!("`{name}` is missing an argument for {}; it has no default", join_names(&names)),
+                    );
+                }
+                ok = false;
+            }
+            if extra_positional > 0 {
+                self.diags.error(
+                    Code::ARG_COUNT,
+                    span,
+                    format!(
+                        "`{name}` takes {} parameter(s), but {extra_positional} extra positional argument(s) were given",
+                        params.len()
+                    ),
+                );
+                ok = false;
+            }
+        }
+        ok.then_some(slots)
     }
 
     /// No argument may mention a place that overlaps one passed as `mut` (EX1, EX2).
@@ -853,6 +1016,7 @@ impl FnCx<'_> {
 
     /// `CPtr.null()`.
     fn cptr_null(&mut self, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        self.reject_named_args("CPtr.null", args);
         if !args.is_empty() {
             self.diags.error(Code::ARG_COUNT, span, "`CPtr.null` takes no arguments");
             return self.args_then_error(args, span);
@@ -874,6 +1038,7 @@ impl FnCx<'_> {
 
     /// `Heap.new(value)`.
     pub(super) fn heap_new(&mut self, args: &[ast::Arg], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        self.reject_named_args("Heap.new", args);
         let inner = match expect {
             Some(Ty::Heap(t)) => Some((**t).clone()),
             _ => None,
@@ -1039,15 +1204,29 @@ impl FnCx<'_> {
     }
 }
 
+/// `` `a` ``, `` `a` and `b` ``, or `` `a`, `b`, and `c` ``.
+fn join_names(names: &[String]) -> String {
+    match names {
+        [] => "no parameter".to_string(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        _ => {
+            let (last, rest) = names.split_last().expect("the slice is not empty");
+            format!("{}, and {last}", rest.join(", "))
+        }
+    }
+}
+
 /// A synthetic argument of a lowered call: the string literal `text`.
 fn string_arg(text: String, span: Span) -> ast::Arg {
-    ast::Arg { mut_marker: false, mut_span: None, expr: ast::Expr { kind: ast::ExprKind::Str(text), span } }
+    ast::Arg { name: None, mut_marker: false, mut_span: None, expr: ast::Expr { kind: ast::ExprKind::Str(text), span } }
 }
 
 /// The placeholder for an argument whose checked expression the caller supplies separately. It keeps the `mut`
 /// marker so the convention diagnostics are the same as for the written argument.
 fn checked_arg(original: &ast::Arg, span: Span) -> ast::Arg {
     ast::Arg {
+        name: None,
         mut_marker: original.mut_marker,
         mut_span: original.mut_span,
         expr: ast::Expr { kind: ast::ExprKind::Unit, span },

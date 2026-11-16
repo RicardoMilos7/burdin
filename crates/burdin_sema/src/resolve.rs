@@ -102,6 +102,18 @@ impl Sema<'_> {
                 }
                 let sig =
                     fn_signature(decl, Some(&param_ty("Self")), &method_subst, module, &self.globals, false, diags);
+                // A default argument is a call-site convenience of one concrete function; an interface's
+                // signature is shared by every implementation, so it cannot declare one
+                // (spec/arguments.md, AG5).
+                for p in &decl.params {
+                    if let Some(default) = &p.default {
+                        diags.error(
+                            Code::INVALID_DEFAULT,
+                            default.span,
+                            "an interface method cannot declare a default argument; only a function or method with one implementation can",
+                        );
+                    }
+                }
                 self.globals.interfaces[i].methods[k].sig = sig;
             }
         }
@@ -122,6 +134,7 @@ impl Sema<'_> {
                 p.own = true;
                 p.exclusive = true;
             }
+            crate::fncx::check_defaults(&self.globals, item, &mut sig, self.sources, self.traces, diags);
             self.globals.sigs[i] = sig;
         }
         for (i, c) in self.const_decls.iter().enumerate() {
@@ -273,22 +286,39 @@ pub(crate) fn fn_signature(
                     mut_param: false,
                     own: p.convention == ast::Convention::Own,
                     exclusive: p.convention != ast::Convention::Read,
+                    name: None,
+                    default: None,
                 });
             }
-            ast::ParamKind::Named { ty, .. } => {
+            ast::ParamKind::Named { name, ty } => {
                 let ty = globals.resolve_type_in(ty, self_ty, subst, module, diags);
+                let name = Some(name.name.clone());
                 params.push(match p.convention {
                     // A read-only parameter borrows the caller's place, so a view derived from it can be
                     // returned (RT1).
-                    ast::Convention::Read => {
-                        ParamSig { ty, by_ref: true, mut_param: false, own: false, exclusive: false }
-                    }
+                    ast::Convention::Read => ParamSig {
+                        ty,
+                        by_ref: true,
+                        mut_param: false,
+                        own: false,
+                        exclusive: false,
+                        name,
+                        default: None,
+                    },
                     // The callee sees the caller's place, so it is passed by address and the call site
                     // marks it `mut` (CV2).
-                    ast::Convention::Mut => ParamSig { ty, by_ref: true, mut_param: true, own: false, exclusive: true },
-                    ast::Convention::Own => {
-                        ParamSig { ty, by_ref: false, mut_param: false, own: true, exclusive: true }
+                    ast::Convention::Mut => {
+                        ParamSig { ty, by_ref: true, mut_param: true, own: false, exclusive: true, name, default: None }
                     }
+                    ast::Convention::Own => ParamSig {
+                        ty,
+                        by_ref: false,
+                        mut_param: false,
+                        own: true,
+                        exclusive: true,
+                        name,
+                        default: None,
+                    },
                 });
             }
         }
@@ -314,13 +344,28 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
             );
         }
         let ast::ParamKind::Named { ty, .. } = &p.kind else { continue };
+        if let Some(default) = &p.default {
+            diags.error(
+                Code::INVALID_DEFAULT,
+                default.span,
+                "an `extern` declaration takes no default arguments; the C function always receives every parameter",
+            );
+        }
         let resolved = globals.resolve_type_in(ty, None, &[], module, diags);
         if resolved != Ty::Error && !is_c_abi_value(&resolved) {
             diags.error(Code::C_ABI, ty.span, c_abi_rejection(&resolved, "passed to a C function"));
         }
         // The parameter stays in the signature so that calls are still checked for arity, even though this
         // declaration already failed.
-        params.push(ParamSig { ty: resolved, by_ref: false, mut_param: false, own: false, exclusive: false });
+        params.push(ParamSig {
+            ty: resolved,
+            by_ref: false,
+            mut_param: false,
+            own: false,
+            exclusive: false,
+            name: None,
+            default: None,
+        });
     }
     let ret = f.ret.as_ref().map(|t| globals.resolve_type_in(t, None, &[], module, diags)).unwrap_or(Ty::Unit);
     if ret != Ty::Unit && ret != Ty::Error && !is_c_abi_value(&ret) {

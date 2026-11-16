@@ -17,7 +17,7 @@ mod operators;
 mod pattern;
 mod stmt;
 
-pub(crate) use item::{check_const, check_function};
+pub(crate) use item::{check_const, check_defaults, check_function};
 
 use crate::builtins::builtin_type;
 use crate::generics::Bound;

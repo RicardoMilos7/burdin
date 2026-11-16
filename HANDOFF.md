@@ -1,13 +1,13 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, and twenty-ninth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, and thirtieth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the twenty-ninth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirtieth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
-(`any` and `impl`), and 16 (errors) are done**: 379 conformance tests; all pass in debug with one host skip, and all
-pass in release except the debug-only tests.
+(`any` and `impl`), 16 (errors), and 17 (default and named arguments) are done**: 404 conformance tests; all pass
+in debug and release (the release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -93,7 +93,7 @@ is resolved, and boxes at every expected-type position; the move, borrow, and or
 expression forms; code generation emits `{ ptr, ptr }` values, one private constant vtable per `(T, I)` pair
 `{ i64 type_id, ptr drop, ptr method... }`, indirect calls, and type-id-checked downcasts that move the value out and
 free the allocation without dropping it again. The new diagnostics are E0200, E0201, E0202, and E0204. The tests are
-`tests/m15_any/` with 24 tests. The remaining milestones are m17 (default and named arguments) onward.
+`tests/m15_any/` with 24 tests. The remaining milestones are m18 (extension methods) onward.
 
 The twenty-ninth session implemented milestone 16, errors (issue #126). It decided first (`spec/errors.md`,
 ERR1-ERR10) that an `error enum` lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`
@@ -113,6 +113,22 @@ a temporary created inside one branch had an uninitialized drop flag at the stat
 optimizer could treat as an undefined free and use to delete the rest of the function; the flag now starts `false`
 in the entry block. The tests are `tests/m16_errors/` with 25 tests.
 
+The thirtieth session implemented milestone 17, default and named arguments (issue #137, sub-issues #138-#142). It
+decided first (`spec/arguments.md`, AG1-AG7) that a parameter written `name: Type = expr` may be omitted at the
+call site and that the default is a constant expression checked once at the declaration, in the declaration's
+module scope, where the function's parameters and `self` are not in scope; every call that omits the argument
+materializes the value, so nothing is captured and no code runs at the declaration. A default cannot depend on a
+type parameter, cannot be on a `mut` parameter, cannot appear in an interface method signature or an `extern`
+declaration, and the parameters with defaults must be trailing. A call may write `name: value` for any function,
+method, interface method, associated function, or generic function/method; positional arguments fill the leading
+parameters in order, named ones may be reordered, a positional argument may not follow a named one, and built-in
+functions and methods, the constructors, closure values, and `extern` declarations take no named arguments.
+Arguments and defaults are evaluated left to right in parameter order. The parser reads both forms
+(`Param.default`, `Arg.name`); `burdin_sema` records the checked default in `ParamSig.default` and fills it in
+`args_pre`, matches names to parameters before generic inference, and produces the new codes E0213 (invalid
+default) and E0214 (invalid named argument). The tests are `tests/m17_arguments/` with 25 tests, and parser unit
+tests cover the syntax.
+
 | What | Where | Status |
 | --- | --- | --- |
 | Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`/`explain`, diagnostics and their formats, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The nineteenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior; the twenty-second added `BURDIN_VERSION`/`BURDIN_CHANNEL`, the `channel:` line, the installers, and `docs/releasing.md`. `tests/check_docs.py` checks the links and the documented behavior, and every CI job runs it and the other check scripts |
@@ -127,8 +143,9 @@ in the entry block. The tests are `tests/m16_errors/` with 25 tests.
 | Formatting | `spec/format.md`, `std/src/fmt.bd`, `crates/burdin_syntax/src/derive.rs`, `crates/burdin_sema/src/fncx/format.rs` | Milestone 14 (issue #109). Interpolated literals, `Display`/`Debug`, the specifiers, `format` and the generalized output functions, all checked at compile time and lowered to `Formatter` calls; `derives (Debug)` generates an impl block as Burdin source. The tests are `tests/m14_format/` |
 | Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
 | Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, Error>`, error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
+| Arguments | `spec/arguments.md`, `crates/burdin_syntax`, `crates/burdin_tir` (`ParamSig.name`/`.default`), `crates/burdin_sema/src/fncx/{call,generic,item}.rs` | Milestone 17 (issue #137). `name: Type = expr` declares a constant default checked at the declaration and inserted at each call that omits it; `f(name: value)` matches a parameter by name in any order before generic inference; arguments evaluate in parameter order. New codes E0213 and E0214; the tests are `tests/m17_arguments/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
-| Conformance tests | `tests/` | 379 tests. All pass: m01 to m16 (all pass in debug with one host skip, and all pass in release except the debug-only tests) |
+| Conformance tests | `tests/` | 404 tests. All pass: m01 to m17 (all pass in debug; release passes all except the debug-only tests) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -391,6 +408,16 @@ how to call WSL from PowerShell.
   `{ value: any Error, frames: List<TraceFrame>, context: String }`, `TraceFrame`, the `context`/`is`/`downcast`
   helpers, and the `IoError`, `ParseIntError`, and `AssertError` enums; a debug build records creation and
   propagation frames and a release build records none. `tests/m16_errors/` covers the behavior.
+- **Milestone 17 added default and named arguments.** `ast::Param.default` and `ast::Arg.name` carry the syntax,
+  and `tir::ParamSig` gained `name` and `default`. In `resolve_all`, `fncx::check_defaults` checks each default in
+  a fresh `FnCx` with the function's module, subst, and `self_ty` but no parameters or locals, stores the typed
+  constant in the signature, and reports E0213 for the invalid placements (before a required parameter, on `mut`,
+  on a type-parameter type, non-constant); the interface loop and `extern_signature` report the two declaration
+  cases. `FnCx::arg_slots` matches written arguments to parameters (positional fills the next slot, a named
+  argument fills the parameter with that name) and reports E0214; `args_pre` checks the arguments and inserts each
+  omitted default in parameter order, so code generation is unchanged. Generic calls match names and fill defaults
+  through the same helper before inference and then `args_pre`; the same applies to generic methods. `tests/m17_arguments/`
+  covers the behavior.
 - Exhaustiveness (`burdin_sema/src/exhaust.rs`) is the usefulness algorithm over a pattern matrix, with integer and
   `char` ranges split at their boundaries. It handles nested tuples, structs, enums, and `Option`.
 - `burdin_codegen`: typed tree to LLVM IR to an object file. `str` is `{ ptr, usize }`, `String` is `{ ptr, len, cap }`,

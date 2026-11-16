@@ -11,8 +11,9 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
-3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md` — the standard-library surface, the
-   exact derived members, formatting, and error handling.
+3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md`, `spec/arguments.md` — the
+   standard-library surface, the exact derived members, formatting, error handling, and default and named
+   arguments.
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`, and
    `spec/test-runner.md` describe the iteration protocol, `any`/`impl`, and `burdin test`.
 5. `spec/stage0-subset.md` (complete) and `HANDOFF.md` for the current state; `Burdin Language Design.md` for the

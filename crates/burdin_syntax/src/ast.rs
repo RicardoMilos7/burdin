@@ -254,6 +254,9 @@ pub enum ParamKind {
 pub struct Param {
     pub convention: Convention,
     pub kind: ParamKind,
+    /// `= expr` after the type: the value a call may omit (`spec/arguments.md`, AG1). The checker validates it;
+    /// a `self` parameter cannot have one.
+    pub default: Option<Expr>,
     pub span: Span,
 }
 
@@ -391,6 +394,9 @@ pub enum UnOp {
 
 #[derive(Debug)]
 pub struct Arg {
+    /// The parameter name of a named argument (`f(name: value)`), or `None` for a positional one
+    /// (`spec/arguments.md`, AG4).
+    pub name: Option<Ident>,
     /// The call-site `mut` marker.
     pub mut_marker: bool,
     /// The `mut` token, when the marker is written; diagnostics suggest removing it (E0115).

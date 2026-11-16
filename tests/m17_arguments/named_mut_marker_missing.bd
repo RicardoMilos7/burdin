@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// Naming an argument does not replace its `mut` marker (spec/arguments.md, AG4; spec/memory-rules.md CV2).
+
+fn push(mut list: List<i32>, value: i32) {
+    list.push(value)
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    push(xs, value: 1) //~ E0114
+}

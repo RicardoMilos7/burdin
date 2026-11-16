@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// A `mut` parameter is the caller's place; a default has no place to write to (spec/arguments.md, AG3).
+
+fn f(mut a: i32 = 1) { } //~ E0213
+
+fn main() { }

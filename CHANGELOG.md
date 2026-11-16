@@ -280,6 +280,33 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   `spec/stage1-subset.md`, `std/README.md`, `tests/README.md` decision 21 and the registry, `docs/error-codes.md`,
   `HANDOFF.md`, and this file.
 
+### Milestone 17 — default and named arguments (issue #137, sub-issues #138-#142)
+
+- Default arguments: a named parameter may be written `name: Type = expr`. The default is checked once at the
+  declaration, against the parameter's type and in the declaration's module scope, and must be a constant
+  expression (a literal, another constant, an operator on constants, or a cast). It is materialized at every call
+  that omits the argument, so no state is captured and no code runs at the declaration. A default cannot depend on
+  a type parameter, cannot be on a `mut` parameter (the callee writes to the caller's place), cannot appear in an
+  interface method signature (shared by every implementation) or an `extern` declaration, and the parameters with
+  defaults must be trailing. `burdin_sema` stores the checked expression in `ParamSig.default`; call checking
+  inserts it.
+- Named arguments: `f(name: value)` matches a parameter by name; positional arguments fill the leading parameters
+  in order, named ones may be reordered, and a positional argument may not follow a named one. The receiver is not
+  a name. Names work on functions, methods, associated functions, interface methods (static and through `any`),
+  and generic functions and methods (matching happens before inference). Built-in functions and methods,
+  `Some`/`Ok`/`Err`, variant constructors, closure values, and `extern` declarations take no named arguments. A
+  missing required argument stays E0004.
+- Evaluation order: every argument is evaluated left to right in parameter order, and a default in the position of
+  the parameter it fills, so a reordered call runs in the callee's parameter order.
+- Diagnostics: E0213 (invalid default: placement, `mut`, interface, `extern`, type parameter, or a non-constant
+  expression) and E0214 (invalid named argument: unknown name, parameter named twice, positional after named, or a
+  name on a callee that takes none). The registry, `docs/error-codes.md`, and `burdin explain` cover both.
+- Tests: `tests/m17_arguments/` adds 25 conformance tests (defaults omitted and given, named arguments reordered,
+  named `mut`/`own` arguments, parameter-order evaluation, a `str` view default, interface and generic calls, and
+  every new diagnostic). Parser unit tests cover the default and named-argument syntax. The suite is 404 tests.
+- Documentation: `spec/arguments.md` (new), `spec/grammar.md`, `spec/stage1-subset.md`, `tests/README.md`
+  decision 22 and the registry, `docs/error-codes.md`, `HANDOFF.md`, and this file.
+
 ### Milestone 12 — closures (issue #88, sub-issues #89-#97)
 
 - Closure expressions: `|a, b| expr`, `|a: i32|: bool { ... }`, and `||` (zero parameters), parsed at primary

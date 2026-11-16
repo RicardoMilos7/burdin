@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// The default's type is checked against the parameter's type like any other argument (spec/arguments.md,
+// AG2).
+
+fn f(a: i32 = "x"): i32 { a } //~ E0003
+
+fn main() { }

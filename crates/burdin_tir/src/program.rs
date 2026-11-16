@@ -2,7 +2,7 @@
 
 use crate::defs::{EnumDef, StructDef};
 use crate::ops::FuncId;
-use crate::tree::{Closure, Const, Function};
+use crate::tree::{Closure, Const, Expr, Function};
 use crate::ty::Ty;
 
 /// A type-checked program: the input of the memory checks and then of code generation.
@@ -104,13 +104,20 @@ pub struct ParamSig {
     /// Borrowed exclusively for the duration of the call (`mut` and `own` parameters, `mut self`), so no other
     /// argument of the same call may touch an overlapping place (EX1).
     pub exclusive: bool,
+    /// The parameter's name as written, for named arguments (`spec/arguments.md`, AG4). `None` for `self` and
+    /// for built-in functions and methods, which take no named arguments.
+    pub name: Option<String>,
+    /// The checked default value of a parameter written `name: Type = expr` (`spec/arguments.md`, AG1-AG3).
+    /// `None` when the parameter is required. A default is a constant expression, so a call may insert it
+    /// directly, and it may not mention a type parameter.
+    pub default: Option<Expr>,
 }
 
 impl ParamSig {
     /// A plain read-only parameter: borrowed for the call, never dropped by the callee. Used for built-in
     /// functions and methods, whose arguments code generation evaluates directly.
     pub fn plain(ty: Ty) -> ParamSig {
-        ParamSig { ty, by_ref: false, mut_param: false, own: false, exclusive: false }
+        ParamSig { ty, by_ref: false, mut_param: false, own: false, exclusive: false, name: None, default: None }
     }
 }
 

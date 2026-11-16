@@ -372,7 +372,7 @@ impl Parser<'_> {
         let unit = Expr { kind: ExprKind::Unit, span };
         let ok = Expr { kind: ExprKind::Name { name: Ident { name: "Ok".to_string(), span }, args: Vec::new() }, span };
         let tail = Expr {
-            kind: ExprKind::Call(Box::new(ok), vec![Arg { mut_marker: false, mut_span: None, expr: unit }]),
+            kind: ExprKind::Call(Box::new(ok), vec![Arg { name: None, mut_marker: false, mut_span: None, expr: unit }]),
             span: body_span,
         };
         let mut stmts = body.stmts;
@@ -534,12 +534,19 @@ impl Parser<'_> {
             Convention::Read
         };
         if self.eat(&TokenKind::SelfValue) {
-            return Ok(Param { convention, kind: ParamKind::SelfParam, span: start.to(self.prev_span()) });
+            return Ok(Param {
+                convention,
+                kind: ParamKind::SelfParam,
+                default: None,
+                span: start.to(self.prev_span()),
+            });
         }
         let name = self.ident("a parameter name")?;
         self.expect(&TokenKind::Colon)?;
         let ty = self.ty()?;
-        Ok(Param { convention, kind: ParamKind::Named { name, ty }, span: start.to(self.prev_span()) })
+        // `name: Type = expr`: a default argument (spec/arguments.md, AG1).
+        let default = if self.eat(&TokenKind::Eq) { Some(self.expr()?) } else { None };
+        Ok(Param { convention, kind: ParamKind::Named { name, ty }, default, span: start.to(self.prev_span()) })
     }
 
     /// `impl Interface` in a parameter is sugar for one hidden type parameter with that interface as its bound
