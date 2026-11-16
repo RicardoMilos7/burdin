@@ -245,9 +245,9 @@ code; do not invent them inside the implementation.
    The second option was taken without the "add MIR later" part. The interpreter shares the memory rules with
    compiled code: it runs only programs the checks accepted, moves where the tree moves, and drops where compiled
    code drops (CT12). Differential tests between comptime and
-   compiled code (issue #444) run the same test both ways and compare the results; their intended `[differential]`
-   attribute and runner behavior are recorded in [`test-runner.md`](test-runner.md#deferred-differential-tests-issue-444),
-   and they can now be built on the interpreter.
+   compiled code (issue #444) run the same test both ways and compare the `Ok`/`Err` outcome; the `[differential]`
+   attribute and the runner's comparison are in [`test-runner.md`](test-runner.md#differential-tests), built on the
+   interpreter.
 
 7. **Default and named arguments — settled with milestone 17.** A parameter written `name: Type = expr` may be
    omitted at the call site. The default is a constant expression checked once at the declaration (the function's

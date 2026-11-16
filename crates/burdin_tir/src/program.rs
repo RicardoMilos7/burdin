@@ -65,9 +65,24 @@ pub struct AnyVTable {
 /// One `test "name" [attrs] { ... }` block, compiled as the function `func`.
 pub struct TestEntry {
     pub name: String,
+    /// The function the runner calls: the test body plus the wrapper that prints an `Err` before returning it.
     pub func: FuncId,
+    /// The test's own body, `__burdin_test_N_body`. A `[differential]` test is executed at compile time through
+    /// this function, without the wrapper's output (spec/test-runner.md).
+    pub body: FuncId,
     /// The validated attributes of the test item (spec/test-runner.md).
     pub attrs: TestAttrs,
+    /// The `Ok`/`Err` outcome of running `body` at compile time; `Some` exactly for a `[differential]` test.
+    /// `burdin_sema` leaves it `None`; `burdin_comptime` fills it in during a test build.
+    pub comptime: Option<TestOutcome>,
+}
+
+/// The outcome of a `[differential]` test body run at compile time (spec/test-runner.md): the result the compiled
+/// test must also produce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TestOutcome {
+    Ok,
+    Err,
 }
 
 /// The runner-visible attributes of a test item. `burdin_sema` validates them; the driver reads them.
@@ -82,6 +97,9 @@ pub struct TestAttrs {
     pub should_panic_message: Option<String>,
     /// `should_fail`: the test must return an error instead of passing.
     pub should_fail: bool,
+    /// `differential`: run the body at compile time too, and require the compiled test to produce the same
+    /// `Ok`/`Err` outcome (spec/test-runner.md).
+    pub differential: bool,
 }
 
 /// One `extern "C"` declaration. Its parameters are passed by value, as the C ABI expects.
