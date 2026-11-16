@@ -1,0 +1,39 @@
+//@ run
+//> false None
+//> true
+//> false
+//> true Some(1)
+//> Some(1)
+//> None
+//> true
+//> computing
+//> 42
+//> 42
+//> 6
+
+// `Once` is empty until it is set, once: a second `set` is refused, and `get_or_init` runs its closure only the first
+// time. `take` empties the cell so it can be set again.
+
+fn expensive(): i32 {
+    println("computing")
+    42
+}
+
+fn main() {
+    let mut o = Once<i32>.new()
+    println("{} {:?}", o.is_set(), o.get())
+    println("{}", o.set(1))
+    println("{}", o.set(2))
+    println("{} {:?}", o.is_set(), o.get())
+    println("{:?}", o.take())
+    println("{:?}", o.take())
+    println("{}", o.set(3))
+    let mut p = Once<i32>.new()
+    let v = p.get_or_init(expensive)
+    println("{}", *v)
+    let w = p.get_or_init(expensive)
+    println("{}", *w)
+    let mut names = Once<String>.new()
+    let name = names.get_or_init(|| String.from("burdin"))
+    println("{}", name.len())
+}

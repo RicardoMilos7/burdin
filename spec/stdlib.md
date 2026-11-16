@@ -576,6 +576,32 @@ min-heap, wrap the elements in `Reverse<T>`.
 Tests: `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`,
 `heap_needs_ord`.
 
+## `Once<T>` and `Lazy<T, F>` (issue #420)
+
+```
+struct Once<T> {
+    fn new(): Once<T>                     fn is_set(self): bool                  fn get(self): Option<&T>
+    fn set(mut self, value: T): bool      // false, and `value` dropped, when already set
+    fn get_or_init<F: FnOnce(): T>(mut self, init: F): &T
+    fn take(mut self): Option<T>          // leaves the cell empty
+}
+
+struct Lazy<T, F: FnOnce(): T> {
+    fn is_forced(self): bool              fn force(mut self): &T                 fn peek(self): Option<&T>
+}
+fn lazy<T, F: FnOnce(): T>(init: F): Lazy<T, F>
+```
+
+`Once` holds a value after the first `set` (or `get_or_init`) and refuses every later one; `get_or_init` runs `init` only
+when the cell is empty, so it runs at most once. `Lazy` runs its closure the first time `force` is called and keeps the
+result; `peek` never computes. The views `get`, `get_or_init`, `force`, and `peek` return keep the cell borrowed, and
+`force` and `get_or_init` take it `mut`, so a cell that is handed out cannot be forced again until the view is gone.
+
+**The static/global story.** Burdin has no mutable global variables, so a cache or a piece of configuration is a value
+that lives in a local or a struct and is passed to whatever needs it, and `Once` and `Lazy` are ordinary values like
+that. A value that is known at compile time is a `const` or a `comptime` expression instead. The concurrency-safe
+`Once` and `Lazy` (a cell several threads can race to fill) arrive with threads in stage 2.
+
 ## `Heap<T>`
 
 ```
@@ -941,6 +967,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
 | Byte buffers | `m24_stdlib/bytes_mut`, `bytes_share`, `bytes_slice_out_of_bounds`, `bytes_index_out_of_bounds`, `shared_get_view`, `shared_get_view_outlives` |
+| `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |

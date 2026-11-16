@@ -1,0 +1,95 @@
+// One-time initialization (issue #420; spec/stdlib.md, "Once and Lazy").
+//
+// `Once<T>` is a cell that is empty until it is set, once. `Lazy<T, F>` is a value that is computed by `F` the first
+// time it is asked for. Both are ordinary values: Burdin has no mutable globals, so a cache lives in a struct or a
+// local and is passed to whatever needs it. The concurrency-safe variants belong to stage 2 with threads.
+
+use option.take
+
+/// A cell that holds a value after it has been set, and never changes after that. The value sits in a list of at most
+/// one element, so `get` can hand out a view of it.
+struct Once<T> {
+    value: List<T>
+}
+
+Once<T> {
+    /// An empty cell.
+    fn new(): Once<T> {
+        Once { value: List<T>.new() }
+    }
+
+    /// Whether the cell has been set.
+    fn is_set(self): bool {
+        self.value.len() > 0
+    }
+
+    /// The value, or `None` while the cell is empty.
+    fn get(self): Option<&T> {
+        if self.value.len() == 0 {
+            return None
+        }
+        Some(&self.value[0])
+    }
+
+    /// Sets the cell and returns `true`. A cell that is already set keeps its value, and `value` is dropped: the
+    /// result is `false`.
+    fn set(mut self, own value: T): bool {
+        if self.value.len() > 0 {
+            return false
+        }
+        self.value.push(value)
+        true
+    }
+
+    /// The value, setting the cell to the result of `init` first when it is empty. `init` runs at most once.
+    fn get_or_init<F: FnOnce(): T>(mut self, own init: F): &T {
+        if self.value.len() == 0 {
+            self.value.push(init())
+        }
+        &self.value[0]
+    }
+
+    /// Takes the value out and leaves the cell empty, so it can be set again.
+    fn take(mut self): Option<T> {
+        self.value.pop()
+    }
+}
+
+/// A value that `init` computes the first time `force` asks for it. Build one with `lazy(init)`.
+struct Lazy<T, F: FnOnce(): T> {
+    value: List<T>
+    init: Option<F>
+}
+
+Lazy<T, F> where F: FnOnce(): T {
+    /// Whether the value has been computed.
+    fn is_forced(self): bool {
+        self.value.len() > 0
+    }
+
+    /// The value, computed now if this is the first call. `init` runs at most once.
+    fn force(mut self): &T {
+        if self.value.len() == 0 {
+            match self.init.take() {
+                Some(f) => {
+                    self.value.push(f())
+                }
+                None => panic("Lazy was initialized twice")
+            }
+        }
+        &self.value[0]
+    }
+
+    /// The value if it has been computed, without computing it.
+    fn peek(self): Option<&T> {
+        if self.value.len() == 0 {
+            return None
+        }
+        Some(&self.value[0])
+    }
+}
+
+/// A lazy value that is computed by `init` on first use.
+fn lazy<T, F: FnOnce(): T>(own init: F): Lazy<T, F> {
+    Lazy { value: List<T>.new(), init: Some(init) }
+}
