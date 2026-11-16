@@ -1,0 +1,17 @@
+//@ run
+//> Some(50) None
+//> Some(50) Some(20) None
+//> Some(2) Some(1) None
+
+// `last` and `nth` consume the iterator up to the item they return; `position` gives the index of the first match.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [30, 10, 50, 20, 50] {
+        xs.push(x)
+    }
+    let empty = List<i32>.new()
+    println("{xs.iter().last():?} {empty.iter().last():?}")
+    println("{xs.iter().nth(2):?} {xs.iter().nth(3):?} {xs.iter().nth(9):?}")
+    println("{xs.iter().position(|x| x == 50):?} {xs.iter().skip(3).position(|x| x == 50):?} {xs.iter().position(|x| x == 7):?}")
+}

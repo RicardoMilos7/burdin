@@ -104,6 +104,14 @@ asks for it.
 | `step_by(own self, step: usize)` | `StepByIter<Self, T>` | every `step`th item, starting with the first; `step` 0 panics |
 | `inspect<F: FnMut(&T)>(own self, own f: F)` | `InspectIter<Self, T, F>` | calls `f` on a view of each item and passes it on |
 | `peekable(own self)` | `PeekIter<Self, T>` | adds `peek(mut self): Option<&T>`, a view of the next item that is not taken |
+| `last(mut self)` | `Option<T>` | the last item |
+| `nth(mut self, n: usize)` | `Option<T>` | the item `n` places on, counting from 0; consumes the ones before |
+| `position<F: FnMut(T): bool>(mut self, own f: F)` | `Option<usize>` | index of the first accepted item |
+| `for_each<F: FnMut(T)>(mut self, own f: F)` | `()` | calls `f` on every item |
+| `reduce<F: FnMut(T, T): T>(mut self, own f: F)` | `Option<T>` | folds with the first item as the start; `None` when empty |
+| `partition<F: FnMut(&T): bool>(mut self, own f: F)` | `(List<T>, List<T>)` | accepted items, then rejected items, in order |
+| `min_by` / `max_by` `<F: FnMut(&T, &T): Ordering>(mut self, own f: F)` | `Option<T>` | least (first of equals) / greatest (last of equals) under the comparator |
+| `min_by_key` / `max_by_key` `<K: Ord, F: FnMut(&T): K>(mut self, own f: F)` | `Option<T>` | the same, ordered by a key |
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
 
 **Adapters that are not provided (issue #706).** Three constraints of the current language rule these out; each is a
@@ -116,6 +124,13 @@ language change, not a library one, and stays open on the issue:
   target), and a call cannot infer a type parameter from a bound alone ("cannot tell what `U` stands for").
 - `rev` needs a source that can walk backwards, and the built-in iterators are not `Iterator` implementers that a
   `DoubleEndedIterator<T>` interface could be added to; `cycle` needs a clonable iterator. Neither exists yet.
+
+**Consumers that are not provided (issue #707).** `min`, `max`, `eq`, and `cmp` between iterators need a bound on the
+interface's own item type (`where T: Ord`), which a default method cannot state (E9000); use `min_by`/`max_by` with
+`a.cmp(*b)` and `fold`. `unzip` needs the pair's two types, which only appear in a bound, so a call cannot infer them.
+`rposition` needs a double-ended source (see the adapters above). `product` and the float `sum` need compiler support
+like integer `sum`, and `try_fold` and `try_for_each` are not written yet; `fold` covers the first, and a `for` loop with
+`?` the others.
 
 `any` is reserved as an identifier (it belongs to m15), so `std` declares the method as `any_item`; the compiler
 spells the call `.any(...)`. The default methods are instantiated on demand for each receiver type, whether the

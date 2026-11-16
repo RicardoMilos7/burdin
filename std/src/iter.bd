@@ -6,6 +6,8 @@
 // `Iterator<T>`. The built-in collections implement both in the compiler; these declarations give user types the
 // same surface, with the lazy adapters written here as default methods.
 //
+use cmp.Ordering
+
 // A lazy chain borrows its source: its iterator types carry the source's view type, so a chain is second-class
 // (memory-rules SC2/SC3) and cannot be stored in a field or a collection.
 
@@ -155,6 +157,213 @@ interface Iterator<T> {
         }
     }
 
+    /// The last item, or `None` when the iterator is empty.
+    fn last(mut self): Option<T> {
+        let mut result: Option<T> = None
+        loop {
+            match self.next() {
+                Some(x) => {
+                    result = Some(x)
+                }
+                None => {
+                    return result
+                }
+            }
+        }
+    }
+
+    /// The item `n` places on (counting from 0), or `None` when the iterator is shorter; it consumes the items before.
+    fn nth(mut self, n: usize): Option<T> {
+        let mut left = n
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if left == 0 {
+                        return Some(x)
+                    }
+                    left = left - 1
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+
+    /// The index of the first item `f` accepts.
+    fn position<F: FnMut(T): bool>(mut self, own f: F): Option<usize> {
+        let mut f = f
+        let mut i: usize = 0
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if f(x) {
+                        return Some(i)
+                    }
+                    i = i + 1
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+
+    /// Calls `f` on every item.
+    fn for_each<F: FnMut(T)>(mut self, own f: F) {
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    f(x)
+                }
+                None => {
+                    return
+                }
+            }
+        }
+    }
+
+    /// Combines the items into one with `f`, left to right; `None` when the iterator is empty.
+    fn reduce<F: FnMut(T, T): T>(mut self, own f: F): Option<T> {
+        let mut f = f
+        match self.next() {
+            Some(first) => {
+                let mut acc = first
+                loop {
+                    match self.next() {
+                        Some(x) => {
+                            acc = f(acc, x)
+                        }
+                        None => {
+                            return Some(acc)
+                        }
+                    }
+                }
+            }
+            None => None,
+        }
+    }
+
+    /// Splits the items into the ones `f` accepts and the ones it rejects, keeping their order.
+    fn partition<F: FnMut(&T): bool>(mut self, own f: F): (List<T>, List<T>) {
+        let mut f = f
+        let mut yes = List<T>.new()
+        let mut no = List<T>.new()
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if __accepts(mut f, x) {
+                        yes.push(x)
+                    } else {
+                        no.push(x)
+                    }
+                }
+                None => {
+                    return (yes, no)
+                }
+            }
+        }
+    }
+
+    /// The least item under the comparator `f`; the first of equal items. `None` when the iterator is empty.
+    fn min_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F): Option<T> {
+        let mut f = f
+        match self.next() {
+            Some(first) => {
+                let mut best = first
+                loop {
+                    match self.next() {
+                        Some(x) => {
+                            if __is_less(mut f, x, best) {
+                                best = x
+                            }
+                        }
+                        None => {
+                            return Some(best)
+                        }
+                    }
+                }
+            }
+            None => None,
+        }
+    }
+
+    /// The greatest item under the comparator `f`; the last of equal items. `None` when the iterator is empty.
+    fn max_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F): Option<T> {
+        let mut f = f
+        match self.next() {
+            Some(first) => {
+                let mut best = first
+                loop {
+                    match self.next() {
+                        Some(x) => {
+                            if !__is_less(mut f, x, best) {
+                                best = x
+                            }
+                        }
+                        None => {
+                            return Some(best)
+                        }
+                    }
+                }
+            }
+            None => None,
+        }
+    }
+
+    /// The item with the least key; the first of equal ones. `None` when the iterator is empty.
+    fn min_by_key<K: Ord, F: FnMut(&T): K>(mut self, own f: F): Option<T> {
+        let mut f = f
+        match self.next() {
+            Some(first) => {
+                let mut best_key = f(&first)
+                let mut best = first
+                loop {
+                    match self.next() {
+                        Some(x) => {
+                            let k = f(&x)
+                            if k.cmp(best_key).is_lt() {
+                                best = x
+                                best_key = k
+                            }
+                        }
+                        None => {
+                            return Some(best)
+                        }
+                    }
+                }
+            }
+            None => None,
+        }
+    }
+
+    /// The item with the greatest key; the last of equal ones. `None` when the iterator is empty.
+    fn max_by_key<K: Ord, F: FnMut(&T): K>(mut self, own f: F): Option<T> {
+        let mut f = f
+        match self.next() {
+            Some(first) => {
+                let mut best_key = f(&first)
+                let mut best = first
+                loop {
+                    match self.next() {
+                        Some(x) => {
+                            let k = f(&x)
+                            if !k.cmp(best_key).is_lt() {
+                                best = x
+                                best_key = k
+                            }
+                        }
+                        None => {
+                            return Some(best)
+                        }
+                    }
+                }
+            }
+            None => None,
+        }
+    }
+
     /// Collects the remaining items into a list. A chain over borrowed items produces a second-class list of
     /// views, which cannot be stored; clone the items first to get an owned list.
     fn to_list(mut self): List<T> {
@@ -170,6 +379,18 @@ interface Iterator<T> {
             }
         }
     }
+}
+
+/// Whether the comparator `f` puts `a` strictly before `b`. The items are plain (borrowed) parameters, so the views
+/// handed to `f` end with the call and the caller can still move the items.
+priv fn __is_less<T, F: FnMut(&T, &T): Ordering>(mut f: F, a: T, b: T): bool {
+    f(&a, &b).is_lt()
+}
+
+/// Whether the predicate `f` accepts `x`. `x` is a plain (borrowed) parameter, so the view handed to `f` ends with the
+/// call and the caller can still move `x`.
+priv fn __accepts<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
+    f(&x)
 }
 
 /// A collection that `for` can iterate through `iter(self)`.
