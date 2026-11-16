@@ -47,8 +47,8 @@ fn abs(self): Self                    // signed types only
 fn parse(s: str): Result<Self, ParseIntError>
 ```
 
-Floats have `to_string(self): String`, through `Display` (`format.md`, FM8); `f64` and `f32` have no other
-methods in stage 0. `bool`, `char`, and `str` have `to_string(self): String`. `bool` also works in `if`/`while` conditions. `parse` is
+Floats have `to_string(self): String`, through `Display` (`format.md`, FM8), and `f64.parse(s)` and `f32.parse(s)`
+(below). `bool`, `char`, and `str` have `to_string(self): String`. `bool` also works in `if`/`while` conditions. `parse` is
 the associated function `i32.parse(s)`; it accepts an optional leading `-` and digits in the base 10 and returns
 `Err(ParseIntError.Invalid)`, whose message is `invalid integer`, for anything else.
 
@@ -89,14 +89,40 @@ fn rotate_left(self, n: u32): T        fn rotate_right(self, n: u32): T   // n %
 fn swap_bytes(self): T                 fn reverse_bits(self): T
 fn is_power_of_two(self): bool         fn next_power_of_two(self): T      fn checked_next_power_of_two(self): Option<T>   // unsigned only
 
+// text in a base
+fn to_string_radix(self, radix: u32): String       fn parse_radix(s: str, radix: u32): Result<T, ParseIntError>   // radix 2 to 36
+
 // bytes
 fn to_le_bytes(self): [u8; N]          fn to_be_bytes(self): [u8; N]      fn to_ne_bytes(self): [u8; N]
 ```
+
+`to_string_radix` writes lowercase digits with a leading `-` for a negative number. `parse_radix` takes the same
+digits in either case, and for a signed type an optional leading `-`; the empty text, a bare `-`, a `+`, a space, a
+digit that is not in the base, and a value outside the type are all `ParseIntError.Invalid`. A radix outside 2 to 36
+panics in both. `T.parse(s)` (base 10) rejects a value outside the type the same way, so `i32.parse("4294967297")` is
+an error, not `1`.
 
 `N` is the size of the type in bytes (1, 2, 4, or 8). The target is little-endian everywhere Burdin runs, so `ne` is
 `le`. The `from_*_bytes` functions are the one case of an associated function that is not `parse`: `T.name(...)` on an
 integer type looks `name` up as the std function `__T_name`, and `T.NAME` as the std constant `__T_NAME`. A name that
 does not exist is the usual `E0002`. The floating-point functions are a separate issue (#703).
+
+### Floats (issue #417)
+
+```
+error enum ParseFloatError { Empty "cannot parse a float from an empty string", Invalid "invalid float" }
+
+fn f64.parse(s: str): Result<f64, ParseFloatError>      // an associated function, like `i32.parse`
+fn f32.parse(s: str): Result<f32, ParseFloatError>
+```
+
+The grammar is an optional sign, then `digits`, `digits.digits`, `.digits`, or `digits.`, then an optional exponent
+(`e` or `E`, an optional sign, digits); or `inf`, `infinity`, `nan` in any letter case after the optional sign. An empty
+text is `Empty`; everything else that does not match, including spaces around the number, a second point, a `0x`
+prefix, and an exponent without digits, is `Invalid`. A number past the range of the type is infinity and one below it is
+zero, as in C. The value is the correctly rounded one (it is computed by the C library's `strtod`/`strtof` after the
+grammar check), so a float written with `to_string`, which is the shortest text that reads back as the same number
+(`format.md`, FM7), parses back to the same float: `f64.parse(x.to_string()) == x` for every finite `x`.
 
 ## Characters (issue #416)
 
@@ -883,6 +909,8 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
+| Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
+| Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |

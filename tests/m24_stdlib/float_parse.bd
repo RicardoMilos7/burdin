@@ -1,0 +1,75 @@
+//@ run
+//> ok 1.5
+//> ok -0.1
+//> ok 2
+//> ok 1000
+//> ok 0.0025
+//> ok 0.5
+//> ok 5
+//> err invalid float
+//> err invalid float
+//> err invalid float
+//> err invalid float
+//> err invalid float
+//> err cannot parse a float from an empty string
+//> err invalid float
+//> err invalid float
+//> err invalid float
+//> err invalid float
+//> err invalid float
+//> ok inf
+//> ok -inf
+//> ok NaN
+//> err invalid float
+//> ok inf
+//> ok -inf
+//> ok 0
+//> 3.14
+//> inf
+//> true
+
+// `f64.parse` and `f32.parse`: an optional sign, digits with an optional fraction, an optional exponent, or `inf`,
+// `infinity`, `nan` in any case. Anything else is `Invalid`, an empty text is `Empty`, and a number past the range
+// of the type is infinity.
+
+fn show(r: Result<f64, ParseFloatError>) {
+    match r {
+        Ok(v) => {
+            println("ok {v}")
+        }
+        Err(e) => {
+            println("err {e}")
+        }
+    }
+}
+
+fn main() {
+    show(f64.parse("1.5"))
+    show(f64.parse("-0.1"))
+    show(f64.parse("+2"))
+    show(f64.parse("1e3"))
+    show(f64.parse("2.5E-3"))
+    show(f64.parse(".5"))
+    show(f64.parse("5."))
+    show(f64.parse("1e"))
+    show(f64.parse("1e+"))
+    show(f64.parse("e5"))
+    show(f64.parse("."))
+    show(f64.parse("-"))
+    show(f64.parse(""))
+    show(f64.parse("abc"))
+    show(f64.parse(" 1"))
+    show(f64.parse("1 "))
+    show(f64.parse("1.2.3"))
+    show(f64.parse("0x10"))
+    show(f64.parse("inf"))
+    show(f64.parse("-Infinity"))
+    show(f64.parse("NaN"))
+    show(f64.parse("infinit"))
+    show(f64.parse("1e999"))
+    show(f64.parse("-1e999"))
+    show(f64.parse("1e-999"))
+    println("{}", f32.parse("3.14").unwrap())
+    println("{}", f32.parse("1e39").unwrap())
+    println("{}", f32.parse("nope").is_err())
+}

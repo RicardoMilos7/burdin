@@ -1,0 +1,41 @@
+//@ run
+//> 0.1 true
+//> 0.30000000000000004 true
+//> 0.3333333333333333 true
+//> 123456789.125 true
+//> 309 digits true
+//> 326 digits true
+//> 326 digits true
+//> -0.000001 true
+//> 1000000000000000000000 true
+//> 4503599627370497 true
+//> 0.33333334
+//> true
+
+// A float written with `to_string` reads back as the same number: the text is the shortest one that does.
+
+fn check(x: f64) {
+    let text = x.to_string()
+    let same = f64.parse(text).unwrap() == x
+    if text.len() < 40 {
+        println("{} {}", text, same)
+    } else {
+        println("{} digits {}", text.len(), same)
+    }
+}
+
+fn main() {
+    check(0.1)
+    check(0.1 + 0.2)
+    check(1.0 / 3.0)
+    check(123456789.125)
+    check(1.7976931348623157e308)
+    check(5e-324)
+    check(2.2250738585072014e-308)
+    check(-0.000001)
+    check(1e21)
+    check(4503599627370497.0)
+    let third: f32 = 1.0 / 3.0
+    println("{}", third.to_string())
+    println("{}", f32.parse(third.to_string()).unwrap() == third)
+}

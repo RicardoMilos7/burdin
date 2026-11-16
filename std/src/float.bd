@@ -1,0 +1,102 @@
+// Floats (issue #417; spec/stdlib.md, "Floats"): parsing text into `f64` and `f32`.
+//
+// `f64.parse(s)` is the std function `__f64_parse` (the compiler maps `T.name` on a float type to `__T_name`, as it
+// does for the integer types). The text is checked against the grammar below and then handed to the C library's
+// `strtod`/`strtof`, which round correctly, so `f64.parse(x.to_string()) == x` for every finite `x`: `to_string`
+// writes the shortest text that reads back as the same number (spec/format.md, FM7).
+
+use fmt.{Debug, Display, Formatter}
+use std.Error
+use unicode.{is_ascii_digit, to_ascii_lowercase}
+
+/// What went wrong while parsing a float.
+error enum ParseFloatError derives (Eq, Debug) {
+    Empty "cannot parse a float from an empty string"
+    Invalid "invalid float"
+}
+
+extern "C" {
+    fn strtod(text: CPtr<CChar>, end: CPtr<CPtr<CChar>>): f64
+    fn strtof(text: CPtr<CChar>, end: CPtr<CPtr<CChar>>): f32
+}
+
+/// Whether the text is `inf`, `infinity`, or `nan` in any letter case.
+priv fn __is_special(text: str): bool {
+    let mut lower = String.new()
+    for c in text.chars() {
+        lower.push(c.to_ascii_lowercase())
+    }
+    let word = lower.as_str()
+    word == "inf" || word == "infinity" || word == "nan"
+}
+
+/// Whether the text is a decimal float: an optional sign, then digits with an optional fraction (at least one digit in
+/// all), then an optional exponent (`e` or `E`, an optional sign, digits); or one of the special words.
+priv fn __is_float_text(text: str): bool {
+    let mut body = text
+    if text.starts_with("-") || text.starts_with("+") {
+        body = text[1..text.len()]
+    }
+    if __is_special(body) {
+        return true
+    }
+    let mut digits = 0
+    let mut seen_point = false
+    let mut seen_exp = false
+    let mut exp_digits = 0
+    let mut after_exp = false
+    for c in body.chars() {
+        if after_exp {
+            after_exp = false
+            if c == '-' || c == '+' {
+                continue
+            }
+        }
+        if c.is_ascii_digit() {
+            if seen_exp {
+                exp_digits = exp_digits + 1
+            } else {
+                digits = digits + 1
+            }
+        } else if c == '.' && !seen_point && !seen_exp {
+            seen_point = true
+        } else if (c == 'e' || c == 'E') && !seen_exp && digits > 0 {
+            seen_exp = true
+            after_exp = true
+        } else {
+            return false
+        }
+    }
+    if seen_exp {
+        return exp_digits > 0
+    }
+    digits > 0
+}
+
+/// The number in the text. The grammar is an optional sign, then `digits`, `digits.digits`, `.digits`, or `digits.`,
+/// then an optional exponent, or `inf`, `infinity`, `nan` in any case. Anything else, including surrounding spaces
+/// and a `0x` prefix, is `Invalid`, and an empty text is `Empty`. A number too large for the type is infinity.
+fn __f64_parse(s: str): Result<f64, ParseFloatError> {
+    if s.len() == 0 {
+        return Err(ParseFloatError.Empty)
+    }
+    if !__is_float_text(s) {
+        return Err(ParseFloatError.Invalid)
+    }
+    let text = CString.from(s)
+    let value = unsafe { strtod(text.as_ptr(), CPtr<CPtr<CChar>>.null()) }
+    Ok(value)
+}
+
+/// The `f32` form of `f64.parse`: the same grammar, rounded once to `f32`.
+fn __f32_parse(s: str): Result<f32, ParseFloatError> {
+    if s.len() == 0 {
+        return Err(ParseFloatError.Empty)
+    }
+    if !__is_float_text(s) {
+        return Err(ParseFloatError.Invalid)
+    }
+    let text = CString.from(s)
+    let value = unsafe { strtof(text.as_ptr(), CPtr<CPtr<CChar>>.null()) }
+    Ok(value)
+}

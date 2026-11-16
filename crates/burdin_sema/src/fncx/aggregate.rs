@@ -95,6 +95,12 @@ impl FnCx<'_> {
         {
             return mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), span);
         }
+        // `f64.MAX`: so are a float type's constants.
+        if let Ty::Float(_) = &ty
+            && let Some(Global::Const(c)) = self.globals.std_value(&format!("__{}_{}", ty, name.name))
+        {
+            return mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), span);
+        }
         if let Ty::Enum(a) = &ty
             && let Some(index) = self.globals.enums[a.id].variants.iter().position(|v| v.name == name.name)
         {

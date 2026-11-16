@@ -6,6 +6,9 @@
 // `min`, `max`, `abs`, `to_string`, `parse`) win. `u32.MAX`, `u32.from_le_bytes(b)`, and the other associated names
 // are the `__<type>_<name>` constants and functions below: the compiler maps `T.name` to `__T_name`.
 
+use std.ParseIntError
+use unicode.to_digit
+
 // ---- i8 ----
 
 const __i8_MIN: i8 = -127 - 1
@@ -400,6 +403,82 @@ fn i8.ilog10(self): u32 {
         n = n + 1
     }
     n
+}
+
+/// The number in the text in base `radix` (2 to 36; any other radix panics). An optional leading `-` is allowed. Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __i8_parse_radix(s: str, radix: u32): Result<i8, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: i8 = radix as i8
+    let mut value: i8 = 0
+    let mut seen_digit = false
+    let mut negative = false
+    let mut first = true
+    for c in s.chars() {
+        if first {
+            first = false
+            if c == '-' {
+                negative = true
+                continue
+            }
+        }
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: i8 = d as i8
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn i8.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    if self < 0 {
+        out.push('-')
+    }
+    let mut v: u8 = self.unsigned_abs()
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u8 = radix as u8
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
 }
 
 /// The bytes in little-endian order.
@@ -832,6 +911,82 @@ fn i16.ilog10(self): u32 {
     n
 }
 
+/// The number in the text in base `radix` (2 to 36; any other radix panics). An optional leading `-` is allowed. Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __i16_parse_radix(s: str, radix: u32): Result<i16, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: i16 = radix as i16
+    let mut value: i16 = 0
+    let mut seen_digit = false
+    let mut negative = false
+    let mut first = true
+    for c in s.chars() {
+        if first {
+            first = false
+            if c == '-' {
+                negative = true
+                continue
+            }
+        }
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: i16 = d as i16
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn i16.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    if self < 0 {
+        out.push('-')
+    }
+    let mut v: u16 = self.unsigned_abs()
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u16 = radix as u16
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
 /// The bytes in little-endian order.
 fn i16.to_le_bytes(self): [u8; 2] {
     let v: u16 = self as u16
@@ -1260,6 +1415,82 @@ fn i32.ilog10(self): u32 {
         n = n + 1
     }
     n
+}
+
+/// The number in the text in base `radix` (2 to 36; any other radix panics). An optional leading `-` is allowed. Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __i32_parse_radix(s: str, radix: u32): Result<i32, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: i32 = radix as i32
+    let mut value: i32 = 0
+    let mut seen_digit = false
+    let mut negative = false
+    let mut first = true
+    for c in s.chars() {
+        if first {
+            first = false
+            if c == '-' {
+                negative = true
+                continue
+            }
+        }
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: i32 = d as i32
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn i32.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    if self < 0 {
+        out.push('-')
+    }
+    let mut v: u32 = self.unsigned_abs()
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u32 = radix as u32
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
 }
 
 /// The bytes in little-endian order.
@@ -1692,6 +1923,82 @@ fn i64.ilog10(self): u32 {
     n
 }
 
+/// The number in the text in base `radix` (2 to 36; any other radix panics). An optional leading `-` is allowed. Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __i64_parse_radix(s: str, radix: u32): Result<i64, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: i64 = radix as i64
+    let mut value: i64 = 0
+    let mut seen_digit = false
+    let mut negative = false
+    let mut first = true
+    for c in s.chars() {
+        if first {
+            first = false
+            if c == '-' {
+                negative = true
+                continue
+            }
+        }
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: i64 = d as i64
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn i64.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    if self < 0 {
+        out.push('-')
+    }
+    let mut v: u64 = self.unsigned_abs()
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u64 = radix as u64
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
 /// The bytes in little-endian order.
 fn i64.to_le_bytes(self): [u8; 8] {
     let v: u64 = self as u64
@@ -2122,6 +2429,82 @@ fn isize.ilog10(self): u32 {
     n
 }
 
+/// The number in the text in base `radix` (2 to 36; any other radix panics). An optional leading `-` is allowed. Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __isize_parse_radix(s: str, radix: u32): Result<isize, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: isize = radix as isize
+    let mut value: isize = 0
+    let mut seen_digit = false
+    let mut negative = false
+    let mut first = true
+    for c in s.chars() {
+        if first {
+            first = false
+            if c == '-' {
+                negative = true
+                continue
+            }
+        }
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: isize = d as isize
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn isize.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    if self < 0 {
+        out.push('-')
+    }
+    let mut v: usize = self.unsigned_abs()
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: usize = radix as usize
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
 /// The bytes in little-endian order.
 fn isize.to_le_bytes(self): [u8; 8] {
     let v: usize = self as usize
@@ -2504,6 +2887,70 @@ fn u8.ilog10(self): u32 {
         n = n + 1
     }
     n
+}
+
+/// The number in the text in base `radix` (2 to 36; any other radix panics). Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __u8_parse_radix(s: str, radix: u32): Result<u8, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: u8 = radix as u8
+    let mut value: u8 = 0
+    let mut seen_digit = false
+    for c in s.chars() {
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: u8 = d as u8
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = scaled.unwrap().checked_add(digit)
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn u8.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    let mut v: u8 = self
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u8 = radix as u8
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
 }
 
 /// The bytes in little-endian order.
@@ -2890,6 +3337,70 @@ fn u16.ilog10(self): u32 {
     n
 }
 
+/// The number in the text in base `radix` (2 to 36; any other radix panics). Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __u16_parse_radix(s: str, radix: u32): Result<u16, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: u16 = radix as u16
+    let mut value: u16 = 0
+    let mut seen_digit = false
+    for c in s.chars() {
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: u16 = d as u16
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = scaled.unwrap().checked_add(digit)
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn u16.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    let mut v: u16 = self
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u16 = radix as u16
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
 /// The bytes in little-endian order.
 fn u16.to_le_bytes(self): [u8; 2] {
     let v: u16 = self
@@ -3272,6 +3783,70 @@ fn u32.ilog10(self): u32 {
         n = n + 1
     }
     n
+}
+
+/// The number in the text in base `radix` (2 to 36; any other radix panics). Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __u32_parse_radix(s: str, radix: u32): Result<u32, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: u32 = radix as u32
+    let mut value: u32 = 0
+    let mut seen_digit = false
+    for c in s.chars() {
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: u32 = d as u32
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = scaled.unwrap().checked_add(digit)
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn u32.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    let mut v: u32 = self
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u32 = radix as u32
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
 }
 
 /// The bytes in little-endian order.
@@ -3658,6 +4233,70 @@ fn u64.ilog10(self): u32 {
     n
 }
 
+/// The number in the text in base `radix` (2 to 36; any other radix panics). Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __u64_parse_radix(s: str, radix: u32): Result<u64, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: u64 = radix as u64
+    let mut value: u64 = 0
+    let mut seen_digit = false
+    for c in s.chars() {
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: u64 = d as u64
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = scaled.unwrap().checked_add(digit)
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn u64.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    let mut v: u64 = self
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u64 = radix as u64
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
 /// The bytes in little-endian order.
 fn u64.to_le_bytes(self): [u8; 8] {
     let v: u64 = self
@@ -4040,6 +4679,70 @@ fn usize.ilog10(self): u32 {
         n = n + 1
     }
     n
+}
+
+/// The number in the text in base `radix` (2 to 36; any other radix panics). Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __usize_parse_radix(s: str, radix: u32): Result<usize, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: usize = radix as usize
+    let mut value: usize = 0
+    let mut seen_digit = false
+    for c in s.chars() {
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: usize = d as usize
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = scaled.unwrap().checked_add(digit)
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn usize.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    let mut v: usize = self
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: usize = radix as usize
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
 }
 
 /// The bytes in little-endian order.

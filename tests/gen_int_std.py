@@ -27,6 +27,9 @@ HEADER = """// The integer functions of every integer type (spec/stdlib.md, "Int
 // so the prelude makes them visible everywhere; the methods the compiler provides (`wrapping_add`, `checked_add`,
 // `min`, `max`, `abs`, `to_string`, `parse`) win. `u32.MAX`, `u32.from_le_bytes(b)`, and the other associated names
 // are the `__<type>_<name>` constants and functions below: the compiler maps `T.name` to `__T_name`.
+
+use std.ParseIntError
+use unicode.to_digit
 """
 
 
@@ -419,6 +422,95 @@ while v >= 10 {{
     n = n + 1
 }}
 n""")
+
+    # ---- text in a base ----
+    if signed:
+        sign_branch = f"""
+    if first {{
+        first = false
+        if c == '-' {{
+            negative = true
+            continue
+        }}
+    }}"""
+        accumulate = f"""
+            let digit: {t} = d as {t}
+            let scaled = value.checked_mul(base)
+            if scaled.is_none() {{
+                return Err(ParseIntError.Invalid)
+            }}
+            let next = if negative {{ scaled.unwrap().checked_sub(digit) }} else {{ scaled.unwrap().checked_add(digit) }}
+            if next.is_none() {{
+                return Err(ParseIntError.Invalid)
+            }}
+            value = next.unwrap()"""
+        neg_decl = "let mut negative = false\n"
+    else:
+        sign_branch = ""
+        accumulate = f"""
+            let digit: {t} = d as {t}
+            let scaled = value.checked_mul(base)
+            if scaled.is_none() {{
+                return Err(ParseIntError.Invalid)
+            }}
+            let next = scaled.unwrap().checked_add(digit)
+            if next.is_none() {{
+                return Err(ParseIntError.Invalid)
+            }}
+            value = next.unwrap()"""
+        neg_decl = ""
+    first_decl = "let mut first = true\n" if signed else ""
+    sfn("parse_radix", "s: str, radix: u32", f"Result<{t}, ParseIntError>",
+        "The number in the text in base `radix` (2 to 36; any other radix panics). " + ("An optional leading `-` is allowed. " if signed else "") + "Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.", f"""
+if radix < 2 || radix > 36 {{
+    panic("parse_radix: radix must be 2 to 36")
+}}
+let base: {t} = radix as {t}
+let mut value: {t} = 0
+let mut seen_digit = false
+{neg_decl}{first_decl}for c in s.chars() {{{sign_branch}
+    match c.to_digit(radix) {{
+        Some(d) => {{{accumulate}
+            seen_digit = true
+        }}
+        None => {{
+            return Err(ParseIntError.Invalid)
+        }}
+    }}
+}}
+if !seen_digit {{
+    return Err(ParseIntError.Invalid)
+}}
+Ok(value)""")
+    magnitude = "self.unsigned_abs()" if signed else "self"
+    neg_prefix = "if self < 0 {\n    out.push('-')\n}\n" if signed else ""
+    fn("to_string_radix(self, radix: u32): String", "The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.", f"""
+if radix < 2 || radix > 36 {{
+    panic("to_string_radix: radix must be 2 to 36")
+}}
+let mut out = String.new()
+{neg_prefix}let mut v: {u} = {magnitude}
+if v == 0 {{
+    out.push('0')
+    return out
+}}
+let base: {u} = radix as {u}
+let mut digits = List<char>.new()
+while v > 0 {{
+    let d = (v % base) as u32
+    if d < 10 {{
+        digits.push((48 + d) as char)
+    }} else {{
+        digits.push((87 + d) as char)
+    }}
+    v = v / base
+}}
+let mut i = digits.len()
+while i > 0 {{
+    i = i - 1
+    out.push(digits[i])
+}}
+out""")
 
     # ---- bytes ----
     le_items = ", ".join(f"((v >> {8 * i}) & 255) as u8" for i in range(nbytes))
