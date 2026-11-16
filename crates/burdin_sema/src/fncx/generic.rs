@@ -769,7 +769,17 @@ fn generic_hint(
         });
     }
     if globals.ty_has_param(param) {
-        return Some(globals.subst_ty(param, bindings));
+        let hint = globals.subst_ty(param, bindings);
+        // A hint that still names one of the callee's own open parameters (`Option<U>` before `U` is known) would
+        // make the argument's literals take `U` as their type, so it is no hint at all. The parameter names are
+        // found in the type's text, which spells a parameter by its name.
+        let text = param.to_string();
+        let words: Vec<&str> = text.split(|c: char| !(c.is_alphanumeric() || c == '_')).collect();
+        let open = params.iter().any(|p| !bindings.iter().any(|(n, _)| n == p) && words.contains(&p.as_str()));
+        if open {
+            return None;
+        }
+        return Some(hint);
     }
     Some(param.clone())
 }

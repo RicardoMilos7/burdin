@@ -1,0 +1,36 @@
+//@ run
+//> Some(5)
+//> None
+//> None
+//> None
+//> Some(1)
+//> Some(1)
+//> Some(2)
+//> hello
+//> true
+
+// `take` and `replace` change the option in place and hand back the old value.
+
+fn main() {
+    let mut a: Option<i32> = Some(5)
+    let taken = a.take()
+    println("{taken:?}")
+    println("{a:?}")
+    println("{a.take():?}")
+
+    let old = a.replace(1)
+    println("{old:?}")
+    println("{a:?}")
+    let old2 = a.replace(2)
+    println("{old2:?}")
+    println("{a:?}")
+    a = None
+
+    // A non-`Copy` payload moves out and the place is empty afterwards.
+    let mut s: Option<String> = Some(String.from("hello"))
+    match s.take() {
+        Some(text) => println("{text}"),
+        None => println("none"),
+    }
+    println("{s.is_none()}")
+}

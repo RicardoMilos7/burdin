@@ -1,0 +1,258 @@
+// Combinators for `Option<T>` and `Result<T, E>` (spec/stdlib.md).
+//
+// They are extension methods (spec/extensions.md): the prelude makes them visible in every module, and the
+// compiler's own methods (`unwrap`, `expect`, `is_some`, ...) still win. A method that takes `own self` consumes
+// the value; `take` and `replace` take `mut self` and leave the place usable.
+
+use mem
+
+// ---- Option ----
+
+/// Applies `f` to the value of a `Some`; a `None` stays `None`.
+fn Option<T>.map<U, F: FnOnce(T): U>(own self, own f: F): Option<U> {
+    match self {
+        Some(x) => Some(f(x)),
+        None => None,
+    }
+}
+
+/// Applies `f` to the value of a `Some` and returns what it returns; a `None` stays `None`.
+fn Option<T>.and_then<U, F: FnOnce(T): Option<U>>(own self, own f: F): Option<U> {
+    match self {
+        Some(x) => f(x),
+        None => None,
+    }
+}
+
+/// `self` when it is a `Some`, otherwise what `f` returns.
+fn Option<T>.or_else<F: FnOnce(): Option<T>>(own self, own f: F): Option<T> {
+    match self {
+        Some(x) => Some(x),
+        None => f(),
+    }
+}
+
+/// `self` when it is a `Some`, otherwise `other`.
+fn Option<T>.or(own self, own other: Option<T>): Option<T> {
+    match self {
+        Some(x) => Some(x),
+        None => other,
+    }
+}
+
+/// `None` when `self` is `None`, otherwise `other`.
+fn Option<T>.and<U>(own self, own other: Option<U>): Option<U> {
+    match self {
+        Some(_) => other,
+        None => None,
+    }
+}
+
+/// Whichever of the two is a `Some`, when exactly one is.
+fn Option<T>.xor(own self, own other: Option<T>): Option<T> {
+    match self {
+        Some(x) => match other {
+            Some(_) => None,
+            None => Some(x),
+        },
+        None => other,
+    }
+}
+
+/// The two values as a pair when both are `Some`.
+fn Option<T>.zip<U>(own self, own other: Option<U>): Option<(T, U)> {
+    match self {
+        Some(a) => match other {
+            Some(b) => Some((a, b)),
+            None => None,
+        },
+        None => None,
+    }
+}
+
+/// The value of a `Some`, or `default`.
+fn Option<T>.unwrap_or(own self, own default: T): T {
+    match self {
+        Some(x) => x,
+        None => default,
+    }
+}
+
+/// The value of a `Some`, or what `f` returns.
+fn Option<T>.unwrap_or_else<F: FnOnce(): T>(own self, own f: F): T {
+    match self {
+        Some(x) => x,
+        None => f(),
+    }
+}
+
+/// `f` applied to the value of a `Some`, or `default` for a `None`.
+fn Option<T>.map_or<U, F: FnOnce(T): U>(own self, own default: U, own f: F): U {
+    match self {
+        Some(x) => f(x),
+        None => default,
+    }
+}
+
+/// `f` applied to the value of a `Some`, or what `default` returns for a `None`.
+fn Option<T>.map_or_else<U, D: FnOnce(): U, F: FnOnce(T): U>(own self, own default: D, own f: F): U {
+    match self {
+        Some(x) => f(x),
+        None => default(),
+    }
+}
+
+/// `Ok(value)` for a `Some`, `Err(err)` for a `None`.
+fn Option<T>.ok_or<E>(own self, own err: E): Result<T, E> {
+    match self {
+        Some(x) => Ok(x),
+        None => Err(err),
+    }
+}
+
+/// `Ok(value)` for a `Some`, or the error `f` returns for a `None`.
+fn Option<T>.ok_or_else<E, F: FnOnce(): E>(own self, own f: F): Result<T, E> {
+    match self {
+        Some(x) => Ok(x),
+        None => Err(f()),
+    }
+}
+
+/// The value of a `Some` when `f` accepts it; `None` otherwise.
+fn Option<T>.filter<F: FnOnce(&T): bool>(own self, own f: F): Option<T> {
+    match self {
+        Some(x) => {
+            if f(&x) {
+                Some(x)
+            } else {
+                None
+            }
+        },
+        None => None,
+    }
+}
+
+/// Whether `self` is a `Some` whose value `f` accepts.
+fn Option<T>.is_some_and<F: FnOnce(&T): bool>(self, own f: F): bool {
+    match self {
+        Some(x) => f(&x),
+        None => false,
+    }
+}
+
+/// Whether `self` is a `None` or a `Some` whose value `f` accepts.
+fn Option<T>.is_none_or<F: FnOnce(&T): bool>(self, own f: F): bool {
+    match self {
+        Some(x) => f(&x),
+        None => true,
+    }
+}
+
+/// Moves the value out and leaves a `None` in its place.
+fn Option<T>.take(mut self): Option<T> {
+    mem.replace(mut self, None)
+}
+
+/// Stores `value` and returns the value that was there.
+fn Option<T>.replace(mut self, own value: T): Option<T> {
+    mem.replace(mut self, Some(value))
+}
+
+// ---- Result ----
+
+/// Applies `f` to the value of an `Ok`; an `Err` is kept.
+fn Result<T, E>.map<U, F: FnOnce(T): U>(own self, own f: F): Result<U, E> {
+    match self {
+        Ok(x) => Ok(f(x)),
+        Err(e) => Err(e),
+    }
+}
+
+/// Applies `f` to the error of an `Err`; an `Ok` is kept. This is the error-conversion helper:
+/// `res.map_err(|e| Other.from(e))`.
+fn Result<T, E>.map_err<G, F: FnOnce(E): G>(own self, own f: F): Result<T, G> {
+    match self {
+        Ok(x) => Ok(x),
+        Err(e) => Err(f(e)),
+    }
+}
+
+/// Applies `f` to the value of an `Ok` and returns what it returns; an `Err` is kept.
+fn Result<T, E>.and_then<U, F: FnOnce(T): Result<U, E>>(own self, own f: F): Result<U, E> {
+    match self {
+        Ok(x) => f(x),
+        Err(e) => Err(e),
+    }
+}
+
+/// `self` when it is an `Ok`, otherwise what `f` returns for the error.
+fn Result<T, E>.or_else<G, F: FnOnce(E): Result<T, G>>(own self, own f: F): Result<T, G> {
+    match self {
+        Ok(x) => Ok(x),
+        Err(e) => f(e),
+    }
+}
+
+/// The value of an `Ok`, or `default`.
+fn Result<T, E>.unwrap_or(own self, own default: T): T {
+    match self {
+        Ok(x) => x,
+        Err(_) => default,
+    }
+}
+
+/// The value of an `Ok`, or what `f` returns for the error.
+fn Result<T, E>.unwrap_or_else<F: FnOnce(E): T>(own self, own f: F): T {
+    match self {
+        Ok(x) => x,
+        Err(e) => f(e),
+    }
+}
+
+/// `f` applied to the value of an `Ok`, or `default` for an `Err`.
+fn Result<T, E>.map_or<U, F: FnOnce(T): U>(own self, own default: U, own f: F): U {
+    match self {
+        Ok(x) => f(x),
+        Err(_) => default,
+    }
+}
+
+/// The value of an `Ok` as a `Some`; an `Err` becomes `None`.
+fn Result<T, E>.ok(own self): Option<T> {
+    match self {
+        Ok(x) => Some(x),
+        Err(_) => None,
+    }
+}
+
+/// The error of an `Err` as a `Some`; an `Ok` becomes `None`.
+fn Result<T, E>.err(own self): Option<E> {
+    match self {
+        Ok(_) => None,
+        Err(e) => Some(e),
+    }
+}
+
+/// The error of an `Err`. Panics on an `Ok`.
+fn Result<T, E>.unwrap_err(own self): E {
+    match self {
+        Ok(_) => panic("called unwrap_err on an Ok value"),
+        Err(e) => e,
+    }
+}
+
+/// Whether `self` is an `Ok` whose value `f` accepts.
+fn Result<T, E>.is_ok_and<F: FnOnce(&T): bool>(self, own f: F): bool {
+    match self {
+        Ok(x) => f(&x),
+        Err(_) => false,
+    }
+}
+
+/// Whether `self` is an `Err` whose error `f` accepts.
+fn Result<T, E>.is_err_and<F: FnOnce(&E): bool>(self, own f: F): bool {
+    match self {
+        Ok(_) => false,
+        Err(e) => f(&e),
+    }
+}

@@ -1,0 +1,25 @@
+//@ run
+//> Some(6)
+//> None
+//> Some(6)
+
+// A closure bound whose return type wraps a type parameter that only the closure determines
+// (`F: FnOnce(T): Option<U>`): the closure's body decides `U`.
+
+fn apply<T, U, F: FnOnce(T): Option<U>>(own o: Option<T>, own f: F): Option<U> {
+    match o {
+        Some(x) => f(x),
+        None => None,
+    }
+}
+
+fn main() {
+    let a: Option<i32> = Some(3)
+    println("{apply(a, |x| Some(x * 2)):?}")
+    println("{apply(a, |x| if x > 5 { Some(x) } else { None }):?}")
+    let c = apply(a, |x| {
+        let y = x * 2
+        Some(y)
+    })
+    println("{c:?}")
+}

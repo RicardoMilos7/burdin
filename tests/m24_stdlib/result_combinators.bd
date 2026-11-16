@@ -1,0 +1,76 @@
+//@ run
+//> Ok(20)
+//> Err("bad")
+//> Err("wrapped: bad")
+//> Ok(1)
+//> Err(7)
+//> 10
+//> 0
+//> 4
+//> 20
+//> -1
+//> Some(10)
+//> None
+//> Some("bad")
+//> None
+//> bad
+//> true
+//> false
+//> true
+//> false
+//> 1
+
+// The `Result` combinators. Most of them take the result by value, so each line builds its own.
+
+fn ok(): Result<i32, String> {
+    Ok(10)
+}
+
+fn bad(): Result<i32, String> {
+    Err(String.from("bad"))
+}
+
+fn length_error(e: String): Result<i32, usize> {
+    Err(e.len())
+}
+
+fn halve(x: i32): Result<i32, String> {
+    if x % 2 == 0 {
+        Ok(x / 2)
+    } else {
+        Err(String.from("odd"))
+    }
+}
+
+fn main() {
+    println("{ok().map(|x| x * 2):?}")
+    println("{bad().map(|x| x * 2):?}")
+    let wrapped = bad().map_err(|e| format("wrapped: {e}"))
+    println("{wrapped:?}")
+
+    let first: Result<i32, String> = Ok(1)
+    let kept: Result<i32, usize> = first.or_else(length_error)
+    println("{kept:?}")
+    let second: Result<i32, String> = Err(String.from("1234567"))
+    let recovered: Result<i32, usize> = second.or_else(length_error)
+    println("{recovered:?}")
+
+    println("{ok().unwrap_or(0)}")
+    println("{bad().unwrap_or(0)}")
+    println("{bad().unwrap_or_else(|e| e.len() as i32 + 1)}")
+    println("{ok().map_or(0, |x| x * 2)}")
+    println("{bad().map_or(-1, |x| x * 2)}")
+
+    println("{ok().ok():?}")
+    println("{bad().ok():?}")
+    println("{bad().err():?}")
+    println("{ok().err():?}")
+    println("{bad().unwrap_err()}")
+
+    println("{ok().is_ok_and(|x| *x == 10)}")
+    println("{ok().is_ok_and(|x| *x == 11)}")
+    println("{bad().is_err_and(|e| e.len() == 3)}")
+    println("{ok().is_err_and(|e| e.len() == 3)}")
+
+    println("{halve(8).and_then(halve).and_then(halve).unwrap_or(0)}")
+}
