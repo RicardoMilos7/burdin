@@ -345,6 +345,33 @@ probe cluster back instead of leaving tombstones. Keys are hashed structurally â
 `String` by its bytes, tuples, structs, enums, `Option`, `Result`, and ranges â€” so a key needs only `==`, not
 `Hash`.
 
+### Map entry operations (issue #482)
+
+```
+fn get_mut(mut self, key: K): Option<&mut V>        // built in: a mutable view of the value, or None
+fn get_or_insert(mut self, key: K, value: V): &mut V    // built in
+fn get_or_insert_with<F: FnOnce(): V>(mut self, key: K, make: F): &mut V
+fn update<F: FnOnce(&mut V)>(mut self, key: K, change: F): bool
+fn upsert<F: FnOnce(&mut V)>(mut self, key: K, value: V, change: F)
+```
+
+`get_or_insert` returns the value stored under `key`; when the key is absent it first stores `value`. A value that is
+already there is kept, and the incoming key and value are dropped on the spot. It looks the key up once. The
+`&mut V` keeps the map exclusively borrowed until its last use (a `m.insert(...)` while it is live is E0111), because
+inserting may move the table. `get_or_insert_with` calls `make` only for an absent key. `update` runs `change` on the
+value for `key` and returns whether the key was there. `upsert` stores `value` for an absent key and otherwise runs
+`change` on the value already there, dropping `value`. All of them need a key with `==`, like every map operation (E0141),
+and `get_mut` and `get_or_insert` cannot run at compile time (`comptime.md`, CT9).
+
+There is no `Entry` value, so `map.entry(key).or_insert(value)` is written `map.get_or_insert(key, value)`. An entry
+would have to hold a reference to the map in a struct field, and a struct cannot have a reference field
+(`memory-rules.md`, SC2). The counting idiom is `map.upsert(word, 1, |n| { *n = *n + 1 })` or
+
+```
+let count = map.get_or_insert(word, 0)
+*count = *count + 1
+```
+
 ## `Set<T>` (issue #190)
 
 `std.set` is a thin layer over `Map<T, bool, A>`, so it follows the map's rules: an element needs only `==` (`Eq`),
@@ -817,6 +844,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
+| Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

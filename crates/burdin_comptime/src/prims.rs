@@ -660,6 +660,7 @@ impl<'p> Interp<'p, '_> {
                 })?;
                 Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
             }
+            Method::MapGetMut | Method::MapGetOrInsert => return Err(impure("a mutable view of a map value", span)),
             Method::MapContainsKey => {
                 let k = self.eval(&args[1], Mode::Use)?;
                 Value::Bool(self.peek(recv, |v| match v {

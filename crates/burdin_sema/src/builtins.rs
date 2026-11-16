@@ -164,6 +164,14 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             let view = Ty::Ref { mutable: false, inner: v.clone() };
             (Method::MapGet, vec![plain(elem(k))], Ty::Option(Box::new(view)))
         }
+        ("get_or_insert", Ty::Map(k, v, _)) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            (Method::MapGetOrInsert, vec![value_param(elem(k)), value_param(elem(v))], view)
+        }
+        ("get_mut", Ty::Map(k, v, _)) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            (Method::MapGetMut, vec![plain(elem(k))], Ty::Option(Box::new(view)))
+        }
         ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(elem(k))], Ty::Option(v.clone())),
         ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(elem(k))], Ty::Bool),
         ("unwrap", Ty::Option(t)) => (Method::Unwrap, vec![], elem(t)),

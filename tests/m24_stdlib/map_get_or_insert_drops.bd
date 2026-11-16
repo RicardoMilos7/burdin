@@ -1,0 +1,41 @@
+//@ run
+//> make 1
+//> drop 5
+//> drop 20
+//> 1
+//> drop 3
+//> end
+//> drop 20
+//> drop 1
+
+// `get_or_insert_with` runs its closure only for an absent key. When the key is already there, the incoming value
+// and key are dropped on the spot; the map drops what it holds when it goes out of scope.
+
+struct Tag derives (Eq) {
+    id: i32
+}
+
+Tag: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn make(n: i32): Tag {
+    println("make {n}")
+    Tag { id: n }
+}
+
+fn main() {
+    let mut m = Map<i32, Tag>.new()
+    m.get_or_insert_with(7, || make(1))
+    m.get_or_insert_with(7, || make(2))
+    m.get_or_insert(7, Tag { id: 5 })
+    let mut keys = Map<Tag, i32>.new()
+    keys.get_or_insert(Tag { id: 20 }, 1)
+    keys.get_or_insert(Tag { id: 20 }, 2)
+    println("{}", keys.len())
+    m.get_or_insert(8, Tag { id: 3 })
+    m.remove(8)
+    println("end")
+}

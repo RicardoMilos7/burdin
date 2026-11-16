@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// The value `get_or_insert` returns keeps the map exclusively borrowed until its last use.
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    let v = m.get_or_insert(1, 0)
+    m.insert(2, 2) //~ E0111
+    *v = 5
+}

@@ -965,9 +965,15 @@ impl FnCx<'_> {
                     );
                 }
             }
-            (Method::MapGet | Method::MapRemove | Method::MapContainsKey | Method::MapInsert, Ty::Map(k, _, _))
-                if !self.globals.has_eq_in(k, &self.bounds) =>
-            {
+            (
+                Method::MapGet
+                | Method::MapGetMut
+                | Method::MapGetOrInsert
+                | Method::MapRemove
+                | Method::MapContainsKey
+                | Method::MapInsert,
+                Ty::Map(k, _, _),
+            ) if !self.globals.has_eq_in(k, &self.bounds) => {
                 self.diags.error(
                     Code::BOUND_NOT_SATISFIED,
                     span,

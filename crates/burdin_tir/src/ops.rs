@@ -119,6 +119,11 @@ pub enum Method {
     MapInsert,
     /// `Map<K, V>.get(key): Option<&V>`: a view of the value.
     MapGet,
+    /// `Map<K, V>.get_mut(key): Option<&mut V>`: a mutable view of the value.
+    MapGetMut,
+    /// `Map<K, V>.get_or_insert(key, value): &mut V`: the value stored under `key`, inserting `value` first when
+    /// the key is absent. An existing value is kept and the incoming key and value are dropped.
+    MapGetOrInsert,
     /// `Map<K, V>.remove(key): Option<V>`.
     MapRemove,
     /// `Map<K, V>.contains_key(key): bool`.
@@ -173,7 +178,7 @@ impl Method {
         match self {
             Method::Push => index == 1,
             Method::ListInsert => index == 2,
-            Method::MapInsert => index == 1 || index == 2,
+            Method::MapInsert | Method::MapGetOrInsert => index == 1 || index == 2,
             // Unwrapping consumes the `Option` or `Result`.
             Method::Unwrap | Method::Expect => index == 0,
             // `into_iter` takes the collection, the array, the map, or the range by value.
@@ -195,6 +200,8 @@ impl Method {
                 | Method::ListSort
                 | Method::Clear
                 | Method::MapInsert
+                | Method::MapGetOrInsert
+                | Method::MapGetMut
                 | Method::MapRemove
                 | Method::IterNext
         )
@@ -204,7 +211,14 @@ impl Method {
     pub fn result_borrows_receiver(self) -> bool {
         matches!(
             self,
-            Method::ListLast | Method::MapGet | Method::Chars | Method::Iter | Method::IterNext | Method::SharedGet
+            Method::ListLast
+                | Method::MapGet
+                | Method::MapGetMut
+                | Method::MapGetOrInsert
+                | Method::Chars
+                | Method::Iter
+                | Method::IterNext
+                | Method::SharedGet
         )
     }
 }
@@ -220,12 +234,15 @@ mod tests {
         assert!(Method::ListInsert.owns_argument(2));
         assert!(Method::MapInsert.owns_argument(1));
         assert!(Method::MapInsert.owns_argument(2));
+        assert!(Method::MapGetOrInsert.owns_argument(1));
+        assert!(Method::MapGetOrInsert.owns_argument(2));
         assert!(Method::Unwrap.owns_argument(0));
         assert!(Method::Expect.owns_argument(0));
         assert!(!Method::Len.owns_argument(0));
         // The lookup methods borrow their key (`contains(self, value: T)`, `get(self, key: K)`).
         assert!(!Method::ListContains.owns_argument(1));
         assert!(!Method::MapGet.owns_argument(1));
+        assert!(!Method::MapGetMut.owns_argument(1));
         assert!(!Method::MapRemove.owns_argument(1));
         assert!(!Method::MapContainsKey.owns_argument(1));
     }
@@ -242,6 +259,8 @@ mod tests {
             Method::ListSort,
             Method::Clear,
             Method::MapInsert,
+            Method::MapGetOrInsert,
+            Method::MapGetMut,
             Method::MapRemove,
         ] {
             assert!(method.mutates_receiver(), "{method:?}");
