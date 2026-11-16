@@ -191,6 +191,9 @@ value, a `comptime if` by its selected branch, a `comptime for` by its unrolled 
 and each call to a function with comptime parameters by a call to its specialization. A function, method, or `const`
 initializer that only comptime code calls is not emitted. Code generation never sees a comptime construct.
 
+For `burdin test`, a `[differential]` test body is executed by the same interpreter once this rewrite is done, and
+the `Ok`/`Err` outcome it produces is compared with the compiled test's (`spec/test-runner.md`).
+
 ## CT14. Caching
 
 Because comptime is pure (CT9) and bounded (CT11), its results are a function of the source files, the target, and
@@ -242,7 +245,9 @@ const HEADER: [u8; 4] = embed("magic.bin")
 budget (`budget_infinite_loop`, `budget_recursion`), a comptime panic (`comptime_panic`, `comptime_overflow`),
 purity (`purity_print`, `purity_file`), materialization (`not_materializable`), runtime locals (`runtime_local`),
 memory rules at compile time (`comptime_moves`, `comptime_drop`), and the interpreter's coverage of the language
-(`interp_*`).
+(`interp_*`). The `[differential]` test attribute reuses the interpreter and is specified in
+[`test-runner.md`](test-runner.md#differential-tests), with `tests/m10_test_runner/attributes_differential.bd` and
+`tests/runner/differential/`.
 
 `tests/m21_reflect/` covers CT15: `embed_basic` (a text file as `str` and a binary file as `[u8; N]`), `embed_missing`
 (E0240), and `embed_invalid` (E0241).

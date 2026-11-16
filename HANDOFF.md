@@ -7,7 +7,7 @@ Written at the end of the first session, updated at the end of the second, third
 Updated at the end of the thirty-sixth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
-overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 573 conformance tests; all pass in debug and release (the
+overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 576 conformance tests; all pass in debug and release (the
 release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -28,7 +28,8 @@ scheduled `fuzz` job that runs a ten-minute session and uploads new inputs, and 
 returning (issues #288 and #447); the eighteenth added the test-runner ergonomics of issue #438 (sub-issues
 #439-#443, #445): test attributes (E0170), `-j` and package selection, output capture, isolation, a black-box check
 wired into every CI job, and an error-code coverage audit that fails when a registered code has no test. Issue #444
-(differential tests) waits for the comptime interpreter, milestone 20; the nineteenth implemented the compiler and
+(differential tests) waited for the comptime interpreter, milestone 20, and was implemented in the thirty-sixth
+session; the nineteenth implemented the compiler and
 runtime work of issue #421 (sub-issues #422-#432): source-level debug information, panic backtraces, buffered output,
 a main-thread stack-overflow guard, glue deduplication, drop-flag elimination, bounds-check elision, LTO and PGO
 flags, stripping and a size budget, `--version` with build metadata, and parallel parsing. The twentieth session
@@ -177,10 +178,23 @@ marker on `List`/`Map`/`Heap` and the owning iterators, `Ty::Shared`, the alloca
 gained the checking allocator and the leak check; `burdin_comptime` models `Shared` as its value and rejects
 explicit allocation as impure (E0224). `std/src/alloc.bd` adds `Allocator`, `Global`, and `Arena`. The new
 diagnostics are E0270, E0271, and E0272. The tests are `tests/m23_allocators/` with 27 conformance tests, the
-`tests/runner/leaks/` fixture, and the leak-detection checks in `tests/check_test_runner.py`; the suite is 573
+`tests/runner/leaks/` fixture, and the leak-detection checks in `tests/check_test_runner.py`; the suite is 576
 tests. The checking allocator also exposed a latent temporary-drop leak in the non-consuming `Option`/`Result`
 methods (`is_some`, `is_ok`, ...), fixed by reading the receiver through a place so its temporary is registered;
 two runner fixtures reported it before the fix.
+
+The thirty-sixth session implemented the differential tests of issue #444, the last sub-issue of #438: a test
+item may carry `[differential]`, and the runner then compares the `Ok`/`Err` outcome of the same body run by the
+comptime interpreter while the package is compiled with the compiled test's outcome.
+`burdin_comptime::evaluate_differential_tests` runs each `[differential]` body after the rewrite of CT13, through
+the interpreter's function-call entry point, under the ordinary purity, panic, budget, and profile rules; the
+outcome travels in `tir::TestEntry.comptime` to the runner, which treats a different outcome or an aborted compiled
+run as a divergence with a note naming both outcomes.
+`differential` cannot be combined with `should_panic` or `should_fail` (E0170). The behavior is in
+`spec/test-runner.md`, the conformance tests are `tests/m10_test_runner/attributes_differential.bd`,
+`differential_invalid.bd`, and `differential_impure.bd`, and `tests/check_test_runner.py` gains a fixture
+(`tests/runner/differential/`) whose third test depends on the unspecified `Map` iteration order, so the interpreter
+and compiled code really do disagree; the check reports it instead of passing. Every CI job already runs the script.
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -266,7 +280,7 @@ tests cover the syntax.
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
-| Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the deferred differential tests (issue #444) |
+| Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the `[differential]` comparison between the comptime interpreter and the compiled test (issue #444) |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), member type arguments (`x.downcast<T>()`), `any`/`impl` types, `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, `...` in an `extern` signature, interpolated and raw strings, and the format-specifier grammar |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
@@ -1221,9 +1235,13 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 - **Every registry code needs a test.** `tests/check_tests.py` now fails on a registered code with no `//~`
   marker; a code that cannot have a compile-fail test is listed with its reason in `tests/README.md`
   (issue #445). The list is empty today.
-- **Differential tests can now be built.** Issue #444 waited for milestone 20's interpreter, which exists now;
-  `spec/test-runner.md` records the intended `[differential]` attribute and behavior, and the issue stays open until
-  it is implemented. The `interp_*` tests in `tests/m20_comptime/` already compare comptime and run-time results.
+- **Differential tests are implemented (issue #444).** A `[differential]` body runs at compile time through the
+  interpreter and as the compiled test; the runner compares the `Ok`/`Err` outcomes and reports a divergence with
+  both. The compile-time run follows the ordinary CT9-CT11 rules, so an impure or panicking body is a compile error
+  (E0224/E0222), and `differential` cannot combine with `should_panic` or `should_fail` (E0170). The check is
+  `tests/check_test_runner.py` with `tests/runner/differential/`, whose divergent case uses the unspecified `Map`
+  iteration order, plus the `attributes_differential.bd`, `differential_invalid.bd`, and `differential_impure.bd`
+  conformance tests. The `interp_*` tests in `tests/m20_comptime/` remain the per-construct comparisons.
 - **Diagnostics are sorted once, never streamed** (issue #436). The semantic and memory checks already collect the
   whole list before the driver prints it, so the renderer sorts by file (load order), byte offset, code, message,
   and discovery order. That makes equal spans stable and the output byte-for-byte deterministic. The "report every
@@ -1560,14 +1578,14 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 1. Milestone 23 is complete (thirty-sixth session): `spec/allocators.md` AL1-AL10 is the decision and
    `tests/m23_allocators/` has 27 tests. The next milestone is 24 (`m24_stdlib`: `Set`, `Deque`, a priority heap,
    Unicode helpers, paths, time, random, and the formatting foundation), which may split as the standard library
-   grows. Issue #444 (differential tests between comptime and compiled code) is unblocked;
-   `spec/test-runner.md` holds its intended shape. The full bindgen, C function-pointer types, and `union`
-   declarations remain stage 3 / the stage 1 "Fixes" list.
-2. The remaining stage 1 work is milestone 24 and the two open type-system items: writing a built-in interface by
-   hand (#402) and the differential comptime tests (#444). Known limits to keep in mind: the comptime ones (a
-   closure inside a function with comptime parameters is shared by its specializations; `Map` iteration at
-   compile time is insertion order, CT9; comptime results are not cached, CT14), the m21 ones (problems 24-27
-   above), the temporary-move bug (problem 28), and the allocator limits (problems 29-31).
+   grows. Issue #444 (differential tests between comptime and compiled code) is done (thirty-sixth session);
+   `spec/test-runner.md` holds its behavior. The full bindgen, C function-pointer types, and `union` declarations
+   remain stage 3 / the stage 1 "Fixes" list.
+2. The remaining stage 1 work is milestone 24 and the open type-system item: writing a built-in interface by
+   hand (#402). Known limits to keep in mind: the comptime ones (a closure inside a function with comptime
+   parameters is shared by its specializations; `Map` iteration at compile time is insertion order, CT9;
+   comptime results are not cached, CT14), the m21 ones (problems 24-27 above), the temporary-move bug (problem
+   28), and the allocator limits (problems 29-31).
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,

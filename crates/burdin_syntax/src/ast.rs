@@ -34,8 +34,8 @@ pub struct TestDecl {
     pub span: Span,
 }
 
-/// One attribute of a test item: `ignore`, `timeout(500)`, `should_panic`, `should_panic("text")`, or
-/// `should_fail`. The parser accepts any identifier with an optional integer or string value; names,
+/// One attribute of a test item: `ignore`, `timeout(500)`, `should_panic`, `should_panic("text")`, `should_fail`,
+/// or `differential`. The parser accepts any identifier with an optional integer or string value; names,
 /// values, duplicates, and combinations are checked in `burdin_sema` (E0170).
 #[derive(Debug, Clone)]
 pub struct TestAttr {

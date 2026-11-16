@@ -6,6 +6,19 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- Differential tests between comptime and compiled code (issue #444).
+  - A test item may carry `[differential]`: the compiler runs its body through the comptime interpreter after the
+    CT13 rewrite, and `burdin test` requires the compiled test to produce the same `Ok`/`Err` outcome. A different
+    outcome, or a compiled run that aborts, fails the test with a note naming both outcomes. Agreement passes even
+    when both runs return `Err`; this stage compares only the outcome, because the dynamic error type carries no
+    comparable value.
+  - The body must be one the interpreter can execute: an impure operation is E0224, a panic is E0222, and an
+    exhausted budget is E0225, each reported at the test item. `differential` cannot be combined with
+    `should_panic` or `should_fail` (E0170). `[ignore]` and `[timeout(ms)]` still apply.
+  - The behavior is in `spec/test-runner.md`. The conformance tests are
+    `tests/m10_test_runner/attributes_differential.bd`, `differential_invalid.bd`, and `differential_impure.bd`;
+    `tests/check_test_runner.py` runs `tests/runner/differential/`, whose divergent test depends on the
+    unspecified `Map` iteration order, proving the check catches a real interpreter/compiled divergence.
 - Every check and test tool under `tests/` is Python 3 (`tests/run_tests.py`, `tests/check_*.py`,
   `tests/build_release.py`, `tests/release_notes.py`, `tests/bench_regression.py`, `tests/fuzz.py`, and the shared
   `tests/harness.py`), one implementation for Linux, macOS, and Windows instead of the former shell scripts and the
@@ -261,7 +274,7 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   parameters and functions, arena-backed `List`/`Map`/`Heap`, arena reset and growth, `Shared` across scopes and in
   structs, default type parameters, owning iterators, cloning, the leak report, and the compile-fail cases of
   E0270-E0272, E0120, and E0224), plus the `tests/runner/leaks/` fixture and the leak checks in
-  `tests/check_test_runner.py`. The suite is 573 tests. The checking allocator also exposed a temporary-drop leak in
+  `tests/check_test_runner.py`. The suite is 576 tests. The checking allocator also exposed a temporary-drop leak in
   the non-consuming `Option`/`Result` methods, now fixed by reading the receiver through a place.
 - Documentation: `spec/allocators.md` (new), `spec/grammar.md` (type parameter defaults), `spec/stdlib.md`,
   `spec/memory-rules.md` (DR8a), `spec/test-runner.md`, `spec/stage1-subset.md`, `tests/README.md` (decision 30),

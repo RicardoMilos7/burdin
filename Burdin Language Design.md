@@ -577,7 +577,7 @@ test "user is valid" {
 ```
 
 - Test blocks are stripped from normal builds, and they can reach package-private items because `priv` is package-wide.
-- A test may carry attributes after its name: `[ignore]`, `[timeout(ms)]`, `[should_panic]`/`[should_panic("text")]`, and `[should_fail]`. They are specified in `spec/test-runner.md`.
+- A test may carry attributes after its name: `[ignore]`, `[timeout(ms)]`, `[should_panic]`/`[should_panic("text")]`, `[should_fail]`, and `[differential]`. They are specified in `spec/test-runner.md`.
 - A test body is implicitly a function returning `Result<()>`. `assert`, `assert_eq`, and similar return an error, and the explicit `?` propagates it, including from helper functions that return `Result`.
 - Every test runs with the leak-detecting allocator, so a leaked allocation fails the test.
 - Real panics (out-of-bounds access, overflow in debug builds, an explicit `panic()`) still abort the process. The runner notes which test was running, marks it failed, and the remaining tests still run. Stage 0 runs each test in its own process, which gives the same result without restarting the binary.

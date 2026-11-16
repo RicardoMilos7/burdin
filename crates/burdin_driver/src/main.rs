@@ -698,6 +698,11 @@ pub(crate) fn compile(
                 steps: options.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
             };
             burdin_comptime::evaluate(&mut program, comptime, &mut diags);
+            // A `[differential]` test body is also run now, so the runner can compare it with the compiled test
+            // (`spec/test-runner.md`). It runs after the rewrite above, so it sees the program code generation will.
+            if !diags.has_errors() {
+                burdin_comptime::evaluate_differential_tests(&mut program, comptime, &mut diags);
+            }
         }
         program
     });

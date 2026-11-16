@@ -22,6 +22,7 @@ test "name" [timeout(500)] { ... }
 test "name" [should_panic] { ... }
 test "name" [should_panic("message")] { ... }
 test "name" [should_fail] { ... }
+test "name" [differential] { ... }
 test "name" [ignore, timeout(500), should_panic("message")] { ... }
 ```
 
@@ -36,15 +37,16 @@ stripped from a normal build). The accepted attributes are:
 | `should_panic` | The test must end in a panic abort. |
 | `should_panic("text")` | The same, and `text` must appear in the test's stderr. |
 | `should_fail` | The test must return an error (`Err`), which the dispatcher reports with exit status 1. A panic does not satisfy it. The failure is a typed `AssertError` (`spec/errors.md`, ERR9), and the test binary prints its message (the condition text, the values, and the location) to standard error before exiting, so it appears under the captured stderr heading. `should_fail` itself checks only the exit status, not the error value. |
+| `differential` | The body is also executed by the comptime interpreter while the package is compiled, and the compiled test must produce the same `Ok`/`Err` outcome. See [Differential tests](#differential-tests). |
 
 A test with none of these passes exactly when its process exits 0. A panic is any ending other than exit 0 or 1: a
 signal, an abort, or another exit status. `should_panic` and `should_fail` are opposite expectations and cannot be
 combined.
 
 An unknown attribute name, a repeated attribute, a value an attribute does not take (`ignore("x")`,
-`should_panic(1)`), a missing value (`timeout`), or `should_panic` together with `should_fail` is **E0170**. The
-attribute is reported at its name; the test is still declared, so one bad attribute does not cascade into
-follow-on diagnostics.
+`should_panic(1)`), a missing value (`timeout`), `should_panic` together with `should_fail`, or `differential`
+together with `should_panic` or `should_fail` is **E0170**. The attribute is reported at its name; the test is still
+declared, so one bad attribute does not cascade into follow-on diagnostics.
 
 ## Execution
 
@@ -127,20 +129,31 @@ skipped because of `[ignore]`. Timeouts count as failures.
 The exit status is 0 when every run test passed (and no test failed), 1 when a test failed or compilation failed,
 and 2 for a usage error (an unknown package, a bad `-j`, conflicting flags) or a driver failure after loading.
 
-## Deferred: differential tests (issue #444)
+## Differential tests
 
-Differential tests compare the same function executed by the comptime interpreter and by compiled code, so an
-interpreter/compiled divergence is caught automatically. They needed the comptime interpreter, which milestone 20
-added (`spec/comptime.md`, `crates/burdin_comptime`); the runner does not use it for tests yet. The intended shape,
-recorded here so it is settled before it is built:
+A test marked `[differential]` runs the same body twice: once through the comptime interpreter while the package is
+compiled (`spec/comptime.md`), and once as the compiled test under the runner. The test passes when the two runs
+produce the same outcome, so an interpreter/compiled divergence is caught automatically (issue #444).
 
-- a test item marked `[differential]` must have a body the comptime interpreter can execute;
-- the runner executes the body at compile time and the compiled test at run time, and fails the test when the two
-  results differ (the `Ok`/`Err` outcome, and the returned value when the error types carry one in stage 1);
-- until then, `differential` is not an accepted attribute, so writing it is E0170 rather than a silently skipped
-  test.
-
-Issue #444 is unblocked and stays open until the runner implements `[differential]`.
+- The outcome is the body's `Ok` or `Err`: the interpreter's return value and the compiled dispatcher's exit status
+  0 or 1. A body that returns `Err` in both runs passes, just as `should_fail` would treat it; agreement is the
+  expectation, not success. This stage compares only `Ok`/`Err`; the dynamic error type carries no comparable value.
+- A compiled run that ends any other way (a panic, an abort, a signal, another exit status) while the interpreter
+  returned `Ok` or `Err` is a divergence, and the report gives the two outcomes.
+- The compile-time run happens after every `comptime` construct in the body has been evaluated and rewritten
+  (`spec/comptime.md`, CT13), under the same purity (CT9), panic (CT10), budget (CT11), and profile rules (a
+  `--release` test wraps integer overflow, CT1) as any other compile-time evaluation. A body the interpreter cannot
+  execute fails compilation: an impure operation is E0224, a panic is E0222, a failed `comptime assert` is E0223,
+  and an exhausted budget is E0225, each reported at the test item. Consequently a `[differential]` body cannot
+  print, read files or the environment, run processes, call C, or panic at compile time.
+- A body must be deterministic and may not depend on behavior the language leaves unspecified. In particular,
+  `Map` iteration is insertion order at compile time and hash order in compiled code (`spec/comptime.md`, CT9), so a
+  differential test that observes it can report a divergence; the language does not promise otherwise.
+- `differential` states no expectation of its own, so it cannot be combined with `should_panic` or `should_fail`
+  (E0170). `ignore` and `timeout` still apply. An ignored differential test is compiled and checked like any other,
+  so its body is still executed at compile time; only the compiled run is skipped.
+- One test binary is still built per package and each test still runs in its own process; the differential
+  comparison uses the `Ok`/`Err` exit status the dispatcher already produces.
 
 ## Tests
 
@@ -149,7 +162,10 @@ Issue #444 is unblocked and stays open until the runner implements `[differentia
 | `[ignore]`, the ignored count, `--ignored`, `--include-ignored` | `tests/m10_test_runner/attributes_ignore.bd`, `tests/check_test_runner.py` |
 | `[should_panic]`, `[should_panic("text")]`, `[should_fail]` | `tests/m10_test_runner/attributes_should_panic.bd`, `tests/check_test_runner.py` |
 | `[timeout(ms)]` | `tests/m10_test_runner/attributes_timeout.bd`, `tests/check_test_runner.py` |
-| Invalid attributes (E0170) | `tests/m10_test_runner/attributes_invalid.bd` (`//@ test-compile-fail`) |
+| `[differential]`: agreement, `Ok` and `Err` | `tests/m10_test_runner/attributes_differential.bd`, `tests/check_test_runner.py` |
+| `[differential]`: a divergent compiled run | `tests/runner/differential/`, `tests/check_test_runner.py` |
+| `[differential]`: a body the interpreter cannot run (E0224) | `tests/m10_test_runner/differential_impure.bd` (`//@ test-compile-fail`) |
+| Invalid attributes (E0170) | `tests/m10_test_runner/attributes_invalid.bd`, `tests/m10_test_runner/differential_invalid.bd` (`//@ test-compile-fail`) |
 | Parallel execution and deterministic failure order | `tests/check_test_runner.py` |
 | Output capture, `--verbose` | `tests/check_test_runner.py` |
 | Fresh working directory, clean environment, cleanup | `tests/check_test_runner.py` |

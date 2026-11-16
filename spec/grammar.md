@@ -38,10 +38,9 @@ immediately after a `.` in a member position, where it is a member name: that is
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct
 name), `from` (after an error variant's payload), `pub` (immediately before `use`), and `Fn`/`FnMut`/`FnOnce` (a
-closure type when followed by `(`). The attribute
-names of a
-test item (`ignore`, `timeout`, `should_panic`, `should_fail`) are contextual only inside the `[...]` after the test
-name; the checker rejects an unknown name with E0170 ([`test-runner.md`](test-runner.md)).
+closure type when followed by `(`). The attribute names of a test item (`ignore`, `timeout`, `should_panic`,
+`should_fail`, `differential`) are contextual only inside the `[...]` after the test name; the checker rejects an
+unknown name with E0170 ([`test-runner.md`](test-runner.md)).
 
 **Integer literals**: decimal `123`, hex `0xFF`, octal `0o17`, binary `0b1010`, with `_` allowed between digits. No suffixes;
 the type comes from context, or from the other operand when the literal is on the left of a binary operator, and
@@ -157,7 +156,7 @@ ExternParams  = Param { "," Param } [ "," [ "..." ] ] ;   (* `...` only in a dec
 
 TestItem      = "test" STRING [ TestAttrs ] Block ;
 TestAttrs     = "[" TestAttr { "," TestAttr } [ "," ] "]" ;
-TestAttr      = IDENT [ "(" ( INT | STRING ) ")" ] ;   (* ignore, timeout(ms), should_panic[(message)], should_fail *)
+TestAttr      = IDENT [ "(" ( INT | STRING ) ")" ] ;   (* ignore, timeout(ms), should_panic[(message)], should_fail, differential *)
 
 Sep           = "," | NL ;
 ```

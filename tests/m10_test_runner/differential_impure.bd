@@ -1,0 +1,7 @@
+//@ test-compile-fail
+
+// A `[differential]` body must be one the comptime interpreter can execute, so an operation that is impure at
+// compile time is E0224 before the compiled test ever runs (spec/test-runner.md, spec/comptime.md CT9).
+test "prints at compile time" [differential] { //~ E0224
+    println("hello")
+}

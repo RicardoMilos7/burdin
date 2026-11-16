@@ -305,7 +305,8 @@ helper can propagate it. A `main` function is not required in test mode.
 Test attributes are written after the name: `[ignore]` skips a test by default (`--ignored` runs only ignored tests,
 `--include-ignored` runs all); `[timeout(ms)]` bounds one test (`0` disables the limit); `[should_panic]` and
 `[should_panic("text")]` expect a panic abort (and the text on stderr); `[should_fail]` expects the test to return
-an error. An invalid attribute is E0170.
+an error; `[differential]` runs the body through the comptime interpreter too and requires the compiled test to
+produce the same `Ok`/`Err` outcome. An invalid attribute is E0170.
 
 Tests run concurrently (`-j`, default: the number of CPUs), each in a fresh temporary working directory with a
 clean environment. Their output is captured and printed only when they fail; `--verbose` prints passing output too.

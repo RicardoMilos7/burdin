@@ -70,7 +70,7 @@ Directives are line comments at any position in the root file.
 Runner rules: run each test in a fresh empty temporary directory as the working directory; compare
 stdout after normalizing `\r\n` to `\n`; every `compile-fail` file must report all of its errors (no
 stopping at the first error) and no others. The `test` item's attributes (`[ignore]`, `[timeout(ms)]`,
-`[should_panic]`, `[should_fail]`) and the `burdin test` flags are specified in
+`[should_panic]`, `[should_fail]`, `[differential]`) and the `burdin test` flags are specified in
 [`spec/test-runner.md`](../spec/test-runner.md).
 
 ## Running the tests
@@ -200,7 +200,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0162 | Type or convention not allowed in an `extern "C"` declaration (parameters and results are integers, floats, and `CPtr`) |
 | E0163 | Invalid `extern` declaration: a runtime-reserved symbol, a generic function, or a signature that conflicts with an earlier declaration of the symbol |
 | E0164 | Unsupported `repr`: only `repr(C)` exists |
-| E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, or `should_panic` with `should_fail` |
+| E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, `should_panic` with `should_fail`, or `differential` with `should_panic` or `should_fail` |
 | E0171 | A closure whose captures or result would outlive the storage they borrow: a second-class closure used as an owned one, or a closure returning a view |
 | E0180 | Type arguments given to a type that declares no type parameters |
 | E0190 | Format specifier that is malformed or does not apply to the formatted value |

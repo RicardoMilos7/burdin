@@ -14,7 +14,7 @@ use burdin_diag::{Code, Diagnostics, Span};
 use burdin_tir::visit::{Visit, VisitMut, walk_expr, walk_expr_mut};
 use burdin_tir::{
     BindMode, Block, Expr, ExprKind as K, FuncId, Function, Local, LocalId, LocalKind, Pat, Program, Signature, Stmt,
-    Ty, TypeDefs,
+    TestOutcome, Ty, TypeDefs,
 };
 use interp::{ConstState, Fault, Interp};
 use std::collections::HashMap;
@@ -115,6 +115,60 @@ pub fn evaluate(program: &mut Program, opts: Options, diags: &mut Diagnostics) {
     for spec in new_funcs {
         program.functions.push(spec.func);
         program.signatures.push(spec.sig);
+    }
+}
+
+/// Runs the body of every `[differential]` test at compile time and records its `Ok`/`Err` outcome in the test
+/// entry, for the runner to compare with the compiled run (`spec/test-runner.md`). The body must be one the
+/// interpreter can execute: an impure operation (CT9), a panic (CT10), or an exhausted budget (CT11) is reported at
+/// the test item, like any other failed compile-time evaluation. This runs after [`evaluate`], so the bodies it
+/// sees have no comptime construct left.
+pub fn evaluate_differential_tests(program: &mut Program, opts: Options, diags: &mut Diagnostics) {
+    // Fresh constant states: after `evaluate` every constant initializer is a materialized literal, so evaluating
+    // one again here costs no more than the literal itself.
+    let mut consts: Vec<ConstState> = program.consts.iter().map(|_| ConstState::Pending).collect();
+    let mut outcomes = Vec::with_capacity(program.tests.len());
+    for test in &program.tests {
+        if !test.attrs.differential {
+            outcomes.push(None);
+            continue;
+        }
+        let body = test.body;
+        let span = program.functions[body.0].span;
+        let result = {
+            let mut it = Interp::new(program, &mut consts, opts.steps, opts.release);
+            it.call_root(body, span)
+        };
+        let outcome = match result {
+            Ok(Value::Res(Ok(_))) => Some(TestOutcome::Ok),
+            Ok(Value::Res(Err(_))) => Some(TestOutcome::Err),
+            Ok(_) => {
+                diags.error(
+                    Code::COMPTIME_IMPURE,
+                    span,
+                    internal_message("a differential test body did not return a `Result`"),
+                );
+                None
+            }
+            Err(fault) => {
+                if matches!(fault, Fault::Reported) {
+                    // `report` stays silent for a failure an earlier report already covered. The fresh constant
+                    // states above make that impossible here, so leaving the outcome unset would hide a bug.
+                    diags.error(
+                        Code::COMPTIME_IMPURE,
+                        span,
+                        internal_message("a differential test body failed without a reported error"),
+                    );
+                } else {
+                    report(program, diags, fault, span, &format!("the differential test `{}`", test.name));
+                }
+                None
+            }
+        };
+        outcomes.push(outcome);
+    }
+    for (test, outcome) in program.tests.iter_mut().zip(outcomes) {
+        test.comptime = outcome;
     }
 }
 
