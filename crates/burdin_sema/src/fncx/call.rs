@@ -1380,6 +1380,17 @@ impl FnCx<'_> {
         }
         // `i32.parse(s)`: the number in the text, or an error.
         if let Ty::Int(i) = ty {
+            // The other associated functions of an integer type (`u32.from_le_bytes(b)`) are `std` functions named
+            // `__<type>_<name>` (spec/stdlib.md, "Integer functions").
+            if name.name != "parse"
+                && let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", i.name(), name.name))
+            {
+                let sig = self.globals.sigs[f.0].clone();
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+            }
             if name.name != "parse" {
                 self.diags.error(
                     Code::UNKNOWN_NAME,

@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: isqrt of a negative number
+//> before
+
+fn main() {
+    let n: i32 = -4
+    println("before")
+    println("{}", n.isqrt())
+}

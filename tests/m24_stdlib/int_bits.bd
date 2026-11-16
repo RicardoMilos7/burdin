@@ -1,0 +1,51 @@
+//@ run
+//> 8 24
+//> 16 4
+//> 0 8 8
+//> 32 0 0
+//> 3 192
+//> 3 129
+//> 129
+//> 2018915346 305419896
+//> -257 -17
+//> 32767
+//> true false
+//> 128 64
+//> None Some(64)
+//> 1000 999
+//> 46340
+//> 9 3 2
+//> 0 0
+
+fn main() {
+    let a: u32 = 0xF0F0
+    println("{} {}", a.count_ones(), a.count_zeros())
+    println("{} {}", a.leading_zeros(), a.trailing_zeros())
+    let z: u8 = 0
+    println("{} {} {}", z.count_ones(), z.leading_zeros(), z.trailing_zeros())
+    let n: i32 = -1
+    println("{} {} {}", n.count_ones(), n.leading_zeros(), n.trailing_zeros())
+    let r: u8 = 0x81
+    println("{} {}", r.rotate_left(1), r.rotate_right(1))
+    println("{} {}", r.rotate_left(9), r.rotate_left(0))
+    println("{}", r.reverse_bits())
+    let s: u32 = 0x12345678
+    println("{} {}", s.swap_bytes(), s.swap_bytes().swap_bytes())
+    let neg: i16 = -2
+    println("{} {}", neg.swap_bytes(), neg.rotate_left(4))
+    println("{}", neg.reverse_bits())
+    let p: u32 = 64
+    println("{} {}", p.is_power_of_two(), (p + 1).is_power_of_two())
+    let q: u32 = 65
+    println("{} {}", q.next_power_of_two(), p.next_power_of_two())
+    let big: u8 = 129
+    println("{:?} {:?}", big.checked_next_power_of_two(), p.checked_next_power_of_two())
+    let sq: u64 = 1000000
+    println("{} {}", sq.isqrt(), (sq - 1).isqrt())
+    let m: i32 = 2147483647
+    println("{}", m.isqrt())
+    let l: u32 = 1000
+    println("{} {} {}", l.ilog2(), l.ilog10(), (l - 1).ilog10())
+    let one: i64 = 1
+    println("{} {}", one.ilog2(), one.ilog10())
+}

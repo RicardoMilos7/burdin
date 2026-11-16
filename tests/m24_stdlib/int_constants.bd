@@ -1,0 +1,25 @@
+//@ run
+//> -128 127
+//> -32768 32767
+//> -2147483648 2147483647
+//> -9223372036854775808 9223372036854775807
+//> 0 255
+//> 0 65535
+//> 0 4294967295
+//> 0 18446744073709551615
+//> 8 16 32 64
+//> true
+
+fn main() {
+    println("{} {}", i8.MIN, i8.MAX)
+    println("{} {}", i16.MIN, i16.MAX)
+    println("{} {}", i32.MIN, i32.MAX)
+    println("{} {}", i64.MIN, i64.MAX)
+    println("{} {}", u8.MIN, u8.MAX)
+    println("{} {}", u16.MIN, u16.MAX)
+    println("{} {}", u32.MIN, u32.MAX)
+    println("{} {}", u64.MIN, u64.MAX)
+    println("{} {} {} {}", u8.BITS, u16.BITS, i32.BITS, usize.BITS)
+    let m: i32 = i32.MAX
+    println("{}", m.checked_add(1).is_none())
+}

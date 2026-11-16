@@ -1,0 +1,45 @@
+//@ run
+//> 4 3 2 1
+//> 1 2 3 4
+//> 4 3 2 1
+//> 16909060
+//> 16909060
+//> 67305985
+//> 16909060
+//> 255 255 255 254
+//> -2
+//> -2
+//> 1 8 72623859790382856
+//> 212 254 -300
+//> 200 200
+//> -1
+
+fn show(b: [u8; 4]) {
+    println("{} {} {} {}", b[0], b[1], b[2], b[3])
+}
+
+fn main() {
+    let v: u32 = 0x01020304
+    show(v.to_le_bytes())
+    show(v.to_be_bytes())
+    show(v.to_ne_bytes())
+    println("{}", u32.from_le_bytes(v.to_le_bytes()))
+    println("{}", u32.from_be_bytes([1, 2, 3, 4]))
+    println("{}", u32.from_le_bytes([1, 2, 3, 4]))
+    println("{}", u32.from_ne_bytes(v.to_ne_bytes()))
+    let n: i32 = -2
+    show(n.to_be_bytes())
+    println("{}", i32.from_be_bytes([255, 255, 255, 254]))
+    println("{}", i32.from_le_bytes(n.to_le_bytes()))
+    let w: u64 = 0x0102030405060708
+    let wb = w.to_be_bytes()
+    println("{} {} {}", wb[0], wb[7], u64.from_be_bytes(wb))
+    let h: i16 = -300
+    let hb = h.to_le_bytes()
+    println("{} {} {}", hb[0], hb[1], i16.from_le_bytes(hb))
+    let b: u8 = 200
+    let bb = b.to_be_bytes()
+    println("{} {}", bb[0], u8.from_le_bytes(bb))
+    let big: i64 = -1
+    println("{}", i64.from_be_bytes(big.to_be_bytes()))
+}

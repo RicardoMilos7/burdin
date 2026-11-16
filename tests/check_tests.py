@@ -144,6 +144,13 @@ def main() -> int:
         if code not in used and code not in documented_codes:
             problems.append(f"error code {code} has no compile-fail test; add one or document why it cannot have one")
 
+    # std/src/int.bd is generated; it must match its generator (issue #704).
+    sys.path.insert(0, str(tests_dir))
+    import gen_int_std
+
+    if gen_int_std.OUT.read_bytes().decode("utf-8").replace(chr(13), "") != gen_int_std.render():
+        problems.append("std/src/int.bd is out of date: run python3 tests/gen_int_std.py")
+
     if problems:
         print()
         print("Problems:")
