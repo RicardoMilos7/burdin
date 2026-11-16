@@ -115,6 +115,27 @@ pub(crate) struct FromImpl {
     pub(crate) func: FuncId,
 }
 
+/// The standard library's operator interfaces (`spec/operators.md`, OP2). The compiler resolves an operator on a
+/// user type to one of these; it never looks the name up in the program, so a module that declares its own `Add`
+/// does not change what `+` means.
+#[derive(Clone, Copy)]
+pub(crate) struct OpIfaces {
+    pub(crate) add: usize,
+    pub(crate) sub: usize,
+    pub(crate) mul: usize,
+    pub(crate) div: usize,
+    pub(crate) rem: usize,
+    pub(crate) bitand: usize,
+    pub(crate) bitor: usize,
+    pub(crate) bitxor: usize,
+    pub(crate) neg: usize,
+    pub(crate) not: usize,
+    pub(crate) partial_eq: usize,
+    pub(crate) partial_ord: usize,
+    pub(crate) index: usize,
+    pub(crate) index_mut: usize,
+}
+
 #[derive(Default)]
 pub(crate) struct Globals {
     pub(crate) modules: Vec<ModuleInfo>,
@@ -177,6 +198,8 @@ pub(crate) struct Globals {
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,
+    /// The standard library's operator interfaces (`spec/operators.md`, OP2), when it declares them.
+    pub(crate) op_ifaces: Option<OpIfaces>,
     /// The `std.Error` interface (the marker that makes a type an error type) and the `std.Error` struct (the
     /// dynamic error value). Both are `None` when the standard library does not declare them (`spec/errors.md`,
     /// ERR4).

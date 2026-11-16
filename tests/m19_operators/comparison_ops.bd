@@ -1,0 +1,80 @@
+//@ run
+//> false
+//> true
+//> true
+//> true
+//> false
+//> false
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+//> false
+
+// `PartialEq` and `PartialOrd` lower the six comparison operators; the defaults provide `ne`, `le`, `gt`, and
+// `ge` from `eq` and `lt` (spec/operators.md OP1, OP2, OP5).
+
+struct Meter {
+    v: i32
+}
+
+Meter: PartialEq {
+    fn eq(self, other: Meter): bool {
+        self.v == other.v
+    }
+}
+
+Meter: PartialOrd {
+    fn lt(self, other: Meter): bool {
+        self.v < other.v
+    }
+}
+
+// A type may implement only one of the two interfaces. `Rank` has ordering but no equality; `Key` has equality
+// but no ordering.
+struct Rank {
+    level: i32
+}
+
+Rank: PartialOrd {
+    fn lt(self, other: Rank): bool {
+        self.level < other.level
+    }
+}
+
+struct Key {
+    id: i32
+}
+
+Key: PartialEq {
+    fn eq(self, other: Key): bool {
+        self.id == other.id
+    }
+}
+
+fn main() {
+    let a = Meter { v: 1 }
+    let b = Meter { v: 2 }
+    println((a == b).to_string())
+    println((a != b).to_string())
+    println((a < b).to_string())
+    println((a <= b).to_string())
+    println((a > b).to_string())
+    println((a >= b).to_string())
+
+    println((a == a).to_string())
+    println((a <= a).to_string())
+    println((a >= a).to_string())
+
+    let r1 = Rank { level: 1 }
+    let r2 = Rank { level: 2 }
+    println((r1 < r2).to_string())
+    println((r2 > r1).to_string())
+
+    let k1 = Key { id: 7 }
+    let k2 = Key { id: 7 }
+    println((k1 == k2).to_string())
+    println((k1 != k2).to_string())
+}

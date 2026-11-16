@@ -32,7 +32,7 @@ page.
 | `bound-empty` | `crates/burdin_sema/src/generics.rs` | An empty bound path (a defensive branch; the parser cannot produce one today) | Stage 1 | #399 |
 | `bound-drop-from` | `crates/burdin_sema/src/generics.rs` | `Drop` or `From` used as a bound | Stage 1 | #399 |
 | `impl-where-concrete` | `crates/burdin_sema/src/impls.rs` | A `where` clause on a non-generic impl block | Stage 1 | #394 |
-| `impl-builtin-hand` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented by hand (`Type: Eq { ... }`) | m19 | #402 |
+| `impl-builtin-hand` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented by hand (`Type: Eq { ... }`) | Stage 1 | #402 |
 | `impl-interface-path-kind` | `crates/burdin_sema/src/impls.rs` | An interface path that is not a type path | Stage 1 | #400 |
 | `impl-specific-args` | `crates/burdin_sema/src/impls.rs` | An impl block for specific type arguments (`Stack<i32> { ... }`) | m21 | #395 |
 | `impl-builtin-generic` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented for a generic type | m21 | #401 |
@@ -45,8 +45,10 @@ page.
 - `m12` (closures) owned calls and the first-class function surface; calls, named functions, built-in functions, and
   `Some` as a value are implemented with closures. Using a generic or `extern` function as a value is the remaining
   Stage 1 work, because it needs the callee's type arguments or the C calling convention.
-- `m19` (operators) owns a built-in interface implemented by hand: the operator interfaces are the first built-in
-  interfaces a program implements itself, and #402 decides the rule for all of them.
+- `m19` (operators) no longer owns a built-in interface implemented by hand: milestone 19 decided that the operator
+  interfaces are ordinary `std` interfaces (`spec/operators.md`, OP2), so implementing `Add`, `Index`, and the rest
+  is an ordinary interface impl. The remaining site is the built-in `Eq`/`Ord`/`Copy`/`Clone`/`Hash`/`Default`
+  family, whose rule #402 decides as part of the generic and type-system work under #389.
 - `m20` (comptime) owns arbitrary constant expressions; #163 unifies `const` evaluation with comptime.
 - `m21` (reflection, user derives, const generics) owns the remaining type-system forms: generic aliases, impls for
   specific instances, built-in interfaces for generic types, and const-generic array lengths.

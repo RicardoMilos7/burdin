@@ -1,0 +1,47 @@
+//@ run
+//> hello
+//> 5
+//> hello
+//> 5
+//> hello!
+//> 6
+
+// An `Index` method may return a view of a non-Copy element; the element is borrowed, not moved, and `clone`
+// makes an independent copy (spec/operators.md OP9).
+
+struct Words {
+    parts: List<String>
+}
+
+Words: Index<String> {
+    fn index(self, i: usize): &String {
+        &self.parts[i]
+    }
+}
+
+Words: IndexMut<String> {
+    fn index_mut(mut self, i: usize): &mut String {
+        &mut self.parts[i]
+    }
+}
+
+fn main() {
+    let mut w = Words { parts: List<String>.new() }
+    w.parts.push(String.from("hello"))
+    w.parts.push(String.from("world"))
+    println(w[0])
+    println(w[1].len().to_string())
+
+    let copy = w[0].clone()
+    w[1] = copy
+    println(w[1])
+
+    let view = &w[0]
+    println(view.len().to_string())
+
+    // A `mut self` method needs a mutable place: take `&mut w[i]` first (see `index_mut_receiver.bd`).
+    let edit = &mut w[0]
+    edit.push_str("!")
+    println(w[0])
+    println(w[0].len().to_string())
+}

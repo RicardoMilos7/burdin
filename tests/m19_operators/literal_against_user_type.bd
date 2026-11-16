@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// A literal never adopts a user type, so neither order finds two operands of the same type (E0003,
+// spec/operators.md OP7).
+
+struct Meter {
+    v: i32
+}
+
+Meter: Add {
+    fn add(self, other: Meter): Meter {
+        Meter { v: self.v + other.v }
+    }
+}
+
+fn main() {
+    let m = Meter { v: 1 }
+    let a = m + 1 //~ E0003
+    let b = 1 + m //~ E0003
+    println((a.v + b.v).to_string())
+}

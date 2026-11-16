@@ -529,7 +529,12 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         | K::Continue
         | K::LayoutOf { .. } => {}
         K::Local(_) => moved_place(e, globals, usage),
-        K::Field(..) | K::Deref(..) | K::PtrDeref(..) | K::DerefRef(..) => moved_place(e, globals, usage),
+        // The base may be a call: a user `Index`/`IndexMut` is lowered to one, and the call's conventions decide
+        // whether the captured receiver is mutated (`spec/operators.md`, OP10).
+        K::Field(base, _) | K::Deref(base) | K::PtrDeref(base) | K::DerefRef(base) => {
+            moved_place(e, globals, usage);
+            walk(base, captures, globals, usage, Mode::Use);
+        }
         K::Index(base, index) => {
             moved_place(e, globals, usage);
             walk(base, captures, globals, usage, Mode::Use);

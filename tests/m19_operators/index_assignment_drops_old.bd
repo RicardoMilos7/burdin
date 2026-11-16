@@ -1,0 +1,40 @@
+//@ run
+//> drop 1
+//> done
+//> drop 3
+//> drop 2
+
+// Assigning through `IndexMut` drops the old element before storing the new one, exactly like a built-in index
+// (spec/operators.md OP10; memory-rules.md DR4).
+
+struct Loud {
+    id: i32
+}
+
+Loud: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+struct Boxes {
+    items: [Loud; 2]
+}
+
+Boxes: Index<Loud> {
+    fn index(self, i: usize): &Loud {
+        &self.items[i]
+    }
+}
+
+Boxes: IndexMut<Loud> {
+    fn index_mut(mut self, i: usize): &mut Loud {
+        &mut self.items[i]
+    }
+}
+
+fn main() {
+    let mut b = Boxes { items: [Loud { id: 1 }, Loud { id: 2 }] }
+    b[0] = Loud { id: 3 }
+    println("done")
+}

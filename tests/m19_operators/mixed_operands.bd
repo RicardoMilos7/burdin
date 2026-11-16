@@ -1,0 +1,31 @@
+//@ compile-fail
+
+// Both operands of an operator have the same type; an implementation on one type does not make a mixed
+// expression valid (E0003, spec/operators.md OP2, OP3).
+
+struct A {
+    n: i32
+}
+
+struct B {
+    n: i32
+}
+
+A: Add {
+    fn add(self, other: A): A {
+        A { n: self.n + other.n }
+    }
+}
+
+B: Add {
+    fn add(self, other: B): B {
+        B { n: self.n + other.n }
+    }
+}
+
+fn main() {
+    let a = A { n: 1 }
+    let b = B { n: 2 }
+    let c = a + b //~ E0003
+    println(c.n.to_string())
+}

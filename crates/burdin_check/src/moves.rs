@@ -758,6 +758,13 @@ impl<'a> Checker<'a> {
     /// A place expression read in `mode`.
     fn place_expr(&mut self, e: &tir::Expr, mode: Mode) {
         self.place_subexpr(e);
+        // A place behind a call (the referent of a user `Index` implementation's reference) has no local root
+        // the checker can follow. Reading a non-Copy value from it would move out of borrowed content (MV7,
+        // `spec/operators.md`, OP10).
+        if mode == Mode::Move && !self.is_copy(&e.ty) && is_view_place(e) && self.place_of(e).is_none() {
+            self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content");
+            return;
+        }
         let Some((root, path)) = self.place_of(e) else { return };
         // The expression's own type is the place's type: an indexed element, a dereferenced pointee, or a field.
         let ty = e.ty.clone();

@@ -1,9 +1,11 @@
 //! Fields, struct literals, indexing, and arrays.
 
 use super::{FnCx, PathTy, error_expr, mk};
-use crate::globals::Global;
+use crate::generics::{Bound, SYMBOLIC_CALL};
+use crate::globals::{Global, adt_key};
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
+use burdin_tir::place::{is_place_expr, place_root};
 use burdin_tir::{self as tir, IntTy, Ty};
 
 impl FnCx<'_> {
@@ -239,14 +241,20 @@ impl FnCx<'_> {
     }
 
     pub(super) fn index(&mut self, base: &ast::Expr, index: &ast::Expr, span: Span) -> tir::Expr {
+        // The surrounding place may be written (`x[i] = v`, `&mut x[i]`, `mut x[i]`); saving the mode here lets
+        // the base of a nested index keep it while the index operand is an ordinary value expression.
+        let mutable = self.write_place;
         let base = self.expr(base, None);
         let base = self.auto_deref(base);
         if let ast::ExprKind::Range { lo, hi, inclusive } = &index.kind {
+            let saved = self.write_place;
+            self.write_place = false;
             let usize_ty = Ty::Int(IntTy::Usize);
             let lo = self.expr(lo, Some(&usize_ty));
             let lo = self.expect_ty(lo, &usize_ty);
             let hi = self.expr(hi, Some(&usize_ty));
             let hi = self.expect_ty(hi, &usize_ty);
+            self.write_place = saved;
             let ty = match &base.ty {
                 Ty::Str | Ty::String => Ty::Str,
                 Ty::Slice(_) => base.ty.clone(),
@@ -269,21 +277,106 @@ impl FnCx<'_> {
             };
             return mk(kind, ty, span);
         }
+        let saved = self.write_place;
+        self.write_place = false;
         let index = self.expr(index, Some(&Ty::Int(IntTy::Usize)));
+        self.write_place = saved;
         let index = self.expect_ty(index, &Ty::Int(IntTy::Usize));
         let ty = match &base.ty {
             Ty::Array(elem, _) | Ty::Slice(elem) | Ty::List(elem) => (**elem).clone(),
-            Ty::Error => Ty::Error,
-            other => {
-                self.diags.error(
-                    Code::TYPE_MISMATCH,
-                    base.span,
-                    format!("cannot index into a value of type `{other}`"),
-                );
-                return error_expr(span);
-            }
+            Ty::Error => return error_expr(span),
+            // A user type takes part through `Index`/`IndexMut` (`spec/operators.md`, OP9-OP10).
+            _ => return self.overloaded_index(base, index, mutable, span),
         };
         mk(tir::ExprKind::Index(Box::new(base), Box::new(index)), ty, span)
+    }
+
+    /// Lowers `x[i]` (or `x[i] = v`, with `mutable`) on a user type to its `Index`/`IndexMut` call and the
+    /// referent of the returned reference. The built-in array, slice, and `List` indexing never reaches here.
+    fn overloaded_index(&mut self, base: tir::Expr, index: tir::Expr, mutable: bool, span: Span) -> tir::Expr {
+        let Some(ops) = self.globals.op_ifaces else {
+            return self.index_missing(base.ty, mutable, span);
+        };
+        let (iface, method) = if mutable { (ops.index_mut, "index_mut") } else { (ops.index, "index") };
+        match base.ty.clone() {
+            Ty::Param(_) => {
+                let Some((sig, _, _)) = self.globals.bound_method(&base.ty, method, &self.bounds) else {
+                    return self.index_missing(base.ty, mutable, span);
+                };
+                let Ty::Ref { mutable: through, inner } = sig.ret.clone() else {
+                    return self.index_missing(base.ty, mutable, span);
+                };
+                if sig.params.len() != 2 || !sig.has_self || through != mutable {
+                    return self.index_missing(base.ty, mutable, span);
+                }
+                self.check_index_receiver(&base, &sig.params[0], method);
+                let call = mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![base, index]), sig.ret.clone(), span);
+                mk(tir::ExprKind::DerefRef(Box::new(call)), (*inner).clone(), span)
+            }
+            ty @ (Ty::Struct(_) | Ty::Enum(_)) => {
+                let key = adt_key(&ty).expect("a struct or enum has a key");
+                let Some(&f) = self.globals.methods.get(&(key, method.to_string())) else {
+                    return self.index_missing(ty, mutable, span);
+                };
+                let sig = self.globals.sigs[f.0].clone();
+                let Ty::Ref { mutable: through, inner } = sig.ret.clone() else {
+                    return self.index_missing(ty, mutable, span);
+                };
+                if sig.params.len() != 2 || !sig.has_self || through != mutable {
+                    return self.index_missing(ty, mutable, span);
+                }
+                if !self.globals.satisfies(&ty, &Bound::User(iface, vec![(*inner).clone()]), &self.bounds) {
+                    return self.index_missing(ty, mutable, span);
+                }
+                self.check_index_receiver(&base, &sig.params[0], method);
+                let call = mk(tir::ExprKind::Call(f, vec![base, index]), sig.ret.clone(), span);
+                mk(tir::ExprKind::DerefRef(Box::new(call)), (*inner).clone(), span)
+            }
+            ty => self.index_missing(ty, mutable, span),
+        }
+    }
+
+    /// `x[i]` on a type that does not implement `Index`, or `x[i] = v` without `IndexMut` (E0141); a type that
+    /// has no element access at all keeps the stage 0 E0003.
+    fn index_missing(&mut self, ty: Ty, mutable: bool, span: Span) -> tir::Expr {
+        match ty {
+            Ty::Param(_) => {
+                let (what, iface) =
+                    if mutable { ("assign through an index of", "IndexMut") } else { ("index into", "Index") };
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("cannot {what} `{ty}`: its bounds do not provide `{iface}`"),
+                );
+            }
+            Ty::Struct(_) | Ty::Enum(_) => {
+                let (what, iface) =
+                    if mutable { ("assign through an index of", "IndexMut") } else { ("index into", "Index") };
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("cannot {what} `{ty}`: it does not implement `{iface}`"),
+                );
+            }
+            other => {
+                self.diags.error(Code::TYPE_MISMATCH, span, format!("cannot index into a value of type `{other}`"));
+            }
+        }
+        error_expr(span)
+    }
+
+    /// A `mut self` receiver of `index_mut` must be a mutable place (MU3); a temporary or a place behind a
+    /// mutable reference is already writable.
+    fn check_index_receiver(&mut self, recv: &tir::Expr, receiver: &tir::ParamSig, method: &str) {
+        if receiver.by_ref && receiver.exclusive && is_place_expr(recv) && !self.place_mutable(recv) {
+            let local = place_root(recv).map(|root| self.locals[root.0].name.clone());
+            let whose = local.unwrap_or_else(|| "this value".to_string());
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{method}` changes its receiver, but `{whose}` is not mutable"),
+            );
+        }
     }
 
     pub(super) fn array(&mut self, elems: &[ast::Expr], expect: Option<&Ty>, span: Span) -> tir::Expr {

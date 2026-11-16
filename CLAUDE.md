@@ -25,8 +25,8 @@ not updated and may disagree with the repository.
    behavior of `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default`, `spec/existentials.md` is the behavior of `any`
    and `impl` existential types, object safety, boxing, and downcasts, `spec/errors.md` is `error` declarations, the
    dynamic `Error`, `Result<T>`, `context`, traces, and `main(): Result<T>`, `spec/arguments.md` is default and named
-   arguments, `spec/extensions.md` is extension methods and their resolution order, and `spec/test-runner.md` is the
-   behavior of `burdin test`.
+   arguments, `spec/extensions.md` is extension methods and their resolution order, `spec/operators.md` is operator
+   overloading and `Index`/`IndexMut`, and `spec/test-runner.md` is the behavior of `burdin test`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.

@@ -30,6 +30,7 @@ tests/
   m16_errors/          `error` declarations, messages, `from`, dynamic `Error`, `context`, traces, `main`
   m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
   m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
+  m19_operators/       operator overloading, PartialEq/PartialOrd, Index/IndexMut, built-in regressions
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -184,7 +185,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0130 | Derive requirement not met (reported at the offending field or derive clause) |
 | E0131 | A `Drop` implementation that is not exactly one method named `drop` |
 | E0140 | Interface implementation is missing a method (reported at the `impl` line) |
-| E0141 | Interface bound or `requires` not satisfied, or a generic body uses an operation its bounds do not provide |
+| E0141 | Interface bound or `requires` not satisfied, a generic body uses an operation its bounds do not provide, or a user type has no implementation of an operator or `Index`/`IndexMut` interface |
 | E0142 | Orphan rule violation |
 | E0150 | Use of a `priv` item from another package |
 | E0160 | `?` used in a function whose return type is not `Option` or `Result` |
@@ -367,6 +368,20 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     second import of one extension name, are E0007; an extension without `self`, a malformed receiver path, a
     `where` naming a non-parameter, and an import under another name are E0216.
     `spec/extensions.md` EX1-EX8, `tests/m18_extension/`.
+
+24. **Operator overloading and `Index`.** The operator interfaces are the ordinary `std` interfaces `Add`, `Sub`,
+    `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `PartialEq`, `PartialOrd`, `Index<T>`, and
+    `IndexMut<T>` in `std.ops`, visible through the prelude. Both operands of an operator have the same type, and a
+    type implements each interface at most once. The stage 0 built-in rule and a derived `Eq`/`Ord` are always tried
+    first; a user struct or enum then uses its interface implementation, and a type parameter its bounds. Comparisons
+    use the new `PartialEq`/`PartialOrd` interfaces, not the derive-only `Eq`/`Ord`, so every stage 0 derive keeps
+    its exact behavior. `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`, so
+    `x[i]` is a place; a write (assignment, `&mut x[i]`, `mut x[i]`, or an index inside a written place) selects
+    `index_mut` and needs a mutable receiver. A literal never adopts a user type, so `v + 1` is E0003. A missing
+    operator or index implementation is E0141, `index_mut` through an immutable place is E0113, and moving a
+    non-`Copy` element out is E0101. Compound assignment and the shifts are not overloadable; `&&`, `||`, and `=`
+    remain non-overloadable.
+    `spec/operators.md` OP1-OP13, `tests/m19_operators/`.
 
 ## Review of the expected outputs
 

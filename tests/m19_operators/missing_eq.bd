@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// `==` and `!=` on a user type need `PartialEq` (E0141, spec/operators.md OP3, OP5).
+
+struct Plain {
+    n: i32
+}
+
+fn main() {
+    let a = Plain { n: 1 }
+    let b = Plain { n: 2 }
+    let c = a == b //~ E0141
+    let d = a != b //~ E0141
+    println((c && d).to_string())
+}

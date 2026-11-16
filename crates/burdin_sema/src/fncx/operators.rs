@@ -1,6 +1,8 @@
 //! Assignment and the unary and binary operators.
 
 use super::{FnCx, error_expr, mk};
+use crate::generics::{Bound, SYMBOLIC_CALL};
+use crate::globals::adt_key;
 use crate::types::compatible;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -9,7 +11,12 @@ use burdin_tir::{self as tir, BinOp, IntTy, Ty, UnOp};
 
 impl FnCx<'_> {
     pub(super) fn assign(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> tir::Expr {
+        // The left side is written, so an index expression on a user type lowers to `index_mut`
+        // (`spec/operators.md`, OP10). The right side is an ordinary value expression.
+        let saved = self.write_place;
+        self.write_place = true;
         let place = self.expr(lhs, None);
+        self.write_place = saved;
         let rhs = self.expr(rhs, Some(&place.ty));
         let rhs = self.expect_ty(rhs, &place.ty);
         if place.ty != Ty::Error {
@@ -122,20 +129,144 @@ impl FnCx<'_> {
                     _ => unreachable!("handled above"),
                 };
                 if !ok && !matches!(ty, Ty::Error | Ty::Never) {
-                    if let Ty::Param(_) = ty {
-                        self.diags.error(
-                            Code::BOUND_NOT_SATISFIED,
-                            span,
-                            format!("`{op_name}` is not available on `{ty}`: its bounds do not provide it"),
-                        );
-                        return error_expr(span);
+                    // A user type takes part through its operator interface (`spec/operators.md`, OP3-OP6).
+                    if let Some(call) = self.overloaded_binary(op, l.clone(), r.clone(), span) {
+                        return call;
                     }
-                    self.diags.error(Code::TYPE_MISMATCH, span, format!("`{op_name}` cannot be applied to `{ty}`"));
+                    let iface = self.op_interface(op).map(|(_, _, name)| name);
+                    match &ty {
+                        // A derive is the type's own comparison; when it does not hold, a field is the reason and
+                        // the stage 0 diagnostic (E0003) stays (`spec/derives.md`).
+                        Ty::Struct(_) | Ty::Enum(_) if self.derives_comparison(&ty, op) => {
+                            self.diags.error(
+                                Code::TYPE_MISMATCH,
+                                span,
+                                format!("`{op_name}` cannot be applied to `{ty}`"),
+                            );
+                        }
+                        Ty::Param(_) | Ty::Struct(_) | Ty::Enum(_) => {
+                            let reason = match (&ty, iface) {
+                                (Ty::Param(_), Some(name)) => format!(": its bounds do not provide `{name}`"),
+                                (_, Some(name)) => format!(": it does not implement `{name}`"),
+                                _ => String::new(),
+                            };
+                            self.diags.error(
+                                Code::BOUND_NOT_SATISFIED,
+                                span,
+                                format!("`{op_name}` is not available on `{ty}`{reason}"),
+                            );
+                        }
+                        _ => {
+                            self.diags.error(
+                                Code::TYPE_MISMATCH,
+                                span,
+                                format!("`{op_name}` cannot be applied to `{ty}`"),
+                            );
+                        }
+                    }
                     return error_expr(span);
                 }
                 let result = if matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge) { Ty::Bool } else { ty };
                 mk(tir::ExprKind::Binary(bin_op(op), Box::new(l), Box::new(r)), result, span)
             }
+        }
+    }
+
+    /// Whether the type's own derived comparison is the one that just failed: `Eq` for `==`/`!=`, `Ord` for the
+    /// ordering operators. Such a failure names a field, not a missing interface.
+    fn derives_comparison(&self, ty: &Ty, op: ast::BinOp) -> bool {
+        use ast::BinOp as B;
+        let derives = match ty {
+            Ty::Struct(a) => &self.globals.structs[a.id].derives,
+            Ty::Enum(a) => &self.globals.enums[a.id].derives,
+            _ => return false,
+        };
+        match op {
+            B::Eq | B::Ne => derives.eq,
+            B::Lt | B::Gt | B::Le | B::Ge => derives.ord,
+            _ => false,
+        }
+    }
+
+    /// The standard library interface and method an overloadable binary operator uses (`spec/operators.md`, OP3),
+    /// as `(interface, method name, interface name)`.
+    fn op_interface(&self, op: ast::BinOp) -> Option<(usize, &'static str, &'static str)> {
+        let ops = self.globals.op_ifaces?;
+        use ast::BinOp as B;
+        Some(match op {
+            B::Add => (ops.add, "add", "Add"),
+            B::Sub => (ops.sub, "sub", "Sub"),
+            B::Mul => (ops.mul, "mul", "Mul"),
+            B::Div => (ops.div, "div", "Div"),
+            B::Rem => (ops.rem, "rem", "Rem"),
+            B::BitAnd => (ops.bitand, "bitand", "BitAnd"),
+            B::BitOr => (ops.bitor, "bitor", "BitOr"),
+            B::BitXor => (ops.bitxor, "bitxor", "BitXor"),
+            B::Eq => (ops.partial_eq, "eq", "PartialEq"),
+            B::Ne => (ops.partial_eq, "ne", "PartialEq"),
+            B::Lt => (ops.partial_ord, "lt", "PartialOrd"),
+            B::Gt => (ops.partial_ord, "gt", "PartialOrd"),
+            B::Le => (ops.partial_ord, "le", "PartialOrd"),
+            B::Ge => (ops.partial_ord, "ge", "PartialOrd"),
+            _ => return None,
+        })
+    }
+
+    /// Lowers `l op r` to its interface method call when the built-in operator does not apply. `None` when the
+    /// left type is not a struct, enum, or type parameter, or does not implement the interface.
+    fn overloaded_binary(&mut self, op: ast::BinOp, l: tir::Expr, r: tir::Expr, span: Span) -> Option<tir::Expr> {
+        let (iface, method, _) = self.op_interface(op)?;
+        match l.ty.clone() {
+            Ty::Param(_) => {
+                let (sig, _, _) = self.globals.bound_method(&l.ty, method, &self.bounds)?;
+                if sig.params.len() != 2 || !sig.has_self {
+                    return None;
+                }
+                let ret = sig.ret.clone();
+                Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![l, r]), ret, span))
+            }
+            ty @ (Ty::Struct(_) | Ty::Enum(_)) => {
+                let key = adt_key(&ty)?;
+                if !self.globals.satisfies(&ty, &Bound::User(iface, Vec::new()), &self.bounds) {
+                    return None;
+                }
+                let f = *self.globals.methods.get(&(key, method.to_string()))?;
+                let sig = &self.globals.sigs[f.0];
+                if sig.params.len() != 2 || !sig.has_self {
+                    return None;
+                }
+                let ret = sig.ret.clone();
+                Some(mk(tir::ExprKind::Call(f, vec![l, r]), ret, span))
+            }
+            _ => None,
+        }
+    }
+
+    /// Lowers `-a` or `!a` to its interface method call when the built-in operator does not apply.
+    fn overloaded_unary(&mut self, iface: usize, method: &str, e: tir::Expr, span: Span) -> Option<tir::Expr> {
+        match e.ty.clone() {
+            Ty::Param(_) => {
+                let (sig, _, _) = self.globals.bound_method(&e.ty, method, &self.bounds)?;
+                if sig.params.len() != 1 || !sig.has_self {
+                    return None;
+                }
+                let ret = sig.ret.clone();
+                Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![e]), ret, span))
+            }
+            ty @ (Ty::Struct(_) | Ty::Enum(_)) => {
+                let key = adt_key(&ty)?;
+                if !self.globals.satisfies(&ty, &Bound::User(iface, Vec::new()), &self.bounds) {
+                    return None;
+                }
+                let f = *self.globals.methods.get(&(key, method.to_string()))?;
+                let sig = &self.globals.sigs[f.0];
+                if sig.params.len() != 1 || !sig.has_self {
+                    return None;
+                }
+                let ret = sig.ret.clone();
+                Some(mk(tir::ExprKind::Call(f, vec![e]), ret, span))
+            }
+            _ => None,
         }
     }
 
@@ -198,7 +329,28 @@ impl FnCx<'_> {
                     _ => false,
                 };
                 if !ok {
-                    self.diags.error(Code::TYPE_MISMATCH, span, format!("cannot negate a `{}`", e.ty));
+                    // A user type takes part through `Neg` (`spec/operators.md`, OP4).
+                    if let Some(ops) = self.globals.op_ifaces
+                        && let Some(call) = self.overloaded_unary(ops.neg, "neg", e.clone(), span)
+                    {
+                        return call;
+                    }
+                    match &e.ty {
+                        Ty::Param(_) | Ty::Struct(_) | Ty::Enum(_) => {
+                            let reason = match &e.ty {
+                                Ty::Param(_) => "its bounds do not provide `Neg`",
+                                _ => "it does not implement `Neg`",
+                            };
+                            self.diags.error(
+                                Code::BOUND_NOT_SATISFIED,
+                                span,
+                                format!("`-` is not available on `{}`: {reason}", e.ty),
+                            );
+                        }
+                        other => {
+                            self.diags.error(Code::TYPE_MISMATCH, span, format!("cannot negate a `{other}`"));
+                        }
+                    }
                     return error_expr(span);
                 }
                 let ty = e.ty.clone();
@@ -207,7 +359,28 @@ impl FnCx<'_> {
             ast::UnOp::Not => {
                 let e = self.expr(operand, expect.filter(|t| t.is_int() || **t == Ty::Bool));
                 if !matches!(e.ty, Ty::Bool | Ty::Int(_) | Ty::Error | Ty::Never) {
-                    self.diags.error(Code::TYPE_MISMATCH, span, format!("`!` cannot be applied to `{}`", e.ty));
+                    // A user type takes part through `Not` (`spec/operators.md`, OP4).
+                    if let Some(ops) = self.globals.op_ifaces
+                        && let Some(call) = self.overloaded_unary(ops.not, "not", e.clone(), span)
+                    {
+                        return call;
+                    }
+                    match &e.ty {
+                        Ty::Param(_) | Ty::Struct(_) | Ty::Enum(_) => {
+                            let reason = match &e.ty {
+                                Ty::Param(_) => "its bounds do not provide `Not`",
+                                _ => "it does not implement `Not`",
+                            };
+                            self.diags.error(
+                                Code::BOUND_NOT_SATISFIED,
+                                span,
+                                format!("`!` is not available on `{}`: {reason}", e.ty),
+                            );
+                        }
+                        other => {
+                            self.diags.error(Code::TYPE_MISMATCH, span, format!("`!` cannot be applied to `{other}`"));
+                        }
+                    }
                     return error_expr(span);
                 }
                 let ty = e.ty.clone();
@@ -243,7 +416,11 @@ impl FnCx<'_> {
             }
             ast::UnOp::Ref | ast::UnOp::RefMut => {
                 let mutable = op == ast::UnOp::RefMut;
+                // `&mut place` writes through its place, so an index on a user type lowers to `index_mut`.
+                let saved = self.write_place;
+                self.write_place = mutable;
                 let place = self.expr(operand, None);
+                self.write_place = saved;
                 if place.ty == Ty::Error {
                     return error_expr(span);
                 }

@@ -42,6 +42,9 @@ struct Checker<'a> {
     loans: Vec<Loan>,
     /// The top-level statement being checked.
     stmt: usize,
+    /// Set while a call under `*` is checked: its reference result is consumed by the dereference, so no result
+    /// loan is recorded for it (`spec/operators.md`, OP10).
+    skip_result_loan: bool,
     reported: Vec<Span>,
     diags: &'a mut Diagnostics,
 }
@@ -55,7 +58,16 @@ pub(crate) fn check(f: &tir::Function, env: Env, diags: &mut Diagnostics) {
     if let Some(tail) = &f.body.tail {
         uses_expr(tail, f.body.stmts.len(), &mut last_use);
     }
-    let mut cx = Checker { env, locals: &f.locals, last_use, loans: Vec::new(), stmt: 0, reported: Vec::new(), diags };
+    let mut cx = Checker {
+        env,
+        locals: &f.locals,
+        last_use,
+        loans: Vec::new(),
+        stmt: 0,
+        skip_result_loan: false,
+        reported: Vec::new(),
+        diags,
+    };
     cx.body(&f.body);
 }
 
@@ -114,7 +126,15 @@ impl<'a> Checker<'a> {
         use tir::ExprKind as K;
         match &e.kind {
             K::Local(_) => {}
-            K::Field(base, _) | K::Deref(base) | K::PtrDeref(base) | K::DerefRef(base) => self.place_subexpr(base),
+            // A reference returned by a call and consumed by `*` lasts only for this access: its result loan is
+            // skipped, and a re-borrow of the referent is recorded through the call's origin by `add_loan`.
+            K::DerefRef(base) => {
+                let saved = self.skip_result_loan;
+                self.skip_result_loan = true;
+                self.place_subexpr(base);
+                self.skip_result_loan = saved;
+            }
+            K::Field(base, _) | K::Deref(base) | K::PtrDeref(base) => self.place_subexpr(base),
             K::Index(base, index) => {
                 self.place_subexpr(base);
                 self.expr(index, Mode::Use);
@@ -125,8 +145,31 @@ impl<'a> Checker<'a> {
 
     /// Records a loan on the place `e`, if it is one. Its holders are attached by the enclosing `let`.
     fn add_loan(&mut self, e: &tir::Expr, mutable: bool) {
-        if let Some((root, path, _)) = burdin_tir::place::tir_place(e) {
+        let place =
+            burdin_tir::place::tir_place(e).map(|(root, path, _)| (root, path)).or_else(|| self.reference_origin(e));
+        if let Some((root, path)) = place {
             self.loans.push(Loan { root, path, mutable, holders: Vec::new(), start: self.stmt });
+        }
+    }
+
+    /// The storage a borrowed expression views when it is not itself a plain place: a call's reference result
+    /// derives from its origin argument (RF5). A user `Index` implementation lowers to exactly such a call, so a
+    /// re-borrow of an element (`&mut v[i]`) is tracked against the container (`spec/operators.md`, OP10).
+    fn reference_origin(&self, e: &tir::Expr) -> Option<(LocalId, Vec<usize>)> {
+        use tir::ExprKind as K;
+        match &e.kind {
+            K::DerefRef(base) | K::Field(base, _) => self.reference_origin(base),
+            K::Call(f, args) => {
+                let sig = self.env.sigs.get(f.0)?;
+                if !sig.ret.is_second_class() {
+                    return None;
+                }
+                let arg = args.get(sig.ret_origin?)?;
+                burdin_tir::place::tir_place(arg)
+                    .map(|(root, path, _)| (root, path))
+                    .or_else(|| self.reference_origin(arg))
+            }
+            _ => None,
         }
     }
 
@@ -472,7 +515,8 @@ impl<'a> Checker<'a> {
         }
         // A second-class result derived from an argument keeps that argument borrowed until the last use of the
         // result (RF5).
-        if sig.ret.is_second_class()
+        if !self.skip_result_loan
+            && sig.ret.is_second_class()
             && let Some(index) = sig.ret_origin
             && let Some(param) = sig.params.get(index)
             // A result that derives from an `own` parameter borrows from a value the callee drops, which the

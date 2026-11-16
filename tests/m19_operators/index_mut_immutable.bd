@@ -1,0 +1,26 @@
+//@ compile-fail
+
+// `index_mut` takes `mut self`, so assigning through an index needs a mutable binding (E0113,
+// spec/operators.md OP10).
+
+struct Row {
+    cells: [i32; 3]
+}
+
+Row: Index<i32> {
+    fn index(self, i: usize): &i32 {
+        &self.cells[i]
+    }
+}
+
+Row: IndexMut<i32> {
+    fn index_mut(mut self, i: usize): &mut i32 {
+        &mut self.cells[i]
+    }
+}
+
+fn main() {
+    let r = Row { cells: [1, 2, 3] }
+    r[0] = 5 //~ E0113
+    println(r[0].to_string())
+}

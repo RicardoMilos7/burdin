@@ -1,0 +1,61 @@
+//@ run
+//> 4
+//> 6
+//> 10
+//> 10
+
+// Operators in a generic body are checked against the bounds and monomorphized like a method call
+// (spec/operators.md OP6). `Pair<T>: Add` is a generic interface impl.
+
+struct Meter {
+    value: i32
+}
+
+Meter: Add {
+    fn add(self, other: Meter): Meter {
+        Meter { value: self.value + other.value }
+    }
+}
+
+struct Pair<T> {
+    a: T
+    b: T
+}
+
+Pair<T>: Add where T: Add {
+    fn add(self, other: Pair<T>): Pair<T> {
+        Pair { a: self.a + other.a, b: self.b + other.b }
+    }
+}
+
+fn combine<T: Add>(a: T, b: T): T {
+    a + b
+}
+
+struct Bag<T> {
+    items: List<T>
+}
+
+Bag<T>: Index<T> {
+    fn index(self, i: usize): &T {
+        &self.items[i]
+    }
+}
+
+fn first<T: Index<i32>>(v: T): i32 {
+    v[0]
+}
+
+fn main() {
+    let p = combine(
+        Pair { a: Meter { value: 1 }, b: Meter { value: 2 } },
+        Pair { a: Meter { value: 3 }, b: Meter { value: 4 } },
+    )
+    println(p.a.value.to_string())
+    println(p.b.value.to_string())
+
+    let mut bag = Bag<i32> { items: List<i32>.new() }
+    bag.items.push(10)
+    println(bag[0].to_string())
+    println(first(bag).to_string())
+}

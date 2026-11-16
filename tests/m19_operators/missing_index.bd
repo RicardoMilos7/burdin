@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// `x[i]` on a user type needs `Index<T>` (E0141, spec/operators.md OP9).
+
+struct Plain {
+    n: i32
+}
+
+fn main() {
+    let a = Plain { n: 1 }
+    let b = a[0] //~ E0141
+    println(b.to_string())
+}

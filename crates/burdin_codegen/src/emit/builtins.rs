@@ -321,7 +321,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         if m == Method::Clone {
             let recv_ty = args[0].ty.clone();
-            let src = match self.direct_place_ptr(&args[0])? {
+            // A place is cloned from its storage. A reference dereference is a place even when the reference
+            // came from a call (a user `Index`), so the referent is read without a temporary drop
+            // (`spec/operators.md`, OP9). A non-place receiver is evaluated once into a temporary.
+            let src = match self.place_ptr(&args[0])? {
                 Some(ptr) => ptr,
                 None => {
                     let v = self.expr_mode(&args[0], Mode::Use)?;

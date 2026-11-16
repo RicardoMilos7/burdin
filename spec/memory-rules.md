@@ -14,7 +14,10 @@ stage 1 (`stage1-subset.md`).
 **Place.** A local variable or parameter, followed by zero or more struct-field or tuple-field selections:
 `x`, `p.a`, `o.inner.b`, `t.0`. A place never continues through indexing, a `Heap` dereference, a reference
 dereference, or a method call. `xs[i]`, `(*h).a`, and `r.a` through a reference are each treated as one place rooted at
-the whole expression's base (`xs`, `h`, `r`).
+the whole expression's base (`xs`, `h`, `r`). A user type's `x[i]` is a place too: it lowers to `*x.index(i)` (or
+`*x.index_mut(i)` when it is written), so the element is a view of `x` and the ordinary borrow, move, and exclusivity
+rules apply to it; a non-`Copy` element cannot be moved out, and two elements of one container are one place
+(`spec/operators.md`, OP9-OP10).
 
 **Overlap.** Two places overlap when one is a prefix of the other (including equal). `p` and `p.a` overlap, `p.a` and `p.b` do not.
 

@@ -5,7 +5,7 @@
 //! modules themselves under the names they are used with (`env.args()`, `process.exit()`). A module keeps its
 //! own declaration or `use` when a prelude name would collide.
 
-use crate::globals::{Global, TypeName};
+use crate::globals::{Global, OpIfaces, TypeName};
 use crate::session::Sema;
 
 impl Sema<'_> {
@@ -29,6 +29,26 @@ impl Sema<'_> {
         self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
         self.globals.display_iface = find_iface(&self.globals, "Display");
         self.globals.debug_iface = find_iface(&self.globals, "Debug");
+        // The operator interfaces (`spec/operators.md`, OP2). All of them must be present; a standard library that
+        // replaces the embedded one without them leaves the built-in operators only.
+        self.globals.op_ifaces = (|| {
+            Some(OpIfaces {
+                add: find_iface(&self.globals, "Add")?,
+                sub: find_iface(&self.globals, "Sub")?,
+                mul: find_iface(&self.globals, "Mul")?,
+                div: find_iface(&self.globals, "Div")?,
+                rem: find_iface(&self.globals, "Rem")?,
+                bitand: find_iface(&self.globals, "BitAnd")?,
+                bitor: find_iface(&self.globals, "BitOr")?,
+                bitxor: find_iface(&self.globals, "BitXor")?,
+                neg: find_iface(&self.globals, "Neg")?,
+                not: find_iface(&self.globals, "Not")?,
+                partial_eq: find_iface(&self.globals, "PartialEq")?,
+                partial_ord: find_iface(&self.globals, "PartialOrd")?,
+                index: find_iface(&self.globals, "Index")?,
+                index_mut: find_iface(&self.globals, "IndexMut")?,
+            })
+        })();
         // The error surface: the `Error` marker interface, the dynamic `Error` value, and the helpers that build
         // one (`spec/errors.md`, ERR4). Everything is optional, so a program without `std` still checks.
         self.globals.error_iface = find_iface(&self.globals, "Error");

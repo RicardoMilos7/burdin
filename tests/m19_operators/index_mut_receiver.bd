@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// `x[i]` yields the element through the read-only `index` view, so calling a `mut self` method on it needs a
+// mutable place: write `&mut x[i]` first (E0113, spec/operators.md OP10, OP13).
+
+struct Words {
+    parts: List<String>
+}
+
+Words: Index<String> {
+    fn index(self, i: usize): &String {
+        &self.parts[i]
+    }
+}
+
+fn main() {
+    let mut w = Words { parts: List<String>.new() }
+    w.parts.push(String.from("hi"))
+    w[0].push_str("!") //~ E0113
+}

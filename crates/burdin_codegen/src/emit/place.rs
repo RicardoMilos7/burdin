@@ -187,14 +187,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 }
 
 /// A local, possibly followed by fields, indexing, and dereferences: its storage outlives the current statement.
+/// A reference dereference is always a place, even when the reference came from a call (a user `Index`
+/// implementation returns one, `spec/operators.md` OP9): the referent belongs to someone else's storage, so
+/// reading it must not record a temporary drop.
 pub(super) fn is_place(e: &tir::Expr) -> bool {
     match &e.kind {
-        tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _)
-        | tir::ExprKind::Index(base, _)
-        | tir::ExprKind::Deref(base)
-        | tir::ExprKind::PtrDeref(base)
-        | tir::ExprKind::DerefRef(base) => is_place(base),
+        tir::ExprKind::Local(_) | tir::ExprKind::DerefRef(_) | tir::ExprKind::PtrDeref(_) => true,
+        tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) | tir::ExprKind::Deref(base) => is_place(base),
         _ => false,
     }
 }

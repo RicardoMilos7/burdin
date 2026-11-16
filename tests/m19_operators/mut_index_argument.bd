@@ -1,0 +1,51 @@
+//@ run
+//> 3
+//> 4
+//> 2
+//> 9
+
+// Passing `mut x[i]` to a `mut` parameter writes through `index_mut` (spec/operators.md OP10). The same holds
+// for an index write inside a generic body with an `IndexMut` bound.
+
+struct Row {
+    cells: [i32; 3]
+}
+
+Row: Index<i32> {
+    fn index(self, i: usize): &i32 {
+        &self.cells[i]
+    }
+}
+
+Row: IndexMut<i32> {
+    fn index_mut(mut self, i: usize): &mut i32 {
+        &mut self.cells[i]
+    }
+}
+
+fn bump(mut x: i32) {
+    x = x + 1
+}
+
+fn set_first<T: IndexMut<i32>>(mut v: T, x: i32) {
+    v[0] = x
+}
+
+fn main() {
+    let mut r = Row { cells: [1, 2, 3] }
+    bump(mut r[0])
+    bump(mut r[0])
+    println(r[0].to_string())
+
+    let mut s = r
+    bump(mut s[2])
+    println(s[2].to_string())
+
+    // A read still uses `index`, so an immutable binding is enough.
+    let t = Row { cells: [2, 0, 0] }
+    println(t[0].to_string())
+
+    let mut q = Row { cells: [1, 1, 1] }
+    set_first(mut q, 9)
+    println(q[0].to_string())
+}

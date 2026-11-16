@@ -1,0 +1,38 @@
+//@ run
+//> 3
+//> 4
+//> 7
+//> -3
+//> 3
+
+// An overloaded operator borrows its operands, including the receiver: `a + b` and `-a` leave every operand
+// usable (spec/operators.md OP2, OP8).
+
+struct Meter {
+    v: i32
+}
+
+Meter: Add {
+    fn add(self, other: Meter): Meter {
+        Meter { v: self.v + other.v }
+    }
+}
+
+Meter: Neg {
+    fn neg(self): Meter {
+        Meter { v: -self.v }
+    }
+}
+
+fn main() {
+    let a = Meter { v: 3 }
+    let b = Meter { v: 4 }
+    let c = a + b
+    println(a.v.to_string())
+    println(b.v.to_string())
+    println(c.v.to_string())
+
+    let d = -a
+    println(d.v.to_string())
+    println(a.v.to_string())
+}

@@ -1,0 +1,36 @@
+//@ run
+//> 2
+//> 7
+//> 5
+
+// `BitAnd`, `BitOr`, and `BitXor` overload the binary bitwise operators (spec/operators.md OP1-OP3).
+
+struct Bits {
+    v: u8
+}
+
+Bits: BitAnd {
+    fn bitand(self, other: Bits): Bits {
+        Bits { v: self.v & other.v }
+    }
+}
+
+Bits: BitOr {
+    fn bitor(self, other: Bits): Bits {
+        Bits { v: self.v | other.v }
+    }
+}
+
+Bits: BitXor {
+    fn bitxor(self, other: Bits): Bits {
+        Bits { v: self.v ^ other.v }
+    }
+}
+
+fn main() {
+    let a = Bits { v: 6 }
+    let b = Bits { v: 3 }
+    println((a & b).v.to_string())
+    println((a | b).v.to_string())
+    println((a ^ b).v.to_string())
+}

@@ -76,7 +76,7 @@ impl FnCx<'_> {
             let hint = generic_hint(globals, &p.ty, &info.params, &info.bounds, &bindings);
             let e = match pre.as_ref().and_then(|pre| pre.get(ai)) {
                 Some(e) => e.clone(),
-                None => self.expr(&args[ai].expr, hint.as_ref()),
+                None => self.expr_arg(&args[ai].expr, hint.as_ref(), p.mut_param),
             };
             globals.unify(&p.ty, &e.ty, &mut bindings);
             checked[ai] = Some(e);
@@ -527,7 +527,7 @@ impl FnCx<'_> {
         for (i, p) in pattern.params[1..].iter().enumerate() {
             let Some(ai) = slots[i] else { continue };
             let hint = generic_hint(globals, &p.ty, &params, &bounds, &bindings);
-            let e = self.expr(&args[ai].expr, hint.as_ref());
+            let e = self.expr_arg(&args[ai].expr, hint.as_ref(), p.mut_param);
             globals.unify(&p.ty, &e.ty, &mut bindings);
             checked[ai] = Some(e);
         }
@@ -646,7 +646,7 @@ impl FnCx<'_> {
         for (i, p) in pattern.params[1..].iter().enumerate() {
             let Some(ai) = slots[i] else { continue };
             let hint = generic_hint(globals, &p.ty, &params, &bounds, &bindings);
-            let e = self.expr(&args[ai].expr, hint.as_ref());
+            let e = self.expr_arg(&args[ai].expr, hint.as_ref(), p.mut_param);
             globals.unify(&p.ty, &e.ty, &mut bindings);
             checked[ai] = Some(e);
         }

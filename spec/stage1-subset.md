@@ -108,6 +108,15 @@ in modules that import it by name, that a call tries the type's methods before a
 shadowed extension gets a warning at its declaration). The new diagnostics are E0215 (a warning: a shadowed
 extension method) and E0216 (an invalid extension declaration or import).
 
+Milestone 19 is complete: `tests/m19_operators` and every earlier folder pass in debug and release, and the rules
+are recorded in `spec/operators.md` OP1-OP13 (the decisions that the operator interfaces are ordinary `std`
+interfaces declared in `std.ops`, with same-type operands and no mixed types; that the built-in operators and the
+`Eq`/`Ord` derives always win; that `PartialEq`/`PartialOrd` are new interfaces rather than the derive-only `Eq` and
+`Ord`; that `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`; and that
+compound assignment and shifts are not overloadable). The existing diagnostics E0141 (a missing operator or index
+implementation), E0113 (`index_mut` through an immutable place), E0101 (moving out of an indexed element), and E0003
+(wrong operand types) cover the new rejections; no new error code was needed.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -208,9 +217,17 @@ code; do not invent them inside the implementation.
    the position of its parameter. The rules are `spec/arguments.md` AG1-AG7 and the tests are
    `tests/m17_arguments/`.
 
-8. **Operator overloading and `Index`.** The interface set and names (`Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`,
-   `Not`, comparisons, `Index`/`IndexMut`), whether compound assignment is included (currently "when wanted"), and
-   how an overloaded operator interacts with the built-in one during type checking.
+8. **Operator overloading and `Index` — settled with milestone 19.** The operator interfaces are the ordinary
+   `std` interfaces `Add`, `Sub`, `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `PartialEq`,
+   `PartialOrd`, `Index<T>`, and `IndexMut<T>`, declared in `std/src/ops.bd` and visible through the prelude. Each
+   takes the same type on both sides and is implemented at most once per type. The stage 0 built-in rule, and a
+   derived `Eq`/`Ord`, is always tried first; a user type falls back to its interface implementation, and a type
+   parameter to its bounds. Comparisons use new `PartialEq`/`PartialOrd` interfaces rather than the derive-only
+   `Eq`/`Ord`, so every stage 0 derive keeps its exact behavior. `Index<T>`/`IndexMut<T>` name the element type,
+   take a `usize`, and return `&T`/`&mut T`, which makes `x[i]` a place; a write selects `index_mut` and requires a
+   mutable receiver. A literal never adopts a user type (`v + 1` is E0003). Compound assignment and the shift
+   operators are not overloadable. The rules are `spec/operators.md` OP1-OP13 and the tests are
+   `tests/m19_operators/`.
 
 9. **Extension methods — settled with milestone 18.** An extension `fn Type.name(self, ...)` is visible in its
    declaring module and in modules that import it by name; importing a module or another item does not bring it.
