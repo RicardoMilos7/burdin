@@ -1,0 +1,156 @@
+// Allocators: the interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`).
+//
+// The compiler provides the primitives that reach the C heap (`__alloc`, `__realloc`, and `__dealloc`); the
+// allocators a program sees are ordinary Burdin values. A container stores the allocator value it was given, so
+// an arena (and everything allocated in it) lives exactly as long as the containers that own it.
+
+/// An allocator: where a container's buffer comes from. `size` is at least one byte and `align` is a power of
+/// two no larger than eight (every Burdin type's alignment).
+interface Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8>
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8>
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize)
+}
+
+/// The default allocator, stored nowhere: a container made with `.new()` uses it, and its buffer belongs to the
+/// C heap. It is zero-sized, so `List<T>` has the same layout as `List<T, Global>`.
+struct Global { }
+
+Global: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe { __dealloc(ptr, size, align) }
+    }
+}
+
+/// A bump allocator: `allocate` hands out the next bytes of a block, and `deallocate` does nothing. Dropping or
+/// resetting the arena frees every block at once, so the cost of freeing is paid once and no allocation is
+/// tracked individually. A container keeps the arena alive by owning it.
+struct Arena {
+    /// The blocks that are already full of handed-out memory.
+    blocks: List<CPtr<u8>>
+    /// The start of the current block, which `reset` and `drop` free.
+    block: CPtr<u8>
+    /// The next byte of the current block.
+    current: CPtr<u8>
+    /// How many bytes of the current block are left.
+    remaining: usize
+    /// How many bytes this arena has handed out since its last reset, for tests and diagnostics.
+    used: usize
+    /// The size of a new block when the request fits the default.
+    chunk: usize
+}
+
+Arena {
+    /// An empty arena. Its first block is allocated on the first `allocate`.
+    fn new(): Arena {
+        unsafe {
+            Arena {
+                blocks: List<CPtr<u8>>.new(),
+                block: CPtr.null(),
+                current: CPtr.null(),
+                remaining: 0,
+                used: 0,
+                chunk: 4096
+            }
+        }
+    }
+
+    /// The number of bytes this arena has handed out since the last reset.
+    fn bytes_allocated(self): usize {
+        self.used
+    }
+
+    /// Frees every block and leaves the arena empty but usable. Any buffer it handed out is invalid after this
+    /// call; a container that owns the arena keeps it from being called while the buffer is alive.
+    fn reset(mut self) {
+        unsafe {
+            if !self.block.is_null() {
+                __dealloc(self.block, self.chunk, 8)
+            }
+            while self.blocks.len() > 0 {
+                let block = self.blocks.pop().unwrap()
+                __dealloc(block, self.chunk, 8)
+            }
+            self.block = CPtr.null()
+            self.current = CPtr.null()
+        }
+        self.remaining = 0
+        self.used = 0
+    }
+}
+
+Arena: Allocator {
+    /// Bump-allocates `size` bytes rounded up to eight, growing by a block when the current one is exhausted.
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        let mut need = size
+        if need == 0 {
+            need = 1
+        }
+        // Every Burdin type's alignment is at most eight, and `malloc` returns sixteen-aligned memory.
+        need = (need + 7) / 8 * 8
+        unsafe {
+            if self.remaining < need {
+                let mut block_size = self.chunk
+                if block_size < need {
+                    block_size = need
+                }
+                let block = __alloc(block_size, align)
+                if block.is_null() {
+                    panic("arena: allocation failed")
+                }
+                if !self.block.is_null() {
+                    self.blocks.push(self.block)
+                }
+                self.block = block
+                self.current = block
+                self.remaining = block_size
+            }
+            let p = self.current
+            self.current = p + need
+            self.remaining = self.remaining - need
+            self.used = self.used + need
+            p
+        }
+    }
+
+    /// Allocates a new block and copies the smaller of the two sizes into it; the old memory stays part of its
+    /// block and is released with it.
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe {
+            let p = self.allocate(new_size, align)
+            let mut n = old_size
+            if new_size < old_size {
+                n = new_size
+            }
+            let mut i: usize = 0
+            while i < n {
+                *(p + i) = *(ptr + i)
+                i = i + 1
+            }
+            p
+        }
+    }
+
+    /// Arena memory is released in blocks, so an individual free is a no-op.
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe {
+            let _ = ptr
+            let _ = size
+            let _ = align
+        }
+    }
+}
+
+Arena: Drop {
+    fn drop(mut self) {
+        self.reset()
+    }
+}

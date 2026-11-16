@@ -24,6 +24,21 @@ pub enum Builtin {
     StringFrom,
     /// `Heap.new(value)`: allocates and moves `value` into a fresh heap allocation.
     HeapNew,
+    /// `Shared.new(value)`: allocates a reference-counted cell holding `value` (`spec/allocators.md`, AL8).
+    SharedNew,
+    /// `List<T>.new_in(alloc)`: an empty list whose buffer uses the allocator value (`spec/allocators.md`, AL5).
+    ListNewIn,
+    /// `Map<K, V>.new_in(alloc)`.
+    MapNewIn,
+    /// `Heap.new_in(alloc, value)`: one heap allocation through the allocator value.
+    HeapNewIn,
+    /// `__alloc(size, align, site)`: a `Global` allocation, panicking when it fails. The site is the source
+    /// location the checking allocator records for a leak report (`spec/allocators.md`, AL9).
+    RawAlloc,
+    /// `__realloc(ptr, old_size, new_size, align, site)`: grows or shrinks a `Global` allocation.
+    RawRealloc,
+    /// `__dealloc(ptr, size, align)`: frees a `Global` allocation.
+    RawDealloc,
     /// `CPtr.null()`: a null C pointer, typed by the expected type.
     CPtrNull,
     /// `CString.from(str)`: a new NUL-terminated copy of the bytes in the C heap.
@@ -146,6 +161,10 @@ pub enum Method {
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.
     Hash,
+    /// `shared.get(): &T`: a view of the value a `Shared<T>` owns (`spec/allocators.md`, AL8).
+    SharedGet,
+    /// `shared.strong_count(): usize`: how many owners the `Shared<T>` has.
+    SharedStrongCount,
 }
 
 impl Method {
@@ -183,7 +202,10 @@ impl Method {
 
     /// Whether the result is a view derived from the receiver.
     pub fn result_borrows_receiver(self) -> bool {
-        matches!(self, Method::ListLast | Method::MapGet | Method::Chars | Method::Iter | Method::IterNext)
+        matches!(
+            self,
+            Method::ListLast | Method::MapGet | Method::Chars | Method::Iter | Method::IterNext | Method::SharedGet
+        )
     }
 }
 

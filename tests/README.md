@@ -5,8 +5,8 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (tasks, leak detection, allocator
-parameters) has **no tests here** yet.
+Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (the standard library's remaining
+containers, tasks, and the concurrency stage) has **no tests here** yet.
 
 ## Layout
 
@@ -35,6 +35,7 @@ tests/
   m21_reflect/         reflection members, user derives, const generics, embed, generic aliases, impls for
                        specific instances
   m22_build/           build.bd, dependency grants, generated modules, the minimal bindgen
+  m23_allocators/      allocator parameters, Arena, Shared<T>, leak detection, allocator-aware containers
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -236,6 +237,9 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0260 | Invalid build configuration: a dependency has a `build.bd` that the entry package's `[build] allow` list does not name, or the list names a package that is not a dependency |
 | E0261 | A build script failed: it did not compile, could not be run, or ended with a non-zero status |
 | E0262 | Invalid generated modules: a generated path is not a module name, a generated module repeats a source module's name, or the output directory cannot be read |
+| E0270 | An allocator-aware container whose allocator type does not implement `Allocator` |
+| E0271 | Invalid default type parameter: a parameter without a default after one with a default, a const parameter's default, or a default on a declaration that takes none (a function, an interface, or a type alias) |
+| E0272 | A container with a stored allocator created with `new`, which has no allocator value to store; it is made with `new_in` |
 
 ### Codes without a compile-fail test
 
@@ -464,6 +468,30 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     records their contents per package and profile. `burdin bindgen <header> --out <file>` is the minimal C
     declaration generator a script may invoke: functions as `extern "C"`, `repr(C)` structs, typedefs, enums and
     object-like `#define`s. `spec/build-scripts.md` BS1-BS8, `tests/m22_build/`.
+
+30. **Allocators, arenas, and `Shared`.** The allocator is an ordinary value and an ordinary generic parameter:
+    `std.alloc.Allocator` has `allocate`, `reallocate`, and `deallocate` (all `mut self`), and
+    `List<T, A = Global>`, `Map<K, V, A = Global>`, and `Heap<T, A = Global>` take it as their last type
+    argument. `Global` is zero-sized and stored nowhere, so the stage 0 spellings and layouts are unchanged;
+    any other allocator (`Arena`) is stored in the container as a field the container owns. A container with a
+    stored allocator is made with `new_in`, which moves the allocator value in; `new` exists only for `Global`,
+    and using it where an allocator would have to be stored is E0272; an allocator argument or value that does
+    not implement `Allocator` is E0270. A type may give its trailing type parameters defaults
+    (`struct Buffer<A: Allocator = Global>`), resolved where the type is declared; a non-trailing default, a
+    const parameter's default, and a default on a function, interface, or alias are E0271. An inherent or
+    `Drop` impl written with no arguments covers every instance, defaults included. `Arena` is a first-class
+    bump allocator with 4096-byte blocks, `bytes_allocated`, and `reset`; dropping it frees every block, and it
+    is not second-class, because every safe way to get an arena-backed buffer makes the container own the
+    arena. Dropping a container frees its buffer through its allocator and then drops the allocator; cloning
+    requires the allocator to be `Clone` and allocates the copy through the cloned value; owning iterators
+    carry the allocator. `Shared<T>` is a non-atomic reference-counted cell `{count, value}` from `Global`:
+    `.clone()` shares it, `.get()` reads it, `.strong_count()` counts, the last owner drops the value and frees
+    the cell; it is `Clone` for every `T` and never `Copy`, and stage 2 makes the count atomic and adds `Send`.
+    A `burdin test` build uses a checking allocator with a 40-byte header: a double free panics, and an
+    allocation still live when an otherwise passing test returns is reported (`test leak: ...`,
+    `allocated at path:line:column`) and fails that test. At compile time containers are modeled, `Shared` is a
+    transient model of its value, and explicit allocation is impure (E0224).
+    `spec/allocators.md` AL1-AL10, `tests/m23_allocators/`, `tests/runner/leaks/`.
 
 ## Review of the expected outputs
 

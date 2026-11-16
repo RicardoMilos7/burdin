@@ -1,0 +1,34 @@
+// A `burdin test` build uses the checking allocator: an allocation a test leaves live fails that test, and the
+// report names the source site the compiler recorded (`spec/allocators.md`, AL9). No `//@` directives here: the
+// black-box script runs this package.
+
+struct Leaky { }
+
+Leaky: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe {
+            let _ = ptr
+            let _ = size
+            let _ = align
+        }
+    }
+}
+
+test "leaks" {
+    let mut xs = List<i32>.new_in(Leaky { })
+    xs.push(1)
+}
+
+test "clean" {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    assert_eq(xs.len(), 1)?
+}

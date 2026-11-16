@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// A type alias's parameters take no default (E0271).
+
+type Pair<T = i32> = (T, T) //~ E0271
+
+fn main() { }

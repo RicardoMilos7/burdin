@@ -112,7 +112,7 @@ impl FnCx<'_> {
             iterable.ty,
             Ty::Array(..)
                 | Ty::Slice(_)
-                | Ty::List(_)
+                | Ty::List(_, _)
                 | Ty::Map(..)
                 | Ty::Chars
                 | Ty::Range(..)
@@ -157,8 +157,8 @@ impl FnCx<'_> {
         let (elem, kind) = match &iterable.ty {
             Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
             Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
-            Ty::List(t) => ((**t).clone(), ForKind::List),
-            Ty::Map(k, v) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
+            Ty::List(t, _) => ((**t).clone(), ForKind::List),
+            Ty::Map(k, v, _) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
             Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
             Ty::Chars => (Ty::Char, ForKind::Chars),
             Ty::Range(t, _) => ((**t).clone(), ForKind::Range),

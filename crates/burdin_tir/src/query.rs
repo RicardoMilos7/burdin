@@ -66,15 +66,31 @@ impl TypeDefs<'_> {
             // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
             Ty::CPtr(_) => true,
             // An iterator advances through its state, so it is never copied or cloned.
-            Ty::ListIntoIter(_) | Ty::ArrayIntoIter(..) | Ty::MapIter(..) | Ty::MapIntoIter(..) | Ty::RangeIter(..) => {
-                false
-            }
+            Ty::ListIntoIter(..)
+            | Ty::ArrayIntoIter(..)
+            | Ty::MapIter(..)
+            | Ty::MapIntoIter(..)
+            | Ty::RangeIter(..) => false,
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
-            Ty::String | Ty::Heap(_) | Ty::CString => prop == Property::Clone,
-            // A list or a map owns its buffer, so it is never `Copy`; it can be deep-cloned when its elements can.
-            Ty::List(t) => prop == Property::Clone && self.holds(t, prop, seen),
-            Ty::Map(k, v) => prop == Property::Clone && self.holds(k, prop, seen) && self.holds(v, prop, seen),
+            Ty::String | Ty::CString => prop == Property::Clone,
+            // A heap clones its allocator value and the pointee; the default allocator stores no value.
+            Ty::Heap(_, a) => prop == Property::Clone && a.allocator_ty().is_none_or(|a| self.holds(a, prop, seen)),
+            // A `Shared<T>` is cloned by sharing (a reference-count increase), whatever `T` is.
+            Ty::Shared(_) => prop == Property::Clone,
+            // A list or a map owns its buffer, so it is never `Copy`; it can be deep-cloned when its elements and
+            // its allocator value can.
+            Ty::List(t, a) => {
+                prop == Property::Clone
+                    && self.holds(t, prop, seen)
+                    && a.allocator_ty().is_none_or(|a| self.holds(a, prop, seen))
+            }
+            Ty::Map(k, v, a) => {
+                prop == Property::Clone
+                    && self.holds(k, prop, seen)
+                    && self.holds(v, prop, seen)
+                    && a.allocator_ty().is_none_or(|a| self.holds(a, prop, seen))
+            }
             Ty::Param(_) | Ty::Const(_) => false,
             // An `any` box owns a heap allocation and cannot be copied or cloned (AN1).
             Ty::Any(_) => false,
@@ -126,11 +142,12 @@ impl TypeDefs<'_> {
             Ty::Any(_) => true,
             // An owning iterator frees its buffer (or drops the elements it has not handed out).
             Ty::String
-            | Ty::Heap(_)
+            | Ty::Heap(..)
             | Ty::CString
-            | Ty::List(_)
+            | Ty::List(..)
             | Ty::Map(..)
-            | Ty::ListIntoIter(_)
+            | Ty::Shared(_)
+            | Ty::ListIntoIter(..)
             | Ty::MapIntoIter(..) => true,
             Ty::ArrayIntoIter(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
@@ -163,7 +180,7 @@ mod tests {
     use super::*;
     use crate::defs::{FieldDef, VariantDef, VariantShape};
     use crate::ops::FuncId;
-    use crate::ty::{AdtRef, IntTy};
+    use crate::ty::{AdtRef, Alloc, IntTy};
     use burdin_diag::{FileId, Span};
 
     fn span() -> Span {
@@ -208,7 +225,7 @@ mod tests {
         assert!(defs.is_copy(&Ty::Ref { mutable: false, inner: Box::new(Ty::String) }));
         assert!(!defs.is_copy(&Ty::Ref { mutable: true, inner: Box::new(int()) }), "a &mut is not Copy");
         assert!(!defs.is_copy(&Ty::String));
-        assert!(!defs.is_copy(&Ty::List(Box::new(int()))));
+        assert!(!defs.is_copy(&Ty::List(Box::new(int()), crate::ty::Alloc::Global)));
     }
 
     #[test]
@@ -240,11 +257,41 @@ mod tests {
     fn clone_follows_the_parts() {
         let defs = TypeDefs { structs: &[], enums: &[] };
         assert!(defs.is_clone(&Ty::String));
-        assert!(defs.is_clone(&Ty::Heap(Box::new(int()))));
-        assert!(defs.is_clone(&Ty::List(Box::new(Ty::String))));
-        assert!(defs.is_clone(&Ty::List(Box::new(Ty::CString))));
+        assert!(defs.is_clone(&Ty::Heap(Box::new(int()), crate::ty::Alloc::Global)));
+        assert!(defs.is_clone(&Ty::List(Box::new(Ty::String), crate::ty::Alloc::Global)));
+        assert!(defs.is_clone(&Ty::List(Box::new(Ty::CString), crate::ty::Alloc::Global)));
         assert!(defs.is_clone(&Ty::CString));
         assert!(defs.is_clone(&Ty::Ref { mutable: true, inner: Box::new(int()) }));
+    }
+
+    #[test]
+    fn a_stored_allocator_follows_the_clone_rules() {
+        // A container with a stored allocator clones that value too (spec/allocators.md, AL7), so a non-Clone
+        // allocator makes the container non-Clone, while `Global` stores nothing.
+        let structs = [
+            struct_def("Pool", vec![], derives(false, true), None),
+            struct_def("Raw", vec![], derives(false, false), None),
+        ];
+        let defs = TypeDefs { structs: &structs, enums: &[] };
+        let pool = Alloc::Value(Box::new(Ty::Struct(adt("Pool", 0))));
+        let raw = Alloc::Value(Box::new(Ty::Struct(adt("Raw", 1))));
+        assert!(defs.is_clone(&Ty::List(Box::new(int()), pool.clone())));
+        assert!(defs.is_clone(&Ty::Map(Box::new(Ty::Str), Box::new(int()), pool.clone())));
+        assert!(defs.is_clone(&Ty::Heap(Box::new(int()), pool)));
+        assert!(!defs.is_clone(&Ty::List(Box::new(int()), raw.clone())));
+        assert!(!defs.is_clone(&Ty::Map(Box::new(Ty::Str), Box::new(int()), raw.clone())));
+        assert!(!defs.is_clone(&Ty::Heap(Box::new(int()), raw)), "a heap clones its allocator too");
+    }
+
+    #[test]
+    fn shared_is_clone_for_every_element_but_not_copy() {
+        // Cloning a `Shared<T>` shares the cell without cloning `T` (spec/allocators.md, AL8).
+        let structs = [struct_def("Plain", vec![field("x", int())], Derives::default(), None)];
+        let defs = TypeDefs { structs: &structs, enums: &[] };
+        let shared = Ty::Shared(Box::new(Ty::Struct(adt("Plain", 0))));
+        assert!(defs.is_clone(&shared), "`Plain` is not Clone, but the shared cell is");
+        assert!(!defs.is_copy(&shared));
+        assert!(defs.needs_drop(&shared));
     }
 
     #[test]
@@ -265,8 +312,8 @@ mod tests {
         assert!(defs.needs_drop(&Ty::Array(Box::new(Ty::String), 1)));
         assert!(defs.needs_drop(&Ty::Option(Box::new(Ty::String))));
         assert!(!defs.needs_drop(&Ty::Ref { mutable: false, inner: Box::new(Ty::String) }));
-        assert!(defs.needs_drop(&Ty::List(Box::new(int()))));
-        assert!(defs.needs_drop(&Ty::Map(Box::new(Ty::Str), Box::new(int()))));
+        assert!(defs.needs_drop(&Ty::List(Box::new(int()), crate::ty::Alloc::Global)));
+        assert!(defs.needs_drop(&Ty::Map(Box::new(Ty::Str), Box::new(int()), crate::ty::Alloc::Global)));
         assert!(defs.needs_drop(&Ty::CString));
     }
 

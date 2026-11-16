@@ -125,11 +125,34 @@ split a multi-byte character: the language does not check UTF-8 boundaries.
 values or two `String` values lexicographically by bytes. The operands must have the same type; `s == "x"` does not
 convert, and there is no `Ord` for a mixed pair.
 
+## Allocators
+
+```
+interface Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8>
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8>
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize)
+}
+
+struct Global { }                       // the default allocator; zero-sized, stored nowhere
+struct Arena { ... }                    // a bump allocator with blocks, reset, and bytes_allocated
+Shared<T>                               // a built-in reference-counted cell: Shared.new(value), get, strong_count
+```
+
+`Global` and `Arena` live in `std.alloc` and are visible through the prelude; they implement `Allocator`.
+`List`, `Map`, and `Heap` take an allocator as their last type argument (`List<T, A = Global>`) and store it
+when it is not `Global`; `new_in` is the constructor that takes the value (`List<T>.new_in(alloc)`,
+`Map<K, V>.new_in(alloc)`, `Heap.new_in(alloc, value)`). `Arena.new()` makes an empty arena, `bytes_allocated()`
+reports the rounded bytes handed out since the last reset, and `reset()` frees every block and leaves the arena
+usable. `Shared<T>` is shared by `clone()`, read by `get(): &T`, counted by `strong_count(): usize`, and is not
+`Copy`. The rules are [`allocators.md`](allocators.md) AL1-AL8.
+
 ## `List<T>`
 
 ```
-struct List<T> {
-    fn new(): List<T>                 // associated function: List<T>.new()
+struct List<T, A = Global> {
+    fn new(): List<T, A>              // only when A is `Global`: the allocator-free constructor
+    fn new_in(alloc: A): List<T, A>   // takes the allocator value to store (`allocators.md`, AL4)
     fn push(mut self, value: T)       // takes ownership of the value
     fn pop(mut self): Option<T>
     fn len(self): usize
@@ -140,7 +163,7 @@ struct List<T> {
     fn contains(self, value: T): bool // needs == on T
     fn sort(mut self)                 // ascending; needs < on T
     fn iter(self): [T]                // borrows: `T` if Copy, else `&T`
-    fn into_iter(own self): ListIntoIter<T>   // consumes the list
+    fn into_iter(own self): ListIntoIter<T, A>   // consumes the list, carrying the allocator
     fn map<U, F: FnMut(&T): U>(self, f: F): List<U>
     fn filter<F: FnMut(&T): bool>(self, f: F): List<T>   // needs Clone on T
     fn fold<A, F: FnMut(A, &T): A>(self, init: A, f: F): A
@@ -154,13 +177,16 @@ Indexing `xs[i]` is a place: it reads or writes one element, takes a `usize`, an
 `for x in xs` borrows the list for the loop and yields read-only element places (`memory-rules.md`, IT). `T` must be
 storable, so `List<str>` and `List<&T>` are rejected (E0120). The last six methods are the eager iteration helpers:
 they borrow the list, hand the closure a view of each element, and return owned results (`iterators.md`, IT10);
-`.any` is resolved to the `std` function named `__list_any` and spelled with the reserved word.
+`.any` is resolved to the `std` function named `__list_any` and spelled with the reserved word. Every method
+except `new` exists for every allocator argument; `List<T, A>.new()` where `A` is not `Global` is E0272 because
+the constructor has no allocator value to store (`allocators.md`, AL4).
 
 ## `Map<K, V>`
 
 ```
-struct Map<K, V> {
-    fn new(): Map<K, V>               // associated function: Map<K, V>.new()
+struct Map<K, V, A = Global> {
+    fn new(): Map<K, V, A>            // only when A is `Global`
+    fn new_in(alloc: A): Map<K, V, A> // takes the allocator value to store
     fn insert(mut self, key: K, value: V)   // replaces an existing key's value
     fn get(self, key: K): Option<&V>
     fn remove(mut self, key: K): Option<V>
@@ -168,7 +194,7 @@ struct Map<K, V> {
     fn clear(mut self)
     fn len(self): usize
     fn iter(self): MapIter<K, V>          // yields (&K, &V)
-    fn into_iter(own self): MapIntoIter<K, V>   // consumes the map, yielding (K, V)
+    fn into_iter(own self): MapIntoIter<K, V, A>   // consumes the map, yielding (K, V)
 }
 ```
 
@@ -182,8 +208,9 @@ probe cluster back instead of leaving tombstones. Keys are hashed structurally â
 ## `Heap<T>`
 
 ```
-struct Heap<T> {
-    fn new(value: T): Heap<T>         // associated function: Heap.new(value); moves the value in
+struct Heap<T, A = Global> {
+    fn new(value: T): Heap<T, A>         // only when A is `Global`; moves the value in
+    fn new_in(alloc: A, value: T): Heap<T, A>   // takes the allocator value to store
 }
 ```
 

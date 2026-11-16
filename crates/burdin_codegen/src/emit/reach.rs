@@ -53,6 +53,13 @@ impl Codegen<'_, '_> {
                 mark(*entry, &mut reachable, &mut pending);
             }
         }
+        // A container's buffer is allocated and freed through its allocator implementation, which no expression
+        // calls directly (`spec/allocators.md`, AL4).
+        for fns in &program.allocator_fns {
+            mark(fns.allocate, &mut reachable, &mut pending);
+            mark(fns.reallocate, &mut reachable, &mut pending);
+            mark(fns.deallocate, &mut reachable, &mut pending);
+        }
         let mut calls: Vec<tir::FuncId> = Vec::new();
         while let Some(i) = pending.pop() {
             calls.clear();

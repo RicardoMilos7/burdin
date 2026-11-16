@@ -311,6 +311,8 @@ impl<'t> Sema<'t> {
         validate_derives(&self.globals, &mut checks);
         diags.absorb(checks);
         let (any_ifaces, any_vtables, any_type_ids) = self.globals.any_program_ifaces();
+        let allocator_fns = self.globals.allocator_fns();
+        let global_alloc_ty = self.globals.global_alloc_ty.clone();
         let Globals { structs, enums, sigs, externs, embedded, .. } = self.globals;
         let externs = externs
             .into_iter()
@@ -335,6 +337,8 @@ impl<'t> Sema<'t> {
             any_vtables,
             any_type_ids,
             build_inputs: embedded.into_inner(),
+            allocator_fns,
+            global_alloc_ty,
         }
     }
 

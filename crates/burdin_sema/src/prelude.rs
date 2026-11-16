@@ -29,6 +29,10 @@ impl Sema<'_> {
         self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
         self.globals.display_iface = find_iface(&self.globals, "Display");
         self.globals.debug_iface = find_iface(&self.globals, "Debug");
+        // Allocators (`spec/allocators.md`): the interface a container's allocator must implement, and the
+        // zero-sized default allocator `Global` that `List<T>` means when no allocator is written.
+        self.globals.allocator_iface = find_iface(&self.globals, "Allocator");
+        self.globals.global_alloc_ty = self.globals.std_adt_ty("Global");
         // The operator interfaces (`spec/operators.md`, OP2). All of them must be present; a standard library that
         // replaces the embedded one without them leaves the built-in operators only.
         self.globals.op_ifaces = (|| {

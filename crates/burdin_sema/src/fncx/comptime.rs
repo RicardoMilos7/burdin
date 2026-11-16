@@ -110,7 +110,7 @@ impl FnCx<'_> {
         let checked = self.expr(iter, None);
         let item = match &checked.ty {
             Ty::Range(t, _) if t.is_int() => Some((**t).clone()),
-            Ty::Array(t, _) | Ty::List(t) => Some((**t).clone()),
+            Ty::Array(t, _) | Ty::List(t, _) => Some((**t).clone()),
             Ty::Error => None,
             other => {
                 self.diags.error(

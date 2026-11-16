@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// The value passed to `new_in` must implement `Allocator` (E0270, `spec/allocators.md` AL4).
+
+fn main() {
+    let xs = List<i32>.new_in(7) //~ E0270
+}

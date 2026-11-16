@@ -19,9 +19,9 @@ impl Globals {
         Some(match ty {
             Ty::Slice(elem) => Self::element_item(elem, env, self),
             Ty::Chars => Ty::Char,
-            Ty::ListIntoIter(elem) | Ty::ArrayIntoIter(elem, _) | Ty::RangeIter(elem, _) => (**elem).clone(),
+            Ty::ListIntoIter(elem, _) | Ty::ArrayIntoIter(elem, _) | Ty::RangeIter(elem, _) => (**elem).clone(),
             Ty::MapIter(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
-            Ty::MapIntoIter(key, value) => Ty::Tuple(vec![(**key).clone(), (**value).clone()]),
+            Ty::MapIntoIter(key, value, _) => Ty::Tuple(vec![(**key).clone(), (**value).clone()]),
             _ => return None,
         })
     }
@@ -29,8 +29,8 @@ impl Globals {
     /// The item type of one of the compiler-known iterable collections: what `iter()` yields.
     pub(crate) fn builtin_iterable_item(&self, ty: &Ty, env: &crate::generics::Env) -> Option<Ty> {
         Some(match ty {
-            Ty::Array(elem, _) | Ty::Slice(elem) | Ty::List(elem) => Self::element_item(elem, env, self),
-            Ty::Map(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
+            Ty::Array(elem, _) | Ty::Slice(elem) | Ty::List(elem, _) => Self::element_item(elem, env, self),
+            Ty::Map(key, value, _) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
             Ty::Chars => Ty::Char,
             Ty::Range(elem, _) => (**elem).clone(),
             _ => return None,
@@ -137,12 +137,12 @@ mod tests {
     fn builtin_collections_have_an_item_type() {
         let g = Globals::default();
         // A `Copy` element is yielded by value; a `String` element as a shared view.
-        assert_eq!(g.builtin_iterable_item(&Ty::List(Box::new(i32_())), &[]), Some(i32_()));
+        assert_eq!(g.builtin_iterable_item(&Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global), &[]), Some(i32_()));
         assert_eq!(
-            g.builtin_iterable_item(&Ty::List(Box::new(Ty::String)), &[]),
+            g.builtin_iterable_item(&Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global), &[]),
             Some(Ty::Ref { mutable: false, inner: Box::new(Ty::String) })
         );
-        let map = Ty::Map(Box::new(Ty::Str), Box::new(i32_()));
+        let map = Ty::Map(Box::new(Ty::Str), Box::new(i32_()), burdin_tir::Alloc::Global);
         let item = g.builtin_iterable_item(&map, &[]).expect("a map iterates");
         assert_eq!(
             item,
@@ -154,14 +154,17 @@ mod tests {
         assert_eq!(g.builtin_iterable_item(&Ty::Range(Box::new(i32_()), true), &[]), Some(i32_()));
         assert_eq!(g.builtin_iterable_item(&Ty::Chars, &[]), Some(Ty::Char));
         // A list is not itself an iterator.
-        assert_eq!(g.builtin_iterator_item(&Ty::List(Box::new(i32_())), &[]), None);
+        assert_eq!(g.builtin_iterator_item(&Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global), &[]), None);
     }
 
     #[test]
     fn iterators_report_their_item() {
         let g = Globals::default();
         assert_eq!(g.builtin_iterator_item(&Ty::Slice(Box::new(i32_())), &[]), Some(i32_()));
-        assert_eq!(g.builtin_iterator_item(&Ty::ListIntoIter(Box::new(Ty::String)), &[]), Some(Ty::String));
+        assert_eq!(
+            g.builtin_iterator_item(&Ty::ListIntoIter(Box::new(Ty::String), burdin_tir::Alloc::Global), &[]),
+            Some(Ty::String)
+        );
         assert_eq!(g.builtin_iterator_item(&Ty::RangeIter(Box::new(i32_()), false), &[]), Some(i32_()));
         assert_eq!(g.builtin_iterator_item(&Ty::Chars, &[]), Some(Ty::Char));
         let map = Ty::MapIter(Box::new(Ty::Str), Box::new(i32_()));

@@ -30,9 +30,10 @@ not updated and may disagree with the repository.
    parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
    `x.{name}`, and user `derive` declarations, `spec/const-generics.md` is const parameters, const arguments, and array
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
-   `Drop` on a generic type, and the built-in interfaces on one, `spec/test-runner.md` is the behavior of
-   `burdin test`, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated modules, caching, and the
-   minimal `bindgen`.
+   `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
+   default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
+   is the behavior of `burdin test`, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   modules, caching, and the minimal `bindgen`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.

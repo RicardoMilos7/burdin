@@ -219,6 +219,11 @@ pub(crate) struct Globals {
     pub(crate) debug_iface: Option<usize>,
     /// The standard library's operator interfaces (`spec/operators.md`, OP2), when it declares them.
     pub(crate) op_ifaces: Option<OpIfaces>,
+    /// The standard library's `Allocator` interface and its default allocator type `Global`
+    /// (`spec/allocators.md`, AL2-AL3). A standard library that does not declare them leaves the built-in
+    /// containers on the C heap only.
+    pub(crate) allocator_iface: Option<usize>,
+    pub(crate) global_alloc_ty: Option<Ty>,
     /// The `std.Error` interface (the marker that makes a type an error type) and the `std.Error` struct (the
     /// dynamic error value). Both are `None` when the standard library does not declare them (`spec/errors.md`,
     /// ERR4).
@@ -243,6 +248,9 @@ pub(crate) struct Globals {
     pub(crate) builtin_method_templates: HashMap<(usize, usize, Ty, Vec<Ty>), crate::generics::GenericMethod>,
     /// The `any Interface` instances, vtables, and type identities (`any.rs`).
     pub(crate) any: RefCell<crate::any::AnyState>,
+    /// The concrete allocator types a container in the program stores (`spec/allocators.md`, AL4), collected as
+    /// types are resolved; `finish` turns them into `Program::allocator_fns`.
+    pub(crate) allocator_requests: RefCell<Vec<Ty>>,
 }
 
 pub(crate) fn adt_key(ty: &Ty) -> Option<(bool, usize)> {
@@ -250,6 +258,56 @@ pub(crate) fn adt_key(ty: &Ty) -> Option<(bool, usize)> {
         Ty::Struct(a) => Some((false, a.id)),
         Ty::Enum(a) => Some((true, a.id)),
         _ => None,
+    }
+}
+
+impl Globals {
+    /// The allocator a container stores (`spec/allocators.md`, AL3). `Global` and the absence of a standard
+    /// library's default allocator both mean the default: no value is stored.
+    pub(crate) fn alloc_of(&self, ty: Ty) -> burdin_tir::Alloc {
+        match &self.global_alloc_ty {
+            Some(default) if *default == ty => burdin_tir::Alloc::Global,
+            _ => {
+                if !self.ty_has_param(&ty) {
+                    let mut requests = self.allocator_requests.borrow_mut();
+                    if !requests.contains(&ty) {
+                        requests.push(ty.clone());
+                    }
+                }
+                burdin_tir::Alloc::Value(Box::new(ty))
+            }
+        }
+    }
+
+    /// The `Allocator` functions of every stored allocator type the program uses, for code generation.
+    pub(crate) fn allocator_fns(&self) -> Vec<burdin_tir::AllocatorFns> {
+        let mut out = Vec::new();
+        for ty in self.allocator_requests.borrow().iter() {
+            let Some(key) = adt_key(ty) else { continue };
+            let method = |name: &str| self.methods.get(&(key, name.to_string())).copied();
+            if let (Some(allocate), Some(reallocate), Some(deallocate)) =
+                (method("allocate"), method("reallocate"), method("deallocate"))
+            {
+                out.push(burdin_tir::AllocatorFns { ty: ty.clone(), allocate, reallocate, deallocate });
+            }
+        }
+        out
+    }
+
+    /// The allocator of a container after substituting type parameters. The result is canonicalized, so a
+    /// parameter that becomes `Global` turns back into the default allocator.
+    pub(crate) fn subst_alloc(&self, alloc: &burdin_tir::Alloc, env: &[(String, Ty)]) -> burdin_tir::Alloc {
+        match alloc {
+            burdin_tir::Alloc::Global => burdin_tir::Alloc::Global,
+            burdin_tir::Alloc::Value(t) => self.alloc_of(self.subst_ty(t, env)),
+        }
+    }
+
+    /// Whether `ty` implements `Allocator`, with the bounds of the type parameters in `env`. A type parameter
+    /// needs the bound; concrete types need a visible impl block.
+    pub(crate) fn is_allocator(&self, ty: &Ty, env: &[(String, Vec<crate::generics::Bound>)]) -> bool {
+        let Some(iface) = self.allocator_iface else { return true };
+        self.satisfies_with(ty, &crate::generics::Bound::User(iface, Vec::new()), env, &[])
     }
 }
 
@@ -406,12 +464,12 @@ impl Globals {
             | Ty::Slice(inner)
             | Ty::Array(inner, _)
             | Ty::Option(inner)
-            | Ty::Heap(inner)
+            | Ty::Heap(inner, _)
             | Ty::CPtr(inner)
             | Ty::Range(inner, _)
-            | Ty::List(inner) => self.private_adt(inner),
+            | Ty::List(inner, _) => self.private_adt(inner),
             Ty::Result(t, e) => self.private_adt(t).or_else(|| self.private_adt(e)),
-            Ty::Map(k, v) => self.private_adt(k).or_else(|| self.private_adt(v)),
+            Ty::Map(k, v, _) => self.private_adt(k).or_else(|| self.private_adt(v)),
             Ty::Fn { sig, .. } => {
                 sig.params.iter().find_map(|t| self.private_adt(t)).or_else(|| self.private_adt(&sig.ret))
             }

@@ -267,7 +267,7 @@ impl FnCx<'_> {
             let ty = match &base.ty {
                 Ty::Str | Ty::String => Ty::Str,
                 Ty::Slice(_) => base.ty.clone(),
-                Ty::Array(elem, _) | Ty::List(elem) => Ty::Slice(elem.clone()),
+                Ty::Array(elem, _) | Ty::List(elem, _) => Ty::Slice(elem.clone()),
                 Ty::Error => Ty::Error,
                 other => {
                     self.diags.error(
@@ -292,7 +292,7 @@ impl FnCx<'_> {
         self.write_place = saved;
         let index = self.expect_ty(index, &Ty::Int(IntTy::Usize));
         let ty = match &base.ty {
-            Ty::Array(elem, _) | Ty::Slice(elem) | Ty::List(elem) => (**elem).clone(),
+            Ty::Array(elem, _) | Ty::Slice(elem) | Ty::List(elem, _) => (**elem).clone(),
             Ty::Error => return error_expr(span),
             // A user type takes part through `Index`/`IndexMut` (`spec/operators.md`, OP9-OP10).
             _ => return self.overloaded_index(base, index, mutable, span),

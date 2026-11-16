@@ -1,0 +1,36 @@
+//@ burdin-test passed=1 failed=1
+//@ failed-test: leaks
+
+// A `burdin test` build allocates through a checking allocator: an allocation still live when a test that
+// otherwise passed returns fails the test (`spec/allocators.md`, AL9).
+
+struct Leaky { }
+
+Leaky: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe {
+            let _ = ptr
+            let _ = size
+            let _ = align
+        }
+    }
+}
+
+test "leaks" {
+    let mut xs = List<i32>.new_in(Leaky { })
+    xs.push(1)
+}
+
+test "does not leak" {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    assert_eq(xs.len(), 1)?
+}

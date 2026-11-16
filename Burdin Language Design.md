@@ -225,19 +225,18 @@ Structs that need to point at other data store an index or a handle instead (par
 **Heap and shared ownership**
 
 - `Heap<T>` puts one value on the heap, and is how recursive types are written.
-- `Shared<T>` is an opt-in reference-counted owner with weak handles. Reference cycles leak by design.
+- `Shared<T>` is an opt-in reference-counted owner. Reference cycles leak by design. Stage 1's count is not atomic and there are no weak handles yet; both arrive with the concurrency stage.
 
-**Allocators.** There is one global allocator, replaceable once per program at compile time. The default is a fast general-purpose allocator with thread-local caches; debug builds use a checking allocator that reports leaks, double frees, and use-after-free.
-
-Allocator-aware types take a defaulted type parameter, so most code never mentions allocators:
+**Allocators.** Every container buffer comes from an allocator value. Allocator-aware types take a defaulted type argument, so most code never mentions allocators; a function that needs to choose one takes an ordinary generic parameter bound by `Allocator`:
 
 ```
 let a = List<i32>.new()                 // List<i32, Global>
 let arena = Arena.new()
 let b = List<i32>.new_in(arena)         // List<i32, Arena>
+fn build<A: Allocator>(own a: A): List<i32, A> { List<i32>.new_in(a) }
 ```
 
-`Global` is zero-sized. `Arena` owns its memory and frees everything when dropped, and values in it are reached through handles, so nothing can outlive it.
+`Global` is zero-sized and stored nowhere; any other allocator is stored in the container as a value the container owns, so an arena and everything it allocated live exactly as long as the containers that use it. `Arena` owns its memory and frees everything when dropped or reset. Stage 1 has no replaceable program-wide allocator and no per-arena handles yet; those remain later-stage ideas. A `burdin test` build uses a checking allocator that reports leaks and double frees (not use-after-free yet), and ordinary builds use the C heap.
 
 **Failure behavior.** Panics abort the process (no unwinding). Out-of-memory also aborts; fallible `try_` variants can be added later if a program needs them.
 

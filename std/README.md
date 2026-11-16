@@ -1,7 +1,7 @@
 # The Burdin standard library
 
-The standard library (stage 0 plus the stage 1 language surface: closures, iterators, formatting, `any`/`impl`, and
-errors), written in Burdin. The compiler embeds these files in `burdin` and makes the package a dependency of every
+The standard library (stage 0 plus the stage 1 language surface: closures, iterators, formatting, `any`/`impl`,
+errors, and allocators), written in Burdin. The compiler embeds these files in `burdin` and makes the package a dependency of every
 program, then copies its public names into every module (the prelude). A project that declares its own package named
 `std` replaces this one.
 
@@ -14,6 +14,7 @@ program, then copies its public names into every module (the prelude). A project
 | `mem.bd` | `swap`, `replace` |
 | `iter.bd` | `Iterator<T>` and `Iterable<T>`, the lazy adapters and their types, and the eager `List` helpers |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
+| `alloc.bd` | the `Allocator` interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`) |
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`
 impls (`spec/errors.md`, ERR1-ERR3). The `Error` interface marks a type as an error; the `Error` struct is the
@@ -22,7 +23,7 @@ type of a failed `assert`/`assert_eq` in a `burdin test` build; a normal build k
 (ERR9).
 
 Some names in the stage 0 table are compiler built-ins rather than Burdin code, because the language cannot
-express them yet: `Option`, `Result`, `Heap`, `List`, `Map`, `String`, `str`, the `str`/`[T]` intrinsics,
+express them yet: `Option`, `Result`, `Heap`, `List`, `Map`, `String`, `Shared`, `str`, the `str`/`[T]` intrinsics,
 the number methods (`to_string`, `parse`, `wrapping_*`, `checked_*`, `min`, `max`, `abs`), the
 `__read_to_string`, `__write_file`, `__args`, `__exit`, `__run`, `__swap`, and `__replace` primitives the
 modules above call, and `print`/`println`/`eprint`/`eprintln`/`panic`. The I/O and integer-parse primitives are

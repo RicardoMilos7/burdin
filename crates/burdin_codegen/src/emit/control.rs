@@ -342,7 +342,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// `for pattern in list`: binds each element in order; the list is borrowed.
     pub(super) fn for_list(&mut self, pat: &'a Pat, list: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
-        let Ty::List(elem) = &list.ty else {
+        let Ty::List(elem, _) = &list.ty else {
             self.expr_mode(list, Mode::Use)?;
             return Ok(());
         };
@@ -388,7 +388,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// `for pattern in map`: binds each live `(key, value)` pair; the map is borrowed. The hash table's slots are
     /// scanned in order and empty ones are skipped, so the iteration order is unspecified.
     pub(super) fn for_map(&mut self, pat: &'a Pat, map: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
-        let Ty::Map(key, value) = &map.ty else {
+        let Ty::Map(key, value, _) = &map.ty else {
             self.expr_mode(map, Mode::Use)?;
             return Ok(());
         };

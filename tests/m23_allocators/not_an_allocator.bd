@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A container's second type argument must implement `Allocator` (E0270, `spec/allocators.md` AL3).
+
+fn main() {
+    let n = 1
+    let xs: List<i32, i32> = List<i32>.new_in(n) //~ E0270
+}

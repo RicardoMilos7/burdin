@@ -257,7 +257,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_basic(&name, bits, DW_ATE_FLOAT)
             }
-            Ty::Ref { inner, .. } | Ty::CPtr(inner) | Ty::Heap(inner) => {
+            Ty::Ref { inner, .. } | Ty::CPtr(inner) | Ty::Heap(inner, _) => {
+                let pointee = self.debug_type(inner);
+                let db = self.debug.as_ref().expect("debug info is on");
+                db.builder
+                    .create_pointer_type(&format!("{ty:?}"), pointee, 64, 64, inkwell::AddressSpace::default())
+                    .as_type()
+            }
+            Ty::Shared(inner) => {
                 let pointee = self.debug_type(inner);
                 let db = self.debug.as_ref().expect("debug info is on");
                 db.builder
@@ -268,10 +275,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8)])
             }
-            Ty::String | Ty::List(_) | Ty::Map(_, _) => {
+            Ty::String | Ty::List(_, burdin_tir::Alloc::Global) | Ty::Map(_, _, burdin_tir::Alloc::Global) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8)])
             }
+            // A container with a stored allocator appends an arbitrary type after the buffer words.
+            Ty::List(..) | Ty::Map(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Fn { .. } => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("code", 8), ("env", 8), ("drop", 8)])
@@ -323,7 +332,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_product(&name, &members)
             }
-            Ty::ListIntoIter(_) | Ty::MapIter(..) | Ty::MapIntoIter(..) => {
+            Ty::ListIntoIter(..) | Ty::MapIter(..) | Ty::MapIntoIter(..) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
             }
@@ -486,9 +495,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Array(inner, n) => format!("[{}; {}]", Self::debug_name(inner), n),
             Ty::Option(inner) => format!("Option<{}>", Self::debug_name(inner)),
             Ty::Result(ok, err) => format!("Result<{}, {}>", Self::debug_name(ok), Self::debug_name(err)),
-            Ty::List(inner) => format!("List<{}>", Self::debug_name(inner)),
-            Ty::Map(k, v) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
-            Ty::Heap(inner) => format!("Heap<{}>", Self::debug_name(inner)),
+            Ty::List(inner, _) => format!("List<{}>", Self::debug_name(inner)),
+            Ty::Map(k, v, _) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
+            Ty::Heap(inner, _) => format!("Heap<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
             Ty::Fn { .. } | Ty::Any(_) => ty.to_string(),
             Ty::Range(inner, false) => format!("Range<{}>", Self::debug_name(inner)),
@@ -504,6 +513,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 /// Sets the builder's current source location from `span`; a no-op without `-g`.
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn debug_at(&mut self, span: Span) {
+        self.current_span = Some(span);
         if self.debug.is_none() {
             return;
         }

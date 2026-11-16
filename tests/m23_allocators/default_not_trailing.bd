@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A parameter without a default cannot follow one with a default (E0271, `spec/allocators.md` AL5).
+
+struct Bad<A = i32, B> { //~ E0271
+    a: A
+    b: B
+}
+
+fn main() { }

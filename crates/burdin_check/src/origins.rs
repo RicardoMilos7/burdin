@@ -522,8 +522,14 @@ impl<'a> Analyzer<'a> {
                 match b {
                     // The old value comes out of the place, so a view result derives from it.
                     tir::Builtin::Replace => origins.into_iter().next().unwrap_or_default(),
-                    // An empty container owns its (empty) buffer; storing it borrows nothing.
-                    tir::Builtin::ListNew | tir::Builtin::MapNew => Origin::default(),
+                    // An empty container owns its (empty) buffer; storing it borrows nothing. The same holds for
+                    // a container with a stored allocator and for a `Shared` cell.
+                    tir::Builtin::ListNew
+                    | tir::Builtin::MapNew
+                    | tir::Builtin::ListNewIn
+                    | tir::Builtin::MapNewIn
+                    | tir::Builtin::HeapNewIn
+                    | tir::Builtin::SharedNew => Origin::default(),
                     _ => Origin::temp(),
                 }
             }

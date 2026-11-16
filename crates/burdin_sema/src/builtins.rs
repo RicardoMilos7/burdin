@@ -18,6 +18,9 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__run" => Builtin::RunCommand,
         "__target_os" => Builtin::TargetOs,
         "__target_arch" => Builtin::TargetArch,
+        "__alloc" => Builtin::RawAlloc,
+        "__realloc" => Builtin::RawRealloc,
+        "__dealloc" => Builtin::RawDealloc,
         _ => return None,
     })
 }
@@ -33,8 +36,9 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(io_error())),
-        Builtin::EnvArgs => Ty::List(Box::new(Ty::String)),
+        Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
+        Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
         _ => Ty::Unit,
     };
     let params = match b {
@@ -47,6 +51,18 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
         Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        Builtin::RawAlloc => vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Int(IntTy::Usize))],
+        Builtin::RawRealloc => vec![
+            ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::U8)))),
+            ParamSig::plain(Ty::Int(IntTy::Usize)),
+            ParamSig::plain(Ty::Int(IntTy::Usize)),
+            ParamSig::plain(Ty::Int(IntTy::Usize)),
+        ],
+        Builtin::RawDealloc => vec![
+            ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::U8)))),
+            ParamSig::plain(Ty::Int(IntTy::Usize)),
+            ParamSig::plain(Ty::Int(IntTy::Usize)),
+        ],
         Builtin::FloatStr => vec![
             ParamSig::plain(Ty::Float(FloatTy::F64)),
             ParamSig::plain(Ty::Int(IntTy::I32)),
@@ -131,25 +147,25 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("abs", Ty::Int(i)) if i.signed() => (Method::Abs, vec![], recv.clone()),
         ("push_str", Ty::String) => (Method::PushStr, vec![plain(Ty::Str)], Ty::Unit),
         ("push", Ty::String) => (Method::PushChar, vec![plain(Ty::Char)], Ty::Unit),
-        ("push", Ty::List(t)) => (Method::Push, vec![value_param(elem(t))], Ty::Unit),
-        ("pop", Ty::List(t)) => (Method::ListPop, vec![], Ty::Option(t.clone())),
-        ("last", Ty::List(t)) => {
+        ("push", Ty::List(t, _)) => (Method::Push, vec![value_param(elem(t))], Ty::Unit),
+        ("pop", Ty::List(t, _)) => (Method::ListPop, vec![], Ty::Option(t.clone())),
+        ("last", Ty::List(t, _)) => {
             (Method::ListLast, vec![], Ty::Option(Box::new(Ty::Ref { mutable: false, inner: t.clone() })))
         }
-        ("insert", Ty::List(t)) => {
+        ("insert", Ty::List(t, _)) => {
             (Method::ListInsert, vec![plain(Ty::Int(IntTy::Usize)), value_param(elem(t))], Ty::Unit)
         }
-        ("remove", Ty::List(t)) => (Method::ListRemove, vec![plain(Ty::Int(IntTy::Usize))], elem(t)),
-        ("contains", Ty::List(t)) => (Method::ListContains, vec![plain(elem(t))], Ty::Bool),
-        ("sort", Ty::List(_)) => (Method::ListSort, vec![], Ty::Unit),
-        ("clear", Ty::List(_) | Ty::Map(..)) => (Method::Clear, vec![], Ty::Unit),
-        ("insert", Ty::Map(k, v)) => (Method::MapInsert, vec![value_param(elem(k)), value_param(elem(v))], Ty::Unit),
-        ("get", Ty::Map(k, v)) => {
+        ("remove", Ty::List(t, _)) => (Method::ListRemove, vec![plain(Ty::Int(IntTy::Usize))], elem(t)),
+        ("contains", Ty::List(t, _)) => (Method::ListContains, vec![plain(elem(t))], Ty::Bool),
+        ("sort", Ty::List(_, _)) => (Method::ListSort, vec![], Ty::Unit),
+        ("clear", Ty::List(_, _) | Ty::Map(..)) => (Method::Clear, vec![], Ty::Unit),
+        ("insert", Ty::Map(k, v, _)) => (Method::MapInsert, vec![value_param(elem(k)), value_param(elem(v))], Ty::Unit),
+        ("get", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: false, inner: v.clone() };
             (Method::MapGet, vec![plain(elem(k))], Ty::Option(Box::new(view)))
         }
-        ("remove", Ty::Map(k, v)) => (Method::MapRemove, vec![plain(elem(k))], Ty::Option(v.clone())),
-        ("contains_key", Ty::Map(k, _)) => (Method::MapContainsKey, vec![plain(elem(k))], Ty::Bool),
+        ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(elem(k))], Ty::Option(v.clone())),
+        ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(elem(k))], Ty::Bool),
         ("unwrap", Ty::Option(t)) => (Method::Unwrap, vec![], elem(t)),
         ("unwrap", Ty::Result(t, _)) => (Method::Unwrap, vec![], elem(t)),
         ("expect", Ty::Option(t)) => (Method::Expect, vec![plain(Ty::Str)], elem(t)),
@@ -159,7 +175,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("is_ok", Ty::Result(..)) => (Method::IsOk, vec![], Ty::Bool),
         ("is_err", Ty::Result(..)) => (Method::IsErr, vec![], Ty::Bool),
         ("as_str", Ty::String | Ty::Str) => (Method::AsStr, vec![], Ty::Str),
-        ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::List(_) | Ty::Map(..)) => {
+        ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::List(_, _) | Ty::Map(..)) => {
             (Method::Len, vec![], Ty::Int(IntTy::Usize))
         }
         ("starts_with", Ty::Str | Ty::String) => (Method::StartsWith, vec![plain(Ty::Str)], Ty::Bool),
@@ -172,16 +188,23 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("chars", Ty::Str | Ty::String) => (Method::Chars, vec![], Ty::Chars),
         ("as_ptr", Ty::CString) => (Method::AsPtr, vec![], Ty::CPtr(Box::new(Ty::Int(IntTy::I8)))),
         ("is_null", Ty::CPtr(_)) => (Method::IsNull, vec![], Ty::Bool),
+        // `Shared<T>` (`spec/allocators.md`, AL8).
+        ("get", Ty::Shared(t)) => (Method::SharedGet, vec![], Ty::Ref { mutable: false, inner: t.clone() }),
+        ("strong_count", Ty::Shared(_)) => (Method::SharedStrongCount, vec![], Ty::Int(IntTy::Usize)),
         // The iteration protocol's entry points (spec/iterators.md). `next` is checked separately because a
         // slice yields its element by value when it is `Copy`.
         ("iter", Ty::Array(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
         ("iter", Ty::Slice(_)) => (Method::Iter, vec![], recv.clone()),
-        ("iter", Ty::List(elem)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
-        ("iter", Ty::Map(k, v)) => (Method::Iter, vec![], Ty::MapIter(k.clone(), v.clone())),
+        ("iter", Ty::List(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
+        ("iter", Ty::Map(k, v, _)) => (Method::Iter, vec![], Ty::MapIter(k.clone(), v.clone())),
         ("iter", Ty::Chars) => (Method::Iter, vec![], Ty::Chars),
         ("iter", Ty::Range(elem, inclusive)) => (Method::Iter, vec![], Ty::RangeIter(elem.clone(), *inclusive)),
-        ("into_iter", Ty::List(elem)) => (Method::IntoIter, vec![], Ty::ListIntoIter(elem.clone())),
-        ("into_iter", Ty::Map(k, v)) => (Method::IntoIter, vec![], Ty::MapIntoIter(k.clone(), v.clone())),
+        ("into_iter", Ty::List(elem, alloc)) => {
+            (Method::IntoIter, vec![], Ty::ListIntoIter(elem.clone(), alloc.clone()))
+        }
+        ("into_iter", Ty::Map(k, v, alloc)) => {
+            (Method::IntoIter, vec![], Ty::MapIntoIter(k.clone(), v.clone(), alloc.clone()))
+        }
         ("into_iter", Ty::Array(elem, n)) => (Method::IntoIter, vec![], Ty::ArrayIntoIter(elem.clone(), *n)),
         ("into_iter", Ty::Chars) => (Method::IntoIter, vec![], Ty::Chars),
         ("into_iter", Ty::Range(elem, inclusive)) => {
@@ -246,7 +269,7 @@ mod tests {
         assert!(method("min", &Ty::Float(FloatTy::F64)).is_none(), "min is integer-only");
         assert!(method("nope", &i32_).is_none());
 
-        let list = Ty::List(Box::new(i32_.clone()));
+        let list = Ty::List(Box::new(i32_.clone()), burdin_tir::Alloc::Global);
         let (found, params, ret) = method("push", &list).unwrap();
         assert_eq!(found, Method::Push);
         assert!(params[0].own, "push takes its element by ownership");

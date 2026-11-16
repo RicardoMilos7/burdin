@@ -119,7 +119,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         None => Ok(None),
                     }
                 }
-                Ty::List(elem) => {
+                Ty::List(elem, _) => {
                     let elem = (**elem).clone();
                     let base_ptr = self.place_ptr(base)?;
                     let i = self.expr_mode(index, Mode::Use)?;
@@ -160,6 +160,25 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     Some(v) => Ok(Some(v.into_pointer_value())),
                     None => Ok(None),
                 }
+            }
+            // A `Heap<T>` with a stored allocator is `{ ptr, allocator }`: the pointee address is its first field.
+            tir::ExprKind::Deref(base) if matches!(&base.ty, Ty::Heap(_, burdin_tir::Alloc::Value(_))) => {
+                let Ty::Heap(_, alloc) = &base.ty else { unreachable!() };
+                let heap_ty = self.heap_ty(alloc).into_struct_type();
+                let storage = match self.place_ptr(base)? {
+                    Some(ptr) => ptr,
+                    None => {
+                        let v = self.expr_mode(base, Mode::Use)?;
+                        let slot = self.alloca(heap_ty.into(), "heap.place")?;
+                        let v = self.need(v, &base.ty);
+                        self.builder.build_store(slot, v).map_err(llvm_err)?;
+                        self.add_temp_slot(slot, &base.ty);
+                        slot
+                    }
+                };
+                let ptr_field = self.builder.build_struct_gep(heap_ty, storage, 0, "heap.ptr").map_err(llvm_err)?;
+                let p = self.builder.build_load(self.ptr_ty(), ptr_field, "heap").map_err(llvm_err)?;
+                Ok(Some(p.into_pointer_value()))
             }
             tir::ExprKind::Deref(base) | tir::ExprKind::PtrDeref(base) => {
                 let v = self.expr_mode(base, Mode::Use)?;
@@ -205,9 +224,11 @@ pub(super) fn is_tracked_place(e: &tir::Expr) -> bool {
         tir::ExprKind::Local(_) => true,
         tir::ExprKind::Field(base, _) => is_tracked_place(base),
         tir::ExprKind::Index(base, index) => {
-            is_tracked_place(base) && matches!(base.ty, Ty::Array(..) | Ty::List(_)) && constant_index(index).is_some()
+            is_tracked_place(base)
+                && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
+                && constant_index(index).is_some()
         }
-        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)),
+        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)),
         _ => false,
     }
 }

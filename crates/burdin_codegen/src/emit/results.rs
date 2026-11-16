@@ -15,10 +15,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        // `unwrap` and `expect` consume the value; the tests only read its tag.
+        // `unwrap` and `expect` consume the value; the tests only read its tag. A test's receiver is read through
+        // a place, so a temporary (such as `read_to_string(p).is_ok()`) is registered for the statement's drops
+        // and its payload is freed (`spec/allocators.md`, AL9).
         let consuming = matches!(m, Method::Unwrap | Method::Expect);
-        let mode = if consuming { Mode::Move } else { Mode::Use };
-        let recv = self.expr_mode(&args[0], mode)?;
+        let recv =
+            if consuming { self.expr_mode(&args[0], Mode::Move)? } else { self.expr_place(&args[0], Mode::Use)? };
         let recv_ty = args[0].ty.clone();
         let value = match (&recv_ty, m) {
             (Ty::Option(_), Method::IsSome | Method::IsNone) => {

@@ -1,0 +1,27 @@
+//@ run
+//> 2
+//> 1
+//> 1
+//> 2
+//> 1
+
+// `Shared<T>` is reference-counted: a clone outlives the scope that made it, and the count goes up and down
+// (`spec/allocators.md`, AL8).
+
+fn make(): Shared<i32> {
+    let s = Shared.new(1)
+    let t = s.clone()
+    println(s.strong_count().to_string())
+    t
+}
+
+fn main() {
+    let a = make()
+    println(a.strong_count().to_string())
+    println((*a.get()).to_string())
+    {
+        let b = a.clone()
+        println(b.strong_count().to_string())
+    }
+    println(a.strong_count().to_string())
+}

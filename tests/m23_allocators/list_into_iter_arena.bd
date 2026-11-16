@@ -1,0 +1,23 @@
+//@ burdin-test passed=2 failed=0
+
+// The owning iterator of an arena-backed list carries the arena: it frees the buffer through it and drops the
+// elements and the arena it did not hand out (`spec/allocators.md`, AL5). The test build's checking allocator
+// fails the test if anything leaks.
+
+test "into_iter frees the buffer" {
+    let mut xs = List<i32>.new_in(Arena.new())
+    xs.push(1)
+    xs.push(2)
+    let mut it = xs.into_iter()
+    assert_eq(it.next().unwrap(), 1)?
+    assert_eq(it.next().unwrap(), 2)?
+    assert_eq(it.next().is_none(), true)?
+}
+
+test "partial iteration drops the rest" {
+    let mut xs = List<String>.new_in(Arena.new())
+    xs.push("a".to_string())
+    xs.push("b".to_string())
+    let mut it = xs.into_iter()
+    assert_eq(it.next().unwrap(), "a".to_string())?
+}

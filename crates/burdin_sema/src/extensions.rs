@@ -224,7 +224,7 @@ impl<'t> Sema<'t> {
         {
             return true;
         }
-        if matches!(recv, Ty::List(_)) && self.globals.eager_list_fn(name).is_some() {
+        if matches!(recv, Ty::List(_, _)) && self.globals.eager_list_fn(name).is_some() {
             return true;
         }
         if self.globals.iterable_item(recv, &[]).is_some()
@@ -348,13 +348,13 @@ fn same_receiver_shape(globals: &Globals, a: &Ty, b: &Ty) -> bool {
         (Ty::Ref { mutable: m, inner: i }, Ty::Ref { mutable: n, inner: j }) => m == n && pair(i, j),
         (Ty::Slice(i), Ty::Slice(j))
         | (Ty::Option(i), Ty::Option(j))
-        | (Ty::Heap(i), Ty::Heap(j))
+        | (Ty::Heap(i, _), Ty::Heap(j, _))
         | (Ty::CPtr(i), Ty::CPtr(j))
-        | (Ty::List(i), Ty::List(j)) => pair(i, j),
+        | (Ty::List(i, _), Ty::List(j, _)) => pair(i, j),
         (Ty::Array(i, m), Ty::Array(j, n)) => m == n && pair(i, j),
         (Ty::Range(i, m), Ty::Range(j, n)) => m == n && pair(i, j),
         (Ty::Result(io, ie), Ty::Result(jo, je)) => pair(io, jo) && pair(ie, je),
-        (Ty::Map(ik, iv), Ty::Map(jk, jv)) => pair(ik, jk) && pair(iv, jv),
+        (Ty::Map(ik, iv, _), Ty::Map(jk, jv, _)) => pair(ik, jk) && pair(iv, jv),
         (Ty::Tuple(i), Ty::Tuple(j)) => i.len() == j.len() && i.iter().zip(j).all(|(x, y)| pair(x, y)),
         (Ty::Struct(_), Ty::Struct(_)) | (Ty::Enum(_), Ty::Enum(_)) => {
             match (globals.origin_of(a), globals.origin_of(b)) {
@@ -390,12 +390,16 @@ mod tests {
     #[test]
     fn an_extension_applies_only_to_its_receiver_shape() {
         let globals = Globals::default();
-        let generic = extension(Ty::List(Box::new(Ty::Param("T".into()))), &["T"], &["T"]);
-        assert!(extension_applies(&globals, &generic, &Ty::List(Box::new(Ty::Int(IntTy::I32)))));
+        let generic = extension(Ty::List(Box::new(Ty::Param("T".into())), burdin_tir::Alloc::Global), &["T"], &["T"]);
+        assert!(extension_applies(
+            &globals,
+            &generic,
+            &Ty::List(Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global)
+        ));
         assert!(!extension_applies(
             &globals,
             &generic,
-            &Ty::Map(Box::new(Ty::Int(IntTy::I32)), Box::new(Ty::Int(IntTy::I32)))
+            &Ty::Map(Box::new(Ty::Int(IntTy::I32)), Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global)
         ));
         assert!(!extension_applies(&globals, &generic, &Ty::Error));
 
@@ -407,15 +411,15 @@ mod tests {
     #[test]
     fn receiver_shapes_ignore_parameter_names() {
         let globals = Globals::default();
-        let left = Ty::List(Box::new(Ty::Param("T".into())));
-        let right = Ty::List(Box::new(Ty::Param("U".into())));
+        let left = Ty::List(Box::new(Ty::Param("T".into())), burdin_tir::Alloc::Global);
+        let right = Ty::List(Box::new(Ty::Param("U".into())), burdin_tir::Alloc::Global);
         assert!(same_receiver_shape(&globals, &left, &right));
         assert!(same_receiver_shape(&globals, &Ty::Int(IntTy::I32), &Ty::Int(IntTy::I32)));
         assert!(!same_receiver_shape(&globals, &Ty::Int(IntTy::I32), &Ty::Int(IntTy::I64)));
         assert!(!same_receiver_shape(
             &globals,
-            &Ty::List(Box::new(Ty::Int(IntTy::I32))),
-            &Ty::List(Box::new(Ty::String))
+            &Ty::List(Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global),
+            &Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)
         ));
     }
 }

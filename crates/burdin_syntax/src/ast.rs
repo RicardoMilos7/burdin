@@ -265,6 +265,9 @@ pub struct GenericParam {
     /// `const N: usize`: a const generic parameter and its integer type (`spec/const-generics.md`, CG1). Such a
     /// parameter has no bounds.
     pub const_ty: Option<Type>,
+    /// `A: Allocator = Global`: the type a use of the type may leave out (`spec/allocators.md`, AL5). Only a
+    /// struct's or enum's type parameters take one.
+    pub default: Option<Type>,
 }
 
 #[derive(Debug, Clone)]

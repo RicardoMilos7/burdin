@@ -14,12 +14,15 @@ use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
 use inkwell::{AddressSpace, IntPredicate};
 
-/// The three words of a list or map, loaded from its place.
+/// The three words of a list or map, loaded from its place, and the allocator value it stores.
 struct Seq<'ctx> {
     addr: PointerValue<'ctx>,
     data: PointerValue<'ctx>,
     len: IntValue<'ctx>,
     cap: IntValue<'ctx>,
+    alloc: burdin_tir::Alloc,
+    /// The address of the stored allocator value, when the container has one.
+    alloc_addr: Option<PointerValue<'ctx>>,
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -27,27 +30,49 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.cx.ptr_type(AddressSpace::default())
     }
 
-    fn seq_field(&mut self, addr: PointerValue<'ctx>, index: u32, name: &str) -> GenResult<PointerValue<'ctx>> {
-        self.builder.build_struct_gep(self.string_ty, addr, index, name).map_err(llvm_err)
+    fn seq_field(
+        &mut self,
+        addr: PointerValue<'ctx>,
+        alloc: &burdin_tir::Alloc,
+        index: u32,
+        name: &str,
+    ) -> GenResult<PointerValue<'ctx>> {
+        let ty = self.seq_ty(alloc);
+        self.builder.build_struct_gep(ty, addr, index, name).map_err(llvm_err)
+    }
+
+    /// The allocator of a container value, from its type.
+    fn seq_alloc(ty: &Ty) -> burdin_tir::Alloc {
+        match ty {
+            Ty::List(_, alloc) | Ty::Map(_, _, alloc) | Ty::ListIntoIter(_, alloc) | Ty::MapIntoIter(_, _, alloc) => {
+                alloc.clone()
+            }
+            _ => burdin_tir::Alloc::Global,
+        }
     }
 
     /// The `{ ptr, len, cap }` words of a list or map place.
     fn seq_load(&mut self, e: &'a tir::Expr) -> GenResult<Option<Seq<'ctx>>> {
         let Some(addr) = self.place_ptr(e)? else { return Ok(None) };
+        let alloc = Self::seq_alloc(&e.ty);
         let ptr_ty = self.ptr_ty();
-        let f0 = self.seq_field(addr, 0, "seq.ptr")?;
-        let f1 = self.seq_field(addr, 1, "seq.len")?;
-        let f2 = self.seq_field(addr, 2, "seq.cap")?;
+        let f0 = self.seq_field(addr, &alloc, 0, "seq.ptr")?;
+        let f1 = self.seq_field(addr, &alloc, 1, "seq.len")?;
+        let f2 = self.seq_field(addr, &alloc, 2, "seq.cap")?;
         let data = self.builder.build_load(ptr_ty, f0, "").map_err(llvm_err)?.into_pointer_value();
         let len = self.builder.build_load(self.usize_ty, f1, "").map_err(llvm_err)?.into_int_value();
         let cap = self.builder.build_load(self.usize_ty, f2, "").map_err(llvm_err)?.into_int_value();
-        Ok(Some(Seq { addr, data, len, cap }))
+        let alloc_addr = match alloc.allocator_ty() {
+            Some(_) => Some(self.seq_field(addr, &alloc, 3, "seq.alloc")?),
+            None => None,
+        };
+        Ok(Some(Seq { addr, data, len, cap, alloc, alloc_addr }))
     }
 
     fn seq_store(&mut self, seq: &Seq<'ctx>) -> GenResult<()> {
-        let f0 = self.seq_field(seq.addr, 0, "seq.ptr")?;
-        let f1 = self.seq_field(seq.addr, 1, "seq.len")?;
-        let f2 = self.seq_field(seq.addr, 2, "seq.cap")?;
+        let f0 = self.seq_field(seq.addr, &seq.alloc, 0, "seq.ptr")?;
+        let f1 = self.seq_field(seq.addr, &seq.alloc, 1, "seq.len")?;
+        let f2 = self.seq_field(seq.addr, &seq.alloc, 2, "seq.cap")?;
         self.builder.build_store(f0, seq.data).map_err(llvm_err)?;
         self.builder.build_store(f1, seq.len).map_err(llvm_err)?;
         self.builder.build_store(f2, seq.cap).map_err(llvm_err)?;
@@ -55,7 +80,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// The byte size of one element, at least one so that growing always allocates.
-    fn elem_size(&self, elem: &Ty) -> u64 {
+    pub(super) fn elem_size(&self, elem: &Ty) -> u64 {
         self.llvm_ty(elem).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0).max(1)
     }
 
@@ -63,8 +88,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.usize_ty.const_zero()
     }
 
-    /// Grows the buffer to hold at least one more element.
-    fn seq_grow(&mut self, seq: &mut Seq<'ctx>, elem: &Ty) -> GenResult<()> {
+    /// Grows the buffer to hold at least one more element, through the container's allocator.
+    fn seq_grow(&mut self, seq: &mut Seq<'ctx>, elem: &Ty, span: Span) -> GenResult<()> {
         let full = self.builder.build_int_compare(IntPredicate::EQ, seq.len, seq.cap, "").map_err(llvm_err)?;
         let grow = self.new_block("seq.grow");
         let done = self.new_block("seq.grow.end");
@@ -84,23 +109,43 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             )
             .map_err(llvm_err)?
             .into_int_value();
-        let bytes = self
-            .builder
-            .build_int_mul(at_least_four, self.usize_ty.const_int(self.elem_size(elem), false), "")
-            .map_err(llvm_err)?;
-        let call = self
-            .builder
-            .build_call(self.rt.realloc, &[seq.data.into(), bytes.into()], "seq.buffer")
-            .map_err(llvm_err)?;
-        let data = call.try_as_basic_value().basic().expect("realloc returns a pointer").into_pointer_value();
-        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
-        self.builder.position_at_end(done);
+        let size = self.usize_ty.const_int(self.elem_size(elem), false);
+        let old_bytes = self.builder.build_int_mul(seq.cap, size, "").map_err(llvm_err)?;
+        let new_bytes = self.builder.build_int_mul(at_least_four, size, "").map_err(llvm_err)?;
+        let align = self.value_align(elem);
+        let alloc = seq.alloc.clone();
+        let alloc_addr = seq.alloc_addr;
+        let (data, cap, alloc2, alloc_addr2) = (seq.data, seq.cap, alloc.clone(), alloc_addr);
+        let first = self.new_block("seq.alloc");
+        let again = self.new_block("seq.realloc");
+        let grown = self.new_block("seq.grown");
+        let empty =
+            self.builder.build_int_compare(IntPredicate::EQ, seq.cap, self.usize_zero(), "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(empty, first, again).map_err(llvm_err)?;
+        self.builder.position_at_end(first);
+        let fresh = self.alloc_in(&alloc, alloc_addr, new_bytes, align, Some(span))?;
+        self.builder.build_unconditional_branch(grown).map_err(llvm_err)?;
+        self.builder.position_at_end(again);
+        let renewed = self.realloc_in(&alloc2, alloc_addr2, data, old_bytes, new_bytes, align, Some(span))?;
+        self.builder.build_unconditional_branch(grown).map_err(llvm_err)?;
+        self.builder.position_at_end(grown);
         let data_phi = self.builder.build_phi(self.ptr_ty(), "seq.data").map_err(llvm_err)?;
-        data_phi.add_incoming(&[(&seq.data, before), (&data, grow)]);
+        data_phi.add_incoming(&[(&fresh, first), (&renewed, again)]);
         let cap_phi = self.builder.build_phi(self.usize_ty, "seq.cap").map_err(llvm_err)?;
-        cap_phi.add_incoming(&[(&seq.cap, before), (&at_least_four, grow)]);
+        cap_phi.add_incoming(&[(&at_least_four, first), (&at_least_four, again)]);
         seq.data = data_phi.as_basic_value().into_pointer_value();
         seq.cap = cap_phi.as_basic_value().into_int_value();
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(done);
+        let grown_data = seq.data;
+        let grown_cap = seq.cap;
+        let data_phi = self.builder.build_phi(self.ptr_ty(), "seq.data.end").map_err(llvm_err)?;
+        data_phi.add_incoming(&[(&data, before), (&grown_data, grown)]);
+        let cap_phi = self.builder.build_phi(self.usize_ty, "seq.cap.end").map_err(llvm_err)?;
+        cap_phi.add_incoming(&[(&cap, before), (&grown_cap, grown)]);
+        seq.data = data_phi.as_basic_value().into_pointer_value();
+        seq.cap = cap_phi.as_basic_value().into_int_value();
+        let _ = alloc2;
         Ok(())
     }
 
@@ -147,10 +192,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         match (&args[0].ty, m) {
-            (Ty::List(elem), Method::Push) => {
+            (Ty::List(elem, _), Method::Push) => {
                 let elem = (**elem).clone();
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
-                self.seq_grow(&mut seq, &elem)?;
+                self.seq_grow(&mut seq, &elem, span)?;
                 let v = self.expr_mode(&args[1], Mode::Move)?;
                 if let Some(p) = self.elem_ptr(&seq, &elem, seq.len) {
                     let v = self.need(v, &elem);
@@ -161,7 +206,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.seq_store(&seq)?;
                 Ok(None)
             }
-            (Ty::List(elem), Method::ListPop) => {
+            (Ty::List(elem, _), Method::ListPop) => {
                 let elem = (**elem).clone();
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let empty = self
@@ -205,7 +250,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     _ => None,
                 })
             }
-            (Ty::List(elem), Method::ListLast) => {
+            (Ty::List(elem, _), Method::ListLast) => {
                 let elem = (**elem).clone();
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let empty = self
@@ -242,7 +287,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     _ => None,
                 })
             }
-            (Ty::List(elem), Method::ListInsert) => {
+            (Ty::List(elem, _), Method::ListInsert) => {
                 let elem = (**elem).clone();
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let index = self.expr_mode(&args[1], Mode::Use)?;
@@ -253,7 +298,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 // The value is evaluated before the shift, as an argument of a call is.
                 let value = self.expr_mode(&args[2], Mode::Move)?;
                 let value_slot = self.spill(value, &elem)?;
-                self.seq_grow(&mut seq, &elem)?;
+                self.seq_grow(&mut seq, &elem, span)?;
                 let size = self.elem_size(&elem);
                 let tail = self.builder.build_int_sub(seq.len, index, "").map_err(llvm_err)?;
                 let bytes =
@@ -275,7 +320,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.seq_store(&seq)?;
                 Ok(None)
             }
-            (Ty::List(elem), Method::ListRemove) => {
+            (Ty::List(elem, _), Method::ListRemove) => {
                 let elem = (**elem).clone();
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let index = self.expr_mode(&args[1], Mode::Use)?;
@@ -304,19 +349,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.seq_store(&seq)?;
                 Ok(value)
             }
-            (Ty::List(elem), Method::ListContains) => {
+            (Ty::List(elem, _), Method::ListContains) => {
                 let elem = (**elem).clone();
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let key = self.expr_mode(&args[1], Mode::Use)?;
                 let key_ptr = self.spill(key, &elem)?;
                 self.sequence_contains(seq.data, seq.len, &elem, key_ptr)
             }
-            (Ty::List(elem), Method::ListSort) => {
+            (Ty::List(elem, _), Method::ListSort) => {
                 let elem = (**elem).clone();
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 self.sort_sequence(&seq, &elem)
             }
-            (Ty::List(elem), Method::Clear) => {
+            (Ty::List(elem, _), Method::Clear) => {
                 let elem = (**elem).clone();
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 self.drop_sequence_elements(&seq, &elem)?;
@@ -324,7 +369,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.seq_store(&seq)?;
                 Ok(None)
             }
-            (Ty::Map(key, value), Method::MapInsert) => {
+            (Ty::Map(key, value, _), Method::MapInsert) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -351,7 +396,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (old_data, old_cap) = (seq.data, seq.cap);
                 self.builder.build_conditional_branch(grow, grow_bb, ready_bb).map_err(llvm_err)?;
                 self.builder.position_at_end(grow_bb);
-                self.map_grow(&mut seq, &key_ty, &value_ty)?;
+                self.map_grow(&mut seq, &key_ty, &value_ty, span)?;
                 let grown = self.builder.get_insert_block().expect("positioned");
                 let (new_data, new_cap) = (seq.data, seq.cap);
                 self.builder.build_unconditional_branch(ready_bb).map_err(llvm_err)?;
@@ -410,7 +455,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 Ok(None)
             }
-            (Ty::Map(key, value), Method::MapGet) => {
+            (Ty::Map(key, value, _), Method::MapGet) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -454,7 +499,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     _ => None,
                 })
             }
-            (Ty::Map(key, value), Method::MapRemove) => {
+            (Ty::Map(key, value, _), Method::MapRemove) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -507,7 +552,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     _ => None,
                 })
             }
-            (Ty::Map(key, value), Method::MapContainsKey) => {
+            (Ty::Map(key, value, _), Method::MapContainsKey) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -530,7 +575,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 Ok(Some(self.builder.build_load(self.cx.bool_type(), result, "").map_err(llvm_err)?))
             }
-            (Ty::Map(key, value), Method::Clear) => {
+            (Ty::Map(key, value, _), Method::Clear) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 self.map_drop_entries(&seq, &key_ty, &value_ty)?;
@@ -832,7 +877,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// Doubles a map's slot table and rehashes its entries (an empty map gets eight slots); `seq` then holds the new
     /// buffer and capacity. The old buffer is freed without dropping its entries: ownership moved into the new table.
-    fn map_grow(&mut self, seq: &mut Seq<'ctx>, key: &Ty, value: &Ty) -> GenResult<()> {
+    fn map_grow(&mut self, seq: &mut Seq<'ctx>, key: &Ty, value: &Ty, span: Span) -> GenResult<()> {
         let entry = Self::map_entry_ty(key, value);
         let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();
         let size = self.map_entry_size(key, value);
@@ -846,8 +891,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .map_err(llvm_err)?
             .into_int_value();
         let bytes = self.builder.build_int_mul(new_cap, self.usize_ty.const_int(size, false), "").map_err(llvm_err)?;
-        let call = self.builder.build_call(self.rt.alloc, &[bytes.into()], "map.slots").map_err(llvm_err)?;
-        let base = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+        let align = self.value_align(&entry);
+        let base = self.alloc_in(&seq.alloc, seq.alloc_addr, bytes, align, Some(span))?;
         let entry_bytes = self.usize_ty.const_int(size, false);
 
         // Zero every hash word: every slot of the new table starts empty.
@@ -901,7 +946,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_unconditional_branch(move_cond).map_err(llvm_err)?;
         self.builder.position_at_end(move_end);
 
-        self.builder.build_call(self.rt.free, &[seq.data.into()], "").map_err(llvm_err)?;
+        let old_bytes = self.builder.build_int_mul(seq.cap, entry_bytes, "").map_err(llvm_err)?;
+        let alloc = seq.alloc.clone();
+        let alloc_addr = seq.alloc_addr;
+        self.dealloc_in(&alloc, alloc_addr, seq.data, old_bytes, align)?;
         seq.data = base;
         seq.cap = new_cap;
         Ok(())
@@ -1012,20 +1060,33 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
-    /// Drops a `ListIntoIter<T>`: the elements it has not handed out, then the buffer. The iterator's layout is
-    /// `{ ptr, len, cap, index }`; the first three fields share the `{ ptr, len, cap }` offsets.
-    pub(super) fn drop_list_into_iter(&mut self, addr: PointerValue<'ctx>, elem: &Ty) -> GenResult<()> {
+    /// Drops a `ListIntoIter<T>`: the elements it has not handed out, then the buffer, through the allocator the
+    /// iterator owns. Its layout is `{ ptr, len, cap, index, allocator? }`.
+    pub(super) fn drop_list_into_iter(
+        &mut self,
+        addr: PointerValue<'ctx>,
+        elem: &Ty,
+        alloc: &burdin_tir::Alloc,
+    ) -> GenResult<()> {
         let ptr_ty = self.ptr_ty();
+        let seq_ty = self.iter_seq_ty_for(alloc);
+        let field = |cg: &mut Self, i: u32, name: &str| -> GenResult<PointerValue<'ctx>> {
+            cg.builder.build_struct_gep(seq_ty, addr, i, name).map_err(llvm_err)
+        };
         let data = {
-            let p = self.seq_field(addr, 0, "iter.ptr")?;
+            let p = field(self, 0, "iter.ptr")?;
             self.builder.build_load(ptr_ty, p, "").map_err(llvm_err)?.into_pointer_value()
         };
         let len = {
-            let p = self.seq_field(addr, 1, "iter.len")?;
+            let p = field(self, 1, "iter.len")?;
+            self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
+        };
+        let cap = {
+            let p = field(self, 2, "iter.cap")?;
             self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
         };
         let index = {
-            let p = self.builder.build_struct_gep(self.iter_seq_ty(), addr, 3, "iter.index").map_err(llvm_err)?;
+            let p = field(self, 3, "iter.index")?;
             self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
         };
         if self.needs_drop(elem) && self.llvm_ty(elem).is_some() {
@@ -1050,33 +1111,57 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
             self.builder.position_at_end(end);
         }
-        self.builder.build_call(self.rt.free, &[data.into()], "").map_err(llvm_err)?;
-        Ok(())
+        let alloc_addr = match alloc.allocator_ty() {
+            Some(_) => Some(field(self, 4, "iter.alloc")?),
+            None => None,
+        };
+        let size = self.usize_ty.const_int(self.elem_size(elem), false);
+        let bytes = self.builder.build_int_mul(cap, size, "").map_err(llvm_err)?;
+        let align = self.value_align(elem);
+        self.dealloc_in(alloc, alloc_addr, data, bytes, align)?;
+        self.drop_stored_allocator(alloc, alloc_addr)
     }
 
     /// Drops a `MapIntoIter<K, V>`: the entries it has not handed out (a handed-out entry has a zeroed hash
     /// word), then the slot table.
-    pub(super) fn drop_map_into_iter(&mut self, addr: PointerValue<'ctx>, key: &Ty, value: &Ty) -> GenResult<()> {
+    pub(super) fn drop_map_into_iter(
+        &mut self,
+        addr: PointerValue<'ctx>,
+        key: &Ty,
+        value: &Ty,
+        alloc: &burdin_tir::Alloc,
+    ) -> GenResult<()> {
         let ptr_ty = self.ptr_ty();
+        let seq_ty = self.iter_seq_ty_for(alloc);
+        let field = |cg: &mut Self, i: u32, name: &str| -> GenResult<PointerValue<'ctx>> {
+            cg.builder.build_struct_gep(seq_ty, addr, i, name).map_err(llvm_err)
+        };
         let data = {
-            let p = self.seq_field(addr, 0, "iter.ptr")?;
+            let p = field(self, 0, "iter.ptr")?;
             self.builder.build_load(ptr_ty, p, "").map_err(llvm_err)?.into_pointer_value()
         };
         let len = {
-            let p = self.seq_field(addr, 1, "iter.len")?;
+            let p = field(self, 1, "iter.len")?;
             self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
         };
         let cap = {
-            let p = self.seq_field(addr, 2, "iter.cap")?;
+            let p = field(self, 2, "iter.cap")?;
             self.builder.build_load(self.usize_ty, p, "").map_err(llvm_err)?.into_int_value()
         };
-        let seq = Seq { addr, data, len, cap };
+        let alloc_addr = match alloc.allocator_ty() {
+            Some(_) => Some(field(self, 4, "iter.alloc")?),
+            None => None,
+        };
+        let seq = Seq { addr, data, len, cap, alloc: alloc.clone(), alloc_addr };
         self.map_drop_entries(&seq, key, value)?;
-        self.builder.build_call(self.rt.free, &[data.into()], "").map_err(llvm_err)?;
-        Ok(())
+        let size = self.usize_ty.const_int(self.map_entry_size(key, value), false);
+        let bytes = self.builder.build_int_mul(cap, size, "").map_err(llvm_err)?;
+        let align = self.value_align(&Self::map_entry_ty(key, value));
+        self.dealloc_in(alloc, alloc_addr, data, bytes, align)?;
+        self.drop_stored_allocator(alloc, alloc_addr)
     }
 
-    /// The four-word layout of the list and map iterators.
+    /// The four-word layout of the list and map iterators without a stored allocator.
     pub(super) fn iter_seq_ty(&self) -> inkwell::types::StructType<'ctx> {
         let ptr = self.ptr_ty();
         self.cx.struct_type(&[ptr.into(), self.usize_ty.into(), self.usize_ty.into(), self.usize_ty.into()], false)
@@ -1088,47 +1173,88 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.cx.struct_type(&[array.into(), self.usize_ty.into()], false)
     }
 
-    /// Drops a map: every live entry, then the slot table.
-    pub(super) fn drop_map(&mut self, addr: PointerValue<'ctx>, key: &Ty, value: &Ty) -> GenResult<()> {
-        let ptr_ty = self.ptr_ty();
-        let data_field = self.seq_field(addr, 0, "map.ptr")?;
-        let len_field = self.seq_field(addr, 1, "map.len")?;
-        let cap_field = self.seq_field(addr, 2, "map.cap")?;
-        let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
-        let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
-        let cap = self.builder.build_load(self.usize_ty, cap_field, "").map_err(llvm_err)?.into_int_value();
-        let seq = Seq { addr, data, len, cap };
-        self.map_drop_entries(&seq, key, value)?;
-        self.builder.build_call(self.rt.free, &[data.into()], "").map_err(llvm_err)?;
+    /// Drops the allocator value stored at `addr`, after its buffer is released.
+    pub(super) fn drop_stored_allocator(
+        &mut self,
+        alloc: &burdin_tir::Alloc,
+        addr: Option<PointerValue<'ctx>>,
+    ) -> GenResult<()> {
+        if let (Some(ty), Some(addr)) = (alloc.allocator_ty(), addr)
+            && self.needs_drop(ty)
+        {
+            self.drop_value(addr, ty)?;
+        }
         Ok(())
     }
 
-    /// Deep-copies a map: clones the live entries and preserves the slot table's shape (and hashes).
+    /// Drops a map: every live entry, then the slot table, then the stored allocator.
+    pub(super) fn drop_map(
+        &mut self,
+        addr: PointerValue<'ctx>,
+        key: &Ty,
+        value: &Ty,
+        alloc: &burdin_tir::Alloc,
+    ) -> GenResult<()> {
+        let ptr_ty = self.ptr_ty();
+        let seq_ty = self.seq_ty(alloc);
+        let field = |cg: &mut Self, i: u32, name: &str| -> GenResult<PointerValue<'ctx>> {
+            cg.builder.build_struct_gep(seq_ty, addr, i, name).map_err(llvm_err)
+        };
+        let data_field = field(self, 0, "map.ptr")?;
+        let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
+        let len_field = field(self, 1, "map.len")?;
+        let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let cap_field = field(self, 2, "map.cap")?;
+        let cap = self.builder.build_load(self.usize_ty, cap_field, "").map_err(llvm_err)?.into_int_value();
+        let alloc_addr = match alloc.allocator_ty() {
+            Some(_) => Some(field(self, 3, "map.alloc")?),
+            None => None,
+        };
+        let seq = Seq { addr, data, len, cap, alloc: alloc.clone(), alloc_addr };
+        self.map_drop_entries(&seq, key, value)?;
+        let size = self.usize_ty.const_int(self.map_entry_size(key, value), false);
+        let bytes = self.builder.build_int_mul(cap, size, "").map_err(llvm_err)?;
+        let align = self.value_align(&Self::map_entry_ty(key, value));
+        self.dealloc_in(alloc, alloc_addr, data, bytes, align)?;
+        self.drop_stored_allocator(alloc, alloc_addr)
+    }
+
+    /// Deep-copies a map: clones the allocator value first, then the live entries, and preserves the slot table's
+    /// shape (and hashes).
     pub(super) fn clone_map(
         &mut self,
         dst: PointerValue<'ctx>,
         src: PointerValue<'ctx>,
         key: &Ty,
         value: &Ty,
+        alloc: &burdin_tir::Alloc,
     ) -> GenResult<()> {
         let ptr_ty = self.ptr_ty();
         let entry = Self::map_entry_ty(key, value);
         let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();
-        let field = |cg: &mut Self, base: PointerValue<'ctx>, i: u32| -> GenResult<PointerValue<'ctx>> {
-            cg.builder.build_struct_gep(cg.string_ty, base, i, "").map_err(llvm_err)
+        let seq_ty = self.seq_ty(alloc);
+        let field_src = |cg: &mut Self, base: PointerValue<'ctx>, i: u32| -> GenResult<PointerValue<'ctx>> {
+            cg.builder.build_struct_gep(seq_ty, base, i, "").map_err(llvm_err)
         };
-        let src_ptr_field = field(self, src, 0)?;
-        let src_len_field = field(self, src, 1)?;
-        let src_cap_field = field(self, src, 2)?;
+        let src_ptr_field = field_src(self, src, 0)?;
+        let src_len_field = field_src(self, src, 1)?;
+        let src_cap_field = field_src(self, src, 2)?;
         let base = self.builder.build_load(ptr_ty, src_ptr_field, "").map_err(llvm_err)?.into_pointer_value();
         let len = self.builder.build_load(self.usize_ty, src_len_field, "").map_err(llvm_err)?.into_int_value();
         let cap = self.builder.build_load(self.usize_ty, src_cap_field, "").map_err(llvm_err)?.into_int_value();
+        let mut dst_alloc_addr = None;
+        if let Some(ty) = alloc.allocator_ty() {
+            let s = field_src(self, src, 3)?;
+            let d = field_src(self, dst, 3)?;
+            self.clone_value(d, s, ty)?;
+            dst_alloc_addr = Some(d);
+        }
         let bytes = self
             .builder
             .build_int_mul(cap, self.usize_ty.const_int(self.map_entry_size(key, value), false), "")
             .map_err(llvm_err)?;
-        let call = self.builder.build_call(self.rt.alloc, &[bytes.into()], "map.copy").map_err(llvm_err)?;
-        let new_base = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+        let align = self.value_align(&entry);
+        let new_base = self.alloc_in(alloc, dst_alloc_addr, bytes, align, None)?;
         let index = self.alloca(self.usize_ty.into(), "map.clone.i")?;
         self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
         let header = self.new_block("map.clone.cond");
@@ -1165,9 +1291,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(index, next_i).map_err(llvm_err)?;
         self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
         self.builder.position_at_end(end);
-        let dst_ptr_field = field(self, dst, 0)?;
-        let dst_len_field = field(self, dst, 1)?;
-        let dst_cap_field = field(self, dst, 2)?;
+        let dst_ptr_field = field_src(self, dst, 0)?;
+        let dst_len_field = field_src(self, dst, 1)?;
+        let dst_cap_field = field_src(self, dst, 2)?;
         self.builder.build_store(dst_ptr_field, new_base).map_err(llvm_err)?;
         self.builder.build_store(dst_len_field, len).map_err(llvm_err)?;
         self.builder.build_store(dst_cap_field, cap).map_err(llvm_err)?;

@@ -207,8 +207,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let env_ty = self.closure_env_ty(clos);
         let size = self.target_data.get_abi_size(&env_ty).max(1);
         let size = self.usize_ty.const_int(size, false);
-        let call = self.builder.build_call(self.rt.alloc, &[size.into()], "closure.env").map_err(llvm_err)?;
-        let env = call.try_as_basic_value().basic().expect("alloc returns a pointer").into_pointer_value();
+        let env = self.global_alloc(size, None)?;
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         for (i, c) in captures.iter().enumerate() {
             let field = self.builder.build_struct_gep(env_ty, env, i as u32, "").map_err(llvm_err)?;

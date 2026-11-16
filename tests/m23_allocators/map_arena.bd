@@ -1,0 +1,32 @@
+//@ run
+//> 40
+//> 17
+//> 780
+//> 0
+//> true
+
+// A map grows and rehashes through its stored allocator; a growth keeps every entry (`spec/allocators.md`, AL5).
+
+fn main() {
+    let mut m = Map<String, i32>.new_in(Arena.new())
+    let mut i = 0
+    while i < 40 {
+        m.insert("k{i}", i)
+        i = i + 1
+    }
+    println(m.len().to_string())
+    match m.get("k17".to_string()) {
+        Some(v) => println((*v).to_string()),
+        None => println("missing"),
+    }
+    let mut sum = 0
+    for (k, v) in m.iter() {
+        sum = sum + *v
+    }
+    println(sum.to_string())
+    match m.remove("k0".to_string()) {
+        Some(v) => println(v.to_string()),
+        None => println("missing"),
+    }
+    println((m.len() == 39).to_string())
+}

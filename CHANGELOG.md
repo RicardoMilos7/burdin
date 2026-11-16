@@ -228,6 +228,45 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Milestone 23 — allocators, `Arena`, and `Shared` (issue #180, sub-issues #181-#188)
+
+- Decision (#181): an allocator is an ordinary value and an ordinary generic parameter (`A: Allocator`, or
+  `own a: impl Allocator`), and `List<T, A = Global>`, `Map<K, V, A = Global>`, and `Heap<T, A = Global>` take
+  it as their trailing type argument. `Global` is zero-sized and stored nowhere, so the stage 0 spellings and
+  layouts are unchanged; any other allocator is stored as an owned field, given to `new_in` (`spec/allocators.md`,
+  AL1-AL10).
+- The `Allocator` interface and `Global` (#182): `std/src/alloc.bd` declares `allocate`, `reallocate`, and
+  `deallocate` (all `mut self`, by address when stored) and the zero-sized `Global`, whose methods call the
+  compiler's unsafe `__alloc`/`__realloc`/`__dealloc`.
+- Allocator parameters (#183): `List<T>.new_in(alloc)`, `Map<K, V>.new_in(alloc)`, and `Heap.new_in(alloc, value)`
+  move the value into the container; `new` for a container with a stored allocator is E0272 and a non-allocator type
+  or value is E0270. Default type parameters (`struct Buffer<A: Allocator = Global>`) are resolved where the type
+  is declared, with E0271 for a non-trailing default, a const parameter's default, and a default on a function,
+  interface, or alias; a bare inherent or `Drop` impl covers every instance.
+- `Arena` (#184): a first-class bump allocator with 4096-byte blocks, `bytes_allocated`, `reset`, and a `Drop` that
+  resets it; `reallocate` copies into fresh arena memory and `deallocate` is a no-op. It is not second-class
+  because every safe way to get an arena-backed buffer makes the container own the arena.
+- `Shared<T>` (#185): a built-in non-atomic reference-counted cell `{count, value}` from `Global`; `.clone()`
+  shares it, `.get()` borrows the value, `.strong_count()` counts, and the last handle drops the value and frees
+  the cell. It is `Clone` for every `T` and never `Copy`; the cell's value is stored, so a view is E0120. Stage 2
+  makes the count atomic and adds `Send`.
+- Leak detection (#186): a `burdin test` build allocates through a checking allocator with a 40-byte header (next,
+  size, site, magic) and a live list. A double free panics; a test that returns success with live allocations is
+  reported as `test leak: <n> allocation(s) leaked, <bytes> byte(s)` with `allocated at <path>:<line>:<column>` for
+  each block, and fails. `burdin build`/`run` keep the plain C heap.
+- Allocator-aware containers (#187): `List`, `Map`, and `Heap` allocate, reallocate, free, clone, and iterate
+  through the stored allocator, and the owning iterators carry it. Dropping a container frees its buffer through
+  the allocator and then drops the allocator; cloning requires the allocator to be `Clone`.
+- Tests (#188): `tests/m23_allocators/` adds 27 conformance tests (the default spelling and layout, allocator
+  parameters and functions, arena-backed `List`/`Map`/`Heap`, arena reset and growth, `Shared` across scopes and in
+  structs, default type parameters, owning iterators, cloning, the leak report, and the compile-fail cases of
+  E0270-E0272, E0120, and E0224), plus the `tests/runner/leaks/` fixture and the leak checks in
+  `tests/check_test_runner.py`. The suite is 573 tests. The checking allocator also exposed a temporary-drop leak in
+  the non-consuming `Option`/`Result` methods, now fixed by reading the receiver through a place.
+- Documentation: `spec/allocators.md` (new), `spec/grammar.md` (type parameter defaults), `spec/stdlib.md`,
+  `spec/memory-rules.md` (DR8a), `spec/test-runner.md`, `spec/stage1-subset.md`, `tests/README.md` (decision 30),
+  `docs/error-codes.md` (E0270-E0272), `README.md`, `AGENTS.md`, `CLAUDE.md`, `HANDOFF.md`, and CI's milestone list.
+
 ### Milestone 22 — build scripts (issue #173, sub-issues #174-#179)
 
 - Decision (#174): `build.bd` next to a package's manifest is a standalone Burdin program the driver compiles and

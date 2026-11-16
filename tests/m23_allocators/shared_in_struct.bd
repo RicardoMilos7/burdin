@@ -1,0 +1,23 @@
+//@ run
+//> 2
+//> 2
+//> 7
+//> 7
+//> true
+
+// A struct that holds a `Shared<T>` and derives `Clone` shares the same cell instead of copying the value
+// (`spec/allocators.md`, AL8).
+
+struct Holder derives (Clone) {
+    value: Shared<i32>
+}
+
+fn main() {
+    let a = Holder { value: Shared.new(7) }
+    let b = a.clone()
+    println(a.value.strong_count().to_string())
+    println(b.value.strong_count().to_string())
+    println((*b.value.get()).to_string())
+    println((*a.value.get()).to_string())
+    println((b.value.strong_count() == 2).to_string())
+}

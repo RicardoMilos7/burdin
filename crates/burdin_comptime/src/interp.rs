@@ -399,7 +399,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             K::ComptimeFor { pat, iter, body } => {
                 let items = self.comptime_items(iter)?;
                 let item_ty = match &iter.ty {
-                    Ty::Array(t, _) | Ty::List(t) | Ty::Range(t, _) => (**t).clone(),
+                    Ty::Array(t, _) | Ty::List(t, _) | Ty::Range(t, _) => (**t).clone(),
                     other => other.clone(),
                 };
                 self.items_loop(pat, items, &item_ty, body, span)?;
@@ -898,12 +898,14 @@ impl<'p, 'c> Interp<'p, 'c> {
             }
             Ty::Tuple(ts) => ts.iter().any(|t| self.has_user_drop(t)),
             Ty::Array(t, _)
-            | Ty::List(t)
+            | Ty::List(t, _)
             | Ty::Option(t)
-            | Ty::Heap(t)
-            | Ty::ListIntoIter(t)
+            | Ty::Heap(t, _)
+            | Ty::ListIntoIter(t, _)
             | Ty::ArrayIntoIter(t, _) => self.has_user_drop(t),
-            Ty::Result(a, b) | Ty::Map(a, b) | Ty::MapIntoIter(a, b) => self.has_user_drop(a) || self.has_user_drop(b),
+            Ty::Result(a, b) | Ty::Map(a, b, _) | Ty::MapIntoIter(a, b, _) => {
+                self.has_user_drop(a) || self.has_user_drop(b)
+            }
             Ty::Any(_) | Ty::Fn { .. } => true,
             _ => false,
         };
@@ -946,27 +948,27 @@ impl<'p, 'c> Interp<'p, 'c> {
                     self.drop_value(fv, ft, span)?;
                 }
             }
-            (Ty::Array(t, _) | Ty::List(t), Value::Array(vs) | Value::List(vs)) => {
+            (Ty::Array(t, _) | Ty::List(t, _), Value::Array(vs) | Value::List(vs)) => {
                 for fv in vs {
                     self.drop_value(fv, t, span)?;
                 }
             }
-            (Ty::ListIntoIter(t) | Ty::ArrayIntoIter(t, _), Value::Items(vs)) => {
+            (Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _), Value::Items(vs)) => {
                 for fv in vs {
                     self.drop_value(fv, t, span)?;
                 }
             }
-            (Ty::Option(t) | Ty::Heap(t), Value::Opt(Some(b)) | Value::Heap(b)) => self.drop_value(*b, t, span)?,
+            (Ty::Option(t) | Ty::Heap(t, _), Value::Opt(Some(b)) | Value::Heap(b)) => self.drop_value(*b, t, span)?,
             (Ty::Result(t, _), Value::Res(Ok(b))) | (Ty::Result(_, t), Value::Res(Err(b))) => {
                 self.drop_value(*b, t, span)?
             }
-            (Ty::Map(k, val), Value::Map(pairs)) => {
+            (Ty::Map(k, val, _), Value::Map(pairs)) => {
                 for (kv, vv) in pairs {
                     self.drop_value(kv, k, span)?;
                     self.drop_value(vv, val, span)?;
                 }
             }
-            (Ty::MapIntoIter(k, val), Value::Items(pairs)) => {
+            (Ty::MapIntoIter(k, val, _), Value::Items(pairs)) => {
                 for pair in pairs {
                     if let Value::Tuple(mut kv) = pair {
                         let vv = kv.pop().unwrap_or(Value::Moved);

@@ -1,0 +1,30 @@
+//@ run
+//> 2
+//> 5
+//> drop 5
+//> drop 1
+//> drop 2
+
+// Dropping a container frees its buffer and drops every element and the allocator value through the ordinary
+// drop machinery (`spec/allocators.md`, AL7). The arena-backed list drops its arena, which frees the block.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut xs = List<Noisy>.new_in(Arena.new())
+    xs.push(Noisy { id: 1 })
+    xs.push(Noisy { id: 2 })
+    println(xs.len().to_string())
+    {
+        let shared = Shared.new(Noisy { id: 5 })
+        println((*shared.get()).id.to_string())
+    }
+}

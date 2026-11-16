@@ -244,21 +244,32 @@ impl FnCx<'_> {
             globals.unify(&identity, expected, &mut bindings);
         }
         let mut args = Vec::new();
-        for p in &info.params {
-            match bindings.iter().find(|(n, _)| n == p) {
-                Some((_, t)) => args.push(t.clone()),
-                None => {
-                    self.diags.error(
-                        Code::TYPE_MISMATCH,
-                        span,
-                        format!(
-                            "cannot tell the type arguments of `{}` here; write them, as in `{}<...>`",
-                            info.name, info.name
-                        ),
-                    );
-                    return None;
-                }
-            }
+        let mut env: Vec<(String, Ty)> = bindings.clone();
+        for (i, p) in info.params.iter().enumerate() {
+            let found = bindings.iter().find(|(n, _)| n == p).map(|(_, t)| t.clone());
+            let ty = match found {
+                Some(t) => t,
+                None => match info.defaults.get(i).and_then(|d| d.clone()) {
+                    Some(default) => {
+                        let ty = globals.resolve_type_in(&default, None, &env, info.module, self.diags);
+                        bindings.push((p.clone(), ty.clone()));
+                        ty
+                    }
+                    None => {
+                        self.diags.error(
+                            Code::TYPE_MISMATCH,
+                            span,
+                            format!(
+                                "cannot tell the type arguments of `{}` here; write them, as in `{}<...>`",
+                                info.name, info.name
+                            ),
+                        );
+                        return None;
+                    }
+                },
+            };
+            args.push(ty.clone());
+            env.push((p.clone(), ty));
         }
         globals.check_adt_bounds(g, &args, span, self.diags);
         Some(globals.adt_instance_ty(g, args))

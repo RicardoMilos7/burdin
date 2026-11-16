@@ -71,6 +71,9 @@ pub(crate) struct GenericAdt {
     pub is_enum: bool,
     pub params: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
+    /// The default type of each parameter, when it was written (`struct Pool<A: Allocator = Global>`), as a
+    /// type expression resolved when a use leaves the argument out (`spec/allocators.md`, AL5).
+    pub defaults: Vec<Option<ast::Type>>,
     /// Index into the template list of structs or of enums.
     pub decl: usize,
     /// The instance whose arguments are its own parameters. Its fields are the pattern that struct literals and
@@ -208,12 +211,21 @@ impl Globals {
             Ty::Ref { inner, .. }
             | Ty::Slice(inner)
             | Ty::Option(inner)
-            | Ty::Heap(inner)
             | Ty::CPtr(inner)
             | Ty::Range(inner, _)
-            | Ty::List(inner) => self.ty_has_param(inner),
+            | Ty::Shared(inner) => self.ty_has_param(inner),
+            Ty::Heap(inner, alloc) => {
+                self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
+            }
+            Ty::List(inner, alloc) => {
+                self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
+            }
             Ty::Result(ok, err) => self.ty_has_param(ok) || self.ty_has_param(err),
-            Ty::Map(k, v) => self.ty_has_param(k) || self.ty_has_param(v),
+            Ty::Map(k, v, alloc) => {
+                self.ty_has_param(k)
+                    || self.ty_has_param(v)
+                    || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
+            }
             Ty::Fn { sig, .. } => sig.params.iter().any(|t| self.ty_has_param(t)) || self.ty_has_param(&sig.ret),
             Ty::Any(a) => a.args.iter().any(|t| self.ty_has_param(t)),
             Ty::Tuple(ts) => ts.iter().any(|t| self.ty_has_param(t)),
@@ -238,10 +250,17 @@ impl Globals {
             (Ty::Ref { inner: p, .. }, Ty::Ref { inner: a, .. })
             | (Ty::Slice(p), Ty::Slice(a))
             | (Ty::Option(p), Ty::Option(a))
-            | (Ty::Heap(p), Ty::Heap(a))
+            | (Ty::Shared(p), Ty::Shared(a))
             | (Ty::CPtr(p), Ty::CPtr(a))
-            | (Ty::Range(p, _), Ty::Range(a, _))
-            | (Ty::List(p), Ty::List(a)) => self.unify(p, a, bindings),
+            | (Ty::Range(p, _), Ty::Range(a, _)) => self.unify(p, a, bindings),
+            (Ty::Heap(p, pa), Ty::Heap(a, aa)) => {
+                self.unify(p, a, bindings);
+                self.unify_alloc(pa, aa, bindings);
+            }
+            (Ty::List(p, pa), Ty::List(a, aa)) => {
+                self.unify(p, a, bindings);
+                self.unify_alloc(pa, aa, bindings);
+            }
             (Ty::Array(p, pn), Ty::Array(a, an)) => {
                 self.unify(p, a, bindings);
                 self.unify_len(*pn, *an, bindings);
@@ -250,9 +269,10 @@ impl Globals {
                 self.unify(po, ao, bindings);
                 self.unify(pe, ae, bindings);
             }
-            (Ty::Map(pk, pv), Ty::Map(ak, av)) => {
+            (Ty::Map(pk, pv, pa), Ty::Map(ak, av, aa)) => {
                 self.unify(pk, ak, bindings);
                 self.unify(pv, av, bindings);
+                self.unify_alloc(pa, aa, bindings);
             }
             (Ty::Fn { sig: psig, kind: pk, borrowed: pb }, Ty::Fn { sig: asig, kind: ak, borrowed: ab })
                 if pk.at_least(*ak) && pb == ab && psig.params.len() == asig.params.len() =>
@@ -286,6 +306,20 @@ impl Globals {
         }
     }
 
+    /// Matches the allocators of two container types. A pattern allocator parameter binds to the default
+    /// allocator when the actual container stores none.
+    fn unify_alloc(&self, pat: &burdin_tir::Alloc, act: &burdin_tir::Alloc, bindings: &mut Vec<(String, Ty)>) {
+        match (pat.allocator_ty(), act.allocator_ty()) {
+            (Some(p), Some(a)) => self.unify(p, a, bindings),
+            (Some(p), None) => {
+                if let Some(global) = &self.global_alloc_ty {
+                    self.unify(p, global, bindings);
+                }
+            }
+            (None, _) => {}
+        }
+    }
+
     /// Replaces type parameters by the types in `env`.
     pub(crate) fn subst_ty(&self, ty: &Ty, env: &[(String, Ty)]) -> Ty {
         let go = |t: &Ty| Box::new(self.subst_ty(t, env));
@@ -301,9 +335,10 @@ impl Globals {
             Ty::Const(v) if *v >= crate::consteval::SYM_CONST => self.subst_const(*v, env),
             Ty::Option(t) => Ty::Option(go(t)),
             Ty::Result(t, e) => Ty::Result(go(t), go(e)),
-            Ty::List(t) => Ty::List(go(t)),
-            Ty::Map(k, v) => Ty::Map(go(k), go(v)),
-            Ty::Heap(t) => Ty::Heap(go(t)),
+            Ty::List(t, a) => Ty::List(go(t), self.subst_alloc(a, env)),
+            Ty::Map(k, v, a) => Ty::Map(go(k), go(v), self.subst_alloc(a, env)),
+            Ty::Heap(t, a) => Ty::Heap(go(t), self.subst_alloc(a, env)),
+            Ty::Shared(t) => Ty::Shared(go(t)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),
             Ty::Range(t, inclusive) => Ty::Range(go(t), *inclusive),
             Ty::Fn { sig, kind, borrowed } => Ty::Fn {
@@ -760,7 +795,7 @@ impl Globals {
             Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char | Ty::Str | Ty::String | Ty::Error | Ty::Never => true,
             Ty::Ref { inner, .. } => part(inner),
             Ty::Unit => debug,
-            Ty::Option(t) | Ty::List(t) | Ty::Heap(t) => debug && part(t),
+            Ty::Option(t) | Ty::List(t, _) | Ty::Heap(t, _) => debug && part(t),
             Ty::Result(t, e) => debug && part(t) && part(e),
             Ty::Tuple(ts) => debug && (2..=4).contains(&ts.len()) && ts.iter().all(part),
             Ty::Struct(_) | Ty::Enum(_) => return None,
@@ -961,13 +996,21 @@ mod tests {
                 Ty::Result(Box::new(i32_()), Box::new(bool_())),
                 vec![("T".into(), i32_()), ("E".into(), bool_())],
             ),
-            (Ty::List(Box::new(param("T"))), Ty::List(Box::new(bool_())), vec![("T".into(), bool_())]),
             (
-                Ty::Map(Box::new(param("K")), Box::new(param("V"))),
-                Ty::Map(Box::new(Ty::Str), Box::new(i32_())),
+                Ty::List(Box::new(param("T")), burdin_tir::Alloc::Global),
+                Ty::List(Box::new(bool_()), burdin_tir::Alloc::Global),
+                vec![("T".into(), bool_())],
+            ),
+            (
+                Ty::Map(Box::new(param("K")), Box::new(param("V")), burdin_tir::Alloc::Global),
+                Ty::Map(Box::new(Ty::Str), Box::new(i32_()), burdin_tir::Alloc::Global),
                 vec![("K".into(), Ty::Str), ("V".into(), i32_())],
             ),
-            (Ty::Heap(Box::new(param("T"))), Ty::Heap(Box::new(i32_())), vec![("T".into(), i32_())]),
+            (
+                Ty::Heap(Box::new(param("T")), burdin_tir::Alloc::Global),
+                Ty::Heap(Box::new(i32_()), burdin_tir::Alloc::Global),
+                vec![("T".into(), i32_())],
+            ),
             (Ty::CPtr(Box::new(param("T"))), Ty::CPtr(Box::new(bool_())), vec![("T".into(), bool_())]),
             (Ty::Slice(Box::new(param("T"))), Ty::Slice(Box::new(Ty::Str)), vec![("T".into(), Ty::Str)]),
             (Ty::Array(Box::new(param("T")), 3), Ty::Array(Box::new(i32_()), 3), vec![("T".into(), i32_())]),
@@ -1010,9 +1053,15 @@ mod tests {
 
     #[test]
     fn mismatched_shapes_bind_nothing() {
-        assert!(bindings(&opt(param("T")), &Ty::List(Box::new(i32_()))).is_empty());
+        assert!(bindings(&opt(param("T")), &Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global)).is_empty());
         assert!(bindings(&Ty::Tuple(vec![param("T")]), &Ty::Tuple(vec![i32_(), bool_()])).is_empty());
-        assert!(bindings(&Ty::List(Box::new(param("T"))), &Ty::Map(Box::new(i32_()), Box::new(i32_()))).is_empty());
+        assert!(
+            bindings(
+                &Ty::List(Box::new(param("T")), burdin_tir::Alloc::Global),
+                &Ty::Map(Box::new(i32_()), Box::new(i32_()), burdin_tir::Alloc::Global)
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1052,13 +1101,13 @@ mod tests {
         let ty = Ty::Tuple(vec![
             param("T"),
             Ty::Result(Box::new(param("T")), Box::new(param("E"))),
-            Ty::Map(Box::new(param("E")), Box::new(param("T"))),
+            Ty::Map(Box::new(param("E")), Box::new(param("T")), burdin_tir::Alloc::Global),
             Ty::Ref { mutable: false, inner: Box::new(param("T")) },
         ]);
         let want = Ty::Tuple(vec![
             i32_(),
             Ty::Result(Box::new(i32_()), Box::new(bool_())),
-            Ty::Map(Box::new(bool_()), Box::new(i32_())),
+            Ty::Map(Box::new(bool_()), Box::new(i32_()), burdin_tir::Alloc::Global),
             Ty::Ref { mutable: false, inner: Box::new(i32_()) },
         ]);
         assert_eq!(g.subst_ty(&ty, &env), want);
@@ -1069,7 +1118,7 @@ mod tests {
         let mut g = Globals::default();
         assert!(g.ty_has_param(&param("T")));
         assert!(g.ty_has_param(&opt(param("T"))));
-        assert!(g.ty_has_param(&Ty::Tuple(vec![i32_(), Ty::List(Box::new(param("T")))])));
+        assert!(g.ty_has_param(&Ty::Tuple(vec![i32_(), Ty::List(Box::new(param("T")), burdin_tir::Alloc::Global)])));
         assert!(!g.ty_has_param(&opt(i32_())));
         assert!(!g.ty_has_param(&Ty::Str));
 

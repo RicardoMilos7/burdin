@@ -114,7 +114,8 @@ SelfParam     = [ Convention ] "self" ;                 (* only as the first par
 Convention    = "mut" | "own" ;                         (* no convention = read-only *)
 
 GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">" ;
-GenericParam  = IDENT [ ":" Bounds ]
+GenericParam  = IDENT [ ":" Bounds ] [ "=" Type ]   (* a default: only on a struct's or enum's trailing type
+                                                        parameters, `spec/allocators.md`, AL5 *)
               | "const" IDENT ":" Type ;                (* a const parameter: `spec/const-generics.md`, CG1 *)
 Bounds        = TypePath { "+" TypePath } ;
 WhereClause   = "where" WherePred { "," WherePred } ;
@@ -171,6 +172,11 @@ variant constructors, argument lists, generic arguments, tuples, and arrays also
 method with one implementation may declare one, the parameters with defaults must be the trailing ones, and the
 expression must be a constant expression checked at the declaration (`arguments.md`, AG1-AG3). Interface method
 signatures and `extern` declarations cannot (E0213).
+
+**Type parameter defaults.** A struct's or enum's type parameter may end with `= Type`, the argument a use may
+omit (`struct Buffer<A: Allocator = Global>`). The parameters with defaults must be the trailing ones, a const
+parameter takes no default, and functions, interfaces, and type aliases cannot declare one (`allocators.md`,
+AL5; E0271). A use may stop writing arguments at the first omitted default: `Buffer` is `Buffer<Global>`.
 
 **Unique names and cycles.** A name is unique in its namespace: a repeated type, interface, function, constant,
 test, type parameter, field, variant, method, extension method for the same receiver, or import is E0007. A declaration may not depend on itself: a constant

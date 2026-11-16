@@ -1625,3 +1625,61 @@ fn main() {} //~ E0262
 
 **How to fix:** give the generated module a name the package does not already use, for example
 `<out>/src/generated.bd`, and import it with that name.
+
+## E0270: Not an allocator
+
+The last type argument of `List<T, A>`, `Map<K, V, A>`, and `Heap<T, A>` is the allocator the container
+allocates through, and the value passed to `new_in` is stored as that allocator. Both must implement the
+`Allocator` interface from `std.alloc`; a type that does not, such as `i32`, cannot supply or store memory.
+`spec/allocators.md` AL2-AL4.
+
+<!-- error-example: E0270 -->
+```burdin
+fn takes(xs: List<i32, i32>) {} //~ E0270
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** use `Global` (the default, written by leaving the argument out) or `Arena`, or implement
+`Allocator` for your type with an `impl` block that provides `allocate`, `reallocate`, and `deallocate`.
+
+## E0271: Invalid default type parameter
+
+A struct's or enum's type parameter may end with a default (`struct Buffer<A: Allocator = Global>`), which a use
+may omit. The defaulted parameters must be the trailing ones, because a use fills the trailing arguments; a
+const parameter takes a value rather than a type; and a function's, an interface's, and a type alias's type
+parameters take no default at all. Each of those is this error. `spec/allocators.md` AL5.
+
+<!-- error-example: E0271 -->
+```burdin
+struct Bad<A = i32, B> { //~ E0271
+    a: A
+    b: B
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** move every parameter with a default to the end of the list (`struct Pair<A, B = i32>`), and
+declare defaults only on a struct or enum. A function's type arguments are inferred at each call, an impl writes
+an interface's arguments, and an alias is expanded where it is used.
+
+## E0272: Missing allocator
+
+A container stores its allocator value when its allocator type is not `Global` (`List<i32, Arena>`,
+`Heap<i32, Arena>`). The `new` constructor has no allocator value to store, so it exists only for the default
+allocator; calling it for such a container is this error. `spec/allocators.md` AL4.
+
+<!-- error-example: E0272 -->
+```burdin
+fn main() {
+    let xs: List<i32, Arena> = List<i32, Arena>.new() //~ E0272
+}
+```
+<!-- /error-example -->
+
+**How to fix:** construct the container with the `new_in` form and pass the allocator:
+`List.new_in(arena)`, `Map.new_in(arena)`, or `Heap.new_in(arena, value)`. `new()` remains the constructor for
+`List<T>`, `Map<K, V>`, and `Heap.new(value)`, which use `Global`.

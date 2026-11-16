@@ -304,11 +304,11 @@ fn ty_mentions_self(ty: &Ty) -> bool {
         | Ty::Array(inner, _)
         | Ty::Option(inner)
         | Ty::Result(inner, _)
-        | Ty::List(inner)
-        | Ty::Heap(inner)
+        | Ty::List(inner, _)
+        | Ty::Heap(inner, _)
         | Ty::CPtr(inner)
         | Ty::Range(inner, _) => ty_mentions_self(inner),
-        Ty::Map(k, v) => ty_mentions_self(k) || ty_mentions_self(v),
+        Ty::Map(k, v, _) => ty_mentions_self(k) || ty_mentions_self(v),
         Ty::Any(a) => a.args.iter().any(ty_mentions_self),
         Ty::Fn { sig, .. } => sig.params.iter().any(ty_mentions_self) || ty_mentions_self(&sig.ret),
         Ty::Tuple(ts) => ts.iter().any(ty_mentions_self),

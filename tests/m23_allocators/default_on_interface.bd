@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// An interface's type parameters take no default (E0271).
+
+interface Show<T = i32> { //~ E0271
+    fn show(self): T
+}
+
+fn main() { }

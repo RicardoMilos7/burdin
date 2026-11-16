@@ -97,7 +97,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A test build: the entry point dispatches to one `test` block by its index on the command line.
             None => {
                 let tests: Vec<_> = program.tests.iter().map(|t| self.functions[t.func.0]).collect();
-                crate::runtime::define_test_main(self.cx, self.module, &tests, self.windows)?
+                crate::runtime::define_test_main(self.cx, self.module, &tests, self.rt.leak_check, self.windows)?
             }
         }
         Ok(())

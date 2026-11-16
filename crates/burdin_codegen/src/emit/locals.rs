@@ -76,10 +76,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     ty = (**elem).clone();
                     i += 1;
                 }
-                Ty::List(elem) => {
+                Ty::List(elem, alloc) => {
                     let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
-                    let data_field =
-                        self.builder.build_struct_gep(self.string_ty, ptr, 0, "list.ptr").map_err(llvm_err)?;
+                    let seq_ty = self.seq_ty(alloc);
+                    let data_field = self.builder.build_struct_gep(seq_ty, ptr, 0, "list.ptr").map_err(llvm_err)?;
                     let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
                     let Some(elem_t) = self.llvm_ty(elem) else { return Ok(None) };
                     let index = self.usize_ty.const_int(path[i] as u64, false);
@@ -88,9 +88,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     ty = (**elem).clone();
                     i += 1;
                 }
-                Ty::Heap(inner) if path[i] == tir::MOVED_DEREF => {
+                Ty::Heap(inner, alloc) if path[i] == tir::MOVED_DEREF => {
                     let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
-                    ptr = self.builder.build_load(ptr_ty, ptr, "heap").map_err(llvm_err)?.into_pointer_value();
+                    let slot = match alloc.allocator_ty() {
+                        None => ptr,
+                        Some(_) => {
+                            let heap_ty = self.heap_ty(alloc).into_struct_type();
+                            self.builder.build_struct_gep(heap_ty, ptr, 0, "heap.ptr").map_err(llvm_err)?
+                        }
+                    };
+                    ptr = self.builder.build_load(ptr_ty, slot, "heap").map_err(llvm_err)?.into_pointer_value();
                     ty = (**inner).clone();
                     i += 1;
                 }
@@ -117,7 +124,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Index(base, index) => {
                 let (root, mut path) = self.place_path(base)?;
                 if is_tracked_place(base)
-                    && matches!(base.ty, Ty::Array(..) | Ty::List(_))
+                    && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
                     && let Some(index) = constant_index(index)
                 {
                     path.push(index);
@@ -126,7 +133,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::Deref(base) => {
                 let (root, mut path) = self.place_path(base)?;
-                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_)) {
+                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)) {
                     path.push(tir::MOVED_DEREF);
                 }
                 Some((root, path))

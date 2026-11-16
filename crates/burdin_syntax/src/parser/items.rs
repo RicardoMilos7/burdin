@@ -741,7 +741,7 @@ impl Parser<'_> {
             };
             let name = Ident { name, span };
             ty.kind = TypeKind::Path(vec![PathSegment { name: name.clone(), args: Vec::new() }]);
-            generics.push(GenericParam { name, bounds: vec![*inner], const_ty: None });
+            generics.push(GenericParam { name, bounds: vec![*inner], const_ty: None, default: None });
         }
         generics
     }
@@ -753,17 +753,22 @@ impl Parser<'_> {
             if self.eat_closing_angle() {
                 break;
             }
-            // `const N: usize`: a const generic parameter (`spec/const-generics.md`, CG1).
+            // `const N: usize`: a const generic parameter (`spec/const-generics.md`, CG1). A default parses so
+            // that `const N: usize = 4` reaches the checker, which reports E0271: a const parameter takes a
+            // value, not a type (`spec/allocators.md`, AL5).
             if self.at(&TokenKind::Const) {
                 self.bump();
                 let name = self.ident("a const generic parameter name")?;
                 self.expect(&TokenKind::Colon)?;
                 let ty = self.ty()?;
-                params.push(GenericParam { name, bounds: Vec::new(), const_ty: Some(ty) });
+                let default = if self.eat(&TokenKind::Eq) { Some(self.generic_arg()?) } else { None };
+                params.push(GenericParam { name, bounds: Vec::new(), const_ty: Some(ty), default });
             } else {
                 let name = self.ident("a generic parameter name")?;
                 let bounds = if self.eat(&TokenKind::Colon) { self.bounds()? } else { Vec::new() };
-                params.push(GenericParam { name, bounds, const_ty: None });
+                // `A: Allocator = Global`: a default for an omitted type argument (`spec/allocators.md`, AL5).
+                let default = if self.eat(&TokenKind::Eq) { Some(self.ty()?) } else { None };
+                params.push(GenericParam { name, bounds, const_ty: None, default });
             }
             if !self.eat(&TokenKind::Comma) {
                 if !self.eat_closing_angle() {
