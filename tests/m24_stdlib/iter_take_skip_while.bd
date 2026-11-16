@@ -1,0 +1,20 @@
+//@ run
+//> [10, 20]
+//> [30, 40, 5]
+//> [20, 40, 60]
+//> []
+
+// `take_while` stops for good at the first rejected item; `skip_while` stops skipping at the first accepted-no-more
+// item and then yields everything, including items the predicate would accept again; `map_while` stops at the first
+// `None`.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [10, 20, 30, 40, 5] {
+        xs.push(x)
+    }
+    println("{xs.iter().take_while(|x| *x < 30).to_list():?}")
+    println("{xs.iter().skip_while(|x| *x < 30).to_list():?}")
+    println("{xs.iter().map_while(|x| if x < 40 { Some(x * 2) } else { None }).to_list():?}")
+    println("{xs.iter().take_while(|x| *x > 100).to_list():?}")
+}

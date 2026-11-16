@@ -1,0 +1,37 @@
+//@ run
+//> saw 1
+//> saw 2
+//> 2
+//> Some(1)
+//> Some(1)
+//> Some(1)
+//> Some(2)
+//> Some(2)
+//> Some(3)
+//> None
+//> None
+//> 6
+
+// `inspect` sees each item as it passes. `peekable` adds `peek`, which looks at the next item without taking it and
+// reports `None` at the end; a view from `peek` keeps the iterator borrowed until it is last used.
+
+fn main() {
+    let n = (1..3).iter().inspect(|x| println("saw {x}")).count()
+    println("{n}")
+
+    let mut p = (1..4).iter().peekable()
+    let a = p.peek()
+    println("{a:?}")
+    let b = p.peek()
+    println("{b:?}")
+    println("{p.next():?}")
+    let c = p.peek()
+    println("{c:?}")
+    println("{p.next():?}")
+    println("{p.next():?}")
+    let d = p.peek()
+    println("{d:?}")
+    println("{p.next():?}")
+    let total = (1..4).iter().peekable().fold(0, |acc, x| acc + x)
+    println("{total}")
+}

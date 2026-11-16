@@ -97,7 +97,25 @@ asks for it.
 | `any(FnMut(T): bool)` | `bool` | stops at the first accepted item |
 | `all(FnMut(T): bool)` | `bool` | stops at the first rejected item |
 | `find<F: FnMut(&T): bool>(mut self, own f: F)` | `Option<T>` | stops at the first accepted item |
+| `enumerate(own self)` | `EnumerateIter<Self, T>` | `(index, item)` pairs, counting from 0 |
+| `take_while<F: FnMut(&T): bool>(own self, own f: F)` | `TakeWhileIter<Self, T, F>` | items up to, not including, the first one `f` rejects |
+| `skip_while<F: FnMut(&T): bool>(own self, own f: F)` | `SkipWhileIter<Self, T, F>` | drops items while `f` accepts them, then yields the rest |
+| `map_while<U, F: FnMut(T): Option<U>>(own self, own f: F)` | `MapWhileIter<Self, T, U, F>` | applies `f`, stops at the first `None` |
+| `step_by(own self, step: usize)` | `StepByIter<Self, T>` | every `step`th item, starting with the first; `step` 0 panics |
+| `inspect<F: FnMut(&T)>(own self, own f: F)` | `InspectIter<Self, T, F>` | calls `f` on a view of each item and passes it on |
+| `peekable(own self)` | `PeekIter<Self, T>` | adds `peek(mut self): Option<&T>`, a view of the next item that is not taken |
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
+
+**Adapters that are not provided (issue #706).** Three constraints of the current language rule these out; each is a
+language change, not a library one, and stays open on the issue:
+
+- `zip` and `chain` take two iterators and return one chain over both. When both are second-class (a list `iter()`),
+  the result derives from two parameters, which RT3 rejects with E0121. A change would need a return origin that is a
+  set of parameters.
+- `flat_map`, `flatten`, `cloned`, and `copied` need a type that appears only in a bound (`J: Iterator<U>`, a view's
+  target), and a call cannot infer a type parameter from a bound alone ("cannot tell what `U` stands for").
+- `rev` needs a source that can walk backwards, and the built-in iterators are not `Iterator` implementers that a
+  `DoubleEndedIterator<T>` interface could be added to; `cycle` needs a clonable iterator. Neither exists yet.
 
 `any` is reserved as an identifier (it belongs to m15), so `std` declares the method as `any_item`; the compiler
 spells the call `.any(...)`. The default methods are instantiated on demand for each receiver type, whether the

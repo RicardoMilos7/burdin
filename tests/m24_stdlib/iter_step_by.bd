@@ -1,0 +1,18 @@
+//@ run
+//> [10, 30, 50]
+//> [0, 3, 6, 9]
+//> [7]
+//> []
+
+// `step_by(n)` yields the first item and then every nth one after it.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [10, 20, 30, 40, 50] {
+        xs.push(x)
+    }
+    println("{xs.iter().step_by(2).to_list():?}")
+    println("{(0..10).iter().step_by(3).to_list():?}")
+    println("{(7..8).iter().step_by(5).to_list():?}")
+    println("{(0..0).iter().step_by(2).to_list():?}")
+}
