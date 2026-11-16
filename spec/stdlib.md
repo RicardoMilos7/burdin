@@ -334,6 +334,34 @@ binding.
 Tests: `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators`, `unwrap_err_on_ok`,
 `option_wrong_default`, `m12_closures/closure_returns_generic_wrapper`.
 
+### `List` convenience methods (issue #483)
+
+`std.list` declares these as extension methods on `List<T>` (a list with the default allocator; `extensions.md`), so
+the prelude makes them visible everywhere and the compiler's own methods (`push`, `pop`, `sort`, `contains`, `map`,
+`filter`, `find`, ...) win. They move elements with `pop`/`push`, so nothing is cloned unless the name says so, and
+every element is dropped exactly once.
+
+```
+fn List<T>.is_empty(self): bool
+fn List<T>.retain<F: FnMut(&T): bool>(mut self, f: F)      // keeps the accepted elements, in order
+fn List<T>.position<F: FnMut(&T): bool>(self, f: F): Option<usize>
+fn List<T>.rposition<F: FnMut(&T): bool>(self, f: F): Option<usize>
+fn List<T>.reverse(mut self)
+fn List<T>.dedup(mut self) where T: Eq                      // removes consecutive duplicates
+fn List<T>.extend(mut self, own other: List<T>)             // moves the elements of `other`
+fn List<T>.extend_from(mut self, other: List<T>) where T: Clone
+fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone
+fn List<T>.truncate(mut self, len: usize)
+fn List<T>.swap(mut self, a: usize, b: usize)              // panics when an index is out of bounds
+```
+
+`find` is the eager helper of `iterators.md` IT10 (it clones the element). `dedup_by_key`, `drain`, and `first` are
+not provided: a key function would need its result type fixed by a bound the checker cannot yet match against a type
+parameter, and views returned from an extension would dangle.
+
+Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops`,
+`list_swap_out_of_bounds`.
+
 ## Errors
 
 `std` declares the marker interface `Error requires Display { }` and, under the same name in the type namespace,
@@ -511,6 +539,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |

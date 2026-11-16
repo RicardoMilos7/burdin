@@ -1,0 +1,19 @@
+//@ run
+//> 3
+//> 1
+
+// A local that a closure captures shadows a standard-library module of the same name: `list` is a module of
+// `std` and also an ordinary variable name.
+fn main() {
+    let mut list = List<i32>.new()
+    list.push(1)
+    let mut cmp = 1
+
+    let mut add = || {
+        list.push(2)
+        list.push(3)
+        list.len()
+    }
+    println(add().to_string())
+    println(cmp.to_string())
+}

@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: swap: index out of bounds
+//> before
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    println("before")
+    xs.swap(0, 1)
+}
