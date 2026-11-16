@@ -16,8 +16,10 @@ struct Path derives (Clone, Eq) {
     is_windows: bool
 }
 
+// `access` is the POSIX name; the Windows C runtime spells it `_access`. Only the one for the target is called.
 extern "C" {
     priv fn access(path: CPtr<CChar>, mode: i32): i32
+    priv fn _access(path: CPtr<CChar>, mode: i32): i32
 }
 
 priv fn __is_sep(c: char, windows: bool): bool {
@@ -340,8 +342,13 @@ Path {
     /// path made with `Path.new`), and it does not run at compile time.
     fn exists(self): bool {
         let text = CString.from(self.text.as_str())
-        let status = unsafe { access(text.as_ptr(), 0) }
-        status == 0
+        comptime if os() == Os.Windows {
+            let status = unsafe { _access(text.as_ptr(), 0) }
+            status == 0
+        } else {
+            let status = unsafe { access(text.as_ptr(), 0) }
+            status == 0
+        }
     }
 }
 

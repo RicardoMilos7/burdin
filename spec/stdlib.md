@@ -637,7 +637,7 @@ resolves symbolic links.
 - `normalize` removes `.` and empty pieces, cancels `name/..`, keeps a leading `..` of a relative path, drops `..` at a
   root, and writes the rules' separator; an empty result is `.`. It is lexical, so it can change what a path with
   symbolic links names.
-- `exists` is true when the system can see the path (the C library's `access` with no mode bits). It is impure, so a
+- `exists` is true when the system can see the path (the C library's `access`, or `_access` on Windows, with no mode bits). It is impure, so a
   comptime evaluation that reaches it fails with E0224. Directory listing and metadata are #411.
 
 Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists`.
