@@ -186,6 +186,10 @@ pub enum Ty {
     /// A type parameter of a generic function or type, only while its body is checked against its bounds. Such
     /// code never reaches code generation: instantiations replace the parameter with a concrete type.
     Param(Rc<str>),
+    /// A const generic argument: the value `Matrix<f64, 2, 3>` gives `R` and `C`. Values from `1 << 100` up are
+    /// expressions over const parameters that sema has not folded yet, only seen while a generic body is checked
+    /// (`spec/const-generics.md`). It has no run-time representation.
+    Const(i128),
     /// The type of an expression that already produced an error; it matches everything to avoid cascades.
     Error,
 }
@@ -249,6 +253,7 @@ impl fmt::Display for Ty {
             Ty::Ref { mutable: false, inner } => write!(f, "&{inner}"),
             Ty::Ref { mutable: true, inner } => write!(f, "&mut {inner}"),
             Ty::Slice(t) => write!(f, "[{t}]"),
+            Ty::Array(t, n) if *n >= 1 << 62 => write!(f, "[{t}; _]"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
             Ty::Option(t) => write!(f, "Option<{t}>"),
             Ty::Result(t, e) => write!(f, "Result<{t}, {e}>"),
@@ -283,6 +288,8 @@ impl fmt::Display for Ty {
             Ty::Struct(a) | Ty::Enum(a) => f.write_str(&a.name),
             Ty::Never => f.write_str("!"),
             Ty::Param(name) => f.write_str(name),
+            Ty::Const(v) if *v >= 1 << 100 => f.write_str("_"),
+            Ty::Const(v) => write!(f, "{v}"),
             Ty::Error => f.write_str("{error}"),
         }
     }

@@ -1,0 +1,16 @@
+//@ run
+//> hello from a file
+//> 17
+//> 65 66 67
+
+// `embed("path")` is the contents of a file, read while compiling, relative to this source file: `str` for text
+// and `[u8; N]` for bytes (spec/comptime.md, CT15).
+
+const GREETING: str = embed("data/greeting.txt")
+
+fn main() {
+    println(GREETING)
+    println("{}", GREETING.len())
+    let bytes: [u8; 3] = embed("data/bytes.bin")
+    println("{} {} {}", bytes[0], bytes[1], bytes[2])
+}

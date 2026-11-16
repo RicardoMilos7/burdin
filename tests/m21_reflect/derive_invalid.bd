@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// A user derive cannot take a built-in derive's name, and `derives (Name)` needs the interface in scope
+// (spec/reflection.md, RFL8, RFL9).
+
+derive Clone { //~ E0233
+    fn clone(self): Self { self }
+}
+
+derive Shout {
+    fn shout(self): String { String.from("!") }
+}
+
+struct Thing derives (Shout) { a: i32 } //~ E0233
+
+fn main() {}

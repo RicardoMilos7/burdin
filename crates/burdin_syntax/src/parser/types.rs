@@ -139,19 +139,58 @@ impl Parser<'_> {
                         return depth == 0 && continues(i + 1);
                     }
                 }
-                TokenKind::LParen | TokenKind::LBracket => parens += 1,
-                TokenKind::RParen | TokenKind::RBracket => {
+                // A `{ ... }` inside the list is a const argument (`Matrix<f64, { N + 1 }, C>`).
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => parens += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
                     if parens == 0 {
                         return false;
                     }
                     parens -= 1;
                 }
-                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace if parens == 0 => return false,
+                TokenKind::Ge | TokenKind::Eof if parens == 0 => return false,
                 _ => {}
             }
             i += 1;
         }
         false
+    }
+
+    /// One generic argument: a type, or a const argument (an integer literal or a `{ expr }`;
+    /// `spec/const-generics.md`, CG3).
+    pub(super) fn generic_arg(&mut self) -> PResult<Type> {
+        let start = self.span();
+        match self.kind().clone() {
+            TokenKind::Int(n) => {
+                self.bump();
+                let e = Expr { kind: ExprKind::Int(n), span: start };
+                Ok(Type { kind: TypeKind::Const(Box::new(e)), span: start })
+            }
+            TokenKind::Minus if matches!(self.nth_kind(1), TokenKind::Int(_)) => {
+                self.bump();
+                let TokenKind::Int(n) = self.kind().clone() else { unreachable!("checked above") };
+                let lit = self.bump().span;
+                let inner = Expr { kind: ExprKind::Int(n), span: lit };
+                let e = Expr { kind: ExprKind::Unary(UnOp::Neg, Box::new(inner)), span: start.to(lit) };
+                Ok(Type { kind: TypeKind::Const(Box::new(e)), span: start.to(lit) })
+            }
+            kind @ (TokenKind::True | TokenKind::False) => {
+                self.bump();
+                let e = Expr { kind: ExprKind::Bool(kind == TokenKind::True), span: start };
+                Ok(Type { kind: TypeKind::Const(Box::new(e)), span: start })
+            }
+            TokenKind::Char(c) => {
+                self.bump();
+                let e = Expr { kind: ExprKind::Char(c), span: start };
+                Ok(Type { kind: TypeKind::Const(Box::new(e)), span: start })
+            }
+            TokenKind::LBrace => {
+                self.open(&TokenKind::LBrace, false)?;
+                let e = self.expr()?;
+                let close = self.close(&TokenKind::RBrace)?;
+                Ok(Type { kind: TypeKind::Const(Box::new(e)), span: start.to(close.span) })
+            }
+            _ => self.ty(),
+        }
     }
 
     /// Parses `<` Type { `,` Type } `>` after the identifier of a path expression.
@@ -162,7 +201,7 @@ impl Parser<'_> {
             if self.eat_closing_angle() {
                 break;
             }
-            args.push(self.ty()?);
+            args.push(self.generic_arg()?);
             if !self.eat(&TokenKind::Comma) {
                 if !self.eat_closing_angle() {
                     return Err(self.unexpected("`,` or `>`"));
@@ -188,7 +227,7 @@ impl Parser<'_> {
                 if self.eat_closing_angle() {
                     break;
                 }
-                args.push(self.ty()?);
+                args.push(self.generic_arg()?);
                 if !self.eat(&TokenKind::Comma) {
                     if !self.eat_closing_angle() {
                         return Err(self.unexpected("`,` or `>`"));

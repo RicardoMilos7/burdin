@@ -75,7 +75,7 @@ impl TypeDefs<'_> {
             // A list or a map owns its buffer, so it is never `Copy`; it can be deep-cloned when its elements can.
             Ty::List(t) => prop == Property::Clone && self.holds(t, prop, seen),
             Ty::Map(k, v) => prop == Property::Clone && self.holds(k, prop, seen) && self.holds(v, prop, seen),
-            Ty::Param(_) => false,
+            Ty::Param(_) | Ty::Const(_) => false,
             // An `any` box owns a heap allocation and cannot be copied or cloned (AN1).
             Ty::Any(_) => false,
             Ty::Result(t, e) => self.holds(t, prop, seen) && self.holds(e, prop, seen),
@@ -118,7 +118,7 @@ impl TypeDefs<'_> {
     fn needs_drop_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::CPtr(_) | Ty::Chars => false,
+            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::Const(_) | Ty::CPtr(_) | Ty::Chars => false,
             Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) => false,
             // A closure's capture record is heap-allocated and may own its captures.
             Ty::Fn { .. } => true,

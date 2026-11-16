@@ -61,6 +61,7 @@ impl Parser<'_> {
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
             TokenKind::Comptime if !is_priv => Ok(Some(Item::Const(self.comptime_assert_item(start)?))),
             TokenKind::Extern => Ok(Some(self.extern_item(is_priv, start)?)),
+            TokenKind::Reserved(word) if word == "derive" => Ok(Some(Item::Derive(self.derive_decl(is_priv, start)?))),
             TokenKind::Ident(_) | TokenKind::SelfType if !is_priv => Ok(Some(Item::Impl(self.impl_block(start)?))),
             _ => Err(self.unexpected("an item")),
         }
@@ -323,6 +324,28 @@ impl Parser<'_> {
         self.expect(&TokenKind::Eq)?;
         let ty = self.ty()?;
         Ok(TypeAliasDecl { is_priv, name, generics, ty, span: start.to(self.prev_span()) })
+    }
+
+    /// `[priv] derive Name { fn ... }`: a derive written in Burdin (`spec/reflection.md`, RFL8). The body is a list
+    /// of methods, like an impl block's.
+    pub(super) fn derive_decl(&mut self, is_priv: bool, start: Span) -> PResult<DeriveDecl> {
+        self.bump(); // `derive`
+        let name = self.ident("a derive name")?;
+        self.open(&TokenKind::LBrace, true)?;
+        let mut methods = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(self.unexpected("`}`"));
+            }
+            let fn_start = self.span();
+            let method_priv = self.eat(&TokenKind::Priv);
+            if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
+                return Err(self.unexpected("a method"));
+            }
+            methods.push(self.fn_decl(method_priv, fn_start)?);
+        }
+        self.close(&TokenKind::RBrace)?;
+        Ok(DeriveDecl { is_priv, name, methods, span: start.to(self.prev_span()) })
     }
 
     pub(super) fn impl_block(&mut self, start: Span) -> PResult<ImplBlock> {
@@ -718,7 +741,7 @@ impl Parser<'_> {
             };
             let name = Ident { name, span };
             ty.kind = TypeKind::Path(vec![PathSegment { name: name.clone(), args: Vec::new() }]);
-            generics.push(GenericParam { name, bounds: vec![*inner] });
+            generics.push(GenericParam { name, bounds: vec![*inner], const_ty: None });
         }
         generics
     }
@@ -730,9 +753,18 @@ impl Parser<'_> {
             if self.eat_closing_angle() {
                 break;
             }
-            let name = self.ident("a generic parameter name")?;
-            let bounds = if self.eat(&TokenKind::Colon) { self.bounds()? } else { Vec::new() };
-            params.push(GenericParam { name, bounds });
+            // `const N: usize`: a const generic parameter (`spec/const-generics.md`, CG1).
+            if self.at(&TokenKind::Const) {
+                self.bump();
+                let name = self.ident("a const generic parameter name")?;
+                self.expect(&TokenKind::Colon)?;
+                let ty = self.ty()?;
+                params.push(GenericParam { name, bounds: Vec::new(), const_ty: Some(ty) });
+            } else {
+                let name = self.ident("a generic parameter name")?;
+                let bounds = if self.eat(&TokenKind::Colon) { self.bounds()? } else { Vec::new() };
+                params.push(GenericParam { name, bounds, const_ty: None });
+            }
             if !self.eat(&TokenKind::Comma) {
                 if !self.eat_closing_angle() {
                     return Err(self.unexpected("`,` or `>`"));

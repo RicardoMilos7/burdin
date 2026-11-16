@@ -127,6 +127,22 @@ deterministic; and that each evaluation has a step budget, `--comptime-steps N`)
 assert`), E0224 (impure operation), and E0225 (budget, depth, or specialization limit). `comptime` is a keyword
 now, and `std` gained the `target` module. The `const-expression` E9000 site is gone.
 
+Milestone 21 is complete: `tests/m21_reflect` and every earlier folder pass in debug and release, and the rules are
+recorded in `spec/reflection.md` RFL1-RFL10, `spec/const-generics.md` CG1-CG9, `spec/comptime.md` CT15,
+`spec/type-aliases.md` AL1-AL6, and `spec/impls.md` IM1-IM9. It did not split. The decisions: reflection is five compile-time members of every type, resolved by sema while a body is checked,
+with `comptime for` over `Type.fields`/`variants` unrolled there (not in `burdin_comptime`), because `x.{name}` needs
+the field's name to type; `x.{name}` is the computed field access syntax; a user derive is `derive Name { fn ... }`,
+syntax for the methods of an impl block that `derives (Name)` registers for the type; const generics put values in
+`Ty::Const` so instances and inference reuse the type machinery, with array lengths evaluated by sema (CG3); and
+`embed` is a compile-time file read that records a build input (`--emit-deps`); a generic alias is a template
+expanded where it is used and is the aliased type, so an impl written through one is E0003; the arguments of an impl
+block are a pattern (`Stack<i32>`, `Pair<i32, B>`, `Holder<List<T>>`) and the impl covers the instances it matches,
+with E0143 for the later of two overlapping impls of one interface and E0131 for a `Drop` block that names specific
+arguments. The new diagnostics are E0230-E0233 (reflection and derives), E0240-E0241 (`embed`), E0250-E0252 (const
+generics), and E0143 (overlapping impls). The `type-array-length`, `array-repeat-length`, `declare-generic-alias`,
+`impl-specific-args`, and `impl-builtin-generic` E9000 sites are gone. The one built-in-interface row left is
+`impl-builtin-hand` (#402), which applies to a plain type and a generic one alike.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,

@@ -13,7 +13,7 @@ impl Globals {
             TypeName::Struct(i) => Ty::Struct(self.struct_refs[i].clone()),
             TypeName::Enum(i) => Ty::Enum(self.enum_refs[i].clone()),
             TypeName::Alias(i) => self.aliases[i].clone(),
-            TypeName::GenericAdt(_) => return None,
+            TypeName::GenericAdt(_) | TypeName::GenericAlias(_) => return None,
         })
     }
 
@@ -41,6 +41,15 @@ impl Globals {
         match &ty.kind {
             ast::TypeKind::Unit => Ty::Unit,
             ast::TypeKind::Never => Ty::Never,
+            // A value where a type is expected: the const arguments of a generic type are read by its path, not here.
+            ast::TypeKind::Const(_) => {
+                diags.error(
+                    Code::INVALID_CONST_GENERIC,
+                    ty.span,
+                    "a value is not a type; it can only be a const generic argument",
+                );
+                Ty::Error
+            }
             // `any Interface`: the owned boxed existential (spec/existentials.md, AN1).
             ast::TypeKind::Any(inner) => self.resolve_any(inner, ty.span, subst, module, diags),
             // The parser desugars `impl` in a parameter list; anywhere else it reaches here (AN4).
@@ -101,16 +110,9 @@ impl Globals {
             }
             ast::TypeKind::Array(elem, len) => {
                 let elem = self.resolve_type_in(elem, self_ty, subst, module, diags);
-                match len.kind {
-                    ast::ExprKind::Int(n) if n <= u128::from(u32::MAX) => Ty::Array(Box::new(elem), n as u64),
-                    _ => {
-                        diags.error(
-                            Code::UNSUPPORTED, // e9000: type-array-length
-                            len.span,
-                            "array lengths other than integer literals are not implemented in this compiler yet",
-                        );
-                        Ty::Error
-                    }
+                match self.eval_array_len(len, subst, module, diags) {
+                    Some(n) => Ty::Array(Box::new(elem), n),
+                    None => Ty::Error,
                 }
             }
         }
@@ -142,6 +144,9 @@ impl Globals {
         if let Some(TypeName::GenericAdt(g)) = self.type_name(module, name) {
             return self.generic_adt_type(g, span, &seg.args, self_ty, subst, module, diags);
         }
+        if let Some(TypeName::GenericAlias(a)) = self.type_name(module, name) {
+            return self.generic_alias_type(a, span, &seg.args, self_ty, subst, module, diags);
+        }
         if !seg.args.is_empty() {
             diags.error(Code::NOT_A_GENERIC_TYPE, span, format!("`{name}` is not a generic type"));
             return Ty::Error;
@@ -167,6 +172,9 @@ impl Globals {
         let name = seg.name.name.as_str();
         match self.exported_type(target, name) {
             Some(TypeName::GenericAdt(g)) => self.generic_adt_type(g, span, &seg.args, self_ty, subst, target, diags),
+            Some(TypeName::GenericAlias(a)) => {
+                self.generic_alias_type(a, span, &seg.args, self_ty, subst, target, diags)
+            }
             Some(TypeName::Struct(_) | TypeName::Enum(_) | TypeName::Alias(_)) => {
                 if !seg.args.is_empty() {
                     diags.error(Code::NOT_A_GENERIC_TYPE, span, format!("`{name}` is not a generic type"));
@@ -204,7 +212,14 @@ impl Globals {
             );
             return Ty::Error;
         }
-        let args: Vec<Ty> = args.iter().map(|a| self.resolve_type_in(a, self_ty, subst, module, diags)).collect();
+        let args: Vec<Ty> = args
+            .iter()
+            .zip(&info.bounds)
+            .map(|(a, bounds)| match Globals::const_param_ty(bounds) {
+                Some(declared) => self.eval_const_arg(a, declared, subst, module, diags),
+                None => self.resolve_type_in(a, self_ty, subst, module, diags),
+            })
+            .collect();
         self.check_adt_bounds(g, &args, span, diags);
         self.adt_instance_ty(g, args)
     }
@@ -226,6 +241,9 @@ impl Globals {
         let n = name.name.as_str();
         if let Some(TypeName::GenericAdt(g)) = self.type_name(module, n) {
             return self.generic_adt_type(g, name.span, args, self_ty, subst, module, diags);
+        }
+        if let Some(TypeName::GenericAlias(a)) = self.type_name(module, n) {
+            return self.generic_alias_type(a, name.span, args, self_ty, subst, module, diags);
         }
         if self.type_name(module, n).is_some() {
             diags.error(Code::NOT_A_GENERIC_TYPE, name.span, format!("`{n}` is not a generic type"));
@@ -302,7 +320,7 @@ impl Globals {
     /// `Eq` on `Wrapper<T>` holds when the fields do, which is what a `T: Eq` bound provides (issue #69).
     pub(crate) fn has_eq_in(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
         match ty {
-            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
+            Ty::Const(_) | Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
             // Text compares by value; `String` and `str` compare byte for byte.
             Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &crate::generics::Bound::Eq, env),

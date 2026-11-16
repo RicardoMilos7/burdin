@@ -1,0 +1,41 @@
+//@ run
+//> 14
+//> boxed bool
+//> 1
+
+// An impl for specific arguments names its type through a module path like any other impl, and it applies to the
+// instances of a type declared in another module (spec/impls.md, IM1).
+
+use shapes.{Boxed, Slot}
+
+interface Label {
+    fn label(self): String
+}
+
+shapes.Boxed<i32> {
+    fn doubled(self): i32 {
+        self.value * 2
+    }
+}
+
+Boxed<bool>: Label {
+    fn label(self): String {
+        String.from("boxed bool")
+    }
+}
+
+shapes.Slot<i32> {
+    fn count(self): i32 {
+        match self {
+            Slot.Empty => 0,
+            Slot.Full(_) => 1,
+        }
+    }
+}
+
+fn main() {
+    println("{}", Boxed { value: 7 }.doubled())
+    println(Boxed { value: true }.label())
+    let s: Slot<i32> = Slot.Full(5)
+    println("{}", s.count())
+}

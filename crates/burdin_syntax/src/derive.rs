@@ -57,7 +57,12 @@ fn head(name: &str, generics: &[GenericParam]) -> String {
         return format!("{name}: Debug");
     }
     let params: Vec<&str> = generics.iter().map(|g| g.name.name.as_str()).collect();
-    let wheres: Vec<String> = params.iter().map(|p| format!("{p}: Debug")).collect();
+    // A const parameter is a number: it has nothing to implement.
+    let wheres: Vec<String> =
+        generics.iter().filter(|g| g.const_ty.is_none()).map(|g| format!("{}: Debug", g.name.name)).collect();
+    if wheres.is_empty() {
+        return format!("{name}<{}>: Debug", params.join(", "));
+    }
     format!("{name}<{}>: Debug where {}", params.join(", "), wheres.join(", "))
 }
 

@@ -193,6 +193,14 @@ impl Parser<'_> {
                             let index = u32::try_from(n).unwrap_or(u32::MAX);
                             e = Expr { kind: ExprKind::TupleField(Box::new(e), index, t.span), span };
                         }
+                        // `x.{field.name}`: a field chosen at compile time (`spec/reflection.md`, RFL5).
+                        TokenKind::LBrace => {
+                            self.open(&TokenKind::LBrace, false)?;
+                            let name = self.expr()?;
+                            let close = self.close(&TokenKind::RBrace)?;
+                            let span = e.span.to(close.span);
+                            e = Expr { kind: ExprKind::DynField(Box::new(e), Box::new(name)), span };
+                        }
                         _ => return Err(self.unexpected("a field name")),
                     }
                 }

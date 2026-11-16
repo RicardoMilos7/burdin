@@ -1,0 +1,48 @@
+//@ run
+//> 2 3
+//> 6
+//> 1 2 3
+//> 4 5 6
+//> 21
+//> 3
+//> 12
+
+// Const generics: a value parameter next to the type parameters. `R` and `C` are numbers while compiling, so they
+// give an array its length and can be read like constants in the methods (spec/const-generics.md).
+
+struct Matrix<T: Copy, const R: usize, const C: usize> {
+    data: [T; R * C]
+}
+
+Matrix<T, R, C> {
+    fn rows(self): usize { R }
+
+    fn cols(self): usize { C }
+
+    fn len(self): usize { R * C }
+
+    fn get(self, row: usize, col: usize): T {
+        self.data[row * C + col]
+    }
+}
+
+fn sum<const N: usize>(values: [i32; N]): i32 {
+    let mut total = 0
+    for i in 0..N {
+        total = total + values[i]
+    }
+    total
+}
+
+fn length_of<T, const N: usize>(values: [T; N]): usize { N }
+
+fn main() {
+    let m: Matrix<i32, 2, 3> = Matrix { data: [1, 2, 3, 4, 5, 6] }
+    println("{} {}", m.rows(), m.cols())
+    println("{}", m.len())
+    println("{} {} {}", m.get(0, 0), m.get(0, 1), m.get(0, 2))
+    println("{} {} {}", m.get(1, 0), m.get(1, 1), m.get(1, 2))
+    println("{}", sum([1, 2, 3, 4, 5, 6]))
+    println("{}", length_of(["a", "b", "c"]))
+    println("{}", sum([3, 4, 5]))
+}

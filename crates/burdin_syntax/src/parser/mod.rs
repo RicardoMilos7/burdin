@@ -634,4 +634,83 @@ mod tests {
         assert!(matches!(&args[0].expr.kind, ExprKind::StructLit(..)));
         assert!(args[1].name.is_none());
     }
+
+    #[test]
+    fn a_derive_item_holds_methods() {
+        let (file, out) = render(
+            "derive Describe {
+    fn describe(self): String { x }
+    priv fn helper(self) {}
+}
+",
+        );
+        assert_eq!(out, "");
+        let Item::Derive(d) = &file.items[0] else { panic!("expected a derive item") };
+        assert_eq!(d.name.name, "Describe");
+        assert_eq!(d.methods.len(), 2);
+        assert!(!d.is_priv);
+        assert!(d.methods[1].is_priv);
+    }
+
+    #[test]
+    fn const_parameters_have_a_type() {
+        let (file, out) = render(
+            "struct M<T, const R: usize, const OK: bool> { a: i32 }
+",
+        );
+        assert_eq!(out, "");
+        let Item::Struct(s) = &file.items[0] else { unreachable!() };
+        assert!(s.generics[0].const_ty.is_none());
+        assert!(s.generics[1].const_ty.is_some());
+        assert!(s.generics[2].const_ty.is_some());
+    }
+
+    #[test]
+    fn const_arguments_are_values_not_types() {
+        let (file, out) = render(
+            "fn main() {
+    let m: M<i32, 2, -1, true, { 1 + 2 }, 'a', N> = x
+}
+",
+        );
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Let { ty, .. } = &main.body.stmts[0] else { unreachable!() };
+        let TypeKind::Path(segs) = &ty.as_ref().expect("annotated").kind else { unreachable!() };
+        let kinds: Vec<bool> = segs[0].args.iter().map(|a| matches!(a.kind, TypeKind::Const(_))).collect();
+        // `i32` and `N` are types; the other five arguments are values.
+        assert_eq!(kinds, vec![false, true, true, true, true, true, false]);
+    }
+
+    #[test]
+    fn a_computed_field_access_takes_an_expression_in_braces() {
+        let (file, out) = render(
+            "fn main() {
+    a.{\"x\"} = b.{n}.c
+}
+",
+        );
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Expr(assign) = &main.body.stmts[0] else { unreachable!() };
+        let ExprKind::Assign(lhs, rhs) = &assign.kind else { unreachable!() };
+        assert!(matches!(lhs.kind, ExprKind::DynField(..)));
+        let ExprKind::Field(inner, _) = &rhs.kind else { unreachable!() };
+        assert!(matches!(inner.kind, ExprKind::DynField(..)));
+    }
+
+    #[test]
+    fn braces_inside_generic_arguments_do_not_end_the_scan() {
+        // `M<{ 1 }>.new()` is a generic path, not a comparison.
+        let (file, out) = render(
+            "fn main() {
+    M<{ 1 }>.new()
+}
+",
+        );
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Expr(call) = &main.body.stmts[0] else { unreachable!() };
+        assert!(matches!(call.kind, ExprKind::Call(..)));
+    }
 }

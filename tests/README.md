@@ -32,6 +32,8 @@ tests/
   m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
   m19_operators/       operator overloading, PartialEq/PartialOrd, Index/IndexMut, built-in regressions
   m20_comptime/        comptime expressions and parameters, comptime if/for, const evaluation, comptime assert
+  m21_reflect/         reflection members, user derives, const generics, embed, generic aliases, impls for
+                       specific instances
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -188,6 +190,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0140 | Interface implementation is missing a method (reported at the `impl` line) |
 | E0141 | Interface bound or `requires` not satisfied, a generic body uses an operation its bounds do not provide, or a user type has no implementation of an operator or `Index`/`IndexMut` interface |
 | E0142 | Orphan rule violation |
+| E0143 | Two implementations of one interface for one generic type that apply to a common instance |
 | E0150 | Use of a `priv` item from another package |
 | E0160 | `?` used in a function whose return type is not `Option` or `Result` |
 | E0161 | Operation that requires `unsafe` used outside `unsafe` |
@@ -219,6 +222,15 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0223 | A `comptime assert` failed |
 | E0224 | An impure operation (output, files, the environment, processes, or C) during compile-time evaluation |
 | E0225 | Compile-time evaluation exceeded its step budget, the comptime call depth, or the specialization limit of a function with comptime parameters |
+| E0230 | Invalid reflection: `Type.fields` or `Type.variants` on a type that is neither a struct nor an enum (a number, `bool`, `str`, a tuple, ...) |
+| E0231 | A name the reflection members reserve (`name`, `size`, `align`, `fields`, `variants`) used for an associated function or an enum variant |
+| E0232 | Invalid computed field access `x.{name}`: the name is not a string literal or the `name` of a `comptime for` variable over `Type.fields` |
+| E0233 | Invalid derive declaration or use: a user derive named like a built-in derive, or `derives (Name)` with no interface `Name` in scope |
+| E0240 | `embed` could not read its file: it is missing, unreadable, or not valid UTF-8 text |
+| E0241 | Invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected `[u8; N]` is not the file's length |
+| E0250 | Invalid const generic declaration or argument: a type where a value is expected or the other way round, a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit |
+| E0251 | A const expression (an array length or const argument) that cannot be computed: an unknown name, overflow, a division by zero, or a length out of range |
+| E0252 | A const generic argument that cannot be inferred from the call |
 
 ### Codes without a compile-fail test
 
@@ -403,6 +415,35 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     E0222, and each evaluation has a budget of 10,000,000 steps (`--comptime-steps N`), a call depth of 512, and
     E0225 beyond any limit. `target.os()` and `target.arch()` name the compilation target.
     `spec/comptime.md` CT1-CT14, `tests/m20_comptime/`.
+
+26. **Reflection and user derives.** Reflection is five compile-time members of every type: `Type.name` (`str`),
+    `.size` and `.align` (`usize`), `.fields` (an array of the standard library's `FieldInfo`), and `.variants` (an
+    array of `VariantInfo`). A struct has no variants and an enum no fields (both empty arrays), any other type has
+    neither (E0230), and a function without `self` or a variant with one of the five names is E0231.
+    `comptime for item in Type.fields` (or `.variants`) is unrolled while the body is checked, with `item.name`,
+    `item.type_name`, `item.index`, `item.arity` as literals. `x.{name}` is a field access whose name is a string
+    literal or `item.name` (E0232 otherwise). `derive Name { fn ... }` declares the methods of a user derive, and
+    `derives (Name)` applies it as the impl block `Type: Name`, with `where P: Name` on each type parameter. A derive
+    cannot take a built-in derive's name (E0233). `spec/reflection.md` RFL1-RFL10, `tests/m21_reflect/`.
+
+27. **Const generics and `embed`.** `const N: usize` (an integer, `bool`, or `char` type) is a generic parameter of
+    a struct, enum, or function; its argument is a literal, a name, or `{ expr }`. A const argument is a value in
+    `Ty::Const`, so instances, inference, and keys work as for types. Array lengths (`[T; R * C]`, `[0; N]`) are
+    const expressions over numbers, const parameters, and constants (E0250 for a type/value mix-up, E0251 when the
+    expression cannot be computed, E0252 for an argument nothing determines). `embed("path")` is the contents of a
+    file read at compile time, as `str` or, with the expected type `[u8; N]`, as bytes; the file is a build input
+    (`--emit-deps`), a missing one is E0240 and a bad path or length E0241. `spec/const-generics.md` CG1-CG9,
+    `spec/comptime.md` CT15, `tests/m21_reflect/`.
+
+28. **Generic aliases, impls for specific instances, and built-in interfaces on generic types.** `type Pair<T> =
+    (T, T)` is a template expanded where it is used; an alias is the aliased type, so an `impl` block written
+    through one is E0003 (`spec/type-aliases.md` AL1-AL6). The arguments of an impl block are a pattern: every name
+    in them that is not a type stands for what it matches (`Stack<i32>`, `Pair<i32, B>`, `Holder<List<T>>`), and
+    the impl covers the instances it matches. The later of two overlapping impls of one interface is E0143;
+    two methods of one name on one instance are E0007. `Drop` on a generic type covers every instance, so its
+    header has no concrete arguments and no `where` clause (E0131). A derive on a generic type holds for the
+    instances whose parts allow it, and a built-in interface written by hand is still E9000 (#402).
+    `spec/impls.md` IM1-IM9, `tests/m21_reflect/`.
 
 ## Review of the expected outputs
 

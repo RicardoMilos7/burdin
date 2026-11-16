@@ -8,7 +8,7 @@ pub struct Ident {
     pub span: Span,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct File {
     pub items: Vec<Item>,
     pub uses: Vec<UseDecl>,
@@ -19,7 +19,7 @@ pub struct File {
 
 /// `test "name" [attrs] { ... }`: a test block. The checker compiles it as an ordinary function with no parameters
 /// that returns `Result<(), AssertError>`, whose body is the block's statements followed by `Ok(())`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TestDecl {
     /// The text of the string after `test`.
     pub name: String,
@@ -37,7 +37,7 @@ pub struct TestDecl {
 /// One attribute of a test item: `ignore`, `timeout(500)`, `should_panic`, `should_panic("text")`, or
 /// `should_fail`. The parser accepts any identifier with an optional integer or string value; names,
 /// values, duplicates, and combinations are checked in `burdin_sema` (E0170).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TestAttr {
     pub name: Ident,
     pub value: Option<TestAttrValue>,
@@ -49,7 +49,7 @@ pub enum TestAttrValue {
     Str(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Item {
     Fn(FnDecl),
     /// `fn Type.name(self, ...) { ... }`: an extension method (`spec/extensions.md`). The receiver type is
@@ -68,18 +68,31 @@ pub enum Item {
     Extern(ExternBlock),
     /// `extern "C" fn ... { ... }`: a Burdin function exported with the C ABI (issue #489).
     ExternFn(ExternFnDecl),
+    /// `derive Name { fn ... }`: a derive written in Burdin (`spec/reflection.md`, RFL8). Applying it to a type
+    /// generates `Type: Name { ... }` with these methods.
+    Derive(DeriveDecl),
+}
+
+/// `derive Name { fn method(self, ...) { ... } }`: the template of the impl block that `derives (Name)` generates.
+/// Its bodies may read the reflection members of `Self` (`spec/reflection.md`).
+#[derive(Debug, Clone)]
+pub struct DeriveDecl {
+    pub is_priv: bool,
+    pub name: Ident,
+    pub methods: Vec<FnDecl>,
+    pub span: Span,
 }
 
 /// `fn Type.name(self, ...)`: an extension method. `func` holds the signature and body exactly as an ordinary
 /// function's; `recv` is the receiver type written before the method name, including the type parameters the
 /// receiver declares (`fn List<T>.sum(self)`).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExtensionDecl {
     pub recv: Type,
     pub func: FnDecl,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExternFnDecl {
     pub abi: String,
     pub abi_span: Span,
@@ -87,7 +100,7 @@ pub struct ExternFnDecl {
 }
 
 /// `use a.b.c`, `use a.b as x`, or `use a.b.{c, d}`. A `pub use` also re-exports what it imports.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UseDecl {
     pub is_pub: bool,
     /// The module or item path, without the imported names of a brace list.
@@ -100,7 +113,7 @@ pub struct UseDecl {
 }
 
 /// `extern "C" { fn ... }`: C functions the program calls, declared without a body.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExternBlock {
     pub abi: String,
     pub abi_span: Span,
@@ -109,14 +122,14 @@ pub struct ExternBlock {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldDecl {
     pub is_priv: bool,
     pub name: Ident,
     pub ty: Type,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructDecl {
     pub is_priv: bool,
     pub name: Ident,
@@ -128,20 +141,20 @@ pub struct StructDecl {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum VariantKind {
     Unit,
     Tuple(Vec<Type>),
     Struct(Vec<FieldDecl>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Variant {
     pub name: Ident,
     pub kind: VariantKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub is_priv: bool,
     pub name: Ident,
@@ -153,7 +166,7 @@ pub struct EnumDecl {
 
 /// `error enum Name { Variant(payload) from "message", ... }`: an enum whose variants carry a required message
 /// template and an optional `from` conversion (spec/errors.md, ERR1).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ErrorEnumDecl {
     pub is_priv: bool,
     pub name: Ident,
@@ -163,7 +176,7 @@ pub struct ErrorEnumDecl {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ErrorVariant {
     pub name: Ident,
     pub kind: VariantKind,
@@ -175,7 +188,7 @@ pub struct ErrorVariant {
     pub message_span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeAliasDecl {
     pub is_priv: bool,
     pub name: Ident,
@@ -185,7 +198,7 @@ pub struct TypeAliasDecl {
 }
 
 /// `interface Name requires A + B { fn ...  fn ... { default body } }`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InterfaceDecl {
     pub is_priv: bool,
     pub name: Ident,
@@ -197,14 +210,14 @@ pub struct InterfaceDecl {
 
 /// A method of an interface. A method with a body is a default method; otherwise `decl.body` is empty and
 /// `has_body` is false.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InterfaceFn {
     pub decl: FnDecl,
     pub has_body: bool,
 }
 
 /// `Type { fn ... }` or `Type: Interface { fn ... }`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImplBlock {
     pub ty: Type,
     pub interface: Option<Type>,
@@ -213,7 +226,7 @@ pub struct ImplBlock {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub is_priv: bool,
     pub name: Ident,
@@ -230,7 +243,7 @@ pub enum Convention {
     Own,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FnDecl {
     pub is_priv: bool,
     pub is_unsafe: bool,
@@ -245,25 +258,28 @@ pub struct FnDecl {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericParam {
     pub name: Ident,
     pub bounds: Vec<Type>,
+    /// `const N: usize`: a const generic parameter and its integer type (`spec/const-generics.md`, CG1). Such a
+    /// parameter has no bounds.
+    pub const_ty: Option<Type>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WherePred {
     pub ty: Type,
     pub bounds: Vec<Type>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParamKind {
     SelfParam,
     Named { name: Ident, ty: Type },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Param {
     pub convention: Convention,
     pub kind: ParamKind,
@@ -276,7 +292,7 @@ pub struct Param {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PathSegment {
     pub name: Ident,
     pub args: Vec<Type>,
@@ -290,7 +306,7 @@ pub enum FnKind {
     FnOnce,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypeKind {
     Path(Vec<PathSegment>),
     /// `any Interface`: the owned boxed existential (spec/existentials.md).
@@ -308,6 +324,10 @@ pub enum TypeKind {
     Unit,
     Tuple(Vec<Type>),
     Array(Box<Type>, Box<Expr>),
+    /// A value written where a type argument goes: `Matrix<f64, 2, 3>` or `Matrix<f64, { N + 1 }, C>`
+    /// (`spec/const-generics.md`, CG3). A bare name stays a `Path`: whether it is a type or a constant is decided
+    /// by name resolution.
+    Const(Box<Expr>),
     Slice(Box<Type>),
     Ref {
         mutable: bool,
@@ -316,25 +336,25 @@ pub enum TypeKind {
     Never,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Type {
     pub kind: TypeKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Let { pattern: Pattern, ty: Option<Type>, init: Expr, else_block: Option<Block>, span: Span },
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PatternKind {
     Wild,
     /// A plain identifier: a binding, or a unit variant or constant in scope (decided by name resolution).
@@ -364,14 +384,14 @@ pub enum LitPat {
     Bool(bool),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldPat {
     pub name: Ident,
     /// `None` for the shorthand `name` (meaning `name: name`).
     pub pattern: Option<Pattern>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Pattern {
     pub kind: PatternKind,
     pub span: Span,
@@ -408,7 +428,7 @@ pub enum UnOp {
     RefMut,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Arg {
     /// The parameter name of a named argument (`f(name: value)`), or `None` for a positional one
     /// (`spec/arguments.md`, AG4).
@@ -420,7 +440,7 @@ pub struct Arg {
     pub expr: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(u128),
     Float(String),
@@ -472,6 +492,9 @@ pub enum ExprKind {
     OrElse(Box<Expr>, Box<Expr>),
     Try(Box<Expr>),
     Field(Box<Expr>, Ident),
+    /// `recv.{name}`: a field chosen by a compile-time string, for derive bodies and `comptime for` over
+    /// `Type.fields` (`spec/reflection.md`, RFL5).
+    DynField(Box<Expr>, Box<Expr>),
     /// `recv.name<T>`: type arguments on a member, as in `x.downcast<Circle>()` (spec/existentials.md, AN6).
     TypeArgs(Box<Expr>, Vec<Type>),
     TupleField(Box<Expr>, u32, Span),
@@ -501,14 +524,14 @@ pub enum ExprKind {
 }
 
 /// One piece of an interpolated string literal.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InterpPart {
     Lit(String),
     Hole(Hole),
 }
 
 /// A `{arg:spec}` placeholder.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Hole {
     pub arg: HoleArg,
     pub spec: FormatSpec,
@@ -516,7 +539,7 @@ pub struct Hole {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum HoleArg {
     /// `{}`: the next positional argument of a format call.
     Next,
@@ -589,20 +612,20 @@ impl FormatSpec {
 }
 
 /// One parameter of a closure: a name and an optional type (`|x: i32, y|`).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClosureParam {
     pub name: Ident,
     pub ty: Option<Type>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldInit {
     pub name: Ident,
     /// `None` for the shorthand `name` (meaning `name: name`).
     pub value: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MatchArm {
     /// `None` for the catch-all `else` arm.
     pub pattern: Option<Pattern>,
@@ -611,7 +634,7 @@ pub struct MatchArm {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,

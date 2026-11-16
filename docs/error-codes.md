@@ -618,6 +618,39 @@ fn main() {}
 **How to fix:** move the implementation to the package that declares the type, or implement a local interface for
 the foreign type instead.
 
+## E0143: Overlapping implementations
+
+Two impl blocks of one interface for one generic type apply to a common instance: `Stack<T>: Describe` covers every
+instance, so `Stack<i32>: Describe` covers an instance the first one already has. The compiler reports the later block
+and leaves it out. `where` clauses do not tell two impls apart, because the compiler does not decide whether two
+bounds can hold together.
+
+<!-- error-example: E0143 -->
+```burdin
+interface Describe {
+    fn describe(self): String
+}
+
+struct Stack<T> {
+    items: List<T>
+}
+
+Stack<T>: Describe {
+    fn describe(self): String { String.from("any") }
+}
+
+Stack<i32>: Describe { //~ E0143
+    fn describe(self): String { String.from("ints") }
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** keep one impl that covers the instances you mean, or give the two impls patterns that do not
+overlap (`Stack<i32>` and `Stack<bool>`). An inherent impl on `Stack<i32>` cannot repeat a method the general impl
+already gives that instance (E0007): give it another name.
+
 ## E0150: Use of a `priv` item from another package
 
 The item exists but is package-private: another package may not import it, read or write a private field,
@@ -1324,3 +1357,171 @@ fn main() {}
 
 **How to fix:** make the computation end. If it is meant to be long, raise the budget with
 `burdin build --comptime-steps <n>`.
+
+## E0230: Invalid reflection
+
+`Type.fields` lists the fields of a struct and `Type.variants` the variants of an enum, and any other type (a
+number, `bool`, `str`, a tuple, an array) has neither. A struct has no variants and an enum no fields, so a derive
+written for both kinds can ask for either one and get an empty array. `spec/reflection.md` RFL2.
+
+<!-- error-example: E0230 -->
+```burdin
+fn main() {
+    let fields = i32.fields //~ E0230
+}
+```
+<!-- /error-example -->
+
+**How to fix:** ask for the members of a struct or an enum, or do not reflect on a type that has none.
+
+## E0231: Name reserved for reflection
+
+Every type has the compile-time members `name`, `size`, `align`, `fields`, and `variants`. A function with no
+`self` called one of those names, or an enum variant called one of them, would be ambiguous with the member, so it
+is an error. A method with `self` is called on a value and is not affected. `spec/reflection.md` RFL3.
+
+<!-- error-example: E0231 -->
+```burdin
+enum Mode {
+    name //~ E0231
+    Fast
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** give the variant or the function another name.
+
+## E0232: Invalid computed field access
+
+`x.{name}` reads the field whose name is the compile-time string in the braces: a string literal, or the `name` of
+the loop variable of a `comptime for` over `Type.fields`. A name that is only known while the program runs cannot
+choose a field, and the type must have a field of that name. `spec/reflection.md` RFL5.
+
+<!-- error-example: E0232 -->
+```burdin
+struct Point {
+    x: i32
+}
+
+fn main() {
+    let p = Point { x: 1 }
+    let name = "x"
+    println("{}", p.{name}) //~ E0232
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write the name as a string literal, or loop over `Type.fields` in a `comptime for` and use
+`field.name`.
+
+## E0233: Invalid derive
+
+A `derive Name { ... }` declaration cannot take the name of a built-in derive (`Copy`, `Clone`, `Eq`, `Ord`,
+`Hash`, `Default`, `Debug`), and `derives (Name)` on a type needs the interface `Name` in scope, because the derive
+generates `Type: Name`. `spec/reflection.md` RFL8, RFL9.
+
+<!-- error-example: E0233 -->
+```burdin
+derive Clone { //~ E0233
+    fn clone(self): Self { self }
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** pick a name no built-in derive uses, and import the interface together with the derive.
+
+## E0240: `embed` could not read its file
+
+`embed("path")` reads a file while compiling. The file is missing, cannot be read, or, for `str`, is not valid
+UTF-8 text. The path is relative to the source file that writes the call. `spec/comptime.md` CT15.
+
+<!-- error-example: E0240 -->
+```burdin
+fn main() {
+    let text = embed("no_such_file.txt") //~ E0240
+    println(text)
+}
+```
+<!-- /error-example -->
+
+**How to fix:** correct the path, or embed a binary file as bytes with an expected type of `[u8; N]`.
+
+## E0241: Invalid `embed`
+
+The path of `embed` must be a string literal, so that the file is known while compiling, and it must be relative and
+stay inside the directory of the source file (no `..`). When the expected type is `[u8; N]`, `N` must be the length
+of the file. `spec/comptime.md` CT15.
+
+<!-- error-example: E0241 -->
+```burdin
+fn main() {
+    let name = "data.txt"
+    let text = embed(name) //~ E0241
+    println(text)
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write the path as a string literal inside the source directory, and give `[u8; N]` the file's
+length.
+
+## E0250: Invalid const generic parameter or argument
+
+A const parameter (`const N: usize`) takes a value of its own type, which is an integer type, `bool`, or `char`; a
+type parameter takes a type. Giving a type where a value is expected, a value where a type is expected, a value that
+does not fit the parameter's type, or declaring a const parameter of another type are all errors.
+`spec/const-generics.md` CG2, CG3.
+
+<!-- error-example: E0250 -->
+```burdin
+struct Grid<const W: usize> {
+    cells: [i32; W]
+}
+
+fn main() {
+    let g: Grid<i32> = Grid { cells: [0; 4] } //~ E0250
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write a number (or a constant, or `{ expression }`) for a const parameter, and a type for a type
+parameter.
+
+## E0251: Const expression that cannot be evaluated
+
+An array length or a const argument is computed while compiling. It can use numbers, const parameters, constants,
+and `+ - * / % << >> & | ^`; a name that is none of those, an overflow, a division by zero, or an array length
+outside 0 to 4294967295 cannot be computed. `spec/const-generics.md` CG4.
+
+<!-- error-example: E0251 -->
+```burdin
+fn takes(values: [i32; 1 / 0]) {} //~ E0251
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** use only numbers and constants, and keep the value in range.
+
+## E0252: Const argument that cannot be inferred
+
+A call to a generic function infers its const arguments from the argument types (`[T; N]` gives `N`) or from the
+expected type. When nothing determines one, the call cannot be compiled. `spec/const-generics.md` CG6.
+
+<!-- error-example: E0252 -->
+```burdin
+fn make<const N: usize>(): usize { N }
+
+fn main() {
+    let n = make() //~ E0252
+    println("{}", n)
+}
+```
+<!-- /error-example -->
+
+**How to fix:** pass an argument or write a type annotation that fixes the value, for example an array of the
+wanted length.

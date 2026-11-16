@@ -11,6 +11,9 @@ use burdin_tir::{self as tir, IntTy, Ty};
 impl FnCx<'_> {
     /// `base.name`: a field of a struct, a unit variant (`Color.Red`), or a constant of a module.
     pub(super) fn field(&mut self, base: &ast::Expr, name: &ast::Ident, expect: Option<&Ty>, span: Span) -> tir::Expr {
+        if let Some(literal) = self.reflect_member_of_loop_variable(base, name, span) {
+            return literal;
+        }
         if let Some(path) = self.type_path(base) {
             let ty = match path {
                 PathTy::Ty(ty) => ty,
@@ -19,9 +22,15 @@ impl FnCx<'_> {
                     None => return error_expr(span),
                 },
             };
+            if let Some(member) = self.reflect_member(&ty, name, span) {
+                return member;
+            }
             return self.unit_variant(ty, name, span);
         }
         if let Some(ty) = self.qualified_type(base) {
+            if let Some(member) = self.reflect_member(&ty, name, span) {
+                return member;
+            }
             return self.unit_variant(ty, name, span);
         }
         if let Some((target, item)) = self.module_member(base, name) {
@@ -380,8 +389,10 @@ impl FnCx<'_> {
     }
 
     pub(super) fn array(&mut self, elems: &[ast::Expr], expect: Option<&Ty>, span: Span) -> tir::Expr {
+        // The expected element type of a generic call's parameter (`[T; N]`) can be a parameter of the callee that
+        // is not bound yet; it says nothing about the elements, which then decide `T` themselves.
         let mut elem_ty = match expect {
-            Some(Ty::Array(t, _)) => Some((**t).clone()),
+            Some(Ty::Array(t, _)) if !self.is_foreign_param(t) => Some((**t).clone()),
             _ => None,
         };
         let mut checked = Vec::new();
@@ -402,5 +413,13 @@ impl FnCx<'_> {
         };
         let ty = Ty::Array(Box::new(elem_ty), checked.len() as u64);
         mk(tir::ExprKind::Array(checked), ty, span)
+    }
+}
+
+impl FnCx<'_> {
+    /// Whether `ty` is a type parameter that the function being checked does not declare: one of a callee whose
+    /// call is still being inferred.
+    fn is_foreign_param(&self, ty: &Ty) -> bool {
+        matches!(ty, Ty::Param(name) if !self.bounds.iter().any(|(n, _)| n == &**name))
     }
 }

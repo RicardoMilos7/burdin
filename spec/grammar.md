@@ -4,8 +4,10 @@ This is the grammar the compiler accepts. It covers exactly the stage 0 subset p
 milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), milestone 15's
 `any`/`impl` existential types (the details are in `existentials.md`), milestone 16's `error` declarations
 (the details are in `errors.md`), milestone 17's default and named arguments (the details are in
-`arguments.md`), milestone 18's extension methods (the details are in `extensions.md`), and milestone 20's comptime
-forms (the details are in `comptime.md`). It is derived from the conformance tests in `tests/`, so every construct
+`arguments.md`), milestone 18's extension methods (the details are in `extensions.md`), milestone 20's comptime
+forms (the details are in `comptime.md`), and milestone 21's `derive` item, const parameters, computed field access,
+generic type aliases, and impl blocks for specific type arguments (the details are in `reflection.md`,
+`const-generics.md`, `type-aliases.md`, and `impls.md`). It is derived from the conformance tests in `tests/`, so every construct
 below is used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
 milestones (derive declarations, tasks) are reserved but not parsed.
 
@@ -96,7 +98,7 @@ foo()
 File          = { Item } ;
 
 Item          = TestItem | UseItem | ImplBlock | ComptimeAssert
-              | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | TypeAlias | ConstItem | ExternItem ) ;
+              | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | DeriveItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
 FnItem        = FnSig Block ;
@@ -112,7 +114,8 @@ SelfParam     = [ Convention ] "self" ;                 (* only as the first par
 Convention    = "mut" | "own" ;                         (* no convention = read-only *)
 
 GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">" ;
-GenericParam  = IDENT [ ":" Bounds ] ;
+GenericParam  = IDENT [ ":" Bounds ]
+              | "const" IDENT ":" Type ;                (* a const parameter: `spec/const-generics.md`, CG1 *)
 Bounds        = TypePath { "+" TypePath } ;
 WhereClause   = "where" WherePred { "," WherePred } ;
 WherePred     = Type ":" Bounds ;
@@ -121,6 +124,10 @@ StructItem    = "struct" IDENT [ GenericParams ] [ "repr(C)" ] [ Derives ] "{" [
 FieldList     = Field { Sep Field } [ Sep ] ;
 Field         = [ "priv" ] IDENT ":" Type ;
 Derives       = "derives" "(" TypePath { "," TypePath } [ "," ] ")" ;
+
+(* `derive Name { fn ... }`: the methods a user derive generates; `derives (Name)` applies it. The body of a method
+   is ordinary code that can use the reflection members. `spec/reflection.md`, RFL8-RFL9. *)
+DeriveItem    = "derive" IDENT "{" { ImplFn } "}" ;
 
 EnumItem      = "enum" IDENT [ GenericParams ] [ Derives ] "{" [ VariantList ] "}" ;
 VariantList   = Variant { Sep Variant } [ Sep ] ;
@@ -180,7 +187,10 @@ receiver or a return type is E0003. `Drop` is not derivable (E0002) and cannot b
 memory rules are in `memory-rules.md` (DR8).
 
 An item that starts with an identifier (not a keyword) is an impl block. `Type: Interface { ... }` implements an interface,
-`Type { ... }` adds methods with no interface, and generics and `where` bounds go on either.
+`Type { ... }` adds methods with no interface, and generics and `where` bounds go on either. The type of an impl block
+is a type path, which may name the arguments of a generic type (`Stack<i32>`, `Pair<i32, B>`): the names in them that
+are not types are the block's own parameters, and the block covers the instances they match (`impls.md` IM1-IM2).
+An impl block cannot be written through a type alias (`type-aliases.md` AL5).
 
 **`repr(C)`.** `struct Name repr(C) { ... }` gives a struct the C layout: fields in declaration order with C padding
 and alignment, reported by `Type.size()` and `Type.align()`. It may be used behind `CPtr<T>` in the C bridge; passing
@@ -220,7 +230,10 @@ Type          = TypePath
               | "!" ;                                   (* never; written by the standard library only *)
 
 TypePath      = IDENT [ GenericArgs ] { "." IDENT [ GenericArgs ] } ;
-GenericArgs   = "<" Type { "," Type } [ "," ] ">" ;
+GenericArgs   = "<" GenericArg { "," GenericArg } [ "," ] ">" ;
+GenericArg    = Type
+              | [ "-" ] INT | "true" | "false" | CHAR   (* a const argument: spec/const-generics.md, CG2 *)
+              | "{" Expr "}" ;
 ClosureType   = ( "Fn" | "FnMut" | "FnOnce" ) "(" [ Type { "," Type } [ "," ] ] ")" [ ":" Type ] ;
 ```
 
@@ -307,7 +320,8 @@ UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | ComptimeExpr | P
    literal (E0220). *)
 ComptimeExpr  = ComptimeAssert | "comptime" UnaryExpr ;
 ComptimeAssert = "comptime" "assert" "(" Expr [ "," Expr ] [ "," ] ")" ;
-PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
+PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." "{" Expr "}" | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
+                                                        (* `x.{name}`: a field chosen by a compile-time string, `spec/reflection.md` RFL5 *)
 ArgList       = Arg { "," Arg } [ "," ] ;
 Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the parameter; "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)
 

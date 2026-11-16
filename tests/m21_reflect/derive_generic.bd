@@ -1,0 +1,55 @@
+//@ run
+//> Leaf: v
+//> Pair<Leaf>: first, second
+//> Mode: Fast, Slow
+
+// A derive applies to generic types too. Its impl is `Pair<T>: Describe where T: Describe`, so `Pair<Leaf>` works
+// when `Leaf` has the derive too, and the reflection members see the instance (spec/reflection.md, RFL8, RFL9).
+
+interface Describe {
+    fn describe(self): String
+}
+
+derive Describe {
+    fn describe(self): String {
+        let mut out = String.from(Self.name)
+        out.push_str(":")
+        comptime if Self.fields.len() > 0 {
+            comptime for field in Self.fields {
+                if field.index > 0 { out.push_str(",") }
+                out.push_str(" ")
+                out.push_str(field.name)
+            }
+        }
+        comptime if Self.variants.len() > 0 {
+            comptime for variant in Self.variants {
+                if variant.index > 0 { out.push_str(",") }
+                out.push_str(" ")
+                out.push_str(variant.name)
+            }
+        }
+        out
+    }
+}
+
+struct Leaf derives (Describe) {
+    v: i32
+}
+
+struct Pair<T> derives (Describe) {
+    first: T
+    second: T
+}
+
+enum Mode derives (Describe) {
+    Fast
+    Slow
+}
+
+fn main() {
+    let leaf = Leaf { v: 1 }
+    println(leaf.describe())
+    let pair = Pair { first: Leaf { v: 1 }, second: Leaf { v: 2 } }
+    println(pair.describe())
+    println(Mode.Fast.describe())
+}

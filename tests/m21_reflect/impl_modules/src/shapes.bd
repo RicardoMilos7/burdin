@@ -1,0 +1,8 @@
+struct Boxed<T> {
+    value: T
+}
+
+enum Slot<T> {
+    Empty
+    Full(T)
+}

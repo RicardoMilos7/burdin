@@ -438,7 +438,7 @@ const CRC_TABLE: [u32; 256] = comptime {
 }
 ```
 
-A derive written with reflection (the syntax for accessing a field by a compile-time name is a placeholder):
+A derive written with reflection (`x.{name}` is the access to a field by a compile-time name; milestone 21, `spec/reflection.md`):
 
 ```
 derive Eq {

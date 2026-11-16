@@ -30,6 +30,9 @@ pub(crate) enum Bound {
     /// A closure capability: `Fn(A, B): R`, `FnMut(...)`, or `FnOnce(...)`. The index selects the signature in
     /// [`Globals::fn_bounds`].
     Fn(usize, tir::FnKind),
+    /// The parameter is a const parameter of this type (`const N: usize`); it has no interfaces to meet
+    /// (`spec/const-generics.md`).
+    ConstOf(Ty),
 }
 
 pub(crate) const BUILTIN_INTERFACES: &[&str] = &["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Drop", "From"];
@@ -104,6 +107,10 @@ pub(crate) struct ImplInfo {
     pub iface_args: Vec<Ty>,
     /// The names the impl gives the type's arguments (`T` in `Wrapper<T>: Describe where T: Describe`).
     pub params: Vec<String>,
+    /// The type's arguments as the impl writes them, with the impl's own names as `Ty::Param` (`[i32, B]` for
+    /// `Pair<i32, B>`). The impl applies to the instances these match (`spec/impls.md`, IM1); empty for a type that
+    /// is not generic.
+    pub args: Vec<Ty>,
     pub wheres: Vec<(String, Vec<Bound>)>,
     pub span: Span,
 }
@@ -196,9 +203,10 @@ impl Globals {
     pub(crate) fn ty_has_param(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Param(_) => true,
+            Ty::Const(v) => *v >= crate::consteval::SYM_CONST,
+            Ty::Array(inner, n) => *n >= crate::consteval::SYM_LEN || self.ty_has_param(inner),
             Ty::Ref { inner, .. }
             | Ty::Slice(inner)
-            | Ty::Array(inner, _)
             | Ty::Option(inner)
             | Ty::Heap(inner)
             | Ty::CPtr(inner)
@@ -229,12 +237,15 @@ impl Globals {
             }
             (Ty::Ref { inner: p, .. }, Ty::Ref { inner: a, .. })
             | (Ty::Slice(p), Ty::Slice(a))
-            | (Ty::Array(p, _), Ty::Array(a, _))
             | (Ty::Option(p), Ty::Option(a))
             | (Ty::Heap(p), Ty::Heap(a))
             | (Ty::CPtr(p), Ty::CPtr(a))
             | (Ty::Range(p, _), Ty::Range(a, _))
             | (Ty::List(p), Ty::List(a)) => self.unify(p, a, bindings),
+            (Ty::Array(p, pn), Ty::Array(a, an)) => {
+                self.unify(p, a, bindings);
+                self.unify_len(*pn, *an, bindings);
+            }
             (Ty::Result(po, pe), Ty::Result(ao, ae)) => {
                 self.unify(po, ao, bindings);
                 self.unify(pe, ae, bindings);
@@ -282,7 +293,12 @@ impl Globals {
             Ty::Param(n) => env.iter().find(|(m, _)| m == &**n).map(|(_, t)| t.clone()).unwrap_or_else(|| ty.clone()),
             Ty::Ref { mutable, inner } => Ty::Ref { mutable: *mutable, inner: go(inner) },
             Ty::Slice(t) => Ty::Slice(go(t)),
+            Ty::Array(t, n) if *n >= crate::consteval::SYM_LEN => match self.subst_len(*n, env) {
+                Some(len) => Ty::Array(go(t), len),
+                None => Ty::Error,
+            },
             Ty::Array(t, n) => Ty::Array(go(t), *n),
+            Ty::Const(v) if *v >= crate::consteval::SYM_CONST => self.subst_const(*v, env),
             Ty::Option(t) => Ty::Option(go(t)),
             Ty::Result(t, e) => Ty::Result(go(t), go(e)),
             Ty::List(t) => Ty::List(go(t)),
@@ -372,6 +388,7 @@ impl Globals {
             Bound::Hash => "Hash".into(),
             Bound::Default => "Default".into(),
             Bound::Fn(i, kind) => self.fn_sig_name(*i, *kind),
+            Bound::ConstOf(ty) => format!("const {ty}"),
         }
     }
 
@@ -672,6 +689,7 @@ impl Globals {
                     Ty::Fn { sig, kind: actual, .. } => **sig == self.bound_fn_sig(i, subst) && actual.at_least(kind),
                     _ => false,
                 },
+                Bound::ConstOf(_) => matches!(ty, Ty::Const(_)),
             },
         }
     }
@@ -704,9 +722,10 @@ impl Globals {
                     (Vec::new(), &info.wheres)
                 }
                 Head::Generic(template) => match self.adt_origin.get(&key) {
-                    Some((t, cargs)) if *t == template => {
-                        (info.params.iter().cloned().zip(cargs.iter().cloned()).collect(), &info.wheres)
-                    }
+                    Some((t, cargs)) if *t == template => match self.match_impl_args(&info.params, &info.args, cargs) {
+                        Some(subst) => (subst, &info.wheres),
+                        None => return false,
+                    },
                     _ => return false,
                 },
             };

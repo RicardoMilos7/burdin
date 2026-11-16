@@ -31,10 +31,13 @@ impl Codegen<'_, '_> {
                 mark(tir::FuncId(i), &mut reachable, &mut pending);
             }
         }
-        for s in &program.structs {
-            if let Some(drop) = s.drop_method {
-                mark(drop, &mut reachable, &mut pending);
-            }
+        let drops = program
+            .structs
+            .iter()
+            .filter_map(|s| s.drop_method)
+            .chain(program.enums.iter().filter_map(|e| e.drop_method));
+        for drop in drops {
+            mark(drop, &mut reachable, &mut pending);
         }
         // Every closure body is emitted, so everything it calls is reachable too.
         let mut closure_calls: Vec<tir::FuncId> = Vec::new();

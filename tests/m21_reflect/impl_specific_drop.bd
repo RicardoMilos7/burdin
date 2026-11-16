@@ -1,0 +1,40 @@
+//@ run
+//> inner
+//> dropped a guard
+//> outer
+//> dropped a guard
+//> dropped a guard
+
+// `Type<T>: Drop` is written once for every instance of a generic type: each instance's value is dropped with it
+// when it goes out of scope, a struct or an enum alike (spec/impls.md, IM7).
+
+struct Guard<T> {
+    value: T
+}
+
+Guard<T>: Drop {
+    fn drop(mut self) {
+        println("dropped a guard")
+    }
+}
+
+enum Slot<T> {
+    Empty
+    Full(T)
+}
+
+Slot<T>: Drop {
+    fn drop(mut self) {
+        println("dropped a guard")
+    }
+}
+
+fn main() {
+    let a = Guard { value: 5 }
+    {
+        let b = Guard { value: true }
+        println("inner")
+    }
+    println("outer")
+    let c: Slot<i32> = Slot.Full(1)
+}

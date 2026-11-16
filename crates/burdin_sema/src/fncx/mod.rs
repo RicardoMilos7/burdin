@@ -7,6 +7,7 @@ mod call;
 mod closure;
 mod comptime;
 mod control;
+mod embed;
 mod expr;
 mod fnvalue;
 mod format;
@@ -16,9 +17,11 @@ mod iterate;
 mod literals;
 mod operators;
 mod pattern;
+mod reflect;
 mod stmt;
 
 pub(crate) use item::{check_const, check_defaults, check_function};
+pub(crate) use reflect::RESERVED_MEMBERS;
 
 use crate::builtins::builtin_type;
 use crate::generics::Bound;
@@ -73,6 +76,9 @@ struct FnCx<'a> {
     comptime_known: Vec<LocalId>,
     /// The loop depth just outside the innermost `comptime for` body, which `break`/`continue` cannot leave.
     comptime_loop_barrier: Option<usize>,
+    /// The variables of the `comptime for` loops over `Type.fields` and `Type.variants` that are being unrolled, and
+    /// the item each one stands for (`spec/reflection.md`, RFL4).
+    reflect: reflect::ReflectBindings,
 }
 
 /// What a path in expression position can name before its last segment: a type, or a generic type whose
@@ -127,6 +133,7 @@ impl<'a> FnCx<'a> {
             write_place: false,
             comptime_known: Vec::new(),
             comptime_loop_barrier: None,
+            reflect: HashMap::new(),
         }
     }
 
@@ -325,6 +332,7 @@ impl<'a> FnCx<'a> {
                 Some(TypeName::Alias(_)) | Some(TypeName::Struct(_)) | Some(TypeName::Enum(_)) => {
                     self.globals.named_type(target, name)
                 }
+                Some(TypeName::GenericAlias(_)) => None,
                 None => builtin_type(name),
             };
             if let Some(ty) = ty {

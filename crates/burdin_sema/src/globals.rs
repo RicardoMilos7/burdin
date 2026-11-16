@@ -33,6 +33,8 @@ pub(crate) enum TypeName {
     Alias(usize),
     /// A generic struct or enum: an index into [`Globals::generic_adts`]. It is not a type until it has arguments.
     GenericAdt(usize),
+    /// A type alias with parameters: an index into [`Globals::generic_aliases`]. It is expanded where it is used.
+    GenericAlias(usize),
 }
 
 /// One file of a package, and everything its items bind in its own namespace.
@@ -57,12 +59,18 @@ pub(crate) struct ModuleInfo {
     /// The extension names this module declares, with the `priv` flag. An imported extension is in
     /// `extensions` but not here: like every other item, an import is not re-exported.
     pub(crate) extension_priv: HashMap<String, bool>,
+    /// The derives visible in this module, by name: its own `derive` declarations and the ones it imported
+    /// (`spec/reflection.md`, RFL8). A value indexes [`crate::session::Sema::derive_srcs`].
+    pub(crate) derives: HashMap<String, usize>,
+    /// The derive names this module declares, with the `priv` flag.
+    pub(crate) derive_priv: HashMap<String, bool>,
     /// Names this module re-exports with `pub use`, in each namespace, and the module aliases it re-exports.
     pub(crate) pub_values: std::collections::HashSet<String>,
     pub(crate) pub_types: std::collections::HashSet<String>,
     pub(crate) pub_ifaces: std::collections::HashSet<String>,
     pub(crate) pub_modules: std::collections::HashSet<String>,
     pub(crate) pub_extensions: std::collections::HashSet<String>,
+    pub(crate) pub_derives: std::collections::HashSet<String>,
 }
 
 /// One extension method declaration: `fn Type.name(self, ...)`.
@@ -185,6 +193,17 @@ pub(crate) struct Globals {
     pub(crate) from_impls: Vec<FromImpl>,
     /// The signatures of `Fn(...)` bounds, by the index a [`crate::generics::Bound::Fn`] carries.
     pub(crate) fn_bounds: RefCell<Vec<tir::FnSig>>,
+    /// The type aliases that have parameters (`crate::aliases`) and how deeply their expansions nest right now.
+    pub(crate) generic_aliases: Vec<crate::aliases::GenericAlias>,
+    pub(crate) alias_depth: std::cell::Cell<usize>,
+    /// The const expressions over const parameters that an array length or a const argument stands for while a
+    /// generic body is checked, by the index `SYM_LEN`/`SYM_CONST` plus it (`crate::consteval`).
+    pub(crate) sym_exprs: RefCell<Vec<crate::consteval::ConstExpr>>,
+    /// The initializer of each constant and the module it is written in, by constant index: an array length may
+    /// name a constant.
+    pub(crate) const_inits: Vec<(usize, &'static burdin_syntax::ast::Expr)>,
+    /// The files `embed` read, in the order they were first read: inputs of the build (`spec/comptime.md`, CT15).
+    pub(crate) embedded: RefCell<Vec<String>>,
     /// The methods of `Type: From<..>` blocks: their one parameter is taken by ownership even though the
     /// declaration does not write `own`, because a conversion consumes its input.
     pub(crate) from_methods: Vec<FuncId>,
@@ -295,6 +314,15 @@ impl Globals {
             return None;
         }
         info.extensions.get(name).cloned()
+    }
+
+    /// The derive `name` if the module declares or re-exports it.
+    pub(crate) fn exported_derive(&self, module: usize, name: &str) -> Option<usize> {
+        let info = &self.modules[module];
+        if !info.derive_priv.contains_key(name) && !info.pub_derives.contains(name) {
+            return None;
+        }
+        info.derives.get(name).copied()
     }
 
     /// The struct `name` of the standard library, as a type.

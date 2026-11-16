@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// The name in `x.{...}` must be known while compiling, and the type must have that field (spec/reflection.md, RFL5).
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let name = "x"
+    println("{}", p.{name}) //~ E0232
+    println("{}", p.{"z"}) //~ E0002
+    println("{}", p.{"x"})
+}

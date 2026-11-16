@@ -1,0 +1,63 @@
+//@ run
+//> 4 8
+//> 3 3
+//> true false
+//> 2
+//> 7 true
+//> 8
+
+// Const parameters can be `bool`, constants are allowed in array lengths, a const parameter is inferred from
+// a generic type's arguments, and derives skip them (spec/const-generics.md, CG1-CG6).
+
+const SIZE: usize = 4
+const DOUBLE: usize = SIZE * 2
+
+struct Buffer<const N: usize> {
+    data: [i32; N]
+}
+
+Buffer<N> {
+    fn zeroed(): Buffer<N> { Buffer { data: [0; N] } }
+
+    fn capacity(self): usize { N }
+}
+
+struct Flag<const ON: bool> {
+    tag: i32
+}
+
+Flag<ON> {
+    fn on(self): bool { ON }
+}
+
+struct Matrix<T: Copy, const R: usize, const C: usize> {
+    data: [T; R * C]
+}
+
+fn rows_of<T: Copy, const R: usize, const C: usize>(m: Matrix<T, R, C>): usize { R }
+
+struct Tagged<T, const N: usize> derives (Clone, Debug, Eq) {
+    id: T
+}
+
+Tagged<T, N> {
+    fn tag(self): usize { N }
+}
+
+fn main() {
+    let a: [i32; SIZE] = [1, 2, 3, 4]
+    let b: [i32; DOUBLE] = [0; DOUBLE]
+    println("{} {}", a.len(), b.len())
+    let z: Buffer<3> = Buffer.zeroed()
+    println("{} {}", z.capacity(), z.data.len())
+    let f: Flag<true> = Flag { tag: 1 }
+    let g: Flag<false> = Flag { tag: 2 }
+    println("{} {}", f.on(), g.on())
+    let m: Matrix<i32, 2, 2> = Matrix { data: [1, 2, 3, 4] }
+    println("{}", rows_of(m))
+    let t: Tagged<i32, 7> = Tagged { id: 1 }
+    let u = t.clone()
+    println("{} {}", t.tag(), t == u)
+    let v: Tagged<i32, 8> = Tagged { id: 1 }
+    println("{}", v.tag())
+}

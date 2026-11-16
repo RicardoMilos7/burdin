@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// `name`, `size`, `align`, `fields`, and `variants` are the reflection members, so a function without `self`
+// or an enum variant cannot take them (spec/reflection.md, RFL3).
+
+struct Point { x: i32 }
+
+Point {
+    fn size(): i32 { 0 } //~ E0231
+    fn describe(self): i32 { self.x }
+    fn name(self): i32 { self.x }
+}
+
+enum Mode {
+    name //~ E0231
+    Fast
+}
+
+fn main() {
+    println(Point.name)
+}

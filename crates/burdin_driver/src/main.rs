@@ -14,7 +14,7 @@ pub(crate) const USAGE: &str = "\
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--link-lib <name>]... [--comptime-steps <n>] [diagnostics]
+               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
@@ -25,6 +25,7 @@ usage:
 
 compile options:
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
+  --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
 
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
@@ -85,6 +86,8 @@ pub(crate) struct Args {
     pub(crate) diagnostics: DiagnosticOptions,
     /// The step budget of each compile-time evaluation (`spec/comptime.md`, CT11). `None` keeps the default.
     pub(crate) comptime_steps: Option<u64>,
+    /// Where to list the files `embed` read (`--emit-deps`).
+    pub(crate) emit_deps: Option<PathBuf>,
     // `burdin test` only.
     pub(crate) jobs: Option<usize>,
     pub(crate) verbose: bool,
@@ -155,6 +158,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         program_args: Vec::new(),
         diagnostics: DiagnosticOptions::default(),
         comptime_steps: None,
+        emit_deps: None,
         jobs: None,
         verbose: false,
         packages: Vec::new(),
@@ -214,6 +218,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--ignored" => args.ignored_only = flag_without_value(a, inline)?,
             "--include-ignored" => args.include_ignored = flag_without_value(a, inline)?,
             "--filter" => args.filter = Some(option_value(&mut it, inline, a, "a text")?),
+            "--emit-deps" => args.emit_deps = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--comptime-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
                 let steps: u64 = value
@@ -358,6 +363,7 @@ fn driver_main() -> ExitCode {
         test_mode: false,
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
+        emit_deps: args.emit_deps.as_deref(),
     };
     match args.command.as_str() {
         "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
@@ -564,6 +570,8 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) diagnostics: &'a DiagnosticOptions,
     /// The step budget of each compile-time evaluation; `None` is the default (`spec/comptime.md`, CT11).
     pub(crate) comptime_steps: Option<u64>,
+    /// Where to list the files `embed` read; `None` writes nothing.
+    pub(crate) emit_deps: Option<&'a Path>,
 }
 
 /// What a successful compilation produced: the executable and its `test` blocks (empty for a normal build).
@@ -695,6 +703,17 @@ pub(crate) fn compile(
         return Err(ExitCode::from(1));
     }
     let program = program.expect("no errors means checking produced a program");
+    if let Some(path) = options.emit_deps {
+        let mut text = String::new();
+        for input in &program.build_inputs {
+            text.push_str(input);
+            text.push('\n');
+        }
+        if let Err(e) = std::fs::write(path, text) {
+            eprintln!("error: cannot write {}: {e}", path.display());
+            return Err(ExitCode::from(2));
+        }
+    }
     // Warnings do not stop compilation, but they are printed before the build goes on (`spec/extensions.md`,
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
     if diags.has_warnings() {

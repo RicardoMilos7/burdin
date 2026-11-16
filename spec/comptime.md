@@ -2,7 +2,7 @@
 
 Milestone 20 adds compile-time execution: `comptime` expressions, blocks, and parameters, `comptime if` and
 `comptime for`, `const` values computed by the same engine, `comptime assert`, and a step budget. This page is the
-exact behavior; the tests are `tests/m20_comptime/`. Rule IDs are CT1-CT14.
+exact behavior; the tests are `tests/m20_comptime/`. Rule IDs are CT1-CT15.
 
 ## CT1. The engine: the typed tree, interpreted (decision, issue #158)
 
@@ -197,6 +197,26 @@ Because comptime is pure (CT9) and bounded (CT11), its results are a function of
 the profile, so a build cache may key them on those inputs. The compiler does not cache comptime results across
 builds yet; a later stage that adds cached object files can rely on this rule.
 
+## CT15. `embed`
+
+`embed("path")` is the contents of a file, read by the compiler while it checks the call. It is the one place a
+compile-time construct reads a file, and it does so outside the interpreter: the result is a literal in the program,
+so the purity rule (CT9) is untouched.
+
+- The path is a string literal, relative to the directory of the source file that writes the call. An absolute path,
+  or one with a `..` component, is E0241, and so is a path that is not a literal.
+- With the expected type `[u8; N]` (a `let` annotation, a parameter, a constant's type), the result is the file's bytes
+  and `N` must be the file's length (E0241). Anywhere else it is a `str`, and the file must be valid UTF-8 (E0240).
+- A file that is missing, a directory, or unreadable is E0240 at the path, naming the file; the build stops without
+  a crash.
+- The compiler records every file `embed` read as an input of the build: `burdin build --emit-deps <file>` writes them,
+  one path per line, in the order they were first read, so a build system can rebuild when one changes.
+
+```
+const LICENSE: str = embed("LICENSE.txt")
+const HEADER: [u8; 4] = embed("magic.bin")
+```
+
 ## Diagnostics
 
 | Code | Meaning |
@@ -207,6 +227,8 @@ builds yet; a later stage that adds cached object files can rely on this rule.
 | E0223 | A `comptime assert` failed |
 | E0224 | An impure operation (I/O, environment, process, C) during compile-time evaluation |
 | E0225 | Compile-time evaluation exceeded its step budget, its call depth, or the specialization limit |
+| E0240 | `embed` could not read its file, or the file is not valid UTF-8 text |
+| E0241 | An invalid `embed`: a path that is not a literal, is absolute, or has `..`; a `[u8; N]` with the wrong length |
 | E0009 | A constant that depends on itself through calls (existing code) |
 
 ## Tests
@@ -221,3 +243,6 @@ budget (`budget_infinite_loop`, `budget_recursion`), a comptime panic (`comptime
 purity (`purity_print`, `purity_file`), materialization (`not_materializable`), runtime locals (`runtime_local`),
 memory rules at compile time (`comptime_moves`, `comptime_drop`), and the interpreter's coverage of the language
 (`interp_*`).
+
+`tests/m21_reflect/` covers CT15: `embed_basic` (a text file as `str` and a binary file as `[u8; N]`), `embed_missing`
+(E0240), and `embed_invalid` (E0241).

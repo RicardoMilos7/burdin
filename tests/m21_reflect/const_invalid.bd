@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// A const parameter takes a value of its integer, `bool`, or `char` type, and a type parameter takes a type
+// (spec/const-generics.md, CG2, CG3).
+
+struct Grid<const W: usize> {
+    cells: [i32; W]
+}
+
+struct Wrapper<T> {
+    value: T
+}
+
+struct Floaty<const X: f64> { //~ E0250
+    id: i32
+}
+
+fn main() {
+    let a: Grid<i32> = Grid { cells: [0; 4] } //~ E0250
+    let b: Wrapper<3> = Wrapper { value: 1 } //~ E0250
+    let c: Grid<-1> = Grid { cells: [0; 1] } //~ E0250
+}
