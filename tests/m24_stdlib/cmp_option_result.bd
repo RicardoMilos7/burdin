@@ -1,0 +1,33 @@
+//@ run
+//> Less
+//> Greater
+//> Equal
+//> Less
+//> Greater
+//> Less
+//> Greater
+//> Equal
+//> Less
+
+// `Option` is ordered with `None` first; `Result` with every `Ok` before every `Err`.
+
+fn show(o: Ordering) {
+    println("{o:?}")
+}
+
+fn main() {
+    let none: Option<i32> = None
+    show(none.cmp(Some(0)))
+    show((Some(5)).cmp(none))
+    show(none.cmp(none))
+    show((Some(1)).cmp(Some(2)))
+    show((Some("b")).cmp(Some("a")))
+
+    let ok1: Result<i32, String> = Ok(1)
+    let ok2: Result<i32, String> = Ok(2)
+    let err: Result<i32, String> = Err(String.from("x"))
+    show(ok1.cmp(err))
+    show(err.cmp(ok2))
+    show(err.cmp(err))
+    show(ok1.cmp(ok2))
+}

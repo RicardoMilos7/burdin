@@ -1,0 +1,184 @@
+use fmt.{Debug, Formatter}
+use ops.PartialOrd
+
+// Three-way comparison: `Ordering`, `a.cmp(b)`, `Reverse<T>`, and the comparison helpers (spec/stdlib.md).
+//
+// `a.cmp(b)` is provided by the compiler for every type that supports `<` through `Ord` (the integers, `char`,
+// `bool`, `str`, `String`, `()`, tuples and ranges of ordered parts, and a struct or enum that derives `Ord`),
+// and it calls `__ord_cmp` below. `Option` and `Result` are ordered by the extension methods in this file.
+// Floats have no `cmp`: `<` compares them, and `total_cmp` is their total order.
+
+/// The result of comparing two values: `Less` when the left one sorts first, `Equal` when neither does, and
+/// `Greater` when the right one sorts first. The variants are declared in that order, so `Ord` compares
+/// `Less < Equal < Greater`.
+enum Ordering derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+    Less
+    Equal
+    Greater
+}
+
+Ordering {
+    /// The opposite order: `Less` becomes `Greater` and the other way round; `Equal` stays `Equal`.
+    fn reverse(self): Ordering {
+        match self {
+            Ordering.Less => Ordering.Greater,
+            Ordering.Equal => Ordering.Equal,
+            Ordering.Greater => Ordering.Less,
+        }
+    }
+
+    /// `self` unless it is `Equal`, in which case `other`. Chains comparisons of several keys.
+    fn then(self, other: Ordering): Ordering {
+        match self {
+            Ordering.Equal => other,
+            _ => self,
+        }
+    }
+
+    /// Like `then`, but `f` runs only when `self` is `Equal`.
+    fn then_with<F: FnOnce(): Ordering>(self, own f: F): Ordering {
+        match self {
+            Ordering.Equal => f(),
+            _ => self,
+        }
+    }
+
+    /// Whether the order is `Less`.
+    fn is_lt(self): bool {
+        self == Ordering.Less
+    }
+
+    /// Whether the order is `Less` or `Equal`.
+    fn is_le(self): bool {
+        self != Ordering.Greater
+    }
+
+    /// Whether the order is `Equal`.
+    fn is_eq(self): bool {
+        self == Ordering.Equal
+    }
+
+    /// Whether the order is not `Equal`.
+    fn is_ne(self): bool {
+        self != Ordering.Equal
+    }
+
+    /// Whether the order is `Greater`.
+    fn is_gt(self): bool {
+        self == Ordering.Greater
+    }
+
+    /// Whether the order is `Greater` or `Equal`.
+    fn is_ge(self): bool {
+        self != Ordering.Less
+    }
+}
+
+/// The comparison behind `a.cmp(b)`: the compiler rewrites the method call into a call of this function.
+priv fn __ord_cmp<T: Ord>(a: T, b: T): Ordering {
+    if a < b {
+        Ordering.Less
+    } else if b < a {
+        Ordering.Greater
+    } else {
+        Ordering.Equal
+    }
+}
+
+/// The smaller of two values; `a` when they compare equal.
+fn min<T: Ord>(own a: T, own b: T): T {
+    if b < a { b } else { a }
+}
+
+/// The larger of two values; `b` when they compare equal.
+fn max<T: Ord>(own a: T, own b: T): T {
+    if b < a { a } else { b }
+}
+
+/// `value` limited to the range `low..=high`. Panics when `low` is greater than `high`.
+fn clamp<T: Ord>(own value: T, own low: T, own high: T): T {
+    if high < low {
+        panic("clamp: low is greater than high")
+    }
+    if value < low {
+        low
+    } else if high < value {
+        high
+    } else {
+        value
+    }
+}
+
+/// The smaller of two values by `compare`; `a` when it reports `Equal`.
+fn min_by<T, F: FnMut(&T, &T): Ordering>(own a: T, own b: T, own compare: F): T {
+    let mut compare = compare
+    match compare(&a, &b) {
+        Ordering.Greater => b,
+        _ => a,
+    }
+}
+
+/// The larger of two values by `compare`; `b` when it reports `Equal`.
+fn max_by<T, F: FnMut(&T, &T): Ordering>(own a: T, own b: T, own compare: F): T {
+    let mut compare = compare
+    match compare(&a, &b) {
+        Ordering.Greater => a,
+        _ => b,
+    }
+}
+
+/// The smaller of two values by the key `key` computes; `a` when the keys are equal.
+fn min_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
+    let mut key = key
+    let ka = key(&a)
+    let kb = key(&b)
+    if kb < ka { b } else { a }
+}
+
+/// The larger of two values by the key `key` computes; `b` when the keys are equal.
+fn max_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
+    let mut key = key
+    let ka = key(&a)
+    let kb = key(&b)
+    if kb < ka { a } else { b }
+}
+
+/// A value whose order is reversed: `Reverse(a) < Reverse(b)` exactly when `b < a`. It turns a max-ordered
+/// container into a min-ordered one and lets a sort by key run descending.
+struct Reverse<T> derives (Copy, Clone, Eq, Debug) {
+    value: T
+}
+
+Reverse<T>: PartialOrd where T: Ord {
+    fn lt(self, other: Reverse<T>): bool {
+        other.value < self.value
+    }
+}
+
+/// `Option` is ordered with `None` before every `Some`, and two `Some` values by their contents.
+fn Option<T>.cmp(self, other: Option<T>): Ordering where T: Ord {
+    match self {
+        None => match other {
+            None => Ordering.Equal,
+            Some(_) => Ordering.Less,
+        },
+        Some(a) => match other {
+            None => Ordering.Greater,
+            Some(b) => __ord_cmp(a, b),
+        },
+    }
+}
+
+/// `Result` is ordered with every `Ok` before every `Err`, and two values of one kind by their contents.
+fn Result<T, E>.cmp(self, other: Result<T, E>): Ordering where T: Ord, E: Ord {
+    match self {
+        Ok(a) => match other {
+            Ok(b) => __ord_cmp(a, b),
+            Err(_) => Ordering.Less,
+        },
+        Err(a) => match other {
+            Ok(_) => Ordering.Greater,
+            Err(b) => __ord_cmp(a, b),
+        },
+    }
+}

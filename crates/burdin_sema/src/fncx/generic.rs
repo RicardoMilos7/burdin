@@ -173,6 +173,13 @@ impl FnCx<'_> {
         if name.name == "hash" && args.is_empty() && self.param_has(&recv.ty, Bound::Hash) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
+        if name.name == "cmp"
+            && args.len() == 1
+            && self.param_has(&recv.ty, Bound::Ord)
+            && let Some(g) = self.globals.std_generic("__ord_cmp")
+        {
+            return self.generic_call_with_receiver(g, recv, "cmp", args, span);
+        }
         let found = self.globals.bound_method(&recv.ty, &name.name, &self.bounds);
         let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| sig.has_self) else {
             self.diags.error(

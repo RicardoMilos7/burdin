@@ -1,0 +1,38 @@
+//@ run
+//> Less
+//> Greater
+//> Equal
+//> 3
+//> 9
+
+// `cmp` works on a type parameter bounded by `Ord`.
+
+fn compare<T: Ord>(a: T, b: T): Ordering {
+    a.cmp(b)
+}
+
+fn largest<T: Ord + Clone>(xs: List<T>): T {
+    let mut best = xs[0].clone()
+    for x in xs {
+        if best.cmp(x.clone()) == Ordering.Less {
+            best = x.clone()
+        }
+    }
+    best
+}
+
+fn main() {
+    println("{compare(1, 2):?}")
+    let z = compare("z", "a")
+    println("{z:?}")
+    println("{compare((1, 2), (1, 2)):?}")
+    let mut xs = List<i32>.new()
+    xs.push(3)
+    xs.push(1)
+    xs.push(2)
+    println("{largest(xs)}")
+    let mut ys = List<i32>.new()
+    ys.push(9)
+    ys.push(2)
+    println("{largest(ys)}")
+}

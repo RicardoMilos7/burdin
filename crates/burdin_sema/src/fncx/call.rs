@@ -893,6 +893,14 @@ impl FnCx<'_> {
         if name.name == "hash" && args.is_empty() && self.globals.has_hash_in(&recv.ty, &self.bounds) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
+        // `a.cmp(b)` on every type that supports `<` through `Ord` (`spec/stdlib.md`, `Ordering`).
+        if name.name == "cmp"
+            && args.len() == 1
+            && self.globals.satisfies(&recv.ty, &crate::generics::Bound::Ord, &self.bounds)
+            && let Some(g) = self.globals.std_generic("__ord_cmp")
+        {
+            return self.generic_call_with_receiver(g, recv, "cmp", args, span);
+        }
         // A field that holds a closure is callable: `holder.f(x)` calls the closure in `f` when no method of that
         // name exists (CL6). The field wins only when its type is a closure interface.
         if let Some((index, field_ty)) = self.closure_field(&recv, &name.name) {

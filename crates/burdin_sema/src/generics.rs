@@ -716,7 +716,7 @@ impl Globals {
                 Bound::Copy => self.is_copy(ty),
                 Bound::Clone => self.is_clone(ty),
                 Bound::Eq => self.has_eq_in(ty, env),
-                Bound::Ord => self.has_ord_in(ty, env),
+                Bound::Ord => self.has_ord_in(ty, env) || self.implements_partial_ord(ty, env),
                 Bound::Hash => self.has_hash_in(ty, env),
                 Bound::Default => self.has_default(ty),
                 Bound::User(i, args) => self.implements(ty, i, &args, env),
@@ -826,6 +826,13 @@ impl Globals {
             }
             _ => false,
         }
+    }
+
+    /// Whether a user type implements `PartialOrd` by hand. Such a type satisfies an `Ord` bound: its `lt` is the
+    /// order, which is how `Reverse<T>` plugs into a container or a sort that asks for `T: Ord`. The built-in
+    /// `<` still does not apply to it (`has_ord`), so a generic body instantiated for it calls `lt`.
+    fn implements_partial_ord(&self, ty: &Ty, env: &Env) -> bool {
+        self.op_ifaces.as_ref().is_some_and(|ops| self.implements(ty, ops.partial_ord, &[], env))
     }
 
     /// Whether values of `ty` implement `Debug`, for the derive requirement.

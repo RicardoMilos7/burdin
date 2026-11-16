@@ -194,6 +194,7 @@ impl<'t> Sema<'t> {
         match name {
             "clone" => self.globals.is_clone(recv),
             "hash" => self.globals.has_hash_in(recv, &[]),
+            "cmp" => self.globals.has_ord_in(recv, &[]),
             "to_string" => self.to_string_is_provided(recv),
             _ => self.iterator_name(recv, name),
         }

@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A struct without `Ord` has no `cmp`, and `cmp.min` asks for the bound.
+
+struct Plain {
+    n: i32
+}
+
+fn main() {
+    let a = Plain { n: 1 }
+    let b = Plain { n: 2 }
+    let o = a.cmp(b) //~ E0002
+    let m = cmp.min(Plain { n: 1 }, Plain { n: 2 }) //~ E0141
+}
