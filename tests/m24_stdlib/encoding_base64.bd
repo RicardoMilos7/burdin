@@ -1,0 +1,66 @@
+//@ run
+//> [] []
+//> ok []
+//> [f] [Zg==]
+//> ok [f]
+//> [fo] [Zm8=]
+//> ok [fo]
+//> [foo] [Zm9v]
+//> ok [foo]
+//> [foob] [Zm9vYg==]
+//> ok [foob]
+//> [fooba] [Zm9vYmE=]
+//> ok [fooba]
+//> [foobar] [Zm9vYmFy]
+//> ok [foobar]
+//> +/++ -_--
+//> "fbffbe" "fbffbe"
+//> ok [fo]
+//> ok [fo]
+//> Zm8
+//> err invalid length
+//> err invalid length
+//> err invalid character at byte 3
+//> err invalid character at byte 4
+//> err invalid character at byte 3
+//> err invalid character at byte 3
+
+// Standard and URL-safe base64: the RFC 4648 test vectors, the two characters that differ, padding that the URL-safe
+// form leaves optional, and the errors for a bad length or character.
+
+fn show(r: Result<List<u8>, DecodeError>) {
+    match r {
+        Ok(b) => {
+            println("ok [{b.to_text().unwrap()}]")
+        }
+        Err(e) => {
+            println("err {e}")
+        }
+    }
+}
+
+fn main() {
+    // The test vectors of RFC 4648, section 10.
+    for s in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
+        let encoded = base64_encode(s.to_utf8()[0..s.len()])
+        println("[{}] [{}]", s, encoded)
+        show(base64_decode(encoded))
+    }
+    // The two characters that differ between the alphabets.
+    let mut raw = List<u8>.new()
+    raw.push(251)
+    raw.push(255)
+    raw.push(190)
+    println("{} {}", raw.to_base64(), raw.to_base64_url())
+    println("{:?} {:?}", base64_decode("+/++").unwrap().to_hex(), base64_url_decode("-_--").unwrap().to_hex())
+    // The URL-safe form takes padding or leaves it.
+    show(base64_url_decode("Zm8"))
+    show(base64_url_decode("Zm8="))
+    println("{}", base64_url_encode("fo".to_utf8()[0..2]))
+    show(base64_decode("Zm8"))
+    show(base64_decode("Zm9vY"))
+    show(base64_decode("Zm=v"))
+    show(base64_decode("Zm9v!"))
+    show(base64_decode("Zm9-"))
+    show(base64_url_decode("Zm9+"))
+}

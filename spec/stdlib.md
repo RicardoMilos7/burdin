@@ -265,6 +265,42 @@ name still hides the prelude's.
 Tests: `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`,
 `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern`.
 
+## Encodings (issue #414)
+
+```
+error enum DecodeError { InvalidLength, InvalidCharacter { index: usize }, InvalidUtf8 { index: usize } }
+
+fn str.to_utf8(self): List<u8>             fn String.to_utf8(self): List<u8>
+fn from_utf8(data: [u8]): Result<String, DecodeError>
+
+fn hex_encode(data: [u8]): String          fn hex_encode_upper(data: [u8]): String
+fn hex_decode(text: str): Result<List<u8>, DecodeError>
+
+fn base64_encode(data: [u8]): String       fn base64_url_encode(data: [u8]): String
+fn base64_decode(text: str): Result<List<u8>, DecodeError>
+fn base64_url_decode(text: str): Result<List<u8>, DecodeError>
+
+fn url_encode(text: str): String
+fn url_decode(text: str): Result<String, DecodeError>
+
+fn List<u8>.to_hex(self): String           fn List<u8>.to_base64(self): String
+fn List<u8>.to_base64_url(self): String    fn List<u8>.to_text(self): Result<String, DecodeError>
+```
+
+Encoders take bytes as a `[u8]` view (`bytes[0..bytes.len()]`; the `List<u8>` methods do that for the whole list) and
+return a `String`. `hex_encode` writes lowercase digits, two per byte; `hex_decode` accepts either case. `base64_encode`
+is RFC 4648 section 4 with `=` padding to a multiple of four characters; `base64_url_encode` is section 5 (`-` and
+`_`) **without** padding. `base64_decode` needs the padding and the standard alphabet; `base64_url_decode` takes the
+URL-safe alphabet with or without padding. Neither checks that the unused bits of the last character are zero.
+`url_encode` writes every byte of the UTF-8 form of the text as `%XX` (uppercase) except `A-Z a-z 0-9 - . _ ~`;
+`url_decode` turns `%XX` (either case) back into bytes and leaves every other character, `+` included, as it is.
+`from_utf8` accepts exactly the well-formed UTF-8 byte sequences.
+
+A decoder reports the first problem: `InvalidLength` for an odd number of hex digits, a base64 text that cannot be a
+whole number of bytes or whose padding is wrong, or a `%` cut off by the end of the text; `InvalidCharacter { index }`
+for a character that does not belong (`index` is its byte offset in the text); `InvalidUtf8 { index }` for the byte
+offset where the bytes stop being UTF-8.
+
 ## Allocators
 
 ```
@@ -845,6 +881,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
+| Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
