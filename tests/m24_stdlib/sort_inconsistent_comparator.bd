@@ -1,0 +1,33 @@
+//@ run
+//> 6 21
+//> 6 21
+//> 6 21
+
+// A comparator that is not a total order gives some order, but never loses or repeats an element and never panics.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [4, 1, 6, 2, 5, 3] {
+        xs.push(x)
+    }
+    xs.sort_by(|a, b| Ordering.Less)
+    let mut total = 0
+    for x in xs {
+        total = total + x
+    }
+    println("{xs.len()} {total}")
+
+    xs.sort_by(|a, b| Ordering.Greater)
+    total = 0
+    for x in xs {
+        total = total + x
+    }
+    println("{xs.len()} {total}")
+
+    xs.sort_by(|a, b| if *a % 2 == 0 { Ordering.Less } else { Ordering.Greater })
+    total = 0
+    for x in xs {
+        total = total + x
+    }
+    println("{xs.len()} {total}")
+}

@@ -1,0 +1,16 @@
+//@ run
+//> [1, 2, 3, 4]
+//> [4, 3, 2, 1]
+
+// The `_unstable` names sort the same way and promise nothing about the order of equal elements.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [3, 1, 4, 2] {
+        xs.push(x)
+    }
+    xs.sort_unstable_by(|a, b| a.cmp(*b))
+    println("{xs:?}")
+    xs.sort_unstable_by_key(|x| 0 - *x)
+    println("{xs:?}")
+}
