@@ -1,0 +1,26 @@
+//@ run
+//> 0:10
+//> 1:20
+//> 2:30
+//> 0:a
+//> 1:b
+//> 5
+
+// `enumerate` pairs each item with its position, counting from 0, over any iterator: a list, a range, or a chain.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [10, 20, 30] {
+        xs.push(x)
+    }
+    for (i, x) in xs.iter().enumerate() {
+        println("{i}:{x}")
+    }
+    let mut names = List<String>.new()
+    names.push(String.from("a"))
+    names.push(String.from("b"))
+    for (i, name) in names.iter().enumerate() {
+        println("{i}:{name}")
+    }
+    println("{(0..5).iter().enumerate().count()}")
+}

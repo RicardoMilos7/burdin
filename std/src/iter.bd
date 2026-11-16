@@ -34,6 +34,44 @@ interface Iterator<T> {
         SkipIter { inner: self, remaining: count }
     }
 
+    /// A lazy chain of `(index, item)` pairs, counting from 0.
+    fn enumerate(own self): EnumerateIter<Self, T> {
+        EnumerateIter { inner: self, index: 0 }
+    }
+
+    /// A lazy chain of the items up to, not including, the first one `f` rejects.
+    fn take_while<F: FnMut(&T): bool>(own self, own f: F): TakeWhileIter<Self, T, F> {
+        TakeWhileIter { inner: self, f: f, done: false }
+    }
+
+    /// A lazy chain that drops items while `f` accepts them, then yields the rest.
+    fn skip_while<F: FnMut(&T): bool>(own self, own f: F): SkipWhileIter<Self, T, F> {
+        SkipWhileIter { inner: self, f: f, skipping: true }
+    }
+
+    /// A lazy chain that applies `f` and stops at the first `None` it returns.
+    fn map_while<U, F: FnMut(T): Option<U>>(own self, own f: F): MapWhileIter<Self, T, U, F> {
+        MapWhileIter { inner: self, f: f, done: false }
+    }
+
+    /// A lazy chain of every `step`th item, starting with the first. A `step` of 0 panics.
+    fn step_by(own self, step: usize): StepByIter<Self, T> {
+        if step == 0 {
+            panic("step_by: the step is 0")
+        }
+        StepByIter { inner: self, step: step, first: true }
+    }
+
+    /// A lazy chain that calls `f` on a view of each item and passes the item on.
+    fn inspect<F: FnMut(&T)>(own self, own f: F): InspectIter<Self, T, F> {
+        InspectIter { inner: self, f: f }
+    }
+
+    /// A lazy chain whose next item can be looked at with `peek` before it is taken.
+    fn peekable(own self): PeekIter<Self, T> {
+        PeekIter { inner: self, buffer: List<T>.new(), looked: false }
+    }
+
     /// Folds the items into an accumulator, left to right.
     fn fold<A, F: FnMut(A, T): A>(mut self, own init: A, own f: F): A {
         let mut acc = init
@@ -210,6 +248,190 @@ SkipIter<I, T>: Iterator<T> where I: Iterator<T> {
                 None => {
                     return None
                 }
+            }
+        }
+    }
+}
+
+/// The lazy `enumerate` chain.
+struct EnumerateIter<I, T> {
+    inner: I
+    index: usize
+}
+
+EnumerateIter<I, T>: Iterator<(usize, T)> where I: Iterator<T> {
+    fn next(mut self): Option<(usize, T)> {
+        match self.inner.next() {
+            Some(x) => {
+                let i = self.index
+                self.index = self.index + 1
+                Some((i, x))
+            }
+            None => None,
+        }
+    }
+}
+
+/// The lazy `take_while` chain.
+struct TakeWhileIter<I, T, F: FnMut(&T): bool> {
+    inner: I
+    f: F
+    done: bool
+}
+
+TakeWhileIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
+    fn next(mut self): Option<T> {
+        if self.done {
+            return None
+        }
+        match self.inner.next() {
+            Some(x) => {
+                if self.f(&x) {
+                    return Some(x)
+                }
+                self.done = true
+                None
+            }
+            None => None,
+        }
+    }
+}
+
+/// The lazy `skip_while` chain.
+struct SkipWhileIter<I, T, F: FnMut(&T): bool> {
+    inner: I
+    f: F
+    skipping: bool
+}
+
+SkipWhileIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
+    fn next(mut self): Option<T> {
+        loop {
+            match self.inner.next() {
+                Some(x) => {
+                    if self.skipping && self.f(&x) {
+                        continue
+                    }
+                    self.skipping = false
+                    return Some(x)
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+}
+
+/// The lazy `map_while` chain.
+struct MapWhileIter<I, T, U, F: FnMut(T): Option<U>> {
+    inner: I
+    f: F
+    done: bool
+}
+
+MapWhileIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): Option<U> {
+    fn next(mut self): Option<U> {
+        if self.done {
+            return None
+        }
+        match self.inner.next() {
+            Some(x) => {
+                let r = self.f(x)
+                if r.is_none() {
+                    self.done = true
+                }
+                r
+            }
+            None => None,
+        }
+    }
+}
+
+/// The lazy `step_by` chain.
+struct StepByIter<I, T> {
+    inner: I
+    step: usize
+    first: bool
+}
+
+StepByIter<I, T>: Iterator<T> where I: Iterator<T> {
+    fn next(mut self): Option<T> {
+        if self.first {
+            self.first = false
+            return self.inner.next()
+        }
+        let mut skipped: usize = 1
+        while skipped < self.step {
+            match self.inner.next() {
+                Some(_) => {}
+                None => {
+                    return None
+                }
+            }
+            skipped = skipped + 1
+        }
+        self.inner.next()
+    }
+}
+
+/// The lazy `inspect` chain.
+struct InspectIter<I, T, F: FnMut(&T)> {
+    inner: I
+    f: F
+}
+
+InspectIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T) {
+    fn next(mut self): Option<T> {
+        match self.inner.next() {
+            Some(x) => {
+                self.f(&x)
+                Some(x)
+            }
+            None => None,
+        }
+    }
+}
+
+/// The lazy `peekable` chain: `buffer` holds the item that was looked at, if any.
+struct PeekIter<I, T> {
+    inner: I
+    buffer: List<T>
+    looked: bool
+}
+
+PeekIter<I, T> where I: Iterator<T> {
+    /// A view of the next item without taking it, or `None` when there is none.
+    fn peek(mut self): Option<&T> {
+        if !self.looked {
+            match self.inner.next() {
+                Some(x) => {
+                    self.buffer.push(x)
+                }
+                None => {}
+            }
+            self.looked = true
+        }
+        if self.buffer.len() == 0 {
+            return None
+        }
+        Some(&self.buffer[0])
+    }
+}
+
+PeekIter<I, T>: Iterator<T> where I: Iterator<T> {
+    fn next(mut self): Option<T> {
+        match self.buffer.pop() {
+            Some(x) => {
+                self.looked = false
+                Some(x)
+            }
+            None => {
+                if self.looked {
+                    self.looked = false
+                    return None
+                }
+                self.inner.next()
             }
         }
     }
