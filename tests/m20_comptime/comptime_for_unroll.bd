@@ -1,0 +1,30 @@
+//@ run
+//> field 0: 10
+//> field 1: 20
+//> field 2: 30
+//> first
+//> 1 then 2
+//> 60
+
+// `comptime for` repeats its body once per item in the generated code; each copy's binding is compile-time known
+// (spec/comptime.md, CT6).
+
+const WEIGHTS: [i32; 3] = [10, 20, 30]
+
+fn main() {
+    comptime for i in 0..3 as usize {
+        println("field {i}: {comptime WEIGHTS[i]}")
+    }
+    comptime for name in ["first"] {
+        println(name)
+    }
+    comptime for (a, b) in [(1, 2)] {
+        println("{a} then {b}")
+    }
+    let mut total = 0
+    comptime for w in WEIGHTS {
+        comptime assert(w % 10 == 0)
+        total = total + w
+    }
+    println("{total}")
+}

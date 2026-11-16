@@ -116,30 +116,36 @@ fn check_one(
     (value.ty != Ty::Error).then_some(value)
 }
 
-/// Checks the value of a constant against its declared type.
+/// Checks the initializer of a constant against its declared type. Any expression of a materializable type is
+/// allowed: the comptime engine evaluates it after the memory checks (`spec/comptime.md`, CT7). The closures it
+/// creates go to the program's list, because the engine may call them.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_const(
     globals: &Globals,
     decl: &ast::ConstDecl,
     module: usize,
     ty: &Ty,
+    closures: std::rc::Rc<std::cell::RefCell<Vec<tir::Closure>>>,
     sources: &SourceMap,
     traces: bool,
     diags: &mut Diagnostics,
 ) -> tir::Const {
-    // A constant cannot hold a closure (`is_const_expr` below rejects it), so its closures are checked for
-    // diagnostics and dropped.
-    let closures = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let mut cx = FnCx::new(globals, diags, Ty::Unit, None, module, false, false, closures, sources, traces);
     let value = cx.expr(&decl.value, Some(ty));
     let value = cx.expect_ty(value, ty);
-    if !is_const_expr(&value) {
+    if !globals.materializable(ty) {
         cx.diags.error(
-            Code::UNSUPPORTED, // e9000: const-expression
-            decl.value.span,
-            "only literals, other constants, operators, and casts are allowed in a constant for now",
+            Code::NOT_MATERIALIZABLE,
+            decl.ty.span,
+            format!(
+                "a constant cannot have type `{ty}`: its value is computed at compile time and copied into every \
+                 use, so it must be a scalar, `str`, `String`, or a struct, enum, tuple, array, `Option`, or \
+                 `Result` of those (spec/comptime.md, CT3)"
+            ),
         );
     }
-    tir::Const { name: globals.qualified(module, &decl.name.name), value }
+    let locals = std::mem::take(&mut cx.locals);
+    tir::Const { name: globals.qualified(module, &decl.name.name), span: decl.name.span, value, locals }
 }
 
 /// A function without code. A symbolic function is checked against its bounds and then replaced by one of these:
@@ -245,6 +251,9 @@ impl FnCx<'_> {
             let kind = if ps.own { LocalKind::OwnParam } else { LocalKind::BorrowedParam };
             let id = self.declare(name, ps.ty.clone(), mutable, kind);
             self.locals[id.0].by_ref = ps.by_ref;
+            if ps.comptime {
+                self.comptime_known.push(id);
+            }
             if name == "self" {
                 self.self_local = Some(id);
             }

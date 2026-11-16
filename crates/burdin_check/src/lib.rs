@@ -6,7 +6,7 @@ mod moves;
 mod origins;
 
 use burdin_diag::Diagnostics;
-use burdin_tir::{AnyIface, Program, Signature, TypeDefs};
+use burdin_tir::{AnyIface, Block, Function, Program, Signature, TypeDefs};
 
 /// What the checks need to know about the rest of the program: type definitions and callee signatures.
 #[derive(Clone, Copy)]
@@ -38,5 +38,23 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
     for closure in &program.closures {
         borrows::check(&closure.func, env, diags);
         origins::check_closure(&closure.func, signatures, diags);
+    }
+    // A constant's initializer is code the comptime engine runs (`spec/comptime.md`, CT7), so it follows the same
+    // move and borrow rules as a function body that returns the value.
+    for c in &program.consts {
+        let func = Function {
+            name: c.name.clone(),
+            span: c.span,
+            params: Vec::new(),
+            ret: c.value.ty.clone(),
+            locals: c.locals.clone(),
+            body: Block { stmts: Vec::new(), tail: Some(Box::new(c.value.clone())) },
+            moved: Vec::new(),
+            ret_origin: None,
+            symbolic: false,
+            exported: false,
+        };
+        moves::check_function(&func, env, diags);
+        borrows::check(&func, env, diags);
     }
 }

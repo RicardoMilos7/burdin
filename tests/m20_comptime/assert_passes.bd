@@ -1,0 +1,14 @@
+//@ run
+//> ok
+
+// `comptime assert` with a true condition has no effect, as a module item or in a body (spec/comptime.md, CT8).
+
+const BUFFER_SIZE: usize = 256
+
+comptime assert(BUFFER_SIZE % 64 == 0, "the buffer must be a whole number of cache lines")
+comptime assert(BUFFER_SIZE > 0)
+
+fn main() {
+    comptime assert(BUFFER_SIZE / 64 == 4)
+    println("ok")
+}

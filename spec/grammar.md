@@ -4,10 +4,10 @@ This is the grammar the compiler accepts. It covers exactly the stage 0 subset p
 milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), milestone 15's
 `any`/`impl` existential types (the details are in `existentials.md`), milestone 16's `error` declarations
 (the details are in `errors.md`), milestone 17's default and named arguments (the details are in
-`arguments.md`), and milestone 18's extension methods (the details are in `extensions.md`). It is derived from the
-conformance tests in `tests/`, so every construct below is used by at least one test, and every construct those
-tests use is here. Features deferred to later stage 1 milestones (comptime, derive declarations, tasks) are
-reserved but not parsed.
+`arguments.md`), milestone 18's extension methods (the details are in `extensions.md`), and milestone 20's comptime
+forms (the details are in `comptime.md`). It is derived from the conformance tests in `tests/`, so every construct
+below is used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
+milestones (derive declarations, tasks) are reserved but not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).
@@ -24,11 +24,11 @@ and `/* ... */` (block comments do not nest).
 **Keywords** (reserved):
 
 ```
-any  as  break  const  continue  else  enum  error  extern  false  fn  for  if  impl  in  interface  let  loop
-match  mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
+any  as  break  comptime  const  continue  else  enum  error  extern  false  fn  for  if  impl  in  interface  let
+loop  match  mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
 ```
 
-Reserved for stage 1, rejected as identifiers now: `comptime  derive`. No keyword is an identifier, except
+Reserved for stage 1, rejected as identifiers now: `derive`. No keyword is an identifier, except
 immediately after a `.` in a member position, where it is a member name: that is how `.any(...)` reaches the
 `Iterator` default method declared as `any_item` (`iterators.md`, IT9), and why a member may be spelled `any` or
 `impl` now that both are keywords.
@@ -95,7 +95,7 @@ foo()
 ```
 File          = { Item } ;
 
-Item          = TestItem | UseItem | ImplBlock
+Item          = TestItem | UseItem | ImplBlock | ComptimeAssert
               | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
@@ -106,7 +106,8 @@ FnItem        = FnSig Block ;
    `spec/extensions.md`, EX1. *)
 ExtensionItem = [ "unsafe" ] "fn" TypePath "." IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
 ParamList     = Param { "," Param } [ "," ] ;
-Param         = SelfParam | [ Convention ] IDENT ":" Type [ "=" Expr ] ;
+Param         = SelfParam | [ "comptime" ] [ Convention ] IDENT ":" Type [ "=" Expr ] ;
+                                                        (* `comptime` takes a compile-time value: comptime.md, CT4 *)
 SelfParam     = [ Convention ] "self" ;                 (* only as the first parameter, only inside impl/interface *)
 Convention    = "mut" | "own" ;                         (* no convention = read-only *)
 
@@ -298,7 +299,14 @@ Precedence from loosest to tightest:
 | 15 | postfix `?`, `.field`, `.0`, `call(...)`, `index[...]` | tightest |
 
 ```
-UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | PostfixExpr ;
+UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | ComptimeExpr | PostfixExpr ;
+(* `comptime E` evaluates E while compiling (comptime.md, CT2); `comptime if` and `comptime for` select a branch
+   and unroll a body (CT5, CT6); `comptime assert(...)` is checked while compiling (CT8). The operand of `comptime`
+   is a unary expression, so `comptime f(x) + 1` adds 1 at run time to a compile-time `f(x)`. `comptime if let` is
+   a syntax error. The message of an assertion parses as an expression, and the checker requires a string
+   literal (E0220). *)
+ComptimeExpr  = ComptimeAssert | "comptime" UnaryExpr ;
+ComptimeAssert = "comptime" "assert" "(" Expr [ "," Expr ] [ "," ] ")" ;
 PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
 ArgList       = Arg { "," Arg } [ "," ] ;
 Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the parameter; "mut" marks an argument passed to a mut parameter; `own` and read-only parameters take no marker *)

@@ -228,6 +228,32 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Milestone 20 — comptime (issue #157, sub-issues #158-#165 and #305-#308)
+
+- Decision (#158): the comptime engine interprets the checked typed tree; there is no MIR (#159 closed as not
+  chosen). The new crate `crates/burdin_comptime` depends only on `burdin_tir` and `burdin_diag` and runs after the
+  memory checks and before code generation (`spec/comptime.md`, CT1).
+- Syntax and sema: `comptime` is a keyword. `comptime E` and `comptime { ... }`, `comptime name: T` parameters,
+  `comptime if`, `comptime for`, and `comptime assert(cond, "msg")` (also as a module item). Comptime code sees only
+  constants, comptime parameters, `comptime for` bindings, and its own locals (E0220); a value that crosses into
+  run time must be materializable (E0221). A `const` initializer is now any materializable expression, and the
+  memory checks also run on const initializers.
+- Interpreter (#160, #305-#308): every expression form, with owned values, places for `&mut`/`mut`, moves, user
+  `Drop`, the profile's overflow rule, and the runtime's float text, integer parsing, hashing, and layout. Panics
+  are E0222, a failed `comptime assert` is E0223, output/files/environment/processes/C are E0224, and the step
+  budget (10,000,000, `--comptime-steps N`), call depth 512, and 1024 specializations per function are E0225. A
+  constant cycle through calls is E0009.
+- Rewriting: constants and comptime expressions become literals, `comptime if` keeps its selected branch, `comptime
+  for` is unrolled, and each call to a function with comptime parameters goes to a specialization per argument
+  value. `std/src/target.bd` adds `target.os()` and `target.arch()`. The driver runs the compiler on a thread with
+  a 1 GiB reserved stack.
+- Tests: `tests/m20_comptime/` adds 40 conformance tests, including `interp_*` tests that compare comptime and
+  run-time results; `tests/check_build_flags.py` checks `--comptime-steps`. The suite is 512 tests.
+- Documentation: `spec/comptime.md` (new, CT1-CT14), `spec/grammar.md`, `spec/stdlib.md`, `spec/stage1-subset.md`
+  (decision 6 and the milestone note), `tests/README.md` (layout, E0220-E0225, E0009, and decision 25),
+  `docs/error-codes.md`, `spec/e9000-audit.md` (the `const-expression` site is gone), `HANDOFF.md`, `CLAUDE.md`, and
+  `AGENTS.md`.
+
 ### Milestone 19 — operator overloading and `Index` (issue #150, sub-issues #151-#156)
 
 - Interfaces: `std/src/ops.bd` declares `Add`, `Sub`, `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`,

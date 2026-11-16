@@ -44,7 +44,7 @@ every stage 0 gap listed in "Fixes that ship with stage 1" has a registry code a
 | Arguments | Default arguments, named arguments at call sites, not in interface signatures | S |
 | Extension methods | `fn Type.name(self, ...)` on any local or imported type, resolution order, conflict diagnostics | M |
 | Operators | Overloadable arithmetic, comparison, unary, and `Index`/`IndexMut` through interfaces; built-in operators unchanged | M |
-| Comptime | A MIR interpreter, `comptime` blocks/parameters/values, `comptime if`/`for`, `const` evaluation, `comptime assert`, a step budget | L |
+| Comptime | An interpreter over the typed tree (no MIR, decision 6), `comptime` blocks/parameters/values, `comptime if`/`for`, `const` evaluation, `comptime assert`, a step budget | L |
 | Reflection and derives | `Self.fields`/`variants`/`name`/`size`/`align`, user-written derive bodies, const generics, `embed` | L |
 | Build scripts | `build.bd`, dependency grants, generated sources, invoking `bindgen` from the script | M |
 | Allocators | Allocator parameters, `Arena`, `Shared<T>`, leak-detecting allocator in tests, allocator-aware containers | L |
@@ -65,14 +65,14 @@ folder and every earlier folder pass in debug and release.
 | 17 | `m17_arguments` | Default and named arguments on functions and methods | A call that omits a default; a call with reordered named arguments |
 | 18 | `m18_extension` | Extension methods, resolution order, shadowing diagnostics | An extension on `String` called with dot syntax; a method that shadows it |
 | 19 | `m19_operators` | Overloadable operators and `Index`/`IndexMut` through interfaces | A `Vec`-like type with `+` and `[]`; a built-in operator still behaving as before |
-| 20 | `m20_comptime` | MIR (or the chosen interpreter), `comptime` blocks/params/values, `comptime if`/`for`, const evaluation, step budget | A const table built at compile time; a compile-time assertion; a loop past the budget rejected |
+| 20 | `m20_comptime` | The typed-tree interpreter (`burdin_comptime`), `comptime` blocks/params/values, `comptime if`/`for`, const evaluation, step budget | A const table built at compile time; a compile-time assertion; a loop past the budget rejected |
 | 21 | `m21_reflect` | Reflection members, user derive bodies, const generics, `embed` | A derive written in Burdin; `Matrix<T, const R: usize, const C: usize>` |
 | 22 | `m22_build` | `build.bd`, dependency grants, generated sources, `bindgen` invocation | A build script writes a generated module that the package imports |
 | 23 | `m23_allocators` | Allocator parameters, `Arena`, `Shared<T>`, leak detection in tests, allocator-aware containers | A list with an arena allocator; a leaked allocation fails a test; `Shared<T>` outlives a scope |
 | 24+ | `m24_stdlib` | `Set`, `Deque`, priority heap, Unicode, paths, time, random, the serialization framework's foundation | The containers and text helpers the author's projects need, each with tests |
 
-Milestones 20 and 21 are the riskiest and may split (for example `m20a_mir`, `m20b_comptime_core`,
-`m21a_reflection`, `m21b_derives`). A split is a decision to record in `HANDOFF.md`, not a silent change.
+Milestone 21 is the riskiest and may split (for example `m21a_reflection`, `m21b_derives`); milestone 20 shipped
+whole. A split is a decision to record in `HANDOFF.md`, not a silent change.
 
 Milestone 12 is complete: `tests/m12_closures` and every earlier folder pass in debug and release, and the closure
 rules are recorded in `spec/memory-rules.md` CL1-CL11 and `spec/grammar.md` section 4.
@@ -116,6 +116,16 @@ interfaces declared in `std.ops`, with same-type operands and no mixed types; th
 compound assignment and shifts are not overloadable). The existing diagnostics E0141 (a missing operator or index
 implementation), E0113 (`index_mut` through an immutable place), E0101 (moving out of an indexed element), and E0003
 (wrong operand types) cover the new rejections; no new error code was needed.
+
+Milestone 20 is complete: `tests/m20_comptime` and every earlier folder pass in debug and release, and the rules are
+recorded in `spec/comptime.md` CT1-CT14 (the decisions that the engine interprets the checked typed tree in its own
+crate, `burdin_comptime`, between the memory checks and code generation, with no MIR; that a compile-time value
+crosses into the program only when its type is materializable; that each call of a function with `comptime`
+parameters is specialized per argument value; that `const` evaluation is the same engine; that comptime is pure and
+deterministic; and that each evaluation has a step budget, `--comptime-steps N`). The new diagnostics are E0220
+(invalid comptime construct), E0221 (not materializable), E0222 (comptime panic), E0223 (failed `comptime
+assert`), E0224 (impure operation), and E0225 (budget, depth, or specialization limit). `comptime` is a keyword
+now, and `std` gained the `target` module. The `const-expression` E9000 site is gone.
 
 ## Fixes that ship with stage 1
 
@@ -195,17 +205,20 @@ code; do not invent them inside the implementation.
    `Shared<T>` is (non-atomic `Rc` or atomic `Arc`; `Send` arrives in stage 2), and how the leak-detecting allocator
    reports the allocation site.
 
-6. **Comptime execution.** The design says comptime reads a MIR so its behavior matches compiled code; stage 0 has no
-   MIR. Options:
+6. **Comptime execution — settled with milestone 20 (issue #158): interpret the typed tree.** The engine is
+   `burdin_comptime`, an interpreter over `burdin_tir` that runs after the memory checks; there is no `burdin_mir`
+   (issue #159 is closed as not chosen, and a MIR stays on the "when wanted" list). The reasons are in
+   `spec/comptime.md`, CT1. The options that were considered:
    - introduce `burdin_mir` at milestone 20 (typed tree to MIR to LLVM), the design's architecture;
    - write an interpreter over `burdin_tir` first and add MIR later;
    - evaluate only the subset of expression forms the tests need, rejecting the rest with E9000.
 
-   Recommendation: decide before milestone 20, not in it. Whatever is chosen, the interpreter must share the memory
-   rules with compiled code, so comptime `Drop`/move behavior matches. Differential tests between comptime and
+   The second option was taken without the "add MIR later" part. The interpreter shares the memory rules with
+   compiled code: it runs only programs the checks accepted, moves where the tree moves, and drops where compiled
+   code drops (CT12). Differential tests between comptime and
    compiled code (issue #444) run the same test both ways and compare the results; their intended `[differential]`
    attribute and runner behavior are recorded in [`test-runner.md`](test-runner.md#deferred-differential-tests-issue-444),
-   and they can be built only after the interpreter exists.
+   and they can now be built on the interpreter.
 
 7. **Default and named arguments — settled with milestone 17.** A parameter written `name: Type = expr` may be
    omitted at the call site. The default is a constant expression checked once at the declaration (the function's
@@ -278,7 +291,7 @@ exclusivity checker must learn about them.
 ### When wanted
 
 `i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment, doc tests, `bench` blocks,
-fallible allocation, compiler-inserted preemption checks, declaration generation in comptime, `Set`/`Deque` if they
+fallible allocation, compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
 slip past stage 1, and a package registry.
 
 ## Working on stage 1
@@ -292,6 +305,6 @@ slip past stage 1, and a package registry.
   remaining E9000 site with the milestone and issue that remove it; `tests/check_e9000.py` fails when the list and
   the source disagree, or when a site names a milestone that has shipped.
 - Keep the stage 0 checks local (one body, signatures only) and keep the compiler free of LLVM before codegen. If
-  comptime needs a MIR, put it between `burdin_tir` and `burdin_codegen`; do not make the other crates depend on it
-  before it exists.
+  a MIR is ever introduced, put it between `burdin_tir` and `burdin_codegen`; the comptime engine
+  (`burdin_comptime`) depends only on `burdin_tir` and `burdin_diag`, like the checks.
 - Update `HANDOFF.md`, the design document, and this file when a decision changes, in that order.

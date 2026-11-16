@@ -413,6 +413,22 @@ impl<'a> Analyzer<'a> {
                     self.place_origin(inner)
                 }
             }
+            // A comptime value is materialized as literals, so a `str` it produces is static (spec/comptime.md, CT3).
+            K::Comptime(inner) => {
+                self.expr(inner);
+                Origin::default()
+            }
+            // The items are materialized values too, so the pattern binds nothing that views runtime storage.
+            K::ComptimeFor { pat, iter, body } => {
+                self.expr(iter);
+                let id = self.block_parent.len();
+                self.block_parent.push(Some(self.current_block));
+                self.current_block = id;
+                self.bind_pattern(pat, &Origin::default(), true, iter.span);
+                self.block_body(body);
+                self.current_block = self.block_parent[id].expect("a nested block has a parent");
+                Origin::default()
+            }
             // A box, a type test, and a downcast are owned values; they carry no view out of the value.
             K::BoxAny { value, .. } | K::AnyIs { value, .. } | K::AnyDowncast { value, .. } => {
                 self.expr(value);

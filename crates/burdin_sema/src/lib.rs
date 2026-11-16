@@ -17,6 +17,7 @@
 mod any;
 mod bodies;
 mod builtins;
+mod comptime;
 mod consts;
 mod declare;
 mod derives;

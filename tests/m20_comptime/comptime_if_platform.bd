@@ -1,0 +1,27 @@
+//@ run
+//> supported
+//> 64-bit
+
+// `comptime if` keeps only the selected branch; `target.os()` and `target.arch()` name the system the program is
+// compiled for (spec/comptime.md, CT5).
+
+fn platform(): str {
+    comptime if target.os() == target.Os.Linux {
+        "supported"
+    } else if target.os() == target.Os.MacOs {
+        "supported"
+    } else if target.os() == target.Os.Windows {
+        "supported"
+    } else {
+        "unknown"
+    }
+}
+
+fn main() {
+    println(platform())
+    comptime if target.arch() == target.Arch.X86_64 || target.arch() == target.Arch.Aarch64 {
+        println("64-bit")
+    } else {
+        println("other")
+    }
+}

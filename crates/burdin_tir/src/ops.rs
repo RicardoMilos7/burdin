@@ -58,6 +58,13 @@ pub enum Builtin {
     Swap,
     /// `mem.replace(place, value)`: stores a value and returns the old one.
     Replace,
+    /// `comptime assert(condition, message)` (`spec/comptime.md`, CT8): only ever inside a comptime expression.
+    /// The arguments are the condition and the message (a `str`, empty when none was written).
+    ComptimeAssert,
+    /// `target.os()`'s primitive: `"linux"`, `"macos"`, or `"windows"`, the system the program is compiled for.
+    TargetOs,
+    /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.
+    TargetArch,
 }
 
 /// Built-in methods of the primitive types.

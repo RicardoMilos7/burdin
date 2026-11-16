@@ -93,6 +93,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         link_libs: &args.link_libs,
         test_mode: true,
         diagnostics: &args.diagnostics,
+        comptime_steps: args.comptime_steps,
     };
     let mut compiled = Vec::new();
     for &index in &selected {
@@ -438,6 +439,7 @@ mod tests {
             link_libs: Vec::new(),
             program_args: Vec::new(),
             diagnostics: crate::DiagnosticOptions::default(),
+            comptime_steps: None,
             jobs: None,
             verbose: false,
             packages: Vec::new(),
@@ -632,6 +634,7 @@ mod tests {
                 link_libs: self.link_libs.clone(),
                 program_args: self.program_args.clone(),
                 diagnostics: crate::DiagnosticOptions::default(),
+                comptime_steps: self.comptime_steps,
                 jobs: self.jobs,
                 verbose: self.verbose,
                 packages: self.packages.clone(),

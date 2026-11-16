@@ -5,8 +5,8 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (comptime, tasks, leak detection,
-allocator parameters) has **no tests here** yet.
+Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (tasks, leak detection, allocator
+parameters) has **no tests here** yet.
 
 ## Layout
 
@@ -31,6 +31,7 @@ tests/
   m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
   m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
   m19_operators/       operator overloading, PartialEq/PartialOrd, Index/IndexMut, built-in regressions
+  m20_comptime/        comptime expressions and parameters, comptime if/for, const evaluation, comptime assert
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -168,7 +169,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0006 | Non-exhaustive `match` (reported at the `match` line) |
 | E0007 | A name is declared or imported more than once (type, interface, function, constant, test, type parameter, field, variant, member, or import) |
 | E0008 | Literal out of range for its type |
-| E0009 | A declaration depends on itself: a constant, a type alias, or a type that contains itself |
+| E0009 | A declaration depends on itself: a constant (also through the calls of its compile-time evaluation), a type alias, or a type that contains itself |
 | E0100 | Use of a moved or possibly moved value |
 | E0101 | Move out of borrowed content (for example returning a read-only parameter by value) |
 | E0103 | Partial move out of a type that implements `Drop` |
@@ -212,6 +213,12 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
 | E0215 | Warning: an extension method is shadowed by a method of its receiver type; calls use the method |
 | E0216 | Invalid extension method declaration: no `self` first parameter, a receiver path with type arguments on a segment other than the type, a `where` clause naming something that is not one of its type parameters, or an extension imported under another name |
+| E0220 | Invalid comptime construct: a run-time local, `self`, or capture used in a compile-time context; `comptime` on a parameter that cannot take it (`mut`/`own`, `self`, an interface method or its implementation, an `extern` declaration); a comptime-parameter function used as a value; `break`/`continue` leaving a `comptime for`; a `mut` `comptime for` binding; or a `comptime assert` message that is not a string literal |
+| E0221 | A compile-time value whose type cannot be materialized in the program (a `List`, `Map`, `Heap`, `any`, closure, reference, slice, C type, or iterator, or an aggregate holding one) |
+| E0222 | Compile-time evaluation panicked |
+| E0223 | A `comptime assert` failed |
+| E0224 | An impure operation (output, files, the environment, processes, or C) during compile-time evaluation |
+| E0225 | Compile-time evaluation exceeded its step budget, the comptime call depth, or the specialization limit of a function with comptime parameters |
 
 ### Codes without a compile-fail test
 
@@ -382,6 +389,20 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     non-`Copy` element out is E0101. Compound assignment and the shifts are not overloadable; `&&`, `||`, and `=`
     remain non-overloadable.
     `spec/operators.md` OP1-OP13, `tests/m19_operators/`.
+
+25. **Comptime.** The comptime engine interprets the checked typed tree; there is no MIR (issue #158, #159 not
+    chosen). It runs after the memory checks and before code generation, in its own crate, and behaves like
+    compiled code of the same profile (overflow panics in debug and wraps in release). `comptime E` and `comptime
+    { ... }` evaluate while compiling and may use only constants, `comptime` parameters, `comptime for` bindings,
+    and their own locals (E0220). The value must be materializable: scalars, `str`, `String`, and tuples, arrays,
+    structs, enums, `Option`, `Result`, and ranges of those (E0221). `comptime name: T` parameters specialize each
+    call per distinct argument value (at most 1024 per function). `comptime if` keeps only the selected branch, and
+    `comptime for` unrolls its body over a range, array, or `List`. A `const` initializer is any materializable
+    expression, evaluated once in declaration order; a cycle through calls is E0009. `comptime assert(cond, "msg")`
+    fails with E0223. Evaluation is pure (E0224 for output, files, the environment, processes, and C), panics are
+    E0222, and each evaluation has a budget of 10,000,000 steps (`--comptime-steps N`), a call depth of 512, and
+    E0225 beyond any limit. `target.os()` and `target.arch()` name the compilation target.
+    `spec/comptime.md` CT1-CT14, `tests/m20_comptime/`.
 
 ## Review of the expected outputs
 

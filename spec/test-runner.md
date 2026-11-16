@@ -126,9 +126,9 @@ and 2 for a usage error (an unknown package, a bad `-j`, conflicting flags) or a
 ## Deferred: differential tests (issue #444)
 
 Differential tests compare the same function executed by the comptime interpreter and by compiled code, so an
-interpreter/compiled divergence is caught automatically. They cannot exist before the comptime interpreter does:
-milestone 20 (`stage1-subset.md`) introduces it, and stage 0 has no interpreter. The intended shape, recorded here so
-it is settled before it is built:
+interpreter/compiled divergence is caught automatically. They needed the comptime interpreter, which milestone 20
+added (`spec/comptime.md`, `crates/burdin_comptime`); the runner does not use it for tests yet. The intended shape,
+recorded here so it is settled before it is built:
 
 - a test item marked `[differential]` must have a body the comptime interpreter can execute;
 - the runner executes the body at compile time and the compiled test at run time, and fails the test when the two
@@ -136,7 +136,7 @@ it is settled before it is built:
 - until then, `differential` is not an accepted attribute, so writing it is E0170 rather than a silently skipped
   test.
 
-Issue #444 stays open until milestone 20 provides the interpreter.
+Issue #444 is unblocked and stays open until the runner implements `[differential]`.
 
 ## Tests
 

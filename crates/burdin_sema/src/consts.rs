@@ -1,36 +1,26 @@
-//! Constants: they are expanded at every use, so they must be simple and must not depend on themselves.
+//! Constants: their values are computed at compile time and expanded at every use, so they must not depend on
+//! themselves.
 
 use burdin_diag::{Code, Diagnostics};
 use burdin_syntax::ast;
+use burdin_tir::visit::{Visit, walk_expr};
 use burdin_tir::{self as tir, ConstId, Ty};
 
 /// A constant is expanded at every use, so it must not refer to itself, directly or through other constants.
 pub(crate) fn check_const_cycles(consts: &[tir::Const], decls: &[&ast::ConstDecl], diags: &mut Diagnostics) {
+    // Every constant the initializer names, anywhere in it. A cycle through a function call is found when the
+    // comptime engine evaluates the constant (`spec/comptime.md`, CT7).
     fn refs(e: &tir::Expr, out: &mut Vec<ConstId>) {
-        use tir::ExprKind as K;
-        match &e.kind {
-            K::Const(id) => out.push(*id),
-            K::Unary(_, a) | K::Cast(a) => refs(a, out),
-            K::Binary(_, a, b) => {
-                refs(a, out);
-                refs(b, out);
-            }
-            K::If(c, then, other) => {
-                refs(c, out);
-                if let Some(t) = &then.tail {
-                    refs(t, out);
+        struct Refs<'a>(&'a mut Vec<ConstId>);
+        impl Visit for Refs<'_> {
+            fn expr(&mut self, e: &tir::Expr) {
+                if let tir::ExprKind::Const(id) = &e.kind {
+                    self.0.push(*id);
                 }
-                if let Some(o) = other {
-                    refs(o, out);
-                }
+                walk_expr(self, e);
             }
-            K::Block(b) => {
-                if let Some(t) = &b.tail {
-                    refs(t, out);
-                }
-            }
-            _ => {}
         }
+        Refs(out).expr(e);
     }
     let deps: Vec<Vec<ConstId>> = consts
         .iter()

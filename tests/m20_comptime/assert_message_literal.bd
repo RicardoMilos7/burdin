@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// The message of `comptime assert` must be a string literal, and its condition a compile-time `bool`
+// (spec/comptime.md, CT2, CT8).
+
+const MESSAGE: str = "nope"
+
+fn main() {
+    comptime assert(true, MESSAGE) //~ E0220
+    let x = 1
+    comptime assert(x == 1) //~ E0220
+    comptime assert(1) //~ E0003
+}

@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// Inside a comptime expression only constants, comptime parameters, `comptime for` bindings, and the
+// expression's own locals are visible (spec/comptime.md, CT2).
+
+fn compute(v: i32): i32 {
+    v * 2
+}
+
+fn main() {
+    let x = 4
+    let a = comptime compute(x) //~ E0220
+    let b = comptime { let y = 3; compute(y) }
+    comptime if x > 2 { //~ E0220
+        println("big")
+    }
+    println("{b}")
+}

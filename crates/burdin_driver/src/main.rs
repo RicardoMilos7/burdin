@@ -14,14 +14,17 @@ pub(crate) const USAGE: &str = "\
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--link-lib <name>]... [diagnostics]
-  burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]... [diagnostics]
-             [-- <program arguments>...]
+               [--link-lib <name>]... [--comptime-steps <n>] [diagnostics]
+  burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
+             [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
               [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
-              [diagnostics]
+              [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
   burdin --version
+
+compile options:
+  --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
 
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
@@ -80,6 +83,8 @@ pub(crate) struct Args {
     pub(crate) link_libs: Vec<String>,
     pub(crate) program_args: Vec<String>,
     pub(crate) diagnostics: DiagnosticOptions,
+    /// The step budget of each compile-time evaluation (`spec/comptime.md`, CT11). `None` keeps the default.
+    pub(crate) comptime_steps: Option<u64>,
     // `burdin test` only.
     pub(crate) jobs: Option<usize>,
     pub(crate) verbose: bool,
@@ -149,6 +154,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         link_libs: Vec::new(),
         program_args: Vec::new(),
         diagnostics: DiagnosticOptions::default(),
+        comptime_steps: None,
         jobs: None,
         verbose: false,
         packages: Vec::new(),
@@ -208,6 +214,15 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--ignored" => args.ignored_only = flag_without_value(a, inline)?,
             "--include-ignored" => args.include_ignored = flag_without_value(a, inline)?,
             "--filter" => args.filter = Some(option_value(&mut it, inline, a, "a text")?),
+            "--comptime-steps" => {
+                let value = option_value(&mut it, inline, a, "a number of steps")?;
+                let steps: u64 = value
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| format!("`--comptime-steps` needs a positive number of steps, got `{value}`"))?;
+                args.comptime_steps = Some(steps);
+            }
             "--timeout" => {
                 let value = option_value(&mut it, inline, a, "a number of milliseconds")?;
                 let ms: u64 =
@@ -301,7 +316,21 @@ fn parse_number(option: &str, value: &str) -> Result<usize, String> {
     value.parse::<usize>().map_err(|_| format!("`{option}` needs a non-negative number, got `{value}`"))
 }
 
+/// The compiler runs on a thread with a large stack: the comptime interpreter recurses once per nested expression
+/// and call it evaluates, up to the call depth `spec/comptime.md` (CT11) allows.
+const COMPILER_STACK: usize = 1 << 30;
+
 fn main() -> ExitCode {
+    match std::thread::Builder::new().name("burdin".into()).stack_size(COMPILER_STACK).spawn(driver_main) {
+        Ok(handle) => handle.join().unwrap_or(ExitCode::from(101)),
+        Err(e) => {
+            eprintln!("error: cannot start the compiler thread: {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn driver_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if matches!(argv.as_slice(), [flag] if flag == "--version" || flag == "-V") {
         println!("{}", version_text());
@@ -328,6 +357,7 @@ fn main() -> ExitCode {
         link_libs: &args.link_libs,
         test_mode: false,
         diagnostics: &args.diagnostics,
+        comptime_steps: args.comptime_steps,
     };
     match args.command.as_str() {
         "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
@@ -532,6 +562,8 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) test_mode: bool,
     /// How diagnostics are rendered (format, color, width, and limit).
     pub(crate) diagnostics: &'a DiagnosticOptions,
+    /// The step budget of each compile-time evaluation; `None` is the default (`spec/comptime.md`, CT11).
+    pub(crate) comptime_steps: Option<u64>,
 }
 
 /// What a successful compilation produced: the executable and its `test` blocks (empty for a normal build).
@@ -627,6 +659,14 @@ pub(crate) fn compile(
         let mut memory = Diagnostics::default();
         burdin_check::check(&mut program, &mut memory);
         diags.absorb(memory);
+        // Compile-time evaluation runs only on a program every check accepted (`spec/comptime.md`, CT1).
+        if !diags.has_errors() {
+            let comptime = burdin_comptime::Options {
+                release: options.release,
+                steps: options.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
+            };
+            burdin_comptime::evaluate(&mut program, comptime, &mut diags);
+        }
         program
     });
     if diags.has_errors() {

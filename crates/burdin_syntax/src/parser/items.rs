@@ -59,6 +59,7 @@ impl Parser<'_> {
             TokenKind::Interface => Ok(Some(Item::Interface(self.interface_decl(is_priv, start)?))),
             TokenKind::Type => Ok(Some(Item::TypeAlias(self.type_alias(is_priv, start)?))),
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
+            TokenKind::Comptime if !is_priv => Ok(Some(Item::Const(self.comptime_assert_item(start)?))),
             TokenKind::Extern => Ok(Some(self.extern_item(is_priv, start)?)),
             TokenKind::Ident(_) | TokenKind::SelfType if !is_priv => Ok(Some(Item::Impl(self.impl_block(start)?))),
             _ => Err(self.unexpected("an item")),
@@ -645,8 +646,24 @@ impl Parser<'_> {
         Ok(ConstDecl { is_priv, name, ty, value, span })
     }
 
+    /// `comptime assert(condition, "message")` at module scope (spec/comptime.md, CT8). It is a private constant of
+    /// type `()` whose value is the assertion, so the checker and the comptime engine treat it like any constant
+    /// and evaluate it once. Its name contains a space, so no written name can refer to it.
+    fn comptime_assert_item(&mut self, start: Span) -> PResult<ConstDecl> {
+        let value = self.comptime_expr(super::Restriction::None)?;
+        if !matches!(value.kind, ExprKind::ComptimeAssert(..)) {
+            return Err(self.error_at(value.span, "expected `comptime assert(...)` at module scope; a comptime value outside a function belongs in a `const`".into()));
+        }
+        self.comptime_asserts += 1;
+        let name = Ident { name: format!("comptime assert {}", self.comptime_asserts), span: start };
+        let ty = Type { kind: TypeKind::Unit, span: start };
+        Ok(ConstDecl { is_priv: true, name, ty, span: start.to(value.span), value })
+    }
+
     pub(super) fn param(&mut self) -> PResult<Param> {
         let start = self.span();
+        // `comptime name: Type` (spec/comptime.md, CT4). The checker rejects it together with a convention or `self`.
+        let comptime = if self.at(&TokenKind::Comptime) { Some(self.bump().span) } else { None };
         let convention = if self.eat(&TokenKind::Mut) {
             Convention::Mut
         } else if self.eat(&TokenKind::Own) {
@@ -659,6 +676,7 @@ impl Parser<'_> {
                 convention,
                 kind: ParamKind::SelfParam,
                 default: None,
+                comptime,
                 span: start.to(self.prev_span()),
             });
         }
@@ -667,7 +685,13 @@ impl Parser<'_> {
         let ty = self.ty()?;
         // `name: Type = expr`: a default argument (spec/arguments.md, AG1).
         let default = if self.eat(&TokenKind::Eq) { Some(self.expr()?) } else { None };
-        Ok(Param { convention, kind: ParamKind::Named { name, ty }, default, span: start.to(self.prev_span()) })
+        Ok(Param {
+            convention,
+            kind: ParamKind::Named { name, ty },
+            default,
+            comptime,
+            span: start.to(self.prev_span()),
+        })
     }
 
     /// `impl Interface` in a parameter is sugar for one hidden type parameter with that interface as its bound

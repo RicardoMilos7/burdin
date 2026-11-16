@@ -1,0 +1,29 @@
+//@ run
+//> 30
+//> 8
+//> 5
+
+// Inherent methods and functions with default arguments may take comptime parameters (spec/comptime.md, CT4;
+// spec/arguments.md).
+
+struct Scaler {
+    base: i32
+}
+
+Scaler {
+    fn scale(self, comptime factor: i32): i32 {
+        comptime assert(factor > 0, "the factor must be positive")
+        self.base * factor
+    }
+}
+
+fn shifted(v: i32, comptime by: i32 = 3): i32 {
+    v + by
+}
+
+fn main() {
+    let s = Scaler { base: 10 }
+    println("{s.scale(3)}")
+    println("{shifted(5)}")
+    println("{shifted(5, by: 0)}")
+}

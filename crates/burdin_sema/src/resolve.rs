@@ -109,6 +109,13 @@ impl Sema<'_> {
                 // signature is shared by every implementation, so it cannot declare one
                 // (spec/arguments.md, AG5).
                 for p in &decl.params {
+                    if let Some(at) = p.comptime {
+                        diags.error(
+                            Code::INVALID_COMPTIME,
+                            at,
+                            "an interface method cannot take a `comptime` parameter: every implementation would need its own specializations",
+                        );
+                    }
                     if let Some(default) = &p.default {
                         diags.error(
                             Code::INVALID_DEFAULT,
@@ -294,11 +301,31 @@ pub(crate) fn fn_signature(
                     exclusive: p.convention != ast::Convention::Read,
                     name: None,
                     default: None,
+                    comptime: false,
                 });
+                if let Some(at) = p.comptime {
+                    diags.error(Code::INVALID_COMPTIME, at, "`self` cannot be a `comptime` parameter");
+                }
             }
             ast::ParamKind::Named { name, ty } => {
                 let ty = globals.resolve_type_in(ty, self_ty, subst, module, diags);
                 let name = Some(name.name.clone());
+                let comptime = p.comptime.is_some();
+                if let Some(at) = p.comptime {
+                    if p.convention != ast::Convention::Read {
+                        diags.error(
+                            Code::INVALID_COMPTIME,
+                            at,
+                            "a `comptime` parameter is read-only: it cannot be `mut` or `own` (spec/comptime.md, CT4)",
+                        );
+                    } else if !globals.ty_has_param(&ty) && !globals.materializable(&ty) {
+                        diags.error(
+                            Code::NOT_MATERIALIZABLE,
+                            p.span,
+                            format!("a `comptime` parameter cannot have type `{ty}`: it is not a compile-time value (spec/comptime.md, CT3)"),
+                        );
+                    }
+                }
                 params.push(match p.convention {
                     // A read-only parameter borrows the caller's place, so a view derived from it can be
                     // returned (RT1).
@@ -310,12 +337,20 @@ pub(crate) fn fn_signature(
                         exclusive: false,
                         name,
                         default: None,
+                        comptime,
                     },
                     // The callee sees the caller's place, so it is passed by address and the call site
                     // marks it `mut` (CV2).
-                    ast::Convention::Mut => {
-                        ParamSig { ty, by_ref: true, mut_param: true, own: false, exclusive: true, name, default: None }
-                    }
+                    ast::Convention::Mut => ParamSig {
+                        ty,
+                        by_ref: true,
+                        mut_param: true,
+                        own: false,
+                        exclusive: true,
+                        name,
+                        default: None,
+                        comptime: false,
+                    },
                     ast::Convention::Own => ParamSig {
                         ty,
                         by_ref: false,
@@ -324,6 +359,7 @@ pub(crate) fn fn_signature(
                         exclusive: true,
                         name,
                         default: None,
+                        comptime: false,
                     },
                 });
             }
@@ -363,6 +399,9 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
         }
         // The parameter stays in the signature so that calls are still checked for arity, even though this
         // declaration already failed.
+        if let Some(at) = p.comptime {
+            diags.error(Code::INVALID_COMPTIME, at, "an `extern` declaration cannot take a `comptime` parameter");
+        }
         params.push(ParamSig {
             ty: resolved,
             by_ref: false,
@@ -371,6 +410,7 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
             exclusive: false,
             name: None,
             default: None,
+            comptime: false,
         });
     }
     let ret = f.ret.as_ref().map(|t| globals.resolve_type_in(t, None, &[], module, diags)).unwrap_or(Ty::Unit);

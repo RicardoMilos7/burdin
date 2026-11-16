@@ -5,10 +5,16 @@ use crate::program::ParamSig;
 use crate::ty::*;
 use burdin_diag::Span;
 
-/// A constant. Its value is expanded at every use, so it costs nothing at run time beyond the expression itself.
+/// A constant. Its initializer is evaluated by the comptime engine (`spec/comptime.md`, CT7), which replaces
+/// `value` with the materialized result; that value is expanded at every use, so it costs nothing at run time
+/// beyond the expression itself.
 pub struct Const {
     pub name: String,
+    /// Where the constant was declared, for diagnostics about its evaluation.
+    pub span: Span,
     pub value: Expr,
+    /// The locals the initializer declares (a block, a `let`, a closure capture). Empty once it is evaluated.
+    pub locals: Vec<Local>,
 }
 
 pub struct Function {
@@ -66,6 +72,7 @@ pub enum LocalKind {
     Scrutinee,
 }
 
+#[derive(Clone)]
 pub struct Local {
     pub name: String,
     pub ty: Ty,
@@ -291,6 +298,17 @@ pub enum ExprKind {
     Err(Box<Expr>),
     /// Field `n` of a struct or tuple.
     Field(Box<Expr>, usize),
+    /// `comptime E` (`spec/comptime.md`, CT2): evaluated while compiling and replaced by its value. A `comptime
+    /// if` is an [`ExprKind::If`] whose condition is this node; an argument for a `comptime` parameter is one too
+    /// (CT4). No comptime node reaches code generation.
+    Comptime(Box<Expr>),
+    /// `comptime for pattern in iter { body }` (CT6): `iter` is a comptime expression and the body is repeated
+    /// once per item with the pattern bound to it. The pattern binds owned items, like [`ExprKind::ForArray`].
+    ComptimeFor {
+        pat: Pat,
+        iter: Box<Expr>,
+        body: Block,
+    },
 }
 
 #[derive(Clone)]

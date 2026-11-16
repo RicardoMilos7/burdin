@@ -1,0 +1,33 @@
+//@ run
+//> 1 2 6 24 120
+//> 3628800
+//> hello, comptime
+
+// `comptime { ... }` evaluates a block while compiling: its locals, loops, and calls run in the compiler, and only
+// the value reaches the program (spec/comptime.md, CT2).
+
+fn factorial(n: u64): u64 {
+    if n == 0 { 1 } else { n * factorial(n - 1) }
+}
+
+fn main() {
+    let table = comptime {
+        let mut t = [0 as u64; 5]
+        let mut i: usize = 0
+        while i < 5 {
+            t[i] = factorial((i + 1) as u64)
+            i = i + 1
+        }
+        t
+    }
+    println("{table[0]} {table[1]} {table[2]} {table[3]} {table[4]}")
+    let big = comptime { factorial(10) }
+    println("{big}")
+    let text = comptime {
+        let mut s = String.from("hello")
+        s.push_str(", ")
+        s.push_str("comptime")
+        s
+    }
+    println(text)
+}

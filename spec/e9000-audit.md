@@ -24,7 +24,6 @@ page.
 | `declare-where-non-param` | `crates/burdin_sema/src/declare.rs` | A `where` predicate on something other than a type parameter, such as an associated-type projection | Stage 1 | #394 |
 | `function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using a generic or `extern` function as a value | Stage 1 | #493 |
 | `array-repeat-length` | `crates/burdin_sema/src/fncx/expr.rs` | `[value; count]` where `count` is not an integer literal | m21 | #403 |
-| `const-expression` | `crates/burdin_sema/src/fncx/item.rs` | A `const` initializer beyond literals, other constants, operators, and casts | m20 | #163 |
 | `unsupported-helper` | `crates/burdin_sema/src/fncx/mod.rs` | The shared `unsupported()` helper that reports the `E9000` sites in expression checking; not a construct | helper | - |
 | `pattern-constant` | `crates/burdin_sema/src/fncx/pattern.rs` | A constant used as a pattern | Stage 1 | #493 |
 | `pattern-or-binding` | `crates/burdin_sema/src/fncx/pattern.rs` | A binding inside an alternative of an or-pattern | Stage 1 | #493 |
@@ -49,7 +48,8 @@ page.
   interfaces are ordinary `std` interfaces (`spec/operators.md`, OP2), so implementing `Add`, `Index`, and the rest
   is an ordinary interface impl. The remaining site is the built-in `Eq`/`Ord`/`Copy`/`Clone`/`Hash`/`Default`
   family, whose rule #402 decides as part of the generic and type-system work under #389.
-- `m20` (comptime) owns arbitrary constant expressions; #163 unifies `const` evaluation with comptime.
+- `m20` (comptime) owned arbitrary constant expressions; #163 unified `const` evaluation with comptime, and the
+  `const-expression` site is gone.
 - `m21` (reflection, user derives, const generics) owns the remaining type-system forms: generic aliases, impls for
   specific instances, built-in interfaces for generic types, and const-generic array lengths.
 - `Stage 1` is the milestone for the cross-cutting work with no single feature milestone: the remaining pattern
