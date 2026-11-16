@@ -1,0 +1,31 @@
+//@ run
+//> true
+//> true
+//> false
+//> 2
+//> true
+//> false
+//> true
+//> false
+//> 1
+//> true
+//> 0
+
+// `Set` basics: `insert` reports whether the value is new, `remove` whether it was there, and `clear` empties it.
+
+fn main() {
+    let mut s = Set<i32>.new()
+    println("{s.is_empty()}")
+    println("{s.insert(10)}")
+    println("{s.insert(10)}")
+    s.insert(20)
+    println("{s.len()}")
+    println("{s.contains(10)}")
+    println("{s.contains(11)}")
+    println("{s.remove(10)}")
+    println("{s.remove(10)}")
+    println("{s.len()}")
+    println("{s.contains(20)}")
+    s.clear()
+    println("{s.len()}")
+}

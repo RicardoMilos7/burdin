@@ -205,6 +205,47 @@ probe cluster back instead of leaving tombstones. Keys are hashed structurally â
 `String` by its bytes, tuples, structs, enums, `Option`, `Result`, and ranges â€” so a key needs only `==`, not
 `Hash`.
 
+## `Set<T>` (issue #190)
+
+`std.set` is a thin layer over `Map<T, bool, A>`, so it follows the map's rules: an element needs only `==` (`Eq`),
+lookup, insert, and remove are expected O(1), and the iteration order is not specified. Like `List` and `Map`, a set
+takes an allocator as its last type argument and stores it (`allocators.md`).
+
+```
+struct Set<T: Eq, A: Allocator = Global> {
+    fn new(): Set<T>                               // only when A is `Global`
+    fn new_in(own alloc: A): Set<T, A>
+    fn from_list(own items: List<T>): Set<T>       // a repeated element is stored once
+    fn len(self): usize
+    fn is_empty(self): bool
+    fn contains(self, value: T): bool
+    fn insert(mut self, own value: T): bool        // false (and the new value dropped) when already present
+    fn remove(mut self, value: T): bool
+    fn clear(mut self)
+    fn extend(mut self, own items: List<T>)
+    fn into_list(own self): List<T>                // consumes the set, in no particular order
+    fn iter(self): SetIter<MapEntries<T, bool>, T> // yields &T; `for x in set` borrows the set
+}
+
+// with `T: Clone`, the default allocator, and the result uses the default allocator
+fn to_list(self): List<T>
+fn clone(self): Set<T>
+fn union(self, other: Set<T>): Set<T>
+fn intersection(self, other: Set<T>): Set<T>
+fn difference(self, other: Set<T>): Set<T>             // in `self` and not in `other`
+fn symmetric_difference(self, other: Set<T>): Set<T>   // in exactly one of the two
+
+fn is_subset(self, other: Set<T>): bool
+fn is_superset(self, other: Set<T>): bool
+fn is_disjoint(self, other: Set<T>): bool
+```
+
+`Set<T>` implements `PartialEq` (same elements, regardless of order), `Debug` (`{1, 2, 3}`, in iteration order), and
+`Iterable<&T>`. `MapEntries<K, V>` is the nameable type of the iterator `map.iter()` returns, added so a library type
+can wrap it. Operations that copy elements need `Clone`; they return a set that uses the default allocator.
+
+Tests: `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq`.
+
 ## `Heap<T>`
 
 ```
@@ -539,6 +580,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
+| `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |

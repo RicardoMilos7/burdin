@@ -1,0 +1,54 @@
+//@ run
+//> 1 2 3 4
+//> 2 3
+//> 1
+//> 1 4
+//> true
+//> false
+//> true
+//> true
+//> false
+//> true
+
+// Union, intersection, difference, and symmetric difference build new sets; the operands are unchanged.
+
+fn make(a: i32, b: i32, c: i32): Set<i32> {
+    let mut s = Set<i32>.new()
+    s.insert(a)
+    s.insert(b)
+    s.insert(c)
+    s
+}
+
+fn show(s: Set<i32>) {
+    let mut xs = s.to_list()
+    xs.sort()
+    let mut out = String.new()
+    let mut first = true
+    for x in xs {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(x.to_string())
+        first = false
+    }
+    println(out)
+}
+
+fn main() {
+    let a = make(1, 2, 3)
+    let b = make(2, 3, 4)
+    show(a.union(b))
+    show(a.intersection(b))
+    show(a.difference(b))
+    show(a.symmetric_difference(b))
+
+    let small = make(2, 3, 3)
+    println("{small.is_subset(a)}")
+    println("{a.is_subset(small)}")
+    println("{a.is_superset(small)}")
+    let far = make(9, 9, 9)
+    println("{a.is_disjoint(far)}")
+    println("{a.is_disjoint(b)}")
+    println("{a == a.clone()}")
+}
