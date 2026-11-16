@@ -1,13 +1,14 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, and thirty-first. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, and thirty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirty-first session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-second session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
-(`any` and `impl`), 16 (errors), 17 (default and named arguments), and 18 (extension methods) are done**: 436
-conformance tests; all pass in debug and release (the release run skips the debug-only tests).
+(`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), and 19 (operator
+overloading and `Index`) are done**: 472 conformance tests; all pass in debug and release (the release run skips
+the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output,
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -54,7 +55,9 @@ with an open-addressing hash table (issue #82): lookup, insert, and remove are e
 `// e9000:` id, and `tests/check_e9000.py` keeps the table and the compiler in agreement. The stage 0 diagnostics
 that had no future milestone got permanent codes (E0007, E0009, E0131, E0163, E0164, E0180) with compile-fail
 tests; string literal patterns and inclusive slice ranges are implemented, and a dead "comparing strings" branch was
-removed. The remaining E9000 sites are assigned to m19, m20, m21, or the cross-cutting Stage 1 work.
+removed. The remaining E9000 sites are assigned to m20, m21, or the cross-cutting Stage 1 work (the hand-written
+built-in-interface question moved there with #402 when milestone 19 made the operator interfaces ordinary `std`
+interfaces).
 
 The twenty-fifth session implemented milestone 12, closures (issue #88, sub-issues #89-#97): `|a, b| ...` and `||`
 expressions, the `Fn`/`FnMut`/`FnOnce` interface types and generic `Fn` bounds with monomorphization, borrow and
@@ -93,7 +96,7 @@ is resolved, and boxes at every expected-type position; the move, borrow, and or
 expression forms; code generation emits `{ ptr, ptr }` values, one private constant vtable per `(T, I)` pair
 `{ i64 type_id, ptr drop, ptr method... }`, indirect calls, and type-id-checked downcasts that move the value out and
 free the allocation without dropping it again. The new diagnostics are E0200, E0201, E0202, and E0204. The tests are
-`tests/m15_any/` with 24 tests. The remaining milestones are m19 (operator overloading) onward.
+`tests/m15_any/` with 24 tests. The remaining milestones are m20 (comptime) onward.
 
 The twenty-ninth session implemented milestone 16, errors (issue #126). It decided first (`spec/errors.md`,
 ERR1-ERR10) that an `error enum` lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`
@@ -112,6 +115,26 @@ diagnostics are E0210, E0211, and E0212. The session also fixed a code-generatio
 a temporary created inside one branch had an uninitialized drop flag at the statement's drop site, which an
 optimizer could treat as an undefined free and use to delete the rest of the function; the flag now starts `false`
 in the entry block. The tests are `tests/m16_errors/` with 25 tests.
+
+The thirty-second session implemented milestone 19, operator overloading and `Index` (issue #150, sub-issues
+#151-#156). It decided first (`spec/operators.md`, OP1-OP13) that the operator interfaces are ordinary `std`
+interfaces declared in `std/src/ops.bd` — `Add`, `Sub`, `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`,
+`Not`, `PartialEq`, `PartialOrd`, `Index<T>`, and `IndexMut<T>` — visible through the prelude, with same-type
+operands and at most one impl per type. The stage 0 built-in rule and a derived `Eq`/`Ord` are always tried first;
+a user struct/enum then uses its interface impl and a type parameter its bounds. Comparisons use the new
+`PartialEq`/`PartialOrd` rather than the derive-only `Eq`/`Ord`, so every derive keeps its behavior. `Index<T>` and
+`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`; `x[i]` lowers to `*x.index(i)` and a
+written place (`=`, `&mut x[i]`, `mut x[i]`, `x[i].f = v`, nested `g[i][j] = v`) selects `index_mut`. The
+implementation lowers operators and indexing to ordinary `Call` nodes in sema, so codegen needed only two fixes:
+a reference dereference is always a place, and `clone` reads it without a temporary drop (a non-`Copy` element was
+being freed twice). The borrow checker now skips the result loan of a reference consumed by `*`, tracks a
+re-borrow through the call's origin, and the closure classifier follows calls under a place, so `v[i] = v[j] + 1`
+works, `&mut v[i]` still borrows `v`, and a closure that writes `v[i]` is `FnMut`. A literal never adopts a user
+type (`v + 1` is E0003), and compound assignment and shifts stay non-overloadable. No new error code was needed:
+E0141 covers a missing operator/index implementation, E0113 an immutable `index_mut` receiver, E0101 a move out of
+an indexed element, and E0003 wrong operand types (including a failed derive). The E9000 row for hand-written
+built-in interfaces moved to the #402 Stage 1 work, because the operator interfaces are now ordinary. The tests are
+`tests/m19_operators/` with 36 tests; the suite is 472 tests.
 
 The thirty-first session implemented milestone 18, extension methods (issue #143, sub-issues #144-#149). It
 decided first (`spec/extensions.md`, EX1-EX8) that `fn Type.name(self, ...)` at module scope adds a method to any
@@ -166,7 +189,7 @@ tests cover the syntax.
 | Arguments | `spec/arguments.md`, `crates/burdin_syntax`, `crates/burdin_tir` (`ParamSig.name`/`.default`), `crates/burdin_sema/src/fncx/{call,generic,item}.rs` | Milestone 17 (issue #137). `name: Type = expr` declares a constant default checked at the declaration and inserted at each call that omits it; `f(name: value)` matches a parameter by name in any order before generic inference; arguments evaluate in parameter order. New codes E0213 and E0214; the tests are `tests/m17_arguments/` |
 | Extension methods | `spec/extensions.md`, `crates/burdin_syntax/src/ast.rs` (`Item::Extension`), `crates/burdin_sema/src/extensions.rs`, `crates/burdin_sema/src/{declare,imports,prelude,resolve}.rs`, `crates/burdin_sema/src/fncx/call.rs` | Milestone 18 (issue #143). `fn Type.name(self, ...)` adds a method to a local, imported, or built-in type; visible in its module and where imported by name; methods win over a same-named extension, which gets the warning E0215 at its declaration. Generic receivers and method parameters are monomorphized. New codes E0215 (warning) and E0216; the tests are `tests/m18_extension/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
-| Conformance tests | `tests/` | 436 tests. All pass: m01 to m18 (all pass in debug; release passes all except the debug-only tests) |
+| Conformance tests | `tests/` | 472 tests. All pass: m01 to m19 (all pass in debug; release passes all except the debug-only tests) |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |

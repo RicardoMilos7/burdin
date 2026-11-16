@@ -416,8 +416,8 @@ impl FnCx<'_> {
             self.diags.error(Code::ARG_COUNT, span, format!("`swap` takes 2 arguments, but {} were given", args.len()));
             return self.args_then_error(args, span);
         }
-        let a = self.expr(&args[0].expr, None);
-        let b = self.expr(&args[1].expr, None);
+        let a = self.expr_arg(&args[0].expr, None, true);
+        let b = self.expr_arg(&args[1].expr, None, true);
         for e in [&a, &b] {
             if e.ty != Ty::Error && (!is_place_expr(e) || !self.place_mutable(e)) {
                 self.diags.error(Code::MUT_OF_IMMUTABLE, e.span, "`swap` needs two mutable places");
@@ -451,7 +451,7 @@ impl FnCx<'_> {
             );
             return self.args_then_error(args, span);
         }
-        let place = self.expr(&args[0].expr, None);
+        let place = self.expr_arg(&args[0].expr, None, true);
         if place.ty != Ty::Error && (!is_place_expr(&place) || !self.place_mutable(&place)) {
             self.diags.error(Code::MUT_OF_IMMUTABLE, place.span, "`replace` needs a mutable place");
         }
@@ -547,7 +547,7 @@ impl FnCx<'_> {
                     }
                     match pending[ai].take() {
                         Some(arg) => arg,
-                        None => self.expr(&a.expr, Some(&p.ty)),
+                        None => self.expr_arg(&a.expr, Some(&p.ty), p.mut_param),
                     }
                 }
                 // The argument is omitted: insert the value checked at the declaration. A missing parameter

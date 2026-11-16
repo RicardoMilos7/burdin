@@ -1,0 +1,52 @@
+//@ run
+//> 8
+//> 7
+//> 6
+
+// Every written place selects `index_mut`: the left side of `=`, a field of an indexed element, `&mut x[i]`, and
+// the argument of a `mut` parameter (spec/operators.md OP10).
+
+struct Cell {
+    v: i32
+}
+
+struct Table {
+    cells: [Cell; 2]
+}
+
+Table: Index<Cell> {
+    fn index(self, i: usize): &Cell {
+        &self.cells[i]
+    }
+}
+
+Table: IndexMut<Cell> {
+    fn index_mut(mut self, i: usize): &mut Cell {
+        &mut self.cells[i]
+    }
+}
+
+fn bump(mut x: i32) {
+    x = x + 1
+}
+
+fn set_first(mut t: Table) {
+    t[0].v = 6
+}
+
+fn main() {
+    let mut t = Table { cells: [Cell { v: 1 }, Cell { v: 2 }] }
+
+    t[0].v = 5
+    let r = &mut t[1].v
+    *r = 7
+
+    let mut c = &mut t[0]
+    c.v = 8
+    println(t[0].v.to_string())
+    println(t[1].v.to_string())
+
+    bump(mut t[0].v)
+    set_first(mut t)
+    println(t[0].v.to_string())
+}

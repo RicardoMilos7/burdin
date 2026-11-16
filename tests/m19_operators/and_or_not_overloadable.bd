@@ -1,0 +1,24 @@
+//@ compile-fail
+
+// `&&` and `||` accept only `bool` and cannot be overloaded (spec/operators.md OP1, OP12; the design document).
+
+struct Counter {
+    n: i32
+}
+
+Counter: Add {
+    fn add(self, other: Counter): Counter {
+        Counter { n: self.n + other.n }
+    }
+}
+
+fn main() {
+    let a = Counter { n: 1 }
+    let b = Counter { n: 2 }
+    if a && b { //~ E0003
+        println("and")
+    }
+    if a || b { //~ E0003
+        println("or")
+    }
+}

@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// A user type with no `Add` implementation cannot use `+`; the diagnostic names the interface (E0141,
+// spec/operators.md OP3).
+
+struct Plain {
+    n: i32
+}
+
+fn main() {
+    let a = Plain { n: 1 }
+    let b = Plain { n: 2 }
+    let c = a + b //~ E0141
+    println(c.n.to_string())
+}

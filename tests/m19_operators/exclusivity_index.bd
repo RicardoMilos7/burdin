@@ -1,0 +1,25 @@
+//@ compile-fail
+
+// Indexing a user container is one place: two elements cannot be passed as `mut` arguments to one call, because
+// the checker cannot prove the indices distinct (E0110, spec/operators.md OP10; memory-rules.md EX1/EX2).
+
+struct Row {
+    cells: [i32; 3]
+}
+
+Row: Index<i32> {
+    fn index(self, i: usize): &i32 {
+        &self.cells[i]
+    }
+}
+
+Row: IndexMut<i32> {
+    fn index_mut(mut self, i: usize): &mut i32 {
+        &mut self.cells[i]
+    }
+}
+
+fn main() {
+    let mut r = Row { cells: [1, 2, 3] }
+    swap(mut r[0], mut r[1]) //~ E0110
+}

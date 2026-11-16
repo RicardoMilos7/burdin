@@ -1,0 +1,61 @@
+//@ run
+//> 7
+//> 0
+//> 42
+//> 9
+
+// Indexing nests: `g[i][j] = v` calls `index_mut` on the grid and then on the row, and `&mut r[i]` yields a
+// writable element (spec/operators.md OP9-OP10).
+
+struct Row {
+    cells: [i32; 3]
+}
+
+Row: Index<i32> {
+    fn index(self, i: usize): &i32 {
+        &self.cells[i]
+    }
+}
+
+Row: IndexMut<i32> {
+    fn index_mut(mut self, i: usize): &mut i32 {
+        &mut self.cells[i]
+    }
+}
+
+struct Grid {
+    rows: [Row; 2]
+}
+
+Grid: Index<Row> {
+    fn index(self, i: usize): &Row {
+        &self.rows[i]
+    }
+}
+
+Grid: IndexMut<Row> {
+    fn index_mut(mut self, i: usize): &mut Row {
+        &mut self.rows[i]
+    }
+}
+
+fn main() {
+    let mut g = Grid {
+        rows: [Row { cells: [0, 0, 0] }, Row { cells: [1, 1, 1] }]
+    }
+    g[1][2] = 7
+    println(g[1][2].to_string())
+    println(g[0][0].to_string())
+
+    let mut r = Row { cells: [1, 2, 3] }
+    let p = &mut r[1]
+    *p = 42
+    println(r[1].to_string())
+
+    let mut g2 = Grid {
+        rows: [Row { cells: [0, 0, 0] }, Row { cells: [0, 0, 0] }]
+    }
+    let row = &mut g2[0]
+    row[2] = 9
+    println(g2[0][2].to_string())
+}

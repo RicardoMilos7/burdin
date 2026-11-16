@@ -228,6 +228,40 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Milestone 19 — operator overloading and `Index` (issue #150, sub-issues #151-#156)
+
+- Interfaces: `std/src/ops.bd` declares `Add`, `Sub`, `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`,
+  `Not`, `PartialEq`, `PartialOrd`, `Index<T>`, and `IndexMut<T>` as ordinary interfaces; the prelude makes them
+  visible without a `use`. All operands are same-type, a type implements each interface once, arithmetic/unary
+  methods borrow their operands, and `PartialEq`/`PartialOrd` provide `ne`/`le`/`gt`/`ge` as defaults. Comparisons
+  use new interfaces rather than the derive-only `Eq`/`Ord`, so every stage 0 derive keeps its exact behavior.
+- Resolution: the stage 0 built-in rule is always tried first, then a derived `Eq`/`Ord`, then the user type's
+  interface impl, then a type parameter's bounds (`SYMBOLIC_CALL`, resolved by monomorphization). A missing
+  implementation is the existing E0141 for a struct/enum/type parameter and E0003 for any other type; a failed
+  derive keeps E0003. A literal never adopts a user type, so `v + 1` is E0003. `&&`, `||`, `=`, compound
+  assignment, and the shifts are not overloadable (compound assignment stays E0001).
+- `Index`/`IndexMut`: `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`, so
+  `x[i]` lowers to `*x.index(i)` and `x[i] = v` to `*x.index_mut(i) = v`. A write-place mode selects `index_mut`
+  for the left side of `=`, `&mut x[i]`, a `mut x[i]` argument, and an index inside a written place (`x[i].f = v`,
+  nested `g[i][j] = v`). The receiver must be a mutable place (E0113); moving a non-`Copy` element out is E0101;
+  indexing a user container without `Index`/`IndexMut` is E0141.
+- Checker and backend: sema records the interface indices while installing the prelude, lowers operators and
+  indexing to ordinary `Call` nodes, and threads a write-place mode through argument checking. The closure capture
+  classifier follows calls under a field/index place, so a closure that writes `v[i]` is `FnMut`. The borrow
+  checker treats a reference returned by a call and consumed by `*` as a temporary (no result loan) while tracking
+  a re-borrow through the call's origin, so `v[i] = v[j] + 1` works and `&mut v[i]` still borrows `v`. Codegen now
+  treats every reference dereference as a place, and `clone` reads it without registering a spurious temporary
+  drop, so non-`Copy` elements are not freed twice.
+- Tests: `tests/m19_operators/` adds 36 conformance tests: a `Vec`-like `+`/`[]` type, generic and nested index
+  containers, write-place forms, closure capture, drop-on-assignment, the derived-wins rule, generic bounds, every
+  missing-impl and mutability diagnostic, compound assignment, and stage 0 regression tests for
+  integer/float/`str`/tuple/derived operators, overflow, division by zero, and shift overflow. A
+  `burdin_tir::place` unit test pins that `*call()` is a rootless place. The suite is 472 tests.
+- Documentation: `spec/operators.md` (new, OP1-OP13), `spec/stdlib.md`, `spec/stage1-subset.md` (decision 8 and the
+  milestone note), `tests/README.md` (layout, the E0141 registry row, and decision 24), `docs/error-codes.md`,
+  `spec/e9000-audit.md` (the hand-built built-in interface row moves to the #402 Stage 1 work), `HANDOFF.md`, and
+  this file.
+
 ### Milestone 18 — extension methods (issue #143, sub-issues #144-#149)
 
 - Declarations: `fn Type.name(self, ...)` at module scope adds a method to any type name in scope, local, imported,

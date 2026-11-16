@@ -1,0 +1,13 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: overflow
+//> before
+
+// Integer overflow still panics in a debug build (spec/operators.md OP12).
+
+fn main() {
+    println("before")
+    let big: i32 = 2147483647
+    let r = big + 1
+    println(r.to_string())
+}

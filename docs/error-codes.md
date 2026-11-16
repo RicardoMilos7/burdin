@@ -209,7 +209,8 @@ callee only needs to look at it, clone it first, or reorder the statements so th
 ## E0101: Move out of borrowed content
 
 The value is only borrowed here: a read-only parameter, a `mut` parameter, a `self` receiver, a binding from a
-borrowed `match` scrutinee, or a view. The callee does not own it, so it cannot give it away.
+borrowed `match` scrutinee, a view, or an element read through a user type's `Index` implementation (which returns
+a borrowed reference). The callee does not own it, so it cannot give it away.
 
 <!-- error-example: E0101 -->
 ```burdin
@@ -337,7 +338,8 @@ above the assignment, or by copying the value out instead of holding a view.
 ## E0113: Mutable use of an immutable place
 
 An operation needs to mutate a place, but the place cannot be mutated: the binding is not `mut`, the place is a
-read-only parameter or pattern binding, or a `&mut` is taken from an immutable place.
+read-only parameter or pattern binding, a `&mut` is taken from an immutable place, or an index assignment needs the
+user type's `IndexMut` implementation and the receiver is not mutable.
 
 <!-- error-example: E0113 -->
 ```burdin
@@ -569,7 +571,9 @@ implementation can inherit.
 ## E0141: Interface bound or `requires` not satisfied
 
 A generic call passes a type argument that does not meet the bound, an `impl` does not satisfy the interface's
-`requires`, or a generic body uses an operation its bounds do not provide. The message names the missing bound.
+`requires`, a generic body uses an operation its bounds do not provide, or a user type has no implementation of an
+operator interface (`Add`, `Neg`, `PartialEq`, `PartialOrd`, `Index`, `IndexMut`, ...) that the expression needs. The
+message names the missing interface or bound.
 
 <!-- error-example: E0141 -->
 ```burdin

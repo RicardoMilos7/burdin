@@ -56,6 +56,44 @@ Arithmetic is the built-in operators only: `+ - * / %`, `<< >>`, `& | ^`, unary 
 wraps in release for `+ - *` and unary `-`; division by zero and out-of-range shifts always panic. `/` and `%`
 truncate toward zero. `as` converts between numeric types (and `char` to an integer), following Rust's cast rules.
 
+## Operators
+
+`std` declares the operator interfaces in `std.ops`; the prelude makes the names visible in every module, so a user
+type takes part in an operator by implementing one of them (`operators.md`, OP1-OP2):
+
+```
+interface Add      { fn add(self, other: Self): Self }
+interface Sub      { fn sub(self, other: Self): Self }
+interface Mul      { fn mul(self, other: Self): Self }
+interface Div      { fn div(self, other: Self): Self }
+interface Rem      { fn rem(self, other: Self): Self }
+interface BitAnd   { fn bitand(self, other: Self): Self }
+interface BitOr    { fn bitor(self, other: Self): Self }
+interface BitXor   { fn bitxor(self, other: Self): Self }
+interface Neg      { fn neg(self): Self }
+interface Not      { fn not(self): Self }
+
+interface PartialEq {
+    fn eq(self, other: Self): bool
+    fn ne(self, other: Self): bool      // default: !self.eq(other)
+}
+
+interface PartialOrd {
+    fn lt(self, other: Self): bool
+    fn le(self, other: Self): bool      // default: !self.gt(other)
+    fn gt(self, other: Self): bool      // default: other.lt(self)
+    fn ge(self, other: Self): bool      // default: !self.lt(other)
+}
+
+interface Index<T>    { fn index(self, i: usize): &T }
+interface IndexMut<T> { fn index_mut(mut self, i: usize): &mut T }
+```
+
+The built-in operators and the `Eq`/`Ord` derives always win over an implementation, both operands have the same
+type, and `&&`, `||`, `=`, compound assignment, and the shifts are not overloadable. `Index` names the element type
+and returns a reference; `IndexMut` is selected when the indexed place is written. The exact resolution, the
+diagnostics, and the ownership rules are in [`operators.md`](operators.md).
+
 ## `String` and `str`
 
 A string literal has type `str`. `str` is a copied, second-class view; `String` is the owning type.
@@ -351,6 +389,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Area | Tests |
 | --- | --- |
 | Output, numbers, parsing | `m02_basics/arithmetic`, `casts_and_numeric_methods`, `m09_stdlib/string_ops` |
+| Operators and `Index` | `m19_operators/*` (`operators.md`) |
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |

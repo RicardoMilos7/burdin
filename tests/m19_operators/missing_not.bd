@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// `!a` on a user type needs `Not` (E0141, spec/operators.md OP4). The built-in `!` still applies to `bool` and
+// the integer types only.
+
+struct Plain {
+    n: i32
+}
+
+fn main() {
+    let a = Plain { n: 1 }
+    let b = !a //~ E0141
+    println(b.n.to_string())
+}

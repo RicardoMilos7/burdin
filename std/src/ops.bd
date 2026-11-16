@@ -1,0 +1,98 @@
+// Operator overloading (spec/operators.md, milestone 19).
+//
+// A user type takes part in `+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, unary `-` and `!`, the comparisons, and `[]` by
+// implementing these ordinary interfaces. The compiler uses the built-in operators first: primitives, `str` and
+// `String`, tuples and arrays, and a type that derives `Eq` or `Ord` never consult an interface here. `&&`, `||`,
+// and `=` are not overloadable. A type implements each operator interface at most once.
+
+/// A type that supports `a + b`: `a + b` calls `a.add(b)`.
+interface Add {
+    fn add(self, other: Self): Self
+}
+
+/// A type that supports `a - b`: `a - b` calls `a.sub(b)`.
+interface Sub {
+    fn sub(self, other: Self): Self
+}
+
+/// A type that supports `a * b`: `a * b` calls `a.mul(b)`.
+interface Mul {
+    fn mul(self, other: Self): Self
+}
+
+/// A type that supports `a / b`: `a / b` calls `a.div(b)`.
+interface Div {
+    fn div(self, other: Self): Self
+}
+
+/// A type that supports `a % b`: `a % b` calls `a.rem(b)`.
+interface Rem {
+    fn rem(self, other: Self): Self
+}
+
+/// A type that supports `a & b`: `a & b` calls `a.bitand(b)`.
+interface BitAnd {
+    fn bitand(self, other: Self): Self
+}
+
+/// A type that supports `a | b`: `a | b` calls `a.bitor(b)`.
+interface BitOr {
+    fn bitor(self, other: Self): Self
+}
+
+/// A type that supports `a ^ b`: `a ^ b` calls `a.bitxor(b)`.
+interface BitXor {
+    fn bitxor(self, other: Self): Self
+}
+
+/// A type that supports `-a`: `-a` calls `a.neg()`.
+interface Neg {
+    fn neg(self): Self
+}
+
+/// A type that supports `!a`: `!a` calls `a.not()`.
+interface Not {
+    fn not(self): Self
+}
+
+/// A type that supports `==` and `!=` by hand. `==` calls `a.eq(b)` and `!=` calls `a.ne(b)`.
+interface PartialEq {
+    /// Whether `self` is equal to `other`.
+    fn eq(self, other: Self): bool
+
+    /// Whether `self` differs from `other`. The default is `!self.eq(other)`.
+    fn ne(self, other: Self): bool {
+        !self.eq(other)
+    }
+}
+
+/// A type that supports `<`, `<=`, `>`, and `>=` by hand. `<` calls `a.lt(b)`.
+interface PartialOrd {
+    /// Whether `self` is less than `other`. `lt` must be a strict order.
+    fn lt(self, other: Self): bool
+
+    /// Whether `self` is less than or equal to `other`. The default is `!self.gt(other)`.
+    fn le(self, other: Self): bool {
+        !self.gt(other)
+    }
+
+    /// Whether `self` is greater than `other`. The default is `other.lt(self)`.
+    fn gt(self, other: Self): bool {
+        other.lt(self)
+    }
+
+    /// Whether `self` is greater than or equal to `other`. The default is `!self.lt(other)`.
+    fn ge(self, other: Self): bool {
+        !self.lt(other)
+    }
+}
+
+/// A type whose elements `x[i]` can be read: `x[i]` calls `x.index(i)` and yields `*x.index(i)`.
+interface Index<T> {
+    fn index(self, i: usize): &T
+}
+
+/// A type whose elements `x[i]` can be written: `x[i] = v` calls `x.index_mut(i)` and writes through it.
+interface IndexMut<T> {
+    fn index_mut(mut self, i: usize): &mut T
+}

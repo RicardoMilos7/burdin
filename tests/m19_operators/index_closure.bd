@@ -1,0 +1,44 @@
+//@ run
+//> 2
+//> 5
+
+// A closure that reads `v[i]` captures `v` by shared borrow (`Fn`); one that writes `v[i]` captures it
+// exclusively (`FnMut`) because the lowered `index_mut` call borrows its receiver (spec/operators.md OP10;
+// memory-rules.md CL3/CL5).
+
+struct Row {
+    cells: [i32; 3]
+}
+
+Row: Index<i32> {
+    fn index(self, i: usize): &i32 {
+        &self.cells[i]
+    }
+}
+
+Row: IndexMut<i32> {
+    fn index_mut(mut self, i: usize): &mut i32 {
+        &mut self.cells[i]
+    }
+}
+
+fn call_shared<F>(f: F): i32 where F: Fn(usize): i32 {
+    f(1)
+}
+
+fn call_mutating<F>(mut f: F) where F: FnMut(usize) {
+    f(0)
+    f(0)
+}
+
+fn main() {
+    let r = Row { cells: [1, 2, 3] }
+    println(call_shared(|i| r[i]).to_string())
+
+    let mut m = Row { cells: [3, 0, 0] }
+    let mut bump = |i: usize| {
+        m[i] = m[i] + 1
+    }
+    call_mutating(mut bump)
+    println(m[0].to_string())
+}

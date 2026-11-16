@@ -1,0 +1,15 @@
+//@ run-abort
+//@ stderr: division by zero
+//> start
+
+// Division by zero still panics in both profiles (spec/operators.md OP12).
+
+fn zero(): i32 {
+    0
+}
+
+fn main() {
+    println("start")
+    let r = 10 / zero()
+    println(r.to_string())
+}

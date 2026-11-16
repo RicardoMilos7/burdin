@@ -64,6 +64,9 @@ struct FnCx<'a> {
     sources: &'a SourceMap,
     /// Record the source location of a dynamic-error conversion (a debug build; `spec/errors.md`, ERR7).
     traces: bool,
+    /// Set while checking a place that will be written: the left side of `=`, the operand of `&mut`, and the
+    /// argument of a `mut` parameter. An index expression then lowers to `index_mut` (`spec/operators.md`, OP10).
+    write_place: bool,
 }
 
 /// What a path in expression position can name before its last segment: a type, or a generic type whose
@@ -115,6 +118,7 @@ impl<'a> FnCx<'a> {
             capture: None,
             sources,
             traces,
+            write_place: false,
         }
     }
 
@@ -346,6 +350,16 @@ impl<'a> FnCx<'a> {
             let span = e.span;
             e = mk(tir::ExprKind::DerefRef(Box::new(e)), ty, span);
         }
+    }
+
+    /// Checks a call argument for a parameter with the write-place mode its convention needs: the argument of a
+    /// `mut` parameter may assign through an index, so its index expressions lower to `index_mut`.
+    pub(super) fn expr_arg(&mut self, e: &ast::Expr, expect: Option<&Ty>, mutable: bool) -> tir::Expr {
+        let saved = self.write_place;
+        self.write_place = mutable;
+        let checked = self.expr(e, expect);
+        self.write_place = saved;
+        checked
     }
 
     /// Whether the place `e` may be assigned to or borrowed with `&mut` (MU1, MU3).

@@ -1,0 +1,29 @@
+//@ compile-fail
+
+// A read-only parameter cannot provide the `mut self` receiver of `index_mut` (E0113,
+// spec/operators.md OP10).
+
+struct Row {
+    cells: [i32; 3]
+}
+
+Row: Index<i32> {
+    fn index(self, i: usize): &i32 {
+        &self.cells[i]
+    }
+}
+
+Row: IndexMut<i32> {
+    fn index_mut(mut self, i: usize): &mut i32 {
+        &mut self.cells[i]
+    }
+}
+
+fn set(r: Row) {
+    r[0] = 5 //~ E0113
+}
+
+fn main() {
+    let mut r = Row { cells: [1, 2, 3] }
+    set(r)
+}

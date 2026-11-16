@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: attempt to shift with overflow
+//> start
+
+// A shift by the bit width or more still panics (spec/operators.md OP12).
+
+fn main() {
+    println("start")
+    let amount = 40
+    let x: i32 = 1
+    let y = x << amount
+    println(y.to_string())
+}

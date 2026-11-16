@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// `Index` returns a borrowed reference, so a non-Copy element cannot be moved out (E0101,
+// spec/operators.md OP9).
+
+struct Words {
+    parts: List<String>
+}
+
+Words: Index<String> {
+    fn index(self, i: usize): &String {
+        &self.parts[i]
+    }
+}
+
+fn main() {
+    let w = Words { parts: List<String>.new() }
+    let s = w[0] //~ E0101
+    println(s)
+}

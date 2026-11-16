@@ -1,0 +1,46 @@
+//@ run
+//> 10
+//> 30
+//> a
+//> b
+//> 1
+
+// A generic container implements `Index<T>`/`IndexMut<T>` for its element type (spec/operators.md OP9-OP11).
+
+struct Bag<T> {
+    items: List<T>
+}
+
+Bag<T>: Index<T> {
+    fn index(self, i: usize): &T {
+        &self.items[i]
+    }
+}
+
+Bag<T>: IndexMut<T> {
+    fn index_mut(mut self, i: usize): &mut T {
+        &mut self.items[i]
+    }
+}
+
+fn first_word<T: Index<String>>(b: T): String {
+    b[0].clone()
+}
+
+fn main() {
+    let mut nums = Bag<i32> { items: List<i32>.new() }
+    nums.items.push(10)
+    nums.items.push(20)
+    nums[1] = 30
+    println(nums[0].to_string())
+    println(nums[1].to_string())
+
+    let mut words = Bag<String> { items: List<String>.new() }
+    words.items.push(String.from("a"))
+    words.items.push(String.from("b"))
+    println(words[0])
+    let copy = words[1].clone()
+    words[0] = copy
+    println(words[0])
+    println(first_word(words).len().to_string())
+}

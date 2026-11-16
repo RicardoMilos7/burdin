@@ -342,6 +342,21 @@ mod tests {
     }
 
     #[test]
+    fn a_reference_dereference_of_a_call_is_a_place_without_a_root() {
+        // A user `Index` implementation lowers to `*x.index(i)`: the dereference names the element, but there is
+        // no local root the drop-flag checker can follow (`spec/operators.md`, OP9-OP10).
+        let call = Expr {
+            kind: ExprKind::Call(FuncId(0), vec![]),
+            ty: Ty::Ref { mutable: true, inner: Box::new(i32_()) },
+            span: span(),
+        };
+        let deref = Expr { kind: ExprKind::DerefRef(Box::new(call)), ty: i32_(), span: span() };
+        assert!(is_place_expr(&deref));
+        assert_eq!(place_root(&deref), None);
+        assert_eq!(tir_place(&deref), None);
+    }
+
+    #[test]
     fn place_mentions_collects_every_place_an_expression_names() {
         let arg = field(local(0, i32_()), 1);
         let indexed = index(local(1, array(i32_())), local(2, i32_()));

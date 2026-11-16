@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// Built-in indexing keeps its stage 0 rules: the index is `usize`, `str` is not indexable, and a user type
+// needs an `Index` implementation rather than a range (E0003, spec/operators.md OP9, OP12).
+
+struct Row {
+    cells: [i32; 3]
+}
+
+fn main() {
+    let xs = [1, 2, 3]
+    let i: u8 = 1
+    let a = xs[i] //~ E0003
+    let s = "abc"
+    let b = s[0] //~ E0003
+    let r = Row { cells: [1, 2, 3] }
+    let c = r[0..1] //~ E0003
+    println((a + b + c.len() as i32).to_string())
+}
