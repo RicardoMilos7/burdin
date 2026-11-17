@@ -57,6 +57,24 @@ pub enum Builtin {
     WriteFile,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
+    /// `__env_get(name)`: the raw bytes of an environment variable, or `None` when it is unset (or, on
+    /// Windows, not valid Unicode). `spec/stdlib.md`, "Environment variables and the working directory".
+    EnvGet,
+    /// `__env_set(name, value)`: sets a variable from bytes. The result is `0` on success, `1` for an invalid
+    /// name, `2` for an invalid value, and `3` for an operating-system failure.
+    EnvSet,
+    /// `__env_set_bytes(name, value)`: the same with a byte view instead of a `str`.
+    EnvSetBytes,
+    /// `__env_remove(name)`: removes a variable. The result is `0` on success, `1` for an invalid name, and `3`
+    /// for an operating-system failure.
+    EnvRemove,
+    /// `__current_dir()`: the raw bytes of the working directory, or `None` when it cannot be read.
+    CurrentDir,
+    /// `__set_current_dir(path)`: changes the working directory. The result is `0` on success, `1` for an
+    /// invalid path, and `3` for an operating-system failure.
+    SetCurrentDir,
+    /// `__set_current_dir_bytes(path)`: the same with a byte view instead of a `str`.
+    SetCurrentDirBytes,
     /// `process.exit(code)`: ends the process.
     ProcessExit,
     /// `assert(condition)`: panics when it is false.

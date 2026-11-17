@@ -184,11 +184,22 @@ error enum IoError {
 error enum ParseIntError {
     Invalid  "invalid integer"
 }
+
+error enum EnvError {
+    Name { name: String }        "invalid environment variable name {name}"
+    Value { name: String }       "invalid value for environment variable {name}"
+    Access { name: String }      "cannot access environment variable {name}"
+    WorkingDirectory             "cannot read the working directory"
+    SetWorkingDirectory          "cannot set the working directory"
+}
 ```
 
 `read_to_string` returns `Result<String, IoError>` with `IoError.Read`; `write_file` returns
 `Result<(), IoError>` with `IoError.Write`; `process.run` returns `Result<i32, IoError>` with `IoError.Run`.
-`i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`.
+`i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The environment
+functions of `std.env` return `EnvError`: `Name` for an invalid name, `Value` for an invalid value, `Access` when the
+system refuses a change, `WorkingDirectory` when the directory cannot be read as text, and `SetWorkingDirectory` when
+it cannot be changed (`stdlib.md`, "Environment variables and the working directory").
 
 The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, and the integer parsers) are
 typed with the same error types but produce a placeholder error value; the `std` wrappers replace it with the

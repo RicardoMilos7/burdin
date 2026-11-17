@@ -1,7 +1,8 @@
 // The stage 0 standard library, written in Burdin.
 //
 // The compiler provides the primitives that need to reach the operating system or raw memory (file I/O,
-// process control, the arguments, and the memory helpers); everything a Burdin program can express is here.
+// process control, the arguments, the environment, the working directory, and the memory helpers); everything a
+// Burdin program can express is here.
 
 use fmt.{Debug, Display, Formatter}
 

@@ -890,6 +890,43 @@ returned as is. On failure each returns the matching `IoError` variant, and an i
 
 None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
 
+### Environment variables and the working directory (issue #412)
+
+```
+error enum EnvError {
+    Name { name: String }        "invalid environment variable name {name}"
+    Value { name: String }       "invalid value for environment variable {name}"
+    Access { name: String }      "cannot access environment variable {name}"
+    WorkingDirectory             "cannot read the working directory"
+    SetWorkingDirectory          "cannot set the working directory"
+}
+
+fn env.get(name: str): Option<String>              fn env.get_bytes(name: str): Option<Bytes>
+fn env.set(name: str, value: str): Result<(), EnvError>
+fn env.set_bytes(name: str, value: [u8]): Result<(), EnvError>
+fn env.remove(name: str): Result<(), EnvError>
+fn env.current_dir(): Result<String, EnvError>     fn env.current_dir_bytes(): Result<Bytes, EnvError>
+fn env.set_current_dir(path: str): Result<(), EnvError>
+fn env.set_current_dir_bytes(path: [u8]): Result<(), EnvError>
+```
+
+**Encoding.** A name is valid when it is not empty and contains neither `=` nor a NUL byte; a value may be any bytes
+except NUL. On Unix an environment value and a path are byte strings: `get` and `current_dir` report `None` and
+`WorkingDirectory` when the bytes are not valid UTF-8, and the `_bytes` functions return them exactly. Windows stores
+the environment and the working directory as UTF-16, so the primitives convert to and from UTF-8; a value that is not
+valid Unicode (an unpaired surrogate) is reported as absent and cannot be set, and the byte and text functions agree.
+
+**Behavior.** `get` is `None` when the variable is unset, while an empty value is `Some("")` because the variable is
+present. `set` replaces an existing value, and `remove` succeeds when the variable is unset. `set` and `remove` report
+`Name` for an invalid name, `Value` for an invalid value, and `Access` when the system refuses. `current_dir` has no
+trailing separator except at a root, and `set_current_dir` reports `SetWorkingDirectory` when the path is not a
+directory. A change is visible to a child started with `process.run`.
+
+None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+
+Tests: `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`,
+`env_test_mode`.
+
 ## The compilation target
 
 ```
@@ -1019,6 +1056,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
+| Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |
 | Dynamic errors, `main`, assertions | `m16_errors/dynamic_error_downcast`, `error_context_chain`, `error_context_non_error`, `traces_debug`, `main_result_ok`, `main_result_err`, `main_result_typed`, `main_result_alias`, `assert_typed`, `std_errors` |
