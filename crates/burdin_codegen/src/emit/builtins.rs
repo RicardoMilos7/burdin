@@ -3,11 +3,11 @@
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
 use burdin_tir::{self as tir, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
-use inkwell::IntPredicate;
 use inkwell::intrinsics::Intrinsic;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, FunctionValue};
+use inkwell::{FloatPredicate, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn builtin(
@@ -989,7 +989,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             FloatOp::Floor => self.intrinsic_call("llvm.floor", &[t], &call_args)?,
             FloatOp::Ceil => self.intrinsic_call("llvm.ceil", &[t], &call_args)?,
             FloatOp::Round => self.intrinsic_call("llvm.round", &[t], &call_args)?,
-            FloatOp::RoundTiesEven => self.intrinsic_call("llvm.roundeven", &[t], &call_args)?,
+            FloatOp::RoundTiesEven => self.round_ties_even(values[0].into_float_value())?,
             FloatOp::Trunc => self.intrinsic_call("llvm.trunc", &[t], &call_args)?,
             FloatOp::Sin => self.intrinsic_call("llvm.sin", &[t], &call_args)?,
             FloatOp::Cos => self.intrinsic_call("llvm.cos", &[t], &call_args)?,
@@ -1024,6 +1024,33 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .get_declaration(self.module, params)
             .ok_or_else(|| format!("cannot declare the LLVM intrinsic `{name}`"))?;
         self.call_value(decl, args)
+    }
+
+    /// `round_ties_even` without `llvm.roundeven`, whose lowering calls the C library's `roundeven`: the MSVC
+    /// CRT has no such symbol. Round halfway cases away from zero, then step a tie toward zero when that leaves
+    /// an odd integer. Every step is exact, and none depends on the current rounding mode. The `copysign` keeps
+    /// a result of zero negative when the input was (`(-0.5).round_ties_even()` is `-0.0`).
+    fn round_ties_even(&mut self, x: FloatValue<'ctx>) -> GenResult<BasicValueEnum<'ctx>> {
+        let float_ty = x.get_type();
+        let t: BasicTypeEnum<'ctx> = float_ty.into();
+        let rounded = self.intrinsic_call("llvm.round", &[t], &[x.into()])?.into_float_value();
+        let diff = self.builder.build_float_sub(x, rounded, "round.diff").map_err(llvm_err)?;
+        let abs_diff = self.intrinsic_call("llvm.fabs", &[t], &[diff.into()])?.into_float_value();
+        let half = float_ty.const_float(0.5);
+        let one = float_ty.const_float(1.0);
+        let is_tie =
+            self.builder.build_float_compare(FloatPredicate::OEQ, abs_diff, half, "round.tie").map_err(llvm_err)?;
+        let halved = self.builder.build_float_mul(rounded, half, "round.halved").map_err(llvm_err)?;
+        let truncated = self.intrinsic_call("llvm.trunc", &[t], &[halved.into()])?.into_float_value();
+        let is_even =
+            self.builder.build_float_compare(FloatPredicate::OEQ, halved, truncated, "round.even").map_err(llvm_err)?;
+        let is_odd = self.builder.build_not(is_even, "round.odd").map_err(llvm_err)?;
+        let fix = self.builder.build_and(is_tie, is_odd, "round.fix").map_err(llvm_err)?;
+        let signed_one = self.intrinsic_call("llvm.copysign", &[t], &[one.into(), x.into()])?.into_float_value();
+        let stepped = self.builder.build_float_sub(rounded, signed_one, "round.stepped").map_err(llvm_err)?;
+        let stepped = self.intrinsic_call("llvm.copysign", &[t], &[stepped.into(), x.into()])?;
+        let rounded_value: BasicValueEnum<'ctx> = rounded.into();
+        self.builder.build_select(fix, stepped, rounded_value, "round.even").map_err(llvm_err)
     }
 
     /// Calls the C math library function `name`, declaring it with the given signature.
