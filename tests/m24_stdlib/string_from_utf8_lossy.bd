@@ -1,0 +1,35 @@
+//@ run
+//> a�b
+//> ���
+//> ��
+//> aé😀z
+//> é�
+
+// `String.from_utf8_lossy` keeps every well-formed sequence and replaces each byte that is not part of one with
+// U+FFFD REPLACEMENT CHARACTER, so it never fails.
+
+fn bytes(values: [i32]): List<u8> {
+    let mut out = List<u8>.new()
+    for value in values {
+        out.push(value as u8)
+    }
+    out
+}
+
+fn lossy(values: [i32]): String {
+    let data = bytes(values)
+    String.from_utf8_lossy(data[0..data.len()])
+}
+
+fn main() {
+    let bad_lead = [97, 255, 98]
+    println("{}", lossy(bad_lead[0..3]))
+    let cut_off = [240, 159, 152]
+    println("{}", lossy(cut_off[0..3]))
+    let overlong = [192, 128]
+    println("{}", lossy(overlong[0..2]))
+    let valid = [97, 195, 169, 240, 159, 152, 128, 122]
+    println("{}", lossy(valid[0..8]))
+    let trailing = [195, 169, 255]
+    println("{}", lossy(trailing[0..3]))
+}
