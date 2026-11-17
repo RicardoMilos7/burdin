@@ -1,4 +1,5 @@
 use std.IoError
+use rw.{BufRead, Read, Write}
 
 // Files. The bytes come from the compiler's file primitives; the signatures and the error type are Burdin.
 
@@ -55,66 +56,88 @@ fn stdin(): Stdin {
 }
 
 Stdout {
-    /// Writes `text` exactly as it is. The bytes join the standard-output buffer; they reach the operating system
-    /// when the buffer fills (or reaches a line end on a terminal), at `flush`, or at a flush point of `print`.
-    fn write(self, text: str) {
-        __stdout_write(text)
-    }
-
-    /// Writes `text` followed by one `\n`. On a terminal the buffer is flushed after the newline.
-    fn write_line(self, text: str) {
-        __stdout_write_line(text)
-    }
-
-    /// Writes everything the buffer holds now, including what `print` and `println` wrote.
-    fn flush(self) {
-        __stdout_flush()
-    }
-
     /// Whether standard output is a terminal. A pipe or a file is not.
     fn is_terminal(self): bool {
         __is_terminal(1)
     }
 }
 
+Stdout: Write {
+    /// Appends `data` to the standard-output buffer, which `print` and `println` share, so the bytes stay in the
+    /// order the program wrote them. They reach the operating system when the buffer fills (or, on a terminal,
+    /// after a line), at `flush`, or at a flush point of `print`. All of `data` is taken, and a write error is
+    /// ignored, as `print` ignores one.
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        __stdout_write_bytes(data)
+        Ok(data.len())
+    }
+
+    /// Writes everything the buffer holds now, including what `print` and `println` wrote.
+    fn flush(mut self): Result<(), IoError> {
+        __stdout_flush()
+        Ok(())
+    }
+}
+
 Stderr {
-    /// Writes `text` exactly as it is. Standard error is unbuffered, so the bytes reach the operating system
-    /// during the call and appear before a later panic message.
-    fn write(self, text: str) {
-        __stderr_write(text)
-    }
-
-    /// Writes `text` followed by one `\n`, unbuffered.
-    fn write_line(self, text: str) {
-        __stderr_write_line(text)
-    }
-
-    /// Does nothing, because standard error is not buffered. It exists so the two output handles are used alike.
-    fn flush(self) {
-    }
-
     /// Whether standard error is a terminal.
     fn is_terminal(self): bool {
         __is_terminal(2)
     }
 }
 
+Stderr: Write {
+    /// Writes `data` unbuffered: the bytes reach the operating system during the call and appear before a later
+    /// panic message. All of `data` is taken, and a write error is ignored.
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        __stderr_write_bytes(data)
+        Ok(data.len())
+    }
+
+    /// Does nothing, because standard error is not buffered.
+    fn flush(mut self): Result<(), IoError> {
+        Ok(())
+    }
+}
+
 Stdin {
-    /// Reads one line without its terminator (`\n`, or the `\r` of a `\r\n`). `Ok(None)` is the end of the input;
-    /// the last line may have no terminator. The bytes are not checked for UTF-8, like a file's.
-    fn read_line(self): Result<Option<String>, IoError> {
-        match __stdin_read_line() {
-            Ok(line) => Ok(line),
-            Err(code) => Err(IoError.Read {
+    /// Whether standard input is a terminal.
+    fn is_terminal(self): bool {
+        __is_terminal(0)
+    }
+}
+
+Stdin: Read {
+    /// Appends up to `max` bytes to `buf`. A read takes what the runtime has buffered, reading one block from the
+    /// operating system when the buffer is empty, so it returns as soon as some input is there and never waits for
+    /// `max` bytes. `Ok(0)` is the end of the input (or a `max` of 0).
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        if max == 0 {
+            return Ok(0)
+        }
+        let avail = __stdin_avail()
+        if avail < 0 {
+            let code = __stdin_error()
+            return Err(IoError.Read {
                 path: String.from("<stdin>"),
                 kind: __io_kind(code),
                 os_code: Some(code),
-            }),
+            })
         }
+        let mut n = avail as usize
+        if n > max {
+            n = max
+        }
+        let mut i: usize = 0
+        while i < n {
+            buf.push(__stdin_next_byte())
+            i = i + 1
+        }
+        Ok(n)
     }
 
-    /// Reads everything left, up to the end of the input.
-    fn read_to_string(self): Result<String, IoError> {
+    /// Reads everything left, up to the end of the input. The bytes are not checked for UTF-8, like a file's.
+    fn read_to_string(mut self): Result<String, IoError> {
         match __stdin_read_to_string() {
             Ok(text) => Ok(text),
             Err(code) => Err(IoError.Read {
@@ -124,9 +147,48 @@ Stdin {
             }),
         }
     }
+}
 
-    /// Whether standard input is a terminal.
-    fn is_terminal(self): bool {
-        __is_terminal(0)
+Stdin: BufRead {
+    /// Appends bytes to `buf` up to and including the first `delim`, or up to the end of the input.
+    fn read_until(mut self, delim: u8, mut buf: List<u8>): Result<usize, IoError> {
+        let mut total: usize = 0
+        loop {
+            let avail = __stdin_avail()
+            if avail < 0 {
+                let code = __stdin_error()
+                return Err(IoError.Read {
+                    path: String.from("<stdin>"),
+                    kind: __io_kind(code),
+                    os_code: Some(code),
+                })
+            }
+            if avail == 0 {
+                return Ok(total)
+            }
+            let mut left = avail as usize
+            while left > 0 {
+                let b = __stdin_next_byte()
+                buf.push(b)
+                total = total + 1
+                left = left - 1
+                if b == delim {
+                    return Ok(total)
+                }
+            }
+        }
+    }
+
+    /// Reads one line without its terminator (a `\n`, or the `\r` of a `\r\n`). `Ok(None)` is the end of the
+    /// input; the last line may have no terminator. The bytes are not checked for UTF-8, like a file's.
+    fn read_line(mut self): Result<Option<String>, IoError> {
+        match __stdin_read_line() {
+            Ok(line) => Ok(line),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stdin>"),
+                kind: __io_kind(code),
+                os_code: Some(code),
+            }),
+        }
     }
 }

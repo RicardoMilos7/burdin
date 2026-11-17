@@ -1,7 +1,8 @@
 // The stage 0 standard library, written in Burdin.
 //
 // The compiler provides the primitives that need to reach the operating system or raw memory (file I/O,
-// process control, the arguments, and the memory helpers); everything a Burdin program can express is here.
+// process control, the arguments, the environment, the working directory, and the memory helpers); everything a
+// Burdin program can express is here.
 
 use fmt.{Debug, Display, Formatter}
 
@@ -143,11 +144,17 @@ IoErrorKind: Display {
 
 /// The error type of the I/O functions (`spec/errors.md`, ERR10). `kind` is the portable classification and
 /// `os_code` is the operating system's own code when the system reported the failure; `std` itself detects a
-/// few failures (such as removing a path that is not a directory) and stores `None` there.
+/// few failures (such as removing a path that is not a directory) and stores `None` there. The reader and writer
+/// interfaces report the failures that no system call observed (`spec/stdlib.md`, "Readers and writers"); they
+/// carry no path and no code, and `kind()` classifies them too.
 error enum IoError {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot write {path}: {kind}"
     Run { command: String, kind: IoErrorKind, os_code: Option<i32> } "cannot run {command}: {kind}"
+    UnexpectedEof "unexpected end of input"
+    WriteZero "the writer accepted no bytes"
+    InvalidData "the bytes are not valid text"
+    Seek "seek to a position before the start"
 }
 
 IoError {
@@ -157,6 +164,10 @@ IoError {
             IoError.Read { path: _, kind, os_code: _ } => kind,
             IoError.Write { path: _, kind, os_code: _ } => kind,
             IoError.Run { command: _, kind, os_code: _ } => kind,
+            IoError.UnexpectedEof => IoErrorKind.UnexpectedEof,
+            IoError.InvalidData => IoErrorKind.InvalidData,
+            IoError.WriteZero => IoErrorKind.Other,
+            IoError.Seek => IoErrorKind.InvalidInput,
         }
     }
 
@@ -167,6 +178,7 @@ IoError {
             IoError.Read { path: _, kind: _, os_code } => os_code,
             IoError.Write { path: _, kind: _, os_code } => os_code,
             IoError.Run { command: _, kind: _, os_code } => os_code,
+            IoError.UnexpectedEof | IoError.WriteZero | IoError.InvalidData | IoError.Seek => None,
         }
     }
 }

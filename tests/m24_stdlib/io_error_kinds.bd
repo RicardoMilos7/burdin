@@ -11,10 +11,19 @@
 //> not a directory none
 //> cannot run no-such-command: other
 //> other none
+//> unexpected end of input
+//> unexpected end of file none
+//> the bytes are not valid text
+//> invalid data none
+//> the writer accepted no bytes
+//> other none
+//> seek to a position before the start
+//> invalid input none
 
 // Every I/O failure carries the portable kind and, when a system call reported it, the raw OS code
 // (spec/errors.md, ERR10-ERR11). The exact code is the platform's own: `errno` on Linux and macOS, the Win32
-// error code on Windows.
+// error code on Windows. The reader and writer variants observe their failure themselves, so they have no code
+// and `kind()` classifies them.
 
 fn report(failure: IoError) {
     println("{failure}")
@@ -88,4 +97,10 @@ fn main() {
     // `process.run` fails only when the shell cannot start, which a test cannot arrange portably, so the third
     // variant is built directly (spec/errors.md, ERR10).
     report(IoError.Run { command: "no-such-command".to_string(), kind: IoErrorKind.Other, os_code: None })
+
+    // The reader and writer failures of #409 carry no path and no OS code; `kind()` still classifies every one.
+    report(IoError.UnexpectedEof)
+    report(IoError.InvalidData)
+    report(IoError.WriteZero)
+    report(IoError.Seek)
 }

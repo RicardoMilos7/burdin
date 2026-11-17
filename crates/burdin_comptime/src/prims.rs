@@ -405,13 +405,19 @@ impl<'p> Interp<'p, '_> {
         Ok(match b {
             Builtin::Print | Builtin::Println => return Err(impure("printing", span)),
             Builtin::Eprint | Builtin::Eprintln => return Err(impure("printing to standard error", span)),
-            Builtin::StdoutWrite | Builtin::StdoutWriteLine => return Err(impure("writing to standard output", span)),
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StdoutWriteBytes => {
+                return Err(impure("writing to standard output", span));
+            }
             Builtin::StdoutFlush => return Err(impure("flushing standard output", span)),
-            Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            Builtin::StderrWrite | Builtin::StderrWriteLine | Builtin::StderrWriteBytes => {
                 return Err(impure("writing to standard error", span));
             }
             Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
-            Builtin::StdinReadLine | Builtin::StdinReadToString => {
+            Builtin::StdinReadLine
+            | Builtin::StdinReadToString
+            | Builtin::StdinAvail
+            | Builtin::StdinNextByte
+            | Builtin::StdinError => {
                 return Err(impure("reading standard input", span));
             }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
@@ -424,6 +430,15 @@ impl<'p> Interp<'p, '_> {
             Builtin::Metadata => return Err(impure("reading file metadata", span)),
             Builtin::Canonicalize => return Err(impure("resolving a path", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
+            Builtin::EnvGet => return Err(impure("reading an environment variable", span)),
+            Builtin::EnvSet | Builtin::EnvSetBytes => {
+                return Err(impure("setting an environment variable", span));
+            }
+            Builtin::EnvRemove => return Err(impure("removing an environment variable", span)),
+            Builtin::CurrentDir => return Err(impure("reading the working directory", span)),
+            Builtin::SetCurrentDir | Builtin::SetCurrentDirBytes => {
+                return Err(impure("changing the working directory", span));
+            }
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
             Builtin::CPtrNull => return Err(impure("making a C pointer", span)),

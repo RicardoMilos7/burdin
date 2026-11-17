@@ -60,7 +60,9 @@ error enum converting from the same source type are E0211.
 
 The generated block is the ordinary `Name: From<Source> { fn from(value: Source): Name { Name.V(value) } }`, so
 `?` converts a `Result<T, Source>` into a `Result<T, Name>` exactly as it converts through a hand-written block
-(`spec/stdlib.md`).
+(`spec/stdlib.md`). Only the error side of a `?` has to fit the enclosing function: the operand's success type is
+unwrapped whatever it is, so a `Result<usize, E>` is unwrapped inside a function that returns `Result<(), E>`, and an
+`Option<i32>` inside one that returns `Option<String>` (`m16_errors/question_other_ok_type`).
 
 ## ERR4. The dynamic `Error`
 
@@ -179,31 +181,50 @@ error enum IoError {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> }      "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> }     "cannot write {path}: {kind}"
     Run { command: String, kind: IoErrorKind, os_code: Option<i32> }    "cannot run {command}: {kind}"
+    UnexpectedEof             "unexpected end of input"
+    WriteZero                 "the writer accepted no bytes"
+    InvalidData               "the bytes are not valid text"
+    Seek                      "seek to a position before the start"
 }
 
 error enum ParseIntError {
     Invalid  "invalid integer"
+}
+
+error enum EnvError {
+    Name { name: String }        "invalid environment variable name {name}"
+    Value { name: String }       "invalid value for environment variable {name}"
+    Access { name: String }      "cannot access environment variable {name}"
+    WorkingDirectory             "cannot read the working directory"
+    SetWorkingDirectory          "cannot set the working directory"
 }
 ```
 
 `read_to_string` returns `Result<String, IoError>` with `IoError.Read`; `write_file` returns
 `Result<(), IoError>` with `IoError.Write`; `process.run` returns `Result<i32, IoError>` with `IoError.Run`.
 The `Stdin` handle's `read_line` and `read_to_string` return `IoError.Read` with the path `<stdin>` (`stdlib.md`,
-Streams). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
+Streams). The reader and writer interfaces return `UnexpectedEof`, `WriteZero`, `InvalidData`, and `Seek` (`stdlib.md`,
+Readers and writers). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
 directory operations (`read_dir`, `metadata`, `canonicalize`, `walk`, and `walk_glob`) use `IoError.Read`, and the
 ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, and
-`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking").
+`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking"). The environment functions of
+`std.env` return `EnvError`: `Name` for an invalid name, `Value` for an invalid value, `Access` when the system
+refuses a change, `WorkingDirectory` when the directory cannot be read as text, and `SetWorkingDirectory` when it
+cannot be changed (`stdlib.md`, "Environment variables and the working directory").
 
 The message ends with the kind's text, so a missing file prints `cannot read missing.txt: not found`. `kind()` is
 the portable classification of ERR11, and `os_code()` is the operating system's own code when a system call reported
-the failure. A failure `std` detects itself has `os_code() == None`; the ones that exist today are `remove_dir_all`
-on a path that is not a directory (`IoErrorKind.NotADirectory`) and a symbolic link `remove_dir_all` cannot remove
-(`IoErrorKind.Other`).
+the failure. The reader and writer variants (`UnexpectedEof`, `WriteZero`, `InvalidData`, and `Seek`) are failures
+`std` observed itself: they carry no path and no code, so `os_code()` is `None` and `kind()` maps them onto the
+portable kinds (ERR11). The other failures `std` detects have `os_code() == None` too; the ones that exist today are
+`remove_dir_all` on a path that is not a directory (`IoErrorKind.NotADirectory`) and a symbolic link `remove_dir_all`
+cannot remove (`IoErrorKind.Other`).
 
 The compiler primitives behind the I/O functions (`__read_to_string`, `__write_file`, `__run`, `__read_dir`,
 `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`, `__metadata`, `__canonicalize`, `__stdin_read_line`,
-and `__stdin_read_to_string`) are typed `Result<..., i32>`: the error is the operating system's code, which the
-`std` wrapper turns into the `IoError` with `__io_kind(code)` (ERR11). The integer parsers stay typed with
+`__stdin_read_to_string`, and `__stdin_avail`) are typed `Result<..., i32>`: the error is the operating system's
+code, which the `std` wrapper turns into the `IoError` with `__io_kind(code)` (ERR11). `__stdin_avail` reports the
+code separately through `__stdin_error`, because its result is the byte count. The integer parsers stay typed with
 `ParseIntError` and produce a placeholder error value, which the `std` wrapper replaces with `Invalid`.
 
 ## ERR11. I/O error kinds and OS codes
@@ -247,16 +268,23 @@ The codes that matter are:
 The numeric values are the platform's; a program that compares `os_code()` with a number is platform-specific and
 should ask `target.os()` first (`comptime.md`, CT5), while `kind()` is the same on every platform.
 
+The reader and writer failures of #409 carry no path and no OS code, so they stay unit variants and `os_code()` is
+`None` for them. `kind()` still classifies every one: `UnexpectedEof` and `InvalidData` are their own kinds,
+`Seek` (a position before the start) is `InvalidInput`, and `WriteZero` (a sink that takes no bytes) is `Other`,
+because neither is an operating-system condition with a portable kind of its own.
+
 Two decisions are recorded here (issue #701):
 
 - **The operation and the path stay variants.** `Read`, `Write`, and `Run` already say which operation failed, and
   each carries its own `path` or `command`. A single struct with an `operation` field would make every match write
   the operation again, let a `Run` carry a path, and buy nothing: the three payloads differ only in that name.
   `kind` and `os_code` are fields of all three, so `kind()` and `os_code()` are the same method on every variant.
-- **`UnexpectedEof` and `InvalidData` are I/O kinds, not a reader-layer error.** The reader/writer layer (#409)
-  returns `IoError` too, so a short read or malformed bytes need no second error type and every caller keeps one
-  `Result<..., IoError>`. An OS code that means malformed data maps to `InvalidData`, and Windows' EOF code maps to
-  `UnexpectedEof`; the reader layer produces either without an OS code, which `os_code()` reports as `None`.
+  The reader and writer failures that have neither a path nor a code stay unit variants for the same reason.
+- **`UnexpectedEof` and `InvalidData` are I/O kinds, and #409's reader variants map to them.** The reader/writer
+  layer returns `IoError` too, so a short read or malformed bytes need no second error type and every caller keeps
+  one `Result<..., IoError>`. An OS code that means malformed data maps to `InvalidData`, and Windows' EOF code maps
+  to `UnexpectedEof`; the reader layer produces either without an OS code, which `os_code()` reports as `None` and
+  `kind()` still classifies.
 
 ## Diagnostics
 

@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A buffered reader wraps something that implements `Read`; a buffered writer wraps a `Write`.
+
+struct Plain {
+    id: i32
+}
+
+fn main() {
+    let r = BufReader.new(Plain { id: 1 }) //~ E0141
+    let w = BufWriter.new(5) //~ E0141
+}

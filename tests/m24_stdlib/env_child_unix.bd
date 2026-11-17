@@ -1,0 +1,14 @@
+//@ run
+//@ skip-platform: windows
+//> 0
+
+// A variable the program sets is visible to a child started through `process.run`: the shell's `test` succeeds and
+// reports status 0.
+
+fn main() {
+    let name = "BURDIN_TEST_ENV_412_CHILD"
+    env.set(name, "value").unwrap()
+    let status = process.run("sh -c 'test \"$BURDIN_TEST_ENV_412_CHILD\" = value'").unwrap()
+    println("{}", status)
+    env.remove(name).unwrap()
+}
