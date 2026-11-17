@@ -773,6 +773,97 @@ file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) report
 
 Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
 
+## Time (issue #195)
+
+```
+struct Duration derives (Clone, Copy, Eq, Ord, Hash, Debug) {
+    nanos: u64
+}
+
+Duration {
+    fn from_secs(secs: u64): Duration         fn from_millis(millis: u64): Duration
+    fn from_micros(micros: u64): Duration     fn from_nanos(nanos: u64): Duration
+    fn as_secs(self): u64                     fn subsec_nanos(self): u32
+    fn as_millis(self): u64                   fn as_micros(self): u64
+    fn as_nanos(self): u64                    fn is_zero(self): bool
+    fn checked_add(self, other: Duration): Option<Duration>
+    fn checked_sub(self, other: Duration): Option<Duration>
+    fn checked_mul(self, factor: u64): Option<Duration>
+    fn saturating_add(self, other: Duration): Duration
+    fn saturating_sub(self, other: Duration): Duration
+}
+Duration: Add          // `a + b` saturates at `u64.MAX` nanoseconds
+Duration: Sub          // `a - b` saturates at zero
+Duration: Display      // `1.500000000s`
+
+struct Instant derives (Clone, Copy, Eq, Ord, Hash, Debug) {
+    priv nanos: u64
+}
+
+fn now(): Instant                      // the monotonic clock
+fn unix_seconds(): i64                 // the wall clock, seconds since the Unix epoch
+
+Instant {
+    fn elapsed(self): Duration
+    fn duration_since(self, earlier: Instant): Duration
+    fn checked_duration_since(self, earlier: Instant): Option<Duration>
+}
+```
+
+A `Duration` is a count of nanoseconds, so its largest value is about 584 years. `from_secs`, `from_millis`,
+`from_micros`, and `from_nanos` multiply and saturate at `u64.MAX`; `as_secs`, `as_millis`, and `as_micros` truncate,
+and `subsec_nanos` is the remainder after the whole seconds. `checked_add`, `checked_sub`, and `checked_mul` return
+`None` when the result would not fit, and the `saturating_` forms stop at the nearest end instead. `+` and `-` use the
+saturating forms, so a duration never wraps around. `Display` writes the whole seconds, a `.`, the nanoseconds as nine
+zero-padded digits, and `s`: `Duration.from_millis(1500)` is `1.500000000s`, and `Duration.from_nanos(1)` is
+`0.000000001s`.
+
+An `Instant` is a reading of the monotonic clock. Only differences between readings are meaningful; the epoch and the
+representation are unspecified, and the field is private. `now()` reads the clock. `elapsed()` reads it again and
+returns the time since the reading, `duration_since(earlier)` subtracts two readings, and both saturate at zero;
+`checked_duration_since` returns `None` when `earlier` is later than `self`. `unix_seconds()` is the system's wall
+clock in seconds, the same unit as `Metadata.modified` and `Metadata.accessed`; it is not monotonic and may step.
+
+`now` and `unix_seconds` reach the operating system, and so does `Instant.elapsed`, which reads the clock; a
+comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9). Comparing instants, adding and
+subtracting durations, and formatting are pure, as are `duration_since` and `checked_duration_since`, which only
+subtract stored readings.
+
+Tests: `m24_stdlib/time_duration`, `time_clock`, `time_comptime_impure`.
+
+## Random (issue #195)
+
+```
+struct Random derives (Clone, Eq, Debug) {
+    priv state: u64
+}
+
+Random {
+    fn new(seed: u64): Random                 // the same seed gives the same sequence
+    fn from_entropy(): Random                 // a seed from the clock; impure
+    fn next_u64(mut self): u64
+    fn next_u32(mut self): u32
+    fn next_bool(mut self): bool
+    fn next_f64(mut self): f64                // in [0, 1)
+    fn below(mut self, bound: u64): u64       // in [0, bound); panics when `bound` is 0
+    fn range(mut self, low: i64, high: i64): i64   // in [low, high); panics when `high <= low`
+}
+```
+
+`Random` is a seeded SplitMix64 generator. It is not a cryptographic generator: use it for simulations, tests, and
+sampling, not for secrets. `new(seed)` is pure and deterministic, so a test or a comptime expression that builds a
+generator from a constant gets the same sequence every time (`Random.new(42).next_u64()` is a compile-time constant).
+`from_entropy()` mixes the wall clock with a counter that advances on every call, so two generators built this way
+start from different states; it is impure and is E0224 at compile time.
+
+`next_u32` is the high half of `next_u64`, `next_bool` is the low bit, and `next_f64` is the high 53 bits scaled into
+`[0, 1)`. `below` reduces modulo `bound`, which is very slightly biased when `bound` does not divide 2^64; `range`
+adds the result to `low` and panics when the interval is empty. `Random` is `Clone` but not `Copy`: duplicating a
+generator is an explicit `clone`, so two independent streams are never made by accident.
+
+Tests: `m24_stdlib/random_seeded`, `random_entropy`, `random_below_zero`, `random_range_empty`,
+`random_comptime_impure`, `random_comptime_seeded`.
+
 ## `Heap<T>`
 
 ```
@@ -1143,6 +1234,8 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
+| Time | `m24_stdlib/time_duration`, `time_clock`, `time_comptime_impure` |
+| Random | `m24_stdlib/random_seeded`, `random_entropy`, `random_below_zero`, `random_range_empty`, `random_comptime_impure`, `random_comptime_seeded` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

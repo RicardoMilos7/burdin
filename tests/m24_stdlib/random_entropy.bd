@@ -1,0 +1,17 @@
+//@ run
+//> true
+//> true
+//> true
+
+// `Random.from_entropy()` seeds from the clock and a counter that advances on every call, so two generators built
+// this way start from different states. The exact values are not reproducible, so the test only checks that they
+// differ and that the results stay in range.
+
+fn main() {
+    let mut a = Random.from_entropy()
+    let mut b = Random.from_entropy()
+    println("{}", a != b)
+    println("{}", a.next_u64() != b.next_u64())
+    let mut c = Random.from_entropy()
+    println("{}", c.next_f64() >= 0.0 && c.next_f64() < 1.0)
+}

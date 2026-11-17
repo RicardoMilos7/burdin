@@ -1,0 +1,163 @@
+// Time (issue #195; spec/stdlib.md, "Time").
+//
+// A `Duration` is a count of nanoseconds. An `Instant` is a reading of the monotonic clock, so only differences
+// between readings are meaningful and the epoch is unspecified. `unix_seconds` is the wall clock, in the same unit
+// as `Metadata.modified` and `Metadata.accessed`. Reading a clock is impure, so a comptime evaluation that reaches
+// one fails with E0224.
+
+use fmt.{Debug, Display, Formatter}
+use int.{saturating_add, saturating_mul, saturating_sub}
+use ops.{Add, Sub}
+
+priv const __NANOS_PER_SEC: u64 = 1_000_000_000
+priv const __NANOS_PER_MILLI: u64 = 1_000_000
+priv const __NANOS_PER_MICRO: u64 = 1_000
+
+/// A span of time, counted in nanoseconds, so the largest value is about 584 years.
+struct Duration derives (Clone, Copy, Eq, Ord, Hash, Debug) {
+    nanos: u64
+}
+
+Duration {
+    /// A duration of `secs` seconds, saturating at `u64.MAX` nanoseconds.
+    fn from_secs(secs: u64): Duration {
+        Duration { nanos: secs.saturating_mul(__NANOS_PER_SEC) }
+    }
+
+    /// A duration of `millis` milliseconds, saturating at `u64.MAX` nanoseconds.
+    fn from_millis(millis: u64): Duration {
+        Duration { nanos: millis.saturating_mul(__NANOS_PER_MILLI) }
+    }
+
+    /// A duration of `micros` microseconds, saturating at `u64.MAX` nanoseconds.
+    fn from_micros(micros: u64): Duration {
+        Duration { nanos: micros.saturating_mul(__NANOS_PER_MICRO) }
+    }
+
+    /// A duration of `nanos` nanoseconds.
+    fn from_nanos(nanos: u64): Duration {
+        Duration { nanos }
+    }
+
+    /// The whole seconds; the rest is `subsec_nanos`.
+    fn as_secs(self): u64 {
+        self.nanos / __NANOS_PER_SEC
+    }
+
+    /// The nanoseconds left after the whole seconds, below one billion.
+    fn subsec_nanos(self): u32 {
+        (self.nanos % __NANOS_PER_SEC) as u32
+    }
+
+    /// The whole milliseconds, truncating.
+    fn as_millis(self): u64 {
+        self.nanos / __NANOS_PER_MILLI
+    }
+
+    /// The whole microseconds, truncating.
+    fn as_micros(self): u64 {
+        self.nanos / __NANOS_PER_MICRO
+    }
+
+    /// The count of nanoseconds.
+    fn as_nanos(self): u64 {
+        self.nanos
+    }
+
+    /// Whether the duration is zero.
+    fn is_zero(self): bool {
+        self.nanos == 0
+    }
+
+    /// `self + other`, or `None` when the sum does not fit in a `Duration`.
+    fn checked_add(self, other: Duration): Option<Duration> {
+        match self.nanos.checked_add(other.nanos) {
+            Some(nanos) => Some(Duration { nanos }),
+            None => None,
+        }
+    }
+
+    /// `self - other`, or `None` when `other` is longer than `self`.
+    fn checked_sub(self, other: Duration): Option<Duration> {
+        match self.nanos.checked_sub(other.nanos) {
+            Some(nanos) => Some(Duration { nanos }),
+            None => None,
+        }
+    }
+
+    /// `self * factor`, or `None` when the product does not fit in a `Duration`.
+    fn checked_mul(self, factor: u64): Option<Duration> {
+        match self.nanos.checked_mul(factor) {
+            Some(nanos) => Some(Duration { nanos }),
+            None => None,
+        }
+    }
+
+    /// `self + other`, stopping at `u64.MAX` nanoseconds.
+    fn saturating_add(self, other: Duration): Duration {
+        Duration { nanos: self.nanos.saturating_add(other.nanos) }
+    }
+
+    /// `self - other`, stopping at zero.
+    fn saturating_sub(self, other: Duration): Duration {
+        Duration { nanos: self.nanos.saturating_sub(other.nanos) }
+    }
+}
+
+Duration: Add {
+    fn add(self, other: Duration): Duration {
+        self.saturating_add(other)
+    }
+}
+
+Duration: Sub {
+    fn sub(self, other: Duration): Duration {
+        self.saturating_sub(other)
+    }
+}
+
+Duration: Display {
+    /// `1.500000000s`: the whole seconds, a dot, nine zero-padded digits, and `s`.
+    fn fmt(self, mut f: Formatter) {
+        let secs = self.as_secs()
+        let frac = self.subsec_nanos()
+        f.pad(format("{secs}.{frac:09}s"))
+    }
+}
+
+/// A reading of the monotonic clock. Only differences between readings are meaningful; the epoch and the
+/// representation are unspecified.
+struct Instant derives (Clone, Copy, Eq, Ord, Hash, Debug) {
+    priv nanos: u64
+}
+
+/// The monotonic clock, in nanoseconds. It never goes backwards.
+fn now(): Instant {
+    Instant { nanos: __monotonic_nanos() }
+}
+
+/// The wall clock, in seconds since the Unix epoch. It is not monotonic and may step.
+fn unix_seconds(): i64 {
+    __unix_seconds()
+}
+
+Instant {
+    /// The time since this reading, saturating at zero.
+    fn elapsed(self): Duration {
+        let current = __monotonic_nanos()
+        Duration { nanos: current.saturating_sub(self.nanos) }
+    }
+
+    /// The time from `earlier` to this reading, saturating at zero when `earlier` is later.
+    fn duration_since(self, earlier: Instant): Duration {
+        Duration { nanos: self.nanos.saturating_sub(earlier.nanos) }
+    }
+
+    /// The time from `earlier` to this reading, or `None` when `earlier` is later.
+    fn checked_duration_since(self, earlier: Instant): Option<Duration> {
+        match self.nanos.checked_sub(earlier.nanos) {
+            Some(nanos) => Some(Duration { nanos }),
+            None => None,
+        }
+    }
+}

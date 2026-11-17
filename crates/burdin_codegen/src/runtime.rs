@@ -178,6 +178,12 @@ pub(crate) struct Runtime<'ctx> {
     pub exit: FunctionValue<'ctx>,
     /// `(command, command_len) -> i32`: runs a shell command; -1 on failure, the exit code otherwise.
     pub run: FunctionValue<'ctx>,
+    /// `() -> u64`: the monotonic clock, in nanoseconds.
+    pub monotonic_nanos: FunctionValue<'ctx>,
+    /// `() -> i64`: the wall clock, in seconds since the Unix epoch.
+    pub unix_seconds: FunctionValue<'ctx>,
+    /// `() -> u64`: a seed mixed from the wall clock and a counter that advances on every call.
+    pub random_seed: FunctionValue<'ctx>,
 }
 
 /// Generates the runtime into `module`. `windows` selects the Windows CRT functions and `darwin` the macOS signal
@@ -521,6 +527,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             args: self.args(argc.as_pointer_value(), argv.as_pointer_value(), alloc_string)?,
             exit: self.exit()?,
             run: self.run_command()?,
+            monotonic_nanos: self.monotonic_nanos()?,
+            unix_seconds: self.unix_seconds()?,
+            random_seed: self.random_seed()?,
         })
     }
 
@@ -3341,6 +3350,72 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let exit = libc(self.module, "exit", self.cx.void_type().fn_type(&[self.i32().into()], false));
         self.mark_noreturn(exit);
         Ok(exit)
+    }
+
+    /// `unix_seconds() -> i64`: the C library's `time`, which is seconds since the Unix epoch on every supported
+    /// system.
+    fn unix_seconds(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i64_ty, ptr_ty) = (self.i64(), self.ptr_ty);
+        let time = libc(self.module, "time", i64_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_unix_seconds", i64_ty.fn_type(&[], false));
+        let seconds = self.call(time, &[ptr_ty.const_null().into()])?.expect("time returns seconds").into_int_value();
+        self.b.build_return(Some(&seconds)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `monotonic_nanos() -> u64`: a monotonic clock in nanoseconds. Unix reads `clock_gettime(CLOCK_MONOTONIC)`;
+    /// Windows reads `GetTickCount64`, which counts milliseconds since the system started.
+    fn monotonic_nanos(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i32_ty, i64_ty, ptr_ty, usize_ty) = (self.i32(), self.i64(), self.ptr_ty, self.usize_ty);
+        let f = self.function("burdin_rt_monotonic_nanos", i64_ty.fn_type(&[], false));
+        let nanos = if self.windows {
+            let ticks = libc(self.module, "GetTickCount64", i64_ty.fn_type(&[], false));
+            let ms = self.call(ticks, &[])?.expect("GetTickCount64 returns a count").into_int_value();
+            self.b.build_int_mul(ms, i64_ty.const_int(1_000_000, false), "nanos").map_err(llvm_err)?
+        } else {
+            // `struct timespec` is two 64-bit words (`tv_sec`, `tv_nsec`) on every supported 64-bit target.
+            let ts = self.b.build_alloca(i64_ty.array_type(2), "timespec").map_err(llvm_err)?;
+            let clock_gettime =
+                libc(self.module, "clock_gettime", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false));
+            // `CLOCK_MONOTONIC` is 1 on Linux and 6 on macOS.
+            let clock = i32_ty.const_int(if self.darwin { 6 } else { 1 }, false);
+            self.call(clock_gettime, &[clock.into(), ts.into()])?;
+            let sec_at = self.offset(ts, usize_ty.const_zero())?;
+            let nsec_at = self.offset(ts, usize_ty.const_int(8, false))?;
+            let sec = self.b.build_load(i64_ty, sec_at, "sec").map_err(llvm_err)?.into_int_value();
+            let nsec = self.b.build_load(i64_ty, nsec_at, "nsec").map_err(llvm_err)?.into_int_value();
+            let secs = self.b.build_int_mul(sec, i64_ty.const_int(1_000_000_000, false), "secs").map_err(llvm_err)?;
+            self.b.build_int_add(secs, nsec, "nanos").map_err(llvm_err)?
+        };
+        self.b.build_return(Some(&nanos)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `random_seed() -> u64`: the wall clock mixed with a counter that advances on every call, so two calls in
+    /// the same second still differ.
+    fn random_seed(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i64_ty, ptr_ty) = (self.i64(), self.ptr_ty);
+        let time = libc(self.module, "time", i64_ty.fn_type(&[ptr_ty.into()], false));
+        let counter = self.module.get_global("burdin_rt_seed_counter").unwrap_or_else(|| {
+            let g = self.module.add_global(i64_ty, None, "burdin_rt_seed_counter");
+            g.set_initializer(&i64_ty.const_zero());
+            g.set_linkage(Linkage::Internal);
+            g
+        });
+        let f = self.function("burdin_rt_random_seed", i64_ty.fn_type(&[], false));
+        let seconds = self.call(time, &[ptr_ty.const_null().into()])?.expect("time returns seconds").into_int_value();
+        let count =
+            self.b.build_load(i64_ty, counter.as_pointer_value(), "seed.count").map_err(llvm_err)?.into_int_value();
+        let next = self.b.build_int_add(count, i64_ty.const_int(1, false), "seed.next").map_err(llvm_err)?;
+        self.b.build_store(counter.as_pointer_value(), next).map_err(llvm_err)?;
+        // The golden-ratio multiplier spreads a one-second clock over the whole 64-bit range.
+        let mixed = self
+            .b
+            .build_int_mul(seconds, i64_ty.const_int(0x9E37_79B9_7F4A_7C15, false), "seed.mixed")
+            .map_err(llvm_err)?;
+        let seed = self.b.build_int_add(mixed, next, "seed").map_err(llvm_err)?;
+        self.b.build_return(Some(&seed)).map_err(llvm_err)?;
+        Ok(f)
     }
 
     /// `run(command, command_len) -> i32`: runs the command through the system shell. The result is -1 when the

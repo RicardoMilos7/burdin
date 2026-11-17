@@ -21,6 +21,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // The program is compiled for the machine the compiler runs on.
             Builtin::TargetOs => return Ok(Some(self.str_literal(burdin_tir::target_os().as_bytes()).into())),
             Builtin::TargetArch => return Ok(Some(self.str_literal(burdin_tir::target_arch().as_bytes()).into())),
+            Builtin::MonotonicNanos => {
+                let call = self.builder.build_call(self.rt.monotonic_nanos, &[], "nanos").map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
+            Builtin::UnixSeconds => {
+                let call = self.builder.build_call(self.rt.unix_seconds, &[], "seconds").map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
+            Builtin::RandomSeed => {
+                let call = self.builder.build_call(self.rt.random_seed, &[], "seed").map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
             Builtin::CPtrNull => {
                 return Ok(Some(self.cx.ptr_type(inkwell::AddressSpace::default()).const_null().into()));
             }

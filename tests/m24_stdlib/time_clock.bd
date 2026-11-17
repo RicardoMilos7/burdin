@@ -1,0 +1,25 @@
+//@ run
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+
+// `time.now()` reads the monotonic clock, so two readings never go backwards, and `elapsed` is the time since a
+// reading. `time.unix_seconds()` is the wall clock.
+
+fn main() {
+    let a = time.now()
+    let b = time.now()
+    println("{}", b >= a)
+    println("{}", a <= b)
+    let first = a.elapsed()
+    let second = a.elapsed()
+    println("{}", second >= first)
+    println("{}", a.duration_since(a).is_zero())
+    println("{}", a == a)
+    println("{}", time.unix_seconds() > 0)
+    println("{}", a.checked_duration_since(a).is_some())
+}

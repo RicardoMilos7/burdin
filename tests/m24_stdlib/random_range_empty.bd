@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: random: range must be nonempty
+//> before
+
+fn main() {
+    let mut r = Random.new(1)
+    println("before")
+    println("{}", r.range(5, 5))
+}

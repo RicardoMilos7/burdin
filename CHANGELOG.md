@@ -249,6 +249,27 @@ close-out checklist in `AGENTS.md`).
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 
+### Standard-library roundout (milestone 24, issue #189; in progress)
+
+- Containers and text: `Set<T>` (a `Map<T, bool>`), `Deque<T>` (a growable ring), and `PriorityHeap<T>` (a binary
+  heap, `Reverse<T>` for a min-heap), plus `Ordering`/`cmp`/`Reverse`, the Unicode predicates and text helpers, the
+  string split/trim/replace/join helpers, the encodings, `Bytes`/`BytesMut`, `Once`/`Lazy`, `Path` with Unix and
+  Windows rules, directory operations, metadata, walking, globs, the integer and float helpers, the iterator
+  adapters and consumers, `sort_by`, the `Map` entry API, and the `Option`/`Result` combinators.
+- Time (issue #195): `Duration` (nanoseconds, checked and saturating arithmetic, `Display`), `Instant` on the
+  monotonic clock, `time.now()`, and `time.unix_seconds()`. The runtime reads `clock_gettime(CLOCK_MONOTONIC)` on
+  Unix and `GetTickCount64` on Windows; the builtins are impure at compile time (E0224).
+- Random (issue #195): `Random`, a seeded SplitMix64 generator with `new(seed)`, `from_entropy()`, `next_u64`,
+  `next_u32`, `next_bool`, `next_f64`, `below`, and `range`. A constant seed is pure and deterministic, so the same
+  sequence is available at compile time; the entropy source mixes the wall clock with a per-call counter.
+- Tests (issue #196): the m24 folder covers every new type with `//@ run` output and the compile-fail and abort
+  cases (`tests/m24_stdlib/time_duration`, `time_clock`, `time_comptime_impure`, `random_seeded`, `random_entropy`,
+  `random_below_zero`, `random_range_empty`, `random_comptime_impure`, `random_comptime_seeded`, alongside the
+  existing `set_*`, `deque_*`, `heap_*`, `char_*`, and `path_*` tests). `spec/stdlib.md` documents the surface, and
+  the standard-library tables in `spec/stage0-subset.md` and `spec/stage1-subset.md` record what shipped. The
+  suite is 708 tests.
+- Remaining in the milestone: `process.Command` with arguments, environment, and pipes (issue #419).
+
 ### Milestone 23 — allocators, `Arena`, and `Shared` (issue #180, sub-issues #181-#188)
 
 - Decision (#181): an allocator is an ordinary value and an ordinary generic parameter (`A: Allocator`, or

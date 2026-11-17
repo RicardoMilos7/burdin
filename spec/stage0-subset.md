@@ -107,7 +107,10 @@ read back is identical. `read_to_string`/`write_file` treat the bytes as UTF-8 t
 | Bindgen for C and Rust | After stage 1 |
 | `fmt`, `lint`, `doc`, `add`, language server, lockfile, multiple-package workspaces | After stage 1 |
 | `i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment | When wanted |
-| `Set`, `Deque`, doc tests, `bench` blocks | When wanted |
+| doc tests, `bench` blocks | When wanted |
+
+`Set`, `Deque`, the priority heap, Unicode helpers, paths, time, and random were on this list; they arrived in stage 1
+milestone 24 and are specified in `stdlib.md`.
 
 ## Milestones
 

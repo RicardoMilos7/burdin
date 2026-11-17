@@ -1,0 +1,14 @@
+//@ run
+//> 13679457532755275413
+//> 13679457532755275413
+
+// A generator built from a constant seed is pure, so its sequence is available at compile time and matches the
+// run-time sequence (`spec/stdlib.md`, "Random").
+
+const FIRST: u64 = comptime Random.new(42).next_u64()
+
+fn main() {
+    println("{}", FIRST)
+    let mut r = Random.new(42)
+    println("{}", r.next_u64())
+}

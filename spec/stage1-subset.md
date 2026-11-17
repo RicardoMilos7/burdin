@@ -69,7 +69,7 @@ folder and every earlier folder pass in debug and release.
 | 21 | `m21_reflect` | Reflection members, user derive bodies, const generics, `embed` | A derive written in Burdin; `Matrix<T, const R: usize, const C: usize>` |
 | 22 | `m22_build` | `build.bd`, dependency grants, generated sources, `bindgen` invocation | A build script writes a generated module that the package imports |
 | 23 | `m23_allocators` | Allocator parameters, `Arena`, `Shared<T>`, leak detection in tests, allocator-aware containers | A list with an arena allocator; a leaked allocation fails a test; `Shared<T>` outlives a scope |
-| 24+ | `m24_stdlib` | `Set`, `Deque`, priority heap, Unicode, paths, time, random, the serialization framework's foundation | The containers and text helpers the author's projects need, each with tests |
+| 24+ | `m24_stdlib` | `Set`, `Deque`, priority heap, Unicode, paths, directories, time, random, the text/number/encoding helpers, the serialization framework's foundation | The containers and helpers the author's projects need, each with tests (issue #196) |
 
 Milestone 21 is the riskiest and may split (for example `m21a_reflection`, `m21b_derives`); milestone 20 shipped
 whole. A split is a decision to record in `HANDOFF.md`, not a silent change.
@@ -340,7 +340,7 @@ exclusivity checker must learn about them.
 | Tooling | `burdin new`, `fmt` (opinionated, no options), `lint` (the design's warnings), `doc`, `add`, bindgen for C headers, Rust interop through generated C-ABI shims |
 | Compiler | A query-based compiler library shared by the CLI and a language server; a lockfile; multiple-package workspaces; cached object files; a possibly faster debug backend |
 | Ecosystem | The serialization framework (`Serialize`/`Deserialize` derives and format packages), JSON/TOML/CSV, HTTP client and server, TLS, WebSockets, regex, compression, images, math, database drivers |
-| Standard library | `Set`, `Deque`, priority heap, Unicode, paths, time, random, math — some may arrive earlier with `m24` |
+| Standard library | The rest of the standard library (math, the serialization packages); `Set`, `Deque`, the priority heap, Unicode, paths, time, and random shipped with `m24` |
 
 ### When wanted
 

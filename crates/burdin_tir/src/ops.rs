@@ -110,6 +110,14 @@ pub enum Builtin {
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.
     TargetArch,
+    /// `__monotonic_nanos()`: the monotonic clock, in nanoseconds (`spec/stdlib.md`, "Time"). Only differences
+    /// between readings are meaningful.
+    MonotonicNanos,
+    /// `__unix_seconds()`: the wall clock, in seconds since the Unix epoch.
+    UnixSeconds,
+    /// `__random_seed()`: a seed for `Random.from_entropy()`, mixed from the wall clock and a counter that
+    /// advances on every call.
+    RandomSeed,
 }
 
 /// Built-in methods of the primitive types.

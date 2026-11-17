@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A generator seeded from the clock is impure at compile time (CT9; spec/stdlib.md, "Random"). A generator built
+// from a constant is pure, so `comptime Random.new(42).next_u64()` is allowed.
+
+fn main() {
+    let r = comptime Random.from_entropy() //~ E0224
+}

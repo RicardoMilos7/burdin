@@ -34,6 +34,9 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__run" => Builtin::RunCommand,
         "__target_os" => Builtin::TargetOs,
         "__target_arch" => Builtin::TargetArch,
+        "__monotonic_nanos" => Builtin::MonotonicNanos,
+        "__unix_seconds" => Builtin::UnixSeconds,
+        "__random_seed" => Builtin::RandomSeed,
         "__alloc" => Builtin::RawAlloc,
         "__realloc" => Builtin::RawRealloc,
         "__dealloc" => Builtin::RawDealloc,
@@ -48,6 +51,8 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
     let ret = match b {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
         Builtin::TargetOs | Builtin::TargetArch => Ty::Str,
+        Builtin::MonotonicNanos | Builtin::RandomSeed => Ty::Int(IntTy::U64),
+        Builtin::UnixSeconds => Ty::Int(IntTy::I64),
         Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
@@ -85,6 +90,9 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::Unreachable
         | Builtin::TargetOs
         | Builtin::TargetArch
+        | Builtin::MonotonicNanos
+        | Builtin::UnixSeconds
+        | Builtin::RandomSeed
         | Builtin::StdoutFlush
         | Builtin::StdinReadLine
         | Builtin::StdinReadToString => Vec::new(),
@@ -341,6 +349,23 @@ mod tests {
         let tty = builtin_sig(Builtin::IsTerminal, &globals);
         assert_eq!(tty.params[0].ty, Ty::Int(IntTy::I32));
         assert_eq!(tty.ret, Ty::Bool);
+    }
+
+    #[test]
+    fn time_and_random_builtin_signatures() {
+        assert_eq!(builtin("__monotonic_nanos"), Some(Builtin::MonotonicNanos));
+        assert_eq!(builtin("__unix_seconds"), Some(Builtin::UnixSeconds));
+        assert_eq!(builtin("__random_seed"), Some(Builtin::RandomSeed));
+
+        let nanos = builtin_sig(Builtin::MonotonicNanos, &Globals::default());
+        assert!(nanos.params.is_empty());
+        assert_eq!(nanos.ret, Ty::Int(IntTy::U64));
+        let seconds = builtin_sig(Builtin::UnixSeconds, &Globals::default());
+        assert!(seconds.params.is_empty());
+        assert_eq!(seconds.ret, Ty::Int(IntTy::I64));
+        let seed = builtin_sig(Builtin::RandomSeed, &Globals::default());
+        assert!(seed.params.is_empty());
+        assert_eq!(seed.ret, Ty::Int(IntTy::U64));
     }
 
     #[test]

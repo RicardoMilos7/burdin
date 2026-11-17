@@ -1,0 +1,29 @@
+//@ run
+//> 13679457532755275413 2949826092126892291 5139283748462763858
+//> 1478287871
+//> false
+//> 0.8682280765465323
+//> 25 8 5
+//> 4 -3 -4
+//> true
+//> true
+//> true
+
+// `Random.new(seed)` is deterministic: the same seed gives the same SplitMix64 sequence in every program and at
+// compile time, which is what keeps tests reproducible.
+
+fn main() {
+    let mut r = Random.new(42)
+    println("{} {} {}", r.next_u64(), r.next_u64(), r.next_u64())
+    println("{}", r.next_u32())
+    println("{}", r.next_bool())
+    println("{}", r.next_f64())
+    println("{} {} {}", r.below(100), r.below(100), r.below(100))
+    println("{} {} {}", r.range(-10, 10), r.range(-10, 10), r.range(-10, 10))
+    let mut a = Random.new(7)
+    let mut b = Random.new(7)
+    println("{}", a.next_u64() == b.next_u64())
+    let mut c = a.clone()
+    println("{}", c.next_u64() == a.next_u64())
+    println("{}", Random.new(12345).below(1) == 0)
+}

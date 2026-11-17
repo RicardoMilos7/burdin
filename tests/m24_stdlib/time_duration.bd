@@ -1,0 +1,35 @@
+//@ run
+//> 1 500000000 1500 1500000 1500000000
+//> 1.500000000s
+//> 0.000000001s
+//> 2.000000000s 0.500000000s
+//> true true
+//> true true true
+//> 3.000000000s
+//> 0.000000000s
+//> true
+
+// `Duration` counts nanoseconds: the constructors and accessors agree, `+`/`-` saturate, and `Display` writes the
+// whole seconds and nine zero-padded digits.
+
+fn main() {
+    let d = Duration.from_millis(1500)
+    println("{} {} {} {} {}", d.as_secs(), d.subsec_nanos(), d.as_millis(), d.as_micros(), d.as_nanos())
+    println("{}", d)
+    println("{}", Duration.from_nanos(1))
+    println("{} {}", Duration.from_secs(1) + Duration.from_millis(1000), Duration.from_secs(1) - Duration.from_millis(500))
+    println("{} {}", Duration.from_secs(1) < Duration.from_secs(2), Duration.from_nanos(0).is_zero())
+    let big = Duration.from_nanos(u64.MAX)
+    println(
+        "{} {} {}",
+        Duration.from_secs(1).checked_add(Duration.from_secs(2)).is_some(),
+        big.checked_add(Duration.from_nanos(1)).is_none(),
+        Duration.from_secs(1).checked_sub(Duration.from_secs(2)).is_none(),
+    )
+    match Duration.from_secs(1).checked_add(Duration.from_secs(2)) {
+        Some(sum) => println("{}", sum),
+        None => println("none"),
+    }
+    println("{}", Duration.from_secs(0) - Duration.from_secs(1))
+    println("{}", Duration.from_secs(1).checked_mul(2).is_some())
+}

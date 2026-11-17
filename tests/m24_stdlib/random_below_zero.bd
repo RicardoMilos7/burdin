@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: random: bound must be nonzero
+//> before
+
+fn main() {
+    let mut r = Random.new(1)
+    println("before")
+    println("{}", r.below(0))
+}

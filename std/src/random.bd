@@ -1,0 +1,72 @@
+// Random numbers (issue #195; spec/stdlib.md, "Random").
+//
+// `Random` is a seeded SplitMix64 generator. It is not a cryptographic generator. `new(seed)` is pure and
+// deterministic, so a test or a comptime expression that builds a generator from a constant gets the same
+// sequence every time. `from_entropy()` seeds from the clock and is impure, so a comptime evaluation that reaches
+// it fails with E0224.
+
+use fmt.{Debug, Formatter}
+
+priv const __GOLDEN_GAMMA: u64 = 0x9E3779B97F4A7C15
+priv const __MIX_A: u64 = 0xBF58476D1CE4E5B9
+priv const __MIX_B: u64 = 0x94D049BB133111EB
+
+/// A seeded pseudo-random generator. `Clone` duplicates the stream; `Copy` is deliberately not derived.
+struct Random derives (Clone, Eq, Debug) {
+    priv state: u64
+}
+
+Random {
+    /// A generator with the given seed. The same seed always gives the same sequence.
+    fn new(seed: u64): Random {
+        Random { state: seed }
+    }
+
+    /// A generator seeded from the wall clock and a counter that advances on every call, so two generators built
+    /// this way start from different states. It is not cryptographic.
+    fn from_entropy(): Random {
+        Random { state: __random_seed() }
+    }
+
+    /// The next 64 random bits (SplitMix64).
+    fn next_u64(mut self): u64 {
+        self.state = self.state.wrapping_add(__GOLDEN_GAMMA)
+        let mut z = self.state
+        z = (z ^ (z >> 30)).wrapping_mul(__MIX_A)
+        z = (z ^ (z >> 27)).wrapping_mul(__MIX_B)
+        z ^ (z >> 31)
+    }
+
+    /// The next 32 random bits: the high half of the next 64.
+    fn next_u32(mut self): u32 {
+        (self.next_u64() >> 32) as u32
+    }
+
+    /// One random bit.
+    fn next_bool(mut self): bool {
+        self.next_u64() & 1 == 1
+    }
+
+    /// A random float in `[0, 1)`: the high 53 bits scaled by 2^-53.
+    fn next_f64(mut self): f64 {
+        let value = self.next_u64() >> 11
+        (value as f64) * (1.0 / 9007199254740992.0)
+    }
+
+    /// A random integer in `[0, bound)`. Panics when `bound` is zero.
+    fn below(mut self, bound: u64): u64 {
+        if bound == 0 {
+            panic("random: bound must be nonzero")
+        }
+        self.next_u64() % bound
+    }
+
+    /// A random integer in `[low, high)`. Panics when the interval is empty (`high <= low`).
+    fn range(mut self, low: i64, high: i64): i64 {
+        if high <= low {
+            panic("random: range must be nonempty")
+        }
+        let span = (high - low) as u64
+        low + (self.below(span) as i64)
+    }
+}

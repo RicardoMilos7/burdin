@@ -4,10 +4,10 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the thirty-sixth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-seventh session (2026-11-17). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
-overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 577 conformance tests; all pass in debug and release (the
+overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done, and milestone 24's standard-library roundout (Set, Deque, PriorityHeap, Unicode, paths, directories, time, random, and the text/number/encoding helpers) is implemented and tested**: 708 conformance tests; all pass in debug and release (the
 release run skips the debug-only tests).
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
@@ -195,6 +195,23 @@ run as a divergence with a note naming both outcomes.
 `differential_invalid.bd`, and `differential_impure.bd`, and `tests/check_test_runner.py` gains a fixture
 (`tests/runner/differential/`) whose third test depends on the unspecified `Map` iteration order, so the interpreter
 and compiled code really do disagree; the check reports it instead of passing. Every CI job already runs the script.
+
+The thirty-seventh session closed the test issue of milestone 24 (issue #196) and added the one standard-library
+area its tests still needed (issue #195): time and random. `std/src/time.bd` adds `Duration` (a `u64` count of
+nanoseconds with the four constructors, the `as_*`/`subsec_nanos` accessors, checked and saturating arithmetic,
+`+`/`-` through the operator interfaces, and `Display` as `1.500000000s`), `Instant` (a monotonic reading with
+`elapsed`, `duration_since`, and `checked_duration_since`), `time.now()`, and `time.unix_seconds()`. `std/src/random.bd`
+adds `Random`, a SplitMix64 generator with `new(seed)`, `from_entropy()`, `next_u64`, `next_u32`, `next_bool`,
+`next_f64`, `below`, and `range`; a constant seed is pure and deterministic (so `comptime Random.new(42).next_u64()`
+is the same value the program gets at run time), while the entropy source mixes the wall clock with a counter and is
+impure. The compiler gained three builtins (`__monotonic_nanos`, `__unix_seconds`, `__random_seed`), the runtime
+implements them with `clock_gettime(CLOCK_MONOTONIC)` on Unix, `GetTickCount64` on Windows, and libc `time`, and
+`burdin_comptime` rejects all three as impure (E0224). There are no new diagnostics. The conformance tests are
+`tests/m24_stdlib/time_duration`, `time_clock`, `time_comptime_impure`, `random_seeded`, `random_entropy`,
+`random_below_zero`, `random_range_empty`, `random_comptime_impure`, and `random_comptime_seeded`; the existing m24
+folders already covered `Set`, `Deque`, `PriorityHeap`, Unicode, and paths. `spec/stdlib.md` has the Time and Random
+sections and test lists, and the standard-library tables in `spec/stage0-subset.md` and `spec/stage1-subset.md` now
+record what shipped. The suite is 708 tests. The remaining m24 work is `process.Command` (issue #419).
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -1575,23 +1592,25 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 ## What is left to do, in order
 
-1. Milestone 23 is complete (thirty-sixth session): `spec/allocators.md` AL1-AL10 is the decision and
-   `tests/m23_allocators/` has 28 tests. The next milestone is 24 (`m24_stdlib`: `Set`, `Deque`, a priority heap,
-   Unicode helpers, paths, time, random, and the formatting foundation), which may split as the standard library
-   grows. Issue #444 (differential tests between comptime and compiled code) is done (thirty-sixth session);
+1. Milestone 24 (`m24_stdlib`) is in progress (thirty-seventh session): `Set`, `Deque`, the priority heap,
+   Unicode helpers, paths, directories, time, random, and the text/number/encoding helpers are implemented and
+   tested, and issue #196's conformance tests are in `tests/m24_stdlib/`. What remains in the milestone is
+   `process.Command` with arguments, environment, and pipes (issue #419). Milestone 23 is complete (thirty-sixth
+   session): `spec/allocators.md` AL1-AL10 is the decision and `tests/m23_allocators/` has 28 tests. Issue #444
+   (differential tests between comptime and compiled code) is done (thirty-sixth session);
    `spec/test-runner.md` holds its behavior. The full bindgen, C function-pointer types, and `union` declarations
    remain stage 3 / the stage 1 "Fixes" list.
-2. The remaining stage 1 work is milestone 24 and the open type-system item: writing a built-in interface by
-   hand (#402). Known limits to keep in mind: the comptime ones (a closure inside a function with comptime
-   parameters is shared by its specializations; `Map` iteration at compile time is insertion order, CT9;
-   comptime results are not cached, CT14), the m21 ones (problems 24-27 above), the temporary-move bug (problem
-   28), and the allocator limits (problems 29-31).
+2. The remaining stage 1 work is the rest of milestone 24 (`process.Command`, issue #419) and the open type-system
+   item: writing a built-in interface by hand (#402). Known limits to keep in mind: the comptime ones (a closure
+   inside a function with comptime parameters is shared by its specializations; `Map` iteration at compile time is
+   insertion order, CT9; comptime results are not cached, CT14), the m21 ones (problems 24-27 above), the
+   temporary-move bug (problem 28), and the allocator limits (problems 29-31).
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,
    C function-pointer and `union` types, by-value C aggregates, and a `priv` module marker if a project needs one.
 4. CI runs on `ubuntu-24.04` (LLVM 21 from apt.llvm.org), `macos-latest` (Apple Silicon, Homebrew `llvm@21`), and
-   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m23 in both
+   `windows-latest` (MSVC and the official LLVM 21 archive, issue #12); all three pass every step and m01-m24 in both
    the debug and release profiles (issues #11, #16, #47, and #12), and cache cargo and LLVM 21 (issue #46).
    `tests/check_ci.py` guards that the workflow keeps covering the suite in both profiles, every job, and their
    caches; `tests/check_platform.py` guards the host triple. Every job also records and compares benchmark baselines,
@@ -1616,6 +1635,6 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 
 Open the folder and say something like:
 
-> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Settle the decisions for milestone 24, then write its tests.
+> Read CLAUDE.md, AGENTS.md, HANDOFF.md, and spec/stage1-subset.md. Implement `process.Command` (issue #419) to finish milestone 24, then close the milestone and take up the built-in interface item (#402).
 
 If the session has no repository access to the folder, attach `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `spec/`, and `tests/README.md`.
