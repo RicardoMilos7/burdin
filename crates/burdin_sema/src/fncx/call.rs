@@ -1001,7 +1001,7 @@ impl FnCx<'_> {
             if let Ty::Array(elem, n) = recv.ty.clone() {
                 let view = self.array_slice_view(recv.clone(), &elem, n, span);
                 if method(&name.name, &view.ty).is_some() {
-                    return self.method_call_on(view, name, args, span);
+                    return self.method_call_on(view, name, args, span, expect);
                 }
                 if let Some(e) = self.extension_call(view, name, args, span) {
                     return e;
