@@ -1,0 +1,62 @@
+//@ run
+//> before drop
+//> sink got 5 bytes
+//> after drop
+//> sink got 5 bytes
+//> into_inner: 1 writes
+//> flush error kept: 1
+//> dropped with a failing sink
+
+// Dropping a `BufWriter` flushes what it holds and ignores a failure. `into_inner` flushes and returns the writer, and
+// the writer it leaves behind does not flush a second time.
+
+struct Sink {
+    writes: i32
+}
+
+Sink: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        self.writes = self.writes + 1
+        println("sink got {} bytes", data.len())
+        Ok(data.len())
+    }
+
+    fn flush(mut self): Result<(), IoError> {
+        Ok(())
+    }
+}
+
+struct Broken {
+}
+
+Broken: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        Err(IoError.Write { path: String.from("broken") })
+    }
+
+    fn flush(mut self): Result<(), IoError> {
+        Ok(())
+    }
+}
+
+fn main() {
+    {
+        let mut w = BufWriter.new(Sink { writes: 0 })
+        w.write_text("hello").unwrap()
+        println("before drop")
+    }
+    println("after drop")
+
+    let mut w = BufWriter.new(Sink { writes: 0 })
+    w.write_text("hello").unwrap()
+    let sink = w.into_inner().unwrap()
+    println("into_inner: {} writes", sink.writes)
+
+    let mut b = BufWriter.new(Broken { })
+    b.write_text("abc").unwrap()
+    match b.flush() {
+        Ok(_) => println("unexpected"),
+        Err(_) => println("flush error kept: {}", b.buffered() / 3),
+    }
+    println("dropped with a failing sink")
+}

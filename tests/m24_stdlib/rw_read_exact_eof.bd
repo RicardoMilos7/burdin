@@ -1,0 +1,33 @@
+//@ run
+//> read 3: ok abc
+//> read 6: cannot continue: unexpected end of input
+//> kept 4
+//> eof
+
+// `read_exact` on a source that ends first is `IoError.UnexpectedEof`; the bytes it did read stay in the list.
+
+fn fetch(own c: Cursor, count: usize): Result<String> {
+    let mut src = c
+    let mut buf = List<u8>.new()
+    src.read_exact(mut buf, count).context("cannot continue")?
+    Ok(from_utf8(buf[0..buf.len()]).unwrap())
+}
+
+fn main() {
+    match fetch(Cursor.from_text("abcd"), 3) {
+        Ok(s) => println("read 3: ok {}", s),
+        Err(e) => println("read 3: {}", e),
+    }
+    match fetch(Cursor.from_text("abcd"), 6) {
+        Ok(s) => println("read 6: ok {}", s),
+        Err(e) => println("read 6: {}", e),
+    }
+    let mut c = Cursor.from_text("abcd")
+    let mut buf = List<u8>.new()
+    let r = c.read_exact(mut buf, 6)
+    println("kept {}", buf.len())
+    match r {
+        Err(IoError.UnexpectedEof) => println("eof"),
+        _ => println("unexpected"),
+    }
+}

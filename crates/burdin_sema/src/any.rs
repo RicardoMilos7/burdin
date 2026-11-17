@@ -107,7 +107,7 @@ impl Globals {
                 params: m.sig.params.iter().map(|p| self.subst_param(p, &subst)).collect(),
                 ret: self.subst_ty(&m.sig.ret, &subst),
                 has_self: m.sig.has_self,
-                ret_origin: None,
+                ret_origins: Vec::new(),
             };
             out.push(AnyMethod { name: m.name.clone(), sig, is_unsafe: m.is_unsafe });
         }

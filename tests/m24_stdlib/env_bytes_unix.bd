@@ -1,0 +1,21 @@
+//@ run
+//@ skip-platform: windows
+//> true
+//> Some(Bytes[255, 254])
+//> true
+
+// On Unix an environment value is a byte string, so a value that is not UTF-8 is readable through `get_bytes` and
+// invisible to `get`, which returns `None`.
+
+fn main() {
+    let name = "BURDIN_TEST_ENV_412_BYTES"
+    env.remove(name).unwrap()
+    let mut raw = List<u8>.new()
+    raw.push(255)
+    raw.push(254)
+    env.set_bytes(name, raw[0..raw.len()]).unwrap()
+    println("{}", env.get(name).is_none())
+    println("{:?}", env.get_bytes(name))
+    env.remove(name).unwrap()
+    println("{}", env.get_bytes(name).is_none())
+}

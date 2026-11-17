@@ -1,0 +1,41 @@
+//@ run
+//@ stdin: hello world
+//@ stdin: line two
+//@ stdin-eof: tail
+//> 5 hello
+//> 6 " world"
+//> 1 newline
+//> line two
+//> 4 tail
+//> 0 0
+
+// `Stdin` is a `Read` and a `BufRead`: `read` appends what the runtime has buffered (never more than `max`),
+// `read_exact` and `read_until` keep reading, and they share one buffer with `read_line` and `read_to_string`.
+
+fn text(bytes: List<u8>): String {
+    from_utf8(bytes[0..bytes.len()]).unwrap()
+}
+
+fn main() {
+    let mut input = stdin()
+    let mut a = List<u8>.new()
+    let n = input.read(mut a, 5).unwrap()
+    println("{} {}", n, text(a))
+
+    let mut b = List<u8>.new()
+    input.read_exact(mut b, 6).unwrap()
+    println("{} {:?}", b.len(), text(b))
+
+    let mut c = List<u8>.new()
+    let k = input.read_until(10, mut c).unwrap()
+    println("{} {}", k, if c[0] == 10 { "newline" } else { "other" })
+
+    println("{}", input.read_line().unwrap().unwrap())
+
+    let mut rest = List<u8>.new()
+    let m = input.read_to_end(mut rest).unwrap()
+    println("{} {}", m, text(rest))
+
+    let mut none = List<u8>.new()
+    println("{} {}", input.read(mut none, 8).unwrap(), none.len())
+}

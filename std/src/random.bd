@@ -1,0 +1,136 @@
+// Random numbers (issue #195; spec/stdlib.md, "Random numbers").
+//
+// `Random` is a seeded pseudo-random generator: xoshiro256** (Blackman and Vigna), whose 256 bits of state are
+// filled from the seed by SplitMix64. It is written in Burdin, so it is pure: the same seed gives the same numbers on
+// every platform and in every build, and it works at compile time. `random_seed` is the one impure part, the seed
+// source: 64 bits from the operating system's entropy source. A test that needs determinism uses `Random.seeded`
+// with a constant; a program that wants a different sequence every run uses `Random.from_entropy`.
+//
+// This is a statistical generator, not a cryptographic one: do not use it for keys, tokens, or anything an attacker
+// should not be able to predict.
+
+use int.rotate_left
+use list.swap
+
+/// The next SplitMix64 output for `state`, which it advances.
+priv fn __splitmix_next(mut state: u64): u64 {
+    state = state.wrapping_add(0x9E3779B97F4A7C15)
+    let mut z = state
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)
+    z ^ (z >> 31)
+}
+
+/// 64 random bits from the operating system's entropy source, to seed a `Random`. Every call returns new bits. This
+/// is impure: a comptime evaluation that reaches it fails with E0224.
+fn random_seed(): u64 {
+    __entropy()
+}
+
+/// A seeded pseudo-random number generator. A generator is a plain value: `clone` it to replay a sequence, and pass
+/// it as `mut` to code that draws numbers.
+struct Random derives (Clone, Eq) {
+    priv s0: u64
+    priv s1: u64
+    priv s2: u64
+    priv s3: u64
+}
+
+Random {
+    /// A generator whose sequence is decided by `seed` alone. Every seed, including 0, gives a good sequence.
+    fn seeded(seed: u64): Random {
+        let mut state = seed
+        let s0 = __splitmix_next(mut state)
+        let s1 = __splitmix_next(mut state)
+        let s2 = __splitmix_next(mut state)
+        let s3 = __splitmix_next(mut state)
+        Random { s0: s0, s1: s1, s2: s2, s3: s3 }
+    }
+
+    /// A generator seeded from the operating system (`random_seed`), so each run differs.
+    fn from_entropy(): Random {
+        Random.seeded(random_seed())
+    }
+
+    /// The next 64 random bits.
+    fn next_u64(mut self): u64 {
+        let result = self.s1.wrapping_mul(5).rotate_left(7).wrapping_mul(9)
+        let t = self.s1 << 17
+        self.s2 = self.s2 ^ self.s0
+        self.s3 = self.s3 ^ self.s1
+        self.s1 = self.s1 ^ self.s2
+        self.s0 = self.s0 ^ self.s3
+        self.s2 = self.s2 ^ t
+        self.s3 = self.s3.rotate_left(45)
+        result
+    }
+
+    /// The next 32 random bits.
+    fn next_u32(mut self): u32 {
+        (self.next_u64() >> 32) as u32
+    }
+
+    /// A random `bool`, true half the time.
+    fn next_bool(mut self): bool {
+        (self.next_u64() >> 63) == 1
+    }
+
+    /// A random `f64` from 0.0 up to but not including 1.0, evenly spread over the 2^53 values that have a short
+    /// fraction.
+    fn next_f64(mut self): f64 {
+        ((self.next_u64() >> 11) as f64) * (1.0 / 9007199254740992.0)
+    }
+
+    /// A random integer from 0 up to but not including `bound`, with every value equally likely. It panics when
+    /// `bound` is zero.
+    fn below(mut self, bound: u64): u64 {
+        if bound == 0 {
+            panic("Random.below: the bound is zero")
+        }
+        // Values under `threshold` would make the low results more likely, so they are drawn again.
+        let threshold = (0 as u64).wrapping_sub(bound) % bound
+        loop {
+            let r = self.next_u64()
+            if r >= threshold {
+                return r % bound
+            }
+        }
+    }
+
+    /// A random integer from `low` up to but not including `high`, with every value equally likely. It panics when
+    /// `low` is not less than `high`.
+    fn range(mut self, low: i64, high: i64): i64 {
+        if low >= high {
+            panic("Random.range: the range is empty")
+        }
+        let width = high.wrapping_sub(low) as u64
+        low.wrapping_add(self.below(width) as i64)
+    }
+
+    /// A random `f64` from `low` up to but not including `high`. It panics when `low` is not less than `high` or
+    /// when either is not finite.
+    fn range_f64(mut self, low: f64, high: f64): f64 {
+        if !(low < high) || (high - low) > 1.7976931348623157e308 {
+            panic("Random.range_f64: the range is empty or not finite")
+        }
+        low + self.next_f64() * (high - low)
+    }
+
+    /// A random index into a collection of `len` elements, or `None` when `len` is zero.
+    fn index(mut self, len: usize): Option<usize> {
+        if len == 0 {
+            return None
+        }
+        Some(self.below(len as u64) as usize)
+    }
+
+    /// Puts the elements of `items` in a random order, every order equally likely (Fisher-Yates).
+    fn shuffle<T>(mut self, mut items: List<T>) {
+        let mut i = items.len()
+        while i > 1 {
+            let j = self.below(i as u64) as usize
+            i = i - 1
+            items.swap(i, j)
+        }
+    }
+}

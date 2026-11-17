@@ -39,6 +39,19 @@ impl FnCx<'_> {
             }
             return Some(mk(tir::ExprKind::Method(Method::IterNext, vec![recv]), Ty::Option(Box::new(item)), span));
         }
+        if name.name == "next_back" && args.is_empty() {
+            let item = self.globals.builtin_double_ended_item(&recv_ty, &self.bounds)?;
+            if is_place_expr(&recv) && !self.place_mutable(&recv) {
+                let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+                let whose = local.unwrap_or_else(|| "this receiver".to_string());
+                self.diags.error(
+                    Code::MUT_OF_IMMUTABLE,
+                    recv.span,
+                    format!("`next_back` changes its receiver, but `{whose}` is not mutable"),
+                );
+            }
+            return Some(mk(tir::ExprKind::Method(Method::IterNextBack, vec![recv]), Ty::Option(Box::new(item)), span));
+        }
         if (name.name == "sum" || name.name == "product")
             && args.is_empty()
             && let Some(item) = self.globals.iterator_item(&recv.ty, &self.bounds)
@@ -58,6 +71,14 @@ impl FnCx<'_> {
         {
             let seed = [("T".to_string(), item)];
             return Some(self.generic_call_with_receiver_seeded(g, recv, &name.name, args, &seed, span));
+        }
+        // The adapters that need items that are iterators or views, or a clonable source, are generic functions in
+        // `std` that take the iterator as their first argument (IT13).
+        if args.is_empty()
+            && self.globals.iterator_item(&recv_ty, &self.bounds).is_some()
+            && let Some(g) = self.globals.iterator_adapter_fn(&name.name)
+        {
+            return Some(self.generic_call_with_receiver(g, recv, &name.name, args, span));
         }
         // An iterator has no impl block for the interface's defaults, whether it is built in or a user type, so
         // the template is instantiated on demand. Registering the defaults on every instance instead would

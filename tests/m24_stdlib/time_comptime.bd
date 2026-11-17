@@ -1,0 +1,33 @@
+//@ run
+//> 1.5s 1.5s
+//> 2023-11-14T22:13:20Z Tuesday
+//> 1546998764402558742 2 6
+
+// Everything that does not read a clock is pure, so it runs at compile time: durations, calendar arithmetic, and a
+// seeded generator all work in a `const` or a `comptime` expression (spec/comptime.md, CT9; spec/stdlib.md,
+// "Time" and "Random numbers").
+
+const TIMEOUT: Duration = Duration.from_millis(1500)
+
+const EPOCH_2023: DateTime = DateTime.from_unix_secs(1_700_000_000)
+
+fn first_values(seed: u64): (u64, u64) {
+    let mut r = Random.seeded(seed)
+    (r.next_u64(), r.below(10))
+}
+
+fn main() {
+    let built = comptime Duration.from_secs(1) + Duration.from_millis(500)
+    println("{TIMEOUT} {built}")
+    println("{EPOCH_2023} {EPOCH_2023.weekday()}")
+    let drawn = comptime first_values(42)
+    let sum = comptime {
+        let mut r = Random.seeded(1)
+        let mut total: u64 = 0
+        for i in 0..4 {
+            total = total + r.below(3)
+        }
+        total
+    }
+    println("{drawn.0} {drawn.1} {sum}")
+}

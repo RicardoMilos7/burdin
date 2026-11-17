@@ -60,7 +60,9 @@ error enum converting from the same source type are E0211.
 
 The generated block is the ordinary `Name: From<Source> { fn from(value: Source): Name { Name.V(value) } }`, so
 `?` converts a `Result<T, Source>` into a `Result<T, Name>` exactly as it converts through a hand-written block
-(`spec/stdlib.md`).
+(`spec/stdlib.md`). Only the error side of a `?` has to fit the enclosing function: the operand's success type is
+unwrapped whatever it is, so a `Result<usize, E>` is unwrapped inside a function that returns `Result<(), E>`, and an
+`Option<i32>` inside one that returns `Option<String>` (`m16_errors/question_other_ok_type`).
 
 ## ERR4. The dynamic `Error`
 
@@ -179,24 +181,48 @@ error enum IoError {
     Read { path: String }     "cannot read {path}"
     Write { path: String }    "cannot write {path}"
     Run { command: String }   "cannot run {command}"
+    UnexpectedEof             "unexpected end of input"
+    WriteZero                 "the writer accepted no bytes"
+    InvalidData               "the bytes are not valid text"
+    Seek                      "seek to a position before the start"
+    InvalidInput              "invalid open options"
 }
 
 error enum ParseIntError {
     Invalid  "invalid integer"
+}
+
+error enum EnvError {
+    Name { name: String }        "invalid environment variable name {name}"
+    Value { name: String }       "invalid value for environment variable {name}"
+    Access { name: String }      "cannot access environment variable {name}"
+    WorkingDirectory             "cannot read the working directory"
+    SetWorkingDirectory          "cannot set the working directory"
 }
 ```
 
 `read_to_string` returns `Result<String, IoError>` with `IoError.Read`; `write_file` returns
 `Result<(), IoError>` with `IoError.Write`; `process.run` returns `Result<i32, IoError>` with `IoError.Run`.
 The `Stdin` handle's `read_line` and `read_to_string` return `IoError.Read` with the path `<stdin>` (`stdlib.md`,
-Streams). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
+Streams). The reader and writer interfaces return `UnexpectedEof`, `WriteZero`, `InvalidData`, and `Seek` (`stdlib.md`,
+Readers and writers). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
 directory operations (`read_dir`, `metadata`, `canonicalize`, `walk`, and `walk_glob`) use `IoError.Read`, and the
 ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, and
-`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking").
+`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking"). A file handle reports its
+operations' failures as `IoError.Read` or `IoError.Write` with the path it was opened with, a seek before the start
+as `IoError.Seek`, and an option set `OpenOptions` rejects as `IoError.InvalidInput` (`stdlib.md`, "Files and file
+handles"). The environment functions of
+`std.env` return `EnvError`: `Name` for an invalid name, `Value` for an invalid value, `Access` when the system
+refuses a change, `WorkingDirectory` when the directory cannot be read as text, and `SetWorkingDirectory` when it
+cannot be changed (`stdlib.md`, "Environment variables and the working directory"). A child's `spawn` failure
+(including a missing program and an argument or environment entry the system cannot take) is `IoError.Run` with the
+program name; reading a piped child stream reports `<stdout>`, `<stderr>`, or `<child>`, and writing the child's
+standard input reports `<stdin>` (`stdlib.md`, "Child processes").
 
-The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, and the integer parsers) are
-typed with the same error types but produce a placeholder error value; the `std` wrappers replace it with the
-real variant. A program calls the `std` functions, not the primitives.
+The compiler primitives behind them (`__read_to_string`, `__write_file`, `__file_open` and the other file-handle
+primitives, `__run`, `__process_spawn`, `__pipe_read_to_string`, `__pipe_read_line`, `__pipe_read_both`, and the
+integer parsers) are typed with the same error types but produce a placeholder error value; the `std` wrappers
+replace it with the real variant. A program calls the `std` functions, not the primitives.
 
 ## Diagnostics
 

@@ -18,7 +18,7 @@ interface Iterator<T> {
 interface Iterable<T> { }
 ```
 
-`Iterator<T>` is the stateful object a chain is made of: `next` borrows the iterator exclusively, advances it, and
+`Iterator<T>` is the stateful object a chain is made of (IT14 adds the second interface, `DoubleEndedIterator<T>`): `next` borrows the iterator exclusively, advances it, and
 returns the next item, or `None` once it is exhausted. `Iterable<T>` is a marker: a type implements it to say that
 `for` accepts it, and the compiler checks that the type provides `iter(self): I` where `I: Iterator<T>`. A type may
 implement one or both. Any later call to `next` after it returned `None` is unspecified but must not misbehave: the
@@ -98,6 +98,9 @@ asks for it.
 | `all(FnMut(T): bool)` | `bool` | stops at the first rejected item |
 | `find<F: FnMut(&T): bool>(mut self, own f: F)` | `Option<T>` | stops at the first accepted item |
 | `enumerate(own self)` | `EnumerateIter<Self, T>` | `(index, item)` pairs, counting from 0 |
+| `zip<U, J: Iterator<U>>(own self, own other: J)` | `ZipIter<Self, T, J, U>` | `(item, other item)` pairs; ends when either source ends |
+| `chain<J: Iterator<T>>(own self, own other: J)` | `ChainIter<Self, J, T>` | every item of `self`, then every item of `other`; both yield the same type |
+| `flat_map<U, J: Iterator<U>, F: FnMut(T): J>(own self, own f: F)` | `FlatMapIter<Self, T, J, U, F>` | the items of the iterator `f` returns for each item, one iterator at a time |
 | `take_while<F: FnMut(&T): bool>(own self, own f: F)` | `TakeWhileIter<Self, T, F>` | items up to, not including, the first one `f` rejects |
 | `skip_while<F: FnMut(&T): bool>(own self, own f: F)` | `SkipWhileIter<Self, T, F>` | drops items while `f` accepts them, then yields the rest |
 | `map_while<U, F: FnMut(T): Option<U>>(own self, own f: F)` | `MapWhileIter<Self, T, U, F>` | applies `f`, stops at the first `None` |
@@ -116,16 +119,64 @@ asks for it.
 | `try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F)` | `Result<(), E>` | calls `f` on every item until it returns an `Err` |
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
 
-**Adapters that are not provided (issue #706).** Three constraints of the current language rule these out; each is a
-language change, not a library one, and stays open on the issue:
+**Adapters for a particular kind of source (IT13).** `flatten`, `cloned`, `copied`, `cycle`, and `rev` need a bound on
+the interface's own item type or on the source itself (the items are iterators, the items are views, the source is
+`Clone`, the source is double-ended), which a default method of `Iterator<T>` cannot state. The compiler resolves
+`it.flatten()`, `it.cloned()`, `it.copied()`, `it.cycle()`, and `it.rev()` on any iterator, built in or user-defined, to
+private generic functions in `std` that take the iterator as `own it: I`:
 
-- `zip` and `chain` take two iterators and return one chain over both. When both are second-class (a list `iter()`),
-  the result derives from two parameters, which RT3 rejects with E0121. A change would need a return origin that is a
-  set of parameters.
-- `flat_map`, `flatten`, `cloned`, and `copied` need a type that appears only in a bound (`J: Iterator<U>`, a view's
-  target), and a call cannot infer a type parameter from a bound alone ("cannot tell what `U` stands for").
-- `rev` needs a source that can walk backwards, and the built-in iterators are not `Iterator` implementers that a
-  `DoubleEndedIterator<T>` interface could be added to; `cycle` needs a clonable iterator. Neither exists yet.
+| Method | Result | Needs |
+| --- | --- | --- |
+| `it.flatten()` | `FlattenIter<I, J, U>` | the items are iterators: `I: Iterator<J>`, `J: Iterator<U>`; yields every `U` |
+| `it.cloned()` | `ClonedIter<I, U>` | the items are views: `I: Iterator<&U>`, `U: Clone`; yields owned clones |
+| `it.copied()` | `CopiedIter<I, U>` | the items are views: `I: Iterator<&U>`, `U: Copy`; yields copies |
+| `it.cycle()` | `CycleIter<I, T>` | `I: Iterator<T> + Clone`; clones the source at the end of every pass, forever |
+| `it.rev()` | `RevIter<I, T>` | `I: Iterator<T> + DoubleEndedIterator<T>` (IT14) |
+
+A source that does not fit is E0141 (the bound is not met) or E0003 (the type parameter has nothing to be inferred
+from: `(0..3).iter().flatten()`, `[1, 2].iter().cloned()`). A list of `Copy` items yields the items themselves, so
+`cloned`/`copied` apply to the iterators that yield views: a list of non-`Copy` items, a `Deque`, and the like. A method
+declared on the type itself (inherent or interface) wins over these names, like every method over an extension.
+
+**Inference from `Iterator` bounds.** A type parameter that appears only inside an `Iterator<...>` bound
+(`zip<U, J: Iterator<U>>`) is bound by the item type of the argument's type, once the owner of the bound (`J`) is
+known: the built-in iterator's item or the `T` of the user's `Type: Iterator<T>` block. One bound can feed another
+(`flatten`: `I` fixes `J`, then `J` fixes `U`). It is the counterpart of the closure-signature inference for `Fn`
+bounds.
+
+**IT14 Walking backwards.** `rev` takes a `DoubleEndedIterator<T>`, a second interface `std` declares:
+
+```
+interface DoubleEndedIterator<T> {
+    fn next_back(mut self): Option<T>
+}
+```
+
+`next_back` takes the last remaining item, or `None`; `next` and `next_back` take from the two ends and meet in the
+middle, and an exhausted iterator keeps returning `None` from both. The compiler implements the interface, with the
+same item type as `next`, for the slice iterator (the `iter()` of an array or a `List`), the range iterator (an
+inclusive range yields its upper endpoint first and never computes a bound outside its type), and `Chars` (walking back
+by scalar value, so `"añ😀".chars().rev()` yields `😀`, `ñ`, `a`). The owning iterators (`ArrayIntoIter`,
+`ListIntoIter`, `MapIntoIter`) and `MapIter` are not double-ended: `list.into_iter().rev()` is E0141. `std` implements it
+for `DequeIter`, for `RevIter` (its `next_back` is the source's `next`), and for the adapters whose order follows their
+source's: `MapIter`, `FilterIter`, `InspectIter`, `ChainIter`, `ClonedIter`, and `CopiedIter`. The adapters that count
+from the front or hold a lookahead (`enumerate`, `zip`, `take`, `skip`, `step_by`, `take_while`, `skip_while`,
+`peekable`) are not, so `rev` after them is E0141; put `rev` before them. A user type implements
+`DoubleEndedIterator<T>` with a `next_back` method next to its `Iterator<T>` block to join `rev`. A `for` loop over a
+range, an array, a list, or a string can use `.iter().rev()` (a range written `(0..n)` is `Iterable`, not an
+iterator, so it needs `.iter()` first).
+
+**Several sources in one result (RT3a).** `zip` and `chain` return a chain over two views, so the return origin of a
+function is a set of parameters, not one (`memory-rules.md`, RT3a): the result of a call derives from the storage of
+each argument in the set, and both stay borrowed while the result is live. A result that is a view itself (`&T`,
+`str`, `[T]`, or an `Option` of one) still derives from exactly one parameter (RT3). An adapter that takes `own` iterators
+as arguments is not rejected by the exclusivity rule when its receiver is a chain computed in the same call, so
+`xs.iter().zip(xs.iter().skip(1))` is allowed: both are shared views of the same list.
+
+**Not provided.** `cycle` needs a clonable source, and a closure is never `Clone` (`memory-rules.md`, CL10), so a chain
+with `map`, `filter`, `inspect`, or a closure-taking adapter cannot be cycled; `cycle` the plain source and apply the
+adapter after it. An owning iterator is not `Clone`, so `into_iter().cycle()` is E0141. `rev` over `enumerate`, `zip`,
+`take`, and `skip` would need the length of the source (an `ExactSizeIterator`), which stage 1 does not have.
 
 **Consumers that need a bound on the item (issue #707).** `min`, `max`, `eq`, and `cmp` between iterators need
 `T: Ord` (`T: Eq` for `eq`) on the interface's own item type, which a default method cannot state (a method-level
@@ -158,7 +209,7 @@ interface default methods, so they are not callable on a type parameter bounded 
 their own type parameters do not resolve through a bound yet).
 
 **Consumers that are not provided (issue #707).** `unzip` needs the pair's two types, which only appear in a bound, so
-a call cannot infer them. `rposition` needs a double-ended source (see the adapters above). These stay open on the
+a call cannot infer them. `rposition` needs a double-ended source (IT14), which exists now, but it is not written yet. These stay open on the
 issue, as do the language changes they wait for.
 
 
@@ -197,8 +248,14 @@ evaluates `r` once and has the same no-overflow behavior.
 the source's view type (and a closure may be second-class too), so the chain is second-class (`memory-rules.md`,
 SC3). It may be a local, a parameter, a temporary, or an argument; it cannot be a struct field, an enum payload, a
 `List`/`Map`/`Heap` element, or a `const` (E0120), and a chain over a temporary cannot be stored in a local (E0123).
-Returning a chain from a function is allowed when it derives from exactly one view-typed parameter (RT2), which is
-how `iter()`/`into_iter()` and the adapters return one. The loans a chain holds last as long as the chain value
+Returning a chain from a function is allowed when it derives from view-typed parameters (RT2): from exactly one for
+`iter()`/`into_iter()` and most adapters, and from several for `zip` and `chain` (RT3a). The loans a chain holds last as long as the chain value
 (CL7/RF2): while a chain over a collection is live and used, the collection cannot be written or moved.
 
-Tests: `tests/m13_iterators/`.
+Tests: `tests/m13_iterators/`; the adapters of IT9, IT13, and IT14 are covered by `tests/m24_stdlib/iter_zip`,
+`iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`,
+`iter_adapters_no_leaks`, and `iter_adapters_comptime`; errors: `iter_zip_from_temporary` (E0123),
+`iter_zip_in_struct_field`, `iter_chain_in_collection` (E0120), `iter_chain_while_mutating_second`,
+`iter_zip_while_mutating_first` (E0111), `iter_rev_needs_double_ended`, `iter_rev_through_adapter`,
+`iter_cloned_needs_clone`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch` (E0141), `iter_cloned_needs_views`,
+`iter_flatten_needs_iterators`, `iter_zip_needs_iterator` (E0003).

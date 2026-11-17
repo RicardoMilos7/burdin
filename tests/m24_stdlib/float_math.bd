@@ -1,0 +1,111 @@
+//@ run
+//> sqrt 1.4142135623730951 4609047870845172685
+//> sqrt_zero 9223372036854775808
+//> powi 1024 0.25 1
+//> exp0 1 1024
+//> ln1 0 -inf
+//> floor -2 1
+//> ceil -1 2
+//> round 3 -3
+//> round_ties_even 2 4
+//> trunc -1 1
+//> abs 4615063718147915776
+//> mul_add 4363988038922010624
+//> mul_add_plain 0
+//> copysign 13815242216921733530 4591870180066957722
+//> sqrt_f32 1.4142135 1068827891
+//> floor_f32 3221225472
+//> ceil_f32 3212836864
+//> round_f32 1077936128 1073741824
+//> trunc_f32 3212836864
+//> powi_f32 1024 0.25
+//> mul_add_f32 847249408
+//> mul_add_f32_plain 0
+//> sin0 0 1
+//> tan0 0 0
+//> acos1 0
+//> atan0 0 0
+//> hyperbolic0 0 1 0
+//> cbrt true
+//> cbrt_neg true
+//> powf true
+//> log2 true
+//> log10 true
+//> log true
+//> hypot true
+//> sin_range true
+//> cos_range true
+//> tan_range true
+//> asin_range true
+//> acos_range true
+//> atan2_range true
+//> sinh_range true
+//> cosh_range true
+//> tanh_range true
+//> exp_range true
+//> ln_range true
+//> sin_f32_range true
+
+// The compiler-provided float functions (issue #703): the exactly rounded ones lower to an LLVM intrinsic and the
+// transcendental ones to the C math library. An exactly rounded result is pinned by its bits; a transcendental
+// one is checked by a range, because the C library may differ by an ulp between platforms.
+
+fn main() {
+    // ---- exactly rounded, f64 ----
+    println("sqrt {} {}", (2.0).sqrt(), (2.0).sqrt().to_bits())
+    println("sqrt_zero {}", (-0.0).sqrt().to_bits())
+    println("powi {} {} {}", (2.0).powi(10), (2.0).powi(-2), (0.0).powi(0))
+    println("exp0 {} {}", (0.0).exp(), (10.0).exp2())
+    println("ln1 {} {}", (1.0).ln(), (0.0).ln())
+    println("floor {} {}", (-1.5).floor(), (1.5).floor())
+    println("ceil {} {}", (-1.5).ceil(), (1.5).ceil())
+    println("round {} {}", (2.5).round(), (-2.5).round())
+    println("round_ties_even {} {}", (2.5).round_ties_even(), (3.5).round_ties_even())
+    println("trunc {} {}", (-1.9).trunc(), (1.9).trunc())
+    println("abs {}", (-3.5).abs().to_bits())
+    println("mul_add {}", (0.1).mul_add(10.0, -1.0).to_bits())
+    println("mul_add_plain {}", (0.1 * 10.0 - 1.0).to_bits())
+    println("copysign {} {}", (0.1).copysign(-1.0).to_bits(), (-0.1).copysign(1.0).to_bits())
+
+    // ---- exactly rounded, f32 ----
+    let two: f32 = 2.0
+    let minus_one_point_five: f32 = -1.5
+    let two_point_five: f32 = 2.5
+    let neg_one_point_nine: f32 = -1.9
+    println("sqrt_f32 {} {}", two.sqrt(), two.sqrt().to_bits())
+    println("floor_f32 {}", minus_one_point_five.floor().to_bits())
+    println("ceil_f32 {}", minus_one_point_five.ceil().to_bits())
+    println("round_f32 {} {}", two_point_five.round().to_bits(), two_point_five.round_ties_even().to_bits())
+    println("trunc_f32 {}", neg_one_point_nine.trunc().to_bits())
+    println("powi_f32 {} {}", two.powi(10), two.powi(-2))
+    let tenth: f32 = 0.1
+    println("mul_add_f32 {}", tenth.mul_add(10.0, -1.0).to_bits())
+    println("mul_add_f32_plain {}", (tenth * 10.0 - 1.0).to_bits())
+
+    // ---- the other functions ----
+    println("sin0 {} {}", (0.0).sin(), (0.0).cos())
+    println("tan0 {} {}", (0.0).tan(), (0.0).asin())
+    println("acos1 {}", (1.0).acos())
+    println("atan0 {} {}", (0.0).atan(), (0.0).atan2(1.0))
+    println("hyperbolic0 {} {} {}", (0.0).sinh(), (0.0).cosh(), (0.0).tanh())
+    println("cbrt {}", (27.0).cbrt() > 2.99 && (27.0).cbrt() < 3.01)
+    println("cbrt_neg {}", (-8.0).cbrt() > -2.01 && (-8.0).cbrt() < -1.99)
+    println("powf {}", (2.0).powf(0.5) > 1.414 && (2.0).powf(0.5) < 1.415)
+    println("log2 {}", (8.0).log2() > 2.99 && (8.0).log2() < 3.01)
+    println("log10 {}", (1000.0).log10() > 2.99 && (1000.0).log10() < 3.01)
+    println("log {}", (8.0).log(2.0) > 2.99 && (8.0).log(2.0) < 3.01)
+    println("hypot {}", (3.0).hypot(4.0) > 4.99 && (3.0).hypot(4.0) < 5.01)
+    println("sin_range {}", (1.0).sin() > 0.84 && (1.0).sin() < 0.85)
+    println("cos_range {}", (1.0).cos() > 0.54 && (1.0).cos() < 0.55)
+    println("tan_range {}", (1.0).tan() > 1.55 && (1.0).tan() < 1.56)
+    println("asin_range {}", (0.5).asin() > 0.52 && (0.5).asin() < 0.53)
+    println("acos_range {}", (0.5).acos() > 1.04 && (0.5).acos() < 1.05)
+    println("atan2_range {}", (1.0).atan2(1.0) > 0.78 && (1.0).atan2(1.0) < 0.79)
+    println("sinh_range {}", (1.0).sinh() > 1.17 && (1.0).sinh() < 1.18)
+    println("cosh_range {}", (1.0).cosh() > 1.54 && (1.0).cosh() < 1.55)
+    println("tanh_range {}", (1.0).tanh() > 0.76 && (1.0).tanh() < 0.77)
+    println("exp_range {}", (1.0).exp() > 2.71 && (1.0).exp() < 2.72)
+    println("ln_range {}", (2.0).ln() > 0.69 && (2.0).ln() < 0.70)
+    let x: f32 = 1.0
+    println("sin_f32_range {}", x.sin() > 0.84 && x.sin() < 0.85)
+}

@@ -1,0 +1,67 @@
+//@ run
+//> PI 3.141592653589793 true
+//> E 2.718281828459045 true
+//> TAU 6.283185307179586 true
+//> SQRT_2 1.4142135623730951 true
+//> LN_2 0.6931471805599453 true
+//> LN_10 true
+//> INFINITY true true
+//> NEG_INFINITY true
+//> NAN true
+//> EPSILON true
+//> MIN true
+//> MAX true
+//> MIN_POSITIVE true
+//> TAU_is_2PI true
+//> PI_f32 3.1415927 true
+//> E_f32 2.7182817 true
+//> TAU_f32 true
+//> SQRT_2_f32 true
+//> LN_2_f32 true
+//> LN_10_f32 true
+//> INFINITY_f32 true
+//> NEG_INFINITY_f32 true
+//> NAN_f32 true
+//> EPSILON_f32 true
+//> MIN_f32 true
+//> MAX_f32 true
+//> MIN_POSITIVE_f32 true
+//> max_above_min true
+//> min_positive_positive true
+
+// The associated constants of `f64` and `f32` (issue #703; spec/stdlib.md, "Float functions"). `f64.NAME` is the
+// std constant `__f64_NAME`, as `u32.MAX` is `__u32_MAX`. Each type has its own precision, and a float literal
+// must be finite, so `INFINITY` and `NAN` are written as divisions.
+
+fn main() {
+    println("PI {} {}", f64.PI, f64.PI.to_bits() == 0x400921fb54442d18)
+    println("E {} {}", f64.E, f64.E.to_bits() == 0x4005bf0a8b145769)
+    println("TAU {} {}", f64.TAU, f64.TAU.to_bits() == 0x401921fb54442d18)
+    println("SQRT_2 {} {}", f64.SQRT_2, f64.SQRT_2.to_bits() == 0x3ff6a09e667f3bcd)
+    println("LN_2 {} {}", f64.LN_2, f64.LN_2.to_bits() == 0x3fe62e42fefa39ef)
+    println("LN_10 {}", f64.LN_10.to_bits() == 0x40026bb1bbb55516)
+    println("INFINITY {} {}", f64.INFINITY.is_infinite(), f64.INFINITY.to_bits() == 0x7ff0000000000000)
+    println("NEG_INFINITY {}", f64.NEG_INFINITY.to_bits() == 0xfff0000000000000)
+    println("NAN {}", f64.NAN.is_nan())
+    println("EPSILON {}", f64.EPSILON.to_bits() == 0x3cb0000000000000)
+    println("MIN {}", f64.MIN.to_bits() == 0xffefffffffffffff)
+    println("MAX {}", f64.MAX.to_bits() == 0x7fefffffffffffff)
+    println("MIN_POSITIVE {}", f64.MIN_POSITIVE.to_bits() == 0x0010000000000000)
+    println("TAU_is_2PI {}", f64.TAU == 2.0 * f64.PI)
+
+    println("PI_f32 {} {}", f32.PI, f32.PI.to_bits() == 0x40490fdb)
+    println("E_f32 {} {}", f32.E, f32.E.to_bits() == 0x402df854)
+    println("TAU_f32 {}", f32.TAU.to_bits() == 0x40c90fdb)
+    println("SQRT_2_f32 {}", f32.SQRT_2.to_bits() == 0x3fb504f3)
+    println("LN_2_f32 {}", f32.LN_2.to_bits() == 0x3f317218)
+    println("LN_10_f32 {}", f32.LN_10.to_bits() == 0x40135d8e)
+    println("INFINITY_f32 {}", f32.INFINITY.to_bits() == 0x7f800000)
+    println("NEG_INFINITY_f32 {}", f32.NEG_INFINITY.to_bits() == 0xff800000)
+    println("NAN_f32 {}", f32.NAN.is_nan())
+    println("EPSILON_f32 {}", f32.EPSILON.to_bits() == 0x34000000)
+    println("MIN_f32 {}", f32.MIN.to_bits() == 0xff7fffff)
+    println("MAX_f32 {}", f32.MAX.to_bits() == 0x7f7fffff)
+    println("MIN_POSITIVE_f32 {}", f32.MIN_POSITIVE.to_bits() == 0x00800000)
+    println("max_above_min {}", f64.MAX > f64.MIN && f32.MAX > f32.MIN)
+    println("min_positive_positive {}", f64.MIN_POSITIVE > 0.0 && f32.MIN_POSITIVE > 0.0)
+}

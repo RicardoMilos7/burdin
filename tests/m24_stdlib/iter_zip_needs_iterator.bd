@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `zip` takes an iterator; a list is iterable but is not an iterator itself (call `.iter()`), so the type of the
+// second items cannot be found.
+fn main() {
+    let xs = [1, 2, 3]
+    let ys = [4, 5, 6]
+    for p in xs.iter().zip(ys) { //~ E0003
+        println(p.0.to_string())
+    }
+}

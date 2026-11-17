@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A chain borrows its sources, so it cannot be an element of a list.
+fn main() {
+    let xs = [1, 2]
+    let ys = [3, 4]
+    let mut chains = List<ChainIter<[i32], [i32], i32>>.new() //~ E0120
+    chains.push(xs.iter().chain(ys.iter()))
+}

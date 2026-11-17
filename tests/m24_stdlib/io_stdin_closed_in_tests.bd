@@ -4,6 +4,9 @@
 // the input and never waits for a person.
 
 test "standard input is closed" {
-    assert(stdin().read_line().unwrap().is_none())
-    assert(stdin().read_to_string().unwrap().len() == 0)
+    let mut input = stdin()
+    assert(input.read_line().unwrap().is_none())
+    assert(input.read_to_string().unwrap().len() == 0)
+    let mut buf = List<u8>.new()
+    assert(input.read(mut buf, 16).unwrap() == 0)
 }
