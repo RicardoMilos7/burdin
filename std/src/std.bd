@@ -106,6 +106,10 @@ error enum IoError {
     Read { path: String } "cannot read {path}"
     Write { path: String } "cannot write {path}"
     Run { command: String } "cannot run {command}"
+    UnexpectedEof "unexpected end of input"
+    WriteZero "the writer accepted no bytes"
+    InvalidData "the bytes are not valid text"
+    Seek "seek to a position before the start"
 }
 
 /// The error type of `i32.parse` and the other integer parsers.

@@ -1,0 +1,77 @@
+//@ run
+//> first line: ok
+//> failed: reading the config: cannot read <flaky>
+//> is io error: true
+//> typed: cannot read <flaky>
+//> lines stop after an error: 1 ok, 1 err, 0 more
+
+// An error from the wrapped reader comes out of every wrapper unchanged, so `?` carries it up; `context` adds to it.
+
+struct Flaky {
+    data: List<u8>
+    pos: usize
+    fail_after: usize
+}
+
+Flaky: Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        if self.pos >= self.fail_after {
+            return Err(IoError.Read { path: String.from("<flaky>") })
+        }
+        let mut n: usize = 0
+        while n < max && self.pos < self.fail_after && self.pos < self.data.len() {
+            buf.push(self.data[self.pos])
+            self.pos = self.pos + 1
+            n = n + 1
+        }
+        Ok(n)
+    }
+}
+
+fn flaky(text: str, fail_after: usize): Flaky {
+    Flaky { data: text.to_utf8(), pos: 0, fail_after: fail_after }
+}
+
+fn first_two(own source: Flaky): Result<String> {
+    let mut r = BufReader.with_capacity(3, source)
+    let a = r.read_line().context("reading the config")?
+    let b = r.read_line().context("reading the config")?
+    Ok(format("{} {}", a.unwrap(), b.unwrap()))
+}
+
+fn typed(own source: Flaky): Result<String, IoError> {
+    let mut r = BufReader.new(source)
+    let line = r.read_line()?
+    Ok(line.unwrap())
+}
+
+fn main() {
+    match first_two(flaky("ok\nfine\n", 100)) {
+        Ok(_) => println("first line: ok"),
+        Err(e) => println("failed: {}", e),
+    }
+    match first_two(flaky("ok\nfine\n", 4)) {
+        Ok(s) => println("unexpected {}", s),
+        Err(e) => {
+            println("failed: {}", e)
+            println("is io error: {}", e.is<IoError>())
+        }
+    }
+    match typed(flaky("no newline", 3)) {
+        Ok(s) => println("unexpected {}", s),
+        Err(e) => println("typed: {}", e),
+    }
+    let mut oks = 0
+    let mut errs = 0
+    let mut more = 0
+    for item in BufReader.new(flaky("a\nb", 2)).lines() {
+        if errs > 0 {
+            more = more + 1
+        }
+        match item {
+            Ok(_) => oks = oks + 1,
+            Err(_) => errs = errs + 1,
+        }
+    }
+    println("lines stop after an error: {} ok, {} err, {} more", oks, errs, more)
+}

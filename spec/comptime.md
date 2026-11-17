@@ -148,9 +148,10 @@ comptime assert(BUFFER_SIZE % 64 == 0, "the buffer must be a whole number of cac
 Comptime is pure and deterministic. Evaluating any of these is E0224, reported at the comptime expression with a
 note at the operation:
 
-- output: `print`, `println`, `eprint`, `eprintln`, and the `Stdout`/`Stderr` handles' `write`, `write_line`,
-  and `flush`;
-- input: the `Stdin` handle's `read_line` and `read_to_string`, and `is_terminal` on any stream handle;
+- output: `print`, `println`, `eprint`, `eprintln`, and the `Stdout`/`Stderr` handles' `write` (and so every
+  `Write` default built on it) and `flush`;
+- input: the `Stdin` handle's `read`, `read_until`, `read_line`, and `read_to_string` (and so every `Read` and
+  `BufRead` default built on them), and `is_terminal` on any stream handle;
 - files, the environment, and processes: `read_to_string`, `write_file`, `env.args`, `process.exit`, `process.run`;
 - C: calling an `extern` function, `CPtr` values and dereferences, `CString`, and `CStr.to_string`.
 
