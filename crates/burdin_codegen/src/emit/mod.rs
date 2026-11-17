@@ -24,6 +24,7 @@ mod results;
 mod scope;
 mod strings;
 mod structural;
+mod tasks;
 mod types;
 
 use crate::runtime::{self, Runtime};
@@ -145,6 +146,10 @@ pub(crate) struct Codegen<'ctx, 'a> {
     temps: Vec<Vec<(PointerValue<'ctx>, Ty, PointerValue<'ctx>)>>,
     /// The target is Windows (the runtime uses the Windows CRT).
     windows: bool,
+    /// The target triple, for the parts of the task runtime that differ per architecture.
+    triple: String,
+    /// The task runtime (`taskrt.rs`) has been linked into the module.
+    tasks_linked: bool,
     /// The span of the expression being generated, for the allocation site a leak report names.
     current_span: Option<Span>,
     /// `-g`: the module's debug metadata, or `None`.
@@ -216,6 +221,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             flags: Vec::new(),
             temps: Vec::new(),
             windows,
+            triple,
+            tasks_linked: false,
             current_span: None,
             debug,
             debug_entry: None,

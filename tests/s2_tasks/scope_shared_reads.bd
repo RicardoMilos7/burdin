@@ -1,0 +1,25 @@
+//@ run
+//> 6
+//> 60 3
+
+// Many tasks may read the same place at once; a place that is only read can be borrowed by any number of tasks, and
+// each task can compute into a place of its own.
+
+fn main() {
+    let data = [1, 2, 3]
+    let mut left = 0
+    let mut right = 0
+    scope(|s| {
+        s.spawn(|| { left = data[0] + data[1] + data[2] })
+        s.spawn(|| { right = data.len() as i32 })
+    })
+    println("{}", left)
+
+    let mut total = 0
+    let mut count = 0
+    scope(|s| {
+        s.spawn(|| { total = data[0] * 10 + data[1] * 10 + data[2] * 10 })
+        s.spawn(|| { count = data.len() as i32 })
+    })
+    println("{} {}", total, count)
+}

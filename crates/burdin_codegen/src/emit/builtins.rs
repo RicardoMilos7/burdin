@@ -618,6 +618,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.continue_dead();
                 return Ok(None);
             }
+            Builtin::Rt(op) => return self.rt_primitive(op, args),
+            // Same representation, different type: the closure value passes through unchanged.
+            Builtin::ClosureOwn => return self.expr_mode(&args[0], Mode::Move),
             Builtin::Assert => {
                 let cond = self.expr_mode(&args[0], Mode::Use)?;
                 let cond = self.need_int(cond, &Ty::Bool);

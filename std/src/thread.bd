@@ -1,0 +1,154 @@
+// OS threads (spec/tasks.md, TK9).
+//
+// A thread is a closure that runs on a thread of the operating system with its own stack. Unlike a task, it is not
+// scheduled by Burdin: it runs in parallel with the code that started it until it returns. Use a thread for work that
+// blocks, such as waiting on a system call, and a task for the rest. The thread's stack is the system's default.
+//
+// The record shared by the thread and its handle is a `repr(C)` struct behind `CPtr`, like the scheduler's.
+
+use option.take
+
+/// The state shared by a running thread and its handle. `lock` guards every field after it; `done_cv` wakes the thread
+/// that is joining.
+priv struct ThreadState repr(C) {
+    lock: CPtr<u8>
+    done_cv: CPtr<u8>
+    done: usize
+    /// The result is in the slot after the record.
+    stored: usize
+    /// The handle is gone: nobody will read the result.
+    detached: usize
+    /// Owners of the record: the running thread until it returns, and the handle until it is joined or dropped.
+    refs: usize
+}
+
+/// The handle of a thread started by `spawn`. `join` waits for the thread and returns its result. Dropping the handle
+/// detaches the thread: it keeps running and its result is dropped.
+struct Thread<T> {
+    state: CPtr<u8>
+    joined: bool
+}
+
+/// Runs `f` on a new operating-system thread and returns its handle. The closure moves its captures into the thread,
+/// and the thread ends when `f` returns. A panic in the thread aborts the process.
+fn spawn<T, F: FnOnce(): T>(own f: F): Thread<T> {
+    unsafe {
+        let st = __alloc(ThreadState.size() + Option<T>.size(), 8) as CPtr<ThreadState>
+        (*st).lock = __mutex_new()
+        (*st).done_cv = __cond_new()
+        (*st).done = 0
+        (*st).stored = 0
+        (*st).detached = 0
+        (*st).refs = 2
+        // The result slot holds `None` until the thread stores its value. It is written byte by byte from a real
+        // `None`, because assigning through a raw pointer would first drop whatever the memory held.
+        let slot = ((st as CPtr<u8>) + ThreadState.size()) as CPtr<Option<T>>
+        let empty: Option<T> = None
+        let src = (&empty) as CPtr<u8>
+        let dst = slot as CPtr<u8>
+        let mut i: usize = 0
+        while i < Option<T>.size() {
+            *(dst + i) = *(src + i)
+            i = i + 1
+        }
+        __thread_start(|| {
+            unsafe {
+                let value = f()
+                __mutex_lock((*st).lock)
+                if (*st).detached == 0 {
+                    *slot = Some(value)
+                    (*st).stored = 1
+                }
+                (*st).done = 1
+                (*st).refs = (*st).refs - 1
+                let last = (*st).refs == 0
+                __cond_broadcast((*st).done_cv)
+                __mutex_unlock((*st).lock)
+                if last {
+                    __free_thread_state(st)
+                }
+            }
+        })
+        Thread { state: st as CPtr<u8>, joined: false }
+    }
+}
+
+/// Releases the lock and the condition variable of a record whose last owner is done with it, then the record.
+priv fn __free_thread_state(st: CPtr<ThreadState>) {
+    unsafe {
+        __mutex_free((*st).lock)
+        __cond_free((*st).done_cv)
+        __dealloc(st as CPtr<u8>, 0, 8)
+    }
+}
+
+/// Gives up the rest of the calling thread's time slice.
+fn yield_now() {
+    unsafe {
+        __thread_yield()
+    }
+}
+
+Thread<T> {
+    /// Waits for the thread to finish and returns what it returned. It blocks the calling thread, so a task that joins
+    /// a thread keeps its worker busy until the thread is done.
+    fn join(own self): T {
+        let mut me = self
+        unsafe {
+            let st = me.state as CPtr<ThreadState>
+            let slot = (me.state + ThreadState.size()) as CPtr<Option<T>>
+            __mutex_lock((*st).lock)
+            while (*st).done == 0 {
+                __cond_wait((*st).done_cv, (*st).lock)
+            }
+            let value = (*slot).take()
+            (*st).refs = (*st).refs - 1
+            let last = (*st).refs == 0
+            __mutex_unlock((*st).lock)
+            if last {
+                __free_thread_state(st)
+            }
+            me.joined = true
+            match value {
+                Some(v) => v,
+                None => panic("thread: it finished without a result"),
+            }
+        }
+    }
+
+    /// Whether the thread has finished.
+    fn is_finished(self): bool {
+        unsafe {
+            let st = self.state as CPtr<ThreadState>
+            __mutex_lock((*st).lock)
+            let done = (*st).done == 1
+            __mutex_unlock((*st).lock)
+            done
+        }
+    }
+}
+
+Thread<T>: Drop {
+    fn drop(mut self) {
+        if self.joined {
+            return
+        }
+        unsafe {
+            let st = self.state as CPtr<ThreadState>
+            let slot = (self.state + ThreadState.size()) as CPtr<Option<T>>
+            __mutex_lock((*st).lock)
+            let mut leftover: Option<T> = None
+            if (*st).stored == 1 {
+                leftover = (*slot).take()
+            } else {
+                (*st).detached = 1
+            }
+            (*st).refs = (*st).refs - 1
+            let last = (*st).refs == 0
+            __mutex_unlock((*st).lock)
+            if last {
+                __free_thread_state(st)
+            }
+        }
+    }
+}

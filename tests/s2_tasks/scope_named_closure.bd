@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A task that borrows must be written at the `spawn` call: the checker follows what the closure borrows from the call,
+// and a closure held in a variable hides it.
+
+fn main() {
+    let mut a = 0
+    scope(|s| {
+        let t = || { a = a + 1 }
+        s.spawn(t) //~ E0171
+    })
+    println("{}", a)
+}

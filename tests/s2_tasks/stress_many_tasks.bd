@@ -1,0 +1,42 @@
+//@ run
+//> 20000 tasks, sum 399980000
+//> 1000 yielding tasks, sum 499500
+
+// Many tasks over several workers: each returns a value and the joins add them up. The second batch makes every task
+// yield many times, which moves them between workers and through the shared queue (spec/tasks.md, TK5).
+
+fn main() {
+    task.set_workers(4)
+    let mut handles = List<task.JoinHandle<i64>>.new()
+    let mut i: i64 = 0
+    while i < 20000 {
+        let n = i
+        handles.push(task.spawn(|| n * 2))
+        i = i + 1
+    }
+    let mut sum: i64 = 0
+    for h in handles.into_iter() {
+        sum = sum + h.join()
+    }
+    println("20000 tasks, sum {}", sum)
+
+    let mut yielders = List<task.JoinHandle<i64>>.new()
+    let mut j: i64 = 0
+    while j < 1000 {
+        let n = j
+        yielders.push(task.spawn(|| {
+            let mut k = 0
+            while k < 20 {
+                task.yield()
+                k = k + 1
+            }
+            n
+        }))
+        j = j + 1
+    }
+    let mut total: i64 = 0
+    for h in yielders.into_iter() {
+        total = total + h.join()
+    }
+    println("1000 yielding tasks, sum {}", total)
+}

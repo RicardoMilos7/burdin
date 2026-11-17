@@ -425,6 +425,7 @@ impl<'p> Interp<'p, '_> {
             Builtin::Canonicalize => return Err(impure("resolving a path", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
+            Builtin::Rt(_) | Builtin::ClosureOwn => return Err(impure("running tasks and threads", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
             Builtin::CPtrNull => return Err(impure("making a C pointer", span)),
             Builtin::CStringFrom => return Err(impure("allocating a C string", span)),

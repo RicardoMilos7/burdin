@@ -4,6 +4,32 @@ Burdin has no backward-compatibility promise (see `Burdin Language Design.md`). 
 GitHub milestones and the roadmap track the work in progress. A milestone closes with an entry here (see the
 close-out checklist in `AGENTS.md`).
 
+## Unreleased — Stage 2
+
+### Milestone 2.1: tasks and the scheduler (issue #198)
+
+- `task.spawn(|| ...)` runs a closure as a task on a work-stealing pool of worker threads and returns a `JoinHandle<T>`
+  (`join`, `is_finished`; dropping an unjoined handle detaches the task). A captured value moves into its task
+  (issues #199, #200).
+- The scheduler is Burdin code in `std/src/task.bd`: per-worker queues and parking, stealing one task from the head of
+  another worker's queue, wake-ups that cannot be lost, a pool started on first use and sized by `task.set_workers`
+  (issues #201, #301-#303). `tests/s2_tasks` has stress, fairness, one-worker, and idle-wake-up tests that run
+  repeatedly in CI (issue #304).
+- Tasks run on their own 256 KiB stacks with a 64 KiB guard region; running off the end is a clean
+  `panic: stack overflow` (issue #202). `task.yield()` puts the caller behind the other ready tasks (issue #203).
+- `task.scope(|s| { s.spawn(|| ...) })` starts tasks that may borrow places of the surrounding code and waits for them.
+  The exclusivity checker keeps what a task borrows unavailable until the scope body ends: two tasks writing one place,
+  or the body touching a borrowed place, is E0111; a task borrowing a local of the body, or a borrowing closure passed
+  by name, is E0171 (issue #204; `spec/memory-rules.md` SK1-SK3).
+- A panic in a task aborts the process (issue #205). `thread.spawn` runs a closure on an operating-system thread
+  (`Thread<T>`: `join`, `is_finished`) (issue #405). `spec/tasks.md` records the decisions TK1-TK12, including that
+  the derived `Send` marker waits for milestone 2.3.
+- The runtime is thread-safe where tasks reach it: output is written under a lock, the checking allocator's live list
+  is locked, and a task-stack overflow is recognized by the signal handler. The task primitives are LLVM IR text linked
+  in only by a program that uses them (`crates/burdin_codegen/src/taskrt/`). Code generation emits a closure body only
+  when a reachable body creates it, which also shrinks every program that does not use tasks.
+- Written for Linux, macOS, and Windows on x86-64 and arm64; run so far only on Linux x86-64 (debug and release).
+
 ## Unreleased — Infrastructure
 
 - Allocator follow-up (sub-issues #331-#333 of #182): the interface and metadata decision, the global libc allocator,

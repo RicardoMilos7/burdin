@@ -428,9 +428,27 @@ block. A generic function or an `extern` function as a value is E9000 for now.
 
 Tests: `tests/m12_closures/`.
 
+## 13. Scoped tasks (SK)
+
+`Scope.spawn(f)` (`std.task`, `spec/tasks.md` TK7) starts a task that runs until the end of its `scope`, so it is the
+one place a closure's borrow outlives the call that took it. The checker adds three rules, on one function body (the
+scope body is a closure):
+
+* **SK1.** The loans taken by the closure given to `Scope.spawn` last until the end of the scope body, whatever holds
+  them. Any later access of a place a task borrows mutably, and any write or `&mut` of a place a task borrows at all, is
+  E0111 (RF3). Places that tasks only read may be borrowed by any number of tasks.
+* **SK2.** A task may borrow only places that outlive the scope body: the captures of the body. Borrowing a local of
+  the body, which is dropped before the scope waits, is E0171. A closure that only copies or moves its captures may
+  borrow nothing and can be passed by name.
+* **SK3.** A `Scope.spawn` inside a loop is one task per iteration: a mutable loan it takes would be taken once per
+  iteration, so it is E0111. A closure that borrows must be written at the `spawn` call (E0171 otherwise), because the
+  rules above follow the loans the call site creates.
+
+Tests: `tests/s2_tasks/scope_*.bd`.
+
 ## Summary of error codes used here
 
 E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2 · E0100 MV2, MV5, MV8, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
-E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7 · E0113 CV2, MU3, CL6 · E0114 CV2 · E0115 CV2 ·
+E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7, SK1, SK3 · E0113 CV2, MU3, CL6 · E0114 CV2 · E0115 CV2 ·
 E0120 SC2, CL3 · E0121 RT3 · E0122 RT2 · E0123 RT5, CL3 · E0130 DR8, CP, CL10 · E0141 CL5, CL6 · E0161 US, CL11 ·
-E0171 CL3, CL9, CL11.
+E0171 CL3, CL9, CL11, SK2, SK3.

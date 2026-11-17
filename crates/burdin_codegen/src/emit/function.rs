@@ -73,16 +73,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.declare_closures()?;
         self.define_closure_drops()?;
         // A function nothing reaches is not emitted (see `reach.rs`): its declaration is enough.
-        let reachable = self.reachable_functions();
+        let reach = self.reachable();
         for (i, f) in program.functions.iter().enumerate() {
-            if reachable[i] {
+            if reach.functions[i] {
                 self.function(self.functions[i], f)?;
             } else {
                 self.dead_function(self.functions[i])?;
             }
         }
         for (i, clos) in program.closures.iter().enumerate() {
-            self.closure_body(self.closure_funcs[i], i, clos)?;
+            if reach.closures[i] {
+                self.closure_body(self.closure_funcs[i], i, clos)?;
+            } else {
+                self.dead_function(self.closure_funcs[i])?;
+            }
         }
         // Drop and clone glue may declare more glue for the types they contain; generate until there is none left.
         while let Some((kind, ty, value)) = self.pending_glue.pop() {

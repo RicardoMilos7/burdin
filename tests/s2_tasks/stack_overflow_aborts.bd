@@ -1,0 +1,20 @@
+//@ run-abort
+//> before
+//@ stderr: stack overflow
+
+// A task has its own fixed-size stack with a guard region below it. Running off the end is a clean abort with the
+// same message as the main stack's overflow, not memory corruption (spec/tasks.md, TK3).
+
+fn recurse(n: i64): i64 {
+    if n == 0 {
+        return 0
+    }
+    let pad = [n, n, n, n, n, n, n, n]
+    recurse(n + 1) + pad[3]
+}
+
+fn main() {
+    println("before")
+    let handle = task.spawn(|| recurse(1))
+    println("{}", handle.join())
+}

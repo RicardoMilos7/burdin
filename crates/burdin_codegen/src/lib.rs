@@ -30,6 +30,7 @@
 //! predecessors, so the rest of the tree can be generated without special cases.
 mod emit;
 mod runtime;
+mod taskrt;
 
 use burdin_diag::SourceMap;
 use burdin_tir::Program;

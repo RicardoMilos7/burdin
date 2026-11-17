@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// Two tasks of one scope cannot both write the same place: the loan of the first task lasts until the scope ends.
+
+fn main() {
+    let mut a = 1
+    scope(|s| {
+        s.spawn(|| { a = a + 10 })
+        s.spawn(|| { a = a + 20 }) //~ E0111
+    })
+    println("{}", a)
+}

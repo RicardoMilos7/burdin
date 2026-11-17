@@ -1,7 +1,7 @@
 //! The built-in functions, types, and methods.
 
 use crate::globals::Globals;
-use burdin_tir::{Builtin, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, Signature, Ty};
+use burdin_tir::{Builtin, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, RtOp, Signature, Ty};
 use std::rc::Rc;
 
 pub(crate) fn builtin(name: &str) -> Option<Builtin> {
@@ -37,11 +37,49 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__alloc" => Builtin::RawAlloc,
         "__realloc" => Builtin::RawRealloc,
         "__dealloc" => Builtin::RawDealloc,
-        _ => return None,
+        _ => return RtOp::ALL.iter().find(|(n, _)| *n == name).map(|(_, op)| Builtin::Rt(*op)),
     })
 }
 
+/// The signature of a task runtime primitive (`spec/tasks.md`, TK2): raw pointers and `usize`, and for the two that
+/// start something an owned `FnOnce(): ()` closure.
+fn rt_sig(op: RtOp) -> Signature {
+    let ptr = || Ty::CPtr(Box::new(Ty::Int(IntTy::U8)));
+    let plain = ParamSig::plain;
+    let closure = || ParamSig {
+        own: true,
+        ..plain(Ty::Fn {
+            sig: Rc::new(FnSig { params: Vec::new(), ret: Box::new(Ty::Unit) }),
+            kind: FnKind::FnOnce,
+            borrowed: false,
+        })
+    };
+    let usize_ty = || Ty::Int(IntTy::Usize);
+    let (params, ret) = match op {
+        RtOp::ThreadStart => (vec![closure()], Ty::Unit),
+        RtOp::ThreadYield | RtOp::SpinLock | RtOp::SpinUnlock => (Vec::new(), Ty::Unit),
+        RtOp::MutexNew | RtOp::CondNew | RtOp::CtxMain | RtOp::TlsGet | RtOp::GlobalGet => (Vec::new(), ptr()),
+        RtOp::MutexLock
+        | RtOp::MutexUnlock
+        | RtOp::MutexFree
+        | RtOp::CondSignal
+        | RtOp::CondBroadcast
+        | RtOp::CondFree
+        | RtOp::CtxFree
+        | RtOp::TlsSet
+        | RtOp::GlobalSet => (vec![plain(ptr())], Ty::Unit),
+        RtOp::CondWait | RtOp::CtxSwitch => (vec![plain(ptr()), plain(ptr())], Ty::Unit),
+        RtOp::CtxNew => (vec![plain(usize_ty()), closure()], ptr()),
+        RtOp::CpuCount | RtOp::ConfigGet => (Vec::new(), usize_ty()),
+        RtOp::ConfigSet => (vec![plain(usize_ty())], Ty::Unit),
+    };
+    Signature { params, ret, has_self: false, ret_origin: None }
+}
+
 pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
+    if let Builtin::Rt(op) = b {
+        return rt_sig(op);
+    }
     // The I/O primitives report the standard library's `IoError` when it is there (`spec/errors.md`, ERR10). The
     // primitives produce a zeroed error value; the `std` wrappers replace it with the real variant.
     let io_error = || globals.io_error_ty.clone().unwrap_or(Ty::Unit);

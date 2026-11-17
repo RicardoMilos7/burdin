@@ -1,0 +1,21 @@
+//@ run
+//> 5000 tasks on one worker, sum 12497500
+
+// With a single worker there is nobody to steal from and nobody else to wake: every task runs on the one thread, in
+// queue order, and a task that waits for another gives the worker back so the other can run (spec/tasks.md, TK5).
+
+fn main() {
+    task.set_workers(1)
+    let mut handles = List<task.JoinHandle<i64>>.new()
+    let mut i: i64 = 0
+    while i < 5000 {
+        let n = i
+        handles.push(task.spawn(|| n))
+        i = i + 1
+    }
+    let mut sum: i64 = 0
+    for h in handles.into_iter() {
+        sum = sum + h.join()
+    }
+    println("5000 tasks on one worker, sum {}", sum)
+}

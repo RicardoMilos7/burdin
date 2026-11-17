@@ -1117,6 +1117,25 @@ module that declares it `extern "C"`) can call it. The signature follows the sam
 `own` parameters, no generics, no `...`, no receiver, and only the C-ABI types above. A panic does not unwind across
 the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 
+## Tasks and threads (issue #198)
+
+`std.task` and `std.thread` are specified in [`tasks.md`](tasks.md); this is the surface.
+
+```
+fn task.spawn<T, F: FnOnce(): T>(own f: F): JoinHandle<T>
+fn task.scope<R, F: FnMut(Scope): R>(own f: F): R
+fn task.yield()
+fn task.set_workers(count: usize)
+JoinHandle<T> { fn join(own self): T; fn is_finished(self): bool }      // Drop detaches an unjoined task
+Scope { fn spawn<F: FnMut(): ()>(self, own f: F) }                       // the closure may borrow; see TK7
+fn thread.spawn<T, F: FnOnce(): T>(own f: F): Thread<T>
+fn thread.yield_now()
+Thread<T> { fn join(own self): T; fn is_finished(self): bool }          // Drop detaches an unjoined thread
+```
+
+Tests: `s2_tasks/two_tasks`, `moved_value`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, and the rest of the
+folder (`tasks.md` lists them by rule).
+
 ## Tests
 
 | Area | Tests |
@@ -1127,6 +1146,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`) |
+| Tasks, scopes, and threads | `s2_tasks/two_tasks`, `moved_value`, `detach_runs`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, `workers_steal`, `stress_many_tasks` |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |

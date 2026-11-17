@@ -32,7 +32,8 @@ not updated and may disagree with the repository.
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
    `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
    default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
-   is the behavior of `burdin test`, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   is the behavior of `burdin test`, `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
+   threads, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
    modules, caching, and the minimal `bindgen`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
@@ -109,7 +110,8 @@ crates/
   burdin_check/             return-origin, move, and borrow checks over the typed tree (spec/memory-rules.md)
   burdin_comptime/          the compile-time interpreter over the typed tree: constants, comptime expressions,
                             specialization of comptime parameters (spec/comptime.md)
-  burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime
+  burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime; taskrt/ holds the task
+                            runtime (threads, locks, context switch) as LLVM IR text, linked in only when used
   burdin_driver/            the `burdin` binary: build, run, test, bindgen; package loading (`package.rs`: burdin.toml,
                             modules, dependencies), build scripts (`build.rs`), and the minimal C bindgen
                             (`bindgen.rs`)

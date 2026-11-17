@@ -1,0 +1,17 @@
+//@ run-abort
+//> before
+//@ stderr: panic: boom in a task
+
+// A panic in a task aborts the whole process, like a panic anywhere else: it does not unwind, and it is not delivered to
+// whoever joins the task. Output written before the panic is flushed first (spec/tasks.md, TK8).
+
+fn boom() {
+    panic("boom in a task")
+}
+
+fn main() {
+    println("before")
+    let handle = task.spawn(|| { boom() })
+    handle.join()
+    println("not reached")
+}

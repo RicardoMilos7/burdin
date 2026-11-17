@@ -1,0 +1,14 @@
+//@ run
+//> finished
+//> 7
+
+// `is_finished` reports whether the thread or task is done without waiting; `join` after it never blocks.
+
+fn main() {
+    let h = thread.spawn(|| 7)
+    while !h.is_finished() {
+        thread.yield_now()
+    }
+    println("finished")
+    println("{}", h.join())
+}

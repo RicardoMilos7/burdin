@@ -1,0 +1,18 @@
+//@ run
+//> 3000 round trips
+
+// Between two round trips every worker has nothing to do and goes to sleep, and the next spawn from the main thread has
+// to wake one. A wake-up that was lost would leave this program waiting forever.
+
+fn main() {
+    task.set_workers(3)
+    let mut total: i64 = 0
+    let mut i: i64 = 0
+    while i < 3000 {
+        let n = i
+        let h = task.spawn(|| n + 1)
+        total = total + h.join() - n - 1
+        i = i + 1
+    }
+    println("{} round trips", i + total)
+}
