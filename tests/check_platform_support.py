@@ -225,6 +225,11 @@ check_claim(
 )
 check_claim(
     "crates/burdin_codegen/src/runtime.rs",
+    "SetThreadStackGuarantee",
+    "the Windows stack guard reserves room for its filter",
+)
+check_claim(
+    "crates/burdin_codegen/src/runtime.rs",
     "backtrace_symbols_fd",
     "symbolized backtraces use libc's backtrace calls",
 )

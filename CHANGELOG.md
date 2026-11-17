@@ -6,6 +6,11 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- The Windows stack-overflow guard reserves a 64 KiB stack guarantee (`SetThreadStackGuarantee`) before it registers
+  its vectored filter. The system's default left the filter only a few kilobytes once the exception dispatcher had
+  run, so the handler could fault before printing `panic: stack overflow`, which made
+  `tests/m02_basics/stack_overflow_aborts.bd` flaky on the `windows` CI job; the guard now has the same room the
+  Unix alternate signal stack gives its handler.
 - Allocator follow-up (sub-issues #331-#333 of #182): the interface and metadata decision, the global libc allocator,
   and drop/clone glue through a stored allocator are verified end to end.
   - `List.contains`, `Map.get`, `Map.remove`, and `Map.contains_key` borrow their key, as `spec/stdlib.md` says,
