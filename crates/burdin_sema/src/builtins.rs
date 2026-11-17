@@ -13,6 +13,13 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "panic" => Builtin::Panic,
         "__read_to_string" => Builtin::ReadToString,
         "__write_file" => Builtin::WriteFile,
+        "__file_open" => Builtin::FileOpen,
+        "__file_read" => Builtin::FileRead,
+        "__file_write" => Builtin::FileWrite,
+        "__file_seek" => Builtin::FileSeek,
+        "__file_sync" => Builtin::FileSync,
+        "__file_set_len" => Builtin::FileSetLen,
+        "__file_close" => Builtin::FileClose,
         "__stdout_write" => Builtin::StdoutWrite,
         "__stdout_write_line" => Builtin::StdoutWriteLine,
         "__stdout_flush" => Builtin::StdoutFlush,
@@ -63,6 +70,12 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(io_error())),
+        Builtin::FileOpen => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
+        Builtin::FileRead | Builtin::FileWrite => Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(io_error())),
+        Builtin::FileSeek => Ty::Result(Box::new(Ty::Int(IntTy::I64)), Box::new(io_error())),
+        Builtin::FileSync | Builtin::FileSetLen | Builtin::FileClose => {
+            Ty::Result(Box::new(Ty::Unit), Box::new(io_error()))
+        }
         Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
         Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::IsTerminal => Ty::Bool,
@@ -130,6 +143,33 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
+        Builtin::FileOpen => {
+            let mut params = vec![ParamSig::plain(Ty::Str)];
+            for _ in 0..6 {
+                params.push(ParamSig::plain(Ty::Bool));
+            }
+            params
+        }
+        // The buffer is the caller's list: the primitive appends to it after growing it.
+        Builtin::FileRead => {
+            let mut buf = ParamSig::plain(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global));
+            buf.by_ref = true;
+            buf.mut_param = true;
+            buf.exclusive = true;
+            vec![ParamSig::plain(Ty::Int(IntTy::I32)), buf, ParamSig::plain(Ty::Int(IntTy::Usize))]
+        }
+        Builtin::FileWrite => {
+            vec![ParamSig::plain(Ty::Int(IntTy::I32)), ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))]
+        }
+        Builtin::FileSeek => vec![
+            ParamSig::plain(Ty::Int(IntTy::I32)),
+            ParamSig::plain(Ty::Int(IntTy::I64)),
+            ParamSig::plain(Ty::Int(IntTy::I32)),
+        ],
+        Builtin::FileSync | Builtin::FileClose => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        Builtin::FileSetLen => {
+            vec![ParamSig::plain(Ty::Int(IntTy::I32)), ParamSig::plain(Ty::Int(IntTy::U64))]
+        }
         Builtin::RenamePath => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
         Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
@@ -348,6 +388,52 @@ mod tests {
             builtin_sig(Builtin::ReadToString, &Globals::default()).ret,
             Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit))
         );
+    }
+
+    #[test]
+    fn file_primitive_signatures_take_the_handle_and_the_caller_buffer() {
+        let error = Ty::Int(IntTy::I64);
+        let globals = Globals { io_error_ty: Some(error.clone()), ..Globals::default() };
+        for (name, found) in [
+            ("__file_open", Builtin::FileOpen),
+            ("__file_read", Builtin::FileRead),
+            ("__file_write", Builtin::FileWrite),
+            ("__file_seek", Builtin::FileSeek),
+            ("__file_sync", Builtin::FileSync),
+            ("__file_set_len", Builtin::FileSetLen),
+            ("__file_close", Builtin::FileClose),
+        ] {
+            assert_eq!(builtin(name), Some(found));
+        }
+
+        let open = builtin_sig(Builtin::FileOpen, &globals);
+        assert_eq!(open.params[0].ty, Ty::Str);
+        assert_eq!(open.params.len(), 7);
+        assert!(open.params[1..].iter().all(|p| p.ty == Ty::Bool));
+        assert_eq!(open.ret, Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(error.clone())));
+
+        let read = builtin_sig(Builtin::FileRead, &globals);
+        assert_eq!(read.params[0].ty, Ty::Int(IntTy::I32));
+        assert_eq!(read.params[1].ty, Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global));
+        assert!(read.params[1].by_ref, "the primitive appends to the caller's list");
+        assert!(read.params[1].mut_param, "the caller writes the buffer as `mut`");
+        assert!(read.params[1].exclusive);
+        assert_eq!(read.params[2].ty, Ty::Int(IntTy::Usize));
+        assert_eq!(read.ret, Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(error.clone())));
+
+        let write = builtin_sig(Builtin::FileWrite, &globals);
+        assert_eq!(write.params[0].ty, Ty::Int(IntTy::I32));
+        assert_eq!(write.params[1].ty, Ty::Slice(Box::new(Ty::Int(IntTy::U8))));
+        assert_eq!(write.ret, Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(error.clone())));
+
+        let seek = builtin_sig(Builtin::FileSeek, &globals);
+        assert_eq!(seek.params.len(), 3);
+        assert_eq!(seek.params[1].ty, Ty::Int(IntTy::I64));
+        assert_eq!(seek.ret, Ty::Result(Box::new(Ty::Int(IntTy::I64)), Box::new(error.clone())));
+
+        for b in [Builtin::FileSync, Builtin::FileSetLen, Builtin::FileClose] {
+            assert_eq!(builtin_sig(b, &globals).ret, Ty::Result(Box::new(Ty::Unit), Box::new(error.clone())));
+        }
     }
 
     #[test]

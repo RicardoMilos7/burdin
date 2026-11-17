@@ -418,6 +418,13 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
             Builtin::WriteFile => return Err(impure("writing a file", span)),
+            Builtin::FileOpen => return Err(impure("opening a file", span)),
+            Builtin::FileRead => return Err(impure("reading a file", span)),
+            Builtin::FileWrite => return Err(impure("writing a file", span)),
+            Builtin::FileSeek => return Err(impure("seeking in a file", span)),
+            Builtin::FileSync => return Err(impure("syncing a file", span)),
+            Builtin::FileSetLen => return Err(impure("resizing a file", span)),
+            Builtin::FileClose => return Err(impure("closing a file", span)),
             Builtin::ReadDir => return Err(impure("reading a directory", span)),
             Builtin::CreateDir => return Err(impure("creating a directory", span)),
             Builtin::RemoveDir => return Err(impure("removing a directory", span)),

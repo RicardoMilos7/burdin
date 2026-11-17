@@ -330,6 +330,148 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
+            // The file-handle primitives (`spec/stdlib.md`, "Files and file handles"). Each reports a descriptor,
+            // a byte count, a position, or zero for success; a negative result is the failure.
+            Builtin::FileOpen => {
+                let (ptr, len) = self.str_parts(&args[0])?;
+                let mut values: Vec<BasicMetadataValueEnum> = vec![ptr.into(), len.into()];
+                let i32_ty = self.cx.i32_type();
+                for arg in &args[1..7] {
+                    let v = self.expr_mode(arg, Mode::Use)?;
+                    let v = self.need(v, &Ty::Bool).into_int_value();
+                    let v = self.builder.build_int_z_extend(v, i32_ty, "").map_err(llvm_err)?;
+                    values.push(v.into());
+                }
+                let fd = self
+                    .builder
+                    .build_call(self.rt.file_open, &values, "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("open returns a descriptor")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, fd, i32_ty.const_zero(), "opened")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_open returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, fd, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileRead => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let Some(buf) = self.place_ptr(&args[1])? else {
+                    return Err("the file read buffer is not a place".into());
+                };
+                let max = self.expr_mode(&args[2], Mode::Use)?;
+                let max = self.need_int(max, &Ty::Int(burdin_tir::IntTy::Usize));
+                let n = self
+                    .builder
+                    .build_call(self.rt.file_read, &[fd.into(), buf.into(), max.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("file_read returns a count")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, n, self.usize_ty.const_zero(), "read")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_read returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, n, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileWrite => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let data = self.expr_mode(&args[1], Mode::Use)?;
+                let data = self.need(data, &args[1].ty).into_struct_value();
+                let ptr = self.builder.build_extract_value(data, 0, "").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(data, 1, "").map_err(llvm_err)?;
+                let n = self
+                    .builder
+                    .build_call(self.rt.file_write, &[fd.into(), ptr.into(), len.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("file_write returns a count")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, n, self.usize_ty.const_zero(), "written")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_write returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, n, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileSeek => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let offset = self.expr_mode(&args[1], Mode::Use)?;
+                let offset = self.need_int(offset, &Ty::Int(burdin_tir::IntTy::I64));
+                let whence = self.expr_mode(&args[2], Mode::Use)?;
+                let whence = self.need_int(whence, &Ty::Int(burdin_tir::IntTy::I32));
+                let position = self
+                    .builder
+                    .build_call(self.rt.file_seek, &[fd.into(), offset.into(), whence.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("file_seek returns a position")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, position, self.cx.i64_type().const_zero(), "position")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_seek returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, position, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileSync | Builtin::FileSetLen | Builtin::FileClose => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let mut values: Vec<BasicMetadataValueEnum> = vec![fd.into()];
+                if b == Builtin::FileSetLen {
+                    let size = self.expr_mode(&args[1], Mode::Use)?;
+                    let size = self.need_int(size, &Ty::Int(burdin_tir::IntTy::U64));
+                    values.push(size.into());
+                }
+                let function = match b {
+                    Builtin::FileSync => self.rt.file_sync,
+                    Builtin::FileSetLen => self.rt.file_set_len,
+                    _ => self.rt.file_close,
+                };
+                let status = self
+                    .builder
+                    .build_call(function, &values, "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("a file operation returns a status")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, status, self.cx.i32_type().const_zero(), "ok")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a file operation returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
             Builtin::StdoutWrite
             | Builtin::StdoutWriteLine
             | Builtin::StderrWrite
