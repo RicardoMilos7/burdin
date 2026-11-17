@@ -773,6 +773,151 @@ file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) report
 
 Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
 
+## Time (issue #195)
+
+```
+struct Duration derives (Copy, Clone, Eq, Ord, Hash, Default)   // a non-negative length of time
+struct Instant derives (Copy, Clone, Eq, Ord, Hash, Debug)      // a reading of the monotonic clock
+struct SystemTime derives (Copy, Clone, Eq, Ord, Hash, Debug)   // a reading of the real-time clock
+struct DateTime derives (Copy, Clone, Eq, Ord, Hash, Debug)     // a calendar date and time of day, in UTC
+enum Weekday derives (Copy, Clone, Eq, Ord, Hash, Debug)        // Monday ... Sunday
+interface Clock { fn now(self): Instant   fn system_time(self): SystemTime }
+struct SystemClock { }                                          // zero-sized; the operating system's clocks
+struct ManualClock                                              // moves only when told to
+fn sleep(d: Duration)
+
+Duration {
+    fn zero(): Duration                                  fn from_nanos(n: u64): Duration
+    fn from_micros(n: u64): Duration                     fn from_millis(n: u64): Duration
+    fn from_secs(n: u64): Duration                       fn from_secs_f64(secs: f64): Duration
+    fn as_nanos(self): u64      fn as_micros(self): u64  fn as_millis(self): u64     fn as_secs(self): u64
+    fn as_secs_f64(self): f64
+    fn subsec_nanos(self): u32  fn subsec_micros(self): u32                          fn subsec_millis(self): u32
+    fn is_zero(self): bool
+    fn checked_add(self, other: Duration): Option<Duration>
+    fn checked_sub(self, other: Duration): Option<Duration>
+    fn saturating_sub(self, other: Duration): Duration   fn abs_diff(self, other: Duration): Duration
+    fn times(self, n: u64): Duration                     fn divide(self, n: u64): Duration
+}                                                        // and `+`, `-` through Add and Sub; Display and Debug
+
+Instant {
+    fn now(): Instant                                    fn from_start(since_start: Duration): Instant
+    fn since_start(self): Duration                       fn elapsed(self): Duration
+    fn duration_since(self, earlier: Instant): Duration
+    fn checked_add(self, d: Duration): Option<Instant>   fn checked_sub(self, d: Duration): Option<Instant>
+}
+
+SystemTime {
+    fn now(): SystemTime                                 fn unix_epoch(): SystemTime
+    fn from_unix_secs(secs: i64): SystemTime             fn from_unix_nanos(nanos: i64): SystemTime
+    fn unix_secs(self): i64     fn unix_nanos(self): i64 fn subsec_nanos(self): u32
+    fn duration_since(self, earlier: SystemTime): Option<Duration>
+    fn checked_add(self, d: Duration): Option<SystemTime>
+    fn checked_sub(self, d: Duration): Option<SystemTime>
+    fn to_utc(self): DateTime
+}
+
+DateTime {   // the fields year: i32, month, day, hour, minute, second, nanosecond: u32 are public
+    fn new(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32, nanosecond: u32): Option<DateTime>
+    fn from_unix_secs(secs: i64): DateTime               fn to_unix_secs(self): i64
+    fn to_system_time(self): SystemTime
+    fn is_leap_year(self): bool   fn ordinal(self): u32  fn weekday(self): Weekday
+    fn format(self, pattern: str): String
+}                                                        // and Display (ISO 8601)
+
+ManualClock {
+    fn new(start: SystemTime): ManualClock
+    fn advance(mut self, d: Duration)                    fn set_system_time(mut self, time: SystemTime)
+}
+```
+
+- **Durations.** A `Duration` is one `u64` of nanoseconds, so it is never negative and tops out at about 584 years.
+  Every operation that could leave that range panics in every build profile, not only in debug: `from_micros`,
+  `from_millis`, `from_secs`, and `times` when the product does not fit, `+` when the sum does not fit, `-` when
+  the right side is longer, `from_secs_f64` for a negative, NaN, or too large value, and `divide(0)`. The `checked_`
+  forms return `None` instead, and `saturating_sub` stops at zero. `from_secs_f64` truncates to a whole nanosecond.
+  The `as_` functions round down, and `subsec_*` give the part after the last whole second.
+- **Writing a duration.** `Display` (and `Debug`, which is the same) writes the largest unit that gives a whole part,
+  with the fraction after it and no trailing zeros: `1.5s`, `250ms`, `42µs`, `7ns`, `0ns`. Width, fill, and
+  alignment apply; the precision does not.
+- **Two clocks.** `Instant` is the monotonic clock: it never goes backward, its zero is unspecified, and only the
+  difference between two readings means anything, so it is what measures how long something took.
+  `duration_since` is zero when `earlier` is not earlier, and `elapsed` is `Instant.now().duration_since(self)`.
+  `SystemTime` is the real-time clock: nanoseconds since 1970-01-01 00:00:00 UTC in an `i64` (the years 1678 to 2262,
+  negative before 1970). It can be set, so it can jump backward, which is why `SystemTime.duration_since` returns an
+  `Option`. `unix_secs` rounds toward the past, so a time before the epoch still has a `subsec_nanos` from 0 to
+  999,999,999. The monotonic clock is `clock_gettime(CLOCK_MONOTONIC)` and `QueryPerformanceCounter`; the real-time
+  clock is `clock_gettime(CLOCK_REALTIME)` and `GetSystemTimePreciseAsFileTime`.
+- **Calendar.** `DateTime` is the proleptic Gregorian calendar in UTC with no leap seconds and no time zones. The
+  conversions with Unix seconds are exact, before 1970 too; `from_unix_secs` panics when the year does not fit the
+  `i32` field. `DateTime.new` returns
+  `None` for a month outside 1 to 12, a day the month does not have (February 29 only in a leap year: divisible by 4,
+  except centuries that are not divisible by 400), an hour above 23, a minute or second above 59, or a nanosecond
+  above 999,999,999. The fields are public, so a value built by hand can be invalid; the derived ordering is
+  chronological because the fields run from the year down to the nanosecond. `to_system_time` panics outside the
+  range of `SystemTime`. `weekday` returns a `Weekday` and `ordinal` is 1 for January 1.
+- **Formatting a date.** `Display` writes ISO 8601 in UTC: `2026-11-17T09:41:07Z`, with the fraction of a second
+  after the seconds when it is not zero (`2023-11-14T22:13:20.12345Z`, no trailing zeros). `format(pattern)` expands
+  `%Y` (the year, at least four digits, with a minus sign when negative), `%m`, `%d`, `%H`, `%M`, `%S` (two digits
+  each), `%f` (nine digits of nanoseconds), `%j` (the day of the year, three digits), and `%%`. Any other text is
+  copied, including an unknown code such as `%q` and a `%` at the end.
+- **Determinism for tests.** Code that needs the time takes a `C: Clock` instead of calling `Instant.now()` or
+  `SystemTime.now()`. `SystemClock` forwards to the operating system. `ManualClock` starts its monotonic clock at
+  `Instant.from_start(Duration.zero())` and its real-time clock at the time given to `new`; `advance` moves both
+  forward (and panics if a reading would not fit), and `set_system_time` moves only the real-time clock, to model the
+  system clock being set. Everything else here (`Duration`, `DateTime`, the calendar functions, `ManualClock`) is
+  pure.
+- **Sleeping.** `sleep(d)` suspends the thread for about `d`. The system may round it up to its timer resolution
+  (whole milliseconds on Windows), and on Unix a signal can end it early. A long sleep is made of sleeps of at most
+  one hour.
+- **Compile time.** `Instant.now`, `SystemTime.now`, `SystemClock`'s methods, and `sleep` reach the operating
+  system, so a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9). The rest is pure and
+  works in a `const` or a `comptime` expression.
+
+Tests: `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`,
+`time_clock`, `time_comptime`, `time_comptime_impure`.
+
+## Random numbers (issue #195)
+
+```
+fn random_seed(): u64                                   // 64 random bits from the operating system
+struct Random derives (Clone, Eq)
+
+Random {
+    fn seeded(seed: u64): Random                        fn from_entropy(): Random
+    fn next_u64(mut self): u64                          fn next_u32(mut self): u32
+    fn next_bool(mut self): bool                        fn next_f64(mut self): f64
+    fn below(mut self, bound: u64): u64
+    fn range(mut self, low: i64, high: i64): i64        fn range_f64(mut self, low: f64, high: f64): f64
+    fn index(mut self, len: usize): Option<usize>
+    fn shuffle<T>(mut self, mut items: List<T>)
+}
+```
+
+- **The generator.** `Random` is xoshiro256** with its 256 bits of state filled from the seed by SplitMix64. It is
+  written in Burdin and uses only wrapping integer arithmetic, so a seed gives the same numbers on every platform,
+  in every build profile, and at compile time. Every seed works, including 0, because SplitMix64 never leaves the
+  state all zero for the four draws it makes. `clone` copies the state, so a clone replays the same numbers. It is a
+  statistical generator, not a cryptographic one: its output must not be used for keys or tokens.
+- **The seed source.** `random_seed()` is the one impure function: 64 bits from `getentropy` on Unix and `rand_s` on
+  Windows. If the system refuses, the bits come from the real-time clock, so a seed is never a constant. A test that
+  needs determinism seeds with a constant (`Random.seeded(42)`); a program that wants a different sequence each run
+  uses `Random.from_entropy()`, which is `Random.seeded(random_seed())`.
+- **Draws.** `next_u64` is the generator's output and `next_u32` is its high 32 bits. `next_bool` is the high bit.
+  `next_f64` is from 0.0 up to but not including 1.0, in steps of 2^-53. `below(bound)` is uniform over `0..bound`
+  with no modulo bias (a draw that would favor the low values is discarded and drawn again) and panics when `bound`
+  is zero. `range(low, high)` is uniform over `low..high` for any two `i64` values, including the whole `i64` range,
+  and panics unless `low < high`. `range_f64` is `low + next_f64() * (high - low)` and panics unless `low < high`
+  and the width is finite. `index(len)` is `Some` of a uniform index below `len`, or `None` for an empty collection.
+- **Shuffling.** `shuffle` is Fisher-Yates over `0..len` using `below`, so every order is equally likely and the
+  result is a function of the generator's state alone. An empty list and a one-element list are unchanged and
+  consume no numbers.
+- **Compile time.** `random_seed` and `from_entropy` fail with E0224 at compile time; `seeded` and every draw are
+  pure and work there (`comptime.md`, CT9).
+
+Tests: `m24_stdlib/random_seeded` (known answers from an independent implementation), `random_properties`,
+`random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure`.
+
 ## `Heap<T>`
 
 ```
@@ -1143,6 +1288,8 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
+| Time | `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_comptime`, `time_comptime_impure` |
+| Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

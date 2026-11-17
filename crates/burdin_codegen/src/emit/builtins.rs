@@ -601,6 +601,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
             }
+            Builtin::Clock => {
+                let kind = self.expr_mode(&args[0], Mode::Use)?;
+                let kind = self.need_int(kind, &Ty::Int(burdin_tir::IntTy::I32));
+                let call = self.builder.build_call(self.rt.clock, &[kind.into()], "").map_err(llvm_err)?;
+                return Ok(Some(call.try_as_basic_value().basic().expect("clock returns nanoseconds")));
+            }
+            Builtin::Entropy => {
+                let call = self.builder.build_call(self.rt.entropy, &[], "").map_err(llvm_err)?;
+                return Ok(Some(call.try_as_basic_value().basic().expect("entropy returns bits")));
+            }
+            Builtin::Sleep => {
+                let nanos = self.expr_mode(&args[0], Mode::Use)?;
+                let nanos = self.need_int(nanos, &Ty::Int(burdin_tir::IntTy::U64));
+                self.builder.build_call(self.rt.sleep, &[nanos.into()], "").map_err(llvm_err)?;
+                return Ok(None);
+            }
             Builtin::EnvArgs => {
                 let out = self.alloca(self.string_ty.into(), "args.list")?;
                 let out = self

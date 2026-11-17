@@ -1,0 +1,42 @@
+//@ run
+//> 1.5s 1.5s
+//> 250ms 42µs 7ns 0ns
+//> 3 3000 3000000 3000000000
+//> 1 500 500000 500000000 1.5
+//> 2.5s 1.5s 6s 666.666666ms 0ns 1.5s
+//> true true true false
+//> Some(1.5s) None Some(2.5s)
+//> None
+//> 1s 90s 1.000000001s
+//> 1ms 1.5ms 999µs 1.001ms
+//> 2.5s 1µs 0ns
+//> [    1.5s] [1.5s    ] [  1.5s  ] [****1.5s]
+//> 600ms
+
+// A `Duration` is a non-negative length of time with nanosecond precision: it is built from a unit, read back in any
+// unit, added and subtracted, compared, and written in its largest whole unit (spec/stdlib.md, "Time").
+
+fn main() {
+    let d = Duration.from_millis(1500)
+    println("{d} {d:?}")
+    println("{Duration.from_micros(250_000)} {Duration.from_nanos(42_000)} {Duration.from_nanos(7)} {Duration.zero()}")
+    let three = Duration.from_secs(3)
+    println("{three.as_secs()} {three.as_millis()} {three.as_micros()} {three.as_nanos()}")
+    println("{d.as_secs()} {d.subsec_millis()} {d.subsec_micros()} {d.subsec_nanos()} {d.as_secs_f64()}")
+    let a = Duration.from_secs(2)
+    let b = Duration.from_millis(500)
+    println("{a + b} {a - b} {a.times(3)} {a.divide(3)} {b.saturating_sub(a)} {a.abs_diff(b)}")
+    println("{b < a} {a == Duration.from_millis(2000)} {Duration.zero().is_zero()} {a.is_zero()}")
+    println("{a.checked_sub(b):?} {b.checked_sub(a):?} {a.checked_add(b):?}")
+    println("{Duration.from_nanos(u64.MAX).checked_add(Duration.from_nanos(1)):?}")
+    println("{Duration.from_secs(1)} {Duration.from_secs(90)} {Duration.from_nanos(1_000_000_001)}")
+    println("{Duration.from_millis(1)} {Duration.from_micros(1500)} {Duration.from_micros(999)} {Duration.from_micros(1001)}")
+    println("{Duration.from_secs_f64(2.5)} {Duration.from_secs_f64(0.000001)} {Duration.default()}")
+    println("[{d:>8}] [{d:<8}] [{d:^8}] [{d:*>8}]")
+    let mut total = Duration.zero()
+    let steps: [u64; 3] = [100, 200, 300]
+    for ms in steps {
+        total = total + Duration.from_millis(ms)
+    }
+    println("{total}")
+}
