@@ -210,22 +210,27 @@ ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, 
 `rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking"). The environment functions of
 `std.env` return `EnvError`: `Name` for an invalid name, `Value` for an invalid value, `Access` when the system
 refuses a change, `WorkingDirectory` when the directory cannot be read as text, and `SetWorkingDirectory` when it
-cannot be changed (`stdlib.md`, "Environment variables and the working directory").
+cannot be changed (`stdlib.md`, "Environment variables and the working directory"). A child's `spawn` failure
+(including a missing program and an argument or environment entry the system cannot take) is `IoError.Run` with the
+program name; reading a piped child stream reports `<stdout>`, `<stderr>`, or `<child>`, and writing the child's
+standard input reports `<stdin>` (`stdlib.md`, "Child processes").
 
 The message ends with the kind's text, so a missing file prints `cannot read missing.txt: not found`. `kind()` is
 the portable classification of ERR11, and `os_code()` is the operating system's own code when a system call reported
 the failure. The reader and writer variants (`UnexpectedEof`, `WriteZero`, `InvalidData`, and `Seek`) are failures
 `std` observed itself: they carry no path and no code, so `os_code()` is `None` and `kind()` maps them onto the
 portable kinds (ERR11). The other failures `std` detects have `os_code() == None` too; the ones that exist today are
-`remove_dir_all` on a path that is not a directory (`IoErrorKind.NotADirectory`) and a symbolic link `remove_dir_all`
-cannot remove (`IoErrorKind.Other`).
+`remove_dir_all` on a path that is not a directory (`IoErrorKind.NotADirectory`), a symbolic link `remove_dir_all`
+cannot remove (`IoErrorKind.Other`), and a process or pipe failure whose runtime path has no OS code to report.
 
 The compiler primitives behind the I/O functions (`__read_to_string`, `__write_file`, `__run`, `__read_dir`,
 `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`, `__metadata`, `__canonicalize`, `__stdin_read_line`,
-`__stdin_read_to_string`, and `__stdin_avail`) are typed `Result<..., i32>`: the error is the operating system's
-code, which the `std` wrapper turns into the `IoError` with `__io_kind(code)` (ERR11). `__stdin_avail` reports the
-code separately through `__stdin_error`, because its result is the byte count. The integer parsers stay typed with
-`ParseIntError` and produce a placeholder error value, which the `std` wrapper replaces with `Invalid`.
+`__stdin_read_to_string`, `__stdin_avail`, `__process_spawn`, `__pipe_read_to_string`, `__pipe_read_line`, and
+`__pipe_read_both`) are typed `Result<..., i32>`: the error is the operating system's code, which the `std` wrapper
+turns into the `IoError` with `__io_kind(code)` (ERR11). `__stdin_avail` reports the code separately through
+`__stdin_error`, because its result is the byte count. The process and pipe primitives report 0 when their runtime
+path has no code, and `std` maps 0 to `IoErrorKind.Other` with `os_code() == None`. The integer parsers stay typed
+with `ParseIntError` and produce a placeholder error value, which the `std` wrapper replaces with `Invalid`.
 
 ## ERR11. I/O error kinds and OS codes
 

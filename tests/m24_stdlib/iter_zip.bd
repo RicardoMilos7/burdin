@@ -1,0 +1,74 @@
+//@ run
+//> 10:0
+//> 20:1
+//> 30:2
+//> 5-10
+//> 4-20
+//> 3-30
+//> 10+2
+//> 20+1
+//> a=10
+//> b=20
+//> c=30
+//> 10->20
+//> 20->30
+//> 1400
+//> 4
+//> Some((0, 5)) Some((1, 6)) Some((2, 7)) None
+//> 0
+
+// `zip` pairs the items of two iterators and stops when either one ends. The two sources can be different kinds:
+// a list, a range, a user iterator, or another chain, and one list can be zipped with a view of itself.
+
+struct Countdown {
+    from: i32
+}
+
+Countdown: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.from <= 0 {
+            return None
+        }
+        let v = self.from
+        self.from = v - 1
+        Some(v)
+    }
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [10, 20, 30] {
+        xs.push(x)
+    }
+    // A list and a range: the shorter source ends the chain.
+    for (x, i) in xs.iter().zip((0..10).iter()) {
+        println("{x}:{i}")
+    }
+    // A user iterator on either side.
+    for (a, b) in (Countdown { from: 5 }).zip(xs.iter()) {
+        println("{a}-{b}")
+    }
+    for (x, c) in xs.iter().zip(Countdown { from: 2 }) {
+        println("{x}+{c}")
+    }
+    // Items that are not `Copy` come out as views, paired with items of another type.
+    let mut names = List<String>.new()
+    names.push(String.from("a"))
+    names.push(String.from("b"))
+    names.push(String.from("c"))
+    for (name, x) in names.iter().zip(xs.iter()) {
+        println("{name}={x}")
+    }
+    // One list zipped with a view of itself: adjacent pairs.
+    for (a, b) in xs.iter().zip(xs.iter().skip(1)) {
+        println("{a}->{b}")
+    }
+    // A zip is an iterator, so the adapters and the consumers apply.
+    println("{xs.iter().zip(xs.iter()).map(|p| p.0 * p.1).sum()}")
+    println("{(0..4).iter().zip((0..100).iter()).count()}")
+    let mut z = (0..3).iter().zip((5..9).iter())
+    println("{z.next():?} {z.next():?} {z.next():?} {z.next():?}")
+    // Zipping with an empty source gives nothing.
+    let empty = List<i32>.new()
+    println("{xs.iter().zip(empty.iter()).count()}")
+}

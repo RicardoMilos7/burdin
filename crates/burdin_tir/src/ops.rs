@@ -129,6 +129,29 @@ pub enum Builtin {
     Unreachable,
     /// `process.run(command)`: runs a command through the system shell.
     RunCommand,
+    /// `__env_list()`: every environment entry as `NAME=VALUE`, in the order the system reports them.
+    EnvList,
+    /// `__process_spawn(program, args, env, cwd, command_line, stdin, stdout, stderr)`: starts a child without a
+    /// shell. The tuple is `(pid, process, stdin, stdout, stderr)`; `process` is the Windows process handle (0 on
+    /// Unix) and each pipe handle is 0 when the stream is not piped. `command_line` is the quoted Windows command
+    /// line and is ignored on Unix.
+    ProcessSpawn,
+    /// `__process_wait(pid, process)`: waits for the child. The result is the exit code, `-1` for a failure to
+    /// wait, or `-(signal + 1)` when a signal ended the child.
+    ProcessWait,
+    /// `__process_close(process)`: releases the Windows process handle. It does nothing on Unix.
+    ProcessClose,
+    /// `__pipe_read_to_string(handle)`: every byte left in the pipe.
+    PipeReadToString,
+    /// `__pipe_read_line(handle)`: one line without its terminator, or `None` at the end of the pipe.
+    PipeReadLine,
+    /// `__pipe_read_both(first, second)`: both pipes read to the end, in one pass, so a child writing a lot to one
+    /// of them cannot block the other.
+    PipeReadBoth,
+    /// `__pipe_write(handle, text)`: writes every byte. The result is `0` on success and `-1` on failure.
+    PipeWrite,
+    /// `__pipe_close(handle)`: closes a pipe end. It is a no-op for handle 0.
+    PipeClose,
     /// `__float_str(v, prec, single)`: the text of a float (see the runtime's `f64_to_string`).
     FloatStr,
     /// `mem.swap(a, b)`: exchanges two places.
@@ -233,6 +256,8 @@ pub enum Method {
     IntoIter,
     /// `it.next()`: advances an iterator and returns its next item (IT6).
     IterNext,
+    /// `it.next_back()`: takes the last item of a double-ended built-in iterator (IT14).
+    IterNextBack,
     /// `x.clone()`: a deep copy derived by the compiler.
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.
@@ -280,6 +305,7 @@ impl Method {
                 | Method::MapGetMut
                 | Method::MapRemove
                 | Method::IterNext
+                | Method::IterNextBack
         )
     }
 
@@ -297,6 +323,7 @@ impl Method {
                 | Method::Chars
                 | Method::Iter
                 | Method::IterNext
+                | Method::IterNextBack
                 | Method::SharedGet
         )
     }

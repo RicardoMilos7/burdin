@@ -1,0 +1,48 @@
+//@ burdin-test passed=2 failed=0
+
+// `burdin test` allocates through the checking allocator, so a test fails when an allocation is still live at its end.
+// These tests partly consume chains of owned `String` items: the chains must free everything they still hold, whether
+// they are exhausted, cut short, or dropped untouched.
+
+fn names(prefix: str, count: usize): List<String> {
+    let mut out = List<String>.new()
+    let mut i: usize = 0
+    while i < count {
+        out.push(format("{prefix}{i}"))
+        i = i + 1
+    }
+    out
+}
+
+test "zip, chain, and flat_map free what they hold" {
+    // `zip` drops the item it took from the longer side when the shorter one ends.
+    let mut zipped = names("a", 3).into_iter().zip(names("b", 2).into_iter())
+    assert_eq(zipped.count(), 2)
+
+    // A chain dropped after one item frees the item it still holds and the whole second source.
+    let mut chained = names("c", 2).into_iter().chain(names("d", 2).into_iter())
+    let first = chained.next()
+    assert(first.is_some())
+
+    // `flat_map` holds the inner iterator it is draining.
+    let mut nested = (0..3).iter().flat_map(|n| names("e", 2).into_iter())
+    let taken = nested.next()
+    assert(taken.is_some())
+
+    // Nothing was consumed at all.
+    let untouched = names("f", 4).into_iter().chain(names("g", 4).into_iter())
+    let skipped = names("h", 2).into_iter().zip(names("i", 2).into_iter())
+}
+
+test "cloned, flatten, and cycle free what they hold" {
+    let source = names("j", 3)
+    let copies = source.iter().cloned().to_list()
+    assert_eq(copies.len(), 3)
+
+    let mut flat = (0..2).iter().map(|n| names("k", 3).into_iter()).flatten()
+    let one = flat.next()
+    assert(one.is_some())
+
+    let mut cycled = (0..2).iter().cycle()
+    assert_eq(cycled.next().unwrap(), 0)
+}

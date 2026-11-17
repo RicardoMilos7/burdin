@@ -11,8 +11,8 @@ program, then copies its public names into every module (the prelude). A project
 | `io.bd` | `read_to_string`, `write_file`, and the `stdin`, `stdout`, and `stderr` handles (`spec/stdlib.md`, Streams) |
 | `rw.bd` | the `Read`, `Write`, `Seek`, and `BufRead` interfaces, `SeekFrom`, `Cursor`, `BufReader`, `BufWriter`, `Lines`, and `copy` (`spec/stdlib.md`, Readers and writers) |
 | `fs.bd` | `read_dir`, `create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`, `metadata`, `canonicalize`, `walk`, and `walk_glob`, with `Metadata` and `FileKind` (`spec/stdlib.md`, "Directories, metadata, and walking") |
-| `env.bd` | `args` |
-| `process.bd` | `exit`, `run` |
+| `env.bd` | `args`, `get`, `get_bytes`, `set`, `set_bytes`, `remove`, `current_dir`, `current_dir_bytes`, `set_current_dir`, `set_current_dir_bytes`, and `EnvError` (`spec/stdlib.md`, "Environment variables and the working directory") |
+| `process.bd` | `exit`, `run`, and `Command`, with `Stdio`, `Child`, `ChildStdin`, `ChildStdout`, `ChildStderr`, `ExitStatus`, and `Output` (`spec/stdlib.md`, "Child processes") |
 | `mem.bd` | `swap`, `replace` |
 | `iter.bd` | `Iterator<T>` and `Iterable<T>`, the lazy adapters and their types, and the eager `List` helpers |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
@@ -32,11 +32,14 @@ the number methods (`to_string`, `parse`, `wrapping_*`, `checked_*`, `min`, `max
 `__stdout_flush`, `__stderr_write`, `__stderr_write_line`, `__stderr_write_bytes`, `__is_terminal`,
 `__stdin_read_line`, `__stdin_read_to_string`, `__stdin_avail`, `__stdin_next_byte`, `__stdin_error`, `__args`,
 `__env_get`, `__env_set`, `__env_set_bytes`, `__env_remove`, `__current_dir`, `__set_current_dir`,
-`__set_current_dir_bytes`, `__exit`, `__run`, `__swap`, and `__replace` primitives the modules above call, and
+`__set_current_dir_bytes`, `__env_list`, `__process_spawn`, `__process_wait`, `__process_close`,
+`__pipe_read_to_string`, `__pipe_read_line`, `__pipe_read_both`, `__pipe_write`, `__pipe_close`, `__exit`, `__run`,
+`__swap`, and `__replace` primitives the modules above call, and
 `print`/`println`/`eprint`/`eprintln`/`panic`. The I/O primitives are typed `Result<..., i32>`: the error is the
 operating system's code, and the `std` wrappers use `__io_kind` to build the `IoError` with its portable kind
-(`spec/errors.md`, ERR10-ERR11). The integer-parse primitives are typed with `ParseIntError` and produce a
-placeholder error value; the `std` wrappers replace it with `Invalid`.
+(`spec/errors.md`, ERR10-ERR11). A process or pipe primitive reports 0 when its runtime path has no code to give,
+and the `std` wrapper then uses the `Other` kind and `os_code() == None`. The integer-parse primitives are typed
+with `ParseIntError` and produce a placeholder error value; the `std` wrappers replace it with `Invalid`.
 
 Because the sources are embedded at compile time, changing a file here requires rebuilding `burdin`
 (`cargo build`). To use a modified standard library without rebuilding, point a package at its own `std`

@@ -27,6 +27,7 @@ impl Sema<'_> {
         };
         self.globals.iterator_iface = find_iface(&self.globals, "Iterator");
         self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
+        self.globals.double_ended_iface = find_iface(&self.globals, "DoubleEndedIterator");
         self.globals.display_iface = find_iface(&self.globals, "Display");
         self.globals.debug_iface = find_iface(&self.globals, "Debug");
         // Allocators (`spec/allocators.md`): the interface a container's allocator must implement, and the

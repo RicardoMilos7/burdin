@@ -1,0 +1,36 @@
+//@ burdin-test passed=1 failed=0
+//@ skip-platform: windows
+
+// In a `burdin test` build the checking allocator watches every allocation the process functions make: the
+// environment snapshot each spawn builds, the strings the pipes collect, and the child's handles must all be
+// released, and a test that leaks one fails.
+
+test "spawn and capture" {
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf ok; printf err >&2")
+    let result = cmd.output().unwrap()
+    assert(result.stdout.as_str() == "ok")
+    assert(result.stderr.as_str() == "err")
+    assert(result.status.success())
+
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("exit 2")
+    let status = cmd.status().unwrap()
+    assert(status.code().unwrap() == 2)
+
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("cat")
+    cmd.stdin(Stdio.Piped)
+    cmd.stdout(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    {
+        let input = child.stdin().unwrap()
+        input.write("echo").unwrap()
+    }
+    let text = child.stdout().unwrap().read_to_string().unwrap()
+    assert(text.as_str() == "echo")
+    assert(child.wait().unwrap().success())
+}

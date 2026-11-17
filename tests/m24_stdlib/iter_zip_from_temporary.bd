@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A zip over a temporary list outlives the storage it borrows, like every other chain over a temporary.
+fn make(): List<i32> {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs
+}
+
+fn main() {
+    let other = [1, 2, 3]
+    let mut it = other.iter().zip(make().iter()) //~ E0123
+    println(it.count().to_string())
+}

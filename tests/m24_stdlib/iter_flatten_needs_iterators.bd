@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `flatten` needs a source whose items are iterators.
+fn main() {
+    for x in (0..3).iter().flatten() { //~ E0003
+        println(x.to_string())
+    }
+}

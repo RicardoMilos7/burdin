@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `chain` needs both iterators to yield the same type.
+fn main() {
+    let xs = [1, 2, 3]
+    let mut names = List<String>.new()
+    names.push(String.from("a"))
+    for x in xs.iter().chain(names.iter()) { //~ E0141
+        println("{x}")
+    }
+}

@@ -159,7 +159,7 @@ fn stub(item: &FnItem) -> tir::Function {
         locals: Vec::new(),
         body: tir::Block { stmts: Vec::new(), tail: None },
         moved: Vec::new(),
-        ret_origin: None,
+        ret_origins: Vec::new(),
         symbolic: true,
         exported: item.is_exported,
     }
@@ -228,7 +228,7 @@ pub(crate) fn check_function(
         locals,
         body,
         moved: Vec::new(),
-        ret_origin: None,
+        ret_origins: Vec::new(),
         symbolic: false,
         exported: item.is_exported,
     }

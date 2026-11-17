@@ -1,0 +1,25 @@
+//@ compile-fail
+
+// The `Command` builder and the child handles check their argument counts and types like any other `std` API.
+
+fn main() {
+    let mut cmd = Command.new() //~ E0004
+    let mut cmd = Command.new("program")
+    cmd.arg() //~ E0004
+    cmd.arg(1) //~ E0003
+    cmd.args("not a list") //~ E0003
+    cmd.env("A") //~ E0004
+    cmd.env("A", 1) //~ E0003
+    cmd.env_remove() //~ E0004
+    cmd.cwd(1) //~ E0003
+    cmd.stdin(1) //~ E0003
+    cmd.stdout("piped") //~ E0003
+    cmd.stderr() //~ E0004
+
+    let mut spawned = Command.new("program")
+    spawned.spawn(1) //~ E0004
+    let mut waited = Command.new("program")
+    waited.status(1) //~ E0004
+    let mut captured = Command.new("program")
+    captured.output(1) //~ E0004
+}

@@ -599,6 +599,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
+            // A range iterator is plain integers and a flag.
+            Ty::RangeIter(..) => self.copy_bits(dst, src, ty),
             Ty::String => {
                 self.builder.build_call(self.rt.string_clone, &[dst.into(), src.into()], "").map_err(llvm_err)?;
                 Ok(())
