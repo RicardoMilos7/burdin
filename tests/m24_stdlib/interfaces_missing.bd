@@ -1,0 +1,30 @@
+//@ compile-fail
+
+// The cells that are deliberately empty (`spec/stdlib.md`, "Interface coverage"). Deriving an interface a field
+// does not implement is E0130 at that field.
+
+struct HashFloat derives (Hash) {
+    value: f64 //~ E0130
+}
+
+struct CopyList derives (Copy) {
+    value: List<i32> //~ E0130
+}
+
+struct EqList derives (Eq) {
+    value: List<i32> //~ E0130
+}
+
+struct CopyText derives (Copy) {
+    value: String //~ E0130
+}
+
+struct DebugArray derives (Debug) {
+    value: [i32; 3] //~ E0130
+}
+
+struct HashDeque derives (Hash) {
+    value: Deque<i32> //~ E0130
+}
+
+fn main() { }

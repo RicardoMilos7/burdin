@@ -2040,6 +2040,54 @@ module that declares it `extern "C"`) can call it. The signature follows the sam
 `own` parameters, no generics, no `...`, no receiver, and only the C-ABI types above. A panic does not unwind across
 the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 
+## Interface coverage (issue #716)
+
+Which built-in interface each standard type implements. A cell is either `yes` or the condition on the type
+arguments; `no` means the type does not implement it. The columns are the seven derives (`derives.md`) plus `Display`
+and `Iterable`.
+
+| Type | Copy | Clone | Eq | Ord | Hash | Default | Debug | Display | Iterable |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `String` | no | yes | yes | yes | yes | empty string | yes | yes | no (`.chars()`) |
+| `str` | yes | yes | yes | yes | yes | empty view | yes | yes | no (`.chars()`) |
+| `List<T>` | no | `T: Clone` | no | no | `T: Hash` | empty (`Global`) | `T: Debug` | no | yes |
+| `Map<K, V>` | no | `K, V: Clone` | `K, V: Eq` | no | `K, V: Hash` | empty (`Global`) | `K, V: Debug` | no | yes |
+| `Set<T>` | no | `T: Clone` | `T: Eq` | no | no | no | `T: Eq + Debug` | no | yes |
+| `Deque<T>` | no | `T: Clone` | `T: Eq` | no | no | empty | `T: Debug` | no | yes |
+| `PriorityHeap<T>` | no | `T: Clone` | no | no | no | empty | `T: Debug` | no | yes |
+| `Heap<T>` | no | yes | no | no | no | no | `T: Debug` | no | no |
+| `Shared<T>` | no | yes | no | no | no | no | no | no | no |
+| `Option<T>` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | `None` | `T: Debug` | no | no |
+| `Result<T, E>` | `T, E: Copy` | `T, E: Clone` | `T, E: Eq` | `T, E: Ord` | `T, E: Hash` | no | `T, E: Debug` | no | no |
+| tuples | parts | parts | parts | parts | parts | parts | 2 to 4 parts | no | no |
+| arrays `[T; N]` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | no | no | no | yes |
+| slices `[T]` | yes | yes | no | no | no | no | no | no | yes |
+| ranges `Range<T>` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | no | no | no | yes |
+| `Ordering` | yes | yes | yes | yes | yes | no | yes | no | no |
+| dynamic `Error` | no | no | no | no | no | no | yes | yes | no |
+| `IoError` | no | no | yes | no | no | no | yes | yes | no |
+| `Duration` | yes | yes | yes | yes | yes | zero | yes | yes | no |
+| `Instant` | yes | yes | yes | yes | yes | no | yes | no | no |
+| `SystemTime` | yes | yes | yes | yes | yes | no | yes | no | no |
+| `Weekday` | yes | yes | yes | yes | yes | no | yes | yes | no |
+| `DateTime` | yes | yes | yes | yes | yes | no | yes | yes | no |
+| `Path` | no | yes | yes | no | no | no | yes | yes | no |
+
+A generic container with a stored allocator (`List<T, A>`, `Map<K, V, A>`, `Set<T, A>`) implements `Clone`, `Eq`,
+and `Hash` from its elements and allocator value, and has a `Default` only when it uses `Global`: a stored allocator
+has no value to build a default from.
+
+`Hash` and `Eq` agree wherever both are present: equal values hash alike, including two maps with the same entries in
+different insertion order (a map hashes each entry from the offset basis and XORs the results, and a `List` folds its
+length and then its elements in order). A float has no `Hash` because `0.0 == -0.0` and a `NaN` never equals itself;
+`List` has no `Eq`/`Ord` and `Map` has no `Ord`; `String` is not `Copy`; arrays have no `Debug` or `Default`; and
+slices and references have no structural `==`.
+
+The cells that are `no` are deliberate: deriving that interface on a struct that holds the type is E0130 at the
+field, and the compile-fail test `m24_stdlib/interfaces_missing` pins each one. The cells that became `yes` in this
+issue are `Hash` for `str`/`String`/`List`/`Map`, `Default` for `List`/`Deque`/`PriorityHeap`, `Ord` for
+`Option`/`Result`, and `Eq`/`Debug` for `IoError` and `ParseIntError`.
+
 ## Tests
 
 | Area | Tests |
@@ -2070,6 +2118,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
+| Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
 | Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_comptime` |

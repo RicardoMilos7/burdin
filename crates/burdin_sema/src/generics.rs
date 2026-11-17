@@ -827,6 +827,10 @@ impl Globals {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Ord, env),
+            // `None < Some(_)`, and `Ok(_) < Err(_)`; two of a kind compare their payloads
+            // (`spec/stdlib.md`, "Interface coverage").
+            Ty::Option(t) => self.has_ord_in(t, env),
+            Ty::Result(t, e) => self.has_ord_in(t, env) && self.has_ord_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
             // A fixed-size array orders lexicographically.
             Ty::Array(t, _) => self.has_ord_in(t, env),
@@ -867,8 +871,14 @@ impl Globals {
     pub(crate) fn has_hash_in(&self, ty: &Ty, env: &Env) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
+            // Text hashes its bytes (`spec/derives.md`, `Hash`).
+            Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Hash, env),
             Ty::Option(t) => self.has_hash_in(t, env),
+            // A list hashes its elements in order and a map its entries in any order
+            // (`spec/stdlib.md`, "Interface coverage").
+            Ty::List(t, _) => self.has_hash_in(t, env),
+            Ty::Map(k, v, _) => self.has_hash_in(k, env) && self.has_hash_in(v, env),
             Ty::Range(t, _) => self.has_hash_in(t, env),
             Ty::Result(t, e) => self.has_hash_in(t, env) && self.has_hash_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
@@ -907,6 +917,8 @@ impl Globals {
             | Ty::Option(_)
             | Ty::Error
             | Ty::Never => true,
+            // The default list is empty and belongs to the default allocator, like the default map.
+            Ty::List(_, alloc) => alloc.is_global(),
             // The default map is empty and belongs to the default allocator: a stored allocator has no value to
             // build its default from.
             Ty::Map(_, _, alloc) => alloc.is_global(),
@@ -1193,6 +1205,33 @@ mod tests {
             methods: Vec::new(),
         });
         assert_eq!(g.bound_closure(&Bound::User(0, Vec::new())), vec![Bound::User(0, Vec::new()), Bound::Eq]);
+    }
+
+    #[test]
+    fn interface_queries_cover_std_types() {
+        let g = Globals::default();
+        let list = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global);
+        let map = Ty::Map(Box::new(Ty::String), Box::new(i32_()), burdin_tir::Alloc::Global);
+        let floats = Ty::List(Box::new(Ty::Float(burdin_tir::FloatTy::F64)), burdin_tir::Alloc::Global);
+
+        // `Hash` covers text, lists, and maps, and requires the element types (issue #716).
+        assert!(g.has_hash(&Ty::String));
+        assert!(g.has_hash(&Ty::Str));
+        assert!(g.has_hash(&list));
+        assert!(g.has_hash(&map));
+        assert!(!g.has_hash(&Ty::Float(burdin_tir::FloatTy::F64)), "a float has no Hash");
+        assert!(!g.has_hash(&floats), "a list of floats has no Hash");
+
+        // `Default` is the empty container, and only for the default allocator.
+        assert!(g.has_default(&list));
+        assert!(g.has_default(&map));
+        let stored = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Value(Box::new(Ty::String)));
+        assert!(!g.has_default(&stored), "a stored allocator has no default");
+
+        // `Ord` covers `Option` and `Result` (issue #716).
+        assert!(g.has_ord(&opt(i32_())));
+        assert!(g.has_ord(&Ty::Result(Box::new(i32_()), Box::new(i32_()))));
+        assert!(!g.has_ord(&list), "a list has no Ord");
     }
 
     #[test]

@@ -269,6 +269,92 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.first_difference(&orders)
             }
+            // `None < Some(_)`, and two `Some`s compare their payloads (`spec/stdlib.md`, "Interface coverage").
+            // The payload is compared only in the block where both tags say `Some`: reading it on a `None` would
+            // dereference an uninitialized pointer for a payload like `String`.
+            Ty::Option(inner) => {
+                let ot = t.into_struct_type();
+                let a_tag = self.builder.build_struct_gep(ot, l, 0, "").map_err(llvm_err)?;
+                let b_tag = self.builder.build_struct_gep(ot, r, 0, "").map_err(llvm_err)?;
+                let a_tag = self.builder.build_load(self.cx.bool_type(), a_tag, "").map_err(llvm_err)?.into_int_value();
+                let b_tag = self.builder.build_load(self.cx.bool_type(), b_tag, "").map_err(llvm_err)?.into_int_value();
+                let tag_order = self.cmp_ints(a_tag, b_tag, false)?;
+                if self.llvm_ty(inner).is_none() {
+                    return Ok(tag_order);
+                }
+                let same_tag = self.builder.build_int_compare(IntPredicate::EQ, a_tag, b_tag, "").map_err(llvm_err)?;
+                let payload_bb = self.new_block("cmp.option.payload");
+                let end = self.new_block("cmp.option.end");
+                let tags_bb = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_conditional_branch(same_tag, payload_bb, end).map_err(llvm_err)?;
+                self.builder.position_at_end(payload_bb);
+                let a = self.builder.build_struct_gep(ot, l, 1, "").map_err(llvm_err)?;
+                let b = self.builder.build_struct_gep(ot, r, 1, "").map_err(llvm_err)?;
+                let payload = self.cmp_at(a, b, inner)?;
+                let payload_from = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                let result = self.builder.build_phi(i32_ty, "order").map_err(llvm_err)?;
+                result.add_incoming(&[(&tag_order, tags_bb), (&payload, payload_from)]);
+                Ok(result.as_basic_value().into_int_value())
+            }
+            // `Ok(_) < Err(_)` (the variant order written in `Result`), and two of a kind compare their payloads.
+            // As for `Option`, the payload compare runs only inside the block of the matching variant.
+            Ty::Result(ok, err) => {
+                let rt = t.into_struct_type();
+                let a_tag = self.builder.build_struct_gep(rt, l, 0, "").map_err(llvm_err)?;
+                let b_tag = self.builder.build_struct_gep(rt, r, 0, "").map_err(llvm_err)?;
+                // The tag is `true` for `Ok`, so flipping it makes `Ok` compare as the first variant.
+                let a_tag = self.builder.build_load(self.cx.bool_type(), a_tag, "").map_err(llvm_err)?.into_int_value();
+                let b_tag = self.builder.build_load(self.cx.bool_type(), b_tag, "").map_err(llvm_err)?.into_int_value();
+                let a_tag = self.builder.build_not(a_tag, "").map_err(llvm_err)?;
+                let b_tag = self.builder.build_not(b_tag, "").map_err(llvm_err)?;
+                let tag_order = self.cmp_ints(a_tag, b_tag, false)?;
+                if self.llvm_ty(ok).is_none() && self.llvm_ty(err).is_none() {
+                    return Ok(tag_order);
+                }
+                let same_kind = self.builder.build_int_compare(IntPredicate::EQ, a_tag, b_tag, "").map_err(llvm_err)?;
+                let payload_bb = self.new_block("cmp.result.payload");
+                let end = self.new_block("cmp.result.end");
+                let tags_bb = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_conditional_branch(same_kind, payload_bb, end).map_err(llvm_err)?;
+                self.builder.position_at_end(payload_bb);
+                let is_ok = self.builder.build_not(a_tag, "").map_err(llvm_err)?;
+                let ok_bb = self.new_block("cmp.result.ok");
+                let err_bb = self.new_block("cmp.result.err");
+                let payload_end = self.new_block("cmp.result.same");
+                self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(ok_bb);
+                let ok_order = if self.llvm_ty(ok).is_some() {
+                    let a = self.builder.build_struct_gep(rt, l, 1, "").map_err(llvm_err)?;
+                    let b = self.builder.build_struct_gep(rt, r, 1, "").map_err(llvm_err)?;
+                    self.cmp_at(a, b, ok)?
+                } else {
+                    i32_ty.const_zero()
+                };
+                let ok_from = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(payload_end).map_err(llvm_err)?;
+                self.builder.position_at_end(err_bb);
+                let err_order = if self.llvm_ty(err).is_some() {
+                    let a = self.builder.build_struct_gep(rt, l, 2, "").map_err(llvm_err)?;
+                    let b = self.builder.build_struct_gep(rt, r, 2, "").map_err(llvm_err)?;
+                    self.cmp_at(a, b, err)?
+                } else {
+                    i32_ty.const_zero()
+                };
+                let err_from = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(payload_end).map_err(llvm_err)?;
+                self.builder.position_at_end(payload_end);
+                let payload_order = self.builder.build_phi(i32_ty, "order").map_err(llvm_err)?;
+                payload_order.add_incoming(&[(&ok_order, ok_from), (&err_order, err_from)]);
+                let payload = payload_order.as_basic_value().into_int_value();
+                let payload_from = self.builder.get_insert_block().expect("positioned");
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                let result = self.builder.build_phi(i32_ty, "order").map_err(llvm_err)?;
+                result.add_incoming(&[(&tag_order, tags_bb), (&payload, payload_from)]);
+                Ok(result.as_basic_value().into_int_value())
+            }
             Ty::Str | Ty::String => {
                 let (a_ptr, a_len) = self.parts_at(l, ty)?;
                 let (b_ptr, b_len) = self.parts_at(r, ty)?;
@@ -430,6 +516,42 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     acc = self.hash_at(f, inner, acc)?;
                 }
                 Ok(acc)
+            }
+            // A list hashes its length and then its elements in order, so equal lists hash alike whatever their
+            // capacity (`spec/derives.md`, `Hash`).
+            Ty::List(elem, alloc) => {
+                let seq = self.seq_load_at(ptr, alloc)?;
+                let len =
+                    self.builder.build_int_z_extend_or_bit_cast(seq.len, self.cx.i64_type(), "").map_err(llvm_err)?;
+                let with_len = self.hash_mix(acc, len)?;
+                if self.llvm_ty(elem).is_none() {
+                    return Ok(with_len);
+                }
+                let index = self.alloca(self.usize_ty.into(), "hash.list.i")?;
+                self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+                let running = self.alloca(self.cx.i64_type().into(), "hash.list.acc")?;
+                self.builder.build_store(running, with_len).map_err(llvm_err)?;
+                let header = self.new_block("hash.list.cond");
+                let body = self.new_block("hash.list.body");
+                let end = self.new_block("hash.list.end");
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(header);
+                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                let more = self.builder.build_int_compare(IntPredicate::ULT, i, seq.len, "").map_err(llvm_err)?;
+                self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                let element = self
+                    .elem_ptr_at(seq.data, elem, i)
+                    .ok_or_else(|| "a list element has no runtime type".to_string())?;
+                let current =
+                    self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value();
+                let mixed = self.hash_at(element, elem, current)?;
+                self.builder.build_store(running, mixed).map_err(llvm_err)?;
+                let next_i = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                self.builder.build_store(index, next_i).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                Ok(self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value())
             }
             // A map hashes each entry from a fixed start and combines the results with `xor`, so two maps with the
             // same entries hash alike whatever their iteration order: `Eq` and `Hash` must agree.

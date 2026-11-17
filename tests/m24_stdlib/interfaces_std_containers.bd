@@ -1,0 +1,30 @@
+//@ run
+//> true true
+//> true
+//> true true
+//> true true true
+//> true true
+
+// The standard containers' interfaces (`spec/stdlib.md`, "Interface coverage"): `Set` is Clone, Eq, Debug, and
+// Iterable; `Deque` and `PriorityHeap` are Clone, Eq (Deque only), Debug, and Iterable, and both have a default;
+// `Heap` is Clone and Debug; `Shared` is Clone for every `T`.
+
+fn main() {
+    let mut set = Set<i32>.new()
+    set.insert(1)
+    set.insert(1)
+    println("{} {}", set.contains(1), set.clone() == set)
+    let mut deque = Deque<i32>.new()
+    deque.push_back(1)
+    deque.push_front(0)
+    println("{}", deque.clone() == deque)
+    println("{} {}", Deque<i32>.default().len() == 0, PriorityHeap<i32>.default().len() == 0)
+    let mut heap = PriorityHeap<i32>.new()
+    heap.push(3)
+    heap.push(1)
+    let mut copy = heap.clone()
+    println("{} {} {}", copy.len() == 2, heap[0] == 3, copy.pop() == Some(3))
+    let boxed = Heap.new(String.from("x"))
+    let copy = boxed.clone()
+    println("{} {}", format("{:?}", copy) == format("{:?}", boxed), (*copy).len() == 1)
+}
