@@ -21,6 +21,9 @@ impl Globals {
             Ty::Chars => Ty::Char,
             Ty::ListIntoIter(elem, _) | Ty::ArrayIntoIter(elem, _) | Ty::RangeIter(elem, _) => (**elem).clone(),
             Ty::MapIter(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
+            // A mutable iterator yields a writable view of each element; a map's keys stay read-only (IT13).
+            Ty::IterMut(elem) => Self::mutable_view(elem),
+            Ty::MapIterMut(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::mutable_view(value)]),
             Ty::MapIntoIter(key, value, _) => Ty::Tuple(vec![(**key).clone(), (**value).clone()]),
             _ => return None,
         })
@@ -118,6 +121,10 @@ impl Globals {
         if copy { elem.clone() } else { Self::shared_view(elem) }
     }
 
+    fn mutable_view(ty: &Ty) -> Ty {
+        Ty::Ref { mutable: true, inner: Box::new(ty.clone()) }
+    }
+
     fn shared_view(ty: &Ty) -> Ty {
         Ty::Ref { mutable: false, inner: Box::new(ty.clone()) }
     }
@@ -169,6 +176,21 @@ mod tests {
         assert_eq!(g.builtin_iterator_item(&Ty::Chars, &[]), Some(Ty::Char));
         let map = Ty::MapIter(Box::new(Ty::Str), Box::new(i32_()));
         assert!(g.builtin_iterator_item(&map, &[]).is_some());
+    }
+
+    #[test]
+    fn mutable_iterators_yield_writable_views() {
+        let g = Globals::default();
+        let writable = |t: Ty| Ty::Ref { mutable: true, inner: Box::new(t) };
+        let shared = |t: Ty| Ty::Ref { mutable: false, inner: Box::new(t) };
+        // Every element is a `&mut T`, even a `Copy` one: that is what makes it writable (IT13).
+        assert_eq!(g.builtin_iterator_item(&Ty::IterMut(Box::new(i32_())), &[]), Some(writable(i32_())));
+        assert_eq!(g.builtin_iterator_item(&Ty::IterMut(Box::new(Ty::String)), &[]), Some(writable(Ty::String)));
+        // A map yields its keys read-only and its values writable.
+        let map = Ty::MapIterMut(Box::new(i32_()), Box::new(Ty::String));
+        assert_eq!(g.builtin_iterator_item(&map, &[]), Some(Ty::Tuple(vec![shared(i32_()), writable(Ty::String)])));
+        // They are iterators, not iterables: `for` reaches them through `iter_mut()`.
+        assert_eq!(g.builtin_iterable_item(&Ty::IterMut(Box::new(i32_())), &[]), None);
     }
 
     #[test]

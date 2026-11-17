@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A map's keys come out of a mutable walk as `&K`: the values are writable, the keys are not (IT13).
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 1)
+    for (k, v) in mut m {
+        *k = 5 //~ E0005
+        *v = 2
+    }
+}

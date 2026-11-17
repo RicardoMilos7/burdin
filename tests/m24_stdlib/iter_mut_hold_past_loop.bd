@@ -1,0 +1,37 @@
+//@ compile-fail
+
+// A writable view copied out of the loop keeps the collection borrowed until its last use, so the collection cannot
+// be changed while the copy is still live (IT13).
+
+fn held_from_loop() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let mut zero = 0
+    let mut held = &mut zero
+    for x in mut xs {
+        held = x
+    }
+    xs.push(2) //~ E0111
+    *held = 5
+}
+
+fn held_from_next() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let mut zero = 0
+    let mut held = &mut zero
+    let mut it = xs.iter_mut()
+    match it.next() {
+        Some(x) => {
+            held = x
+        }
+        None => {}
+    }
+    xs.push(2) //~ E0111
+    *held = 5
+}
+
+fn main() {
+    held_from_loop()
+    held_from_next()
+}

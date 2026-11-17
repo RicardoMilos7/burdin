@@ -7,7 +7,7 @@ use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
-    /// `xs.iter()` and `xs.into_iter()`: builds the iterator value of the receiver's type.
+    /// `xs.iter()`, `xs.iter_mut()`, and `xs.into_iter()`: builds the iterator value of the receiver's type.
     pub(super) fn iter_value(
         &mut self,
         args: &'a [burdin_tir::Expr],
@@ -116,6 +116,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let elem = (**elem).clone();
                 self.next_slice(&args[0], &elem, &item, ty)
             }
+            // A mutable list or array iterator walks the same `{ptr, len}` state as a slice; its item is always the
+            // element's address.
+            Ty::IterMut(elem) => {
+                let elem = (**elem).clone();
+                self.next_slice(&args[0], &elem, &item, ty)
+            }
             Ty::Chars => self.next_chars(&args[0], ty),
             Ty::ListIntoIter(elem, alloc) => {
                 let (elem, alloc) = ((**elem).clone(), alloc.clone());
@@ -125,7 +131,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let elem = (**elem).clone();
                 self.next_array_into(&args[0], &elem, *n, ty)
             }
-            Ty::MapIter(k, v) => {
+            Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {
                 let (k, v) = ((**k).clone(), (**v).clone());
                 self.next_map(&args[0], &k, &v, &item, ty, false, &burdin_tir::Alloc::Global)
             }

@@ -169,4 +169,42 @@ Returning a chain from a function is allowed when it derives from exactly one vi
 how `iter()`/`into_iter()` and the adapters return one. The loans a chain holds last as long as the chain value
 (CL7/RF2): while a chain over a collection is live and used, the collection cannot be written or moved.
 
-Tests: `tests/m13_iterators/`.
+**IT13 Mutable iteration (issue #709).** A loop can write every element of a collection in place. Decisions:
+
+- *Spelling.* Both forms exist and mean the same thing: `xs.iter_mut()` returns an iterator, and `for pattern in mut xs`
+  is `for pattern in xs.iter_mut()`. The `mut` after `in` follows the call-site marker of `mut` arguments (CV2): it says
+  the loop borrows `xs` exclusively. `xs` must be a mutable place (E0113), like any `mut self` receiver.
+- *The item is a `&mut T`, not a new kind of place.* The loop binding is an ordinary `&mut T` value, so an element is
+  read and written with `*x` (`*x = *x + 1`), and fields and methods work through it without a `*` (RF1). This keeps
+  IT2 unchanged (a plain loop binding is still a read-only place) and needs no new binding rule: `Option<&mut T>`
+  and `&mut V` already come out of `get_mut` and `entry`.
+- *Sources.*
+
+| Type | `iter_mut()` gives | `next()` yields |
+| --- | --- | --- |
+| `[T; N]` (a mutable place) | `IterMut<T>` | `&mut T` |
+| `List<T>` | `IterMut<T>` | `&mut T` |
+| `Map<K, V>` | `MapIterMut<K, V>` | `(&K, &mut V)` |
+| `Deque<T>` | `DequeIterMut<&mut Deque<T>, T>` | `&mut T` |
+
+  A map's keys stay read-only (assigning through `&K` is E0005), and the order of a map walk is unspecified. `Deque`
+  declares `iter_mut(mut self)` in `std`; a user type joins `for x in mut c` by declaring an `iter_mut(mut self)` method
+  that returns an `Iterator<U>`, with no interface to implement. A type without `iter_mut` is E0002. A slice `[T]`
+  has no `iter_mut`: a slice is a read-only view, and a writable slice type does not exist in the language yet.
+  `Heap` and `Set` have none either, because writing an element would break their ordering or hashing.
+- *Exclusivity.* `iter_mut()` borrows the collection exclusively (`memory-rules.md`, IT13): while the iterator or an
+  item derived from it is live, any use of the collection is E0111. Inside `for x in mut xs`, that makes `xs.push`,
+  `xs.insert`, `xs.remove`, `xs.len()`, reading `xs[i]`, and a second `for ... in mut xs` all E0111, so the table or
+  buffer can never move under the loop. A view copied out of the loop (`held = x`) keeps the collection borrowed
+  until the copy's last use. Liveness is per top-level statement (RF2), so when the loop sits inside a nested block
+  (an `if`, a `while`, or a block expression) the collection stays borrowed until the end of the enclosing
+  top-level statement; finish the loop in its own statement of the function body to use the collection again.
+- *Adapters.* The iterator is an ordinary `Iterator<&mut T>`, so the adapters of IT9 apply to it unchanged:
+  `enumerate` gives `(usize, &mut T)`, and `take`, `skip`, `step_by`, `take_while`, `skip_while`, `peekable`, `nth`,
+  `last`, `for_each`, and `count` work as they do over any iterator. `zip` and `rev` are not provided (issue #706).
+  `filter`, `find`, and the other adapters that hand the closure `&T` see a `&&mut T`.
+- *Compile time.* A mutable iterator mutates a run-time collection, so `iter_mut` is impure at compile time (E0224,
+  CT9), like `get_mut`.
+- *Drops.* A mutable iterator owns nothing and has no drop glue. Writing `*x = v` drops the element it replaces.
+
+Tests: `tests/m13_iterators/`; mutable iteration: `tests/m24_stdlib/iter_mut_*`.

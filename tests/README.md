@@ -286,7 +286,8 @@ executable form. The design document leaves them open; where a rule says "deviat
    afterwards, and gives a read-only element place usable like a value. Maps use `for (k, v) in map` (also a borrow).
    `for c in s.chars()`. Mutating the collection in the body is E0111. Ranges are ordinary values of
    `Range<T>`/`RangeInclusive<T>` (issue #53), iterated by `for i in r` without borrowing `r`.
-   `spec/memory-rules.md` IT1-IT3.
+   `spec/memory-rules.md` IT1-IT3. `for x in mut xs` (issue #709) borrows exclusively and yields `&mut T`;
+   `spec/memory-rules.md` IT13.
 7. **Library names and signatures.** The surface is written down with signatures in `spec/stdlib.md`: numeric
    methods, `String` and `str` methods and slicing, `List`, `Map`, `Heap`, `Option`/`Result`, file, process, and
    environment functions, the C bridge names, and `unreachable()`. Unknown names are E0002 and wrong arities E0004.

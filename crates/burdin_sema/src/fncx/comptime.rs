@@ -16,7 +16,7 @@ impl FnCx<'_> {
             ast::ExprKind::If { cond, then_block, else_expr } => {
                 self.comptime_if(cond, then_block, else_expr.as_deref(), expect, span)
             }
-            ast::ExprKind::For { pattern, iter, body } => self.comptime_for(pattern, iter, body, span),
+            ast::ExprKind::For { pattern, iter, body, .. } => self.comptime_for(pattern, iter, body, span),
             _ => {
                 let value = self.expr(inner, expect);
                 self.comptime_value(value, span)

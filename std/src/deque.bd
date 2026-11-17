@@ -21,6 +21,13 @@ struct DequeIter<D, T> {
     next_index: usize
 }
 
+/// The iterator of `deque.iter_mut()`: it yields a writable view of each element from the front to the back. `D` is
+/// the exclusive view of the deque it walks (spec/iterators.md, IT13).
+struct DequeIterMut<D, T> {
+    source: D
+    next_index: usize
+}
+
 /// What `DequeIter` needs from the deque it walks.
 interface DequeLen {
     fn deque_len(self): usize
@@ -174,6 +181,26 @@ Deque<T>: Iterable<&T> {
     /// An iterator over views of the elements, from the front to the back.
     fn iter(self): DequeIter<&Deque<T>, T> {
         DequeIter { source: &self, next_index: 0 }
+    }
+}
+
+Deque<T> {
+    /// An iterator over writable views of the elements, from the front to the back. The deque is borrowed
+    /// exclusively until the iterator's last use, so `for x in mut deque` can write every element but cannot push,
+    /// pop, or read the deque inside the loop.
+    fn iter_mut(mut self): DequeIterMut<&mut Deque<T>, T> {
+        DequeIterMut { source: &mut self, next_index: 0 }
+    }
+}
+
+DequeIterMut<D, T>: Iterator<&mut T> where D: IndexMut<T> + DequeLen {
+    fn next(mut self): Option<&mut T> {
+        if self.next_index >= self.source.deque_len() {
+            return None
+        }
+        let k = self.next_index
+        self.next_index = self.next_index + 1
+        Some(&mut self.source[k])
     }
 }
 

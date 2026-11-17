@@ -1,0 +1,29 @@
+//@ run
+//> drop 1
+//> drop 2
+//> set 10 20
+//> drop 10
+//> drop 20
+
+// A mutable iterator owns nothing: writing `*x = v` drops the element it replaces exactly once, and the new element
+// is dropped with the list (IT13).
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut xs = List<Token>.new()
+    xs.push(Token { id: 1 })
+    xs.push(Token { id: 2 })
+    for t in mut xs {
+        *t = Token { id: t.id * 10 }
+    }
+    println("set {xs[0].id} {xs[1].id}")
+}

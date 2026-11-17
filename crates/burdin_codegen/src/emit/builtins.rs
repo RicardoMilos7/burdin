@@ -676,7 +676,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        if matches!(m, Method::Iter | Method::IntoIter) {
+        // `iter_mut` builds the same value as `iter`: the mutable iterators share the borrowing ones' layout.
+        if matches!(m, Method::Iter | Method::IterMut | Method::IntoIter) {
             return self.iter_value(args, m == Method::IntoIter);
         }
         if m == Method::IterNext {

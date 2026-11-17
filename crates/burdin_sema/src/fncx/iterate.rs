@@ -209,6 +209,40 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Block(tir::Block { stmts: vec![init], tail: Some(Box::new(looped)) }), Ty::Unit, span)
     }
 
+    /// `for pattern in mut e`: the loop calls `e.iter_mut()` and walks the iterator it returns, whose items are
+    /// writable views (IT13). The collection is borrowed exclusively until the loop ends. The method is a
+    /// compiler-known one for `List`, arrays, and `Map`, and an ordinary `iter_mut(mut self)` method for a user
+    /// type; either way the result must be an `Iterator`.
+    pub(super) fn for_mut(
+        &mut self,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        body: &ast::Block,
+        span: Span,
+    ) -> tir::Expr {
+        let name = ast::Ident { name: "iter_mut".to_string(), span: iter.span };
+        let iterator = self.method_call(iter, &name, &[], span, None);
+        if iterator.ty == Ty::Error {
+            // The iterable did not resolve; the body is still checked for its own errors.
+            self.scopes.push(Default::default());
+            self.loops.push(false);
+            let _ = self.pattern(pattern, &Ty::Error, true);
+            let _ = self.block(body, None);
+            self.loops.pop();
+            self.scopes.pop();
+            return error_expr(span);
+        }
+        let Some(item) = self.globals.iterator_item(&iterator.ty, &self.bounds) else {
+            self.diags.error(
+                Code::BOUND_NOT_SATISFIED,
+                span,
+                format!("`iter_mut()` returns `{}`, which is not an `Iterator`", iterator.ty),
+            );
+            return error_expr(span);
+        };
+        self.protocol_for(pattern, iterator, item, body, span)
+    }
+
     /// The iterator a `for` over an `Iterable` starts: `value.iter()`, or a symbolic iterator for a type
     /// parameter with the bound.
     pub(super) fn for_iterator(&mut self, iter: &ast::Expr, iterable: tir::Expr, item: &Ty, span: Span) -> tir::Expr {

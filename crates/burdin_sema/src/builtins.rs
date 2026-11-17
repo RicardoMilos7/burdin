@@ -271,6 +271,9 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("iter", Ty::List(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
         ("iter", Ty::Map(k, v, _)) => (Method::Iter, vec![], Ty::MapIter(k.clone(), v.clone())),
         ("iter", Ty::Chars) => (Method::Iter, vec![], Ty::Chars),
+        // The mutable iterators yield `&mut T` and borrow the collection exclusively (IT13).
+        ("iter_mut", Ty::List(elem, _) | Ty::Array(elem, _)) => (Method::IterMut, vec![], Ty::IterMut(elem.clone())),
+        ("iter_mut", Ty::Map(k, v, _)) => (Method::IterMut, vec![], Ty::MapIterMut(k.clone(), v.clone())),
         ("iter", Ty::Range(elem, inclusive)) => (Method::Iter, vec![], Ty::RangeIter(elem.clone(), *inclusive)),
         ("into_iter", Ty::List(elem, alloc)) => {
             (Method::IntoIter, vec![], Ty::ListIntoIter(elem.clone(), alloc.clone()))

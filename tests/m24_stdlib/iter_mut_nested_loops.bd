@@ -1,0 +1,40 @@
+//@ compile-fail
+
+// Two mutable loops over the same collection would hold two writable views of one element, so the inner loop is a
+// conflict. A mutable loop and an iterator that is still in use conflict the same way (IT13).
+
+fn nested() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    for x in mut xs {
+        for y in mut xs { //~ E0111
+            *y = *x
+        }
+    }
+}
+
+fn shared_inside() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    for x in mut xs {
+        for y in xs { //~ E0111
+            *x = y
+        }
+    }
+}
+
+fn live_iterator() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let mut it = xs.iter_mut()
+    for x in mut xs { //~ E0111
+        *x = 2
+    }
+    let _ = it.next()
+}
+
+fn main() {
+    nested()
+    shared_inside()
+    live_iterator()
+}

@@ -1,0 +1,37 @@
+//@ compile-fail
+
+// `for x in mut xs` borrows `xs` exclusively for the whole loop, so the body cannot grow, shrink, read, or move the
+// collection: the buffer could move under the iterator (IT13).
+
+fn push_inside() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    for x in mut xs {
+        *x = 2
+        xs.push(3) //~ E0111
+    }
+}
+
+fn read_inside() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    for x in mut xs {
+        let n = xs.len() //~ E0111
+        *x = n as i32
+    }
+}
+
+fn map_insert_inside() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 1)
+    for (_, v) in mut m {
+        m.insert(2, 2) //~ E0111
+        *v = 0
+    }
+}
+
+fn main() {
+    push_inside()
+    read_inside()
+    map_insert_inside()
+}

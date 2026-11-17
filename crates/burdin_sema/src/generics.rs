@@ -742,9 +742,10 @@ impl Globals {
         {
             return answer;
         }
-        // A shared view satisfies what its target does: a chain is generic over the view type of its source, and
-        // its bounds (`D: Index<T>`) ask about the borrowed collection (`spec/iterators.md` IT12).
-        if let Ty::Ref { mutable: false, inner } = ty {
+        // A view satisfies what its target does: a chain is generic over the view type of its source, and its
+        // bounds (`D: Index<T>`) ask about the borrowed collection (`spec/iterators.md` IT12). A mutable view
+        // carries a mutable iterator's source, whose bounds (`D: IndexMut<T>`) do the same (IT13).
+        if let Ty::Ref { inner, .. } = ty {
             return self.implements(inner, iface, args, env);
         }
         if let Some(have) = self.builtin_iface_args(ty, iface, env) {

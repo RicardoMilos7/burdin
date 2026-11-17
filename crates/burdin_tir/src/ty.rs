@@ -216,6 +216,13 @@ pub enum Ty {
     MapIter(Box<Ty>, Box<Ty>),
     /// The owning iterator of a `Map<K, V>`: the map's buffer, moved entry by entry, and the map's allocator.
     MapIntoIter(Box<Ty>, Box<Ty>, Alloc),
+    /// A mutable iterator over the elements of a `List<T>` or an array `[T; N]` (`iter_mut()`): the address of the
+    /// next element and the number left, like a slice. It yields `&mut T` and holds an exclusive loan on the
+    /// collection for its whole life (spec/iterators.md, IT13).
+    IterMut(Box<Ty>),
+    /// A mutable iterator over a `Map<K, V>` (`iter_mut()`): the same state as [`Ty::MapIter`]. It yields
+    /// `(&K, &mut V)` and holds an exclusive loan on the map.
+    MapIterMut(Box<Ty>, Box<Ty>),
     /// The iterator of a range: the two endpoints and whether the range is exhausted. The flag is true for the
     /// inclusive form.
     RangeIter(Box<Ty>, bool),
@@ -257,7 +264,7 @@ impl Ty {
             Ty::Fn { borrowed, .. } => *borrowed,
             Ty::Array(t, _) | Ty::Option(t) | Ty::List(t, _) => t.is_second_class(),
             // An owning iterator holds its elements; a borrowing one points at its source.
-            Ty::MapIter(..) => true,
+            Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) => true,
             // An entry points at its map, so it is a view of that map's storage (SC2).
             Ty::MapEntry(..) => true,
             Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _) | Ty::RangeIter(t, _) => t.is_second_class(),
@@ -321,6 +328,8 @@ impl fmt::Display for Ty {
             Ty::ListIntoIter(t, a) => write!(f, "ListIntoIter<{t}, {a}>"),
             Ty::ArrayIntoIter(t, n) => write!(f, "ArrayIntoIter<{t}, {n}>"),
             Ty::MapIter(k, v) => write!(f, "MapIter<{k}, {v}>"),
+            Ty::IterMut(t) => write!(f, "IterMut<{t}>"),
+            Ty::MapIterMut(k, v) => write!(f, "MapIterMut<{k}, {v}>"),
             Ty::MapIntoIter(k, v, Alloc::Global) => write!(f, "MapIntoIter<{k}, {v}>"),
             Ty::MapIntoIter(k, v, a) => write!(f, "MapIntoIter<{k}, {v}, {a}>"),
             Ty::RangeIter(t, false) => write!(f, "RangeIter<{t}>"),
