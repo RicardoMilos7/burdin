@@ -622,6 +622,11 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::ListNew | Builtin::ListWithCapacity => Value::List(Vec::new()),
             Builtin::MapNew => Value::Map(Vec::new()),
+            // Capacity is not modeled at compile time; the argument is still evaluated.
+            Builtin::MapWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Map(Vec::new())
+            }
             Builtin::IntParse(int_ty) => {
                 let parsed = self.peek(&args[0], |v| parse_int(v.bytes(), int_ty))?;
                 match parsed {
@@ -933,8 +938,14 @@ impl<'p> Interp<'p, '_> {
                 })?;
                 Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
             }
-            Method::MapGetMut | Method::MapGetOrInsert => return Err(impure("a mutable view of a map value", span)),
+            Method::MapGetMut | Method::MapGetOrInsert | Method::MapGetOr => {
+                return Err(impure("a mutable view of a map value", span));
+            }
             Method::IterMut => return Err(impure("a mutable iterator", span)),
+            Method::MapRetain => return Err(impure("a callback over a map value", span)),
+            // Capacity is not modeled at compile time: the map is a list of pairs, so reserving and shrinking
+            // change nothing observable.
+            Method::MapReserve | Method::MapShrinkToFit => Value::Unit,
             Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
                 return Err(impure("an entry into a map value", span));
             }
@@ -957,6 +968,18 @@ impl<'p> Interp<'p, '_> {
                             self.drop_value(key, &kt, span)?;
                         }
                         Value::Opt(Some(Box::new(v)))
+                    }
+                    None => Value::Opt(None),
+                }
+            }
+            Method::MapRemoveEntry => {
+                let place = self.eval_place(recv)?;
+                let k = self.eval(&args[1], Mode::Use)?;
+                let map = map_mut(self.place_mut(&place, span)?, span)?;
+                match map.iter().position(|(key, _)| value_eq(key, &k)) {
+                    Some(i) => {
+                        let (key, v) = map.remove(i);
+                        Value::Opt(Some(Box::new(Value::Tuple(vec![key, v]))))
                     }
                     None => Value::Opt(None),
                 }

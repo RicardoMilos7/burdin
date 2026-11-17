@@ -321,6 +321,13 @@ fn value_param(ty: Ty) -> ParamSig {
     ParamSig { own: true, exclusive: true, ..ParamSig::plain(ty) }
 }
 
+/// The type of a read-only map lookup's key argument. A `Map<String, V>` takes a `str`, so the key is hashed and
+/// compared by bytes without allocating a `String` (`spec/stdlib.md`, "Borrowed-key lookup"); every other key
+/// type is taken as it is.
+fn lookup_key(k: &Ty) -> Ty {
+    if *k == Ty::String { Ty::Str } else { k.clone() }
+}
+
 /// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the
 /// receiver, and its result. `None` when `recv` has no such method.
 pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
@@ -406,18 +413,45 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("sort", Ty::List(_, _)) => (Method::ListSort, vec![], Ty::Unit),
         ("clear", Ty::List(_, _) | Ty::Map(..)) => (Method::Clear, vec![], Ty::Unit),
         ("insert", Ty::Map(k, v, _)) => (Method::MapInsert, vec![value_param(elem(k)), value_param(elem(v))], Ty::Unit),
+        // A `Map<String, V>` takes a `str` for its read-only lookups (`spec/stdlib.md`, "Borrowed-key lookup"): the
+        // key is hashed and compared by bytes and no `String` is allocated. A `String` argument converts to `str`
+        // through the one implicit conversion (IC1).
         ("get", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: false, inner: v.clone() };
-            (Method::MapGet, vec![plain(elem(k))], Ty::Option(Box::new(view)))
+            (Method::MapGet, vec![plain(lookup_key(k))], Ty::Option(Box::new(view)))
         }
         ("get_or_insert", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: true, inner: v.clone() };
             (Method::MapGetOrInsert, vec![value_param(elem(k)), value_param(elem(v))], view)
         }
+        ("get_or", Ty::Map(k, v, _)) => {
+            let view = Ty::Ref { mutable: false, inner: v.clone() };
+            (Method::MapGetOr, vec![value_param(elem(k)), value_param(elem(v))], view)
+        }
         ("get_mut", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: true, inner: v.clone() };
-            (Method::MapGetMut, vec![plain(elem(k))], Ty::Option(Box::new(view)))
+            (Method::MapGetMut, vec![plain(lookup_key(k))], Ty::Option(Box::new(view)))
         }
+        ("remove_entry", Ty::Map(k, v, _)) => {
+            let pair = Ty::Tuple(vec![(**k).clone(), (**v).clone()]);
+            (Method::MapRemoveEntry, vec![plain(lookup_key(k))], Ty::Option(Box::new(pair)))
+        }
+        ("retain", Ty::Map(k, v, _)) => {
+            let keep = Ty::Fn {
+                sig: Rc::new(FnSig {
+                    params: vec![
+                        Ty::Ref { mutable: false, inner: k.clone() },
+                        Ty::Ref { mutable: false, inner: v.clone() },
+                    ],
+                    ret: Box::new(Ty::Bool),
+                }),
+                kind: FnKind::FnMut,
+                borrowed: false,
+            };
+            (Method::MapRetain, vec![value_param(keep)], Ty::Unit)
+        }
+        ("reserve", Ty::Map(..)) => (Method::MapReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        ("shrink_to_fit", Ty::Map(..)) => (Method::MapShrinkToFit, vec![], Ty::Unit),
         // The entry-style API (`spec/stdlib.md`, "Map entry operations"): one probe, then insert or not.
         ("entry", Ty::Map(k, v, alloc)) => {
             (Method::MapEntry, vec![value_param(elem(k))], Ty::MapEntry(k.clone(), v.clone(), alloc.clone()))
@@ -435,8 +469,8 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             };
             (Method::MapEntryOrInsertWith, vec![value_param(make)], view)
         }
-        ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(elem(k))], Ty::Option(v.clone())),
-        ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(elem(k))], Ty::Bool),
+        ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(lookup_key(k))], Ty::Option(v.clone())),
+        ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(lookup_key(k))], Ty::Bool),
         ("unwrap", Ty::Option(t)) => (Method::Unwrap, vec![], elem(t)),
         ("unwrap", Ty::Result(t, _)) => (Method::Unwrap, vec![], elem(t)),
         ("expect", Ty::Option(t)) => (Method::Expect, vec![plain(Ty::Str)], elem(t)),
@@ -901,6 +935,51 @@ mod tests {
         assert_eq!(builtin_type("CSize"), Some(Ty::Int(IntTy::Usize)));
         assert_eq!(builtin_type("CVoid"), Some(Ty::Unit));
         assert_eq!(builtin_type("Point"), None);
+    }
+
+    #[test]
+    fn map_lookups_take_a_str_for_a_string_key() {
+        let i32_ = Ty::Int(IntTy::I32);
+        let m = Ty::Map(Box::new(Ty::String), Box::new(i32_.clone()), burdin_tir::Alloc::Global);
+        for name in ["get", "get_mut", "contains_key", "remove", "remove_entry"] {
+            let (_, params, _) = method(name, &m).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(params[0].ty, Ty::Str, "{name} takes a borrowed key");
+            assert!(!params[0].own, "{name} borrows its key");
+        }
+        // The operations that store the key take the map's own key type.
+        for name in ["insert", "get_or_insert", "get_or"] {
+            let (_, params, _) = method(name, &m).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(params[0].ty, Ty::String, "{name} takes the stored key type");
+            assert!(params[0].own, "{name} owns the key it stores");
+        }
+        let plain = Ty::Map(Box::new(i32_.clone()), Box::new(i32_.clone()), burdin_tir::Alloc::Global);
+        let (_, params, _) = method("get", &plain).unwrap();
+        assert_eq!(params[0].ty, i32_);
+    }
+
+    #[test]
+    fn map_updates_and_capacity_are_built_in() {
+        let i32_ = Ty::Int(IntTy::I32);
+        let m = Ty::Map(Box::new(i32_.clone()), Box::new(i32_.clone()), burdin_tir::Alloc::Global);
+        let (found, params, ret) = method("get_or", &m).unwrap();
+        assert_eq!(found, Method::MapGetOr);
+        assert!(params[0].own && params[1].own);
+        assert_eq!(ret, Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) });
+        assert!(found.mutates_receiver() && found.result_borrows_receiver());
+
+        let (found, params, ret) = method("remove_entry", &m).unwrap();
+        assert_eq!(found, Method::MapRemoveEntry);
+        assert!(!params[0].own);
+        assert_eq!(ret, Ty::Option(Box::new(Ty::Tuple(vec![i32_.clone(), i32_.clone()]))));
+
+        let (found, params, _) = method("retain", &m).unwrap();
+        assert_eq!(found, Method::MapRetain);
+        assert!(params[0].own && found.mutates_receiver());
+
+        let (found, _, _) = method("reserve", &m).unwrap();
+        assert_eq!(found, Method::MapReserve);
+        let (found, _, _) = method("shrink_to_fit", &m).unwrap();
+        assert_eq!(found, Method::MapShrinkToFit);
     }
 
     #[test]

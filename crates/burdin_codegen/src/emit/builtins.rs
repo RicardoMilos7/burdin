@@ -197,6 +197,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Builtin::ListNew | Builtin::MapNew => {
                 return Ok(Some(self.string_ty.const_zero().into()));
             }
+            // `Map<K, V>.with_capacity(n)`: an empty map whose table holds `n` entries without growing.
+            Builtin::MapWithCapacity => {
+                let capacity = self.expr_mode(&args[0], Mode::Use)?;
+                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
+                let Ty::Map(key, value, _) = ty else { return Ok(None) };
+                let (key, value) = ((**key).clone(), (**value).clone());
+                let cap = self.map_capacity_for(capacity, span)?;
+                let map_ty = self.llvm_ty(ty).expect("a map has a type");
+                let slot = self.alloca(map_ty, "map.with_capacity")?;
+                self.builder.build_store(slot, map_ty.const_zero()).map_err(llvm_err)?;
+                let mut seq = self.seq_load_at(slot, &burdin_tir::Alloc::Global)?;
+                self.map_rehash_to(&mut seq, &key, &value, cap, span)?;
+                self.seq_store(&seq)?;
+                return Ok(Some(self.builder.build_load(map_ty, slot, "").map_err(llvm_err)?));
+            }
             // `List<T>.new_in(alloc)` and `Map<K, V>.new_in(alloc)`: the empty container with the allocator value.
             Builtin::ListNewIn | Builtin::MapNewIn => {
                 let alloc_ty = args[0].ty.clone();
@@ -1493,12 +1508,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::Clear
                 | Method::MapInsert
                 | Method::MapGetOrInsert
+                | Method::MapGetOr
                 | Method::MapEntry
                 | Method::MapEntryOrInsert
                 | Method::MapEntryOrInsertWith
                 | Method::MapGet
                 | Method::MapGetMut
                 | Method::MapRemove
+                | Method::MapRemoveEntry
+                | Method::MapRetain
+                | Method::MapReserve
+                | Method::MapShrinkToFit
                 | Method::MapContainsKey
         ) {
             return self.collection_method(m, args, ty, span);

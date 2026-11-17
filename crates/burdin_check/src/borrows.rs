@@ -407,6 +407,7 @@ impl<'a> Checker<'a> {
                         m,
                         tir::Method::MapGetMut
                             | tir::Method::MapGetOrInsert
+                            | tir::Method::MapGetOr
                             | tir::Method::MapEntry
                             | tir::Method::IterMut
                             | tir::Method::ListGetMut

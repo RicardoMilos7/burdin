@@ -437,6 +437,7 @@ impl FnCx<'_> {
             Ty::Option(_) => self.generic_format("__debug_option", e, f_name, span),
             Ty::Result(..) => self.generic_format("__debug_result", e, f_name, span),
             Ty::List(_, _) => self.generic_format("__debug_list", e, f_name, span),
+            Ty::Map(_, _, _) => self.generic_format("__debug_map", e, f_name, span),
             Ty::Heap(_, _) => self.generic_format("__debug_heap", e, f_name, span),
             Ty::Tuple(ts) => {
                 let name = format!("__debug_tuple{}", ts.len());

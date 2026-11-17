@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A `Map<String, V>` takes a `str` for a lookup, not an arbitrary type; converting the argument to `String` does
+// not convert to `str` the other way (IC1 is one-directional).
+
+fn main() {
+    let mut m = Map<String, i32>.new()
+    m.insert("a".to_string(), 1)
+    let _ = m.get(7) //~ E0003
+}

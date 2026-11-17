@@ -1,0 +1,52 @@
+//@ run
+//> 0
+//> Some(42)
+//> 1 1
+//> false true
+//> true
+//> false
+//> 2 Some(10)
+//> {1: 10}
+//> [1, 2]
+
+// `with_capacity`, `reserve`, and `shrink_to_fit` manage the slot table, and the map implements `Eq`, `Clone`,
+// `Debug`, and `Default` when its key and value types do. Equality ignores the insertion order; `Debug` prints in
+// the unspecified iteration order, so only the one-entry map is printed as a whole.
+
+fn main() {
+    let mut m = Map<i32, i32>.with_capacity(100)
+    println("{}", m.len())
+    m.insert(7, 42)
+    println("{:?}", m.get(7))
+
+    m.reserve(500)
+    m.shrink_to_fit()
+    println("{} {}", m.len(), m.keys().count())
+
+    let empty = Map<i32, i32>.default()
+    println("{} {}", m.is_empty(), empty.is_empty())
+
+    let mut a = Map<i32, i32>.new()
+    a.insert(1, 10)
+    a.insert(2, 20)
+    let mut b = Map<i32, i32>.new()
+    b.insert(2, 20)
+    b.insert(1, 10)
+    println("{}", a == b)
+    b.insert(3, 30)
+    println("{}", a == b)
+
+    let copy = a.clone()
+    println("{} {:?}", copy.len(), copy.get(1))
+
+    let mut one = Map<i32, i32>.new()
+    one.insert(1, 10)
+    println("{:?}", one)
+
+    let mut keys = List<i32>.new()
+    for key in a.keys() {
+        keys.push(*key)
+    }
+    keys.sort()
+    println("{:?}", keys)
+}
