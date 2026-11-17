@@ -504,6 +504,51 @@ with, and `get(from, to)` is the checked, boundary-aware form. A program that ne
 Tests: `m24_stdlib/string_bytes`, `string_utf8_validation`, `string_from_utf8_lossy`, `string_utf8_file`,
 `string_find_all`, `string_checked_slice`, and the compile-fail cases `string_bytes_second_class` (E0120) and
 `string_view_as_text_unsafe` (E0161).
+### String capacity and editing (issue #714)
+
+```
+fn String.with_capacity(capacity: usize): String   // associated function: an empty string with room for `capacity` bytes
+fn capacity(self): usize                           // the buffer's capacity in bytes
+fn reserve(mut self, additional: usize)            // room for `additional` more bytes; keeps the contents
+fn shrink_to_fit(mut self)                         // shrinks the buffer to the length
+fn clear(mut self)                                 // empties the string; keeps the buffer
+fn truncate(mut self, byte_len: usize)
+fn pop(mut self): Option<char>
+fn insert(mut self, byte_idx: usize, c: char)
+fn insert_str(mut self, byte_idx: usize, s: str)          // built in
+fn remove(mut self, byte_idx: usize): char
+fn retain<F: FnMut(char): bool>(mut self, f: F)
+fn drain(mut self, from: usize, to: usize): String         // the removed bytes, as a new string
+fn replace_range(mut self, from: usize, to: usize, s: str) // built in
+fn split_off(mut self, byte_idx: usize): String            // the text from `byte_idx` on
+fn repeat(self, count: usize): String                      // the text `count` times (see "Text helpers")
+```
+
+The buffer operations keep the `String` layout: `{ ptr, len, cap }`. `with_capacity(n)` allocates `n` bytes and
+leaves the length at 0; `reserve(additional)` grows the buffer when the length plus `additional` does not fit, using
+the same growth as `push_str` (the larger of `capacity + capacity / 2 + 8` and the needed size); `shrink_to_fit`
+reallocates to the length (and frees the buffer when the string is empty). `capacity` may be larger than `len`, and
+its exact value is an implementation detail.
+
+Every byte index is a character boundary of the string. `insert`, `insert_str`, `remove`, `truncate`, `drain`,
+`replace_range`, and `split_off` panic with a message naming the operation when an index is out of range or not on a
+character boundary, so a `String` stays valid UTF-8. `insert` and `insert_str` shift the tail right by the inserted
+text's length; `remove`, `truncate`, `drain`, and `replace_range` move it left. `pop` returns the last character and
+removes its bytes; `remove` returns the character that starts at its index. `retain` keeps the characters its
+predicate accepts, in order. `drain(from, to)` removes the bytes and returns them as a new string; `split_off(i)`
+leaves the prefix in the receiver and returns the suffix. `replace_range` takes the two byte offsets rather than a
+range value because a `Range<usize>` value does not expose its endpoints to library code.
+
+`String` implements `Default` (the empty string), `Ord` (byte order through `<`), `Clone`, `Display`, and `Debug`;
+`Hash` for `String` is part of the interface-coverage work (issue #716).
+
+**`+` on strings is not provided.** The operator interfaces take two operands of the same type, and a `String + str`
+that allocates and returns a `String` would need a second, mixed-type rule. `push_str`, `format`, the interpolated
+string literal, and `join` are the ways to build text; the rule is recorded here so a later stage can revisit it.
+
+Tests: `m24_stdlib/string_capacity`, `string_editing`, `string_edit_comptime`, and the abort cases
+`string_edit_boundary_aborts` (a non-boundary insert), `string_edit_bounds_aborts` (a reversed range), and
+`string_truncate_bounds_aborts` (a length past the end); `string_plus_unsupported` (E0003) records the `+` decision.
 
 ### Characters of a text (issue #193)
 
@@ -2016,6 +2061,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | String bytes, UTF-8, and checked slicing | `m24_stdlib/string_bytes`, `string_utf8_validation`, `string_from_utf8_lossy`, `string_utf8_file`, `string_find_all`, `string_checked_slice`, `string_bytes_second_class`, `string_view_as_text_unsafe` |
+| String capacity and editing | `m24_stdlib/string_capacity`, `string_editing`, `string_edit_comptime`, `string_edit_boundary_aborts`, `string_edit_bounds_aborts`, `string_truncate_bounds_aborts`, `string_plus_unsupported` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
 | Map views, updates, and construction | `m24_stdlib/map_views`, `map_in_place`, `map_capacity_interfaces`, `map_views_allocator`, `map_borrowed_key`, `map_borrowed_key_type`, `map_get_or_needs_eq`, `map_with_capacity_allocator` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |

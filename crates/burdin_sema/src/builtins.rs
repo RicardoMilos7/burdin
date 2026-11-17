@@ -159,6 +159,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         },
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
         Builtin::FloatFromBits(ft) => Ty::Float(ft),
+        Builtin::StringWithCapacity => Ty::String,
         _ => Ty::Unit,
     };
     let params = match b {
@@ -215,6 +216,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         }
         Builtin::SetCurrentDirBytes => vec![ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))],
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
+        Builtin::StringWithCapacity => vec![ParamSig::plain(Ty::Int(IntTy::Usize))],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::FileOpen => {
@@ -528,6 +530,18 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             (Method::SliceSortBy, vec![value_param(less)], Ty::Unit)
         }
         ("as_bytes", Ty::String | Ty::Str) => (Method::AsBytes, vec![], Ty::Slice(Box::new(Ty::Int(IntTy::U8)))),
+        // The buffer operations of `String` (`spec/stdlib.md`, "String capacity and editing").
+        ("capacity", Ty::String) => (Method::StringCapacity, vec![], Ty::Int(IntTy::Usize)),
+        ("reserve", Ty::String) => (Method::StringReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        ("shrink_to_fit", Ty::String) => (Method::StringShrinkToFit, vec![], Ty::Unit),
+        ("insert_str", Ty::String) => {
+            (Method::StringInsertStr, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Str)], Ty::Unit)
+        }
+        ("replace_range", Ty::String) => (
+            Method::StringReplaceRange,
+            vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize)), plain(Ty::Str)],
+            Ty::Unit,
+        ),
         ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::List(_, _) | Ty::Map(..)) => {
             (Method::Len, vec![], Ty::Int(IntTy::Usize))
         }
@@ -721,6 +735,28 @@ mod tests {
         assert_eq!(sig.params.len(), 1);
         assert_eq!(sig.params[0].ty, bytes);
         assert_eq!(sig.ret, Ty::Str);
+    }
+
+    #[test]
+    fn string_capacity_and_editing_signatures() {
+        let usize_ = Ty::Int(IntTy::Usize);
+        let (found, params, ret) = method("capacity", &Ty::String).unwrap();
+        assert_eq!(found, Method::StringCapacity);
+        assert!(params.is_empty());
+        assert_eq!(ret, usize_);
+        assert!(!found.mutates_receiver(), "`capacity` only reads the buffer");
+        for name in ["reserve", "shrink_to_fit", "insert_str", "replace_range"] {
+            let (found, _, ret) = method(name, &Ty::String).unwrap();
+            assert_eq!(ret, Ty::Unit, "{name}");
+            assert!(found.mutates_receiver(), "{name}");
+        }
+        let (_, params, _) = method("replace_range", &Ty::String).unwrap();
+        assert_eq!(params.len(), 3);
+        assert_eq!(params[2].ty, Ty::Str);
+        assert!(!params[2].own, "the inserted text is a view");
+        let sig = builtin_sig(Builtin::StringWithCapacity, &Globals::default());
+        assert_eq!(sig.ret, Ty::String);
+        assert_eq!(sig.params[0].ty, usize_);
     }
 
     #[test]

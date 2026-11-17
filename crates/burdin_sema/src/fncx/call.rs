@@ -1855,6 +1855,13 @@ impl FnCx<'_> {
                 };
                 return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
             }
+            if name.name == "with_capacity" {
+                let sig = builtin_sig(Builtin::StringWithCapacity, self.globals);
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::StringWithCapacity, checked), sig.ret, span);
+            }
             let b = match name.name.as_str() {
                 "new" => Builtin::StringNew,
                 "from" => Builtin::StringFrom,

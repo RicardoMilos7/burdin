@@ -214,6 +214,31 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.seq_store(&seq)?;
                 return Ok(Some(self.builder.build_load(map_ty, slot, "").map_err(llvm_err)?));
             }
+
+            // `String.with_capacity(n)`: an empty string with a buffer of `n` bytes.
+            Builtin::StringWithCapacity => {
+                let capacity = self.expr_mode(&args[0], Mode::Use)?;
+                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
+                let string_t = self.string_ty;
+                let slot = self.alloca(string_t.into(), "string.with_capacity")?;
+                self.builder.build_store(slot, self.string_ty.const_zero()).map_err(llvm_err)?;
+                let some = self
+                    .builder
+                    .build_int_compare(IntPredicate::UGT, capacity, self.usize_ty.const_zero(), "")
+                    .map_err(llvm_err)?;
+                let alloc = self.new_block("string.with_capacity.alloc");
+                let done = self.new_block("string.with_capacity.end");
+                self.builder.build_conditional_branch(some, alloc, done).map_err(llvm_err)?;
+                self.builder.position_at_end(alloc);
+                let data = self.global_alloc(capacity, Some(span))?;
+                let ptr_field = self.builder.build_struct_gep(string_t, slot, 0, "s.ptr").map_err(llvm_err)?;
+                let cap_field = self.builder.build_struct_gep(string_t, slot, 2, "s.cap").map_err(llvm_err)?;
+                self.builder.build_store(ptr_field, data).map_err(llvm_err)?;
+                self.builder.build_store(cap_field, capacity).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+                self.builder.position_at_end(done);
+                return Ok(Some(self.builder.build_load(string_t, slot, "").map_err(llvm_err)?));
+            }
             // `List<T>.new_in(alloc)` and `Map<K, V>.new_in(alloc)`: the empty container with the allocator value.
             Builtin::ListNewIn | Builtin::MapNewIn => {
                 let alloc_ty = args[0].ty.clone();
@@ -1560,6 +1585,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if matches!(m, Method::Unwrap | Method::Expect | Method::IsSome | Method::IsNone | Method::IsOk | Method::IsErr)
         {
             return self.result_method(m, args, ty, span);
+        }
+        if matches!(
+            m,
+            Method::StringCapacity
+                | Method::StringReserve
+                | Method::StringShrinkToFit
+                | Method::StringInsertStr
+                | Method::StringReplaceRange
+        ) {
+            return self.string_method(m, args, ty, span);
         }
         if m == Method::PushStr {
             let recv = self.place_ptr(&args[0])?.ok_or("`push_str` needs a place receiver")?;
