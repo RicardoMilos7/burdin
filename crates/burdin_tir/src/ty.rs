@@ -226,6 +226,11 @@ pub enum Ty {
     /// The iterator of a range: the two endpoints and whether the range is exhausted. The flag is true for the
     /// inclusive form.
     RangeIter(Box<Ty>, bool),
+    /// The iterator `[T].chunks(n)` returns: the slice view, the chunk size, and the next index. The flag is
+    /// `true` for `chunks_exact`, which stops before a short last chunk. It is second-class: it views its source.
+    SliceChunks(Box<Ty>, bool),
+    /// The iterator `[T].windows(n)` returns: the slice view, the window size, and the next index.
+    SliceWindows(Box<Ty>),
     /// A tuple of two or more elements (or one, written with a trailing comma).
     Tuple(Vec<Ty>),
     Struct(AdtRef),
@@ -267,6 +272,8 @@ impl Ty {
             Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) => true,
             // An entry points at its map, so it is a view of that map's storage (SC2).
             Ty::MapEntry(..) => true,
+            // A chunks or windows iterator views the slice it was made from.
+            Ty::SliceChunks(..) | Ty::SliceWindows(..) => true,
             Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _) | Ty::RangeIter(t, _) => t.is_second_class(),
             Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
             Ty::Map(k, v, _) | Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
@@ -334,6 +341,9 @@ impl fmt::Display for Ty {
             Ty::MapIntoIter(k, v, a) => write!(f, "MapIntoIter<{k}, {v}, {a}>"),
             Ty::RangeIter(t, false) => write!(f, "RangeIter<{t}>"),
             Ty::RangeIter(t, true) => write!(f, "RangeIterInclusive<{t}>"),
+            Ty::SliceChunks(t, false) => write!(f, "Chunks<{t}>"),
+            Ty::SliceChunks(t, true) => write!(f, "ChunksExact<{t}>"),
+            Ty::SliceWindows(t) => write!(f, "Windows<{t}>"),
             Ty::Tuple(elems) => {
                 f.write_str("(")?;
                 for (i, t) in elems.iter().enumerate() {

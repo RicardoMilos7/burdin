@@ -608,6 +608,16 @@ impl FnCx<'_> {
                 format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
             );
         }
+        if receiver.by_ref
+            && receiver.exclusive
+            && let Some(whose) = self.slice_receiver_problem(&recv)
+        {
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
+            );
+        }
         let mut bindings = Vec::new();
         globals.unify(&receiver.ty, &recv.ty, &mut bindings);
         let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
@@ -842,6 +852,16 @@ impl FnCx<'_> {
         if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
             let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
             let whose = local.unwrap_or_else(|| "this receiver".to_string());
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
+            );
+        }
+        if receiver.by_ref
+            && receiver.exclusive
+            && let Some(whose) = self.slice_receiver_problem(&recv)
+        {
             self.diags.error(
                 Code::MUT_OF_IMMUTABLE,
                 recv.span,

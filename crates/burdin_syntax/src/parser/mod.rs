@@ -279,6 +279,44 @@ mod tests {
     }
 
     #[test]
+    fn slice_extension_receivers_parse() {
+        // A slice receiver is a type after `fn`: `fn [T].name(...)` and nested forms (`spec/extensions.md`, EX1).
+        let (file, out) = render(
+            "fn [T].first(self): Option<&T> { None }\n\
+             fn [[T]].concat(self): List<T> { List<T>.new() }\n\
+             fn [u8].is_ascii(self): bool { true }\n\
+             fn plain() {}\n",
+        );
+        assert_eq!(out, "");
+        assert_eq!(fn_names(&file), ["plain"]);
+        let extensions: Vec<&ExtensionDecl> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Extension(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(extensions.len(), 3);
+
+        let first = extensions[0];
+        assert_eq!(first.func.name.name, "first");
+        let TypeKind::Slice(elem) = &first.recv.kind else { panic!("the receiver is a slice") };
+        assert!(matches!(elem.kind, TypeKind::Path(_)));
+        assert!(matches!(first.func.params[0].kind, ParamKind::SelfParam));
+
+        let concat = extensions[1];
+        let TypeKind::Slice(inner) = &concat.recv.kind else { panic!("the receiver is a slice") };
+        assert!(matches!(inner.kind, TypeKind::Slice(_)), "a slice of slices is a receiver");
+
+        let ascii = extensions[2];
+        let TypeKind::Slice(elem) = &ascii.recv.kind else { panic!("the receiver is a slice") };
+        let TypeKind::Path(segments) = &elem.kind else { panic!("the element is a path") };
+        assert_eq!(segments[0].name.name, "u8");
+        assert!(ascii.func.generics.is_empty(), "`u8` is a builtin type, not a receiver parameter");
+    }
+
+    #[test]
     fn for_loops_take_an_optional_mut_marker() {
         // `for x in mut xs` is the mutable form (spec/iterators.md, IT15); the marker is part of the header, so the
         // iterated expression is still just `xs` (and a struct literal is not allowed there).

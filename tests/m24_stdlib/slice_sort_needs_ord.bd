@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// `sort` orders the elements with `<`, so `T` needs `Ord`.
+
+struct Plain {
+    v: i32
+}
+
+fn main() {
+    let mut arr = [Plain { v: 1 }, Plain { v: 2 }]
+    let mut xs = arr[0..2]
+    xs.sort() //~ E0141
+}

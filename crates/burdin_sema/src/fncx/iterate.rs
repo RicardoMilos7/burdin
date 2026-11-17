@@ -24,6 +24,11 @@ impl FnCx<'_> {
         expect: Option<&Ty>,
     ) -> Option<tir::Expr> {
         let recv_ty = recv.ty.clone();
+        // A method of the receiver type's own table wins over an `Iterator` default of the same name
+        // (`spec/extensions.md`, EX3): `[T].last()` and `[T].to_list()` are the slice's own methods.
+        if crate::builtins::method(&name.name, &recv_ty).is_some() {
+            return None;
+        }
         let builtin_item = self.globals.builtin_iterator_item(&recv_ty, &self.bounds);
         // `.any(...)` is the adapter's spelling; `any` is reserved as an identifier, so `std` declares the
         // method as `any_item` (spec/iterators.md, IT9).

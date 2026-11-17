@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: rotate_left: index out of bounds
+//> before
+
+// `rotate_left` panics when the rotation is past the end.
+
+fn main() {
+    let mut arr = [1, 2, 3]
+    let mut xs = arr[0..3]
+    println("before")
+    xs.rotate_left(4)
+}

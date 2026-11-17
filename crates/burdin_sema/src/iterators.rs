@@ -20,6 +20,8 @@ impl Globals {
             Ty::Slice(elem) => Self::element_item(elem, env, self),
             Ty::Chars => Ty::Char,
             Ty::ListIntoIter(elem, _) | Ty::ArrayIntoIter(elem, _) | Ty::RangeIter(elem, _) => (**elem).clone(),
+            // `chunks`, `chunks_exact`, and `windows` yield views of the slice they were made from.
+            Ty::SliceChunks(elem, _) | Ty::SliceWindows(elem) => Ty::Slice(elem.clone()),
             Ty::MapIter(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
             // A mutable iterator yields a writable view of each element; a map's keys stay read-only (IT15).
             Ty::IterMut(elem) => Self::mutable_view(elem),
@@ -313,6 +315,18 @@ mod tests {
         let owning = Ty::ListIntoIter(Box::new(i32_()), burdin_tir::Alloc::Global);
         assert_eq!(g.builtin_iface_args(&owning, 0, &[]), Some(vec![i32_()]));
         assert_eq!(g.builtin_iface_args(&owning, 1, &[]), None, "an owning iterator is not double-ended");
+    }
+
+    #[test]
+    fn slice_window_iterators_yield_slices() {
+        let g = Globals::default();
+        let i = Ty::Int(IntTy::I32);
+        let item = Ty::Slice(Box::new(i.clone()));
+        assert_eq!(g.builtin_iterator_item(&Ty::SliceChunks(Box::new(i.clone()), false), &[]), Some(item.clone()));
+        assert_eq!(g.builtin_iterator_item(&Ty::SliceChunks(Box::new(i.clone()), true), &[]), Some(item.clone()));
+        assert_eq!(g.builtin_iterator_item(&Ty::SliceWindows(Box::new(i.clone())), &[]), Some(item));
+        // They are iterators only: a `for` loop enters them through the protocol, and `iter()` is not theirs.
+        assert_eq!(g.builtin_iterable_item(&Ty::SliceChunks(Box::new(Ty::Int(IntTy::I32)), false), &[]), None);
     }
 
     #[test]

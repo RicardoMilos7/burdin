@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// `fill` clones the value into every element, so `T` needs `Clone`.
+
+struct Plain {
+    v: i32
+}
+
+fn main() {
+    let mut arr = [Plain { v: 1 }, Plain { v: 2 }]
+    let mut xs = arr[0..2]
+    xs.fill(Plain { v: 3 }) //~ E0141
+}

@@ -44,6 +44,13 @@ read their source and have no drop glue. `Chars.next` decodes one scalar value w
 the range from the list and hands the removed elements over in a buffer with the default allocator
 (`stdlib.md`).
 
+`[T].chunks(n)`, `[T].chunks_exact(n)`, and `[T].windows(n)` return compiler-known iterators (`Chunks<T>`,
+`ChunksExact<T>`, `Windows<T>`) that borrow the slice and yield `[T]` views (`spec/stdlib.md`, "Slices"). They are
+iterators only, not `Iterable`: `for chunk in xs.chunks(n)` enters through the protocol (IT8), and `iter()` is not
+one of their methods. Like every view they are second-class (SC2), and the source stays borrowed until the last
+use of the iterator or of a view it yielded. The slice's own `last` and `to_list` win over the `Iterator` defaults
+of the same name (EX3): an `Iterator` method a receiver's own table also provides is the receiver's method.
+
 **IT6 `next`.** `it.next()` requires a mutable place (E0113), like any `mut self` receiver, and returns
 `Option<T>`. On a type parameter the call goes through the `Iterator` bound; on a user type it is the `next` method
 of its impl; on a built-in iterator it is the compiler's own implementation. Calling `next` directly on an

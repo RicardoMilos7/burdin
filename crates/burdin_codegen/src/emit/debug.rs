@@ -243,6 +243,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Unit | Ty::Never | Ty::Param(_) | Ty::Const(_) | Ty::Error | Ty::Chars => {
                 self.debug_unspecified(&Self::debug_name(ty))
             }
+            Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Bool => self.debug_basic("bool", 8, DW_ATE_BOOLEAN),
             Ty::Char => self.debug_basic("char", 32, DW_ATE_UTF),
             Ty::Int(i) => {

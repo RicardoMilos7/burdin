@@ -1,0 +1,34 @@
+//@ run
+//> apple fig pear
+//> true
+//> Some("apple") Some("pear")
+//> apple, fig, pear
+//> apple
+//> fig
+//> pear
+//> kiwi kiwi kiwi
+//> kiwi
+//> 3 3
+
+// Slices of `String` work with every method that needs only comparison, swapping, or cloning: sorting moves
+// the three words of each value, `fill` and `to_list` clone, and `join` builds one text.
+
+fn main() {
+    let mut arr = [String.from("pear"), String.from("apple"), String.from("fig")]
+    let mut xs = arr[0..3]
+    xs.sort_by(|a: &String, b: &String| a.cmp(*b))
+    println("{} {} {}", xs[0], xs[1], xs[2])
+    println("{}", xs.contains(String.from("fig")))
+    println("{:?} {:?}", xs.first(), xs.last())
+    println("{}", xs.join(", "))
+
+    for part in xs.chunks(1) {
+        println("{}", part[0])
+    }
+
+    xs.fill(String.from("kiwi"))
+    println("{} {} {}", xs[0], xs[1], xs[2])
+    let copy = xs.to_list()
+    println("{}", copy[0])
+    println("{} {}", copy.len(), arr.len())
+}

@@ -479,6 +479,54 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("is_ok", Ty::Result(..)) => (Method::IsOk, vec![], Ty::Bool),
         ("is_err", Ty::Result(..)) => (Method::IsErr, vec![], Ty::Bool),
         ("as_str", Ty::String | Ty::Str) => (Method::AsStr, vec![], Ty::Str),
+        // `List<T>.as_slice(): [T]`: a view of the list's elements (`spec/stdlib.md`, "Slices").
+        ("as_slice", Ty::List(t, _)) => (Method::AsSlice, vec![], Ty::Slice(t.clone())),
+        // The slice methods the compiler implements (the algorithms that write through a slice are in `std`).
+        // `get(range)` is resolved by the call checker from the argument's type.
+        ("get", Ty::Slice(t)) => {
+            let view = Ty::Ref { mutable: false, inner: t.clone() };
+            (Method::SliceGet, vec![plain(Ty::Int(IntTy::Usize))], Ty::Option(Box::new(view)))
+        }
+        // The slice's own `last` and `to_list`: they win over the `Iterator` defaults of the same name.
+        ("last", Ty::Slice(t)) => {
+            let view = Ty::Ref { mutable: false, inner: t.clone() };
+            (Method::SliceLast, vec![], Ty::Option(Box::new(view)))
+        }
+        ("to_list", Ty::Slice(t)) => (Method::SliceToList, vec![], Ty::List(t.clone(), burdin_tir::Alloc::Global)),
+        ("swap", Ty::Slice(_)) => {
+            (Method::SliceSwap, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize))], Ty::Unit)
+        }
+        ("fill", Ty::Slice(t)) => (Method::SliceFill, vec![plain(elem(t))], Ty::Unit),
+        ("copy_from_slice", Ty::Slice(t)) => (Method::SliceCopyFromSlice, vec![plain(Ty::Slice(t.clone()))], Ty::Unit),
+        ("clone_from_slice", Ty::Slice(t)) => {
+            (Method::SliceCloneFromSlice, vec![plain(Ty::Slice(t.clone()))], Ty::Unit)
+        }
+        ("chunks", Ty::Slice(t)) => {
+            (Method::SliceChunks, vec![plain(Ty::Int(IntTy::Usize))], Ty::SliceChunks(t.clone(), false))
+        }
+        ("chunks_exact", Ty::Slice(t)) => {
+            (Method::SliceChunks, vec![plain(Ty::Int(IntTy::Usize))], Ty::SliceChunks(t.clone(), true))
+        }
+        ("windows", Ty::Slice(t)) => {
+            (Method::SliceWindows, vec![plain(Ty::Int(IntTy::Usize))], Ty::SliceWindows(t.clone()))
+        }
+        // `[T].__sort_by(less)`: the insertion sort behind `std`'s `sort_by`, which takes an `Ordering`
+        // comparator and adapts it to this `bool` one. The closure is the borrowing wrapper `std` builds, so
+        // its type says a borrow capture (`spec/memory-rules.md`, CL3).
+        ("__sort_by", Ty::Slice(t)) => {
+            let less = Ty::Fn {
+                sig: Rc::new(FnSig {
+                    params: vec![
+                        Ty::Ref { mutable: false, inner: t.clone() },
+                        Ty::Ref { mutable: false, inner: t.clone() },
+                    ],
+                    ret: Box::new(Ty::Bool),
+                }),
+                kind: FnKind::FnMut,
+                borrowed: true,
+            };
+            (Method::SliceSortBy, vec![value_param(less)], Ty::Unit)
+        }
         ("as_bytes", Ty::String | Ty::Str) => (Method::AsBytes, vec![], Ty::Slice(Box::new(Ty::Int(IntTy::U8)))),
         ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::List(_, _) | Ty::Map(..)) => {
             (Method::Len, vec![], Ty::Int(IntTy::Usize))
@@ -810,6 +858,68 @@ mod tests {
         let tty = builtin_sig(Builtin::IsTerminal, &globals);
         assert_eq!(tty.params[0].ty, Ty::Int(IntTy::I32));
         assert_eq!(tty.ret, Ty::Bool);
+    }
+
+    #[test]
+    fn slice_method_resolution() {
+        let i32_ = Ty::Int(IntTy::I32);
+        let slice = Ty::Slice(Box::new(i32_.clone()));
+
+        // `get` is the checked element view; the range form is resolved by the call checker.
+        let (found, params, ret) = method("get", &slice).unwrap();
+        assert_eq!(found, Method::SliceGet);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].ty, Ty::Int(IntTy::Usize));
+        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) })));
+
+        // The slice's own `last` and `to_list` win over the `Iterator` defaults of the same name.
+        assert_eq!(method("last", &slice).unwrap().0, Method::SliceLast);
+        assert_eq!(method("to_list", &slice).unwrap().2, Ty::List(Box::new(i32_.clone()), burdin_tir::Alloc::Global));
+
+        // The window iterators carry their element and, for chunks, the exactness flag.
+        assert_eq!(method("chunks", &slice).unwrap().2, Ty::SliceChunks(Box::new(i32_.clone()), false));
+        assert_eq!(method("chunks_exact", &slice).unwrap().2, Ty::SliceChunks(Box::new(i32_.clone()), true));
+        assert_eq!(method("windows", &slice).unwrap().2, Ty::SliceWindows(Box::new(i32_.clone())));
+
+        // The mutating methods take the indices and the value they are given.
+        assert_eq!(method("swap", &slice).unwrap().0, Method::SliceSwap);
+        assert_eq!(method("fill", &slice).unwrap().1[0].ty, i32_.clone());
+        assert_eq!(method("copy_from_slice", &slice).unwrap().1[0].ty, slice.clone());
+
+        // `List<T>.as_slice()` gives the same slice type.
+        let list = Ty::List(Box::new(i32_.clone()), burdin_tir::Alloc::Global);
+        let (found, params, ret) = method("as_slice", &list).unwrap();
+        assert_eq!(found, Method::AsSlice);
+        assert!(params.is_empty());
+        assert_eq!(ret, slice);
+
+        // The comparator sort is the compiler's own; `std` writes it with a leading `__`.
+        let sort = method("__sort_by", &slice).unwrap();
+        assert_eq!(sort.0, Method::SliceSortBy);
+        assert!(sort.1[0].own, "the comparator is moved into the sort");
+    }
+
+    #[test]
+    fn slice_method_flags() {
+        assert!(Method::SliceSwap.mutates_receiver());
+        assert!(Method::SliceFill.mutates_receiver());
+        assert!(Method::SliceCopyFromSlice.mutates_receiver());
+        assert!(Method::SliceCloneFromSlice.mutates_receiver());
+        assert!(Method::SliceSortBy.mutates_receiver());
+        assert!(!Method::SliceGet.mutates_receiver());
+        assert!(!Method::SliceChunks.mutates_receiver());
+
+        assert!(Method::AsSlice.result_borrows_receiver());
+        assert!(Method::SliceGet.result_borrows_receiver());
+        assert!(Method::SliceGetRange.result_borrows_receiver());
+        assert!(Method::SliceLast.result_borrows_receiver());
+        assert!(Method::SliceChunks.result_borrows_receiver());
+        assert!(Method::SliceWindows.result_borrows_receiver());
+        assert!(!Method::SliceToList.result_borrows_receiver());
+
+        assert!(Method::SliceSortBy.owns_argument(1));
+        assert!(!Method::SliceSortBy.owns_argument(0));
+        assert!(!Method::SliceFill.owns_argument(1), "fill clones the value; the caller keeps it");
     }
 
     #[test]

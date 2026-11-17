@@ -548,6 +548,7 @@ impl<'a> Analyzer<'a> {
                 let receiver_view = matches!(
                     m,
                     tir::Method::AsStr
+                        | tir::Method::AsSlice
                         | tir::Method::Clone
                         | tir::Method::ListLast
                         | tir::Method::ListFirst
@@ -555,6 +556,11 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::ListLastMut
                         | tir::Method::ListGet
                         | tir::Method::ListGetMut
+                        | tir::Method::SliceGet
+                        | tir::Method::SliceGetRange
+                        | tir::Method::SliceLast
+                        | tir::Method::SliceChunks
+                        | tir::Method::SliceWindows
                         | tir::Method::MapGet
                         | tir::Method::MapGetMut
                         | tir::Method::MapGetOrInsert
@@ -579,6 +585,7 @@ impl<'a> Analyzer<'a> {
                 match m {
                     // A view of the receiver, or a copy of it.
                     tir::Method::AsStr
+                    | tir::Method::AsSlice
                     | tir::Method::Clone
                     | tir::Method::ListLast
                     | tir::Method::ListFirst
@@ -586,6 +593,11 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::ListLastMut
                     | tir::Method::ListGet
                     | tir::Method::ListGetMut
+                    | tir::Method::SliceGet
+                    | tir::Method::SliceGetRange
+                    | tir::Method::SliceLast
+                    | tir::Method::SliceChunks
+                    | tir::Method::SliceWindows
                     | tir::Method::MapGet
                     | tir::Method::MapGetMut
                     | tir::Method::MapGetOrInsert

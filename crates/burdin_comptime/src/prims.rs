@@ -280,6 +280,8 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::Float(FloatTy::F64) => (8, 8),
         Ty::Str | Ty::Chars | Ty::Slice(_) | Ty::Any(_) => (16, 8),
         Ty::Fn { .. } | Ty::String => (24, 8),
+        // A chunks or windows iterator keeps the slice view and two indices.
+        Ty::SliceChunks(..) | Ty::SliceWindows(..) => (32, 8),
         // A container with a stored allocator carries its value after its buffer words (`spec/allocators.md`).
         Ty::List(_, a) => container(p, (24, 8), a),
         Ty::Map(_, _, a) => container(p, (24, 8), a),
@@ -1080,6 +1082,117 @@ impl<'p> Interp<'p, '_> {
                 Value::Borrow(Box::new(inner))
             }
             Method::SharedStrongCount => Value::Int(1),
+            // Slices are read-only at compile time: the interpreter represents a view as a copy, so writing
+            // through one could not reach the storage it views (`spec/stdlib.md`, "Slices").
+            Method::AsSlice => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                match v {
+                    Value::List(xs) | Value::Array(xs) => {
+                        let n = xs.len();
+                        Value::Slice(Rc::new(xs), 0, n)
+                    }
+                    other => return Err(internal(format!("`as_slice` on {other:?}"), span)),
+                }
+            }
+            Method::SliceGet => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                let i = self.eval(&args[1], Mode::Use)?.deref().int().max(0) as usize;
+                match &v {
+                    Value::Slice(xs, lo, hi) => {
+                        if i < hi - lo {
+                            Value::Opt(Some(Box::new(Value::Borrow(Box::new(xs[lo + i].clone())))))
+                        } else {
+                            Value::Opt(None)
+                        }
+                    }
+                    other => return Err(internal(format!("`get` on {other:?}"), span)),
+                }
+            }
+            Method::SliceLast => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                match &v {
+                    Value::Slice(xs, lo, hi) => {
+                        if *lo < *hi {
+                            Value::Opt(Some(Box::new(Value::Borrow(Box::new(xs[*hi - 1].clone())))))
+                        } else {
+                            Value::Opt(None)
+                        }
+                    }
+                    other => return Err(internal(format!("`last` on {other:?}"), span)),
+                }
+            }
+            Method::SliceToList => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                match &v {
+                    Value::Slice(xs, lo, hi) => Value::List(xs[*lo..*hi].to_vec()),
+                    other => return Err(internal(format!("`to_list` on {other:?}"), span)),
+                }
+            }
+            Method::SliceGetRange => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                let range = self.eval(&args[1], Mode::Use)?.deref();
+                let (lo, hi) = range_bounds(&range);
+                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                match &v {
+                    Value::Slice(xs, base, end) => {
+                        let len = (end - base) as i128;
+                        let end_index = match inclusive {
+                            true if hi >= len => None,
+                            true => Some(hi + 1),
+                            false if hi > len => None,
+                            false => Some(hi),
+                        };
+                        match end_index {
+                            Some(hi) if lo >= 0 && lo <= hi => {
+                                let lo = lo as usize;
+                                let hi = hi as usize;
+                                Value::Opt(Some(Box::new(Value::Slice(xs.clone(), base + lo, base + hi))))
+                            }
+                            _ => Value::Opt(None),
+                        }
+                    }
+                    other => return Err(internal(format!("`get` on {other:?}"), span)),
+                }
+            }
+            Method::SliceChunks | Method::SliceWindows => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                let n = self.eval(&args[1], Mode::Use)?.deref().int().max(0) as usize;
+                let name = if m == Method::SliceWindows { "windows" } else { "chunks" };
+                if n == 0 {
+                    return Err(panic(format!("{name}: size must be non-zero"), span));
+                }
+                let exact = matches!(ty, Ty::SliceChunks(_, true));
+                match &v {
+                    Value::Slice(xs, base, end) => {
+                        let len = end - base;
+                        let mut items = VecDeque::new();
+                        if m == Method::SliceWindows {
+                            let mut start = 0;
+                            while start + n <= len {
+                                items.push_back(Value::Slice(xs.clone(), base + start, base + start + n));
+                                start += 1;
+                            }
+                        } else {
+                            let mut start = 0;
+                            while start < len {
+                                let take = (len - start).min(n);
+                                if exact && take < n {
+                                    break;
+                                }
+                                items.push_back(Value::Slice(xs.clone(), base + start, base + start + take));
+                                start += take;
+                            }
+                        }
+                        Value::Items(items)
+                    }
+                    other => return Err(internal(format!("`{name}` on {other:?}"), span)),
+                }
+            }
+            Method::SliceSwap
+            | Method::SliceFill
+            | Method::SliceCopyFromSlice
+            | Method::SliceCloneFromSlice
+            | Method::SliceSortBy => return Err(impure("writing through a slice", span)),
             Method::Float(op) => self.float_method(op, args, span)?,
         })
     }

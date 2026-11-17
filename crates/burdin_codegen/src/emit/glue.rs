@@ -235,7 +235,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Range(..) => Ok(()),
             Ty::Param(_) | Ty::Const(_) => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
-            // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map.
+            // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map; the
+            // chunks and windows iterators only borrow their slice.
             Ty::Ref { .. }
             | Ty::Slice(_)
             | Ty::CPtr(_)
@@ -243,7 +244,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
-            | Ty::RangeIter(..) => Ok(()),
+            | Ty::RangeIter(..)
+            | Ty::SliceChunks(..)
+            | Ty::SliceWindows(..) => Ok(()),
             Ty::ListIntoIter(elem, alloc) => {
                 let elem = (**elem).clone();
                 self.drop_list_into_iter(addr, &elem, alloc)

@@ -143,6 +143,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let elem = (**elem).clone();
                 self.next_range(&args[0], &elem, *inclusive, ty)
             }
+            Ty::SliceChunks(elem, exact) => {
+                let (elem, exact) = ((**elem).clone(), *exact);
+                self.next_chunks(&args[0], &elem, exact, false, ty)
+            }
+            Ty::SliceWindows(elem) => {
+                let elem = (**elem).clone();
+                self.next_chunks(&args[0], &elem, false, true, ty)
+            }
             other => Err(format!("`next` on `{other}` has no built-in implementation")),
         }
     }
@@ -802,6 +810,79 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(done_ptr, last).map_err(llvm_err)?;
         if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
             let some = self.some_value(elem, Some(lo.into()));
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `chunks`, `chunks_exact`, and `windows`: yields a slice view of the next chunk or window and advances.
+    /// A chunk advances by its length (the last one may be shorter); a window advances by one element.
+    fn next_chunks(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        elem: &Ty,
+        exact: bool,
+        windows: bool,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let tt = self.slice_iter_ty();
+        let ptr_field = self.builder.build_struct_gep(tt, slot, 0, "windows.ptr").map_err(llvm_err)?;
+        let base = self.builder.build_load(self.ptr_ty(), ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let len_field = self.builder.build_struct_gep(tt, slot, 1, "windows.len").map_err(llvm_err)?;
+        let len = self.builder.build_load(self.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let size_field = self.builder.build_struct_gep(tt, slot, 2, "windows.size").map_err(llvm_err)?;
+        let size = self.builder.build_load(self.usize_ty, size_field, "").map_err(llvm_err)?.into_int_value();
+        let index_ptr = self.builder.build_struct_gep(tt, slot, 3, "windows.index").map_err(llvm_err)?;
+        let index = self.builder.build_load(self.usize_ty, index_ptr, "").map_err(llvm_err)?.into_int_value();
+        let Ty::Option(item) = ty else { return Err("an iterator's `next` returns an `Option`".into()) };
+        let item = item.as_ref().clone();
+        let out = self.option_slot(ty, "windows.out")?;
+        // `index` never passes `len`: a chunk advances by what it yielded, and a window stops before the end.
+        let remaining = self.builder.build_int_sub(len, index, "").map_err(llvm_err)?;
+        let done = if windows || exact {
+            self.builder.build_int_compare(IntPredicate::ULT, remaining, size, "").map_err(llvm_err)?
+        } else {
+            self.builder
+                .build_int_compare(IntPredicate::EQ, remaining, self.usize_ty.const_zero(), "")
+                .map_err(llvm_err)?
+        };
+        let none_bb = self.new_block("windows.none");
+        let some_bb = self.new_block("windows.some");
+        let end = self.new_block("windows.end");
+        self.builder.build_conditional_branch(done, none_bb, some_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(&item).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let take = if windows || exact {
+            size
+        } else {
+            // The last chunk of `chunks` is shorter when the length is not a multiple of the size.
+            let short = self.builder.build_int_compare(IntPredicate::ULT, remaining, size, "").map_err(llvm_err)?;
+            self.builder.build_select(short, remaining, size, "").map_err(llvm_err)?.into_int_value()
+        };
+        let value = match self.llvm_ty(elem) {
+            Some(elem_t) => {
+                // SAFETY (LLVM): `index + take <= len`.
+                let p = unsafe { self.builder.build_in_bounds_gep(elem_t, base, &[index], "window.ptr") }
+                    .map_err(llvm_err)?;
+                Some(self.make_str(p.into(), take.into())?.into())
+            }
+            None => None,
+        };
+        let advance = if windows { self.usize_ty.const_int(1, false) } else { take };
+        let next = self.builder.build_int_add(index, advance, "").map_err(llvm_err)?;
+        self.builder.build_store(index_ptr, next).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(&item, value);
             self.builder.build_store(out, some).map_err(llvm_err)?;
         }
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
