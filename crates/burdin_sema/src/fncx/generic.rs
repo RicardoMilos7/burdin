@@ -181,6 +181,13 @@ impl FnCx<'_> {
         {
             return self.generic_call_with_receiver(g, recv, "cmp", args, span);
         }
+        // `sum`, `product`, `min`, `max`, `eq`, and `cmp` of an iterator are compiler-known or functions in `std`,
+        // not interface methods, so they apply to a type parameter bounded by `Iterator` here.
+        if (matches!(name.name.as_str(), "sum" | "product") || self.globals.iterator_item_fn(&name.name).is_some())
+            && let Some(e) = self.iterator_method(recv.clone(), name, args, span)
+        {
+            return e;
+        }
         let found = self.globals.bound_method(&recv.ty, &name.name, &self.bounds);
         let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| sig.has_self) else {
             self.diags.error(
@@ -637,6 +644,21 @@ impl FnCx<'_> {
         args: &[ast::Arg],
         span: Span,
     ) -> tir::Expr {
+        self.generic_call_with_receiver_seeded(g, recv, name, args, &[], span)
+    }
+
+    /// Like [`Self::generic_call_with_receiver`], with type arguments the caller already knows. A parameter that
+    /// appears only in a bound (`I: Iterator<T>`) cannot be inferred from the arguments, so the iterator
+    /// helpers pass the item type here.
+    pub(super) fn generic_call_with_receiver_seeded(
+        &mut self,
+        g: usize,
+        recv: tir::Expr,
+        name: &str,
+        args: &[ast::Arg],
+        seed: &[(String, Ty)],
+        span: Span,
+    ) -> tir::Expr {
         let globals = self.globals;
         let info = &globals.generic_fns[g];
         let pattern = globals.sigs[info.identity.0].clone();
@@ -665,7 +687,7 @@ impl FnCx<'_> {
                 format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
             );
         }
-        let mut bindings = Vec::new();
+        let mut bindings = seed.to_vec();
         globals.unify(&receiver.ty, &recv.ty, &mut bindings);
         let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
         for (i, p) in pattern.params[1..].iter().enumerate() {
@@ -723,7 +745,7 @@ impl FnCx<'_> {
         let symbolic = targs.iter().any(|t| globals.ty_has_param(t))
             || globals.ty_has_param(&recv.ty)
             || globals.ty_has_param(&globals.subst_ty(&pattern.ret, &subst));
-        let receiver_place = Some((&recv, receiver.exclusive));
+        let receiver_place = Some((&recv, receiver.exclusive && !receiver.own));
         if symbolic {
             let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);

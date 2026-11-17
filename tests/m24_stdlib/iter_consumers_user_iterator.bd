@@ -1,0 +1,41 @@
+//@ run
+//> Some(2) Some(8) 20
+//> true false Less
+//> Some(2) Some(6) 3
+
+// The new consumers work on a user type that implements `Iterator`, and through a type parameter bounded by it (`min`, `max`, `eq`, `cmp`, `sum`, and `product` only: the interface's
+// own default methods, such as `try_fold`, are not callable on a type parameter yet).
+
+struct Evens {
+    next_value: i32
+    end: i32
+}
+
+Evens: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.next_value >= self.end {
+            return None
+        }
+        let v = self.next_value
+        self.next_value = v + 2
+        Some(v)
+    }
+}
+
+fn evens(from: i32, to: i32): Evens {
+    Evens { next_value: from, end: to }
+}
+
+fn smallest<I: Iterator<i32>>(own it: I): Option<i32> {
+    it.min()
+}
+
+fn largest<I: Iterator<i32>>(own it: I): Option<i32> {
+    it.max()
+}
+
+fn main() {
+    println("{evens(2, 10).min():?} {evens(2, 10).max():?} {evens(2, 10).sum()}")
+    println("{evens(0, 6).eq(evens(0, 6))} {evens(0, 6).eq(evens(0, 8))} {evens(0, 6).cmp(evens(2, 4)):?}")
+    println("{smallest(evens(3, 9).map(|x| x - 1)):?} {largest(evens(0, 8)):?} {evens(1, 5).product()}")
+}

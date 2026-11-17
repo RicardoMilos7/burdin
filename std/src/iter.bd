@@ -381,6 +381,49 @@ interface Iterator<T> {
         }
     }
 
+    /// Folds the items like `fold`, but `f` returns a `Result` and the first `Err` ends the fold and is returned.
+    fn try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F): Result<A, E> {
+        let mut acc = init
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    match f(acc, x) {
+                        Ok(next) => {
+                            acc = next
+                        }
+                        Err(e) => {
+                            return Err(e)
+                        }
+                    }
+                }
+                None => {
+                    return Ok(acc)
+                }
+            }
+        }
+    }
+
+    /// Calls `f` on every item, stopping at the first `Err` and returning it.
+    fn try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F): Result<(), E> {
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    match f(x) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(e)
+                        }
+                    }
+                }
+                None => {
+                    return Ok(())
+                }
+            }
+        }
+    }
+
     /// Collects the remaining items into a list. A chain over borrowed items produces a second-class list of
     /// views, which cannot be stored; clone the items first to get an owned list.
     fn to_list(mut self): List<T> {
@@ -393,6 +436,106 @@ interface Iterator<T> {
                 None => {
                     return out
                 }
+            }
+        }
+    }
+}
+
+/// `it.min()`: the least item; the first of equal items. `None` when the iterator is empty. The compiler supplies `T`.
+priv fn __iter_min<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
+    let mut it = it
+    match it.next() {
+        Some(first) => {
+            let mut best = first
+            loop {
+                match it.next() {
+                    Some(x) => {
+                        if x.cmp(best).is_lt() {
+                            best = x
+                        }
+                    }
+                    None => {
+                        return Some(best)
+                    }
+                }
+            }
+        }
+        None => None,
+    }
+}
+
+/// `it.max()`: the greatest item; the last of equal items. `None` when the iterator is empty.
+priv fn __iter_max<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
+    let mut it = it
+    match it.next() {
+        Some(first) => {
+            let mut best = first
+            loop {
+                match it.next() {
+                    Some(x) => {
+                        if !x.cmp(best).is_lt() {
+                            best = x
+                        }
+                    }
+                    None => {
+                        return Some(best)
+                    }
+                }
+            }
+        }
+        None => None,
+    }
+}
+
+/// `a.eq(b)`: whether both iterators yield equal items and end together.
+priv fn __iter_eq<T: Eq, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): bool {
+    let mut a = a
+    let mut b = b
+    loop {
+        match a.next() {
+            Some(x) => {
+                match b.next() {
+                    Some(y) => {
+                        if x != y {
+                            return false
+                        }
+                    }
+                    None => {
+                        return false
+                    }
+                }
+            }
+            None => {
+                return b.next().is_none()
+            }
+        }
+    }
+}
+
+/// `a.cmp(b)`: compares item by item; the shorter iterator is less when it is a prefix of the other.
+priv fn __iter_cmp<T: Ord, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): Ordering {
+    let mut a = a
+    let mut b = b
+    loop {
+        match a.next() {
+            Some(x) => {
+                match b.next() {
+                    Some(y) => {
+                        let order = x.cmp(y)
+                        if !order.is_eq() {
+                            return order
+                        }
+                    }
+                    None => {
+                        return Ordering.Greater
+                    }
+                }
+            }
+            None => {
+                if b.next().is_none() {
+                    return Ordering.Equal
+                }
+                return Ordering.Less
             }
         }
     }

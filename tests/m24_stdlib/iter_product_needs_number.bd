@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `sum` and `product` are defined for integers and floats (and views of them) only.
+
+fn main() {
+    let mut ws = List<String>.new()
+    ws.push(String.from("a"))
+    let a = ws.iter().product() //~ E0141
+    let b = ws.iter().sum() //~ E0141
+    let c = [true, false].iter().product() //~ E0141
+}
