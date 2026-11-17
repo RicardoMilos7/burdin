@@ -79,6 +79,110 @@ Stdin {
   end of the input and never waits for a person.
 - None of these runs at compile time: reaching one in a comptime evaluation is E0224 (`comptime.md`, CT9).
 
+## Readers and writers (issue #409)
+
+`Read`, `Write`, `Seek`, and `BufRead` are the interfaces that byte sources and sinks implement; `Cursor`,
+`BufReader`, and `BufWriter` are the implementations `std` provides. Every operation returns
+`Result<T, IoError>`, so a failure passes out of any depth of wrappers with `?`.
+
+```
+interface Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError>
+    fn read_exact(mut self, mut buf: List<u8>, count: usize): Result<(), IoError>
+    fn read_to_end(mut self, mut buf: List<u8>): Result<usize, IoError>
+    fn read_to_string(mut self): Result<String, IoError>
+}
+
+interface Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError>
+    fn flush(mut self): Result<(), IoError>
+    fn write_all(mut self, data: [u8]): Result<(), IoError>
+    fn write_text(mut self, text: str): Result<(), IoError>
+    fn write_line(mut self, text: str): Result<(), IoError>
+}
+
+enum SeekFrom derives (Clone, Copy, Eq, Debug) { Start(u64), End(i64), Current(i64) }
+
+interface Seek {
+    fn seek(mut self, from: SeekFrom): Result<u64, IoError>
+    fn position(mut self): Result<u64, IoError>
+    fn rewind(mut self): Result<(), IoError>
+}
+
+interface BufRead requires Read {
+    fn read_until(mut self, delim: u8, mut buf: List<u8>): Result<usize, IoError>
+    fn read_line(mut self): Result<Option<String>, IoError>
+    fn lines(own self): Lines<Self>                  // Iterator<Result<String, IoError>>
+}
+
+fn copy<R: Read, W: Write>(mut from: R, mut to: W): Result<u64, IoError>
+
+struct Cursor {                                      // reads, writes, and seeks in a List<u8>
+    fn new(own data: List<u8>): Cursor
+    fn empty(): Cursor
+    fn from_text(text: str): Cursor
+    fn get_ref(self): &List<u8>
+    fn into_inner(own self): List<u8>
+}
+
+struct BufReader<R: Read> {                          // Read, BufRead, and Seek when R is Seek
+    fn new(own inner: R): BufReader<R>               // a 4096-byte buffer
+    fn with_capacity(capacity: usize, own inner: R): BufReader<R>
+    fn get_ref(self): &R
+    fn buffered(self): usize
+    fn into_inner(own self): R
+}
+
+struct BufWriter<W: Write> {                         // Write, and Seek when W is Seek
+    fn new(own inner: W): BufWriter<W>               // a 4096-byte buffer
+    fn with_capacity(capacity: usize, own inner: W): BufWriter<W>
+    fn get_ref(self): &W
+    fn buffered(self): usize
+    fn into_inner(own self): Result<W, IoError>
+}
+```
+
+- **Reading appends.** `read` appends at most `max` bytes to the caller's list and returns how many it appended, so
+  no read allocates a buffer of its own. `Ok(0)` is the end of the input (or a `max` of 0). A reader may append fewer
+  bytes than asked for. `read_exact` keeps reading until `count` bytes have been appended, and a source that ends
+  first is `IoError.UnexpectedEof`; the bytes it did produce stay in the list. `read_to_end` appends everything left
+  and returns the count. `read_to_string` collects it as text, and bytes that are not valid UTF-8 are
+  `IoError.InvalidData` (the file functions above do not check, as they return what the file holds).
+- **Writing takes a prefix.** `write` takes a prefix of `data` and returns its length. `write_all` calls it until every
+  byte is taken, and a sink that takes none of a non-empty `data` is `IoError.WriteZero`. `write_text` writes the
+  UTF-8 bytes of a string and `write_line` adds one `\n`. `flush` pushes what the writer holds to what it wraps; a
+  writer that holds nothing returns `Ok(())`.
+- **`BufRead`.** `read_until` appends up to and including the first `delim` byte, or up to the end of the input, and
+  returns how many bytes it appended (`0` at the end). `read_line` is the `Stdin.read_line` of "Streams" for any
+  buffered reader: it drops the `\n` and the `\r` of a `\r\n`, returns `Ok(None)` at the end, accepts a last line with
+  no terminator, and reports bytes that are not valid UTF-8 as `IoError.InvalidData`. `lines` yields each line as a
+  `Result`, and stops after the first error.
+- **`Cursor`** holds a `List<u8>` and a position. It reads and `read_until`s from the position, writes over the bytes
+  at the position (growing the list at the end, and filling the gap with zeros when the position is past the end),
+  and seeks. `Seek.position` is `seek(SeekFrom.Current(0))`.
+- **`seek`** returns the new position in bytes from the start. A position before the start is `IoError.Seek` and
+  leaves the position as it was; a position past the end is allowed. `SeekFrom.End(n)` and `SeekFrom.Current(n)` take
+  a signed offset.
+- **`BufReader`** asks the wrapped reader for its capacity at a time, so many small reads cost one inner read; a read
+  of at least the capacity, with nothing buffered, goes straight to the wrapped reader. `capacity` 0 panics. A seek
+  counts the buffered bytes, so `Current` is relative to what the program has read, and then discards the buffer.
+  `into_inner` returns the wrapped reader and drops what was buffered.
+- **`BufWriter`** holds writes until the next one would overflow the capacity, then writes the buffer to the wrapped
+  writer; a write of at least the capacity goes straight through after the buffer is flushed. `capacity` 0 panics.
+  `flush` writes the buffer and flushes the wrapped writer. A failed write leaves the bytes the wrapped writer did not
+  take in the buffer. **Dropping a `BufWriter` flushes the buffer and ignores a failure**; call `flush` or
+  `into_inner` to see one. `into_inner` flushes, returns the writer, and leaves nothing for the drop to write twice.
+  A seek flushes first.
+- **`BytesMut`** implements `Write`: writing appends to the buffer. Nothing else in `std` implements these
+  interfaces yet: the standard-stream handles keep their own `write`, `write_line`, and `read_line` (a stream's text
+  `write` has a different signature from `Write.write`), and file handles are issue #702, which will implement
+  `Read`, `Write`, and `Seek`.
+
+The tests are `m24_stdlib/rw_cursor_read`, `rw_cursor_write_seek`, `rw_read_exact_eof`, `rw_read_chunks`, `rw_write_all`,
+`rw_bufreader_lines`, `rw_bufreader_buffering`, `rw_bufwriter`, `rw_bufwriter_drop`, `rw_seek_buffered`, `rw_copy`,
+`rw_bytesmut_write`, `rw_error_propagation`, `rw_reader_needs_read`, `rw_bufreader_capacity_zero`, and
+`rw_bufwriter_capacity_zero`.
+
 ## Numbers and parsing
 
 Every integer type (`i8`..`i64`, `isize`, `u8`..`u64`, `usize`) has:
@@ -907,6 +1011,10 @@ error enum IoError {
     Read { path: String }    "cannot read {path}"
     Write { path: String }   "cannot write {path}"
     Run { command: String }  "cannot run {command}"
+    UnexpectedEof            "unexpected end of input"
+    WriteZero                "the writer accepted no bytes"
+    InvalidData              "the bytes are not valid text"
+    Seek                     "seek to a position before the start"
 }
 
 error enum ParseIntError {
@@ -915,7 +1023,10 @@ error enum ParseIntError {
 ```
 
 `read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
-`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`.
+`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The readers and writers return
+`UnexpectedEof` (`read_exact` on a source that ended), `WriteZero` (`write_all` on a sink that takes nothing),
+`InvalidData` (text that is not UTF-8), and `Seek` (a position before the start); the set of variants is
+settled together with the operating-system error codes in issue #701.
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
@@ -1056,6 +1167,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
+| Readers and writers | `m24_stdlib/rw_cursor_read`, `rw_cursor_write_seek`, `rw_read_exact_eof`, `rw_read_chunks`, `rw_write_all`, `rw_bufreader_lines`, `rw_bufreader_buffering`, `rw_bufwriter`, `rw_bufwriter_drop`, `rw_seek_buffered`, `rw_copy`, `rw_bytesmut_write`, `rw_error_propagation`, `rw_reader_needs_read`, `rw_bufreader_capacity_zero`, `rw_bufwriter_capacity_zero` |
 | Byte buffers | `m24_stdlib/bytes_mut`, `bytes_share`, `bytes_slice_out_of_bounds`, `bytes_index_out_of_bounds`, `shared_get_view`, `shared_get_view_outlives` |
 | `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |

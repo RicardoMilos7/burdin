@@ -1,0 +1,48 @@
+//@ run
+//> 5 hello
+//> 2 , 
+//> 5 world
+//> 0 0
+//> hello, world!
+//> 0
+//> 12 hello, world
+//> world
+
+// `Cursor` is a reader over bytes in memory. `read` appends up to `max` bytes to the caller's list and returns how many
+// it appended; `0` is the end. `read_exact`, `read_to_end`, and `read_to_string` are built on `read`.
+
+fn text(bytes: List<u8>): String {
+    from_utf8(bytes[0..bytes.len()]).unwrap()
+}
+
+fn main() {
+    let mut c = Cursor.from_text("hello, world!")
+    let mut buf = List<u8>.new()
+    let n = c.read(mut buf, 5).unwrap()
+    println("{} {}", n, text(buf))
+
+    let mut more = List<u8>.new()
+    let n2 = c.read(mut more, 2).unwrap()
+    println("{} {}", n2, text(more))
+
+    let mut exact = List<u8>.new()
+    c.read_exact(mut exact, 5).unwrap()
+    println("{} {}", exact.len(), text(exact))
+
+    let mut none = List<u8>.new()
+    println("{} {}", c.read(mut none, 0).unwrap(), none.len())
+
+    let mut rest = Cursor.from_text("hello, world!")
+    println("{}", rest.read_to_string().unwrap())
+    println("{}", rest.read_to_end(mut none).unwrap())
+
+    let mut again = Cursor.from_text("hello, world")
+    let mut all = List<u8>.new()
+    let total = again.read_to_end(mut all).unwrap()
+    println("{} {}", total, text(all))
+
+    let mut tail = Cursor.from_text("hello world")
+    let mut skip = List<u8>.new()
+    tail.read_exact(mut skip, 6).unwrap()
+    println("{}", tail.read_to_string().unwrap())
+}
