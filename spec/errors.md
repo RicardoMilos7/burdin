@@ -185,6 +185,7 @@ error enum IoError {
     WriteZero                 "the writer accepted no bytes"
     InvalidData               "the bytes are not valid text"
     Seek                      "seek to a position before the start"
+    InvalidInput              "invalid open options"
 }
 
 error enum ParseIntError {
@@ -207,7 +208,10 @@ Streams). The reader and writer interfaces return `UnexpectedEof`, `WriteZero`, 
 Readers and writers). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
 directory operations (`read_dir`, `metadata`, `canonicalize`, `walk`, and `walk_glob`) use `IoError.Read`, and the
 ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, and
-`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking"). The environment functions of
+`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking"). A file handle reports its
+operations' failures as `IoError.Read` or `IoError.Write` with the path it was opened with, a seek before the start
+as `IoError.Seek`, and an option set `OpenOptions` rejects as `IoError.InvalidInput` (`stdlib.md`, "Files and file
+handles"). The environment functions of
 `std.env` return `EnvError`: `Name` for an invalid name, `Value` for an invalid value, `Access` when the system
 refuses a change, `WorkingDirectory` when the directory cannot be read as text, and `SetWorkingDirectory` when it
 cannot be changed (`stdlib.md`, "Environment variables and the working directory"). A child's `spawn` failure
@@ -215,10 +219,10 @@ cannot be changed (`stdlib.md`, "Environment variables and the working directory
 program name; reading a piped child stream reports `<stdout>`, `<stderr>`, or `<child>`, and writing the child's
 standard input reports `<stdin>` (`stdlib.md`, "Child processes").
 
-The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, `__process_spawn`,
-`__pipe_read_to_string`, `__pipe_read_line`, `__pipe_read_both`, and the integer parsers) are
-typed with the same error types but produce a placeholder error value; the `std` wrappers replace it with the
-real variant. A program calls the `std` functions, not the primitives.
+The compiler primitives behind them (`__read_to_string`, `__write_file`, `__file_open` and the other file-handle
+primitives, `__run`, `__process_spawn`, `__pipe_read_to_string`, `__pipe_read_line`, `__pipe_read_both`, and the
+integer parsers) are typed with the same error types but produce a placeholder error value; the `std` wrappers
+replace it with the real variant. A program calls the `std` functions, not the primitives.
 
 ## Diagnostics
 

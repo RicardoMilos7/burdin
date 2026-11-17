@@ -84,6 +84,64 @@ const S_IFREG: u64 = 0o100000;
 const S_IFDIR: u64 = 0o040000;
 const S_IFLNK: u64 = 0o120000;
 
+/// The `open` flags a file handle uses. Linux, macOS, and the Windows CRT disagree on every value except the
+/// access mode, so the runtime picks the set for the system it generates for. `binary` is `O_BINARY` on Windows
+/// (a file is opened without newline translation) and zero elsewhere, where there is no such flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OpenFlagConstants {
+    read_only: u32,
+    write_only: u32,
+    read_write: u32,
+    append: u32,
+    truncate: u32,
+    create: u32,
+    exclusive: u32,
+    binary: u32,
+}
+
+fn open_flag_constants(windows: bool, darwin: bool) -> OpenFlagConstants {
+    if windows {
+        OpenFlagConstants {
+            read_only: 0x0000,
+            write_only: 0x0001,
+            read_write: 0x0002,
+            append: 0x0008,
+            truncate: 0x0200,
+            create: 0x0100,
+            exclusive: 0x0400,
+            binary: 0x8000,
+        }
+    } else if darwin {
+        OpenFlagConstants {
+            read_only: 0,
+            write_only: 1,
+            read_write: 2,
+            append: 0x0008,
+            truncate: 0x0400,
+            create: 0x0200,
+            exclusive: 0x0800,
+            binary: 0,
+        }
+    } else {
+        OpenFlagConstants {
+            read_only: 0,
+            write_only: 1,
+            read_write: 2,
+            append: 0o2000,
+            truncate: 0o1000,
+            create: 0o100,
+            exclusive: 0o200,
+            binary: 0,
+        }
+    }
+}
+
+/// The mode `open` gives a file it creates: the usual 0666 (the umask applies), or the CRT's two permission bits
+/// on Windows, where every other bit is ignored.
+fn open_create_mode(windows: bool) -> u64 {
+    if windows { 0o600 } else { 0o666 }
+}
+
 /// The runtime functions the generated code calls.
 pub(crate) struct Runtime<'ctx> {
     /// `(fd: i32, ptr, len: usize, newline: i32)`
@@ -161,8 +219,22 @@ pub(crate) struct Runtime<'ctx> {
     pub parse_u64: FunctionValue<'ctx>,
     /// `(ptr, len, out: *String) -> i1`: reads a whole file.
     pub read_to_string: FunctionValue<'ctx>,
-    /// `(path, path_len, text, text_len) -> i1`: writes a whole file.
+    /// The `(path, path_len, text, text_len) -> i1` whole-file write.
     pub write_file: FunctionValue<'ctx>,
+    /// `(path, path_len, read, write, append, truncate, create, create_new) -> i32`: a file descriptor, or -1.
+    pub file_open: FunctionValue<'ctx>,
+    /// `(fd: i32, out: *List<u8>, max: usize) -> isize`: appends up to `max` bytes and returns the count, or -1.
+    pub file_read: FunctionValue<'ctx>,
+    /// `(fd: i32, data, len: usize) -> isize`: writes a prefix of the bytes and returns the count, or -1.
+    pub file_write: FunctionValue<'ctx>,
+    /// `(fd: i32, offset: i64, whence: i32) -> i64`: the new position, or -1.
+    pub file_seek: FunctionValue<'ctx>,
+    /// `(fd: i32) -> i32`: makes the file's contents durable; 0 on success.
+    pub file_sync: FunctionValue<'ctx>,
+    /// `(fd: i32, size: u64) -> i32`: sets the file's length; 0 on success.
+    pub file_set_len: FunctionValue<'ctx>,
+    /// `(fd: i32) -> i32`: closes the descriptor; 0 on success.
+    pub file_close: FunctionValue<'ctx>,
     /// `(path, path_len, out: *List<String>) -> i32`: the names in a directory, or -1.
     pub read_dir: FunctionValue<'ctx>,
     /// `(path, path_len) -> i32`: creates one directory, or -1.
@@ -558,6 +630,13 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             parse_u64: self.parse_int(&h, false)?,
             read_to_string: self.read_to_string(&h, alloc_string, string_push_str)?,
             write_file: self.write_file(&h)?,
+            file_open: self.file_open()?,
+            file_read: self.file_read()?,
+            file_write: self.file_write()?,
+            file_seek: self.file_seek()?,
+            file_sync: self.file_sync()?,
+            file_set_len: self.file_set_len()?,
+            file_close: self.file_close()?,
             read_dir: self.read_dir(&h)?,
             create_dir: self.create_dir()?,
             remove_dir: self.remove_dir()?,
@@ -2892,6 +2971,264 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.call(free, &[cpath.into()])?;
         let all = self.b.build_int_compare(IntPredicate::EQ, written, tlen, "").map_err(llvm_err)?;
         self.b.build_return(Some(&all)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `file_open(path, path_len, read, write, append, truncate, create, create_new) -> i32`: `open`/`_open` with
+    /// the flags the options name, returning the descriptor or -1. `create_new` implies `create`. The standard
+    /// library rejects the option combinations the system would reject inconsistently (`spec/stdlib.md`, "Files and
+    /// file handles").
+    fn file_open(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let params = [
+            ptr_ty.into(),
+            usize_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+        ];
+        let f = self.function("burdin_rt_file_open", i32_ty.fn_type(&params, false));
+        let (path, plen) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let options: Vec<IntValue<'ctx>> = (2..8).map(|i| Self::int_param(f, i)).collect();
+        let c = open_flag_constants(self.windows, cfg!(target_os = "macos"));
+        let zero = i32_ty.const_zero();
+        let flag = |v: u32| i32_ty.const_int(u64::from(v), false);
+        let nonzero = |v: IntValue<'ctx>| -> GenResult<IntValue<'ctx>> {
+            self.b.build_int_compare(IntPredicate::NE, v, zero, "").map_err(llvm_err)
+        };
+        let read = nonzero(options[0])?;
+        let write = nonzero(options[1])?;
+        let append = nonzero(options[2])?;
+        let truncate = nonzero(options[3])?;
+        let create = nonzero(options[4])?;
+        let create_new = nonzero(options[5])?;
+        let writes = self.b.build_or(write, append, "writes").map_err(llvm_err)?;
+        // `append` opens for writing too, and `read` with either is the read-write mode.
+        let both = self.b.build_and(read, writes, "both").map_err(llvm_err)?;
+        let plain = self
+            .b
+            .build_select(writes, flag(c.write_only), flag(c.read_only), "access")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let mut flags =
+            self.b.build_select(both, flag(c.read_write), plain, "flags").map_err(llvm_err)?.into_int_value();
+        let append_flag = self.b.build_select(append, flag(c.append), zero, "").map_err(llvm_err)?.into_int_value();
+        flags = self.b.build_or(flags, append_flag, "").map_err(llvm_err)?;
+        let truncate_flag =
+            self.b.build_select(truncate, flag(c.truncate), zero, "").map_err(llvm_err)?.into_int_value();
+        flags = self.b.build_or(flags, truncate_flag, "").map_err(llvm_err)?;
+        // `create_new` is `create` plus `exclusive`; whichever is set, the file is made when it is missing.
+        let exclusive = flag(c.create | c.exclusive);
+        let created_plain = self.b.build_select(create, flag(c.create), zero, "").map_err(llvm_err)?.into_int_value();
+        let created = self.b.build_select(create_new, exclusive, created_plain, "").map_err(llvm_err)?.into_int_value();
+        flags = self.b.build_or(flags, created, "").map_err(llvm_err)?;
+        if self.windows {
+            flags = self.b.build_or(flags, flag(c.binary), "").map_err(llvm_err)?;
+        }
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        let mode = i32_ty.const_int(open_create_mode(self.windows), false);
+        // `open` and `_open` are variadic: the mode is an unnamed argument. The declaration must say so, because
+        // Darwin's arm64 ABI passes unnamed arguments on the stack; a fixed three-argument declaration would lose
+        // the mode there and create the file with whatever the stack held.
+        let open_ty = i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into()], true);
+        let fd = if self.windows {
+            let open = libc(self.module, "_open", open_ty);
+            self.call(open, &[cpath.into(), flags.into(), mode.into()])?
+        } else {
+            let open = libc(self.module, "open", open_ty);
+            self.call(open, &[cpath.into(), flags.into(), mode.into()])?
+        };
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&fd.expect("open returns an int").into_int_value())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `file_read(fd, out: *List<u8>, max) -> isize`: appends up to `max` bytes read from `fd` to the list at
+    /// `out`, growing its buffer, and returns how many. Zero is the end of the file and -1 a read error. The list's
+    /// length changes only when bytes were read.
+    fn file_read(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let params = [i32_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_file_read", usize_ty.fn_type(&params, false));
+        let (fd, out, max) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
+        let ptr_field = self.b.build_struct_gep(self.string_ty, out, 0, "list.ptr").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "list.len").map_err(llvm_err)?;
+        let cap_field = self.b.build_struct_gep(self.string_ty, out, 2, "list.cap").map_err(llvm_err)?;
+        let zero = usize_ty.const_zero();
+        let empty = self.b.build_int_compare(IntPredicate::EQ, max, zero, "empty").map_err(llvm_err)?;
+        let check = self.block(f, "read.check");
+        let none = self.block(f, "read.none");
+        self.b.build_conditional_branch(empty, none, check).map_err(llvm_err)?;
+        self.b.position_at_end(none);
+        self.b.build_return(Some(&zero)).map_err(llvm_err)?;
+
+        self.b.position_at_end(check);
+        let len = self.b.build_load(usize_ty, len_field, "len").map_err(llvm_err)?.into_int_value();
+        let cap = self.b.build_load(usize_ty, cap_field, "cap").map_err(llvm_err)?.into_int_value();
+        let needed = self.b.build_int_add(len, max, "needed").map_err(llvm_err)?;
+        let full = self.b.build_int_compare(IntPredicate::ULT, cap, needed, "full").map_err(llvm_err)?;
+        let grow = self.block(f, "read.grow");
+        let read = self.block(f, "read.read");
+        self.b.build_conditional_branch(full, grow, read).map_err(llvm_err)?;
+
+        // Grow the buffer like a `List` does: double it, at least to what the read needs, and at least four bytes.
+        self.b.position_at_end(grow);
+        let doubled = self.b.build_int_mul(cap, usize_ty.const_int(2, false), "doubled").map_err(llvm_err)?;
+        let wide = self
+            .b
+            .build_select(
+                self.b.build_int_compare(IntPredicate::ULT, doubled, needed, "").map_err(llvm_err)?,
+                needed,
+                doubled,
+                "cap",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let grown = self
+            .b
+            .build_select(
+                self.b
+                    .build_int_compare(IntPredicate::ULT, wide, usize_ty.const_int(4, false), "")
+                    .map_err(llvm_err)?,
+                usize_ty.const_int(4, false),
+                wide,
+                "cap",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let data = self.b.build_load(ptr_ty, ptr_field, "ptr").map_err(llvm_err)?.into_pointer_value();
+        let fresh = self.call_rt_realloc(data, grown)?;
+        self.b.build_store(ptr_field, fresh).map_err(llvm_err)?;
+        self.b.build_store(cap_field, grown).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(read).map_err(llvm_err)?;
+
+        self.b.position_at_end(read);
+        let len = self.b.build_load(usize_ty, len_field, "len").map_err(llvm_err)?.into_int_value();
+        let data = self.b.build_load(ptr_ty, ptr_field, "ptr").map_err(llvm_err)?.into_pointer_value();
+        let dest = self.offset(data, len)?;
+        let n = if self.windows {
+            let read =
+                libc(self.module, "_read", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), i32_ty.into()], false));
+            let count = self.b.build_int_truncate(max, i32_ty, "count").map_err(llvm_err)?;
+            let raw = self
+                .call(read, &[fd.into(), dest.into(), count.into()])?
+                .expect("_read returns an int")
+                .into_int_value();
+            self.b.build_int_s_extend(raw, usize_ty, "n").map_err(llvm_err)?
+        } else {
+            let read =
+                libc(self.module, "read", usize_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+            self.call(read, &[fd.into(), dest.into(), max.into()])?.expect("read returns a size").into_int_value()
+        };
+        let failed = self.b.build_int_compare(IntPredicate::SLT, n, zero, "failed").map_err(llvm_err)?;
+        let failed_block = self.block(f, "read.failed");
+        let done = self.block(f, "read.done");
+        self.b.build_conditional_branch(failed, failed_block, done).map_err(llvm_err)?;
+        self.b.position_at_end(failed_block);
+        self.b.build_return(Some(&usize_ty.const_all_ones())).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        let next = self.b.build_int_add(len, n, "next").map_err(llvm_err)?;
+        self.b.build_store(len_field, next).map_err(llvm_err)?;
+        self.b.build_return(Some(&n)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `file_write(fd, data, len: usize) -> isize`: writes a prefix of `data` and returns how many bytes the system
+    /// took, or -1. A short write is not an error; `Write.write_all` calls again for the rest.
+    fn file_write(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let params = [i32_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_file_write", usize_ty.fn_type(&params, false));
+        let (fd, data, len) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
+        let n = if self.windows {
+            let write =
+                libc(self.module, "_write", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), i32_ty.into()], false));
+            let count = self.b.build_int_truncate(len, i32_ty, "count").map_err(llvm_err)?;
+            let raw = self
+                .call(write, &[fd.into(), data.into(), count.into()])?
+                .expect("_write returns an int")
+                .into_int_value();
+            self.b.build_int_s_extend(raw, usize_ty, "n").map_err(llvm_err)?
+        } else {
+            let write =
+                libc(self.module, "write", usize_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+            self.call(write, &[fd.into(), data.into(), len.into()])?.expect("write returns a size").into_int_value()
+        };
+        self.b.build_return(Some(&n)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `file_seek(fd, offset: i64, whence: i32) -> i64`: the new position, or -1.
+    fn file_seek(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i32_ty, i64_ty) = (self.i32(), self.i64());
+        let params = [i32_ty.into(), i64_ty.into(), i32_ty.into()];
+        let f = self.function("burdin_rt_file_seek", i64_ty.fn_type(&params, false));
+        let (fd, offset, whence) = (Self::int_param(f, 0), Self::int_param(f, 1), Self::int_param(f, 2));
+        let position = if self.windows {
+            let seek =
+                libc(self.module, "_lseeki64", i64_ty.fn_type(&[i32_ty.into(), i64_ty.into(), i32_ty.into()], false));
+            self.call(seek, &[fd.into(), offset.into(), whence.into()])?
+        } else {
+            let seek =
+                libc(self.module, "lseek", i64_ty.fn_type(&[i32_ty.into(), i64_ty.into(), i32_ty.into()], false));
+            self.call(seek, &[fd.into(), offset.into(), whence.into()])?
+        };
+        self.b.build_return(Some(&position.expect("lseek returns a position").into_int_value())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `file_sync(fd) -> i32`: `fsync` / `_commit`; 0 on success.
+    fn file_sync(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let i32_ty = self.i32();
+        let f = self.function("burdin_rt_file_sync", i32_ty.fn_type(&[i32_ty.into()], false));
+        let fd = Self::int_param(f, 0);
+        let sync = if self.windows {
+            let commit = libc(self.module, "_commit", i32_ty.fn_type(&[i32_ty.into()], false));
+            self.call(commit, &[fd.into()])?
+        } else {
+            let fsync = libc(self.module, "fsync", i32_ty.fn_type(&[i32_ty.into()], false));
+            self.call(fsync, &[fd.into()])?
+        };
+        self.b.build_return(Some(&sync.expect("sync returns an int").into_int_value())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `file_set_len(fd, size: u64) -> i32`: `ftruncate` / `_chsize_s`; 0 on success.
+    fn file_set_len(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i32_ty, i64_ty) = (self.i32(), self.i64());
+        let params = [i32_ty.into(), i64_ty.into()];
+        let f = self.function("burdin_rt_file_set_len", i32_ty.fn_type(&params, false));
+        let (fd, size) = (Self::int_param(f, 0), Self::int_param(f, 1));
+        let status = if self.windows {
+            let chsize = libc(self.module, "_chsize_s", i32_ty.fn_type(&[i32_ty.into(), i64_ty.into()], false));
+            self.call(chsize, &[fd.into(), size.into()])?
+        } else {
+            let truncate = libc(self.module, "ftruncate", i32_ty.fn_type(&[i32_ty.into(), i64_ty.into()], false));
+            self.call(truncate, &[fd.into(), size.into()])?
+        };
+        self.b.build_return(Some(&status.expect("the resize returns an int").into_int_value())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `file_close(fd) -> i32`: `close` / `_close`; 0 on success.
+    fn file_close(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let i32_ty = self.i32();
+        let f = self.function("burdin_rt_file_close", i32_ty.fn_type(&[i32_ty.into()], false));
+        let fd = Self::int_param(f, 0);
+        let close = if self.windows {
+            let close = libc(self.module, "_close", i32_ty.fn_type(&[i32_ty.into()], false));
+            self.call(close, &[fd.into()])?
+        } else {
+            let close = libc(self.module, "close", i32_ty.fn_type(&[i32_ty.into()], false));
+            self.call(close, &[fd.into()])?
+        };
+        self.b.build_return(Some(&close.expect("close returns an int").into_int_value())).map_err(llvm_err)?;
         Ok(f)
     }
 
@@ -6347,6 +6684,73 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Darwin's arm64 ABI passes unnamed arguments on the stack, so `open`'s mode argument only reaches the C
+    /// library when the declaration is variadic. The Windows CRT's `_open` is variadic too.
+    #[test]
+    fn file_open_is_declared_variadic() {
+        for windows in [false, true] {
+            let cx = Context::create();
+            let module = cx.create_module("runtime");
+            let ptr = cx.ptr_type(AddressSpace::default());
+            let usize_ty = cx.i64_type();
+            let string_ty = cx.struct_type(&[ptr.into(), usize_ty.into(), usize_ty.into()], false);
+            generate(&cx, &module, usize_ty, string_ty, windows, false, false).expect("the runtime is generated");
+            let symbol = if windows { "_open" } else { "open" };
+            let open = module.get_function(symbol).unwrap_or_else(|| panic!("{symbol} is declared"));
+            assert!(open.get_type().is_var_arg(), "{symbol} must be variadic to pass the create mode");
+        }
+    }
+
+    /// The open flags differ on every platform, and only the host's can be exercised. The values come from the
+    /// systems' C headers: Linux's `O_*`, the different macOS `O_*`, and the Windows CRT's `_O_*`.
+    #[test]
+    fn open_flags_match_each_platform() {
+        assert_eq!(
+            open_flag_constants(false, false),
+            OpenFlagConstants {
+                read_only: 0,
+                write_only: 1,
+                read_write: 2,
+                append: 0o2000,
+                truncate: 0o1000,
+                create: 0o100,
+                exclusive: 0o200,
+                binary: 0,
+            },
+            "Linux"
+        );
+        assert_eq!(
+            open_flag_constants(false, true),
+            OpenFlagConstants {
+                read_only: 0,
+                write_only: 1,
+                read_write: 2,
+                append: 0x0008,
+                truncate: 0x0400,
+                create: 0x0200,
+                exclusive: 0x0800,
+                binary: 0,
+            },
+            "macOS"
+        );
+        assert_eq!(
+            open_flag_constants(true, false),
+            OpenFlagConstants {
+                read_only: 0x0000,
+                write_only: 0x0001,
+                read_write: 0x0002,
+                append: 0x0008,
+                truncate: 0x0200,
+                create: 0x0100,
+                exclusive: 0x0400,
+                binary: 0x8000,
+            },
+            "the Windows CRT"
+        );
+        assert_eq!(open_create_mode(false), 0o666, "Unix honors the umask over these bits");
+        assert_eq!(open_create_mode(true), 0o600, "the CRT takes only _S_IREAD and _S_IWRITE");
+    }
 
     /// The Windows structures the runtime fills by byte offset, mirrored so a wrong offset fails on any host.
     #[repr(C)]

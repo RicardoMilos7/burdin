@@ -254,7 +254,7 @@ an error, not `1`.
 `N` is the size of the type in bytes (1, 2, 4, or 8). The target is little-endian everywhere Burdin runs, so `ne` is
 `le`. The `from_*_bytes` functions are the one case of an associated function that is not `parse`: `T.name(...)` on an
 integer type looks `name` up as the std function `__T_name`, and `T.NAME` as the std constant `__T_NAME`. A name that
-does not exist is the usual `E0002`. The floating-point functions are a separate issue (#703).
+does not exist is the usual `E0002`. The floating-point functions are below.
 
 ### Floats (issue #417)
 
@@ -272,6 +272,83 @@ prefix, and an exponent without digits, is `Invalid`. A number past the range of
 zero, as in C. The value is the correctly rounded one (it is computed by the C library's `strtod`/`strtof` after the
 grammar check), so a float written with `to_string`, which is the shortest text that reads back as the same number
 (`format.md`, FM7), parses back to the same float: `f64.parse(x.to_string()) == x` for every finite `x`.
+
+### Float functions (issue #703)
+
+`f64` and `f32` have the functions below. `T` stands for either type. The compiler provides the ones that lower to
+an LLVM intrinsic or to a C math library call, as it does for the integer methods; the rest are extension methods in
+`std/src/float.bd` (`extensions.md`), so the prelude makes them visible everywhere.
+
+```
+// Exactly rounded: the result is the IEEE 754 result. Compiled code and the comptime interpreter agree bit for bit.
+fn T.abs(self): T                    fn T.sqrt(self): T                 fn T.floor(self): T
+fn T.ceil(self): T                   fn T.round(self): T                fn T.round_ties_even(self): T
+fn T.trunc(self): T                  fn T.mul_add(self, a: T, b: T): T   fn T.copysign(self, sign: T): T
+fn T.to_bits(self): u64              // u32 for `f32`
+fn f64.from_bits(bits: u64): f64     fn f32.from_bits(bits: u32): f32    // associated functions, not methods
+
+// The C math library's results, through an LLVM intrinsic where one exists.
+fn T.powi(self, exp: i32): T         fn T.powf(self, exp: T): T          fn T.cbrt(self): T
+fn T.exp(self): T                    fn T.exp2(self): T                 fn T.ln(self): T
+fn T.log2(self): T                   fn T.log10(self): T                fn T.sin(self): T
+fn T.cos(self): T                    fn T.tan(self): T                  fn T.asin(self): T
+fn T.acos(self): T                   fn T.atan(self): T                 fn T.atan2(self, other: T): T
+fn T.sinh(self): T                   fn T.cosh(self): T                 fn T.tanh(self): T
+fn T.hypot(self, other: T): T
+
+// Written in `std`.
+fn T.is_nan(self): bool              fn T.is_infinite(self): bool       fn T.is_finite(self): bool
+fn T.is_sign_negative(self): bool    fn T.signum(self): T               fn T.fract(self): T
+fn T.log(self, base: T): T           fn T.min(self, other: T): T        fn T.max(self, other: T): T
+fn T.clamp(self, min: T, max: T): T  fn T.to_degrees(self): T           fn T.to_radians(self): T
+fn T.total_cmp(self, other: T): Ordering     // the float order; floats have no `cmp`
+
+// The associated constants, each in its type's precision.
+f64.PI  f64.E  f64.TAU  f64.SQRT_2  f64.LN_2  f64.LN_10  f64.INFINITY  f64.NEG_INFINITY  f64.NAN
+f64.EPSILON  f64.MIN  f64.MAX  f64.MIN_POSITIVE
+f32.PI  f32.E  f32.TAU  f32.SQRT_2  f32.LN_2  f32.LN_10  f32.INFINITY  f32.NEG_INFINITY  f32.NAN
+f32.EPSILON  f32.MIN  f32.MAX  f32.MIN_POSITIVE
+```
+
+The exact semantics:
+
+- `abs` clears the sign bit: `abs(-0.0)` is `0.0`, and a NaN keeps its payload but loses its sign. A NaN payload is
+  otherwise unspecified, including the one `NAN` has.
+- `round` rounds a half away from zero (`2.5` is `3.0`, `-2.5` is `-3.0`); `round_ties_even` rounds a half to the
+  even neighbour (`2.5` is `2.0`, `3.5` is `4.0`); `trunc` rounds toward zero; `floor` and `ceil` round down and
+  up. `fract` is `self - self.trunc()`, so it is NaN for an infinite or NaN value.
+- `signum` is `1.0`, `-1.0`, or NaN: it follows the sign bit, so `(-0.0).signum()` is `-1.0` and a NaN gives NaN.
+  `is_sign_negative` likewise reads the sign bit, so it is true for `-0.0` and for a NaN written with that bit.
+- `min` and `max` return the other value when one of them is NaN, and the receiver when the two compare equal. The
+  rule for equal values makes the signed zeros deterministic: `0.0.min(-0.0)` is `0.0` and `-0.0.min(0.0)` is
+  `-0.0`, and the same for `max`. Both values are bit-identical in compiled code and at compile time.
+- `clamp` panics with `clamp: min is NaN, max is NaN, or min is greater than max` when a bound is NaN or `min` is
+  greater than `max`; it is the value limited to `min..=max`, and a NaN receiver gives NaN.
+- `is_nan` is `self != self`, `is_infinite` is equality with either infinity, and `is_finite` is `abs(self) <
+  INFINITY`.
+- `log(base)` is `self.ln() / base.ln()`; `to_degrees` is `self * (180.0 / PI)` and `to_radians` is `self * (PI /
+  180.0)`, with the constant in the receiver's precision.
+- `total_cmp` is the IEEE 754 totalOrder as an `Ordering`: `-NaN < -inf < ... < -0.0 < 0.0 < ... < inf < NaN`, and
+  NaNs are ordered by their bit patterns. It is the comparator `sort_by` and `PriorityHeap` use for floats; floats
+  have no `cmp` (`E0002`). `Ordering` is described below.
+- `to_bits` and `from_bits` are a bit cast: every bit of the value is kept, including a NaN payload and the sign of
+  `-0.0`. The integer is `u64` for `f64` and `u32` for `f32`.
+- The constants are each type's value, so `f32.PI` is `3.1415927`. `MIN` and `MAX` are the finite extremes,
+  `MIN_POSITIVE` is the smallest positive normal value, and `EPSILON` is the gap between `1.0` and the next value.
+  `INFINITY`, `NEG_INFINITY`, and `NAN` are written as divisions (`1.0 / 0.0`, `-1.0 / 0.0`, `0.0 / 0.0`) because a
+  float literal must be finite; `NAN`'s payload and sign are unspecified.
+- Compiled code and the comptime interpreter agree bit for bit on the exactly rounded operations, and the
+  differential tests assert the bits (`test-runner.md`, "Differential tests"). The transcendental functions are the
+  C library's, through an LLVM intrinsic where LLVM has one (`tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
+  `cosh`, and `tanh` do in LLVM 21; `cbrt` and `hypot` are direct library calls), so their last bit is the
+  library's and is not promised across platforms.
+
+`f64.NAME` is the std constant `__f64_NAME` and `f32.NAME` is `__f32_NAME`, as for the integer constants. An unknown
+method is `E0002`, an unknown constant `E0002`, a wrong argument count `E0004`, and a wrong argument type `E0003`;
+`f64.pow` and `f64.cmp` are `E0002`, and the integer functions do not apply to floats.
+
+Tests: `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`,
+`float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names`.
 
 ## Characters (issue #416)
 
@@ -872,6 +949,67 @@ file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) report
 
 Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
 
+## Files and file handles (issue #702)
+
+The file operations live in `std.fs`, beside the directory operations; the prelude makes every name below visible
+unqualified. A file is opened through `OpenOptions` or the two shortcuts `File.open` and `File.create`, and the
+handle owns the system descriptor. Bytes are never translated: on every system a file is binary, so `0x00` and text
+that is not valid UTF-8 come back exactly as they were written.
+
+```
+struct OpenOptions {
+    fn new(): OpenOptions
+    fn read(mut self, on: bool)                fn write(mut self, on: bool)
+    fn append(mut self, on: bool)              fn truncate(mut self, on: bool)
+    fn create(mut self, on: bool)              fn create_new(mut self, on: bool)
+    fn open(self, path: str): Result<File, IoError>
+}
+
+struct File {
+    fn open(path: str): Result<File, IoError>          // `read` only
+    fn create(path: str): Result<File, IoError>        // write, create, and truncate
+    fn sync_all(self): Result<(), IoError>
+    fn set_len(mut self, size: u64): Result<(), IoError>
+    fn close(own self): Result<(), IoError>            // reports the error a drop would discard
+}
+File: Read     // read(mut buf: List<u8>, max: usize): Result<usize, IoError>
+File: Write    // write(data: [u8]): Result<usize, IoError>; flush(): Result<(), IoError> (there is no buffer)
+File: Seek     // seek(from: SeekFrom): Result<u64, IoError>; position() and rewind() come from `Seek`
+File: Drop     // closes the descriptor
+
+fn read(path: str): Result<List<u8>, IoError>
+fn write(path: str, data: [u8]): Result<(), IoError>
+fn append(path: str, data: [u8]): Result<(), IoError>
+fn copy_file(from: str, to: str): Result<u64, IoError>
+fn exists(path: str): bool
+```
+
+- `File.open` opens for reading, and `File.create` opens for writing, creating the file when it is missing and
+  emptying it when it exists. `OpenOptions.new()` starts with every option off; each setter changes one option.
+- `OpenOptions.open` rejects a set with no read, write, or append access, `truncate` without write or append access,
+  and `append` together with `truncate`, with `IoError.InvalidInput`, before it reaches the system. `create_new`
+  implies `create` and fails when the file exists. A handle opened only for appending is opened for writing, and
+  every write through it goes to the end whatever the position.
+- A system failure is `IoError.Read` when the options only read and `IoError.Write` otherwise, and names the path
+  the handle was opened with; a seek before the start is `IoError.Seek`.
+- `read` appends up to `max` bytes to the caller's list, growing it, and returns how many bytes it appended; `0` is
+  the end of the file. The `Read` defaults (`read_exact`, `read_to_end`, `read_to_string`) and the `Write` defaults
+  (`write_all`, `write_text`, `write_line`) are built on it, and `BufReader` and `BufWriter` wrap a `File` like any
+  other reader or writer.
+- `flush` succeeds without doing anything, because a file handle has no buffer; `sync_all` is the durability call
+  (`fsync` on Unix, `_commit` on Windows). `set_len` cuts the file or extends it with zero bytes.
+- Dropping the handle closes the descriptor. `close` closes it too and returns the failure a drop would discard;
+  it marks the handle closed, so the drop that follows does not close the descriptor again. Closing a descriptor
+  twice is an invalid descriptor, which the Windows CRT treats as a fatal parameter error.
+- `read`, `write`, and `append` are the byte-level counterparts of `read_to_string` and `write_file`; `write`
+  creates or replaces, and `append` creates a missing file. `copy_file` copies the bytes only, not permissions, and
+  returns how many it copied. It is not named `copy` because `std.rw` already exports the reader/writer `copy` under
+  that name, and the prelude has only the unqualified name for one of them; write `fs.copy_file(...)` for a file.
+  `exists` is `Path.exists`.
+- Every operation is impure: a comptime evaluation that reaches one fails with E0224.
+
+Tests: `m24_stdlib/file_handles`, `file_errors`, `file_comptime`.
+
 ## Time (issue #195)
 
 ```
@@ -1238,6 +1376,7 @@ error enum IoError {
     WriteZero                "the writer accepted no bytes"
     InvalidData              "the bytes are not valid text"
     Seek                     "seek to a position before the start"
+    InvalidInput             "invalid open options"
 }
 
 error enum ParseIntError {
@@ -1248,8 +1387,9 @@ error enum ParseIntError {
 `read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
 `IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The readers and writers return
 `UnexpectedEof` (`read_exact` on a source that ended), `WriteZero` (`write_all` on a sink that takes nothing),
-`InvalidData` (text that is not UTF-8), and `Seek` (a position before the start); the set of variants is
-settled together with the operating-system error codes in issue #701.
+`InvalidData` (text that is not UTF-8), and `Seek` (a position before the start); `OpenOptions.open` returns
+`InvalidInput` for an option set it rejects ("Files and file handles"). The set of variants is settled together
+with the operating-system error codes in issue #701.
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
@@ -1270,7 +1410,8 @@ fn process.run(command: str): Result<i32, IoError>
 normalization, so a string written and read back is byte-identical (`len` is the byte count). `process.run` runs the
 command through the system shell and returns its status: the POSIX wait status is shifted, the Windows status is
 returned as is. On failure each returns the matching `IoError` variant, and an integer `parse` returns
-`ParseIntError.Invalid` (`errors.md`, ERR10).
+`ParseIntError.Invalid` (`errors.md`, ERR10). The byte-level helpers (`read`, `write`, `append`, `copy_file`,
+`exists`) and the owning `File` handle are in "Files and file handles".
 
 None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
 
@@ -1514,9 +1655,11 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
+| Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_comptime` |
 | Time | `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_comptime`, `time_comptime_impure` |
 | Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
+| Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
