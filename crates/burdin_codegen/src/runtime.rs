@@ -2991,12 +2991,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         }
         let cpath = self.cstring_of(path, plen, malloc)?;
         let mode = i32_ty.const_int(open_create_mode(self.windows), false);
+        // `open` and `_open` are variadic: the mode is an unnamed argument. The declaration must say so, because
+        // Darwin's arm64 ABI passes unnamed arguments on the stack; a fixed three-argument declaration would lose
+        // the mode there and create the file with whatever the stack held.
+        let open_ty = i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into()], true);
         let fd = if self.windows {
-            let open =
-                libc(self.module, "_open", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), i32_ty.into()], false));
+            let open = libc(self.module, "_open", open_ty);
             self.call(open, &[cpath.into(), flags.into(), mode.into()])?
         } else {
-            let open = libc(self.module, "open", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), i32_ty.into()], false));
+            let open = libc(self.module, "open", open_ty);
             self.call(open, &[cpath.into(), flags.into(), mode.into()])?
         };
         self.call(free, &[cpath.into()])?;
@@ -4460,6 +4463,23 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Darwin's arm64 ABI passes unnamed arguments on the stack, so `open`'s mode argument only reaches the C
+    /// library when the declaration is variadic. The Windows CRT's `_open` is variadic too.
+    #[test]
+    fn file_open_is_declared_variadic() {
+        for windows in [false, true] {
+            let cx = Context::create();
+            let module = cx.create_module("runtime");
+            let ptr = cx.ptr_type(AddressSpace::default());
+            let usize_ty = cx.i64_type();
+            let string_ty = cx.struct_type(&[ptr.into(), usize_ty.into(), usize_ty.into()], false);
+            generate(&cx, &module, usize_ty, string_ty, windows, false, false).expect("the runtime is generated");
+            let symbol = if windows { "_open" } else { "open" };
+            let open = module.get_function(symbol).unwrap_or_else(|| panic!("{symbol} is declared"));
+            assert!(open.get_type().is_var_arg(), "{symbol} must be variadic to pass the create mode");
+        }
+    }
 
     /// The open flags differ on every platform, and only the host's can be exercised. The values come from the
     /// systems' C headers: Linux's `O_*`, the different macOS `O_*`, and the Windows CRT's `_O_*`.
