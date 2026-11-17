@@ -527,6 +527,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::Clear
                 | Method::MapInsert
                 | Method::MapGetOrInsert
+                | Method::MapEntry
+                | Method::MapEntryOrInsert
+                | Method::MapEntryOrInsertWith
                 | Method::MapGet
                 | Method::MapGetMut
                 | Method::MapRemove

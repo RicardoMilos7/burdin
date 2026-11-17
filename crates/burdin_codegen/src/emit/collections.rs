@@ -9,7 +9,7 @@
 
 use super::{Codegen, GenResult, Mode, llvm_err};
 use burdin_diag::Span;
-use burdin_tir::{self as tir, Method, Ty};
+use burdin_tir::{self as tir, FnKind, Method, Ty};
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
 use inkwell::{AddressSpace, IntPredicate};
@@ -55,18 +55,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn seq_load(&mut self, e: &'a tir::Expr) -> GenResult<Option<Seq<'ctx>>> {
         let Some(addr) = self.place_ptr(e)? else { return Ok(None) };
         let alloc = Self::seq_alloc(&e.ty);
+        self.seq_load_at(addr, &alloc).map(Some)
+    }
+
+    /// The `{ ptr, len, cap }` words of a list or map at `addr`, whose allocator the type names.
+    fn seq_load_at(&mut self, addr: PointerValue<'ctx>, alloc: &burdin_tir::Alloc) -> GenResult<Seq<'ctx>> {
         let ptr_ty = self.ptr_ty();
-        let f0 = self.seq_field(addr, &alloc, 0, "seq.ptr")?;
-        let f1 = self.seq_field(addr, &alloc, 1, "seq.len")?;
-        let f2 = self.seq_field(addr, &alloc, 2, "seq.cap")?;
+        let f0 = self.seq_field(addr, alloc, 0, "seq.ptr")?;
+        let f1 = self.seq_field(addr, alloc, 1, "seq.len")?;
+        let f2 = self.seq_field(addr, alloc, 2, "seq.cap")?;
         let data = self.builder.build_load(ptr_ty, f0, "").map_err(llvm_err)?.into_pointer_value();
         let len = self.builder.build_load(self.usize_ty, f1, "").map_err(llvm_err)?.into_int_value();
         let cap = self.builder.build_load(self.usize_ty, f2, "").map_err(llvm_err)?.into_int_value();
         let alloc_addr = match alloc.allocator_ty() {
-            Some(_) => Some(self.seq_field(addr, &alloc, 3, "seq.alloc")?),
+            Some(_) => Some(self.seq_field(addr, alloc, 3, "seq.alloc")?),
             None => None,
         };
-        Ok(Some(Seq { addr, data, len, cap, alloc, alloc_addr }))
+        Ok(Seq { addr, data, len, cap, alloc: alloc.clone(), alloc_addr })
     }
 
     fn seq_store(&mut self, seq: &Seq<'ctx>) -> GenResult<()> {
@@ -597,6 +602,168 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 seq.cap = self.usize_zero();
                 self.seq_store(&seq)?;
                 Ok(None)
+            }
+            // `map.entry(key)` probes once and keeps the slot; the entry operations insert into it. The probe is
+            // recorded here so a fill does not look the key up a second time.
+            (Ty::Map(key, value, _), Method::MapEntry) => {
+                let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
+                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let map_addr = seq.addr;
+                let k = self.expr_mode(&args[1], Mode::Move)?;
+                let k_slot = self.spill(k, &key_ty)?;
+                let hash = self.map_key_hash(k_slot, &key_ty)?;
+                let entry_t = self.map_entry_value_ty(&key_ty);
+                let out = self.alloca(entry_t.into(), "entry")?;
+                let f = self.map_field(entry_t, out, 0, "entry.map")?;
+                self.builder.build_store(f, map_addr).map_err(llvm_err)?;
+                if let Some(k_slot) = k_slot {
+                    let kt = self.llvm_ty(&key_ty).unwrap_or_else(|| self.cx.bool_type().into());
+                    let kv = self.builder.build_load(kt, k_slot, "").map_err(llvm_err)?;
+                    let f = self.map_field(entry_t, out, 1, "entry.key")?;
+                    self.builder.build_store(f, kv).map_err(llvm_err)?;
+                }
+                let f = self.map_field(entry_t, out, 2, "entry.hash")?;
+                self.builder.build_store(f, hash).map_err(llvm_err)?;
+                let f = self.map_field(entry_t, out, 3, "entry.slot")?;
+                self.builder.build_store(f, self.usize_zero()).map_err(llvm_err)?;
+                let f = self.map_field(entry_t, out, 4, "entry.found")?;
+                self.builder.build_store(f, self.cx.bool_type().const_zero()).map_err(llvm_err)?;
+                let probe_bb = self.new_block("entry.probe");
+                let end = self.new_block("entry.end");
+                let no_table = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, seq.cap, self.usize_zero(), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(no_table, end, probe_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(probe_bb);
+                let slot_ty = Self::map_entry_ty(&key_ty, &value_ty);
+                let (found, at) = self.map_probe(&seq, &slot_ty, &key_ty, hash, k_slot)?;
+                let f = self.map_field(entry_t, out, 3, "entry.slot")?;
+                self.builder.build_store(f, at).map_err(llvm_err)?;
+                let f = self.map_field(entry_t, out, 4, "entry.found")?;
+                self.builder.build_store(f, found).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                Ok(Some(self.builder.build_load(entry_t, out, "entry.value").map_err(llvm_err)?))
+            }
+            (Ty::MapEntry(key, value, alloc), Method::MapEntryOrInsert | Method::MapEntryOrInsertWith) => {
+                let with_make = m == Method::MapEntryOrInsertWith;
+                let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
+                let entry_ty = args[0].ty.clone();
+                let entry_t = self.llvm_ty(&entry_ty).expect("an entry has a type").into_struct_type();
+                let entry_v = self.expr_mode(&args[0], Mode::Move)?;
+                let Some(entry_slot) = self.spill(entry_v, &entry_ty)? else { return Ok(None) };
+                // Arguments are evaluated before the operation, whatever branch it takes.
+                let arg_v = self.expr_mode(&args[1], Mode::Move)?;
+                let arg_slot = self.spill(arg_v, &args[1].ty)?;
+                let f = self.map_field(entry_t, entry_slot, 0, "entry.map")?;
+                let map_addr = self.builder.build_load(self.ptr_ty(), f, "").map_err(llvm_err)?.into_pointer_value();
+                let f = self.map_field(entry_t, entry_slot, 2, "entry.hash")?;
+                let hash = self.builder.build_load(self.cx.i64_type(), f, "").map_err(llvm_err)?.into_int_value();
+                let f = self.map_field(entry_t, entry_slot, 3, "entry.slot")?;
+                let at = self.builder.build_load(self.usize_ty, f, "").map_err(llvm_err)?.into_int_value();
+                let f = self.map_field(entry_t, entry_slot, 4, "entry.found")?;
+                let found = self.builder.build_load(self.cx.bool_type(), f, "").map_err(llvm_err)?.into_int_value();
+                let key_ptr = match self.llvm_ty(&key_ty) {
+                    Some(_) => Some(self.map_field(entry_t, entry_slot, 1, "entry.key")?),
+                    None => None,
+                };
+                let mut seq = self.seq_load_at(map_addr, alloc)?;
+                let slot_ty = Self::map_entry_ty(&key_ty, &value_ty);
+                let slot_t = self.llvm_ty(&slot_ty).expect("a map entry has a type").into_struct_type();
+                let result = self.alloca(self.ptr_ty().into(), "entry.result")?;
+                let found_bb = self.new_block("entry.found");
+                let vacant_bb = self.new_block("entry.vacant");
+                let end = self.new_block("entry.done");
+                self.builder.build_conditional_branch(found, found_bb, vacant_bb).map_err(llvm_err)?;
+
+                // The key is already there: keep its value, drop the incoming one, and drop the entry's key.
+                self.builder.position_at_end(found_bb);
+                if let Some(arg_slot) = arg_slot {
+                    self.drop_value(arg_slot, &args[1].ty)?;
+                }
+                if let Some(key_ptr) = key_ptr {
+                    self.drop_value(key_ptr, &key_ty)?;
+                }
+                let old = self.map_slot(&seq, &slot_ty, at)?;
+                let value_ptr = self.map_field(slot_t, old, 1, "map.value")?;
+                self.builder.build_store(result, value_ptr).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+
+                // The key is absent: make room first (growing moves every slot, so the recorded one is redone),
+                // then store the key, the value, and the hash.
+                self.builder.position_at_end(vacant_bb);
+                let next_len =
+                    self.builder.build_int_add(seq.len, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                let needed =
+                    self.builder.build_int_mul(next_len, self.usize_ty.const_int(4, false), "").map_err(llvm_err)?;
+                let room =
+                    self.builder.build_int_mul(seq.cap, self.usize_ty.const_int(3, false), "").map_err(llvm_err)?;
+                let over = self.builder.build_int_compare(IntPredicate::UGT, needed, room, "").map_err(llvm_err)?;
+                let no_table = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, seq.cap, self.usize_zero(), "")
+                    .map_err(llvm_err)?;
+                let grow = self.builder.build_or(over, no_table, "").map_err(llvm_err)?;
+                let grow_bb = self.new_block("entry.grow");
+                let slot_bb = self.new_block("entry.slot");
+                let fill_bb = self.new_block("entry.fill");
+                let (old_data, old_cap) = (seq.data, seq.cap);
+                self.builder.build_conditional_branch(grow, grow_bb, slot_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(grow_bb);
+                self.map_grow(&mut seq, &key_ty, &value_ty, span)?;
+                let (_, grown_at) = self.map_probe(&seq, &slot_ty, &key_ty, hash, key_ptr)?;
+                let grown_end = self.builder.get_insert_block().expect("positioned");
+                let (new_data, new_cap) = (seq.data, seq.cap);
+                self.builder.build_unconditional_branch(fill_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(slot_bb);
+                self.builder.build_unconditional_branch(fill_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(fill_bb);
+                let data_phi = self.builder.build_phi(self.ptr_ty(), "entry.data").map_err(llvm_err)?;
+                data_phi.add_incoming(&[(&old_data, slot_bb), (&new_data, grown_end)]);
+                let cap_phi = self.builder.build_phi(self.usize_ty, "entry.cap").map_err(llvm_err)?;
+                cap_phi.add_incoming(&[(&old_cap, slot_bb), (&new_cap, grown_end)]);
+                let at_phi = self.builder.build_phi(self.usize_ty, "entry.at").map_err(llvm_err)?;
+                at_phi.add_incoming(&[(&at, slot_bb), (&grown_at, grown_end)]);
+                seq.data = data_phi.as_basic_value().into_pointer_value();
+                seq.cap = cap_phi.as_basic_value().into_int_value();
+                let at = at_phi.as_basic_value().into_int_value();
+                let value = if with_make {
+                    let Some(arg_slot) = arg_slot else {
+                        return Err("internal error: `or_insert_with` lost its closure".into());
+                    };
+                    let closure =
+                        self.builder.build_load(self.closure_ty, arg_slot, "").map_err(llvm_err)?.into_struct_value();
+                    self.call_closure_value(closure, &args[1].ty, FnKind::FnOnce, &[])?
+                } else {
+                    match (arg_slot, self.llvm_ty(&value_ty)) {
+                        (Some(arg_slot), Some(vt)) => {
+                            Some(self.builder.build_load(vt, arg_slot, "").map_err(llvm_err)?)
+                        }
+                        _ => None,
+                    }
+                };
+                let slot = self.map_slot(&seq, &slot_ty, at)?;
+                if let Some(key_ptr) = key_ptr {
+                    let kt = self.llvm_ty(&key_ty).expect("checked above");
+                    let kv = self.builder.build_load(kt, key_ptr, "").map_err(llvm_err)?;
+                    let key_field = self.map_field(slot_t, slot, 0, "map.key")?;
+                    self.builder.build_store(key_field, kv).map_err(llvm_err)?;
+                }
+                if let Some(value) = value {
+                    let value_field = self.map_field(slot_t, slot, 1, "map.value")?;
+                    self.builder.build_store(value_field, value).map_err(llvm_err)?;
+                }
+                let hash_field = self.map_field(slot_t, slot, 2, "map.hash")?;
+                self.builder.build_store(hash_field, hash).map_err(llvm_err)?;
+                seq.len = next_len;
+                self.seq_store(&seq)?;
+                let value_ptr = self.map_field(slot_t, slot, 1, "map.value")?;
+                self.builder.build_store(result, value_ptr).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+
+                self.builder.position_at_end(end);
+                Ok(Some(self.builder.build_load(self.ptr_ty(), result, "").map_err(llvm_err)?))
             }
             _ => Err(format!("unsupported collection method {m:?} on `{}`", args[0].ty)),
         }

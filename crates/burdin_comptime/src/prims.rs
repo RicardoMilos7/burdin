@@ -225,6 +225,8 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
         Ty::ListIntoIter(_, a) | Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
         Ty::MapIter(..) => (32, 8),
+        // A pending map lookup: the map's address, the key, the key's hash, the probe slot, and the found flag.
+        Ty::MapEntry(key, _, _) => product(&[(8, 8), member(p, key), (8, 8), (8, 8), (1, 1)]),
         Ty::ArrayIntoIter(inner, n) => product(&[member(p, &Ty::Array(inner.clone(), *n)), (8, 8)]),
         Ty::Enum(a) => {
             let mut size = 0;
@@ -661,6 +663,9 @@ impl<'p> Interp<'p, '_> {
                 Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
             }
             Method::MapGetMut | Method::MapGetOrInsert => return Err(impure("a mutable view of a map value", span)),
+            Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
+                return Err(impure("an entry into a map value", span));
+            }
             Method::MapContainsKey => {
                 let k = self.eval(&args[1], Mode::Use)?;
                 Value::Bool(self.peek(recv, |v| match v {

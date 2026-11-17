@@ -221,7 +221,7 @@ impl Globals {
                 self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
             }
             Ty::Result(ok, err) => self.ty_has_param(ok) || self.ty_has_param(err),
-            Ty::Map(k, v, alloc) => {
+            Ty::Map(k, v, alloc) | Ty::MapEntry(k, v, alloc) => {
                 self.ty_has_param(k)
                     || self.ty_has_param(v)
                     || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
@@ -269,7 +269,7 @@ impl Globals {
                 self.unify(po, ao, bindings);
                 self.unify(pe, ae, bindings);
             }
-            (Ty::Map(pk, pv, pa), Ty::Map(ak, av, aa)) => {
+            (Ty::Map(pk, pv, pa), Ty::Map(ak, av, aa)) | (Ty::MapEntry(pk, pv, pa), Ty::MapEntry(ak, av, aa)) => {
                 self.unify(pk, ak, bindings);
                 self.unify(pv, av, bindings);
                 self.unify_alloc(pa, aa, bindings);
@@ -337,6 +337,7 @@ impl Globals {
             Ty::Result(t, e) => Ty::Result(go(t), go(e)),
             Ty::List(t, a) => Ty::List(go(t), self.subst_alloc(a, env)),
             Ty::Map(k, v, a) => Ty::Map(go(k), go(v), self.subst_alloc(a, env)),
+            Ty::MapEntry(k, v, a) => Ty::MapEntry(go(k), go(v), self.subst_alloc(a, env)),
             Ty::Heap(t, a) => Ty::Heap(go(t), self.subst_alloc(a, env)),
             Ty::Shared(t) => Ty::Shared(go(t)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),

@@ -1,0 +1,92 @@
+//@ run
+//> store
+//> keep
+//> drop 20
+//> leave
+//> drop 10
+//> key
+//> drop 30
+//> leave
+//> drop 30
+//> lazy
+//> drop 50
+//> leave
+//> drop 40
+//> make
+//> make
+//> leave
+//> drop 60
+//> abandon
+//> leave
+//> drop 70
+//> end
+
+// `or_insert` keeps an existing value and drops the incoming one; the entry's key is dropped when the key is
+// already there. `or_insert_with` calls the closure only for an absent key, and the closure value and what it
+// captured are dropped either way. An entry left unconsumed drops its key.
+
+struct Tag derives (Eq) {
+    id: i32
+}
+
+Tag: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn store() {
+    let mut m = Map<i32, Tag>.new()
+    m.entry(1).or_insert(Tag { id: 10 })
+    println("keep")
+    m.entry(1).or_insert(Tag { id: 20 })
+    println("leave")
+}
+
+fn keys() {
+    let mut k = Map<Tag, i32>.new()
+    k.entry(Tag { id: 30 }).or_insert(1)
+    k.entry(Tag { id: 30 }).or_insert(2)
+    println("leave")
+}
+
+fn lazy() {
+    let mut m = Map<i32, Tag>.new()
+    m.insert(1, Tag { id: 40 })
+    let captured = Tag { id: 50 }
+    m.entry(1).or_insert_with(|| {
+        println("make")
+        captured
+    })
+    println("leave")
+}
+
+fn make() {
+    let mut m = Map<i32, Tag>.new()
+    let captured = Tag { id: 60 }
+    m.entry(1).or_insert_with(|| {
+        println("make")
+        captured
+    })
+    println("leave")
+}
+
+fn abandon() {
+    let mut m = Map<Tag, i32>.new()
+    let e = m.entry(Tag { id: 70 })
+    println("leave")
+}
+
+fn main() {
+    println("store")
+    store()
+    println("key")
+    keys()
+    println("lazy")
+    lazy()
+    println("make")
+    make()
+    println("abandon")
+    abandon()
+    println("end")
+}

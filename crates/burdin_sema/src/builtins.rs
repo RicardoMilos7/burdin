@@ -1,7 +1,8 @@
 //! The built-in functions, types, and methods.
 
 use crate::globals::Globals;
-use burdin_tir::{Builtin, FloatTy, IntTy, Method, ParamSig, Signature, Ty};
+use burdin_tir::{Builtin, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, Signature, Ty};
+use std::rc::Rc;
 
 pub(crate) fn builtin(name: &str) -> Option<Builtin> {
     Some(match name {
@@ -171,6 +172,23 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("get_mut", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: true, inner: v.clone() };
             (Method::MapGetMut, vec![plain(elem(k))], Ty::Option(Box::new(view)))
+        }
+        // The entry-style API (`spec/stdlib.md`, "Map entry operations"): one probe, then insert or not.
+        ("entry", Ty::Map(k, v, alloc)) => {
+            (Method::MapEntry, vec![value_param(elem(k))], Ty::MapEntry(k.clone(), v.clone(), alloc.clone()))
+        }
+        ("or_insert", Ty::MapEntry(_, v, _)) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            (Method::MapEntryOrInsert, vec![value_param(elem(v))], view)
+        }
+        ("or_insert_with", Ty::MapEntry(_, v, _)) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            let make = Ty::Fn {
+                sig: Rc::new(FnSig { params: Vec::new(), ret: v.clone() }),
+                kind: FnKind::FnOnce,
+                borrowed: false,
+            };
+            (Method::MapEntryOrInsertWith, vec![value_param(make)], view)
         }
         ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(elem(k))], Ty::Option(v.clone())),
         ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(elem(k))], Ty::Bool),
