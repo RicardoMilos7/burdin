@@ -203,9 +203,13 @@ ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, 
 `rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking"). The environment functions of
 `std.env` return `EnvError`: `Name` for an invalid name, `Value` for an invalid value, `Access` when the system
 refuses a change, `WorkingDirectory` when the directory cannot be read as text, and `SetWorkingDirectory` when it
-cannot be changed (`stdlib.md`, "Environment variables and the working directory").
+cannot be changed (`stdlib.md`, "Environment variables and the working directory"). A child's `spawn` failure
+(including a missing program and an argument or environment entry the system cannot take) is `IoError.Run` with the
+program name; reading a piped child stream reports `<stdout>`, `<stderr>`, or `<child>`, and writing the child's
+standard input reports `<stdin>` (`stdlib.md`, "Child processes").
 
-The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, and the integer parsers) are
+The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, `__process_spawn`,
+`__pipe_read_to_string`, `__pipe_read_line`, `__pipe_read_both`, and the integer parsers) are
 typed with the same error types but produce a placeholder error value; the `std` wrappers replace it with the
 real variant. A program calls the `std` functions, not the primitives.
 

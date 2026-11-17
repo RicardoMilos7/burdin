@@ -10,8 +10,8 @@ program, then copies its public names into every module (the prelude). A project
 | `std.bd` | the `Error` marker interface and the dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`, `__test_assert_eq`, `unreachable` |
 | `io.bd` | `read_to_string`, `write_file`, and the `stdin`, `stdout`, and `stderr` handles (`spec/stdlib.md`, Streams) |
 | `fs.bd` | `read_dir`, `create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`, `metadata`, `canonicalize`, `walk`, and `walk_glob`, with `Metadata` and `FileKind` (`spec/stdlib.md`, "Directories, metadata, and walking") |
-| `env.bd` | `args` |
-| `process.bd` | `exit`, `run` |
+| `env.bd` | `args`, `get`, `get_bytes`, `set`, `set_bytes`, `remove`, `current_dir`, `current_dir_bytes`, `set_current_dir`, `set_current_dir_bytes`, and `EnvError` (`spec/stdlib.md`, "Environment variables and the working directory") |
+| `process.bd` | `exit`, `run`, and `Command`, with `Stdio`, `Child`, `ChildStdin`, `ChildStdout`, `ChildStderr`, `ExitStatus`, and `Output` (`spec/stdlib.md`, "Child processes") |
 | `mem.bd` | `swap`, `replace` |
 | `iter.bd` | `Iterator<T>` and `Iterable<T>`, the lazy adapters and their types, and the eager `List` helpers |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
@@ -28,9 +28,11 @@ express them yet: `Option`, `Result`, `Heap`, `List`, `Map`, `String`, `Shared`,
 the number methods (`to_string`, `parse`, `wrapping_*`, `checked_*`, `min`, `max`, `abs`), the
 `__read_to_string`, `__write_file`, `__read_dir`, `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`,
 `__metadata`, `__canonicalize`, `__stdout_write`, `__stdout_write_line`, `__stdout_flush`, `__stderr_write`,
-`__stderr_write_line`, `__is_terminal`, `__stdin_read_line`, `__stdin_read_to_string`, `__args`, `__exit`,
-`__run`, `__swap`, and `__replace` primitives the modules above call, and
-`print`/`println`/`eprint`/`eprintln`/`panic`. The I/O and integer-parse primitives are
+`__stderr_write_line`, `__is_terminal`, `__stdin_read_line`, `__stdin_read_to_string`, `__args`, `__env_get`,
+`__env_set`, `__env_set_bytes`, `__env_remove`, `__current_dir`, `__set_current_dir`, `__set_current_dir_bytes`,
+`__env_list`, `__process_spawn`, `__process_wait`, `__process_close`, `__pipe_read_to_string`, `__pipe_read_line`,
+`__pipe_read_both`, `__pipe_write`, `__pipe_close`, `__exit`, `__run`, `__swap`, and `__replace` primitives the
+modules above call, and `print`/`println`/`eprint`/`eprintln`/`panic`. The I/O and integer-parse primitives are
 typed with the `std` error types but produce a placeholder error value; the `std` wrappers replace it with the
 real variant (`spec/errors.md`, ERR10).
 
