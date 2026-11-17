@@ -1,0 +1,62 @@
+//@ run
+//> true true false
+//> 2
+//> 2 2
+
+// A type cannot customize its hash (HS5), so another notion of equality is built from `Hasher`: hash the lower-cased
+// bytes, and compare with the same normalization. This is a hand-written table of buckets keyed that way, and a `Map`
+// keyed on the normalized text.
+
+fn fold_hash(text: str): u64 {
+    let mut h = Hasher.new()
+    h.write_str(text.to_ascii_lowercase())
+    h.finish()
+}
+
+struct Table {
+    buckets: List<List<String>>
+}
+
+Table {
+    fn new(): Table {
+        let mut buckets = List<List<String>>.new()
+        let mut i: usize = 0
+        while i < 4 {
+            buckets.push(List<String>.new())
+            i = i + 1
+        }
+        Table { buckets }
+    }
+
+    fn add(mut self, text: str): bool {
+        let slot = (fold_hash(text) % 4) as usize
+        for known in self.buckets[slot].iter() {
+            if known.eq_ignore_ascii_case(text) {
+                return false
+            }
+        }
+        self.buckets[slot].push(text.to_string())
+        true
+    }
+}
+
+fn main() {
+    println("{fold_hash("Hello") == fold_hash("hELLO")} {fold_hash("Hello") == "hello".hash()} {fold_hash("Hello") == "Hello".hash()}")
+
+    let mut table = Table.new()
+    table.add("Hello")
+    table.add("hello")
+    table.add("HELLO")
+    table.add("World")
+    let mut total: usize = 0
+    for bucket in table.buckets.iter() {
+        total = total + bucket.len()
+    }
+    println("{total}")
+
+    let mut keyed = Map<String, i32>.new()
+    keyed.insert("Hello".to_ascii_lowercase(), 1)
+    keyed.insert("HELLO".to_ascii_lowercase(), 2)
+    keyed.insert("World".to_ascii_lowercase(), 3)
+    println("{keyed.len()} {keyed.get("hello".to_string()).unwrap()}")
+}

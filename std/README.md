@@ -15,6 +15,7 @@ program, then copies its public names into every module (the prelude). A project
 | `mem.bd` | `swap`, `replace` |
 | `iter.bd` | `Iterator<T>` and `Iterable<T>`, the lazy adapters and their types, and the eager `List` helpers |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
+| `hash.bd` | `Hasher`, `hash_of`, and `hash_seeded`: the stable FNV-1a hash of `x.hash()` and `Map`, one part at a time (`spec/stdlib.md`, "Hashing") |
 | `alloc.bd` | the `Allocator` interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`) |
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`

@@ -1,0 +1,41 @@
+//@ run
+//> 14695981039346656037
+//> 16654208175385433931 16654208175385433931 true
+//> 11831194018420276491
+//> 775207407765167617
+//> 18165194896842380836 18165194896842380836
+//> 14596296649692061188 12638153115695167455
+//> 12638152016183539244 12638187200555641996
+//> 5808589858502755950 5808589858502755950
+//> 12638352127299873646
+
+// `str` and `String` are `Hash`: they fold their UTF-8 bytes, one word per byte, with no length (HS2), starting
+// from the FNV-1a offset basis (HS1). The expected values come from that fold, not from the compiler.
+
+struct Tag derives (Eq, Hash) {
+    name: String
+    id: i32
+}
+
+fn main() {
+    println("{"".hash()}")
+    let owned = String.from("abc")
+    println("{"abc".hash()} {owned.hash()} {"abc".hash() == owned.hash()}")
+    println("{"hello".hash()}")
+    println("{"é".hash()}")
+
+    let tag = Tag { name: String.from("abc"), id: 7 }
+    let pair = (String.from("abc"), 7)
+    println("{tag.hash()} {pair.hash()}")
+
+    let some: Option<String> = Some(String.from("abc"))
+    let none: Option<String> = None
+    println("{some.hash()} {none.hash()}")
+
+    println("{true.hash()} {'a'.hash()}")
+    let wide: i32 = -1
+    let narrow: i8 = -1
+    println("{wide.hash()} {narrow.hash()}")
+    let byte: u8 = 255
+    println("{byte.hash()}")
+}

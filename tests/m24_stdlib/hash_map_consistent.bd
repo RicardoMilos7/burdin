@@ -1,0 +1,39 @@
+//@ run
+//> true true
+//> 3 true
+//> 0 1 2
+
+// Equal values hash alike, and `Map` and `Set` still take any `==` key (HS1, HS5): a key whose hash a program can read
+// is found through the table.
+
+struct Key derives (Eq, Hash) {
+    name: String
+    id: i32
+}
+
+fn main() {
+    let a = Key { name: String.from("ann"), id: 1 }
+    let b = Key { name: String.from("ann"), id: 1 }
+    let c = Key { name: String.from("ann"), id: 2 }
+    println("{a == b && a.hash() == b.hash()} {a != c && a.hash() != c.hash()}")
+
+    let mut ages = Map<Key, i32>.new()
+    ages.insert(Key { name: String.from("ann"), id: 1 }, 30)
+    ages.insert(Key { name: String.from("ann"), id: 2 }, 31)
+    ages.insert(Key { name: String.from("bob"), id: 1 }, 40)
+    println("{ages.len()} {*ages.get(b).unwrap() == 30}")
+
+    let mut seen = Set<String>.new()
+    for name in ["x", "y", "z"] {
+        seen.insert(name.to_string())
+    }
+    let mut order = List<usize>.new()
+    let mut i: usize = 0
+    for name in ["x", "y", "z"] {
+        if seen.contains(name.to_string()) {
+            order.push(i)
+        }
+        i = i + 1
+    }
+    println("{order[0]} {order[1]} {order[2]}")
+}

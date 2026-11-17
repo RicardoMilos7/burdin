@@ -1,0 +1,78 @@
+// Hashing: `Hasher`, `hash_of`, and `hash_seeded` (spec/stdlib.md, "Hashing").
+//
+// There is one algorithm, the stable FNV-1a fold that `x.hash()` and `Map` use. A `Hasher` is that fold one part at a
+// time: it holds the running state, and `write_u64` is the whole step, `state = (state ^ x) * 0x100000001b3` (mod 2^64).
+// `write(value)` and `write_str(text)` fold with the compiler's `hash_from`, which hashes a whole value from a state.
+
+use fmt.{Debug, Formatter}
+
+/// A running hash: the FNV-1a state of the parts written so far. A hasher is a plain value; copy it to branch.
+struct Hasher derives (Copy, Clone, Eq, Debug) {
+    state: u64
+}
+
+Hasher {
+    /// A hasher that has written nothing: the FNV-1a offset basis.
+    fn new(): Hasher {
+        Hasher { state: 0xcbf29ce484222325 }
+    }
+
+    /// A hasher that starts from `seed`: `Hasher.new()` followed by `write_u64(seed)`. Two seeds give unrelated hash
+    /// sequences for the same data; the seed is not a secret key, so this resists no attacker.
+    fn with_seed(seed: u64): Hasher {
+        let mut h = Hasher.new()
+        h.write_u64(seed)
+        h
+    }
+
+    /// Folds one 64-bit word into the state.
+    fn write_u64(mut self, x: u64) {
+        self.state = (self.state ^ x).wrapping_mul(0x100000001b3)
+    }
+
+    /// Folds one byte, as a word.
+    fn write_u8(mut self, x: u8) {
+        self.write_u64(x as u64)
+    }
+
+    /// Folds a `u32`, as a word.
+    fn write_u32(mut self, x: u32) {
+        self.write_u64(x as u64)
+    }
+
+    /// Folds every byte, in order, one word per byte. No length is written.
+    fn write_bytes(mut self, bytes: [u8]) {
+        let mut i: usize = 0
+        while i < bytes.len() {
+            self.write_u8(bytes[i])
+            i = i + 1
+        }
+    }
+
+    /// Folds the UTF-8 bytes of `text`, like `write_bytes`. No length is written.
+    fn write_str(mut self, text: str) {
+        self.state = text.hash_from(self.state)
+    }
+
+    /// Folds a whole value exactly as `value.hash()` would, starting from the current state.
+    fn write<T: Hash>(mut self, value: T) {
+        self.state = value.hash_from(self.state)
+    }
+
+    /// The hash of everything written so far. The hasher is unchanged, so more can be written after it.
+    fn finish(self): u64 {
+        self.state
+    }
+}
+
+/// The hash of `value`: the same `u64` as `value.hash()`.
+fn hash_of<T: Hash>(value: T): u64 {
+    value.hash()
+}
+
+/// The hash of `value` under `seed`: `Hasher.with_seed(seed)`, then `write(value)`, then `finish()`.
+fn hash_seeded<T: Hash>(seed: u64, value: T): u64 {
+    let mut h = Hasher.with_seed(seed)
+    h.write(value)
+    h.finish()
+}

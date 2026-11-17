@@ -740,10 +740,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let is = self.builder.build_is_null(p, "").map_err(llvm_err)?;
             return Ok(Some(is.into()));
         }
-        if m == Method::Hash {
+        if m == Method::Hash || m == Method::HashFrom {
             let recv_ty = args[0].ty.clone();
             let v = self.expr_mode(&args[0], Mode::Use)?;
-            let start = self.cx.i64_type().const_int(0xcbf2_9ce4_8422_2325, false);
+            let start = if m == Method::HashFrom {
+                let state = self.expr_mode(&args[1], Mode::Use)?;
+                self.need_int(state, &Ty::Int(burdin_tir::IntTy::U64))
+            } else {
+                self.cx.i64_type().const_int(0xcbf2_9ce4_8422_2325, false)
+            };
             let hash = match self.spill(v, &recv_ty)? {
                 Some(ptr) => self.hash_at(ptr, &recv_ty, start)?,
                 None => start,

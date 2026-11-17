@@ -1,0 +1,27 @@
+//@ run
+//> 18165194896842380836 true
+//> 16654208175385433931 true
+
+// A hash computed at compile time is the same stable value the compiled program computes (HS1): `Hasher`, `hash_of`,
+// and `hash_from` all run in `comptime`.
+
+const BUILT: u64 = comptime {
+    let mut h = Hasher.new()
+    h.write_str("abc")
+    h.write(7)
+    h.finish()
+}
+
+const DIRECT: u64 = comptime { hash_of("abc") }
+
+fn runtime_built(): u64 {
+    let mut h = Hasher.new()
+    h.write_str("abc")
+    h.write(7)
+    h.finish()
+}
+
+fn main() {
+    println("{BUILT} {BUILT == runtime_built()}")
+    println("{DIRECT} {DIRECT == "abc".hash()}")
+}

@@ -205,6 +205,8 @@ pub enum Method {
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.
     Hash,
+    /// `x.hash_from(state): u64`: folds `x` into the running hash `state` (`spec/stdlib.md`, HS3).
+    HashFrom,
     /// `shared.get(): &T`: a view of the value a `Shared<T>` owns (`spec/allocators.md`, AL8).
     SharedGet,
     /// `shared.strong_count(): usize`: how many owners the `Shared<T>` has.

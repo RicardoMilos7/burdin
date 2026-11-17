@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A float is not `Hash` (HS2): `==` on floats is not an equivalence, so a `Hash` bound rejects it, as does a
+// `Hasher.write` of one, and `hash()` is not a method of a float.
+
+fn main() {
+    let a = hash_of(1.5) //~ E0141
+    let mut h = Hasher.new()
+    h.write(2.5) //~ E0141
+    let x: f64 = 1.5
+    let b = x.hash() //~ E0002
+}

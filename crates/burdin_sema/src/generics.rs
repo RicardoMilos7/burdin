@@ -859,7 +859,8 @@ impl Globals {
     /// `has_hash` with the bounds of the type parameters in scope (issue #69).
     pub(crate) fn has_hash_in(&self, ty: &Ty, env: &Env) -> bool {
         match ty {
-            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
+            // Text hashes its bytes (`spec/stdlib.md`, HS2); a float is not `Hash`.
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Str | Ty::String | Ty::Error | Ty::Never => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Hash, env),
             Ty::Option(t) => self.has_hash_in(t, env),
             Ty::Range(t, _) => self.has_hash_in(t, env),

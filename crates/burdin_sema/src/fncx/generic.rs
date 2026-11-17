@@ -173,6 +173,9 @@ impl FnCx<'_> {
         if name.name == "hash" && args.is_empty() && self.param_has(&recv.ty, Bound::Hash) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
+        if name.name == "hash_from" && self.param_has(&recv.ty, Bound::Hash) {
+            return self.hash_from_call(recv, args, span);
+        }
         if name.name == "cmp"
             && args.len() == 1
             && self.param_has(&recv.ty, Bound::Ord)

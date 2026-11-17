@@ -60,10 +60,11 @@ are zero-extended. Then
 acc = (acc XOR w) * 0x00000100000001b3        (mod 2^64)
 ```
 
-The parts are: a struct's or tuple's fields in declaration order; an array's elements in index order; an enum's variant declaration index (as an `i32`
+The parts are: a `str` or `String`'s UTF-8 bytes, one word per byte (`stdlib.md`, HS2); a struct's or tuple's fields in declaration order; an array's elements in index order; an enum's variant declaration index (as an `i32`
 word) followed by the active variant's payload fields in declaration order; an `Option`'s tag (`false` = `None`,
 `true` = `Some`) followed by the payload when `Some`. The derive requires every field to be `Hash`. Equal values hash
-equally; the values themselves are pinned by `m07_generics/derive_values`.
+equally; the values themselves are pinned by `m07_generics/derive_values`. `x.hash_from(state)` runs the same fold from
+`state` instead of the offset basis, and `std.hash` builds `Hasher` on it (`stdlib.md`, "Hashing").
 
 Worked examples (these are the expected values in that test):
 

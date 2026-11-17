@@ -1,0 +1,39 @@
+//@ run
+//> 12638153115695167455 12638152016183539244 12638155314718423877
+//> 3375784916657917937 14596296649692061188 8049584617586722283
+//> true true
+//> true
+//> 4 43 22
+//> 44 43 58
+//> true false
+
+// A seed is folded before anything else (HS4): `with_seed(s)` is `new()` then `write_u64(s)`, `hash_seeded` is the
+// seeded hash of a value, and different seeds give different sequences. A bloom filter uses three seeds as three
+// hash functions. The seed is not a secret: this resists nothing.
+
+fn bit(seed: u64, text: str): u64 {
+    hash_seeded(seed, text) % 64
+}
+
+fn has(filter: u64, b: u64): bool {
+    ((filter >> b) & 1) == 1
+}
+
+fn main() {
+    println("{Hasher.with_seed(0).finish()} {Hasher.with_seed(1).finish()} {Hasher.with_seed(2).finish()}")
+    println("{hash_seeded(0, "abc")} {hash_seeded(1, "abc")} {hash_seeded(2, "abc")}")
+
+    let mut h = Hasher.new()
+    h.write_u64(2)
+    println("{h == Hasher.with_seed(2)} {hash_seeded(2, "abc") != hash_seeded(3, "abc")}")
+    println("{hash_of("abc") == "abc".hash()}")
+
+    let mut filter: u64 = 0
+    for word in ["abc", "hello"] {
+        println("{bit(1, word)} {bit(2, word)} {bit(3, word)}")
+        filter = filter | (1 << bit(1, word)) | (1 << bit(2, word)) | (1 << bit(3, word))
+    }
+    let present = has(filter, bit(1, "abc")) && has(filter, bit(2, "abc")) && has(filter, bit(3, "abc"))
+    let absent = has(filter, bit(1, "world")) && has(filter, bit(2, "world")) && has(filter, bit(3, "world"))
+    println("{present} {absent}")
+}
