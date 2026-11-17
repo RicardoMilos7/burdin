@@ -6,7 +6,7 @@ use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
 use burdin_tir::{self as tir, Ty};
 use inkwell::IntPredicate;
-use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, IntValue, PointerValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The element pointer of a slice at `index`, or `None` for an element without a runtime value.
@@ -397,11 +397,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let pa = unsafe { self.builder.build_in_bounds_gep(elem_ty, ptr, &[prev], "sort.prev") }.map_err(llvm_err)?;
         let pb = unsafe { self.builder.build_in_bounds_gep(elem_ty, ptr, &[j], "sort.cur") }.map_err(llvm_err)?;
         let less = self
-            .call_closure_raw(
+            .call_closure_with(
                 closure,
                 &closure_ty,
                 tir::FnKind::FnMut,
-                &[BasicValueEnum::from(pb), BasicValueEnum::from(pa)],
+                &[
+                    BasicMetadataValueEnum::from(BasicValueEnum::from(pb)),
+                    BasicMetadataValueEnum::from(BasicValueEnum::from(pa)),
+                ],
             )?
             .map(|v| v.into_int_value())
             .unwrap_or_else(|| self.cx.bool_type().const_zero());

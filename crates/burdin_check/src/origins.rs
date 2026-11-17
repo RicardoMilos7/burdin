@@ -562,6 +562,7 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::MapGet
                         | tir::Method::MapGetMut
                         | tir::Method::MapGetOrInsert
+                        | tir::Method::MapGetOr
                         | tir::Method::MapEntry
                         | tir::Method::MapEntryOrInsert
                         | tir::Method::MapEntryOrInsertWith
@@ -597,6 +598,7 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::MapGet
                     | tir::Method::MapGetMut
                     | tir::Method::MapGetOrInsert
+                    | tir::Method::MapGetOr
                     | tir::Method::MapEntry
                     | tir::Method::MapEntryOrInsert
                     | tir::Method::MapEntryOrInsertWith

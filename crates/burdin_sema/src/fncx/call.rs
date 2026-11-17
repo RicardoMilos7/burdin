@@ -1088,8 +1088,10 @@ impl FnCx<'_> {
                 Method::MapGet
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
+                | Method::MapGetOr
                 | Method::MapEntry
                 | Method::MapRemove
+                | Method::MapRemoveEntry
                 | Method::MapContainsKey
                 | Method::MapInsert,
                 Ty::Map(k, _, _),
@@ -1637,6 +1639,21 @@ impl FnCx<'_> {
             if name.name == "new_in" {
                 let (key, value, written) = ((**key).clone(), (**value).clone(), written_alloc.clone());
                 return self.map_new_in(&key, &value, &written, args, span);
+            }
+            if name.name == "with_capacity" {
+                if !written_alloc.is_global() {
+                    self.diags.error(
+                        Code::MISSING_ALLOCATOR,
+                        span,
+                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `reserve`"),
+                    );
+                    return error_expr(span);
+                }
+                let params = [ParamSig::plain(Ty::Int(IntTy::Usize))];
+                let Some(checked) = self.args(&name.name, &params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::MapWithCapacity, checked), ty.clone(), span);
             }
         }
         // `i32.parse(s)`: the number in the text, or an error.

@@ -1,0 +1,58 @@
+//@ run
+//> 0 true
+//> 3 false
+//> keys [1, 2, 3]
+//> values [10, 20, 30]
+//> into keys [1, 2, 3]
+//> into values [10, 20, 30]
+//> 0
+
+// `keys` and `values` borrow the map and yield views, so the map stays usable until the chain ends; `into_keys`
+// and `into_values` consume the map and yield owned keys and values. The iteration order is unspecified, so the
+// test sorts what it collects before printing.
+
+fn sorted(own xs: List<i32>): List<i32> {
+    let mut xs = xs
+    xs.sort()
+    xs
+}
+
+fn main() {
+    let empty = Map<i32, i32>.new()
+    println("{} {}", empty.len(), empty.is_empty())
+
+    let mut m = Map<i32, i32>.new()
+    m.insert(2, 20)
+    m.insert(1, 10)
+    m.insert(3, 30)
+    println("{} {}", m.len(), m.is_empty())
+
+    let mut keys = List<i32>.new()
+    for key in m.keys() {
+        keys.push(*key)
+    }
+    println("keys {:?}", sorted(keys))
+
+    let mut values = List<i32>.new()
+    for value in m.values() {
+        values.push(*value)
+    }
+    println("values {:?}", sorted(values))
+
+    let mut into_keys = List<i32>.new()
+    for key in m.into_keys() {
+        into_keys.push(key)
+    }
+    println("into keys {:?}", sorted(into_keys))
+
+    let mut other = Map<i32, i32>.new()
+    other.insert(1, 10)
+    other.insert(2, 20)
+    other.insert(3, 30)
+    let mut into_values = List<i32>.new()
+    for value in other.into_values() {
+        into_values.push(value)
+    }
+    println("into values {:?}", sorted(into_values))
+    println("{}", empty.keys().count())
+}

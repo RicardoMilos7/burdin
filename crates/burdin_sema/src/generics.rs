@@ -808,6 +808,7 @@ impl Globals {
             Ty::Ref { inner, .. } => part(inner),
             Ty::Unit => debug,
             Ty::Option(t) | Ty::List(t, _) | Ty::Heap(t, _) => debug && part(t),
+            Ty::Map(k, v, _) => debug && part(k) && part(v),
             Ty::Result(t, e) => debug && part(t) && part(e),
             Ty::Tuple(ts) => debug && (2..=4).contains(&ts.len()) && ts.iter().all(part),
             Ty::Struct(_) | Ty::Enum(_) => return None,
@@ -906,6 +907,9 @@ impl Globals {
             | Ty::Option(_)
             | Ty::Error
             | Ty::Never => true,
+            // The default map is empty and belongs to the default allocator: a stored allocator has no value to
+            // build its default from.
+            Ty::Map(_, _, alloc) => alloc.is_global(),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_default(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];

@@ -61,6 +61,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 result.add_incoming(&[(&yes, head), (&bool_ty.const_zero(), body_end)]);
                 Ok(result.as_basic_value().into_int_value())
             }
+            // A map compares by its entries, whatever the iteration order (`spec/stdlib.md`, "Map").
+            Ty::Map(key, value, alloc) => self.map_eq(l, r, key, value, alloc),
             Ty::Range(inner, _) => {
                 let st = t.into_struct_type();
                 let a = self.builder.build_struct_gep(st, l, 0, "").map_err(llvm_err)?;
@@ -156,7 +158,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// The pointer and length of a `str` or `String` at `addr`.
-    fn parts_at(
+    pub(super) fn parts_at(
         &mut self,
         addr: PointerValue<'ctx>,
         ty: &Ty,
@@ -428,6 +430,63 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     acc = self.hash_at(f, inner, acc)?;
                 }
                 Ok(acc)
+            }
+            // A map hashes each entry from a fixed start and combines the results with `xor`, so two maps with the
+            // same entries hash alike whatever their iteration order: `Eq` and `Hash` must agree.
+            Ty::Map(key, value, alloc) => {
+                let seq = self.seq_load_at(ptr, alloc)?;
+                let entry = Self::map_entry_ty(key, value);
+                let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();
+                let len =
+                    self.builder.build_int_z_extend_or_bit_cast(seq.len, self.cx.i64_type(), "").map_err(llvm_err)?;
+                let with_len = self.hash_mix(acc, len)?;
+                if self.llvm_ty(key).is_none() && self.llvm_ty(value).is_none() {
+                    return Ok(with_len);
+                }
+                let index = self.alloca(self.usize_ty.into(), "hash.map.i")?;
+                self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+                let running = self.alloca(self.cx.i64_type().into(), "hash.map.acc")?;
+                self.builder.build_store(running, with_len).map_err(llvm_err)?;
+                let header = self.new_block("hash.map.cond");
+                let body = self.new_block("hash.map.body");
+                let live = self.new_block("hash.map.live");
+                let next = self.new_block("hash.map.next");
+                let end = self.new_block("hash.map.end");
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(header);
+                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                let more = self.builder.build_int_compare(IntPredicate::ULT, i, seq.cap, "").map_err(llvm_err)?;
+                self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                let slot = self
+                    .elem_ptr_at(seq.data, &entry, i)
+                    .ok_or_else(|| "a map entry has no runtime type".to_string())?;
+                let hash_field = self.builder.build_struct_gep(entry_t, slot, 2, "map.hash").map_err(llvm_err)?;
+                let stored =
+                    self.builder.build_load(self.cx.i64_type(), hash_field, "").map_err(llvm_err)?.into_int_value();
+                let vacant = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, stored, self.cx.i64_type().const_zero(), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(vacant, next, live).map_err(llvm_err)?;
+                self.builder.position_at_end(live);
+                let start = self.cx.i64_type().const_int(0xcbf2_9ce4_8422_2325, false);
+                let key_field = self.builder.build_struct_gep(entry_t, slot, 0, "map.key").map_err(llvm_err)?;
+                let entry_hash = self.hash_at(key_field, key, start)?;
+                let value_field = self.builder.build_struct_gep(entry_t, slot, 1, "map.value").map_err(llvm_err)?;
+                let entry_hash = self.hash_at(value_field, value, entry_hash)?;
+                let current =
+                    self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value();
+                let combined = self.builder.build_xor(current, entry_hash, "").map_err(llvm_err)?;
+                self.builder.build_store(running, combined).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(next).map_err(llvm_err)?;
+                self.builder.position_at_end(next);
+                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                let next_i = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                self.builder.build_store(index, next_i).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                Ok(self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value())
             }
             Ty::Option(inner) => {
                 let ot = t.into_struct_type();

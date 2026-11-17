@@ -264,24 +264,24 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         kind: FnKind,
         args: &'a [tir::Expr],
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let mut values = Vec::new();
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
         for a in args {
             let v = self.expr_mode(a, Mode::Move)?;
             if self.llvm_ty(&a.ty).is_some() {
-                values.push(self.need(v, &a.ty));
+                values.push(self.need(v, &a.ty).into());
             }
         }
-        self.call_closure_raw(value, closure_ty, kind, &values)
+        self.call_closure_with(value, closure_ty, kind, &values)
     }
 
-    /// A closure call whose arguments are already values, for the compiler-implemented methods that call a
-    /// comparator (`[T].__sort_by`).
-    pub(super) fn call_closure_raw(
+    /// Calls a closure value with arguments that are already LLVM values. A built-in operation that takes a
+    /// closure and hands it borrowed places (`Map.retain`) passes the addresses itself.
+    pub(super) fn call_closure_with(
         &mut self,
         value: StructValue<'ctx>,
         closure_ty: &Ty,
         kind: FnKind,
-        values: &[BasicValueEnum<'ctx>],
+        args: &[BasicMetadataValueEnum<'ctx>],
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let code = self.builder.build_extract_value(value, 0, "closure.code").map_err(llvm_err)?;
         let env = self.builder.build_extract_value(value, 1, "closure.env").map_err(llvm_err)?;
@@ -301,12 +301,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None => self.cx.void_type().fn_type(&params, false),
         };
         let consumed = self.cx.bool_type().const_int(u64::from(kind == FnKind::FnOnce), false);
-        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![env.into(), consumed.into()];
-        for v in values {
-            call_args.push((*v).into());
-        }
-        let call =
-            self.builder.build_indirect_call(fn_ty, code.into_pointer_value(), &call_args, "").map_err(llvm_err)?;
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = vec![env.into(), consumed.into()];
+        values.extend(args.iter().copied());
+        let call = self.builder.build_indirect_call(fn_ty, code.into_pointer_value(), &values, "").map_err(llvm_err)?;
         if ret.is_some() { Ok(call.try_as_basic_value().basic()) } else { Ok(None) }
     }
 
