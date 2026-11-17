@@ -1,0 +1,70 @@
+//@ run
+//> 14695981039346656037
+//> 589729691727335466
+//> 12638149817160282822 true
+//> 16654208175385433931 true true true
+//> true
+//> 589763776587810007 true true
+//> 3753867429526904406 true
+//> true true
+//> 14695981039346656037 true
+
+// `Hasher` is the hash of HS1 one part at a time (HS3): `write_u64` is the fold step, `write_str` and `write_bytes`
+// fold one word per byte, `write` folds a whole value as `hash()` does but from the current state, and writes
+// concatenate with no separator. `finish` does not consume or reset the hasher.
+
+struct Tag derives (Eq, Hash) {
+    name: String
+    id: i32
+}
+
+fn main() {
+    let mut h = Hasher.new()
+    println("{h.finish()}")
+    h.write_u8(1)
+    h.write_u32(2)
+    println("{h.finish()}")
+
+    let mut g = Hasher.new()
+    g.write_u64(7)
+    let seven: u64 = 7
+    println("{g.finish()} {g.finish() == seven.hash()}")
+
+    let mut a = Hasher.new()
+    a.write_str("abc")
+    let bytes = "abc".to_utf8()
+    let mut b = Hasher.new()
+    b.write_bytes(bytes[0..bytes.len()])
+    let mut whole = Hasher.new()
+    whole.write("abc")
+    println("{a.finish()} {a.finish() == b.finish()} {a.finish() == "abc".hash()} {a.finish() == whole.finish()}")
+
+    let mut split = Hasher.new()
+    split.write_str("ab")
+    split.write_str("c")
+    println("{split.finish() == a.finish()}")
+
+    let tag = Tag { name: String.from("a"), id: 1 }
+    let mut c = Hasher.new()
+    c.write_u32(1)
+    c.write_str("a")
+    let t = (1, "a")
+    let mut e = Hasher.new()
+    e.write(tag)
+    println("{c.finish()} {c.finish() == t.hash()} {e.finish() == tag.hash()}")
+
+    // A value written after another continues from the state the first left.
+    let mut d = Hasher.new()
+    d.write(3)
+    d.write("abc")
+    let continued = "abc".hash_from(Hasher.new().finish())
+    println("{d.finish()} {d.finish() == hash_seeded(3, "abc")}")
+    let first = "ab".hash()
+    println("{"c".hash_from(first) == "abc".hash()} {continued == "abc".hash()}")
+
+    // `Hasher` is a `Copy` value: a copy branches, and the original is unchanged by writes to the copy.
+    let start = Hasher.new()
+    let mut branch = start
+    branch.write_u8(9)
+    println("{start.finish()} {start == Hasher.new()}")
+}

@@ -1096,6 +1096,9 @@ impl FnCx<'_> {
         if name.name == "hash" && args.is_empty() && self.globals.has_hash_in(&recv.ty, &self.bounds) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
+        if name.name == "hash_from" && self.globals.has_hash_in(&recv.ty, &self.bounds) {
+            return self.hash_from_call(recv, args, span);
+        }
         // `a.cmp(b)` on every type that supports `<` through `Ord` (`spec/stdlib.md`, `Ordering`).
         if name.name == "cmp"
             && args.len() == 1
@@ -1247,6 +1250,15 @@ impl FnCx<'_> {
         };
         checked.insert(0, recv);
         mk(tir::ExprKind::Method(m, checked), ret, span)
+    }
+
+    /// `x.hash_from(state)` on a `Hash` receiver: the value folded into a running hash (`spec/stdlib.md`, HS3).
+    pub(super) fn hash_from_call(&mut self, recv: tir::Expr, args: &[ast::Arg], span: Span) -> tir::Expr {
+        let u64_ty = Ty::Int(IntTy::U64);
+        let params = [ParamSig::plain(u64_ty.clone())];
+        let Some(mut checked) = self.args("hash_from", &params, args, None, span) else { return error_expr(span) };
+        checked.insert(0, recv);
+        mk(tir::ExprKind::Method(Method::HashFrom, checked), u64_ty, span)
     }
 
     /// The one argument of `List.drain`: a range of `usize` in either spelling. `1..=3` has a different type

@@ -19,6 +19,7 @@ program, then copies its public names into every module (the prelude). A project
 | `iter.bd` | `Iterator<T>`, `Iterable<T>`, and `FromIterator<T>` with `collect`, the lazy adapters and their types, the eager `List` helpers, and the `from_iter` functions of the built-in collections |
 | `slice.bd` | the slice methods the compiler does not implement itself: `first`, `last`, `is_empty`, `contains`, the split and search functions, the algorithms built on `swap`, `concat`, `join`, and the ASCII helpers (`spec/stdlib.md`, "Slices") |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
+| `hash.bd` | `Hasher`, `hash_of`, and `hash_seeded`: the stable FNV-1a hash of `x.hash()` and `Map`, one part at a time (`spec/stdlib.md`, "Hashing") |
 | `alloc.bd` | the `Allocator` interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`) |
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`

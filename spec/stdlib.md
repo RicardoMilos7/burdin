@@ -906,7 +906,7 @@ program must not depend on it. The implementation is an open-addressing hash tab
 expected O(1), the table keeps a 3/4 load factor and rehashes as it grows, and removing a key shifts the rest of its
 probe cluster back instead of leaving tombstones. Keys are hashed structurally — integers, `bool`, `char`, floats,
 `String` by its bytes, tuples, fixed-size arrays, structs, enums, `Option`, `Result`, and ranges — so a key needs only `==`, not
-`Hash`.
+`Hash`. The fold is the stable one of `hash_of` (HS1), and the key rule is the structural one (HS5).
 
 ### Map entry operations (issue #482)
 
@@ -1569,12 +1569,81 @@ order, issue #703). The decisions behind it:
   order) is accepted wherever `T: Ord` is required, which is how `Reverse<T>` works with `cmp.min`, `max_by_key`, and
   later `PriorityHeap` and `sort_by_key`. The built-in `<` does not apply to such a type (`has_ord` is false), so a
   generic body instantiated for it calls `lt`; the compiler-implemented `List.sort` still wants a derived `Ord`
-  (E0141). Hand-written `Eq`/`Ord`/`Hash` beyond this stay E9000 under #402.
+  (E0141). Hand-written `Eq`/`Ord`/`Hash` beyond this stay E9000 under #402 (`Hash`: HS5).
 - A closure comparator or key function sees views of the values (`&T`), so the helpers return an owned `T`: `min`
   and friends cannot be called on two `str` views (E0121, a view cannot come from two parameters); use `String`.
 
 Tests: `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`,
 `reverse`, `cmp_float_has_no_cmp`, `cmp_needs_ord`.
+
+## Hashing (issue #717)
+
+`std.hash` gives a program the hash that `Map` uses, so it can build a cache key, a content hash, a bloom filter, or
+a hand-written hash table. The prelude makes its names visible in every module, and `hash` also names the module.
+
+```
+x.hash(): u64                              // every type that is `Hash`; built in (derives.md)
+fn x.hash_from(state: u64): u64            // built in: folds `x` into a running state
+
+struct Hasher derives (Copy, Clone, Eq, Debug)     // one `u64` of state
+fn Hasher.new(): Hasher                    // the FNV-1a offset basis
+fn Hasher.with_seed(seed: u64): Hasher     // `new()` followed by `write_u64(seed)`
+fn Hasher.write<T: Hash>(mut self, value: T)   // folds a whole value, as `value.hash()` would
+fn Hasher.write_u8(mut self, x: u8)        fn write_u32(mut self, x: u32)      fn write_u64(mut self, x: u64)
+fn Hasher.write_bytes(mut self, bytes: [u8])    // one word per byte, in order
+fn Hasher.write_str(mut self, text: str)   // the text's UTF-8 bytes, like `write_bytes`
+fn Hasher.finish(self): u64                // the state; `finish` does not consume or reset the hasher
+
+fn hash_of<T: Hash>(value: T): u64                          // `value.hash()`
+fn hash_seeded<T: Hash>(seed: u64, value: T): u64           // `Hasher.with_seed(seed)`, `write(value)`, `finish()`
+```
+
+**HS1. One stable algorithm.** There is one hash, the FNV-1a fold of `derives.md`, and it is stable: the same value
+gives the same `u64` on every run, every platform, and every build profile, in `comptime` and at run time. It does not
+change between compiler versions without a breaking-change entry in `CHANGELOG.md`, so a program may store it (an
+on-disk cache key, a content hash). `Map` and `Set` hash their keys with this same fold; the order they iterate in is
+still unspecified, and a program must not depend on it (the table's layout is not part of the contract, only the
+fold is).
+
+**HS2. What is `Hash`.** Every type whose `Hash` cell is `yes` in the interface-coverage table (issue #716, below),
+and a type parameter bounded by `Hash`. That includes `str` and `String`, which hash their UTF-8 bytes one word per
+byte with no length prefix and no terminator, so a `str` and a `String` with the same text hash alike, and `List` and
+`Map`, which `derives.md` folds as a length followed by their elements (a map's entries combine so that insertion order
+does not matter). A float is not `Hash`, because `==` on floats is not an equivalence (`NaN != NaN`); a struct with a
+float field cannot derive `Hash` (E0130), and a `Hash` bound rejects an `f64` argument (E0141). `Map` still accepts a
+float key and hashes it structurally; that rule is `Map`'s, not `Hash`'s.
+
+**HS3. `Hasher` is the same fold, one part at a time.** `Hasher.new()` holds the offset basis, and every `write_*`
+call folds one more part into the state with `state = (state XOR w) * 0x100000001b3` (mod 2^64), where `w` is the
+part as a 64-bit word. `write_u8`, `write_u32`, and `write_u64` fold their argument zero-extended; `write_bytes` and
+`write_str` fold one word per byte; `write(value)` folds the value's parts exactly as `value.hash()` does, but
+starting from the hasher's current state. So a fresh hasher that writes one value finishes with that value's hash
+(`h.write(x)` then `h.finish()` is `x.hash()`), and `x.hash_from(h.finish())` continues a hash without a `Hasher`.
+Writes concatenate with no separators: `write_str("ab")` then `write_str("c")` equals `write_str("abc")`. A program
+that needs the boundary to matter writes the length first.
+
+**HS4. Seeded hashing is a different sequence, not a keyed one.** `Hasher.with_seed(seed)` folds `seed` before
+anything else, so two seeds give two unrelated-looking hash sequences for the same data (the way a bloom filter gets
+several hash functions, or a table partitions keys). It is deterministic for a seed, and the seed is the caller's to
+choose; `std` has no source of random numbers yet. FNV-1a is not a keyed function: a seed does not protect a table
+from a caller who can choose the data. Neither `Hasher` nor `Map` offers collision-attack resistance, and a
+checksum or cryptographic hash is issue #560's, built on `Hasher`.
+
+**HS5. A type cannot customize its hash.** Equality and hash are structural for every type, and the only `hash` a
+type has is the derived one. A hand-written `Type: Hash { ... }`, like every hand-written built-in interface, is
+`E9000` under issue #402, and so is the case-insensitive key it would be needed for; `Map` and `Set` use the one
+structural rule for every key, so they and `hash()` cannot disagree. Until #402 lands, a program that needs another
+notion of equality keys its table on a normalized value (the lower-cased text), or hashes the part it wants with a
+`Hasher` itself. When #402 allows a hand-written `Hash`, it must come with a hand-written `Eq`, `Map` and `Set` must
+call the type's own `hash` and `==`, and `a == b` must imply `a.hash() == b.hash()`; that rule is written for #402
+and is not implemented by this section.
+
+The primitive behind `Hasher.write` is `x.hash_from(state)`: it is declared for exactly the types `x.hash()` is, it
+evaluates `x` once, and `x.hash()` is `x.hash_from(0xcbf29ce484222325)`.
+
+Tests: `m24_stdlib/hash_values` (HS1, HS2), `hash_hasher` (HS3), `hash_seeded` (HS4), `hash_generic` (HS2, bounds),
+`hash_map_consistent` (HS1), `hash_case_insensitive` (HS5, workaround), `hash_comptime` (HS1), `hash_float`
+(HS2, E0141), `hash_float_derive` (HS2, E0130).
 
 ## `Option<T>` and `Result<T, E>`
 
@@ -2101,6 +2170,7 @@ issue are `Hash` for `str`/`String`/`List`/`Map`, `Default` for `List`/`Deque`/`
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
+| Hashing | `m24_stdlib/hash_values`, `hash_hasher`, `hash_seeded`, `hash_generic`, `hash_map_consistent`, `hash_case_insensitive`, `hash_comptime`, `hash_float`, `hash_float_derive` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
 | Characters of a text | `m24_stdlib/text_characters` |

@@ -1159,6 +1159,12 @@ impl<'p> Interp<'p, '_> {
                 let p = self.p;
                 Value::Int(i128::from(self.peek(recv, |v| hash(p, v, &recv_ty, FNV_OFFSET))?))
             }
+            Method::HashFrom => {
+                let recv_ty = recv.ty.clone();
+                let p = self.p;
+                let state = self.eval(&args[1], Mode::Use)?.int() as u64;
+                Value::Int(i128::from(self.peek(recv, |v| hash(p, v, &recv_ty, state))?))
+            }
             Method::Iter | Method::IntoIter => self.iter_value(recv, m == Method::IntoIter, span)?,
             Method::IterNext => self.iter_next(recv, ty, span)?,
             Method::IterNextBack => self.iter_next_back(recv, ty, span)?,
@@ -1748,5 +1754,34 @@ mod tests {
         };
         let h = hash(&p, &Value::str("a"), &Ty::Str, FNV_OFFSET);
         assert_eq!(h, (FNV_OFFSET ^ 0x61).wrapping_mul(FNV_PRIME));
+    }
+
+    /// `x.hash_from(state)` runs the same fold from `state`, so a hash continues where another stopped
+    /// (`spec/stdlib.md`, HS3): hashing "ab" and then folding "c" in is hashing "abc", and a seed is one folded word.
+    #[test]
+    fn hash_continues_from_a_state() {
+        let p = Program {
+            functions: vec![],
+            closures: vec![],
+            consts: vec![],
+            structs: vec![],
+            enums: vec![],
+            signatures: vec![],
+            externs: vec![],
+            main: None,
+            tests: vec![],
+            any_ifaces: vec![],
+            any_vtables: vec![],
+            any_type_ids: vec![],
+            build_inputs: vec![],
+            allocator_fns: vec![],
+            global_alloc_ty: None,
+        };
+        let whole = hash(&p, &Value::str("abc"), &Ty::Str, FNV_OFFSET);
+        let first = hash(&p, &Value::str("ab"), &Ty::Str, FNV_OFFSET);
+        assert_eq!(hash(&p, &Value::str("c"), &Ty::Str, first), whole);
+        let seed = hash(&p, &Value::Int(3), &Ty::Int(IntTy::U64), FNV_OFFSET);
+        assert_eq!(seed, (FNV_OFFSET ^ 3).wrapping_mul(FNV_PRIME));
+        assert_eq!(hash(&p, &Value::str("abc"), &Ty::Str, seed), 3_753_867_429_526_904_406);
     }
 }
