@@ -1,0 +1,43 @@
+//@ run
+//> 3 [1, 2, 3]
+//> 3 [1, 2, 3]
+//> 4 [1, 2, 3, 4]
+//> 0 true
+//> {}
+//> {7}
+//> true false false
+
+// A set can be built from a list or an array (a repeated element is stored once), grown with `extend`, emptied
+// with `clear`, and turned back into a list. A set has no order, so the list is sorted before it is printed.
+
+fn sorted(own items: List<i32>): List<i32> {
+    let mut out = items
+    out.sort()
+    out
+}
+
+fn main() {
+    let from_list = Set<i32>.from_list([3, 1, 3, 2, 1].into_iter().collect())
+    println("{from_list.len()} {sorted(from_list.into_list()):?}")
+
+    let from_array = Set<i32>.from([2, 3, 1, 2])
+    println("{from_array.len()} {sorted(from_array.into_list()):?}")
+
+    let mut grown = Set<i32>.from([1, 2])
+    let more: List<i32> = [2, 3, 4, 4].into_iter().collect()
+    grown.extend(more)
+    println("{grown.len()} {sorted(grown.into_list()):?}")
+
+    let mut emptied = Set<i32>.from([1, 2, 3])
+    emptied.clear()
+    println("{emptied.len()} {emptied.is_empty()}")
+    println("{emptied:?}")
+    emptied.insert(7)
+    println("{emptied:?}")
+
+    let a = Set<i32>.from([1, 2])
+    let b = Set<i32>.from([2, 1])
+    let c = Set<i32>.from([1, 2, 3])
+    let d = Set<i32>.from([1, 4])
+    println("{a == b} {a == c} {a == d}")
+}

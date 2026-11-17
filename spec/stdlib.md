@@ -386,7 +386,8 @@ Armenian, Hebrew, Arabic, Devanagari, Thai, Hiragana, Katakana, Hangul, CJK, and
 another script is not alphabetic and has no case. Case conversion maps one character to one character, so `ß` has no
 uppercase form here and `İ`/`ı` are unchanged; Latin-1, Latin Extended-A, Greek, and Cyrillic letters convert.
 
-Tests: `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix`.
+Tests: `m24_stdlib/char_ascii`, `char_control`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`,
+`char_bad_radix`.
 
 ## Operators
 
@@ -1060,7 +1061,8 @@ fn is_disjoint(self, other: Set<T>): bool
 `Iterable<&T>`, and, for the default allocator, `FromIterator<T>` (issue #708). `MapEntries<K, V>` is the nameable type of the iterator `map.iter()` returns, added so a library type
 can wrap it. Operations that copy elements need `Clone`; they return a set that uses the default allocator.
 
-Tests: `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq`.
+Tests: `m24_stdlib/set_basic`, `set_construction`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_allocator`,
+`set_needs_eq`.
 
 ## `Deque<T>` (issue #191)
 
@@ -1100,8 +1102,8 @@ bounds` past the end), `PartialEq` (same length and equal elements), `Debug` (`[
 shared view `&X` satisfies an interface bound that `X` satisfies. `DequeIterMut<D, T>` needs `D: IndexMut<T> + DequeLen`,
 and a mutable view `&mut X` satisfies the bounds `X` does as well.
 
-Tests: `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds`,
-`iter_mut_deque`.
+Tests: `m24_stdlib/deque_basic`, `deque_construction`, `deque_index_iteration`, `deque_strings_and_drops`,
+`deque_index_out_of_bounds`, `iter_mut_deque`.
 
 ## `PriorityHeap<T>` (issue #192)
 
@@ -1135,7 +1137,7 @@ struct PriorityHeap<T: Ord> {
 `PriorityHeap index out of bounds`), `Debug` (`[9, 5, 1]`, highest priority first), and `Iterable<&T>`. To get a
 min-heap, wrap the elements in `Reverse<T>`.
 
-Tests: `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`,
+Tests: `m24_stdlib/heap_basic`, `heap_construction`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`,
 `heap_needs_ord`.
 
 ## `Once<T>` and `Lazy<T, F>` (issue #420)
@@ -1202,7 +1204,7 @@ resolves symbolic links.
 - `exists` is true when the system can see the path (the C library's `access`, or `_access` on Windows, with no mode bits). It is impure, so a
   comptime evaluation that reaches it fails with E0224. Directory listing, metadata, and walking are the next section.
 
-Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists`.
+Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists`.
 
 ## Directories, metadata, and walking (issue #411)
 
@@ -1431,7 +1433,7 @@ ManualClock {
   system, so a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9). The rest is pure and
   works in a `const` or a `comptime` expression.
 
-Tests: `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`,
+Tests: `m24_stdlib/time_duration`, `time_instant`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`,
 `time_clock`, `time_comptime`, `time_comptime_impure`.
 
 ## Random numbers (issue #195)
@@ -1474,6 +1476,23 @@ Random {
 
 Tests: `m24_stdlib/random_seeded` (known answers from an independent implementation), `random_properties`,
 `random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure`.
+
+## Roundout tests (issue #196)
+
+The sections above each name the tests that cover one type. Three more tests use the m24 types together, so a
+change to one of them is also checked against the others:
+
+- `containers_graph_search`: a `Deque` drives a breadth-first search, a `Set` marks what was visited, and a
+  `PriorityHeap` of `Reverse` entries is the frontier of a shortest-path search, with the distances in a `Map`.
+- `containers_comptime`: `Set`, `Deque`, and `PriorityHeap` are ordinary library code, so a `comptime` expression
+  can build and consume them; only a scalar, `String`, or composite of those leaves it (`comptime.md`, CT3).
+- `roundout_text_and_time`: Unicode case mapping and `split_whitespace` into a `Set`, `Path` edits, a `ManualClock`
+  with `DateTime` formatting, and a seeded `Random` shuffle.
+
+Every public function of `Set`, `Deque`, `PriorityHeap`, `Path`, the time types, `Random`, and the character
+predicates (apart from the `DequeLen` and `HeapLen` helper interfaces the iterators use) is called by at least one test in `tests/`. The compile-fail cases are `set_needs_eq` and `heap_needs_ord`
+(E0141, an element type that does not meet the container's bound) and `time_comptime_impure` (E0224, the clocks, sleep,
+and the entropy source at compile time). There is no new diagnostic.
 
 ## `Heap<T>`
 
@@ -2189,18 +2208,19 @@ issue are `Hash` for `str`/`String`/`List`/`Map`, `Default` for `List`/`Deque`/`
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
-| Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
+| Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
 | Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_comptime` |
-| Time | `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_comptime`, `time_comptime_impure` |
+| Time | `m24_stdlib/time_duration`, `time_instant`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_comptime`, `time_comptime_impure` |
 | Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
-| Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
-| `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
+| Characters | `m24_stdlib/char_ascii`, `char_control`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
+| `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_construction`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
 | Mutable iteration | `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`, `iter_mut_adapters`, `iter_mut_drops`, `iter_mut_mutates_collection`, `iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable`, `iter_mut_map_key_readonly`, `iter_mut_no_iter_mut`, `iter_mut_comptime` |
-| `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
-| `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
+| `Deque` | `m24_stdlib/deque_basic`, `deque_construction`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
+| `Set` | `m24_stdlib/set_basic`, `set_construction`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_allocator`, `set_needs_eq` |
+| Roundout (containers, text, paths, time, random together) | `m24_stdlib/containers_graph_search`, `containers_comptime`, `roundout_text_and_time` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors`, `m24_stdlib/io_error_kinds`, `io_error_kind_display`, `io_error_kind_mapping` |

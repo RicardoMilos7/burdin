@@ -1,0 +1,32 @@
+//@ run
+//> 10s 10s
+//> 12s 7s None
+//> true true
+//> 0ns 5s
+//> None
+//> 2s false
+
+// An `Instant` is a position on the monotonic clock: it can be built at a distance from the clock's start, moved
+// by a `Duration` with `checked_add` and `checked_sub` (`None` when the result does not fit), and compared with
+// another instant; only the difference between two means anything.
+
+fn show(i: Option<Instant>): String {
+    match i {
+        Some(v) => v.since_start().to_string(),
+        None => String.from("None"),
+    }
+}
+
+fn main() {
+    let ten = Instant.from_start(Duration.from_secs(10))
+    println("{ten.since_start()} {ten.duration_since(Instant.from_start(Duration.zero()))}")
+    println("{show(ten.checked_add(Duration.from_secs(2)))} {show(ten.checked_sub(Duration.from_secs(3)))} {show(ten.checked_sub(Duration.from_secs(11)))}")
+
+    let five = Instant.from_start(Duration.from_secs(5))
+    println("{five < ten} {five == Instant.from_start(Duration.from_secs(5))}")
+    println("{five.duration_since(ten)} {ten.duration_since(five)}")
+    println("{show(Instant.from_start(Duration.from_nanos(u64.MAX)).checked_add(Duration.from_nanos(1)))}")
+
+    let moved = five.checked_add(Duration.from_secs(5)).unwrap()
+    println("{ten.since_start() - five.since_start() - Duration.from_secs(3)} {moved != ten}")
+}
