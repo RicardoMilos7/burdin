@@ -225,7 +225,7 @@ Structs that need to point at other data store an index or a handle instead (par
 **Heap and shared ownership**
 
 - `Heap<T>` puts one value on the heap, and is how recursive types are written.
-- `Shared<T>` is an opt-in reference-counted owner. Reference cycles leak by design. Stage 1's count is not atomic and there are no weak handles yet; both arrive with the concurrency stage.
+- `Shared<T>` is an opt-in reference-counted owner. Reference cycles leak by design. Stage 1's count was not atomic; since stage 2.3 it is, and `Shared<T>` is `Send` when its value is `Send` and `Sync` (`spec/shared.md`). There are no weak handles yet.
 
 **Allocators.** Every container buffer comes from an allocator value. Allocator-aware types take a defaulted type argument, so most code never mentions allocators; a function that needs to choose one takes an ordinary generic parameter bound by `Allocator`:
 
@@ -668,7 +668,7 @@ The design is settled at the level of ideas, and these details still need decisi
 - The single-source return rule for references and views, and the diagnostics when it is ambiguous.
 - How second-class types propagate through generics and interfaces.
 - What `unsafe` may do, and what a safe wrapper must guarantee.
-- The `Send` marker: name, derivation rules, and how it interacts with `Shared<T>`.
+- The `Send` marker: name, derivation rules, and how it interacts with `Shared<T>`. Decided in stage 2.3 (`spec/shared.md` SH2, SH4, SH5): `Send` and `Sync`, derived from a type's parts, declared with `unsafe` impl blocks.
 
 **Possible later additions**
 

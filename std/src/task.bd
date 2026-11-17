@@ -9,6 +9,7 @@
 // (`__thread_start`, `__mutex_*`, `__cond_*`, `__ctx_*`, and the two slots `__tls_*` and `__global_*`). Its records
 // are `repr(C)` structs of integers and raw pointers behind `CPtr`, so nothing in them needs a destructor.
 
+use marker.{Send, Sync}
 use option.take
 
 // The scheduler lives as long as the process, so its records come straight from the C allocator instead of the
@@ -472,8 +473,9 @@ struct JoinHandle<T> {
 }
 
 /// Runs `f` as a task on the scheduler and returns its handle. The closure moves its captures into the task, and the
-/// task ends when `f` returns. A panic in the task aborts the process.
-fn spawn<T, F: FnOnce(): T>(own f: F): JoinHandle<T> {
+/// task ends when `f` returns. A panic in the task aborts the process. The closure and its result move to another
+/// thread, so both must be `Send` (spec/shared.md, SH4).
+fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): JoinHandle<T> {
     unsafe {
         let t = __new_task(Option<T>.size())
         // The result slot holds `None` until the task stores its value. It is written byte by byte from a real
@@ -556,6 +558,12 @@ JoinHandle<T> {
     }
 }
 
+// The handle moves between tasks, and its `is_finished` may be called from several at once; both are safe when the result
+// may move (spec/shared.md, SH5).
+unsafe JoinHandle<T>: Send where T: Send { }
+
+unsafe JoinHandle<T>: Sync where T: Send { }
+
 JoinHandle<T>: Drop {
     fn drop(mut self) {
         if self.joined {
@@ -606,11 +614,17 @@ fn scope<R, F: FnMut(Scope): R>(own f: F): R {
     }
 }
 
+// A scope handle is shared by the tasks of its scope, which start nested tasks through it; the scheduler's lock guards
+// the count it updates.
+unsafe Scope: Send { }
+
+unsafe Scope: Sync { }
+
 Scope {
     /// Starts a task that runs `f`. Unlike `spawn`, `f` may borrow: the scope waits for the task, so the borrowed
     /// places outlive it. Two tasks (or a task and the rest of the scope body) cannot use the same place unless
     /// both only read it; the compiler checks that with the same rules as two closures in one function.
-    fn spawn<F: FnMut(): ()>(self, own f: F) {
+    fn spawn<F: FnMut(): () + Send>(self, own f: F) {
         unsafe {
             __spawn_scoped(self.state as CPtr<ScopeState>, __closure_own(f))
         }

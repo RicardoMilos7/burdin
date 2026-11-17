@@ -125,12 +125,13 @@ def check_conformance(job: str, block: str, profile: str) -> None:
 
 
 def check_stress_repeat(job: str, block: str) -> None:
-    """Every job repeats the channel stress tests in the debug and the release profile."""
+    """Every job repeats the channel and the shared-state stress tests in the debug and the release profile."""
     repeated = [line for line in block.split("\n") if "tests/run_tests.py" in line and "--repeat" in line]
     for label, wanted in (("debug-profile", False), ("release-profile", True)):
-        matching = [line for line in repeated if ("--release" in line) == wanted and "s2_channels/stress" in line]
-        if not matching:
-            add_problem(f"ci.yml: {job} job: no {label} repeated channel stress step (run_tests.py --repeat)")
+        for folder, what in (("s2_channels/stress", "channel"), ("s2_shared/stress", "shared-state")):
+            matching = [line for line in repeated if ("--release" in line) == wanted and folder in line]
+            if not matching:
+                add_problem(f"ci.yml: {job} job: no {label} repeated {what} stress step (run_tests.py --repeat)")
 
 
 def cache_steps(block: str) -> str:

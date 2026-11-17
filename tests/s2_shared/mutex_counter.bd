@@ -1,0 +1,41 @@
+//@ run
+//> 6 tasks, each added 5000: 30000
+//> the list holds 6 entries, sum 21
+
+// A shared counter behind a mutex: the `Shared` gives every task a handle, the `Mutex` lets one task at a time change the
+// value (spec/shared.md, SH8). `lock` returns what its closure returns, so the result of one task's work can be read
+// out of the critical section.
+
+fn main() {
+    task.set_workers(4)
+    let counter = Shared.new(Mutex.new(0))
+    let log = Shared.new(Mutex.new(List<i32>.new()))
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut id = 1
+    while id <= 6 {
+        let counter = counter.clone()
+        let log = log.clone()
+        let mine = id
+        handles.push(task.spawn(|| {
+            let mut i = 0
+            while i < 5000 {
+                counter.get().lock(|n| { *n = *n + 1 })
+                i = i + 1
+            }
+            log.get().lock(|entries| { entries.push(mine) })
+        }))
+        id = id + 1
+    }
+    for h in handles.into_iter() {
+        h.join()
+    }
+    println("6 tasks, each added 5000: {}", counter.get().lock(|n| *n))
+    let (count, sum) = log.get().lock(|entries| {
+        let mut sum = 0
+        for e in entries.iter() {
+            sum = sum + e
+        }
+        (entries.len(), sum)
+    })
+    println("the list holds {} entries, sum {}", count, sum)
+}

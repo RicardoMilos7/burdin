@@ -1332,6 +1332,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 return Ok(None);
             }
             Builtin::Rt(op) => return self.rt_primitive(op, args),
+            Builtin::Atomic(op, width) => return self.atomic_primitive(op, width, args),
             // Same representation, different type: the closure value passes through unchanged.
             Builtin::ClosureOwn => return self.expr_mode(&args[0], Mode::Move),
             Builtin::Assertion(kind) => {
@@ -1444,7 +1445,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         if m == Method::SharedStrongCount {
             let p = self.shared_pointer(&args[0])?;
-            let count = self.builder.build_load(self.usize_ty, p, "shared.count").map_err(llvm_err)?;
+            let count = self.shared_count_load(p)?;
             return Ok(Some(count));
         }
         if m == Method::Clone {

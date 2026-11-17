@@ -187,14 +187,14 @@ output is flushed at exit as it always is. A program that wants a task's work to
 
 ## TK11. `Send` (decision, issue #199)
 
-The derived `Send` marker waits for milestone 2.3 (sharing). In 2.1 nothing checks that a value is safe to move to
-another thread, and the tests do not rely on it. The consequence, stated plainly: until 2.3, the program must not give
-two tasks or threads access to the same `Shared<T>` (its count is not atomic in this milestone), a raw `CPtr`, or a
-global resource without synchronization it provides itself. The tasks' own data is always safe, because a captured
-value is moved and a scoped borrow is exclusive or read-only (TK7).
+Milestone 2.1 did not check that a value is safe to move to another thread; the derived `Send` marker came with
+milestone 2.3 (sharing), as this rule decided. It is now `spec/shared.md` SH4-SH6: `task.spawn`, `thread.spawn`, and
+`Scope.spawn` require the closure to be `Send` (each value it moves is `Send`, each value it borrows is `Sync`), and a
+task's result type must be `Send`; anything else is E0280 at the call. `Shared<T>`'s count is atomic (SH1). The tasks'
+own data was always safe, because a captured value is moved and a scoped borrow is exclusive or read-only (TK7).
 
-The decision order is deliberate: `Send` is derived from field types, and the types that make it interesting
-(`Shared<T>` with an atomic count, `Mutex<T>`, atomics) arrive in 2.3.
+The decision order was deliberate: `Send` is derived from field types, and the types that make it interesting
+(`Shared<T>` with an atomic count, `Mutex<T>`, atomics) arrived together in 2.3.
 
 ## TK12. Runtime state shared by threads, and the checking allocator
 

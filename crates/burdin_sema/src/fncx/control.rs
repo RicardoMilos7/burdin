@@ -432,6 +432,7 @@ impl FnCx<'_> {
                         sig: Rc::new(FnSig { params: Vec::new(), ret: Box::new(inner.clone()) }),
                         kind: FnKind::FnOnce,
                         borrowed: false,
+                        send: tir::FnSend::unknown(),
                     };
                     let handler = self.expr(default, Some(&expected));
                     self.closure_call_typed(handler, Vec::new(), span)
@@ -459,6 +460,7 @@ impl FnCx<'_> {
                         sig: Rc::new(FnSig { params: vec![err.clone()], ret: Box::new(ok.clone()) }),
                         kind: FnKind::FnOnce,
                         borrowed: false,
+                        send: tir::FnSend::unknown(),
                     };
                     let handler = self.expr(default, Some(&expected));
                     let error = mk(tir::ExprKind::Local(eid), err, span);

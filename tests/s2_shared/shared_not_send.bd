@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// `Shared<T>` gives several tasks handles to one value, so it is `Send` only when `T` is both `Send` and `Sync`
+// (spec/shared.md, SH2). `Plain` is `Send` but not `Sync`; a `Shared<Plain>` cannot cross to a task. A `Mutex<Plain>` can
+// be shared, because the mutex lets only one task at a time touch the value.
+
+struct Plain {
+    cell: CPtr<i32>
+}
+
+unsafe Plain: Send { }
+
+fn main() {
+    let shared = Shared.new(Plain { cell: unsafe { CPtr.null() } })
+    let h = task.spawn(|| shared.strong_count()) //~ E0280
+    let guarded = Shared.new(Mutex.new(Plain { cell: unsafe { CPtr.null() } }))
+    let g = task.spawn(|| guarded.strong_count()).join()
+}

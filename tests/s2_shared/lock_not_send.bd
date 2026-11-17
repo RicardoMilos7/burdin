@@ -1,0 +1,31 @@
+//@ compile-fail
+
+// A lock is `Send` when its value is, and `Sync` when its value is `Send`; an `RwLock` is `Sync` only when its value is
+// also `Sync`, because readers use the value at the same time (spec/shared.md, SH8, SH10). `Raw` is neither.
+
+struct Raw {
+    ptr: CPtr<u8>
+}
+
+struct SendOnly {
+    cell: CPtr<i32>
+}
+
+unsafe SendOnly: Send { }
+
+fn main() {
+    let a = Mutex.new(Raw { ptr: unsafe { CPtr.null() } })
+    let t = task.spawn(|| a.try_lock(|unused| 1)) //~ E0280
+
+    // A mutex of a `Send` value is shared; a read-write lock of the same value is not.
+    let m = Mutex.new(SendOnly { cell: unsafe { CPtr.null() } })
+    let rw = RwLock.new(SendOnly { cell: unsafe { CPtr.null() } })
+    task.scope(|s| {
+        s.spawn(|| {
+            let _ = m.try_lock(|unused| 1)
+        })
+        s.spawn(|| { //~ E0280
+            let _ = rw.try_read(|unused| 1)
+        })
+    })
+}

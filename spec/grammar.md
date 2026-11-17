@@ -143,7 +143,8 @@ ErrorVariant  = Variant [ "from" ] STRING ;
 InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceFn } "}" ;
 InterfaceFn   = FnSig [ Block ] ;                       (* a body makes it a default method *)
 
-ImplBlock     = Type [ ":" TypePath ] [ WhereClause ] "{" { ImplFn } "}" ;
+ImplBlock     = [ "unsafe" ] Type [ ":" TypePath ] [ WhereClause ] "{" { ImplFn } "}" ;
+                (* `unsafe` is required for `Send` and `Sync` and allowed for nothing else (E0281); spec/shared.md SH5 *)
 ImplFn        = [ "priv" ] FnItem ;
 
 TypeAlias     = "type" IDENT [ GenericParams ] "=" Type ;

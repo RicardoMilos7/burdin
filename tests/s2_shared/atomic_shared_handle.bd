@@ -1,0 +1,30 @@
+//@ run
+//> tasks: 6, flag raised: true, total: 21
+
+// An atomic put in a `Shared` and moved to tasks by cloning the handle: every task owns a handle and the cell outlives
+// them all (spec/shared.md, SH1, SH7). A flag is raised by the last task to finish, found with `fetch_sub`.
+
+fn main() {
+    let remaining = Shared.new(AtomicUsize.new(6))
+    let total = Shared.new(AtomicUsize.new(0))
+    let flag = Shared.new(AtomicBool.new(false))
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut id: usize = 1
+    while id <= 6 {
+        let remaining = remaining.clone()
+        let total = total.clone()
+        let flag = flag.clone()
+        let mine = id
+        handles.push(task.spawn(|| {
+            let _ = total.get().fetch_add(mine)
+            if remaining.get().fetch_sub(1) == 1 {
+                flag.get().store(true)
+            }
+        }))
+        id = id + 1
+    }
+    for h in handles.into_iter() {
+        h.join()
+    }
+    println("tasks: {}, flag raised: {}, total: {}", 6, flag.get().load(), total.get().load())
+}

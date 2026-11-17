@@ -1,0 +1,50 @@
+//@ run
+//> lock returns the closure's value: 15
+//> try_lock while held: None
+//> try_lock while free: Some(16)
+//> two mutexes at once: 3 and 7
+//> get_mut: 100
+//> into_inner: [1, 2, 3]
+
+// The operations of `Mutex<T>` on one task (spec/shared.md, SH8): `lock` runs the closure with the value and returns its
+// result, `try_lock` never waits, `get_mut` needs no lock because `mut self` says nobody else can reach the mutex, and
+// `into_inner` takes the value out. A lock closure is `FnOnce`, so what it captures moves into it: a second handle of a
+// `Shared` is how the nested call reaches the mutex that is already held.
+
+fn main() {
+    let m = Shared.new(Mutex.new(10))
+    let got = m.get().lock(|n| {
+        *n = *n + 5
+        *n
+    })
+    println("lock returns the closure's value: {}", got)
+
+    let inner = m.clone()
+    let nested = m.get().lock(|held| inner.get().try_lock(|n| *n))
+    println("try_lock while held: {:?}", nested)
+    let free = m.get().try_lock(|n| {
+        *n = *n + 1
+        *n
+    })
+    println("try_lock while free: {:?}", free)
+
+    let a = Mutex.new(3)
+    let b = Mutex.new(7)
+    let both = a.lock(|x| b.lock(|y| (*x, *y)))
+    println("two mutexes at once: {} and {}", both.0, both.1)
+
+    let mut c = Mutex.new(1)
+    *c.get_mut() = 100
+    println("get_mut: {}", c.lock(|n| *n))
+
+    let list = Mutex.new(vec_of_three())
+    println("into_inner: {:?}", list.into_inner())
+}
+
+fn vec_of_three(): List<i32> {
+    let mut v = List<i32>.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v
+}

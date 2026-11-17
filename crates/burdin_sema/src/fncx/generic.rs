@@ -96,6 +96,11 @@ impl FnCx<'_> {
             match bindings.iter().find(|(n, _)| n == pname) {
                 Some((_, t)) => targs.push(t.clone()),
                 None => {
+                    // A closure argument whose body already failed has no result type to bind; the failure is
+                    // reported where it happened, not again here.
+                    if checked.iter().flatten().any(|e| matches!(&e.ty, Ty::Fn { sig, .. } if *sig.ret == Ty::Error)) {
+                        return error_expr(span);
+                    }
                     let k = info.params.iter().position(|p| p == pname).unwrap_or(0);
                     let is_const =
                         info.bounds.get(k).is_some_and(|bs| crate::globals::Globals::const_param_ty(bs).is_some());
@@ -116,17 +121,15 @@ impl FnCx<'_> {
         let mut ok = true;
         let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(targs.iter().cloned()).collect();
         for ((pname, t), bounds) in info.params.iter().zip(&targs).zip(&info.bounds) {
+            // A closure whose body already failed has no result type to check against its `Fn` bound.
+            if matches!(t, Ty::Fn { sig, .. } if *sig.ret == Ty::Error) {
+                continue;
+            }
             for b in bounds {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
-                    self.diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!(
-                            "`{t}` does not implement `{}`, which `{pname}` of `{}` requires",
-                            globals.bound_name(b),
-                            id.name
-                        ),
-                    );
+                    let (code, message) =
+                        globals.bound_unmet(t, b, &self.bounds, &format!("`{pname}` of `{}`", id.name));
+                    self.diags.error(code, span, message);
                     ok = false;
                 }
             }
@@ -340,7 +343,9 @@ impl FnCx<'_> {
             args.push(ty.clone());
             env.push((p.clone(), ty));
         }
-        globals.check_adt_bounds(g, &args, span, self.diags);
+        if !globals.check_adt_bounds(g, &args, span, self.diags) {
+            return Some(Ty::Error);
+        }
         Some(globals.adt_instance_ty(g, args))
     }
 
@@ -663,15 +668,9 @@ impl FnCx<'_> {
         for (k, t) in targs.iter().enumerate() {
             for b in &bounds[k] {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
-                    self.diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!(
-                            "`{t}` does not implement `{}`, which `{}` of `{name}` requires",
-                            globals.bound_name(b),
-                            params[k]
-                        ),
-                    );
+                    let (code, message) =
+                        globals.bound_unmet(t, b, &self.bounds, &format!("`{}` of `{name}`", params[k]));
+                    self.diags.error(code, span, message);
                     ok = false;
                 }
             }
@@ -773,15 +772,9 @@ impl FnCx<'_> {
         for (k, t) in targs.iter().enumerate() {
             for b in &bounds[k] {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
-                    self.diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!(
-                            "`{t}` does not implement `{}`, which `{}` of `{name}` requires",
-                            globals.bound_name(b),
-                            params[k]
-                        ),
-                    );
+                    let (code, message) =
+                        globals.bound_unmet(t, b, &self.bounds, &format!("`{}` of `{name}`", params[k]));
+                    self.diags.error(code, span, message);
                     ok = false;
                 }
             }
@@ -910,15 +903,9 @@ impl FnCx<'_> {
         for (k, t) in targs.iter().enumerate() {
             for b in &bounds[k] {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
-                    self.diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!(
-                            "`{t}` does not implement `{}`, which `{}` of `{name}` requires",
-                            globals.bound_name(b),
-                            params[k]
-                        ),
-                    );
+                    let (code, message) =
+                        globals.bound_unmet(t, b, &self.bounds, &format!("`{}` of `{name}`", params[k]));
+                    self.diags.error(code, span, message);
                     ok = false;
                 }
             }
@@ -976,6 +963,7 @@ fn generic_hint(
             sig: Rc::new(globals.bound_fn_sig(index, bindings)),
             kind,
             borrowed: kind != FnKind::FnOnce,
+            send: tir::FnSend::unknown(),
         });
     }
     if globals.ty_has_param(param) {

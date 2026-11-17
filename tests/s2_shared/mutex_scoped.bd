@@ -1,0 +1,43 @@
+//@ run
+//> 4 scoped tasks pushed 400 entries
+//> per task: 100 100 100 100
+//> each task's entries are in order: true
+
+// A mutex borrowed by scoped tasks instead of shared through a `Shared`: `Mutex<T>` is `Sync` when `T` is `Send`, so
+// the tasks of one `scope` may all read the same mutex (the shared borrow of TK7) and take turns through `lock`. The
+// interleaving of the tasks depends on the schedule; the counts and each task's own order do not.
+
+fn main() {
+    task.set_workers(3)
+    let entries = Mutex.new(List<(usize, usize)>.new())
+    let ticket = AtomicUsize.new(0)
+    task.scope(|s| {
+        let mut w = 0
+        while w < 4 {
+            s.spawn(|| {
+                let mine = ticket.fetch_add(1)
+                let mut i: usize = 0
+                while i < 100 {
+                    entries.lock(|list| { list.push((mine, i)) })
+                    i = i + 1
+                }
+            })
+            w = w + 1
+        }
+    })
+    let list = entries.into_inner()
+    let mut per_task: [usize; 4] = [0, 0, 0, 0]
+    let mut ordered = true
+    let mut last: [usize; 4] = [0, 0, 0, 0]
+    for item in list.iter() {
+        let (who, n) = item
+        if per_task[who] > 0 && n != last[who] + 1 {
+            ordered = false
+        }
+        last[who] = n
+        per_task[who] = per_task[who] + 1
+    }
+    println("4 scoped tasks pushed {} entries", list.len())
+    println("per task: {} {} {} {}", per_task[0], per_task[1], per_task[2], per_task[3])
+    println("each task's entries are in order: {}", ordered)
+}

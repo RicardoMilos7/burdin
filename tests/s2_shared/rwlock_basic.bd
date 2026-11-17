@@ -1,0 +1,33 @@
+//@ run
+//> read: 21
+//> write then read: 30
+//> try_read nested in a read: Some(30)
+//> try_write while reading: None
+//> try_write while free: Some(31)
+//> get_mut: 40
+//> into_inner: 40
+
+// The operations of `RwLock<T>` on one task (spec/shared.md, SH10): `read` runs a closure with a shared view, `write`
+// with an exclusive one, and the `try_` forms never wait.
+
+fn main() {
+    let rw = Shared.new(RwLock.new(20))
+    println("read: {}", rw.get().read(|n| *n + 1))
+    rw.get().write(|n| { *n = 30 })
+    println("write then read: {}", rw.get().read(|n| *n))
+    let again = rw.clone()
+    let inner = rw.get().read(|unused| again.get().try_read(|n| *n))
+    println("try_read nested in a read: {:?}", inner)
+    let again2 = rw.clone()
+    let blocked = rw.get().read(|unused| again2.get().try_write(|n| *n))
+    println("try_write while reading: {:?}", blocked)
+    let free = rw.get().try_write(|n| {
+        *n = *n + 1
+        *n
+    })
+    println("try_write while free: {:?}", free)
+    let mut owned = RwLock.new(0)
+    *owned.get_mut() = 40
+    println("get_mut: {}", owned.read(|n| *n))
+    println("into_inner: {}", owned.into_inner())
+}

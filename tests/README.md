@@ -40,6 +40,8 @@ tests/
   m24_stdlib/          the standard-library roundout: Ordering, containers, text, numbers, I/O, time, random
   s2_tasks/            stage 2.1: tasks, the work-stealing scheduler, `yield`, scoped tasks, threads
   s2_channels/         stage 2.2: `Channel<T>`, send/receive, closing, `select`, and their stress tests
+  s2_shared/           stage 2.3: atomic `Shared<T>`, `Mutex<T>`, `RwLock<T>`, atomics, derived `Send`/`Sync`, and
+                       their stress tests
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -250,6 +252,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0270 | An allocator-aware container whose allocator type does not implement `Allocator` |
 | E0271 | Invalid default type parameter: a parameter without a default after one with a default, a const parameter's default, or a default on a declaration that takes none (a function, an interface, or a type alias) |
 | E0272 | A container with a stored allocator created with `new`, `from_iter`, or `from`, which have no allocator value to store; it is made with `new_in` |
+| E0280 | A value that is not `Send` (or not `Sync`) given to something that needs it: a task or thread whose closure moves or borrows one, a `Channel<T>` of one, or a call whose type argument misses a `Send` or `Sync` bound. The message names the field or capture that makes it so |
+| E0281 | An invalid `Send` or `Sync` implementation: one not written `unsafe`, an `unsafe` block for an interface other than `Send` or `Sync`, or one that gives a method |
 
 ### Codes without a compile-fail test
 

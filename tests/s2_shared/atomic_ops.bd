@@ -1,0 +1,76 @@
+//@ run
+//> load 5, then store 9 -> 9
+//> swap -> old 9, now 4
+//> add -> old 4, now 7
+//> sub -> old 7, now 2
+//> and 4, or 14, xor 11
+//> cas hit Ok(14), miss Err(5), now 5
+//> max -> old 5, now 12
+//> min -> old 12, now 3
+//> wraps: 0 4294967295
+//> signed: -3 then -10
+//> flag: false true true false
+//> flag cas: Ok(false) Err(true)
+//> u64 and usize: 18446744073709551615 3
+
+// Every operation of the atomic types on one task, so the results are exact (spec/shared.md, SH7). The values that wrap
+// around show that the unsigned storage and the signed view agree, and compare-exchange returns the value it found.
+
+fn main() {
+    let a = AtomicI32.new(5)
+    let first = a.load()
+    a.store(9)
+    println("load {}, then store 9 -> {}", first, a.load())
+    let old = a.swap(4)
+    println("swap -> old {}, now {}", old, a.load())
+    let old = a.fetch_add(3)
+    println("add -> old {}, now {}", old, a.load())
+    let old = a.fetch_sub(5)
+    println("sub -> old {}, now {}", old, a.load())
+
+    let bits = AtomicU32.new(12)
+    let _ = bits.fetch_and(6)
+    let after_and = bits.load()
+    let _ = bits.fetch_or(10)
+    let after_or = bits.load()
+    let _ = bits.fetch_xor(5)
+    println("and {}, or {}, xor {}", after_and, after_or, bits.load())
+
+    let c = AtomicI64.new(14)
+    let hit = c.compare_exchange(14, 5)
+    let miss = c.compare_exchange(14, 99)
+    println("cas hit {:?}, miss {:?}, now {}", hit, miss, c.load())
+
+    let m = AtomicIsize.new(5)
+    let old = m.fetch_max(12)
+    println("max -> old {}, now {}", old, m.load())
+    let old = m.fetch_min(3)
+    println("min -> old {}, now {}", old, m.load())
+
+    let w = AtomicU32.new(4294967295)
+    let _ = w.fetch_add(1)
+    let w0 = AtomicU32.new(0)
+    let _ = w0.fetch_sub(1)
+    println("wraps: {} {}", w.load(), w0.load())
+
+    let s = AtomicI32.new(-3)
+    let first = s.load()
+    let _ = s.fetch_sub(7)
+    println("signed: {} then {}", first, s.load())
+
+    let f = AtomicBool.new(false)
+    let before = f.load()
+    let _ = f.swap(true)
+    let on = f.load()
+    let old = f.fetch_and(false)
+    println("flag: {} {} {} {}", before, on, old, f.load())
+    let r1 = f.compare_exchange(false, true)
+    let r2 = f.compare_exchange(false, false)
+    println("flag cas: {:?} {:?}", r1, r2)
+
+    let big = AtomicU64.new(0)
+    let _ = big.fetch_sub(1)
+    let u = AtomicUsize.new(1)
+    let _ = u.fetch_add(2)
+    println("u64 and usize: {} {}", big.load(), u.load())
+}

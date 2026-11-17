@@ -1699,3 +1699,50 @@ fn main() {
 `List.new_in(arena)`, `Map.new_in(arena)`, or `Heap.new_in(arena, value)`. `new()` remains the constructor for
 `List<T>`, `Map<K, V>`, and `Heap.new(value)`, which use `Global`. To fill such a container from an iterator, make it with
 `new_in` and call `extend_iter`.
+
+## E0280: Not `Send` or not `Sync`
+
+A value crosses to another task or thread only when it is `Send`, and several tasks use one value at the same time
+only when it is `Sync`. The compiler works both out from a type's parts: a record is `Send` when each field is, a raw
+`CPtr<T>` is never either, and a `Shared<T>` is `Send` when `T` is both. A task or thread that moves a value which is
+not `Send`, a scoped task that borrows one which is not `Sync`, a `Channel<T>` of a type that is not `Send`, and a call
+whose type argument misses a `Send` or `Sync` bound are each this error. The message follows the chain of types down to
+the field that decides it. `spec/shared.md` SH4-SH6.
+
+<!-- error-example: E0280 -->
+```burdin
+struct Cursor {
+    ptr: CPtr<u8>
+}
+
+fn main() {
+    let c = Cursor { ptr: unsafe { CPtr.null() } }
+    let t = task.spawn(|| unsafe { c.ptr.is_null() }) //~ E0280
+}
+```
+<!-- /error-example -->
+
+**How to fix:** keep the value on one task, or send plain data instead of the pointer. When the type really is safe
+to move or share (it only reads what the pointer holds, say), say so with an `unsafe` impl block: `unsafe Cursor: Send { }`.
+A generic function that passes its parameter to a task asks for it with a bound: `fn run<T: Send>(own value: T)`.
+
+## E0281: Invalid `Send` or `Sync` implementation
+
+`Send` and `Sync` are promises the compiler cannot check, so an implementation of either is written `unsafe` and
+has an empty body. An implementation that is not marked `unsafe`, an `unsafe` implementation of any other interface,
+and one with methods in its body are this error. `spec/shared.md` SH5.
+
+<!-- error-example: E0281 -->
+```burdin
+struct Handle {
+    cell: CPtr<i32>
+}
+
+Handle: Send { } //~ E0281
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** write `unsafe Handle: Send { }` when the promise holds, or remove the implementation and let the
+compiler derive the interface from the fields.

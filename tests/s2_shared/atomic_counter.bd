@@ -1,0 +1,48 @@
+//@ run
+//> 8 tasks added 80000, counter is 80000
+//> compare-exchange loop: 40000
+
+// An atomic counter shared by scoped tasks: each task borrows it (an atomic is `Sync`), and no increment is lost, which a
+// plain integer would lose across workers (spec/shared.md, SH7). The second part builds an update out of
+// `compare_exchange`, retrying when another task got in first.
+
+fn main() {
+    task.set_workers(4)
+    let counter = AtomicUsize.new(0)
+    task.scope(|s| {
+        let mut t = 0
+        while t < 8 {
+            s.spawn(|| {
+                let mut i = 0
+                while i < 10000 {
+                    let _ = counter.fetch_add(1)
+                    i = i + 1
+                }
+            })
+            t = t + 1
+        }
+    })
+    println("8 tasks added 80000, counter is {}", counter.load())
+
+    let total = AtomicI64.new(0)
+    task.scope(|s| {
+        let mut t = 0
+        while t < 4 {
+            s.spawn(|| {
+                let mut i = 0
+                while i < 10000 {
+                    loop {
+                        let current = total.load()
+                        match total.compare_exchange(current, current + 1) {
+                            Ok(_) => break,
+                            Err(_) => {}
+                        }
+                    }
+                    i = i + 1
+                }
+            })
+            t = t + 1
+        }
+    })
+    println("compare-exchange loop: {}", total.load())
+}

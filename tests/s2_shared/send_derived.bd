@@ -1,0 +1,55 @@
+//@ run
+//> a record, an enum, a recursive list, and a closure crossed: 6 2 3 ok
+
+// `Send` is derived from a type's parts (spec/shared.md, SH4): plain data, strings, lists, options, tuples, enums,
+// recursive types behind a `Heap`, `Shared` handles of such data, locks, atomics, and channels are all `Send`, so tasks
+// and threads accept them without a declaration. A generic function that asks for it with a bound can pass its parameter on to a task.
+
+struct Record {
+    id: i32
+    name: String
+    tags: List<String>
+    parent: Option<(i32, i64)>
+}
+
+enum Shape {
+    Dot
+    Circle(f64)
+    Named(String, List<i32>)
+}
+
+struct Node {
+    value: i32
+    next: Option<Heap<Node>>
+}
+
+fn bounce<T: Send>(own value: T): T {
+    task.spawn(|| value).join()
+}
+
+fn count(node: Node): i32 {
+    match node.next {
+        Some(rest) => 1 + count(*rest),
+        None => 1,
+    }
+}
+
+fn main() {
+    let record = Record { id: 6, name: "r".to_string(), tags: List<String>.new(), parent: Some((1, 2)) }
+    let back = bounce(record)
+    let shape = bounce(Shape.Named("n".to_string(), List<i32>.new()))
+    let kind = match shape {
+        Shape.Dot => 0,
+        Shape.Circle(_) => 1,
+        Shape.Named(_, _) => 2,
+    }
+    let list = Node { value: 1, next: Some(Heap.new(Node { value: 2, next: Some(Heap.new(Node { value: 3, next: None })) })) }
+    let n = bounce(list)
+    let local = 40
+    let sum = task.spawn(|| local + 2).join()
+    let shared = Shared.new(Mutex.new(AtomicI32.new(1)))
+    let ch = Channel<Shared<Mutex<AtomicI32>>>.bounded(1)
+    let _ = ch.send(shared.clone())
+    let ok = task.spawn(|| ch.recv().is_some() && sum == 42).join()
+    println("a record, an enum, a recursive list, and a closure crossed: {} {} {} {}", back.id, kind, count(n), if ok { "ok" } else { "no" })
+}

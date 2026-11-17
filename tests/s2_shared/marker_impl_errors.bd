@@ -1,0 +1,24 @@
+//@ compile-fail
+
+// An implementation of `Send` or `Sync` promises something the compiler cannot check, so it is written `unsafe`, and
+// only those two interfaces are (spec/shared.md, SH5).
+
+struct Handle {
+    cell: CPtr<i32>
+}
+
+Handle: Send { } //~ E0281
+
+unsafe Handle: Sync { }
+
+struct Other {
+    n: i32
+}
+
+unsafe Other: Display { //~ E0281
+    fn fmt(self, f: Formatter) {
+    }
+}
+
+fn main() {
+}

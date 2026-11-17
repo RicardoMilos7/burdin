@@ -248,6 +248,12 @@ impl Code {
     /// A container with a stored allocator created with `new`, which has no allocator value to store; the
     /// program must call `new_in` (`spec/allocators.md`, AL4).
     pub const MISSING_ALLOCATOR: Code = Code("E0272");
+    /// A value that is not `Send` (or `Sync`) where one is required: a task's closure, a value sent through a
+    /// channel, or a shared value (`spec/shared.md`, SH4-SH6).
+    pub const NOT_SEND: Code = Code("E0280");
+    /// An invalid `Send` or `Sync` declaration: not written `unsafe`, naming a type that is not a struct or enum
+    /// of this package, or an `unsafe` block for another interface (`spec/shared.md`, SH5).
+    pub const INVALID_MARKER_IMPL: Code = Code("E0281");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

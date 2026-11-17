@@ -262,6 +262,7 @@ mod tests {
             sig: std::rc::Rc::new(crate::ty::FnSig { params: Vec::new(), ret: Box::new(Ty::Unit) }),
             kind: crate::ty::FnKind::Fn,
             borrowed: false,
+            send: crate::ty::FnSend::unknown(),
         };
         assert!(!defs.is_copy(&closure));
         assert!(!defs.is_clone(&closure));

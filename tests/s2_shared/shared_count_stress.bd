@@ -1,0 +1,44 @@
+//@ run
+//> after 12 tasks cloned and dropped 3000 handles each: strong_count 1, drops 0
+//> the value was dropped exactly once: 1
+
+// The count of `Shared<T>` is atomic (spec/shared.md, SH1). Twelve tasks clone and drop handles of one cell as fast as they
+// can; a plain count would lose updates, and the cell would then be freed early (a crash or a second drop) or never (the
+// drop count stays 0). The value's `Drop` counts itself in an atomic, so "exactly once" is checked directly.
+
+struct Probe {
+    drops: Shared<AtomicUsize>
+}
+
+Probe: Drop {
+    fn drop(mut self) {
+        let _ = self.drops.get().fetch_add(1)
+    }
+}
+
+fn main() {
+    task.set_workers(4)
+    let drops = Shared.new(AtomicUsize.new(0))
+    let probe = Shared.new(Probe { drops: drops.clone() })
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut t = 0
+    while t < 12 {
+        let mine = probe.clone()
+        handles.push(task.spawn(|| {
+            let mut i = 0
+            while i < 3000 {
+                let again = mine.clone()
+                let third = again.clone()
+                let _ = third
+                i = i + 1
+            }
+        }))
+        t = t + 1
+    }
+    for h in handles.into_iter() {
+        h.join()
+    }
+    println("after 12 tasks cloned and dropped 3000 handles each: strong_count {}, drops {}", probe.strong_count(), drops.get().load())
+    drop(probe)
+    println("the value was dropped exactly once: {}", drops.get().load())
+}

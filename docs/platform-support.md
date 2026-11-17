@@ -142,6 +142,11 @@ run is the CI jobs for those platforms, and `tests/s2_tasks` is the check. Const
 scheduler's lock, parking, and condition variable, so it runs wherever tasks do. `tests/s2_channels` is its check, and
 its stress tests run 20 times in every CI job's debug and release profiles.
 
+The atomics, `Mutex<T>`, `RwLock<T>`, and the atomic `Shared<T>` count (stage 2.3, `spec/shared.md`) use LLVM's atomic
+instructions, which every supported target lowers natively, and the scheduler's lock and waiters, so they run wherever
+tasks do. `tests/s2_shared` is their check, and its stress tests run 20 times in every CI job's debug and release
+profiles.
+
 ### Not platform-specific
 
 Language-level gaps and correctness issues that apply everywhere are tracked under "Known problems and risks" in

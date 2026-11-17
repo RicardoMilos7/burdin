@@ -151,6 +151,12 @@ def main() -> int:
     if gen_int_std.OUT.read_bytes().decode("utf-8").replace(chr(13), "") != gen_int_std.render():
         problems.append("std/src/int.bd is out of date: run python3 tests/gen_int_std.py")
 
+    # std/src/atomic.bd is generated too (issue #217).
+    import gen_atomic_std
+
+    if gen_atomic_std.OUT.read_bytes().decode("utf-8").replace(chr(13), "") != gen_atomic_std.render():
+        problems.append("std/src/atomic.bd is out of date: run python3 tests/gen_atomic_std.py")
+
     if problems:
         print()
         print("Problems:")

@@ -77,16 +77,9 @@ impl Globals {
                 param.bounds.iter().filter_map(|b| self.resolve_bound(b, &own, alias.module, diags)).collect();
             for bound in &bounds {
                 if !self.satisfies_with(arg, bound, &[], &env) {
-                    diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!(
-                            "`{arg}` does not implement `{}`, which `{}` of `{}` requires",
-                            self.bound_name(bound),
-                            param.name.name,
-                            decl.name.name
-                        ),
-                    );
+                    let (code, message) =
+                        self.bound_unmet(arg, bound, &[], &format!("`{}` of `{}`", param.name.name, decl.name.name));
+                    diags.error(code, span, message);
                 }
             }
         }

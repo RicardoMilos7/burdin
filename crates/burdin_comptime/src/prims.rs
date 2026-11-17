@@ -560,6 +560,7 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::Rt(_) | Builtin::ClosureOwn => return Err(impure("running tasks and threads", span)),
+            Builtin::Atomic(..) => return Err(impure("an atomic operation", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
             Builtin::ProcessSpawn => return Err(impure("starting a process", span)),
             Builtin::ProcessWait => return Err(impure("waiting for a process", span)),

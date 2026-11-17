@@ -26,6 +26,23 @@ impl<'t> Sema<'t> {
     /// type is allocated.
     pub(crate) fn register_impl(&mut self, imp: &'t ast::ImplBlock, module: usize, diags: &mut Diagnostics) {
         let Some((kind, iface_seg)) = self.impl_kind(imp, module, diags) else { return };
+        // `Send` and `Sync` are promises the compiler cannot check, so their impl blocks are `unsafe`, and nothing
+        // else is (`spec/shared.md`, SH5).
+        let marker = matches!(&kind, ImplKind::User(i) if self.globals.marker_kind(*i).is_some());
+        if marker && !imp.is_unsafe {
+            diags.error(
+                Code::INVALID_MARKER_IMPL,
+                imp.span,
+                "an implementation of `Send` or `Sync` promises what the compiler cannot check, so it is written `unsafe`",
+            );
+        } else if !marker && imp.is_unsafe {
+            diags.error(
+                Code::INVALID_MARKER_IMPL,
+                imp.span,
+                "only an implementation of `Send` or `Sync` can be `unsafe`",
+            );
+            return;
+        }
 
         // An impl on a generic type, written plainly or through a module: `Stack<T> { ... }`,
         // `sh.Stack<T>: Describe where T: Describe { ... }`.

@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// `Send` covers moving a value to another task; sharing it needs `Sync` (spec/shared.md, SH6). `Counter` is `Send` (the
+// impl says so) but not `Sync`: two tasks using it at once would race. A scoped task that only *reads* a borrowed value
+// shares it, so the borrow needs `Sync`; a task that *writes* it holds it exclusively, which only needs `Send`.
+
+struct Counter {
+    cell: CPtr<i32>
+}
+
+unsafe Counter: Send { }
+
+fn main() {
+    let c = Counter { cell: unsafe { CPtr.null() } }
+    task.scope(|s| {
+        s.spawn(|| { //~ E0280
+            let _ = unsafe { c.cell.is_null() }
+        })
+    })
+    // Moving it is fine.
+    let moved = task.spawn(|| unsafe { c.cell.is_null() }).join()
+}

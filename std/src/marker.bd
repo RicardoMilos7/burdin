@@ -1,0 +1,12 @@
+// The `Send` and `Sync` markers (spec/shared.md, SH4).
+//
+// Neither has a method. The compiler derives them from what a type is made of: a value is `Send` when every part of it
+// is, and `Sync` likewise. A type that holds a raw pointer, or a type whose safety rests on something the compiler cannot
+// see (a lock, an atomic), declares them itself with an `unsafe` impl block. `task.spawn`, `thread.spawn`, `Scope.spawn`,
+// `Channel`, and `Shared` ask for them.
+
+/// A type whose values may move to another task or thread.
+interface Send { }
+
+/// A type that several tasks or threads may use at once through shared views (`&T`).
+interface Sync { }

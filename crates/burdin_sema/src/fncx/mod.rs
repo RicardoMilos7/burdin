@@ -434,7 +434,7 @@ impl<'a> FnCx<'a> {
     /// checks its body again with `F` substituted, so a closure the bound does not allow is still rejected there.
     fn param_meets_fn(&self, found: &Ty, want: &Ty) -> bool {
         let Ty::Param(_) = found else { return false };
-        let Ty::Fn { sig: want_sig, kind: want_kind, borrowed: false } = want else { return false };
+        let Ty::Fn { sig: want_sig, kind: want_kind, borrowed: false, .. } = want else { return false };
         self.globals
             .fn_call_sig(found, &self.bounds)
             .is_some_and(|(sig, kind)| sig == **want_sig && kind.at_least(*want_kind))
@@ -444,7 +444,7 @@ impl<'a> FnCx<'a> {
     /// that explains it: a borrowing closure where an owned one is required is E0171, and a closure whose body
     /// needs a lower capability than the expected type gives is E0141.
     pub(super) fn report_mismatch(&mut self, span: Span, want: &Ty, found: &Ty) {
-        if let (Ty::Fn { sig: asig, kind: ak, borrowed: true }, Ty::Fn { sig: esig, kind: ek, borrowed: false }) =
+        if let (Ty::Fn { sig: asig, kind: ak, borrowed: true, .. }, Ty::Fn { sig: esig, kind: ek, borrowed: false, .. }) =
             (found, want)
             && asig == esig
             && ak.at_least(*ek)

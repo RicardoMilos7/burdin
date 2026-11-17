@@ -383,21 +383,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (inner2, p2) = (inner.clone(), p);
                 self.if_then(alive, "shared.drop", move |cg| {
                     let count_at = cg.offset_ptr(p2, cg.usize_ty.const_zero())?;
-                    let count = cg
-                        .builder
-                        .build_load(cg.usize_ty, count_at, "shared.count")
-                        .map_err(llvm_err)?
-                        .into_int_value();
-                    let next = cg
-                        .builder
-                        .build_int_sub(count, cg.usize_ty.const_int(1, false), "shared.dec")
-                        .map_err(llvm_err)?;
-                    cg.builder.build_store(count_at, next).map_err(llvm_err)?;
-                    let last = cg
-                        .builder
-                        .build_int_compare(IntPredicate::EQ, next, cg.usize_ty.const_zero(), "")
-                        .map_err(llvm_err)?;
+                    // The count is atomic: another task or thread may hold a handle (`spec/shared.md`, SH1).
+                    let last = cg.shared_count_dec(count_at)?;
                     cg.if_then(last, "shared.last", move |cg| {
+                        cg.shared_acquire()?;
                         if cg.needs_drop(&inner2) {
                             let eight = cg.usize_ty.const_int(8, false);
                             let value = cg.offset_ptr(p2, eight)?;
@@ -655,16 +644,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Shared(_) => {
                 let p = self.builder.build_load(ptr_ty, src, "shared").map_err(llvm_err)?.into_pointer_value();
                 let count_at = self.offset_ptr(p, self.usize_ty.const_zero())?;
-                let count = self
-                    .builder
-                    .build_load(self.usize_ty, count_at, "shared.count")
-                    .map_err(llvm_err)?
-                    .into_int_value();
-                let next = self
-                    .builder
-                    .build_int_add(count, self.usize_ty.const_int(1, false), "shared.inc")
-                    .map_err(llvm_err)?;
-                self.builder.build_store(count_at, next).map_err(llvm_err)?;
+                self.shared_count_inc(count_at)?;
                 self.builder.build_store(dst, p).map_err(llvm_err)?;
                 Ok(())
             }
