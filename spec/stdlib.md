@@ -922,8 +922,8 @@ fn exists(path: str): bool
 - `flush` succeeds without doing anything, because a file handle has no buffer; `sync_all` is the durability call
   (`fsync` on Unix, `_commit` on Windows). `set_len` cuts the file or extends it with zero bytes.
 - Dropping the handle closes the descriptor. `close` closes it too and returns the failure a drop would discard;
-  because it consumes the handle, the drop that follows closes the descriptor a second time, which fails harmlessly
-  on a closed descriptor.
+  it marks the handle closed, so the drop that follows does not close the descriptor again. Closing a descriptor
+  twice is an invalid descriptor, which the Windows CRT treats as a fatal parameter error.
 - `read`, `write`, and `append` are the byte-level counterparts of `read_to_string` and `write_file`; `write`
   creates or replaces, and `append` creates a missing file. `copy_file` copies the bytes only, not permissions, and
   returns how many it copied. It is not named `copy` because `std.rw` already exports the reader/writer `copy` under

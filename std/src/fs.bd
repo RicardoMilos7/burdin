@@ -453,12 +453,15 @@ File {
     }
 
     /// Closes the file and reports a failure that `Drop` would discard. The handle is moved, so it cannot be used
-    /// again. The drop that follows the call closes the descriptor a second time, which fails harmlessly on a
-    /// closed descriptor and runs before any other code can open a file.
+    /// again. The rebinding marks the descriptor closed, so the drop that follows does not close it a second time
+    /// (a second close is an invalid descriptor, which the Windows CRT treats as a fatal parameter error).
     fn close(own self): Result<(), IoError> {
-        match __file_close(self.fd) {
+        let mut me = self
+        let fd = me.fd
+        me.fd = -1
+        match __file_close(fd) {
             Ok(()) => Ok(()),
-            Err(_) => Err(IoError.Write { path: self.path.clone() }),
+            Err(_) => Err(IoError.Write { path: me.path.clone() }),
         }
     }
 }
@@ -502,10 +505,12 @@ File: Seek {
 
 File: Drop {
     fn drop(mut self) {
-        let closed = __file_close(self.fd)
-        match closed {
-            Ok(()) => {}
-            Err(_) => {}
+        if self.fd >= 0 {
+            let closed = __file_close(self.fd)
+            match closed {
+                Ok(()) => {}
+                Err(_) => {}
+            }
         }
     }
 }
