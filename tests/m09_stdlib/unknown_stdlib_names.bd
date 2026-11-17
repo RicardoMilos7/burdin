@@ -4,7 +4,7 @@
 
 fn main() {
     let mut xs = List<i32>.new()
-    xs.get(0) //~ E0002
+    xs.nope(0) //~ E0002
     let s = String.from("abc")
     s.substring(1) //~ E0002
     let t = String.from() //~ E0004

@@ -419,6 +419,325 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.seq_store(&seq)?;
                 Ok(None)
             }
+            (Ty::List(_, _), Method::ListCapacity) => {
+                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                Ok(Some(seq.cap.into()))
+            }
+            (Ty::List(_, _), Method::ListIsEmpty) => {
+                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let empty = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, seq.len, self.usize_zero(), "")
+                    .map_err(llvm_err)?;
+                Ok(Some(empty.into()))
+            }
+            (Ty::List(elem, _), Method::ListGet | Method::ListGetMut) => {
+                let elem = (**elem).clone();
+                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let index = self.expr_mode(&args[1], Mode::Use)?;
+                let index = self.need_int(index, &Ty::Int(burdin_tir::IntTy::Usize));
+                let view = Ty::Ref { mutable: m == Method::ListGetMut, inner: Box::new(elem.clone()) };
+                self.sequence_element_view(&seq, &elem, &view, Some(index), ty)
+            }
+            (Ty::List(elem, _), Method::ListFirst | Method::ListFirstMut) => {
+                let elem = (**elem).clone();
+                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let view = Ty::Ref { mutable: m == Method::ListFirstMut, inner: Box::new(elem.clone()) };
+                self.sequence_element_view(&seq, &elem, &view, Some(self.usize_zero()), ty)
+            }
+            (Ty::List(elem, _), Method::ListLastMut) => {
+                let elem = (**elem).clone();
+                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let view = Ty::Ref { mutable: true, inner: Box::new(elem.clone()) };
+                self.sequence_element_view(&seq, &elem, &view, None, ty)
+            }
+            (Ty::List(elem, _), Method::ListReserve | Method::ListReserveExact) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let additional = self.expr_mode(&args[1], Mode::Use)?;
+                let additional = self.need_int(additional, &Ty::Int(burdin_tir::IntTy::Usize));
+                let want = self.builder.build_int_add(seq.len, additional, "reserve.want").map_err(llvm_err)?;
+                let overflow =
+                    self.builder.build_int_compare(IntPredicate::ULT, want, seq.len, "").map_err(llvm_err)?;
+                let fits = self.builder.build_not(overflow, "").map_err(llvm_err)?;
+                self.check(fits, "reserve: capacity overflow", span)?;
+                if m == Method::ListReserveExact {
+                    self.seq_reserve_exact_to(&mut seq, &elem, want, span)?;
+                } else {
+                    self.seq_reserve_to(&mut seq, &elem, want, span)?;
+                }
+                self.seq_store(&seq)?;
+                Ok(None)
+            }
+            (Ty::List(elem, _), Method::ListShrinkToFit) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let len = seq.len;
+                self.seq_realloc_to(&mut seq, &elem, len, span)?;
+                self.seq_store(&seq)?;
+                Ok(None)
+            }
+            (Ty::List(elem, _), Method::ListSwap) => {
+                let elem = (**elem).clone();
+                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let a = self.expr_mode(&args[1], Mode::Use)?;
+                let a = self.need_int(a, &Ty::Int(burdin_tir::IntTy::Usize));
+                let b = self.expr_mode(&args[2], Mode::Use)?;
+                let b = self.need_int(b, &Ty::Int(burdin_tir::IntTy::Usize));
+                let a_ok = self.builder.build_int_compare(IntPredicate::ULT, a, seq.len, "").map_err(llvm_err)?;
+                let b_ok = self.builder.build_int_compare(IntPredicate::ULT, b, seq.len, "").map_err(llvm_err)?;
+                let ok = self.builder.build_and(a_ok, b_ok, "").map_err(llvm_err)?;
+                self.check(ok, "swap: index out of bounds", span)?;
+                let Some(elem_t) = self.llvm_ty(&elem) else { return Ok(None) };
+                let (Some(pa), Some(pb)) = (self.elem_ptr(&seq, &elem, a), self.elem_ptr(&seq, &elem, b)) else {
+                    return Ok(None);
+                };
+                let tmp = self.alloca(elem_t, "swap.value")?;
+                let bytes = self.usize_ty.const_int(self.elem_size(&elem), false);
+                self.builder.build_memcpy(tmp, 1, pa, 1, bytes).map_err(llvm_err)?;
+                self.builder.build_memcpy(pa, 1, pb, 1, bytes).map_err(llvm_err)?;
+                self.builder.build_memcpy(pb, 1, tmp, 1, bytes).map_err(llvm_err)?;
+                Ok(None)
+            }
+            (Ty::List(elem, _), Method::ListSwapRemove) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let index = self.expr_mode(&args[1], Mode::Use)?;
+                let index = self.need_int(index, &Ty::Int(burdin_tir::IntTy::Usize));
+                let ok = self.builder.build_int_compare(IntPredicate::ULT, index, seq.len, "").map_err(llvm_err)?;
+                self.check(ok, "swap_remove: index out of bounds", span)?;
+                let value = match self.elem_ptr(&seq, &elem, index) {
+                    Some(p) if self.llvm_ty(&elem).is_some() => {
+                        let t = self.llvm_ty(&elem).expect("checked above");
+                        Some(self.builder.build_load(t, p, "swap_remove.value").map_err(llvm_err)?)
+                    }
+                    _ => None,
+                };
+                // The last element fills the hole; the slot past the new length is dead.
+                let last =
+                    self.builder.build_int_sub(seq.len, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                let moved = self.builder.build_int_compare(IntPredicate::NE, index, last, "").map_err(llvm_err)?;
+                let (Some(from), Some(to)) = (self.elem_ptr(&seq, &elem, last), self.elem_ptr(&seq, &elem, index))
+                else {
+                    return Ok(None);
+                };
+                let bytes = self.usize_ty.const_int(self.elem_size(&elem), false);
+                self.if_then(moved, "swap_remove.move", move |cg| {
+                    cg.builder.build_memcpy(to, 1, from, 1, bytes).map_err(llvm_err)?;
+                    Ok(())
+                })?;
+                seq.len = last;
+                self.seq_store(&seq)?;
+                Ok(value)
+            }
+            (Ty::List(elem, _), Method::ListTruncate) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let len = self.expr_mode(&args[1], Mode::Use)?;
+                let len = self.need_int(len, &Ty::Int(burdin_tir::IntTy::Usize));
+                let shorter = self.builder.build_int_compare(IntPredicate::ULT, len, seq.len, "").map_err(llvm_err)?;
+                let old_len = seq.len;
+                self.if_then(shorter, "truncate", |cg| cg.drop_sequence_range(&seq, &elem, len, old_len))?;
+                seq.len = self.builder.build_select(shorter, len, old_len, "").map_err(llvm_err)?.into_int_value();
+                self.seq_store(&seq)?;
+                Ok(None)
+            }
+            (Ty::List(elem, _), Method::ListSplitOff) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let index = self.expr_mode(&args[1], Mode::Use)?;
+                let index = self.need_int(index, &Ty::Int(burdin_tir::IntTy::Usize));
+                let ok = self.builder.build_int_compare(IntPredicate::ULE, index, seq.len, "").map_err(llvm_err)?;
+                self.check(ok, "split_off: index out of bounds", span)?;
+                let count = self.builder.build_int_sub(seq.len, index, "split.count").map_err(llvm_err)?;
+                let empty = self.list_with_capacity(count, &elem, &burdin_tir::Alloc::Global, None, span)?;
+                let tail = self
+                    .builder
+                    .build_insert_value(empty, count, 1, "split.len")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                let data = self.builder.build_extract_value(tail, 0, "split.data").map_err(llvm_err)?;
+                let Some(elem_t) = self.llvm_ty(&elem) else {
+                    seq.len = index;
+                    self.seq_store(&seq)?;
+                    return Ok(Some(tail.into()));
+                };
+                let source = seq.data;
+                let bytes = self
+                    .builder
+                    .build_int_mul(count, self.usize_ty.const_int(self.elem_size(&elem), false), "")
+                    .map_err(llvm_err)?;
+                let nonzero =
+                    self.builder.build_int_compare(IntPredicate::NE, count, self.usize_zero(), "").map_err(llvm_err)?;
+                self.if_then(nonzero, "split.copy", move |cg| {
+                    // SAFETY (LLVM): `index <= len` was checked, so `count` elements start at `index`.
+                    let src =
+                        unsafe { cg.builder.build_in_bounds_gep(elem_t, source, &[index], "") }.map_err(llvm_err)?;
+                    cg.builder.build_memcpy(data.into_pointer_value(), 1, src, 1, bytes).map_err(llvm_err)?;
+                    Ok(())
+                })?;
+                seq.len = index;
+                self.seq_store(&seq)?;
+                Ok(Some(tail.into()))
+            }
+            (Ty::List(elem, _), Method::ListAppend) => {
+                let elem = (**elem).clone();
+                let other_ty = args[1].ty.clone();
+                let burdin_tir::Ty::List(_, other_alloc) = &other_ty else {
+                    return Err("`append` takes another list".into());
+                };
+                let other_alloc = other_alloc.clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let value = self.expr_mode(&args[1], Mode::Move)?;
+                let Some(other_slot) = self.spill(value, &other_ty)? else { return Ok(None) };
+                let other = self.seq_load_at(other_slot, &other_alloc)?;
+                let start = seq.len;
+                let count = other.len;
+                let want = self.builder.build_int_add(start, count, "append.len").map_err(llvm_err)?;
+                self.seq_reserve_to(&mut seq, &elem, want, span)?;
+                if self.llvm_ty(&elem).is_some() {
+                    let target = self.elem_ptr(&seq, &elem, start);
+                    let source: PointerValue<'ctx> = other.data;
+                    let bytes = self
+                        .builder
+                        .build_int_mul(count, self.usize_ty.const_int(self.elem_size(&elem), false), "")
+                        .map_err(llvm_err)?;
+                    let nonzero = self
+                        .builder
+                        .build_int_compare(IntPredicate::NE, count, self.usize_zero(), "")
+                        .map_err(llvm_err)?;
+                    self.if_then(nonzero, "append.copy", move |cg| {
+                        let Some(target) = target else { return Ok(()) };
+                        cg.builder.build_memcpy(target, 1, source, 1, bytes).map_err(llvm_err)?;
+                        Ok(())
+                    })?;
+                }
+                seq.len = want;
+                self.seq_store(&seq)?;
+                // `other` was moved into the call: its elements now belong to `self`, so its buffer and its
+                // stored allocator value are released here.
+                self.free_sequence(&other, &elem)?;
+                Ok(None)
+            }
+            (Ty::List(elem, _), Method::ListDrain) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let range = self.expr_mode(&args[1], Mode::Use)?;
+                let range_ty = args[1].ty.clone();
+                let range = self.need(range, &range_ty).into_struct_value();
+                let lo = self.builder.build_extract_value(range, 0, "drain.lo").map_err(llvm_err)?.into_int_value();
+                let hi = self.builder.build_extract_value(range, 1, "drain.hi").map_err(llvm_err)?.into_int_value();
+                let inclusive = matches!(range_ty, Ty::Range(_, true));
+                let len = seq.len;
+                let end = if inclusive {
+                    // An inclusive end must be strictly inside the list, so `hi + 1` cannot wrap.
+                    self.check(
+                        self.builder.build_int_compare(IntPredicate::ULT, hi, len, "").map_err(llvm_err)?,
+                        "drain: range out of bounds",
+                        span,
+                    )?;
+                    self.builder.build_int_add(hi, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?
+                } else {
+                    hi
+                };
+                self.check(
+                    self.builder.build_int_compare(IntPredicate::ULE, end, len, "").map_err(llvm_err)?,
+                    "drain: range out of bounds",
+                    span,
+                )?;
+                self.check(
+                    self.builder.build_int_compare(IntPredicate::ULE, lo, end, "").map_err(llvm_err)?,
+                    "drain: range out of bounds",
+                    span,
+                )?;
+                let count = self.builder.build_int_sub(end, lo, "drain.count").map_err(llvm_err)?;
+                let removed = self.list_with_capacity(count, &elem, &burdin_tir::Alloc::Global, None, span)?;
+                let data = self.builder.build_extract_value(removed, 0, "drain.data").map_err(llvm_err)?;
+                let source = seq.data;
+                let size = self.usize_ty.const_int(self.elem_size(&elem), false);
+                let bytes = self.builder.build_int_mul(count, size, "").map_err(llvm_err)?;
+                let nonzero =
+                    self.builder.build_int_compare(IntPredicate::NE, count, self.usize_zero(), "").map_err(llvm_err)?;
+                if let Some(elem_t) = self.llvm_ty(&elem) {
+                    self.if_then(nonzero, "drain.copy", move |cg| {
+                        // SAFETY (LLVM): `end <= len`, so the `count` elements from `lo` are in the buffer.
+                        let src =
+                            unsafe { cg.builder.build_in_bounds_gep(elem_t, source, &[lo], "") }.map_err(llvm_err)?;
+                        cg.builder.build_memcpy(data.into_pointer_value(), 1, src, 1, bytes).map_err(llvm_err)?;
+                        Ok(())
+                    })?;
+                }
+                // The tail moves down over the hole.
+                let tail_bytes = self
+                    .builder
+                    .build_int_mul(
+                        self.builder.build_int_sub(len, end, "").map_err(llvm_err)?,
+                        self.usize_ty.const_int(self.elem_size(&elem), false),
+                        "",
+                    )
+                    .map_err(llvm_err)?;
+                let has_tail = self.builder.build_int_compare(IntPredicate::ULT, end, len, "").map_err(llvm_err)?;
+                if let Some(elem_t) = self.llvm_ty(&elem) {
+                    let source = seq.data;
+                    self.if_then(has_tail, "drain.shift", move |cg| {
+                        // SAFETY (LLVM): `lo <= end <= len`; the source region starts at `end`.
+                        let from =
+                            unsafe { cg.builder.build_in_bounds_gep(elem_t, source, &[end], "") }.map_err(llvm_err)?;
+                        let to =
+                            unsafe { cg.builder.build_in_bounds_gep(elem_t, source, &[lo], "") }.map_err(llvm_err)?;
+                        cg.builder.build_memmove(to, 1, from, 1, tail_bytes).map_err(llvm_err)?;
+                        Ok(())
+                    })?;
+                }
+                seq.len = self.builder.build_int_sub(len, count, "drain.len").map_err(llvm_err)?;
+                self.seq_store(&seq)?;
+                // The removed elements travel in a new buffer with the default allocator, owned by the iterator.
+                let zero = self.usize_zero();
+                let iter = self.seq_value(
+                    &burdin_tir::Alloc::Global,
+                    &[(0, data), (1, count.into()), (2, count.into()), (3, zero.into())],
+                )?;
+                Ok(Some(iter.into()))
+            }
+            (Ty::List(elem, _), Method::ListExtendFromSlice) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let (source, count) = self.view_parts(&args[1])?;
+                let source = source.into_pointer_value();
+                let count = count.into_int_value();
+                let start = seq.len;
+                let want = self.builder.build_int_add(start, count, "extend.len").map_err(llvm_err)?;
+                self.seq_reserve_to(&mut seq, &elem, want, span)?;
+                if let Some(elem_t) = self.llvm_ty(&elem) {
+                    let Some(target) = self.elem_ptr(&seq, &elem, start) else { return Ok(None) };
+                    let elem2 = elem.clone();
+                    let index = self.alloca(self.usize_ty.into(), "extend.i")?;
+                    self.builder.build_store(index, self.usize_zero()).map_err(llvm_err)?;
+                    let header = self.new_block("extend.cond");
+                    let body = self.new_block("extend.body");
+                    let exit = self.new_block("extend.end");
+                    self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                    self.builder.position_at_end(header);
+                    let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                    let go = self.builder.build_int_compare(IntPredicate::ULT, i, count, "").map_err(llvm_err)?;
+                    self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
+                    self.builder.position_at_end(body);
+                    // SAFETY (LLVM): `i < count`, and the target has room for `count` elements.
+                    let dst =
+                        unsafe { self.builder.build_in_bounds_gep(elem_t, target, &[i], "") }.map_err(llvm_err)?;
+                    let src =
+                        unsafe { self.builder.build_in_bounds_gep(elem_t, source, &[i], "") }.map_err(llvm_err)?;
+                    self.clone_value(dst, src, &elem2)?;
+                    let next =
+                        self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                    self.builder.build_store(index, next).map_err(llvm_err)?;
+                    self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                    self.builder.position_at_end(exit);
+                }
+                seq.len = want;
+                self.seq_store(&seq)?;
+                Ok(None)
+            }
             (Ty::Map(key, value, _), Method::MapInsert | Method::MapGetOrInsert) => {
                 // `get_or_insert` keeps an existing value (dropping the incoming key and value) and yields a
                 // mutable view of the value either way.
@@ -918,19 +1237,32 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// Drops the elements of `seq` (no flags) in order.
     fn drop_sequence_elements(&mut self, seq: &Seq<'ctx>, elem: &Ty) -> GenResult<()> {
+        let zero = self.usize_zero();
+        let len = seq.len;
+        self.drop_sequence_range(seq, elem, zero, len)
+    }
+
+    /// Drops the elements of `seq` in `from..to` (no flags), in index order.
+    fn drop_sequence_range(
+        &mut self,
+        seq: &Seq<'ctx>,
+        elem: &Ty,
+        from: IntValue<'ctx>,
+        to: IntValue<'ctx>,
+    ) -> GenResult<()> {
         if !self.needs_drop(elem) {
             return Ok(());
         }
         let Some(elem_t) = self.llvm_ty(elem) else { return Ok(()) };
         let index = self.alloca(self.usize_ty.into(), "clear.i")?;
-        self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+        self.builder.build_store(index, from).map_err(llvm_err)?;
         let header = self.new_block("clear.cond");
         let body = self.new_block("clear.body");
         let exit = self.new_block("clear.end");
         self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
         self.builder.position_at_end(header);
         let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
-        let go = self.builder.build_int_compare(IntPredicate::ULT, i, seq.len, "").map_err(llvm_err)?;
+        let go = self.builder.build_int_compare(IntPredicate::ULT, i, to, "").map_err(llvm_err)?;
         self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
         self.builder.position_at_end(body);
         let p = unsafe { self.builder.build_in_bounds_gep(elem_t, seq.data, &[i], "") }.map_err(llvm_err)?;
@@ -940,6 +1272,226 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
         self.builder.position_at_end(exit);
         Ok(())
+    }
+
+    /// `Some(view of element `index`)`, or of the last element when `index` is `None`; `None` when the list is
+    /// empty or the index is out of bounds.
+    fn sequence_element_view(
+        &mut self,
+        seq: &Seq<'ctx>,
+        elem: &Ty,
+        view: &Ty,
+        index: Option<IntValue<'ctx>>,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let slot = match self.llvm_ty(ty) {
+            Some(t) => Some(self.alloca(t, "element.out")?),
+            None => None,
+        };
+        let (at, valid) = match index {
+            Some(i) => (i, self.builder.build_int_compare(IntPredicate::ULT, i, seq.len, "").map_err(llvm_err)?),
+            None => {
+                let at =
+                    self.builder.build_int_sub(seq.len, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                let valid = self
+                    .builder
+                    .build_int_compare(IntPredicate::NE, seq.len, self.usize_zero(), "")
+                    .map_err(llvm_err)?;
+                (at, valid)
+            }
+        };
+        let some_bb = self.new_block("element.some");
+        let none_bb = self.new_block("element.none");
+        let end = self.new_block("element.end");
+        self.builder.build_conditional_branch(valid, some_bb, none_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(slot), Some(_)) = (slot, self.llvm_ty(ty)) {
+            self.builder.build_store(slot, self.option_ty(view).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let pointer = self.elem_ptr(seq, elem, at);
+        if let (Some(slot), Some(_)) = (slot, self.llvm_ty(ty)) {
+            let some = self.some_value(view, pointer.map(BasicValueEnum::from));
+            self.builder.build_store(slot, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        Ok(match (slot, self.llvm_ty(ty)) {
+            (Some(slot), Some(t)) => Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?),
+            _ => None,
+        })
+    }
+
+    /// Grows the buffer to hold at least `want` elements, doubling the capacity when that is enough, through the
+    /// container's allocator.
+    fn seq_reserve_to(&mut self, seq: &mut Seq<'ctx>, elem: &Ty, want: IntValue<'ctx>, span: Span) -> GenResult<()> {
+        let (old_data, old_cap) = (seq.data, seq.cap);
+        let enough = self.builder.build_int_compare(IntPredicate::ULE, want, old_cap, "").map_err(llvm_err)?;
+        let done = self.new_block("reserve.enough");
+        let grow = self.new_block("reserve.grow");
+        let before = self.builder.get_insert_block().expect("positioned");
+        self.builder.build_conditional_branch(enough, done, grow).map_err(llvm_err)?;
+        self.builder.position_at_end(grow);
+        let doubled = self.builder.build_int_mul(old_cap, self.usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let short = self.builder.build_int_compare(IntPredicate::ULT, doubled, want, "").map_err(llvm_err)?;
+        let new_cap = self.builder.build_select(short, want, doubled, "").map_err(llvm_err)?.into_int_value();
+        self.seq_realloc_to(seq, elem, new_cap, span)?;
+        let (new_data, grown_cap) = (seq.data, seq.cap);
+        let grown = self.builder.get_insert_block().expect("positioned");
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(done);
+        let data = self.builder.build_phi(self.ptr_ty(), "reserve.data").map_err(llvm_err)?;
+        data.add_incoming(&[(&old_data, before), (&new_data, grown)]);
+        let cap = self.builder.build_phi(self.usize_ty, "reserve.cap").map_err(llvm_err)?;
+        cap.add_incoming(&[(&old_cap, before), (&grown_cap, grown)]);
+        seq.data = data.as_basic_value().into_pointer_value();
+        seq.cap = cap.as_basic_value().into_int_value();
+        Ok(())
+    }
+
+    /// Grows the buffer to exactly `want` elements when it is smaller, through the container's allocator.
+    fn seq_reserve_exact_to(
+        &mut self,
+        seq: &mut Seq<'ctx>,
+        elem: &Ty,
+        want: IntValue<'ctx>,
+        span: Span,
+    ) -> GenResult<()> {
+        let (old_data, old_cap) = (seq.data, seq.cap);
+        let enough = self.builder.build_int_compare(IntPredicate::ULE, want, old_cap, "").map_err(llvm_err)?;
+        let done = self.new_block("reserve.enough");
+        let grow = self.new_block("reserve.grow");
+        let before = self.builder.get_insert_block().expect("positioned");
+        self.builder.build_conditional_branch(enough, done, grow).map_err(llvm_err)?;
+        self.builder.position_at_end(grow);
+        self.seq_realloc_to(seq, elem, want, span)?;
+        let (new_data, new_cap) = (seq.data, seq.cap);
+        let grown = self.builder.get_insert_block().expect("positioned");
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(done);
+        let data = self.builder.build_phi(self.ptr_ty(), "reserve.data").map_err(llvm_err)?;
+        data.add_incoming(&[(&old_data, before), (&new_data, grown)]);
+        let cap = self.builder.build_phi(self.usize_ty, "reserve.cap").map_err(llvm_err)?;
+        cap.add_incoming(&[(&old_cap, before), (&new_cap, grown)]);
+        seq.data = data.as_basic_value().into_pointer_value();
+        seq.cap = cap.as_basic_value().into_int_value();
+        Ok(())
+    }
+
+    /// Changes the buffer's capacity to exactly `new_cap` elements. A zero capacity frees the buffer; a buffer that
+    /// had none is allocated only for a positive capacity. The live elements are copied.
+    fn seq_realloc_to(&mut self, seq: &mut Seq<'ctx>, elem: &Ty, new_cap: IntValue<'ctx>, span: Span) -> GenResult<()> {
+        let zero = self.usize_zero();
+        let same = self.builder.build_int_compare(IntPredicate::EQ, new_cap, seq.cap, "").map_err(llvm_err)?;
+        let unchanged = self.new_block("seq.capacity.same");
+        let work = self.new_block("seq.capacity");
+        let end = self.new_block("seq.capacity.end");
+        let (old_data, old_cap) = (seq.data, seq.cap);
+        self.builder.build_conditional_branch(same, unchanged, work).map_err(llvm_err)?;
+        self.builder.position_at_end(unchanged);
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(work);
+        let size = self.usize_ty.const_int(self.elem_size(elem), false);
+        let old_bytes = self.builder.build_int_mul(old_cap, size, "").map_err(llvm_err)?;
+        let new_bytes = self.builder.build_int_mul(new_cap, size, "").map_err(llvm_err)?;
+        let align = self.value_align(elem);
+        let is_zero = self.builder.build_int_compare(IntPredicate::EQ, new_cap, zero, "").map_err(llvm_err)?;
+        let free_bb = self.new_block("seq.capacity.free");
+        let grow_bb = self.new_block("seq.capacity.grow");
+        let done = self.new_block("seq.capacity.done");
+        self.builder.build_conditional_branch(is_zero, free_bb, grow_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(free_bb);
+        let alloc = seq.alloc.clone();
+        let alloc_addr = seq.alloc_addr;
+        self.dealloc_in(&alloc, alloc_addr, old_data, old_bytes, align)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(grow_bb);
+        let had = self.builder.build_int_compare(IntPredicate::NE, old_cap, zero, "").map_err(llvm_err)?;
+        let fresh_bb = self.new_block("seq.capacity.alloc");
+        let renew_bb = self.new_block("seq.capacity.realloc");
+        let grew = self.new_block("seq.capacity.grew");
+        self.builder.build_conditional_branch(had, renew_bb, fresh_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(fresh_bb);
+        let fresh = self.alloc_in(&alloc, alloc_addr, new_bytes, align, Some(span))?;
+        self.builder.build_unconditional_branch(grew).map_err(llvm_err)?;
+        self.builder.position_at_end(renew_bb);
+        let renewed = self.realloc_in(&alloc, alloc_addr, old_data, old_bytes, new_bytes, align, Some(span))?;
+        self.builder.build_unconditional_branch(grew).map_err(llvm_err)?;
+        self.builder.position_at_end(grew);
+        let data = self.builder.build_phi(self.ptr_ty(), "seq.capacity.data").map_err(llvm_err)?;
+        data.add_incoming(&[(&fresh, fresh_bb), (&renewed, renew_bb)]);
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(done);
+        let null = self.ptr_ty().const_null();
+        let zero_value = self.usize_zero();
+        let data_done = self.builder.build_phi(self.ptr_ty(), "seq.capacity.data.done").map_err(llvm_err)?;
+        data_done.add_incoming(&[(&null, free_bb), (&data.as_basic_value(), grew)]);
+        let cap_done = self.builder.build_phi(self.usize_ty, "seq.capacity.cap.done").map_err(llvm_err)?;
+        cap_done.add_incoming(&[(&zero_value, free_bb), (&new_cap, grew)]);
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        let data_end = self.builder.build_phi(self.ptr_ty(), "seq.capacity.data.end").map_err(llvm_err)?;
+        data_end.add_incoming(&[(&old_data, unchanged), (&data_done.as_basic_value(), done)]);
+        let cap_end = self.builder.build_phi(self.usize_ty, "seq.capacity.cap.end").map_err(llvm_err)?;
+        cap_end.add_incoming(&[(&old_cap, unchanged), (&cap_done.as_basic_value(), done)]);
+        seq.data = data_end.as_basic_value().into_pointer_value();
+        seq.cap = cap_end.as_basic_value().into_int_value();
+        Ok(())
+    }
+
+    /// Releases the buffer and the stored allocator of a sequence whose elements were moved out (`append`).
+    fn free_sequence(&mut self, seq: &Seq<'ctx>, elem: &Ty) -> GenResult<()> {
+        let bytes = self
+            .builder
+            .build_int_mul(seq.cap, self.usize_ty.const_int(self.elem_size(elem), false), "")
+            .map_err(llvm_err)?;
+        let align = self.value_align(elem);
+        let alloc = seq.alloc.clone();
+        self.dealloc_in(&alloc, seq.alloc_addr, seq.data, bytes, align)?;
+        self.drop_stored_allocator(&alloc, seq.alloc_addr)
+    }
+
+    /// An empty list value with room for `capacity` elements, allocated through `alloc`. When the list stores an
+    /// allocator, its value is read back from `alloc_addr` after the allocation: allocating may change the
+    /// allocator in place (an arena advances its cursor), so the stored value must be the updated one.
+    pub(super) fn list_with_capacity(
+        &mut self,
+        capacity: IntValue<'ctx>,
+        elem: &Ty,
+        alloc: &burdin_tir::Alloc,
+        alloc_addr: Option<PointerValue<'ctx>>,
+        span: Span,
+    ) -> GenResult<StructValue<'ctx>> {
+        let seq_ty = self.seq_ty(alloc);
+        let ptr_ty = self.ptr_ty();
+        let zero = self.usize_zero();
+        let bytes = self
+            .builder
+            .build_int_mul(capacity, self.usize_ty.const_int(self.elem_size(elem), false), "")
+            .map_err(llvm_err)?;
+        let empty = self.builder.build_int_compare(IntPredicate::EQ, capacity, zero, "").map_err(llvm_err)?;
+        let allocate = self.new_block("list.capacity.alloc");
+        let end = self.new_block("list.capacity.end");
+        let before = self.builder.get_insert_block().expect("positioned");
+        self.builder.build_conditional_branch(empty, end, allocate).map_err(llvm_err)?;
+        self.builder.position_at_end(allocate);
+        let align = self.value_align(elem);
+        let fresh = self.alloc_in(alloc, alloc_addr, bytes, align, Some(span))?;
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        let data = self.builder.build_phi(ptr_ty, "list.capacity.data").map_err(llvm_err)?;
+        let null = ptr_ty.const_null();
+        data.add_incoming(&[(&null, before), (&fresh, allocate)]);
+        let mut agg = seq_ty.const_zero();
+        agg = self.builder.build_insert_value(agg, data.as_basic_value(), 0, "").map_err(llvm_err)?.into_struct_value();
+        agg = self.builder.build_insert_value(agg, capacity, 2, "").map_err(llvm_err)?.into_struct_value();
+        if let (Some(addr), Some(ty)) = (alloc_addr, alloc.allocator_ty()) {
+            let t = self.storage_ty(ty);
+            let value = self.builder.build_load(t, addr, "list.alloc").map_err(llvm_err)?;
+            agg = self.builder.build_insert_value(agg, value, 3, "").map_err(llvm_err)?.into_struct_value();
+        }
+        Ok(agg)
     }
 
     /// A map entry is `(key, value, hash)`. A zero hash marks an empty slot; a live entry stores a nonzero hash.

@@ -169,6 +169,31 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(ptr_field, ptr).map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(heap_ty, slot, "").map_err(llvm_err)?));
             }
+            // `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for
+            // `n` elements. A stored allocator value is placed in the list's own field before the buffer is
+            // allocated through it.
+            Builtin::ListWithCapacity | Builtin::ListWithCapacityIn => {
+                let n = self.expr_mode(&args[0], Mode::Use)?;
+                let n = self.need_int(n, &Ty::Int(burdin_tir::IntTy::Usize));
+                let Ty::List(elem, alloc) = ty else { return Err("`with_capacity` on a non-list type".into()) };
+                let (elem, alloc) = ((**elem).clone(), alloc.clone());
+                if b == Builtin::ListWithCapacityIn {
+                    let alloc_value = self.expr_mode(&args[1], Mode::Move)?;
+                    if !alloc.is_global() {
+                        let seq_ty = self.seq_ty(&alloc);
+                        let slot = self.alloca(seq_ty.into(), "list.capacity")?;
+                        let alloc_field =
+                            self.builder.build_struct_gep(seq_ty, slot, 3, "list.alloc").map_err(llvm_err)?;
+                        let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
+                        self.builder.build_store(alloc_field, alloc_value).map_err(llvm_err)?;
+                        let value = self.list_with_capacity(n, &elem, &alloc, Some(alloc_field), span)?;
+                        self.builder.build_store(slot, value).map_err(llvm_err)?;
+                        return Ok(Some(self.builder.build_load(seq_ty, slot, "").map_err(llvm_err)?));
+                    }
+                }
+                let value = self.list_with_capacity(n, &elem, &alloc, None, span)?;
+                return Ok(Some(value.into()));
+            }
             Builtin::ListNew | Builtin::MapNew => {
                 return Ok(Some(self.string_ty.const_zero().into()));
             }
@@ -1461,6 +1486,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Method::Push
                 | Method::ListPop
                 | Method::ListLast
+                | Method::ListFirst
+                | Method::ListFirstMut
+                | Method::ListLastMut
+                | Method::ListGet
+                | Method::ListGetMut
+                | Method::ListCapacity
+                | Method::ListIsEmpty
+                | Method::ListReserve
+                | Method::ListReserveExact
+                | Method::ListShrinkToFit
+                | Method::ListSwap
+                | Method::ListSwapRemove
+                | Method::ListTruncate
+                | Method::ListSplitOff
+                | Method::ListAppend
+                | Method::ListDrain
+                | Method::ListExtendFromSlice
                 | Method::ListInsert
                 | Method::ListRemove
                 | Method::ListContains

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// The allocator-free constructor is only for the default layout: a list that stores an allocator is made with
+// `with_capacity_in` (E0272).
+
+fn main() {
+    let mut xs = List<i32, Arena>.with_capacity(4) //~ E0272
+    xs.push(1)
+}

@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// The accessors that hand out a mutable view, and every capacity edit, borrow the list exclusively, so the
+// list must be a mutable place (E0113).
+
+fn main() {
+    let xs = List<i32>.new()
+    let _ = xs.get_mut(0) //~ E0113
+    xs.reserve(1) //~ E0113
+    let _ = xs.last_mut() //~ E0113
+}

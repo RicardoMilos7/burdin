@@ -549,6 +549,11 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::AsSlice
                         | tir::Method::Clone
                         | tir::Method::ListLast
+                        | tir::Method::ListFirst
+                        | tir::Method::ListFirstMut
+                        | tir::Method::ListLastMut
+                        | tir::Method::ListGet
+                        | tir::Method::ListGetMut
                         | tir::Method::SliceGet
                         | tir::Method::SliceGetRange
                         | tir::Method::SliceLast
@@ -579,6 +584,11 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::AsSlice
                     | tir::Method::Clone
                     | tir::Method::ListLast
+                    | tir::Method::ListFirst
+                    | tir::Method::ListFirstMut
+                    | tir::Method::ListLastMut
+                    | tir::Method::ListGet
+                    | tir::Method::ListGetMut
                     | tir::Method::SliceGet
                     | tir::Method::SliceGetRange
                     | tir::Method::SliceLast
