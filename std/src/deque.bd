@@ -8,8 +8,8 @@ use fmt.{Debug, Formatter}
 use iter.{DoubleEndedIterator, FromIterator, Iterable, Iterator}
 use ops.{Index, IndexMut, PartialEq}
 
-/// A double-ended queue.
-struct Deque<T> {
+/// A double-ended queue. Its default is the empty deque.
+struct Deque<T> derives (Default) {
     front: List<T>
     back: List<T>
 }

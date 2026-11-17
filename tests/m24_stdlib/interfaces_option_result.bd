@@ -1,0 +1,34 @@
+//@ run
+//> true
+//> true true
+//> true true true
+//> true true
+
+// `Option<T>` and `Result<T, E>` implement Clone, Eq, Ord, Hash, and Debug when their payloads do; `Option` also
+// has a default (`None`), while `Result` has none (`spec/stdlib.md`, "Interface coverage").
+
+struct OptionHolder derives (Clone, Eq, Ord, Hash, Default, Debug) {
+    value: Option<i32>
+}
+
+struct ResultHolder derives (Clone, Eq, Ord, Hash, Debug) {
+    value: Result<i32, i32>
+}
+
+fn main() {
+    println("{}", OptionHolder.default().value.is_none())
+    println(
+        "{} {}",
+        OptionHolder { value: None }.value < OptionHolder { value: Some(0) }.value,
+        OptionHolder { value: Some(1) } < OptionHolder { value: Some(2) },
+    )
+    let ok = ResultHolder { value: Ok(1) }
+    let other = ResultHolder { value: Ok(1) }
+    println("{} {} {}", ok == other, ok.hash() == other.hash(), ok.clone() == ok)
+    // `Ok` is the first variant, so every `Ok` sorts before every `Err`.
+    println(
+        "{} {}",
+        (ResultHolder { value: Ok(9) }.value) < (ResultHolder { value: Err(0) }.value),
+        (ResultHolder { value: Err(1) }.value) < (ResultHolder { value: Err(2) }.value),
+    )
+}

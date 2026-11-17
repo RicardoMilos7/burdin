@@ -10,8 +10,8 @@ use fmt.{Debug, Formatter}
 use iter.{FromIterator, Iterable, Iterator}
 use ops.Index
 
-/// A priority queue: `pop` returns the greatest element.
-struct PriorityHeap<T: Ord> {
+/// A priority queue: `pop` returns the greatest element. Its default is the empty heap.
+struct PriorityHeap<T: Ord> derives (Default) {
     items: List<T>
 }
 

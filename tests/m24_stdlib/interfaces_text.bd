@@ -1,0 +1,29 @@
+//@ run
+//> true true true true
+//> TextHolder { text: "a" }
+//> true true true
+
+// `String` and `str` implement Clone, Eq, Ord, Hash, Default, Debug, and Display (`spec/stdlib.md`,
+// "Interface coverage"). A struct holding a `String` derives all of them.
+
+struct TextHolder derives (Clone, Eq, Ord, Hash, Default, Debug) {
+    text: String
+}
+
+fn main() {
+    let a = TextHolder { text: String.from("a") }
+    let b = TextHolder { text: String.from("b") }
+    let empty = TextHolder.default()
+    println(
+        "{} {} {} {}",
+        a.hash() == TextHolder { text: String.from("a") }.hash(),
+        a < b,
+        a == a.clone(),
+        empty.text.len() == 0,
+    )
+    println("{:?}", a)
+    // `str` is a view, so it is Copy, and it hashes like the `String` with the same bytes.
+    let view: str = a.text.as_str()
+    let copied: str = view
+    println("{} {} {}", copied == view, "text".hash() == String.from("text").hash(), view < "b")
+}

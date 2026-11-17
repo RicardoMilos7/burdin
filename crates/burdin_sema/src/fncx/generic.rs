@@ -561,6 +561,7 @@ impl FnCx<'_> {
             Ty::Float(_) => K::Float(0.0),
             Ty::Str => K::Str(String::new()),
             Ty::String => K::Builtin(Builtin::StringNew, Vec::new()),
+            Ty::List(_, alloc) if alloc.is_global() => K::Builtin(Builtin::ListNew, Vec::new()),
             Ty::Map(_, _, alloc) if alloc.is_global() => K::Builtin(Builtin::MapNew, Vec::new()),
             Ty::Option(_) => K::None,
             Ty::Tuple(ts) => K::Tuple(ts.iter().map(|t| self.default_expr(t, span)).collect()),

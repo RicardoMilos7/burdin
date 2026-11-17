@@ -1,0 +1,30 @@
+//@ run
+//> 0
+//> true true true
+
+// `Map<K, V>` implements Clone, Eq, Hash (when `K` and `V` are `Eq`/`Hash`), Default (with the default allocator),
+// Debug, and Iterable. Equal maps hash alike whatever their insertion order (`spec/stdlib.md`, "Interface coverage").
+
+struct MapHolder derives (Clone, Eq, Hash, Default, Debug) {
+    entries: Map<String, i32>
+}
+
+fn build(reverse: bool): Map<String, i32> {
+    let mut entries = Map<String, i32>.new()
+    if reverse {
+        entries.insert(String.from("b"), 2)
+        entries.insert(String.from("a"), 1)
+    } else {
+        entries.insert(String.from("a"), 1)
+        entries.insert(String.from("b"), 2)
+    }
+    entries
+}
+
+fn main() {
+    let empty = MapHolder.default()
+    println("{}", empty.entries.len())
+    let first = MapHolder { entries: build(false) }
+    let second = MapHolder { entries: build(true) }
+    println("{} {} {}", first == second, first.hash() == second.hash(), first.clone() == first)
+}

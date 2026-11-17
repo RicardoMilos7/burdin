@@ -182,6 +182,12 @@ pub(crate) fn value_cmp(a: &Value, b: &Value) -> Ordering {
             (Some(_), None) => Ordering::Greater,
             (Some(p), Some(q)) => value_cmp(p, q),
         },
+        // `Ok(_) < Err(_)`: the variant order of `Result`.
+        (Value::Res(x), Value::Res(y)) => match (x, y) {
+            (Ok(p), Ok(q)) | (Err(p), Err(q)) => value_cmp(p, q),
+            (Ok(_), Err(_)) => Ordering::Less,
+            (Err(_), Ok(_)) => Ordering::Greater,
+        },
         (Value::Int(_) | Value::Bool(_) | Value::Char(_), Value::Int(_) | Value::Bool(_) | Value::Char(_)) => {
             a.int().cmp(&b.int())
         }
@@ -255,6 +261,23 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
             _ => acc,
         },
         Ty::Array(t, _) => v.elems().iter().fold(acc, |h, x| hash(p, x, t, h)),
+        // A list hashes its length and then its elements in order, exactly as `hash_at` does.
+        Ty::List(t, _) => {
+            let with_len = mix(acc, v.elems().len() as u64);
+            v.elems().iter().fold(with_len, |h, x| hash(p, x, t, h))
+        }
+        // A map hashes each entry from the offset basis and XORs the results, so entry order does not matter.
+        Ty::Map(k, vty, _) => match v {
+            Value::Map(entries) => {
+                let mut h = mix(acc, entries.len() as u64);
+                for (key, value) in entries {
+                    let entry = hash(p, value, vty, hash(p, key, k, FNV_OFFSET));
+                    h ^= entry;
+                }
+                h
+            }
+            _ => acc,
+        },
         _ => acc,
     }
 }

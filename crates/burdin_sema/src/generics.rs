@@ -827,6 +827,10 @@ impl Globals {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Ord, env),
+            // `None < Some(_)`, and `Ok(_) < Err(_)`; two of a kind compare their payloads
+            // (`spec/stdlib.md`, "Interface coverage").
+            Ty::Option(t) => self.has_ord_in(t, env),
+            Ty::Result(t, e) => self.has_ord_in(t, env) && self.has_ord_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
             // A fixed-size array orders lexicographically.
             Ty::Array(t, _) => self.has_ord_in(t, env),
@@ -867,8 +871,14 @@ impl Globals {
     pub(crate) fn has_hash_in(&self, ty: &Ty, env: &Env) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
+            // Text hashes its bytes (`spec/derives.md`, `Hash`).
+            Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Hash, env),
             Ty::Option(t) => self.has_hash_in(t, env),
+            // A list hashes its elements in order and a map its entries in any order
+            // (`spec/stdlib.md`, "Interface coverage").
+            Ty::List(t, _) => self.has_hash_in(t, env),
+            Ty::Map(k, v, _) => self.has_hash_in(k, env) && self.has_hash_in(v, env),
             Ty::Range(t, _) => self.has_hash_in(t, env),
             Ty::Result(t, e) => self.has_hash_in(t, env) && self.has_hash_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
@@ -907,6 +917,8 @@ impl Globals {
             | Ty::Option(_)
             | Ty::Error
             | Ty::Never => true,
+            // The default list is empty and belongs to the default allocator, like the default map.
+            Ty::List(_, alloc) => alloc.is_global(),
             // The default map is empty and belongs to the default allocator: a stored allocator has no value to
             // build its default from.
             Ty::Map(_, _, alloc) => alloc.is_global(),
