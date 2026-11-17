@@ -426,6 +426,7 @@ impl<'p> Interp<'p, '_> {
             Builtin::Metadata => return Err(impure("reading file metadata", span)),
             Builtin::Canonicalize => return Err(impure("resolving a path", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
+            Builtin::EnvList => return Err(impure("reading the environment", span)),
             Builtin::EnvGet => return Err(impure("reading an environment variable", span)),
             Builtin::EnvSet | Builtin::EnvSetBytes => {
                 return Err(impure("setting an environment variable", span));
@@ -437,6 +438,14 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
+            Builtin::ProcessSpawn => return Err(impure("starting a process", span)),
+            Builtin::ProcessWait => return Err(impure("waiting for a process", span)),
+            Builtin::ProcessClose => return Err(impure("closing a process", span)),
+            Builtin::PipeReadToString | Builtin::PipeReadLine | Builtin::PipeReadBoth => {
+                return Err(impure("reading a pipe", span));
+            }
+            Builtin::PipeWrite => return Err(impure("writing a pipe", span)),
+            Builtin::PipeClose => return Err(impure("closing a pipe", span)),
             Builtin::CPtrNull => return Err(impure("making a C pointer", span)),
             Builtin::CStringFrom => return Err(impure("allocating a C string", span)),
             Builtin::CStrToString => return Err(impure("reading a C string", span)),

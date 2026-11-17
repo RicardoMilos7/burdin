@@ -1,0 +1,124 @@
+//@ run
+//@ skip-platform: windows
+//> out=out err=err code=7 success=false
+//> arg=a b; rm -rf /
+//> path=spaced
+//> env=set/none/none
+//> cwd=true
+//> status=3
+//> before
+//> inherited
+//> after
+//> twice=true
+//> signal=15 code=none
+//> missing=true
+//> badcwd=true
+//> empty=true
+//> run=4
+
+// `Command` starts a program without a shell: the program and each argument reach the operating system as they
+// are, so a space or a shell metacharacter in an argument has no special meaning. The builder also passes the
+// environment and the working directory, and `output` captures both output streams and the exit status.
+
+fn main() {
+    // Both streams captured, and the exit status of a normal exit.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf out; printf err >&2; exit 7")
+    let result = cmd.output().unwrap()
+    println(
+        "out={} err={} code={} success={}",
+        result.stdout,
+        result.stderr,
+        result.status.code().unwrap(),
+        result.status.success(),
+    )
+
+    // The argument is passed as one word, not interpreted by a shell.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf \"%s\" \"$1\"")
+    cmd.arg("sh")
+    cmd.arg("a b; rm -rf /")
+    let result = cmd.output().unwrap()
+    println("arg={}", result.stdout)
+
+    // A program whose path contains a space is passed as one word.
+    let mut copy = Command.new("cp")
+    copy.arg("/bin/echo")
+    copy.arg("my echo")
+    copy.status().unwrap()
+    let mut cmd = Command.new("./my echo")
+    cmd.arg("spaced")
+    let result = cmd.output().unwrap()
+    println("path={}", result.stdout.trim())
+
+    // A variable the parent sets is removed for the child, and `env` adds one the parent lacks.
+    env.set("BURDIN_419_PARENT", "parent").unwrap()
+    env.set("BURDIN_419_REMOVED", "removed").unwrap()
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf \"%s/%s/%s\" \"$BURDIN_419_SET\" \"${{BURDIN_419_REMOVED-none}}\" \"${{BURDIN_419_ABSENT-none}}\"")
+    cmd.env("BURDIN_419_SET", "set")
+    cmd.env_remove("BURDIN_419_REMOVED")
+    let result = cmd.output().unwrap()
+    println("env={}", result.stdout)
+    env.remove("BURDIN_419_PARENT").unwrap()
+    env.remove("BURDIN_419_REMOVED").unwrap()
+
+    // The child runs in the working directory `cwd` selects.
+    create_dir("sub").unwrap()
+    let want = canonicalize("sub").unwrap()
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("pwd")
+    cmd.cwd("sub")
+    let result = cmd.output().unwrap()
+    let printed = result.stdout
+    println("cwd={}", printed.trim() == want.as_str())
+
+    // `status` waits for a child whose streams are inherited.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("exit 3")
+    println("status={}", cmd.status().unwrap().code().unwrap())
+
+    // An inherited stream is the parent's: the parent's buffered line is written before the child's.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("echo inherited\n")
+    println("before")
+    cmd.status().unwrap()
+    println("after")
+
+    // A child is waited for once.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("exit 0")
+    let mut child = cmd.spawn().unwrap()
+    child.wait().unwrap()
+    println("twice={}", child.wait().is_err())
+
+    // A signal is reported as a signal, with no exit code.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("kill -TERM $$")
+    let status = cmd.output().unwrap().status
+    println("signal={} code={}", status.signal().unwrap(), match status.code() {
+        Some(code) => code.to_string(),
+        None => "none".to_string(),
+    })
+
+    // A program that does not exist, and a working directory that does not, are spawn errors.
+    let cmd = Command.new("burdin-no-such-program-419")
+    println("missing={}", cmd.spawn().is_err())
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("exit 0")
+    cmd.cwd("burdin-no-such-directory-419")
+    println("badcwd={}", cmd.spawn().is_err())
+    println("empty={}", Command.new("").spawn().is_err())
+
+    // The shell helper is unchanged.
+    println("run={}", process.run("exit 4").unwrap())
+}
