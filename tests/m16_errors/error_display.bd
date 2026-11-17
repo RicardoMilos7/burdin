@@ -1,5 +1,5 @@
 //@ run
-//> cannot read config: cannot read cfg.toml
+//> cannot read config: cannot read cfg.toml: not found
 //> syntax error on line 7
 //> missing key port
 //> unknown configuration
@@ -14,7 +14,7 @@ error enum ConfigError {
 }
 
 fn main() {
-    println("{ConfigError.Io(IoError.Read { path: "cfg.toml".to_string() })}")
+    println("{ConfigError.Io(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })}")
     println("{ConfigError.Syntax { line: 7 }}")
     println("{ConfigError.Missing("port".to_string())}")
     println("{ConfigError.Unknown}")

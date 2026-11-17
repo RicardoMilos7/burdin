@@ -1,5 +1,5 @@
 //@ run
-//> missing read true
+//> missing read true true true
 //> create_new existing true
 //> create_new fresh true
 //> invalid none true
@@ -15,9 +15,14 @@
 // access mode does not allow. Every one is an `IoError`, never a panic.
 
 fn main() {
-    // A read-only open of a missing path names the path and is `IoError.Read`.
+    // A read-only open of a missing path names the path and is `IoError.Read`, with the system's kind and code.
     match File.open("absent.txt") {
-        Err(IoError.Read { path }) => println("missing read {}", path.as_str() == "absent.txt"),
+        Err(IoError.Read { path, kind, os_code }) => println(
+            "missing read {} {} {}",
+            path.as_str() == "absent.txt",
+            kind == IoErrorKind.NotFound,
+            os_code.is_some(),
+        ),
         _ => println("missing read false"),
     }
 

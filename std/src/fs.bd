@@ -10,7 +10,7 @@ use fmt.{Debug, Formatter}
 use path.Path
 use rw.{Read, Seek, SeekFrom, Write}
 use sort.sort_by
-use std.IoError
+use std.{IoError, IoErrorKind}
 use text.to_char_list
 
 /// The kind of entry a path names.
@@ -56,7 +56,11 @@ Metadata {
 fn read_dir(path: str): Result<List<String>, IoError> {
     match __read_dir(path) {
         Ok(names) => Ok(names),
-        Err(_) => Err(IoError.Read { path: path.to_string() }),
+        Err(code) => Err(IoError.Read {
+            path: path.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -65,7 +69,11 @@ fn read_dir(path: str): Result<List<String>, IoError> {
 fn create_dir(path: str): Result<(), IoError> {
     match __create_dir(path) {
         Ok(_) => Ok(()),
-        Err(_) => Err(IoError.Write { path: path.to_string() }),
+        Err(code) => Err(IoError.Write {
+            path: path.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -94,7 +102,11 @@ fn create_dir_all(path: str): Result<(), IoError> {
 fn remove_dir(path: str): Result<(), IoError> {
     match __remove_dir(path) {
         Ok(_) => Ok(()),
-        Err(_) => Err(IoError.Write { path: path.to_string() }),
+        Err(code) => Err(IoError.Write {
+            path: path.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -102,7 +114,11 @@ fn remove_dir(path: str): Result<(), IoError> {
 fn remove_file(path: str): Result<(), IoError> {
     match __remove_file(path) {
         Ok(_) => Ok(()),
-        Err(_) => Err(IoError.Write { path: path.to_string() }),
+        Err(code) => Err(IoError.Write {
+            path: path.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -113,7 +129,8 @@ fn remove_dir_all(path: str): Result<(), IoError> {
         Err(failure) => return Err(failure),
     }
     if !info.is_dir() {
-        return Err(IoError.Write { path: path.to_string() })
+        // `std` sees the kind itself here; no system call failed.
+        return Err(IoError.Write { path: path.to_string(), kind: IoErrorKind.NotADirectory, os_code: None })
     }
     __remove_entry(path)
 }
@@ -134,7 +151,7 @@ priv fn __remove_entry(path: str): Result<(), IoError> {
         Err(failure) => return Err(failure),
     }
     if info.is_symlink() {
-        return Err(IoError.Write { path: path.to_string() })
+        return Err(IoError.Write { path: path.to_string(), kind: IoErrorKind.Other, os_code: None })
     }
     let names = match read_dir(path) {
         Ok(names) => names,
@@ -151,7 +168,11 @@ priv fn __remove_entry(path: str): Result<(), IoError> {
 fn rename(from: str, to: str): Result<(), IoError> {
     match __rename(from, to) {
         Ok(_) => Ok(()),
-        Err(_) => Err(IoError.Write { path: to.to_string() }),
+        Err(code) => Err(IoError.Write {
+            path: to.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -166,7 +187,11 @@ fn metadata(path: str): Result<Metadata, IoError> {
             accessed,
             kind: __file_kind(flags),
         }),
-        Err(_) => Err(IoError.Read { path: path.to_string() }),
+        Err(code) => Err(IoError.Read {
+            path: path.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -188,7 +213,11 @@ priv fn __file_kind(flags: u64): FileKind {
 fn canonicalize(path: str): Result<String, IoError> {
     match __canonicalize(path) {
         Ok(text) => Ok(text),
-        Err(_) => Err(IoError.Read { path: path.to_string() }),
+        Err(code) => Err(IoError.Read {
+            path: path.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -334,6 +363,17 @@ Path {
 
 // ---- files and file handles (issue #702; spec/stdlib.md, "Files and file handles") ----
 
+/// The kind of a file failure. The primitives report 0 when no system call gave a code, which is `Other`
+/// (`spec/errors.md`, ERR10-ERR11).
+priv fn __io_error_kind(code: i32): IoErrorKind {
+    if code > 0 { __io_kind(code) } else { IoErrorKind.Other }
+}
+
+/// The OS code of a file failure, when the primitive reported one.
+priv fn __io_error_code(code: i32): Option<i32> {
+    if code > 0 { Some(code) } else { None }
+}
+
 /// The options that open a file. Every option starts off; `open` rejects a set with no access and the combinations
 /// the systems disagree on (`IoError.InvalidInput`).
 struct OpenOptions {
@@ -399,11 +439,20 @@ OpenOptions {
         match __file_open(path, self.read, self.write, self.append, self.truncate, self.create, self.create_new) {
             Ok(fd) => Ok(File { fd: fd, path: path.to_string() }),
             Err(_) => {
+                let code = __file_error()
                 let changes = self.write || self.append || self.truncate || self.create || self.create_new
                 if changes {
-                    Err(IoError.Write { path: path.to_string() })
+                    Err(IoError.Write {
+                        path: path.to_string(),
+                        kind: __io_error_kind(code),
+                        os_code: __io_error_code(code),
+                    })
                 } else {
-                    Err(IoError.Read { path: path.to_string() })
+                    Err(IoError.Read {
+                        path: path.to_string(),
+                        kind: __io_error_kind(code),
+                        os_code: __io_error_code(code),
+                    })
                 }
             }
         }
@@ -440,7 +489,14 @@ File {
     fn sync_all(self): Result<(), IoError> {
         match __file_sync(self.fd) {
             Ok(()) => Ok(()),
-            Err(_) => Err(IoError.Write { path: self.path.clone() }),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
         }
     }
 
@@ -448,7 +504,14 @@ File {
     fn set_len(mut self, size: u64): Result<(), IoError> {
         match __file_set_len(self.fd, size) {
             Ok(()) => Ok(()),
-            Err(_) => Err(IoError.Write { path: self.path.clone() }),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
         }
     }
 
@@ -461,7 +524,14 @@ File {
         me.fd = -1
         match __file_close(fd) {
             Ok(()) => Ok(()),
-            Err(_) => Err(IoError.Write { path: me.path.clone() }),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: me.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
         }
     }
 }
@@ -470,7 +540,14 @@ File: Read {
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         match __file_read(self.fd, mut buf, max) {
             Ok(n) => Ok(n),
-            Err(_) => Err(IoError.Read { path: self.path.clone() }),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Read {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
         }
     }
 }
@@ -479,7 +556,14 @@ File: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         match __file_write(self.fd, data) {
             Ok(n) => Ok(n),
-            Err(_) => Err(IoError.Write { path: self.path.clone() }),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
         }
     }
 

@@ -2,7 +2,7 @@
 //> 7 1
 //> missing
 //> no value
-//> no number: cannot read cfg.toml
+//> no number: cannot read cfg.toml: not found
 
 // `?` unwraps its operand whatever the success type is: only the error side has to fit the enclosing function's
 // result. A `Result<usize, E>` can be unwrapped inside a function that returns `Result<(), E>`, and an
@@ -12,7 +12,7 @@ fn count(ok: bool): Result<usize, IoError> {
     if ok {
         Ok(7)
     } else {
-        Err(IoError.Read { path: String.from("cfg.toml") })
+        Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
     }
 }
 

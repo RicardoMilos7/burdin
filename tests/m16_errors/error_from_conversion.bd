@@ -1,5 +1,5 @@
 //@ run
-//> cannot read config: cannot read cfg.toml
+//> cannot read config: cannot read cfg.toml: not found
 //> syntax error on line -3
 //> ok 5
 
@@ -12,7 +12,7 @@ error enum ConfigError {
 }
 
 fn read(path: str): Result<i32, IoError> {
-    Err(IoError.Read { path: path.to_string() })
+    Err(IoError.Read { path: path.to_string(), kind: IoErrorKind.NotFound, os_code: None })
 }
 
 fn parse(line: i32): Result<i32, ConfigError> {

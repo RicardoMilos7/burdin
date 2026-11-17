@@ -24,6 +24,38 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // The program is compiled for the machine the compiler runs on.
             Builtin::TargetOs => return Ok(Some(self.str_literal(burdin_tir::target_os().as_bytes()).into())),
             Builtin::TargetArch => return Ok(Some(self.str_literal(burdin_tir::target_arch().as_bytes()).into())),
+            // `__io_kind(code)`: the portable kind of an operating system code (`spec/errors.md`, ERR11).
+            // The table is the target's, and the variant is found by name so a reordered `IoErrorKind` is still
+            // classified correctly.
+            Builtin::IoErrorKind => {
+                let code = self.expr_mode(&args[0], Mode::Use)?;
+                let code = self.need_int(code, &Ty::Int(tir::IntTy::I32));
+                // A standard library without an `IoErrorKind` enum types this builtin as unit, and the call
+                // needs no value.
+                let Ty::Enum(a) = ty else { return Ok(None) };
+                let variants = &self.program.enums[a.id].variants;
+                let index = |name: &str| variants.iter().position(|v| v.name == name);
+                let i32_ty = self.cx.i32_type();
+                // A code the table does not know is `Other`; a standard library without that name falls back
+                // to the first variant rather than panicking.
+                let mut tag: BasicValueEnum<'ctx> = i32_ty.const_int(index("Other").unwrap_or(0) as u64, false).into();
+                for (os, name) in tir::ioerror::table(self.platform) {
+                    let Some(variant) = index(name) else { continue };
+                    let is = self
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, code, i32_ty.const_int(*os as u64, false), "")
+                        .map_err(llvm_err)?;
+                    let kind: BasicValueEnum<'ctx> = i32_ty.const_int(variant as u64, false).into();
+                    tag = self.builder.build_select(is, kind, tag, "io.kind").map_err(llvm_err)?;
+                }
+                let et = self.enum_ty(a.id);
+                let value = self
+                    .builder
+                    .build_insert_value(et.const_zero(), tag, 0, "io.kind.value")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                return Ok(Some(value.into()));
+            }
             Builtin::CPtrNull => {
                 return Ok(Some(self.cx.ptr_type(inkwell::AddressSpace::default()).const_null().into()));
             }
@@ -232,13 +264,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let s = self.need(s, &Ty::Str).into_struct_value();
                 let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
                 let len = self.builder.build_extract_value(s, 1, "").map_err(llvm_err)?;
-                let call = self.builder.build_call(self.rt.run, &[ptr.into(), len.into()], "").map_err(llvm_err)?;
+                let err_slot = self.alloca(self.cx.i32_type().into(), "run.err")?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.run, &[ptr.into(), len.into(), err_slot.into()], "")
+                    .map_err(llvm_err)?;
                 let status = call.try_as_basic_value().basic().expect("run returns a status").into_int_value();
                 let failed = self
                     .builder
                     .build_int_compare(IntPredicate::EQ, status, self.cx.i32_type().const_all_ones(), "")
                     .map_err(llvm_err)?;
                 let ok = self.builder.build_not(failed, "").map_err(llvm_err)?;
+                let code = self.builder.build_load(self.cx.i32_type(), err_slot, "run.code").map_err(llvm_err)?;
                 let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("run returns a Result") };
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
@@ -247,6 +284,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     value =
                         self.builder.build_insert_value(value, status, 1, "").map_err(llvm_err)?.into_struct_value();
                 }
+                value = self.builder.build_insert_value(value, code, 2, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
             Builtin::EnvList => {
@@ -568,7 +606,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_call(self.rt.read_to_string, &[ptr.into(), len.into(), out.into()], "")
                     .map_err(llvm_err)?;
-                let ok = call.try_as_basic_value().basic().expect("read returns a flag").into_int_value();
+                let code = call.try_as_basic_value().basic().expect("read returns a code").into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, code, self.cx.i32_type().const_zero(), "read.ok")
+                    .map_err(llvm_err)?;
                 let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_to_string returns a Result") };
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "read.out")?;
@@ -588,7 +630,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(bad);
                 self.drop_value(out, &Ty::String)?;
-                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                let mut failure = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                failure = self.builder.build_insert_value(failure, code, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
@@ -606,11 +654,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_call(self.rt.write_file, &[pptr.into(), plen.into(), tptr.into(), tlen.into()], "")
                     .map_err(llvm_err)?;
-                let ok = call.try_as_basic_value().basic().expect("write returns a flag").into_int_value();
+                let code = call.try_as_basic_value().basic().expect("write returns a code").into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, code, self.cx.i32_type().const_zero(), "write.ok")
+                    .map_err(llvm_err)?;
                 let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("write_file returns a Result") };
                 let rt = self.result_ty(ok_ty, err_ty);
-                let value =
+                let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, code, 2, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
             // The file-handle primitives (`spec/stdlib.md`, "Files and file handles"). Each reports a descriptor,
@@ -723,6 +776,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 value = self.builder.build_insert_value(value, position, 1, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
+            Builtin::FileError => {
+                let code = self
+                    .builder
+                    .build_call(self.rt.file_error, &[], "file.error")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("file_error returns a code");
+                return Ok(Some(code));
+            }
             Builtin::FileSync | Builtin::FileSetLen | Builtin::FileClose => {
                 let fd = self.expr_mode(&args[0], Mode::Use)?;
                 let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
@@ -803,6 +866,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .expect("in_next returns a byte");
                 return Ok(Some(byte));
             }
+            Builtin::StdinError => {
+                let code = self
+                    .builder
+                    .build_call(self.rt.in_error, &[], "stdin.error")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("in_error returns a code");
+                return Ok(Some(code));
+            }
             Builtin::StdoutFlush => {
                 self.builder.build_call(self.rt.flush, &[], "").map_err(llvm_err)?;
                 return Ok(None);
@@ -822,9 +895,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Builtin::StdinReadLine => {
                 let out = self.alloca(self.string_ty.into(), "stdin.line")?;
                 self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let err_slot = self.alloca(self.cx.i32_type().into(), "stdin.err")?;
                 let status = self
                     .builder
-                    .build_call(self.rt.in_read_line, &[out.into()], "status")
+                    .build_call(self.rt.in_read_line, &[out.into(), err_slot.into()], "status")
                     .map_err(llvm_err)?
                     .try_as_basic_value()
                     .basic()
@@ -869,7 +943,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(bad);
                 self.drop_value(out, &Ty::String)?;
-                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                let code = self.builder.build_load(self.cx.i32_type(), err_slot, "stdin.code").map_err(llvm_err)?;
+                let mut failure = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                failure = self.builder.build_insert_value(failure, code, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
@@ -877,9 +958,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Builtin::StdinReadToString => {
                 let out = self.alloca(self.string_ty.into(), "stdin.text")?;
                 self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let err_slot = self.alloca(self.cx.i32_type().into(), "stdin.err")?;
                 let status = self
                     .builder
-                    .build_call(self.rt.in_read_to_string, &[out.into()], "status")
+                    .build_call(self.rt.in_read_to_string, &[out.into(), err_slot.into()], "status")
                     .map_err(llvm_err)?
                     .try_as_basic_value()
                     .basic()
@@ -908,13 +990,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(bad);
                 self.drop_value(out, &Ty::String)?;
-                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                let code = self.builder.build_load(self.cx.i32_type(), err_slot, "stdin.code").map_err(llvm_err)?;
+                let mut failure = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                failure = self.builder.build_insert_value(failure, code, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
             }
-            // The directory and metadata primitives (`spec/stdlib.md`, issue #411). Each reports a status of
-            // zero for success; the `std` wrappers turn a failure into the real `IoError` variant.
+            // The directory and metadata primitives (`spec/stdlib.md`, issue #411). Each reports the operating
+            // system's error code, with zero for success; the `std` wrappers build the `IoError`.
             Builtin::ReadDir => {
                 let (ptr, len) = self.str_parts(&args[0])?;
                 let out = self.alloca(self.string_ty.into(), "dir.list")?;
@@ -945,7 +1034,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(bad);
                 // The runtime leaves an empty list behind, so dropping it is safe and frees nothing.
                 self.drop_value(out, &Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global))?;
-                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                let mut failure = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                failure =
+                    self.builder.build_insert_value(failure, status, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
@@ -971,8 +1067,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
                 let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a path change returns a Result") };
                 let rt = self.result_ty(ok_ty, err_ty);
-                let value =
+                let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, status, 2, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
             Builtin::Metadata => {
@@ -1013,7 +1110,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, value).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(bad);
-                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                let mut failure = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                failure =
+                    self.builder.build_insert_value(failure, status, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
@@ -1047,7 +1151,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(bad);
                 self.drop_value(out, &Ty::String)?;
-                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                let mut failure = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                failure =
+                    self.builder.build_insert_value(failure, status, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));

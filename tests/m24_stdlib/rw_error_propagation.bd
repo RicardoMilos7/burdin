@@ -1,8 +1,8 @@
 //@ run
 //> first line: ok
-//> failed: reading the config: cannot read <flaky>
+//> failed: reading the config: cannot read <flaky>: not found
 //> is io error: true
-//> typed: cannot read <flaky>
+//> typed: cannot read <flaky>: not found
 //> lines stop after an error: 1 ok, 1 err, 0 more
 
 // An error from the wrapped reader comes out of every wrapper unchanged, so `?` carries it up; `context` adds to it.
@@ -16,7 +16,7 @@ struct Flaky {
 Flaky: Read {
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         if self.pos >= self.fail_after {
-            return Err(IoError.Read { path: String.from("<flaky>") })
+            return Err(IoError.Read { path: String.from("<flaky>"), kind: IoErrorKind.NotFound, os_code: None })
         }
         let mut n: usize = 0
         while n < max && self.pos < self.fail_after && self.pos < self.data.len() {

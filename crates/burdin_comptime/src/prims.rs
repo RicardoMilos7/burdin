@@ -488,7 +488,11 @@ impl<'p> Interp<'p, '_> {
                 return Err(impure("writing to standard error", span));
             }
             Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
-            Builtin::StdinReadLine | Builtin::StdinReadToString | Builtin::StdinAvail | Builtin::StdinNextByte => {
+            Builtin::StdinReadLine
+            | Builtin::StdinReadToString
+            | Builtin::StdinAvail
+            | Builtin::StdinNextByte
+            | Builtin::StdinError => {
                 return Err(impure("reading standard input", span));
             }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
@@ -500,6 +504,7 @@ impl<'p> Interp<'p, '_> {
             Builtin::FileSync => return Err(impure("syncing a file", span)),
             Builtin::FileSetLen => return Err(impure("resizing a file", span)),
             Builtin::FileClose => return Err(impure("closing a file", span)),
+            Builtin::FileError => return Err(impure("reading a file error", span)),
             Builtin::ReadDir => return Err(impure("reading a directory", span)),
             Builtin::CreateDir => return Err(impure("creating a directory", span)),
             Builtin::RemoveDir => return Err(impure("removing a directory", span)),
@@ -565,6 +570,20 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::TargetOs => Value::str(tir::target_os()),
             Builtin::TargetArch => Value::str(tir::target_arch()),
+            // The portable kind of an OS error code (`spec/errors.md`, ERR11). It is pure, so it evaluates at
+            // compile time like the target queries above.
+            Builtin::IoErrorKind => {
+                let code = self.eval(&args[0], Mode::Use)?.int() as i32;
+                let Ty::Enum(a) = ty else { unreachable!("`__io_kind` returns IoErrorKind") };
+                let variants = &self.p.enums[a.id].variants;
+                let name = tir::ioerror::kind_name(tir::ioerror::host_platform(), code);
+                let index = variants
+                    .iter()
+                    .position(|v| v.name == name)
+                    .or_else(|| variants.iter().position(|v| v.name == "Other"))
+                    .unwrap_or(0);
+                Value::Variant(index, Vec::new())
+            }
             Builtin::StringNew => Value::String(Vec::new()),
             Builtin::StringFrom => {
                 let bytes = self.peek(&args[0], |v| v.bytes().to_vec())?;

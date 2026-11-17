@@ -1,7 +1,7 @@
 //@ run
 //> true
 //> wrong
-//> cannot read cfg.toml
+//> cannot read cfg.toml: not found
 //> missing key port
 //> key port
 //> true
@@ -22,14 +22,22 @@ fn into_dynamic(ok: bool): Result<i32> {
 }
 
 fn main() {
-    let io: Error = IoError.Read { path: "cfg.toml".to_string() }
+    let io: Error = IoError.Read {
+        path: "cfg.toml".to_string(),
+        kind: IoErrorKind.NotFound,
+        os_code: None,
+    }
     println("{}", io.is<IoError>())
     match io.downcast<ConfigError>() {
         Some(_) => println("config"),
         None => println("wrong"),
     }
 
-    let io2: Error = IoError.Read { path: "cfg.toml".to_string() }
+    let io2: Error = IoError.Read {
+        path: "cfg.toml".to_string(),
+        kind: IoErrorKind.NotFound,
+        os_code: None,
+    }
     match io2.downcast<IoError>() {
         Some(e) => println("{e}"),
         None => println("no"),

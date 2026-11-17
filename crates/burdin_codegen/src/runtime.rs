@@ -77,6 +77,11 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u64 = 0x400;
 const INVALID_FILE_ATTRIBUTES: u64 = 0xFFFF_FFFF;
 /// `MOVEFILE_REPLACE_EXISTING`: `MoveFileExA` replaces an existing destination, as POSIX `rename` does.
 const MOVEFILE_REPLACE_EXISTING: u64 = 1;
+/// `ERROR_GEN_FAILURE`: what the runtime reports when a failing Windows call sets neither `_doserrno` nor
+/// `GetLastError`.
+const ERROR_GEN_FAILURE: u32 = 31;
+/// `ERROR_NO_MORE_FILES`: `FindNextFileA`'s normal end of a listing, not a failure.
+const ERROR_NO_MORE_FILES: u32 = 18;
 /// The `S_IFMT` mask and the file, directory, and link kinds it selects (`_S_IFMT` and the `_S_IF*` values on
 /// Windows agree with the POSIX ones for these three kinds).
 const S_IFMT: u64 = 0o170000;
@@ -150,14 +155,17 @@ pub(crate) struct Runtime<'ctx> {
     pub flush: FunctionValue<'ctx>,
     /// `(fd: i32) -> i1`: whether the descriptor is a terminal.
     pub is_terminal: FunctionValue<'ctx>,
-    /// `(out: *String) -> i32`: reads one line of standard input; 0 is a line (or the last one), 1 is the end
-    /// of input with nothing read, and -1 is an error.
+    /// `(out: *String, err: *i32) -> i32`: reads one line of standard input; 0 is a line (or the last one), 1
+    /// is the end of input with nothing read, and -1 is an error, whose OS code is stored in `err`.
     pub in_read_line: FunctionValue<'ctx>,
-    /// `(out: *String) -> i32`: reads the rest of standard input; 0 is success and -1 an error.
+    /// `(out: *String, err: *i32) -> i32`: reads the rest of standard input; 0 is success and -1 an error,
+    /// whose OS code is stored in `err`.
     pub in_read_to_string: FunctionValue<'ctx>,
     /// `() -> isize`: how many standard-input bytes are buffered, reading a block when none are; 0 is the end of
-    /// the input and -1 a read error.
+    /// the input and -1 a read error, whose OS code `in_error` then reports.
     pub in_avail: FunctionValue<'ctx>,
+    /// `() -> i32`: the OS code of the last standard-input read error.
+    pub in_error: FunctionValue<'ctx>,
     /// `() -> i8`: takes the next buffered standard-input byte.
     pub in_next: FunctionValue<'ctx>,
     /// `(msg, msg_len: usize, file, file_len: usize, line: i32, col: i32)`, never returns.
@@ -217,9 +225,9 @@ pub(crate) struct Runtime<'ctx> {
     pub parse_i64: FunctionValue<'ctx>,
     /// `(ptr, len, out: *i64) -> i1`: parses an unsigned decimal integer.
     pub parse_u64: FunctionValue<'ctx>,
-    /// `(ptr, len, out: *String) -> i1`: reads a whole file.
+    /// `(ptr, len, out: *String) -> i32`: reads a whole file; 0, or the OS error code.
     pub read_to_string: FunctionValue<'ctx>,
-    /// The `(path, path_len, text, text_len) -> i1` whole-file write.
+    /// `(path, path_len, text, text_len) -> i32`: writes a whole file; 0, or the OS error code.
     pub write_file: FunctionValue<'ctx>,
     /// `(path, path_len, read, write, append, truncate, create, create_new) -> i32`: a file descriptor, or -1.
     pub file_open: FunctionValue<'ctx>,
@@ -235,19 +243,23 @@ pub(crate) struct Runtime<'ctx> {
     pub file_set_len: FunctionValue<'ctx>,
     /// `(fd: i32) -> i32`: closes the descriptor; 0 on success.
     pub file_close: FunctionValue<'ctx>,
-    /// `(path, path_len, out: *List<String>) -> i32`: the names in a directory, or -1.
+    /// `() -> i32`: the OS code of the last failed file operation.
+    pub file_error: FunctionValue<'ctx>,
+    /// `(path, path_len, out: *List<String>) -> i32`: the names in a directory; 0, or the OS error code.
     pub read_dir: FunctionValue<'ctx>,
-    /// `(path, path_len) -> i32`: creates one directory, or -1.
+    /// `(path, path_len) -> i32`: creates one directory; 0, or the OS error code.
     pub create_dir: FunctionValue<'ctx>,
-    /// `(path, path_len) -> i32`: removes an empty directory, or -1.
+    /// `(path, path_len) -> i32`: removes an empty directory; 0, or the OS error code.
     pub remove_dir: FunctionValue<'ctx>,
-    /// `(path, path_len) -> i32`: removes a file or a symbolic link, or -1.
+    /// `(path, path_len) -> i32`: removes a file or a symbolic link; 0, or the OS error code.
     pub remove_file: FunctionValue<'ctx>,
-    /// `(from, from_len, to, to_len) -> i32`: renames a file or a directory, replacing `to`; -1 on failure.
+    /// `(from, from_len, to, to_len) -> i32`: renames a file or a directory, replacing `to`; 0, or the OS error
+    /// code.
     pub rename: FunctionValue<'ctx>,
-    /// `(path, path_len, out: *RawMetadata) -> i32`: the entry's size, mode, times, and kind, or -1.
+    /// `(path, path_len, out: *RawMetadata) -> i32`: the entry's size, mode, times, and kind; 0, or the OS error
+    /// code.
     pub metadata: FunctionValue<'ctx>,
-    /// `(path, path_len, out: *String) -> i32`: the absolute, normalized path, or -1.
+    /// `(path, path_len, out: *String) -> i32`: the absolute, normalized path; 0, or the OS error code.
     pub canonicalize: FunctionValue<'ctx>,
     /// `(out: *List<String>)`: the process arguments, program name first.
     pub args: FunctionValue<'ctx>,
@@ -292,7 +304,8 @@ pub(crate) struct Runtime<'ctx> {
     pub set_current_dir: FunctionValue<'ctx>,
     /// `(code: i32)`: ends the process.
     pub exit: FunctionValue<'ctx>,
-    /// `(command, command_len) -> i32`: runs a shell command; -1 on failure, the exit code otherwise.
+    /// `(command, command_len, err: *i32) -> i32`: runs a shell command; -1 on failure with the OS error code
+    /// in `err`, and the exit code otherwise.
     pub run: FunctionValue<'ctx>,
 }
 
@@ -590,8 +603,18 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let argv = self.module.add_global(self.ptr_ty, None, "burdin_rt_argv");
         argv.set_initializer(&self.ptr_ty.const_null());
         argv.set_linkage(Linkage::Internal);
-        // The standard-input block buffer, shared by every read of standard input.
+        // The standard-input block buffer, shared by every read of standard input, and the last read error's
+        // OS code, which `__stdin_avail`'s failure path reports through `__stdin_error`. The file operations keep
+        // their last error code the same way, for `__file_error`.
         let in_fill = self.in_fill()?;
+        let in_error = self.module.add_global(argc_ty, None, "burdin_rt_in_err");
+        in_error.set_initializer(&argc_ty.const_zero());
+        in_error.set_linkage(Linkage::Internal);
+        let in_error_ptr = in_error.as_pointer_value();
+        let file_error = self.module.add_global(argc_ty, None, "burdin_rt_file_err");
+        file_error.set_initializer(&argc_ty.const_zero());
+        file_error.set_linkage(Linkage::Internal);
+        let file_error_ptr = file_error.as_pointer_value();
         let clock = self.clock()?;
         Ok(Runtime {
             print: self.print(&h)?,
@@ -599,7 +622,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             is_terminal: self.is_terminal()?,
             in_read_line: self.in_read_line(string_push_str, in_fill)?,
             in_read_to_string: self.in_read_to_string(string_push_str, in_fill)?,
-            in_avail: self.in_avail(in_fill)?,
+            in_avail: self.in_avail(in_fill, in_error_ptr)?,
+            in_error: self.in_error(in_error_ptr)?,
             in_next: self.in_next()?,
             panic: self.panic(&h)?,
             panic_bounds: self.panic_bounds(&h)?,
@@ -630,13 +654,14 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             parse_u64: self.parse_int(&h, false)?,
             read_to_string: self.read_to_string(&h, alloc_string, string_push_str)?,
             write_file: self.write_file(&h)?,
-            file_open: self.file_open()?,
-            file_read: self.file_read()?,
-            file_write: self.file_write()?,
-            file_seek: self.file_seek()?,
-            file_sync: self.file_sync()?,
-            file_set_len: self.file_set_len()?,
-            file_close: self.file_close()?,
+            file_open: self.file_open(file_error_ptr)?,
+            file_read: self.file_read(file_error_ptr)?,
+            file_write: self.file_write(file_error_ptr)?,
+            file_seek: self.file_seek(file_error_ptr)?,
+            file_sync: self.file_sync(file_error_ptr)?,
+            file_set_len: self.file_set_len(file_error_ptr)?,
+            file_close: self.file_close(file_error_ptr)?,
+            file_error: self.file_error(file_error_ptr)?,
             read_dir: self.read_dir(&h)?,
             create_dir: self.create_dir()?,
             remove_dir: self.remove_dir()?,
@@ -758,6 +783,48 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let s = self.b.build_ptr_to_int(start, self.usize_ty, "").map_err(llvm_err)?;
         let e = self.b.build_ptr_to_int(end, self.usize_ty, "").map_err(llvm_err)?;
         self.b.build_int_sub(e, s, "").map_err(llvm_err)
+    }
+
+    /// The address of the platform's `errno`: `__errno_location` on Linux and `__error` on macOS.
+    fn errno_ptr(&mut self) -> GenResult<PointerValue<'ctx>> {
+        let symbol = if self.darwin { "__error" } else { "__errno_location" };
+        let getter = libc(self.module, symbol, self.ptr_ty.fn_type(&[], false));
+        Ok(self.call(getter, &[])?.expect("the errno accessor returns a pointer").into_pointer_value())
+    }
+
+    /// The operating system error code of the call that just failed, as an `i32` (`spec/errors.md`, ERR11).
+    ///
+    /// On Unix it is `errno`. On Windows it is the Win32 code: `GetLastError` for a Win32 call, and
+    /// `_doserrno` for a CRT call, whose `errno` value is only the CRT's own classification. A failure that
+    /// sets neither reports `ERROR_GEN_FAILURE`, and one that leaves `errno` zero reports `EIO`, so a nonzero
+    /// code always means a failure.
+    fn last_error(&mut self, from_crt: bool) -> GenResult<IntValue<'ctx>> {
+        let i32_ty = self.i32();
+        let zero = i32_ty.const_zero();
+        if self.windows {
+            let fallback = i32_ty.const_int(u64::from(ERROR_GEN_FAILURE), false);
+            // `_get_doserrno` writes an `unsigned long`, which is 32 bits on Windows.
+            let slot = self.b.build_alloca(i32_ty, "dos.errno").map_err(llvm_err)?;
+            let getter = libc(self.module, "_get_doserrno", i32_ty.fn_type(&[self.ptr_ty.into()], false));
+            self.call(getter, &[slot.into()])?;
+            let dos = self.b.build_load(i32_ty, slot, "dos.errno").map_err(llvm_err)?.into_int_value();
+            let get_last = libc(self.module, "GetLastError", i32_ty.fn_type(&[], false));
+            let last = self.call(get_last, &[])?.expect("GetLastError returns a code").into_int_value();
+            let base = if from_crt {
+                let unset = self.b.build_int_compare(IntPredicate::EQ, dos, zero, "no.dos").map_err(llvm_err)?;
+                self.b.build_select(unset, last, dos, "crt.error").map_err(llvm_err)?.into_int_value()
+            } else {
+                last
+            };
+            let unset = self.b.build_int_compare(IntPredicate::EQ, base, zero, "no.error").map_err(llvm_err)?;
+            Ok(self.b.build_select(unset, fallback, base, "os.error").map_err(llvm_err)?.into_int_value())
+        } else {
+            let at = self.errno_ptr()?;
+            let code = self.b.build_load(i32_ty, at, "errno").map_err(llvm_err)?.into_int_value();
+            let unset = self.b.build_int_compare(IntPredicate::EQ, code, zero, "no.errno").map_err(llvm_err)?;
+            let eio = i32_ty.const_int(libc::EIO as u64, false);
+            Ok(self.b.build_select(unset, eio, code, "os.error").map_err(llvm_err)?.into_int_value())
+        }
     }
 
     /// A stack buffer of `n` bytes; call it in the `entry` block only.
@@ -1024,12 +1091,13 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `in_fill() -> i32`: makes the input block hold at least one byte. 1 means data, 0 the end of input, and
-    /// -1 a read error.
+    /// `in_fill(err: *i32) -> i32`: makes the input block hold at least one byte. 1 means data, 0 the end of
+    /// input, and -1 a read error, whose OS code is stored in `err`.
     fn in_fill(&mut self) -> GenResult<FunctionValue<'ctx>> {
         let (buf, pos, len) = self.in_globals();
         let (i32_ty, usize_ty, ptr_ty) = (self.i32(), self.usize_ty, self.ptr_ty);
-        let f = self.function("burdin_rt_in_fill", i32_ty.fn_type(&[], false));
+        let f = self.function("burdin_rt_in_fill", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let err = Self::ptr_param(f, 0);
         let have = self.block(f, "have");
         let read = self.block(f, "read");
         let got = self.block(f, "got");
@@ -1081,13 +1149,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.position_at_end(eof);
         self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
         self.b.position_at_end(failed);
+        let code = self.last_error(true)?;
+        self.b.build_store(err, code).map_err(llvm_err)?;
         self.b.build_return(Some(&i32_ty.const_int(0xFFFF_FFFF, false))).map_err(llvm_err)?;
         Ok(f)
     }
 
     /// `in_avail() -> isize`: the number of buffered bytes, after reading a block when the buffer is empty. 0 is the
-    /// end of the input and -1 a read error.
-    fn in_avail(&mut self, fill: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+    /// end of the input and -1 a read error, whose OS code `in_error` then reports.
+    fn in_avail(&mut self, fill: FunctionValue<'ctx>, in_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (_, pos, len) = self.in_globals();
         let (i32_ty, usize_ty) = (self.i32(), self.usize_ty);
         let f = self.function("burdin_rt_in_avail", usize_ty.fn_type(&[], false));
@@ -1095,7 +1165,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let end = self.block(f, "end");
         let error = self.block(f, "error");
         let check = self.block(f, "check");
-        let r = self.call(fill, &[])?.expect("fill returns a status").into_int_value();
+        let err_slot = self.b.build_alloca(i32_ty, "in.err").map_err(llvm_err)?;
+        let r = self.call(fill, &[err_slot.into()])?.expect("fill returns a status").into_int_value();
         let failed = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "failed").map_err(llvm_err)?;
         self.b.build_conditional_branch(failed, error, check).map_err(llvm_err)?;
         self.b.position_at_end(check);
@@ -1109,7 +1180,18 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.position_at_end(end);
         self.b.build_return(Some(&usize_ty.const_zero())).map_err(llvm_err)?;
         self.b.position_at_end(error);
+        let code = self.b.build_load(i32_ty, err_slot, "in.code").map_err(llvm_err)?.into_int_value();
+        self.b.build_store(in_error, code).map_err(llvm_err)?;
         self.b.build_return(Some(&usize_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `in_error() -> i32`: the OS code of the last standard-input read error.
+    fn in_error(&mut self, global: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let i32_ty = self.i32();
+        let f = self.function("burdin_rt_in_error", i32_ty.fn_type(&[], false));
+        let code = self.b.build_load(i32_ty, global, "in.error").map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
         Ok(f)
     }
 
@@ -1127,14 +1209,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `in_read_line(out: *String) -> i32`: appends one line of standard input to `out`, without its newline
-    /// (and without the `\r` of a `\r\n` pair). 0 is a line (the last one may be unterminated), 1 is the end of
-    /// input with nothing read, and -1 is a read error.
+    /// `in_read_line(out: *String, err: *i32) -> i32`: appends one line of standard input to `out`, without its
+    /// newline (and without the `\r` of a `\r\n` pair). 0 is a line (the last one may be unterminated), 1 is the
+    /// end of input with nothing read, and -1 is a read error, whose OS code is stored in `err`.
     fn in_read_line(&mut self, push: FunctionValue<'ctx>, fill: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (buf, pos, len) = self.in_globals();
         let (i32_ty, usize_ty, ptr_ty, i8_ty) = (self.i32(), self.usize_ty, self.ptr_ty, self.i8());
-        let f = self.function("burdin_rt_in_read_line", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_in_read_line", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
         let out = Self::ptr_param(f, 0);
+        let err = Self::ptr_param(f, 1);
         let start_slot = self.b.build_alloca(usize_ty, "start").map_err(llvm_err)?;
         let scan_slot = self.b.build_alloca(usize_ty, "scan").map_err(llvm_err)?;
         let lp = self.block(f, "loop");
@@ -1226,7 +1309,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
 
         self.b.position_at_end(need);
-        let r = self.call(fill, &[])?.expect("fill returns a status").into_int_value();
+        let r = self.call(fill, &[err.into()])?.expect("fill returns a status").into_int_value();
         let failed = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "failed").map_err(llvm_err)?;
         let ended = self.b.build_int_compare(IntPredicate::EQ, r, i32_ty.const_zero(), "ended").map_err(llvm_err)?;
         self.b.build_conditional_branch(failed, error, filled).map_err(llvm_err)?;
@@ -1249,8 +1332,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `in_read_to_string(out: *String) -> i32`: appends the rest of standard input to `out`. 0 is success and
-    /// -1 a read error.
+    /// `in_read_to_string(out: *String, err: *i32) -> i32`: appends the rest of standard input to `out`. 0 is
+    /// success and -1 a read error, whose OS code is stored in `err`.
     fn in_read_to_string(
         &mut self,
         push: FunctionValue<'ctx>,
@@ -1258,8 +1341,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
     ) -> GenResult<FunctionValue<'ctx>> {
         let (buf, pos, len) = self.in_globals();
         let (i32_ty, usize_ty, ptr_ty) = (self.i32(), self.usize_ty, self.ptr_ty);
-        let f = self.function("burdin_rt_in_read_to_string", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_in_read_to_string", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
         let out = Self::ptr_param(f, 0);
+        let err = Self::ptr_param(f, 1);
         let lp = self.block(f, "loop");
         let append = self.block(f, "append");
         let need = self.block(f, "need");
@@ -1284,7 +1368,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
 
         self.b.position_at_end(need);
-        let r = self.call(fill, &[])?.expect("fill returns a status").into_int_value();
+        let r = self.call(fill, &[err.into()])?.expect("fill returns a status").into_int_value();
         let failed = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "failed").map_err(llvm_err)?;
         let ended = self.b.build_int_compare(IntPredicate::EQ, r, i32_ty.const_zero(), "ended").map_err(llvm_err)?;
         self.b.build_conditional_branch(failed, error, filled).map_err(llvm_err)?;
@@ -2871,7 +2955,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `read_to_string(path, path_len, out: *String) -> i1`: the file's bytes, or false.
+    /// `read_to_string(path, path_len, out: *String) -> i32`: the file's bytes; 0, or the OS error code.
     fn read_to_string(
         &mut self,
         _h: &Helpers<'ctx>,
@@ -2887,10 +2971,11 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             "fread",
             usize_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into(), ptr_ty.into()], false),
         );
+        let ferror = libc(self.module, "ferror", i32_ty.fn_type(&[ptr_ty.into()], false));
         let fclose = libc(self.module, "fclose", i32_ty.fn_type(&[ptr_ty.into()], false));
         let f = self.function(
             "burdin_rt_read_to_string",
-            self.cx.bool_type().fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], false),
+            i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], false),
         );
         let (path, plen, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
         let cpath = self.cstring_of(path, plen, malloc)?;
@@ -2902,8 +2987,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let fail = self.block(f, "read.fail");
         self.b.build_conditional_branch(null, fail, ok).map_err(llvm_err)?;
         self.b.position_at_end(fail);
+        let code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&self.cx.bool_type().const_zero())).map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(ok);
         let buf = self.buffer(4096)?;
@@ -2928,13 +3014,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.position_at_end(done);
         // The loop leaves the `String` in `out`; `alloc_string` is only used to zero it on failure paths.
         let _ = alloc_string;
+        // `fread` reports a read error only through the stream's error flag, and the code is `errno`; keep it
+        // before `fclose`, which may set its own.
+        let bad = self.call(ferror, &[file.into()])?.expect("ferror returns a flag").into_int_value();
+        let failed = self.b.build_int_compare(IntPredicate::NE, bad, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let code = self.last_error(true)?;
         self.call(fclose, &[file.into()])?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&self.cx.bool_type().const_int(1, false))).map_err(llvm_err)?;
+        let status = self.b.build_select(failed, code, i32_ty.const_zero(), "read.status").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
         Ok(f)
     }
 
-    /// `write_file(path, path_len, text, text_len) -> i1`.
+    /// `write_file(path, path_len, text, text_len) -> i32`: 0, or the OS error code.
     fn write_file(&mut self, _h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
@@ -2947,7 +3039,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let fclose = libc(self.module, "fclose", i32_ty.fn_type(&[ptr_ty.into()], false));
         let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
         let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()];
-        let f = self.function("burdin_rt_write_file", self.cx.bool_type().fn_type(&params, false));
+        let f = self.function("burdin_rt_write_file", i32_ty.fn_type(&params, false));
         let (path, plen, text, tlen) =
             (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
         let cpath = self.cstring_of(path, plen, malloc)?;
@@ -2959,18 +3051,28 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let fail = self.block(f, "write.fail");
         self.b.build_conditional_branch(null, fail, ok).map_err(llvm_err)?;
         self.b.position_at_end(fail);
+        let code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&self.cx.bool_type().const_zero())).map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(ok);
         let written = self
             .call(fwrite, &[text.into(), usize_ty.const_int(1, false).into(), tlen.into(), file.into()])?
             .expect("fwrite returns a size")
             .into_int_value();
-        self.call(fclose, &[file.into()])?;
+        let short = self.b.build_int_compare(IntPredicate::NE, written, tlen, "").map_err(llvm_err)?;
+        // `fwrite` and `fclose` both report a failure through `errno`; keep the write's own code when it was
+        // the write that failed, and the close's otherwise.
+        let write_code = self.last_error(true)?;
+        let closed = self.call(fclose, &[file.into()])?.expect("fclose returns an int").into_int_value();
+        let close_code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        let all = self.b.build_int_compare(IntPredicate::EQ, written, tlen, "").map_err(llvm_err)?;
-        self.b.build_return(Some(&all)).map_err(llvm_err)?;
+        let close_failed =
+            self.b.build_int_compare(IntPredicate::NE, closed, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let failed = self.b.build_or(short, close_failed, "write.failed").map_err(llvm_err)?;
+        let code = self.b.build_select(short, write_code, close_code, "write.code").map_err(llvm_err)?.into_int_value();
+        let status = self.b.build_select(failed, code, i32_ty.const_zero(), "write.status").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
         Ok(f)
     }
 
@@ -2978,7 +3080,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
     /// the flags the options name, returning the descriptor or -1. `create_new` implies `create`. The standard
     /// library rejects the option combinations the system would reject inconsistently (`spec/stdlib.md`, "Files and
     /// file handles").
-    fn file_open(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    fn file_open(&mut self, file_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
         let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
@@ -3043,15 +3145,22 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let open = libc(self.module, "open", open_ty);
             self.call(open, &[cpath.into(), flags.into(), mode.into()])?
         };
+        let fd = fd.expect("open returns an int").into_int_value();
+        // The descriptor is -1 on failure; keep `errno` before `free`, which may set its own.
+        let code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&fd.expect("open returns an int").into_int_value())).map_err(llvm_err)?;
+        let failed =
+            self.b.build_int_compare(IntPredicate::SLT, fd, i32_ty.const_zero(), "failed").map_err(llvm_err)?;
+        let stored = self.b.build_select(failed, code, i32_ty.const_zero(), "file.code").map_err(llvm_err)?;
+        self.b.build_store(file_error, stored).map_err(llvm_err)?;
+        self.b.build_return(Some(&fd)).map_err(llvm_err)?;
         Ok(f)
     }
 
     /// `file_read(fd, out: *List<u8>, max) -> isize`: appends up to `max` bytes read from `fd` to the list at
     /// `out`, growing its buffer, and returns how many. Zero is the end of the file and -1 a read error. The list's
     /// length changes only when bytes were read.
-    fn file_read(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    fn file_read(&mut self, file_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let params = [i32_ty.into(), ptr_ty.into(), usize_ty.into()];
         let f = self.function("burdin_rt_file_read", usize_ty.fn_type(&params, false));
@@ -3130,6 +3239,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let done = self.block(f, "read.done");
         self.b.build_conditional_branch(failed, failed_block, done).map_err(llvm_err)?;
         self.b.position_at_end(failed_block);
+        let code = self.last_error(true)?;
+        self.b.build_store(file_error, code).map_err(llvm_err)?;
         self.b.build_return(Some(&usize_ty.const_all_ones())).map_err(llvm_err)?;
 
         self.b.position_at_end(done);
@@ -3141,11 +3252,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
     /// `file_write(fd, data, len: usize) -> isize`: writes a prefix of `data` and returns how many bytes the system
     /// took, or -1. A short write is not an error; `Write.write_all` calls again for the rest.
-    fn file_write(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    fn file_write(&mut self, file_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let params = [i32_ty.into(), ptr_ty.into(), usize_ty.into()];
         let f = self.function("burdin_rt_file_write", usize_ty.fn_type(&params, false));
         let (fd, data, len) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
+        let zero = usize_ty.const_zero();
         let n = if self.windows {
             let write =
                 libc(self.module, "_write", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), i32_ty.into()], false));
@@ -3160,12 +3272,16 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 libc(self.module, "write", usize_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into()], false));
             self.call(write, &[fd.into(), data.into(), len.into()])?.expect("write returns a size").into_int_value()
         };
+        let code = self.last_error(true)?;
+        let failed = self.b.build_int_compare(IntPredicate::SLT, n, zero, "failed").map_err(llvm_err)?;
+        let stored = self.b.build_select(failed, code, i32_ty.const_zero(), "file.code").map_err(llvm_err)?;
+        self.b.build_store(file_error, stored).map_err(llvm_err)?;
         self.b.build_return(Some(&n)).map_err(llvm_err)?;
         Ok(f)
     }
 
     /// `file_seek(fd, offset: i64, whence: i32) -> i64`: the new position, or -1.
-    fn file_seek(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    fn file_seek(&mut self, file_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (i32_ty, i64_ty) = (self.i32(), self.i64());
         let params = [i32_ty.into(), i64_ty.into(), i32_ty.into()];
         let f = self.function("burdin_rt_file_seek", i64_ty.fn_type(&params, false));
@@ -3179,12 +3295,18 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 libc(self.module, "lseek", i64_ty.fn_type(&[i32_ty.into(), i64_ty.into(), i32_ty.into()], false));
             self.call(seek, &[fd.into(), offset.into(), whence.into()])?
         };
-        self.b.build_return(Some(&position.expect("lseek returns a position").into_int_value())).map_err(llvm_err)?;
+        let position = position.expect("lseek returns a position").into_int_value();
+        let code = self.last_error(true)?;
+        let minus_one = i64_ty.const_all_ones();
+        let failed = self.b.build_int_compare(IntPredicate::EQ, position, minus_one, "failed").map_err(llvm_err)?;
+        let stored = self.b.build_select(failed, code, i32_ty.const_zero(), "file.code").map_err(llvm_err)?;
+        self.b.build_store(file_error, stored).map_err(llvm_err)?;
+        self.b.build_return(Some(&position)).map_err(llvm_err)?;
         Ok(f)
     }
 
     /// `file_sync(fd) -> i32`: `fsync` / `_commit`; 0 on success.
-    fn file_sync(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    fn file_sync(&mut self, file_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let i32_ty = self.i32();
         let f = self.function("burdin_rt_file_sync", i32_ty.fn_type(&[i32_ty.into()], false));
         let fd = Self::int_param(f, 0);
@@ -3195,12 +3317,17 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let fsync = libc(self.module, "fsync", i32_ty.fn_type(&[i32_ty.into()], false));
             self.call(fsync, &[fd.into()])?
         };
-        self.b.build_return(Some(&sync.expect("sync returns an int").into_int_value())).map_err(llvm_err)?;
+        let status = sync.expect("sync returns an int").into_int_value();
+        let code = self.last_error(true)?;
+        let failed = self.b.build_int_compare(IntPredicate::NE, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let stored = self.b.build_select(failed, code, i32_ty.const_zero(), "file.code").map_err(llvm_err)?;
+        self.b.build_store(file_error, stored).map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
         Ok(f)
     }
 
     /// `file_set_len(fd, size: u64) -> i32`: `ftruncate` / `_chsize_s`; 0 on success.
-    fn file_set_len(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    fn file_set_len(&mut self, file_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (i32_ty, i64_ty) = (self.i32(), self.i64());
         let params = [i32_ty.into(), i64_ty.into()];
         let f = self.function("burdin_rt_file_set_len", i32_ty.fn_type(&params, false));
@@ -3212,12 +3339,17 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let truncate = libc(self.module, "ftruncate", i32_ty.fn_type(&[i32_ty.into(), i64_ty.into()], false));
             self.call(truncate, &[fd.into(), size.into()])?
         };
-        self.b.build_return(Some(&status.expect("the resize returns an int").into_int_value())).map_err(llvm_err)?;
+        let status = status.expect("the resize returns an int").into_int_value();
+        let code = self.last_error(true)?;
+        let failed = self.b.build_int_compare(IntPredicate::NE, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let stored = self.b.build_select(failed, code, i32_ty.const_zero(), "file.code").map_err(llvm_err)?;
+        self.b.build_store(file_error, stored).map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
         Ok(f)
     }
 
     /// `file_close(fd) -> i32`: `close` / `_close`; 0 on success.
-    fn file_close(&mut self) -> GenResult<FunctionValue<'ctx>> {
+    fn file_close(&mut self, file_error: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let i32_ty = self.i32();
         let f = self.function("burdin_rt_file_close", i32_ty.fn_type(&[i32_ty.into()], false));
         let fd = Self::int_param(f, 0);
@@ -3228,12 +3360,26 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let close = libc(self.module, "close", i32_ty.fn_type(&[i32_ty.into()], false));
             self.call(close, &[fd.into()])?
         };
-        self.b.build_return(Some(&close.expect("close returns an int").into_int_value())).map_err(llvm_err)?;
+        let status = close.expect("close returns an int").into_int_value();
+        let code = self.last_error(true)?;
+        let failed = self.b.build_int_compare(IntPredicate::NE, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let stored = self.b.build_select(failed, code, i32_ty.const_zero(), "file.code").map_err(llvm_err)?;
+        self.b.build_store(file_error, stored).map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
         Ok(f)
     }
 
-    /// `read_dir(path, path_len, out: *List<String>) -> i32`: the entry names, or -1. `.` and `..` are
-    /// skipped. Every failure leaves an empty, valid list in `out`.
+    /// `file_error() -> i32`: the OS code of the last failed file operation.
+    fn file_error(&mut self, global: PointerValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let i32_ty = self.i32();
+        let f = self.function("burdin_rt_file_error", i32_ty.fn_type(&[], false));
+        let code = self.b.build_load(i32_ty, global, "file.error").map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `read_dir(path, path_len, out: *List<String>) -> i32`: the entry names; 0, or the OS error code. `.`
+    /// and `..` are skipped. Every failure leaves an empty, valid list in `out`.
     fn read_dir(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
@@ -3278,20 +3424,36 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let fail = self.block(f, "read_dir.fail");
         self.b.build_conditional_branch(missing, fail, open).map_err(llvm_err)?;
         self.b.position_at_end(fail);
+        let code = self.last_error(true)?;
         self.call(free, &[path.into()])?;
-        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(open);
         let scan = self.block(f, "read_dir.scan");
         let entry = self.block(f, "read_dir.entry");
         let append = self.block(f, "read_dir.append");
+        let scan_end = self.block(f, "read_dir.scan_end");
+        let read_fail = self.block(f, "read_dir.read_fail");
         let done = self.block(f, "read_dir.done");
         self.b.build_unconditional_branch(scan).map_err(llvm_err)?;
 
         self.b.position_at_end(scan);
+        // `readdir` returns NULL both at the end of the listing and on an error, and only sets `errno` for the
+        // error; zero it first so the two can be told apart.
+        let errno = self.errno_ptr()?;
+        self.b.build_store(errno, i32_ty.const_zero()).map_err(llvm_err)?;
         let ent = self.call(readdir, &[dir.into()])?.expect("readdir returns a pointer").into_pointer_value();
         let end = self.b.build_is_null(ent, "").map_err(llvm_err)?;
-        self.b.build_conditional_branch(end, done, entry).map_err(llvm_err)?;
+        self.b.build_conditional_branch(end, scan_end, entry).map_err(llvm_err)?;
+
+        self.b.position_at_end(scan_end);
+        let code = self.b.build_load(i32_ty, errno, "readdir.errno").map_err(llvm_err)?.into_int_value();
+        let bad = self.b.build_int_compare(IntPredicate::NE, code, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(bad, read_fail, done).map_err(llvm_err)?;
+
+        self.b.position_at_end(read_fail);
+        self.call(free, &[path.into()])?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(entry);
         let name = self.offset(ent, usize_ty.const_int(DIRENT_NAME_OFFSET, false))?;
@@ -3385,14 +3547,17 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let fail = self.block(f, "read_dir.fail");
         self.b.build_conditional_branch(invalid, fail, open).map_err(llvm_err)?;
         self.b.position_at_end(fail);
+        let code = self.last_error(false)?;
         self.call_rt_free(pattern)?;
         self.call(free, &[path.into()])?;
-        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(open);
         let entry = self.block(f, "read_dir.entry");
         let append = self.block(f, "read_dir.append");
         let next = self.block(f, "read_dir.next");
+        let next_end = self.block(f, "read_dir.next_end");
+        let next_fail = self.block(f, "read_dir.next_fail");
         let done = self.block(f, "read_dir.done");
         self.b.build_unconditional_branch(entry).map_err(llvm_err)?;
 
@@ -3412,7 +3577,27 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .expect("FindNextFileA returns a flag")
             .into_int_value();
         let has_more = self.b.build_int_compare(IntPredicate::NE, more, i32_ty.const_zero(), "").map_err(llvm_err)?;
-        self.b.build_conditional_branch(has_more, entry, done).map_err(llvm_err)?;
+        self.b.build_conditional_branch(has_more, entry, next_end).map_err(llvm_err)?;
+
+        // `ERROR_NO_MORE_FILES` is the normal end of the listing; any other code is a failure.
+        self.b.position_at_end(next_end);
+        let code = self.last_error(false)?;
+        let last = self
+            .b
+            .build_int_compare(
+                IntPredicate::EQ,
+                code,
+                i32_ty.const_int(u64::from(ERROR_NO_MORE_FILES), false),
+                "no.more",
+            )
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(last, done, next_fail).map_err(llvm_err)?;
+
+        self.b.position_at_end(next_fail);
+        self.call(find_close, &[handle.into()])?;
+        self.call_rt_free(pattern)?;
+        self.call(free, &[path.into()])?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(done);
         self.call(find_close, &[handle.into()])?;
@@ -3487,7 +3672,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(())
     }
 
-    /// `create_dir(path, path_len) -> i32`: `mkdir`/`_mkdir`.
+    /// `create_dir(path, path_len) -> i32`: `mkdir`/`_mkdir`; 0, or the OS error code.
     fn create_dir(&mut self) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
@@ -3502,8 +3687,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let mkdir = libc(self.module, "mkdir", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into()], false));
             self.call(mkdir, &[cpath.into(), i32_ty.const_int(0o777, false).into()])?
         };
+        let status = status.expect("mkdir returns an int").into_int_value();
+        let code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&status.expect("mkdir returns an int").into_int_value())).map_err(llvm_err)?;
+        let ok = self.b.build_int_compare(IntPredicate::EQ, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let result = self.b.build_select(ok, i32_ty.const_zero(), code, "mkdir.status").map_err(llvm_err)?;
+        self.b.build_return(Some(&result)).map_err(llvm_err)?;
         Ok(f)
     }
 
@@ -3517,7 +3706,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.remove_path("burdin_rt_remove_file", "unlink", "_unlink")
     }
 
-    /// A one-path removal: `(path, path_len) -> i32`, the C function's status.
+    /// A one-path removal: `(path, path_len) -> i32`; 0, or the OS error code.
     fn remove_path(&mut self, name: &str, unix: &str, windows: &str) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
@@ -3527,14 +3716,17 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let cpath = self.cstring_of(path, plen, malloc)?;
         let symbol = if self.windows { windows } else { unix };
         let remove = libc(self.module, symbol, i32_ty.fn_type(&[ptr_ty.into()], false));
-        let status = self.call(remove, &[cpath.into()])?;
+        let status = self.call(remove, &[cpath.into()])?.expect("the removal returns an int").into_int_value();
+        let code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&status.expect("the removal returns an int").into_int_value())).map_err(llvm_err)?;
+        let ok = self.b.build_int_compare(IntPredicate::EQ, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let result = self.b.build_select(ok, i32_ty.const_zero(), code, "remove.status").map_err(llvm_err)?;
+        self.b.build_return(Some(&result)).map_err(llvm_err)?;
         Ok(f)
     }
 
     /// `rename(from, from_len, to, to_len) -> i32`: `rename`, or `MoveFileExA` with
-    /// `MOVEFILE_REPLACE_EXISTING` on Windows.
+    /// `MOVEFILE_REPLACE_EXISTING` on Windows; 0, or the OS error code.
     fn rename(&mut self) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
@@ -3555,21 +3747,22 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 )?
                 .expect("MoveFileExA returns a flag")
                 .into_int_value();
+            let code = self.last_error(false)?;
             self.call(free, &[cfrom.into()])?;
             self.call(free, &[cto.into()])?;
             let moved = self.b.build_int_compare(IntPredicate::NE, ok, i32_ty.const_zero(), "").map_err(llvm_err)?;
-            let status = self
-                .b
-                .build_select(moved, i32_ty.const_zero(), i32_ty.const_all_ones(), "")
-                .map_err(llvm_err)?
-                .into_int_value();
+            let status = self.b.build_select(moved, i32_ty.const_zero(), code, "rename.status").map_err(llvm_err)?;
             self.b.build_return(Some(&status)).map_err(llvm_err)?;
         } else {
             let rename = libc(self.module, "rename", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
-            let status = self.call(rename, &[cfrom.into(), cto.into()])?;
+            let status =
+                self.call(rename, &[cfrom.into(), cto.into()])?.expect("rename returns an int").into_int_value();
+            let code = self.last_error(true)?;
             self.call(free, &[cfrom.into()])?;
             self.call(free, &[cto.into()])?;
-            self.b.build_return(Some(&status.expect("rename returns an int").into_int_value())).map_err(llvm_err)?;
+            let ok = self.b.build_int_compare(IntPredicate::EQ, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let status = self.b.build_select(ok, i32_ty.const_zero(), code, "rename.status").map_err(llvm_err)?;
+            self.b.build_return(Some(&status)).map_err(llvm_err)?;
         }
         Ok(f)
     }
@@ -3600,8 +3793,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let fail = self.block(f, "meta.fail");
         self.b.build_conditional_branch(ok, fill, fail).map_err(llvm_err)?;
         self.b.position_at_end(fail);
+        let code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(fill);
         let load = |b: &Builder<'ctx>, offset: u64, ty: IntType<'ctx>, name: &str| -> GenResult<IntValue<'ctx>> {
@@ -3681,8 +3875,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let fail = self.block(f, "canon.fail");
             self.b.build_conditional_branch(missing, fail, resolve).map_err(llvm_err)?;
             self.b.position_at_end(fail);
+            let code = self.last_error(true)?;
             self.call(free, &[cpath.into()])?;
-            self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+            self.b.build_return(Some(&code)).map_err(llvm_err)?;
             self.b.position_at_end(resolve);
         }
         let resolved = if self.windows {
@@ -3702,8 +3897,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let fail = self.block(f, "canon.fail");
         self.b.build_conditional_branch(missing, fail, ok).map_err(llvm_err)?;
         self.b.position_at_end(fail);
+        let code = self.last_error(true)?;
         self.call(free, &[cpath.into()])?;
-        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(ok);
         let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
@@ -3911,24 +4107,30 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(exit)
     }
 
-    /// `run(command, command_len) -> i32`: runs the command through the system shell. The result is -1 when the
-    /// shell could not start, and the command's exit code otherwise.
+    /// `run(command, command_len, err: *i32) -> i32`: runs the command through the system shell. The result is
+    /// -1 when the shell could not start, with the OS error code in `err`, and the command's exit code otherwise.
     fn run_command(&mut self) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
         let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
         let system = libc(self.module, "system", i32_ty.fn_type(&[ptr_ty.into()], false));
-        let f = self.function("burdin_rt_run", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into()];
+        let f = self.function("burdin_rt_run", i32_ty.fn_type(&params, false));
+        let err = Self::ptr_param(f, 2);
+        self.b.build_store(err, i32_ty.const_zero()).map_err(llvm_err)?;
         let cpath = self.cstring_of(Self::ptr_param(f, 0), Self::int_param(f, 1), malloc)?;
         let status = self.call(system, &[cpath.into()])?.expect("system returns a status").into_int_value();
+        let minus_one = i32_ty.const_all_ones();
+        let failed = self.b.build_int_compare(IntPredicate::EQ, status, minus_one, "").map_err(llvm_err)?;
+        let code = self.last_error(true)?;
+        let error = self.b.build_select(failed, code, i32_ty.const_zero(), "run.error").map_err(llvm_err)?;
+        self.b.build_store(err, error).map_err(llvm_err)?;
         self.call(free, &[cpath.into()])?;
         if self.windows {
             self.b.build_return(Some(&status)).map_err(llvm_err)?;
             return Ok(f);
         }
         // POSIX `system` returns a wait status: the exit code is its second byte. -1 stays -1.
-        let minus_one = i32_ty.const_all_ones();
-        let failed = self.b.build_int_compare(IntPredicate::EQ, status, minus_one, "").map_err(llvm_err)?;
         let shift = self.b.build_right_shift(status, i32_ty.const_int(8, false), false, "").map_err(llvm_err)?;
         let code = self.b.build_and(shift, i32_ty.const_int(0xff, false), "").map_err(llvm_err)?;
         let result = self.b.build_select(failed, minus_one, code, "").map_err(llvm_err)?;

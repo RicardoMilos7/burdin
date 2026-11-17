@@ -65,7 +65,8 @@ Stdin  { fn is_terminal(self): bool }
   and the last line may have no terminator. `read_to_string` returns everything left, as the empty `String` at the
   end. All of them take bytes from the same buffer, so they can be mixed. Unlike the `Read` and `BufRead` defaults,
   `Stdin.read_line` and `Stdin.read_to_string` do not check the bytes for UTF-8, as with files.
-- A read error is `IoError.Read` with the path `<stdin>` (`errors.md`, ERR10).
+- A read error is `IoError.Read` with the path `<stdin>`, the portable kind, and the OS code (`errors.md`,
+  ERR10-ERR11).
 - Because the handles implement interfaces whose methods take `mut self`, a handle is bound with `mut`
   (`let mut out = stdout()`); a temporary such as `stdout().write_line("x")` needs no binding.
 - `is_terminal` asks the operating system whether that stream is a terminal. It is false under the conformance
@@ -920,7 +921,9 @@ Path {   // extension methods, the same operations with the receiver as the path
 Every function is impure: a comptime evaluation that reaches one fails with E0224. A read that only inspects the
 file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
 (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`) reports `IoError.Write`.
-`rename` names its destination `to` in the error.
+Each error carries the portable kind and the OS code (`errors.md`, ERR10-ERR11). `rename` names its destination `to`
+in the error. `remove_dir_all` on a path that is not a directory has kind `NotADirectory` and no OS code, because
+`std` saw the kind before any system call failed.
 
 - `read_dir` returns the entry names, not paths, without `.` and `..`, in the order the system returns them; sort the
   list for a deterministic order. A missing path or a file is an error. The names join with `Path.join`.
@@ -1367,18 +1370,28 @@ prints the wrapped error's `Display` (`errors.md`, ERR4). `TraceFrame` implement
 `Error` and a propagation frame at each `?` that passes a `Result<..., Error>` outward, and a release build records
 none (`errors.md`, ERR7).
 
-`std` declares its error types (`errors.md`, ERR10):
+`std` declares its error types (`errors.md`, ERR10-ERR11):
 
 ```
+enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+    NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
+    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut  Other
+}
+IoErrorKind: Display { fn fmt(self, mut f: Formatter) }   // "not found", "permission denied", ...
+
 error enum IoError {
-    Read { path: String }    "cannot read {path}"
-    Write { path: String }   "cannot write {path}"
-    Run { command: String }  "cannot run {command}"
+    Read { path: String, kind: IoErrorKind, os_code: Option<i32> }      "cannot read {path}: {kind}"
+    Write { path: String, kind: IoErrorKind, os_code: Option<i32> }     "cannot write {path}: {kind}"
+    Run { command: String, kind: IoErrorKind, os_code: Option<i32> }    "cannot run {command}: {kind}"
     UnexpectedEof            "unexpected end of input"
     WriteZero                "the writer accepted no bytes"
     InvalidData              "the bytes are not valid text"
     Seek                     "seek to a position before the start"
     InvalidInput             "invalid open options"
+}
+IoError {
+    fn kind(self): IoErrorKind
+    fn os_code(self): Option<i32>
 }
 
 error enum ParseIntError {
@@ -1387,11 +1400,13 @@ error enum ParseIntError {
 ```
 
 `read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
-`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The readers and writers return
-`UnexpectedEof` (`read_exact` on a source that ended), `WriteZero` (`write_all` on a sink that takes nothing),
-`InvalidData` (text that is not UTF-8), and `Seek` (a position before the start); `OpenOptions.open` returns
-`InvalidInput` for an option set it rejects ("Files and file handles"). The set of variants is settled together
-with the operating-system error codes in issue #701.
+`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The kind is portable and the OS code is the
+platform's own (`errno`, or the Win32 error code); the message ends with the kind's text, so a missing file prints
+`cannot read missing.txt: not found`. The readers and writers return `UnexpectedEof` (`read_exact` on a source that
+ended), `WriteZero` (`write_all` on a sink that takes nothing), `InvalidData` (text that is not UTF-8), and `Seek`
+(a position before the start); `OpenOptions.open` returns `InvalidInput` for an option set it rejects ("Files and
+file handles"). Those five are failures `std` observed itself, so they carry no OS code; `kind()` still classifies
+them (`errors.md`, ERR11).
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
@@ -1411,9 +1426,9 @@ fn process.run(command: str): Result<i32, IoError>
 `read_to_string` and `write_file` read and write raw bytes: there is no newline translation on Windows and no UTF-8
 normalization, so a string written and read back is byte-identical (`len` is the byte count). `process.run` runs the
 command through the system shell and returns its status: the POSIX wait status is shifted, the Windows status is
-returned as is. On failure each returns the matching `IoError` variant, and an integer `parse` returns
-`ParseIntError.Invalid` (`errors.md`, ERR10). The byte-level helpers (`read`, `write`, `append`, `copy_file`,
-`exists`) and the owning `File` handle are in "Files and file handles".
+returned as is. On failure each returns the matching `IoError` variant with its kind and OS code, and an integer
+`parse` returns `ParseIntError.Invalid` (`errors.md`, ERR10-ERR11). The byte-level helpers (`read`, `write`,
+`append`, `copy_file`, `exists`) and the owning `File` handle are in "Files and file handles".
 
 None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
 
@@ -1668,7 +1683,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
-| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
+| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors`, `m24_stdlib/io_error_kinds`, `io_error_kind_display`, `io_error_kind_mapping` |
 | Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode` |
 | Child processes | `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`, `m20_comptime/purity_process` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |

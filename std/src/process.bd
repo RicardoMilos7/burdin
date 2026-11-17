@@ -9,7 +9,7 @@
 
 use mem.replace
 use option.take
-use std.IoError
+use std.{IoError, IoErrorKind}
 use target.{Os, os}
 use unicode.to_lowercase
 
@@ -22,7 +22,11 @@ fn exit(code: i32): ! {
 fn run(command: str): Result<i32, IoError> {
     match __run(command) {
         Ok(status) => Ok(status),
-        Err(_) => Err(IoError.Run { command: command.to_string() }),
+        Err(code) => Err(IoError.Run {
+            command: command.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }
 
@@ -206,7 +210,7 @@ Child {
     /// that reads it sees the end of the input instead of waiting. Waiting twice is an error.
     fn wait(mut self): Result<ExitStatus, IoError> {
         if self.waited {
-            return Err(IoError.Run { command: self.command.clone() })
+            return Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: None })
         }
         self.waited = true
         // The handle's `Drop` closes the pipe at the end of this statement.
@@ -216,7 +220,7 @@ Child {
         }
         let raw = __process_wait(self.pid, self.process)
         if raw == -1 {
-            return Err(IoError.Run { command: self.command.clone() })
+            return Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: None })
         }
         Ok(__exit_status(raw))
     }
@@ -255,8 +259,12 @@ Child {
                     stdout_text = pair.0
                     stderr_text = pair.1
                 }
-                Err(_) => {
-                    return Err(IoError.Read { path: String.from("<child>") })
+                Err(code) => {
+                    return Err(IoError.Read {
+                        path: String.from("<child>"),
+                        kind: __failure_kind(code),
+                        os_code: __failure_code(code),
+                    })
                 }
             }
         } else if stdout_handle != 0 {
@@ -264,9 +272,13 @@ Child {
                 Ok(text) => {
                     stdout_text = text
                 }
-                Err(_) => {
+                Err(code) => {
                     __pipe_close(stdout_handle)
-                    return Err(IoError.Read { path: String.from("<stdout>") })
+                    return Err(IoError.Read {
+                        path: String.from("<stdout>"),
+                        kind: __failure_kind(code),
+                        os_code: __failure_code(code),
+                    })
                 }
             }
             __pipe_close(stdout_handle)
@@ -275,9 +287,13 @@ Child {
                 Ok(text) => {
                     stderr_text = text
                 }
-                Err(_) => {
+                Err(code) => {
                     __pipe_close(stderr_handle)
-                    return Err(IoError.Read { path: String.from("<stderr>") })
+                    return Err(IoError.Read {
+                        path: String.from("<stderr>"),
+                        kind: __failure_kind(code),
+                        os_code: __failure_code(code),
+                    })
                 }
             }
             __pipe_close(stderr_handle)
@@ -308,7 +324,7 @@ ChildStdin {
         if __pipe_write(self.handle, text) == 0 {
             Ok(())
         } else {
-            Err(IoError.Write { path: String.from("<stdin>") })
+            Err(IoError.Write { path: String.from("<stdin>"), kind: IoErrorKind.Other, os_code: None })
         }
     }
 
@@ -336,7 +352,11 @@ ChildStdout {
     fn read_to_string(self): Result<String, IoError> {
         match __pipe_read_to_string(self.handle) {
             Ok(text) => Ok(text),
-            Err(_) => Err(IoError.Read { path: String.from("<stdout>") }),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stdout>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
         }
     }
 
@@ -345,7 +365,11 @@ ChildStdout {
     fn read_line(self): Result<Option<String>, IoError> {
         match __pipe_read_line(self.handle) {
             Ok(line) => Ok(line),
-            Err(_) => Err(IoError.Read { path: String.from("<stdout>") }),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stdout>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
         }
     }
 
@@ -373,7 +397,11 @@ ChildStderr {
     fn read_to_string(self): Result<String, IoError> {
         match __pipe_read_to_string(self.handle) {
             Ok(text) => Ok(text),
-            Err(_) => Err(IoError.Read { path: String.from("<stderr>") }),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stderr>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
         }
     }
 
@@ -381,7 +409,11 @@ ChildStderr {
     fn read_line(self): Result<Option<String>, IoError> {
         match __pipe_read_line(self.handle) {
             Ok(line) => Ok(line),
-            Err(_) => Err(IoError.Read { path: String.from("<stderr>") }),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stderr>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
         }
     }
 
@@ -473,8 +505,23 @@ priv fn __spawn(
                 errors: __child_stderr(errors),
             })
         }
-        Err(_) => Err(IoError.Run { command: command.program.clone() }),
+        Err(code) => Err(IoError.Run {
+            command: command.program.clone(),
+            kind: __failure_kind(code),
+            os_code: __failure_code(code),
+        }),
     }
+}
+
+/// The kind of a process or pipe failure. Those primitives report 0 when the runtime path has no OS code, and 0
+/// is `Other` (`spec/errors.md`, ERR10-ERR11).
+priv fn __failure_kind(code: i32): IoErrorKind {
+    if code > 0 { __io_kind(code) } else { IoErrorKind.Other }
+}
+
+/// The OS code of a process or pipe failure, when the primitive reported one.
+priv fn __failure_code(code: i32): Option<i32> {
+    if code > 0 { Some(code) } else { None }
 }
 
 /// The primitive's stream mode: 0 inherited, 1 piped, 2 null.

@@ -20,6 +20,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__file_sync" => Builtin::FileSync,
         "__file_set_len" => Builtin::FileSetLen,
         "__file_close" => Builtin::FileClose,
+        "__file_error" => Builtin::FileError,
         "__stdout_write" => Builtin::StdoutWrite,
         "__stdout_write_line" => Builtin::StdoutWriteLine,
         "__stdout_flush" => Builtin::StdoutFlush,
@@ -32,6 +33,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__stdin_read_to_string" => Builtin::StdinReadToString,
         "__stdin_avail" => Builtin::StdinAvail,
         "__stdin_next_byte" => Builtin::StdinNextByte,
+        "__stdin_error" => Builtin::StdinError,
         "__read_dir" => Builtin::ReadDir,
         "__create_dir" => Builtin::CreateDir,
         "__remove_dir" => Builtin::RemoveDir,
@@ -39,6 +41,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__rename" => Builtin::RenamePath,
         "__metadata" => Builtin::Metadata,
         "__canonicalize" => Builtin::Canonicalize,
+        "__io_kind" => Builtin::IoErrorKind,
         "__clock" => Builtin::Clock,
         "__entropy" => Builtin::Entropy,
         "__sleep" => Builtin::Sleep,
@@ -72,32 +75,34 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
 }
 
 pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
-    // The I/O primitives report the standard library's `IoError` when it is there (`spec/errors.md`, ERR10). The
-    // primitives produce a zeroed error value; the `std` wrappers replace it with the real variant.
-    let io_error = || globals.io_error_ty.clone().unwrap_or(Ty::Unit);
+    // The I/O primitives report the operating system's own error code; the `std` wrappers turn it into the
+    // `IoError` of `spec/errors.md` ERR10 with `__io_kind` for the portable kind (ERR11).
+    let os_code = || Ty::Int(IntTy::I32);
     let ret = match b {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
         Builtin::TargetOs | Builtin::TargetArch => Ty::Str,
         Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
         Builtin::CStringFrom => Ty::CString,
-        Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
-        Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(io_error())),
-        Builtin::FileOpen => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
-        Builtin::FileRead | Builtin::FileWrite => Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(io_error())),
-        Builtin::FileSeek => Ty::Result(Box::new(Ty::Int(IntTy::I64)), Box::new(io_error())),
+        Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
+        Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(os_code())),
+        Builtin::FileOpen => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(os_code())),
+        Builtin::FileRead | Builtin::FileWrite => Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(os_code())),
+        Builtin::FileSeek => Ty::Result(Box::new(Ty::Int(IntTy::I64)), Box::new(os_code())),
         Builtin::FileSync | Builtin::FileSetLen | Builtin::FileClose => {
-            Ty::Result(Box::new(Ty::Unit), Box::new(io_error()))
+            Ty::Result(Box::new(Ty::Unit), Box::new(os_code()))
         }
-        Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
-        Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
+        Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(os_code())),
+        Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
         Builtin::IsTerminal => Ty::Bool,
         Builtin::StdinAvail => Ty::Int(IntTy::Isize),
         Builtin::StdinNextByte => Ty::Int(IntTy::U8),
+        Builtin::StdinError => Ty::Int(IntTy::I32),
+        Builtin::FileError => Ty::Int(IntTy::I32),
         Builtin::ReadDir => {
-            Ty::Result(Box::new(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)), Box::new(io_error()))
+            Ty::Result(Box::new(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)), Box::new(os_code()))
         }
         Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
-            Ty::Result(Box::new(Ty::Unit), Box::new(io_error()))
+            Ty::Result(Box::new(Ty::Unit), Box::new(os_code()))
         }
         // `(size: u64, mode: u64, modified: i64, accessed: i64, flags: u64)`: the raw `stat` fields, which
         // `std` turns into `Metadata`.
@@ -109,9 +114,9 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
                 Ty::Int(IntTy::I64),
                 Ty::Int(IntTy::U64),
             ])),
-            Box::new(io_error()),
+            Box::new(os_code()),
         ),
-        Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
+        Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
         Builtin::Clock => Ty::Int(IntTy::I64),
         Builtin::Entropy => Ty::Int(IntTy::U64),
         Builtin::EnvArgs | Builtin::EnvList => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
@@ -135,12 +140,21 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
                 Ty::Int(IntTy::Usize),
                 Ty::Int(IntTy::Usize),
             ])),
-            Box::new(io_error()),
+            Box::new(os_code()),
         ),
-        Builtin::PipeReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
-        Builtin::PipeReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
-        Builtin::PipeReadBoth => Ty::Result(Box::new(Ty::Tuple(vec![Ty::String, Ty::String])), Box::new(io_error())),
-        Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
+        // The process and pipe primitives report 0 when their runtime path has no OS code to give; the `std`
+        // wrappers turn 0 into the `Other` kind and `os_code() == None` (`spec/errors.md`, ERR10).
+        Builtin::PipeReadToString => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
+        Builtin::PipeReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(os_code())),
+        Builtin::PipeReadBoth => Ty::Result(Box::new(Ty::Tuple(vec![Ty::String, Ty::String])), Box::new(os_code())),
+        Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(os_code())),
+        // `IoErrorKind` is the enum the standard library declares; a standard library without that enum (or
+        // with a struct of the same name) leaves the builtin untyped, and a caller then fails to type-check
+        // instead of the code generator meeting an unexpected type.
+        Builtin::IoErrorKind => match &globals.io_error_kind_ty {
+            Some(Ty::Enum(_)) => globals.io_error_kind_ty.clone().unwrap(),
+            _ => Ty::Unit,
+        },
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
         Builtin::FloatFromBits(ft) => Ty::Float(ft),
         _ => Ty::Unit,
@@ -158,7 +172,9 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::StdinReadLine
         | Builtin::StdinReadToString
         | Builtin::StdinAvail
-        | Builtin::StdinNextByte => Vec::new(),
+        | Builtin::StdinNextByte
+        | Builtin::StdinError
+        | Builtin::FileError => Vec::new(),
         Builtin::ProcessClose | Builtin::PipeClose => vec![ParamSig::plain(Ty::Int(IntTy::Usize))],
         Builtin::ProcessWait => {
             vec![ParamSig::plain(Ty::Int(IntTy::I32)), ParamSig::plain(Ty::Int(IntTy::Usize))]
@@ -228,6 +244,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         }
         Builtin::RenamePath => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
+        Builtin::IoErrorKind => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::RawAlloc => vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Int(IntTy::Usize))],
@@ -482,32 +499,40 @@ mod tests {
     use crate::globals::Globals;
 
     #[test]
-    fn io_primitive_signatures_use_the_std_error() {
-        let error = Ty::Int(IntTy::I64);
-        let globals = Globals { io_error_ty: Some(error.clone()), ..Globals::default() };
+    fn io_primitive_signatures_use_the_operating_system_code() {
+        // The primitives report the OS code itself; `std` maps it with `__io_kind` (spec/errors.md, ERR10-ERR11).
+        let code = Ty::Int(IntTy::I32);
+        let globals = Globals::default();
         assert_eq!(
             builtin_sig(Builtin::ReadToString, &globals).ret,
-            Ty::Result(Box::new(Ty::String), Box::new(error.clone()))
+            Ty::Result(Box::new(Ty::String), Box::new(code.clone()))
         );
         assert_eq!(
             builtin_sig(Builtin::WriteFile, &globals).ret,
-            Ty::Result(Box::new(Ty::Unit), Box::new(error.clone()))
+            Ty::Result(Box::new(Ty::Unit), Box::new(code.clone()))
         );
         assert_eq!(
             builtin_sig(Builtin::RunCommand, &globals).ret,
-            Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(error))
+            Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(code.clone()))
         );
-        // Without a standard library the primitive falls back to the unit placeholder rather than failing.
-        assert_eq!(
-            builtin_sig(Builtin::ReadToString, &Globals::default()).ret,
-            Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit))
-        );
+        // Without a standard library `__io_kind` has no result type to name.
+        assert_eq!(builtin_sig(Builtin::IoErrorKind, &Globals::default()).ret, Ty::Unit);
+        let kind = Ty::Enum(burdin_tir::AdtRef { id: 0, name: "IoErrorKind".into(), second_class: false });
+        let globals = Globals { io_error_kind_ty: Some(kind.clone()), ..Globals::default() };
+        let sig = builtin_sig(Builtin::IoErrorKind, &globals);
+        assert_eq!(sig.ret, kind);
+        assert_eq!(sig.params.len(), 1);
+        assert_eq!(sig.params[0].ty, code);
+        assert!(!sig.params[0].own);
+        // A standard library whose `IoErrorKind` is not an enum leaves the builtin untyped.
+        let not_an_enum = Globals { io_error_kind_ty: Some(Ty::Int(IntTy::U8)), ..Globals::default() };
+        assert_eq!(builtin_sig(Builtin::IoErrorKind, &not_an_enum).ret, Ty::Unit);
     }
 
     #[test]
     fn file_primitive_signatures_take_the_handle_and_the_caller_buffer() {
-        let error = Ty::Int(IntTy::I64);
-        let globals = Globals { io_error_ty: Some(error.clone()), ..Globals::default() };
+        let error = Ty::Int(IntTy::I32);
+        let globals = Globals::default();
         for (name, found) in [
             ("__file_open", Builtin::FileOpen),
             ("__file_read", Builtin::FileRead),
@@ -516,6 +541,7 @@ mod tests {
             ("__file_sync", Builtin::FileSync),
             ("__file_set_len", Builtin::FileSetLen),
             ("__file_close", Builtin::FileClose),
+            ("__file_error", Builtin::FileError),
         ] {
             assert_eq!(builtin(name), Some(found));
         }
@@ -548,6 +574,8 @@ mod tests {
         for b in [Builtin::FileSync, Builtin::FileSetLen, Builtin::FileClose] {
             assert_eq!(builtin_sig(b, &globals).ret, Ty::Result(Box::new(Ty::Unit), Box::new(error.clone())));
         }
+        assert_eq!(builtin_sig(Builtin::FileError, &globals).ret, error);
+        assert!(builtin_sig(Builtin::FileError, &globals).params.is_empty());
     }
 
     #[test]
@@ -645,8 +673,8 @@ mod tests {
 
     #[test]
     fn stream_builtin_signatures() {
-        let error = Ty::Int(IntTy::I64);
-        let globals = Globals { io_error_ty: Some(error.clone()), ..Globals::default() };
+        let error = Ty::Int(IntTy::I32);
+        let globals = Globals::default();
         assert_eq!(builtin("__stdin_read_line"), Some(Builtin::StdinReadLine));
         assert_eq!(builtin("__stdin_read_to_string"), Some(Builtin::StdinReadToString));
         assert_eq!(builtin("__stderr_write_line"), Some(Builtin::StderrWriteLine));

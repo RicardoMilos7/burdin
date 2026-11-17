@@ -31,7 +31,7 @@ struct Broken {
 
 Broken: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
-        Err(IoError.Write { path: String.from("broken") })
+        Err(IoError.Write { path: String.from("broken"), kind: IoErrorKind.Other, os_code: None })
     }
 
     fn flush(mut self): Result<(), IoError> {

@@ -70,6 +70,8 @@ pub enum Builtin {
     FileSetLen,
     /// `__file_close(fd)`: closes the descriptor.
     FileClose,
+    /// `__file_error()`: the OS code of the last failed file operation (`spec/errors.md`, ERR11).
+    FileError,
     /// `__stdout_write(text)`: appends to the standard-output buffer.
     StdoutWrite,
     /// `__stdout_write_line(text)`: appends `text` and a newline to the standard-output buffer.
@@ -95,6 +97,8 @@ pub enum Builtin {
     StdinAvail,
     /// `__stdin_next_byte()`: takes the next buffered byte of standard input (only after `__stdin_avail` was positive).
     StdinNextByte,
+    /// `__stdin_error()`: the OS code of the last standard-input read error (`spec/errors.md`, ERR11).
+    StdinError,
     /// `__read_dir(path)`: the names of the entries in a directory (`spec/stdlib.md`, issue #411).
     ReadDir,
     /// `__create_dir(path)`: creates one directory.
@@ -109,6 +113,9 @@ pub enum Builtin {
     Metadata,
     /// `__canonicalize(path)`: the absolute, normalized path.
     Canonicalize,
+    /// `__io_kind(code)`: the portable `IoErrorKind` of an operating system error code (`spec/errors.md`,
+    /// ERR11). The compiler knows the target's table (`ioerror`).
+    IoErrorKind,
     /// `__clock(kind)`: nanoseconds from the real-time clock (kind 0, since the Unix epoch) or the monotonic clock
     /// (any other kind, from an unspecified start) (`spec/stdlib.md`, issue #195).
     Clock,

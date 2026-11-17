@@ -1,0 +1,37 @@
+//@ run
+//> not found
+//> permission denied
+//> already exists
+//> is a directory
+//> not a directory
+//> directory not empty
+//> invalid input
+//> invalid data
+//> unexpected end of file
+//> interrupted
+//> broken pipe
+//> would block
+//> timed out
+//> other
+//> NotFound
+
+// The text of each kind is part of the stable `IoError` message (`spec/errors.md`, ERR11), and `Debug` comes
+// from the derive.
+
+fn main() {
+    println("{}", IoErrorKind.NotFound)
+    println("{}", IoErrorKind.PermissionDenied)
+    println("{}", IoErrorKind.AlreadyExists)
+    println("{}", IoErrorKind.IsADirectory)
+    println("{}", IoErrorKind.NotADirectory)
+    println("{}", IoErrorKind.DirectoryNotEmpty)
+    println("{}", IoErrorKind.InvalidInput)
+    println("{}", IoErrorKind.InvalidData)
+    println("{}", IoErrorKind.UnexpectedEof)
+    println("{}", IoErrorKind.Interrupted)
+    println("{}", IoErrorKind.BrokenPipe)
+    println("{}", IoErrorKind.WouldBlock)
+    println("{}", IoErrorKind.TimedOut)
+    println("{}", IoErrorKind.Other)
+    println("{:?}", IoErrorKind.NotFound)
+}
