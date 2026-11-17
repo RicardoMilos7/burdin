@@ -248,7 +248,7 @@ Compiles the target to a native executable. On success it prints nothing and exi
   program, reads the sections with `llvm-dwarfdump` (from the `.dSYM` on macOS), and, when `gdb` is installed, stops
   on a Burdin line and prints the locals.
 - `--strip` passes the platform strip option to the linker (`-s` on ELF/Mach-O; `/OPT:REF /OPT:ICF` with MSVC) and
-  keeps the program's behavior. `tests/check_build_flags.py` enforces a 128 KiB budget for a stripped hello-world
+  keeps the program's behavior. `tests/check_build_flags.py` enforces a 144 KiB budget for a stripped hello-world
   and 512 KiB for a program using `List` and `Map` on Linux and macOS.
 - `--lto` emits LLVM bitcode and links it with `-flto`. It needs an LLVM compiler driver: set `BURDIN_CC=clang` (MSVC
   `cl` cannot link bitcode).

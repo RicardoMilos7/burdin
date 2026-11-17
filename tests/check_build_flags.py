@@ -124,10 +124,13 @@ with harness.temporary_dir("burdin-flags-") as work:
         )
         if harness.PLATFORM in ("linux", "macos"):
             checks += 1
-            if strip_size is None or strip_size > 131072:
+            # The budget moved from 128 KiB to 144 KiB with the standard-library roundout of issues #712-#716
+            # (Map views, String bytes/UTF-8/editing, assertions, interface coverage): every standard-library
+            # function is emitted into the binary, so a larger `std` shows up even in hello-world.
+            if strip_size is None or strip_size > 147456:
                 add_problem(
                     f"stripped hello is {strip_size if strip_size is not None else '?'} bytes, "
-                    "over the 128 KiB budget"
+                    "over the 144 KiB budget"
                 )
             checks += 1
             nm = harness.which("nm")
