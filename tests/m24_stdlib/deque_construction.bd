@@ -1,0 +1,50 @@
+//@ run
+//> [1, 2, 3] 3
+//> [1, 2, 3]
+//> [0, 1, 2, 3, 4]
+//> [3, 4, 1, 2] 4
+//> [0, 0] [] 0 true
+//> [1, 2, 3] [4, 5]
+//> true false false
+
+// A deque is built from a list, an array, or an iterator, and grown at the back with `extend`. `into_list` gives
+// the elements back front to back whichever end they were pushed on, and `clear` empties it.
+
+fn main() {
+    let from_list = Deque<i32>.from_list([1, 2, 3].into_iter().collect())
+    println("{from_list:?} {from_list.len()}")
+
+    let from_array = Deque<i32>.from([1, 2, 3])
+    println("{from_array:?}")
+
+    let mut grown = Deque<i32>.from([1, 2])
+    grown.push_front(0)
+    let more: List<i32> = [3, 4].into_iter().collect()
+    grown.extend(more)
+    println("{grown:?}")
+
+    let mut mixed = Deque<i32>.new()
+    mixed.push_back(1)
+    mixed.push_back(2)
+    mixed.push_front(4)
+    mixed.push_front(3)
+    println("{mixed.clone().into_list():?} {mixed.len()}")
+
+    let mut zeros = Deque<i32>.from([0, 0])
+    let before = zeros.clone()
+    zeros.clear()
+    println("{before:?} {zeros:?} {zeros.len()} {zeros.is_empty()}")
+    zeros.push_back(9)
+    zeros.clear()
+
+    let mut pieces = Deque<i32>.new()
+    pieces.extend_iter([1, 2, 3].into_iter())
+    let tail: Deque<i32> = [4, 5].into_iter().collect()
+    println("{pieces.into_list():?} {tail.into_list():?}")
+
+    let a = Deque<i32>.from([1, 2])
+    let b = Deque<i32>.from([1, 2])
+    let c = Deque<i32>.from([2, 1])
+    let d = Deque<i32>.from([1, 2, 3])
+    println("{a == b} {a == c} {a == d}")
+}

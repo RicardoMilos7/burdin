@@ -82,7 +82,9 @@ Written mostly in Burdin itself on top of `unsafe` and C's `malloc`, so it also 
 
 **Language items** the Rust compiler knows by name: `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Hash`, `From`, `Option`, `Result`,
 the range types, and the intrinsics behind `str` and `[T]`. Everything else is ordinary library code. The exact
-surface a program may use, with signatures, is in `stdlib.md`; the derived members are in `derives.md`.
+surface a program may use, with signatures, is in `stdlib.md`; the derived members are in `derives.md`. The table above is
+the stage 0 library. Stage 1 added `Set`, `Deque`, `PriorityHeap`, paths, time, random, and the Unicode helpers
+(milestone 24, `stage1-subset.md`).
 
 **Runtime.** A small start-up wrapper calls `main`, and the panic path prints the message with file and line, flushes stdout,
 and aborts. Files, processes, paths, and environment go through one platform module with an implementation per operating system.
