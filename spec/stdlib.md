@@ -457,6 +457,54 @@ split a multi-byte character: the language does not check UTF-8 boundaries.
 values or two `String` values lexicographically by bytes. The operands must have the same type; `s == "x"` does not
 convert, and there is no `Ord` for a mixed pair.
 
+### Bytes, UTF-8, and checked slicing (issue #713)
+
+```
+fn as_bytes(self): [u8]                 // a view of the UTF-8 bytes; built in, no copy
+fn bytes(self): [u8]                    // the iterator spelling of as_bytes
+fn String.into_bytes(own self): List<u8> // the bytes as an owned list; the string is consumed
+
+error enum Utf8Error { Invalid { index: usize } "invalid UTF-8 at byte {index}" }
+fn String.from_utf8(own bytes: List<u8>): Result<String, Utf8Error>   // associated function
+fn str.from_utf8(bytes: [u8]): Result<str, Utf8Error>                  // associated function; a view
+fn String.from_utf8_lossy(bytes: [u8]): String                         // associated function
+
+fn contains_str(self, needle: str): bool      // the same as contains
+fn rfind(self, c: char): Option<usize>         // byte offset of the last occurrence
+fn rfind_str(self, needle: str): Option<usize> // "" matches at the end
+fn match_indices(self, needle: str): List<(usize, String)>  // each occurrence's offset and text; "" panics
+fn find_all(self, needle: str): List<(usize, String)>       // the same as match_indices
+fn get(self, from: usize, to: usize): Option<str>           // the checked, boundary-aware slice
+```
+
+`as_bytes` is a `[u8]` view of the string's storage, so it copies nothing and keeps the string borrowed; `bytes`
+is the iterator spelling (`for b in s.bytes()`), and `into_bytes` copies the bytes into an owned list. An offset
+these functions return is a byte offset.
+
+`String.from_utf8` accepts exactly the well-formed UTF-8 sequences and reports the first byte that is not part of
+one, as `Utf8Error.Invalid { index }`: a bad lead or continuation byte, an overlong form, a surrogate, a value past
+U+10FFFF, or a sequence the end cuts off. `str.from_utf8` validates the same way and returns a `str` view of the
+caller's bytes without copying; the view keeps the bytes borrowed. `String.from_utf8_lossy` keeps every well-formed
+sequence and replaces each byte that is not part of one with U+FFFD REPLACEMENT CHARACTER, so it never fails.
+
+`match_indices` reports non-overlapping matches from the left; `find_all` is its other name. `get(from, to)` is the
+checked slice: it returns `None` when the range is reversed, past the end, or either end splits a character, and a
+view otherwise.
+
+The unchecked reinterpretation behind `str.from_utf8` is the primitive `__view_as_text(view: [u8]): str`, which
+requires an `unsafe` block (E0161); `std` calls it only after validating the bytes, so an ordinary program cannot
+make a `str` that is not UTF-8. `str.from_utf8` and `String.from_utf8` are associated functions resolved by name;
+`as_bytes` is a compiler-provided method.
+
+**The slicing rule does not change.** `s[a..b]` stays the unchecked byte slice: it panics on a reversed or
+out-of-range range and may split a character. Byte slicing is the primitive the UTF-8 algorithms above are written
+with, and `get(from, to)` is the checked, boundary-aware form. A program that needs a character boundary asks
+`is_char_boundary` (or uses `get`).
+
+Tests: `m24_stdlib/string_bytes`, `string_utf8_validation`, `string_from_utf8_lossy`, `string_utf8_file`,
+`string_find_all`, `string_checked_slice`, and the compile-fail cases `string_bytes_second_class` (E0120) and
+`string_view_as_text_unsafe` (E0161).
+
 ### Characters of a text (issue #193)
 
 The scope of Unicode support is the scalar value. These extension methods (also on `String`) count, index, and rebuild
@@ -500,8 +548,8 @@ fn str.rsplit_char(self, c: char): List<String>
 fn str.split_whitespace(self): List<String>             // runs of non-white-space characters
 fn str.lines(self): List<String>                        // at line feeds; a carriage return before one is removed
 fn str.replace(self, from: str, to: str): String        // an empty `from` panics
-fn str.strip_prefix(self, prefix: str): Option<String>
-fn str.strip_suffix(self, suffix: str): Option<String>
+fn str.strip_prefix(self, prefix: str): Option<str>     // a view of the receiver
+fn str.strip_suffix(self, suffix: str): Option<str>
 fn str.repeat(self, count: usize): String
 fn str.to_lowercase(self): String                       // char.to_lowercase on each character
 fn str.to_uppercase(self): String
@@ -1943,6 +1991,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable`, `iter_zip`, `iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`, `iter_adapters_no_leaks`, `iter_adapters_comptime`; errors `iter_zip_from_temporary`, `iter_zip_in_struct_field`, `iter_chain_in_collection`, `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`, `iter_rev_needs_double_ended`, `iter_rev_through_adapter`, `iter_cloned_needs_clone`, `iter_cloned_needs_views`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch`, `iter_flatten_needs_iterators`, `iter_zip_needs_iterator` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
+| String bytes, UTF-8, and checked slicing | `m24_stdlib/string_bytes`, `string_utf8_validation`, `string_from_utf8_lossy`, `string_utf8_file`, `string_find_all`, `string_checked_slice`, `string_bytes_second_class`, `string_view_as_text_unsafe` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
 | Map views, updates, and construction | `m24_stdlib/map_views`, `map_in_place`, `map_capacity_interfaces`, `map_views_allocator`, `map_borrowed_key`, `map_borrowed_key_type`, `map_get_or_needs_eq`, `map_with_capacity_allocator` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |

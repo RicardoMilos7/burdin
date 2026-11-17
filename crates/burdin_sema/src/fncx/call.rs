@@ -94,6 +94,20 @@ impl FnCx<'_> {
                             let text = self.coerce_arg(text, &Ty::Str);
                             return mk(tir::ExprKind::Builtin(b, vec![text]), Ty::Unit, span);
                         }
+                        // The unchecked bytes-to-text cast upholds the `str` invariant only when the bytes are
+                        // valid UTF-8, which is what `unsafe` promises here (`spec/stdlib.md`).
+                        Some(b @ Builtin::ViewAsText) => {
+                            if self.unsafe_depth == 0 {
+                                self.diags.error(
+                                    Code::UNSAFE_REQUIRED,
+                                    id.span,
+                                    "`__view_as_text` treats bytes as text without checking them; it requires an \
+                                     `unsafe` block",
+                                );
+                            }
+                            let sig = builtin_sig(b, self.globals);
+                            (sig.params, sig.ret, Callee::Builtin(b))
+                        }
                         Some(b) => {
                             let sig = builtin_sig(b, self.globals);
                             (sig.params, sig.ret, Callee::Builtin(b))
@@ -1707,6 +1721,22 @@ impl FnCx<'_> {
         }
         // The associated functions of `String` (the only built-in owning type with any so far).
         if *ty == Ty::String && name.name != "default" {
+            // `String.from_utf8` and `String.from_utf8_lossy` are `std` functions; the compiler only maps the
+            // names (`spec/stdlib.md`, "String bytes and UTF-8 validation").
+            let utf8 = match name.name.as_str() {
+                "from_utf8" => Some("__string_from_utf8"),
+                "from_utf8_lossy" => Some("__string_from_utf8_lossy"),
+                _ => None,
+            };
+            if let Some(hidden) = utf8
+                && let Some(Global::Func(f)) = self.globals.std_value(hidden)
+            {
+                let sig = self.globals.sigs[f.0].clone();
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+            }
             let b = match name.name.as_str() {
                 "new" => Builtin::StringNew,
                 "from" => Builtin::StringFrom,
@@ -1724,6 +1754,20 @@ impl FnCx<'_> {
                 return error_expr(span);
             };
             return mk(tir::ExprKind::Builtin(b, checked), sig.ret, span);
+        }
+        // `str.from_utf8`: the `std` function that validates the bytes and returns a `str` view of them.
+        if *ty == Ty::Str && name.name != "default" {
+            if name.name == "from_utf8"
+                && let Some(Global::Func(f)) = self.globals.std_value("__str_from_utf8")
+            {
+                let sig = self.globals.sigs[f.0].clone();
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+            }
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`str` has no function `{}`", name.name));
+            return self.args_then_error(args, span);
         }
         // The C string bridge.
         if *ty == Ty::CString {

@@ -59,6 +59,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Builtin::CPtrNull => {
                 return Ok(Some(self.cx.ptr_type(inkwell::AddressSpace::default()).const_null().into()));
             }
+            // `__view_as_text(view)`: `[u8]` and `str` are the same pointer-and-length value.
+            Builtin::ViewAsText => return self.expr_mode(&args[0], Mode::Use),
             Builtin::CStringFrom => {
                 let s = self.expr_mode(&args[0], Mode::Use)?;
                 let s = self.need(s, &Ty::Str).into_struct_value();
@@ -1450,7 +1452,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.builder.build_call(self.rt.string_push_char, &[recv.into(), c.into()], "").map_err(llvm_err)?;
             return Ok(None);
         }
-        if m == Method::Chars {
+        if m == Method::Chars || m == Method::AsBytes {
+            // The characters and the bytes are both a view of the text's storage (`[u8]` and `str` share the
+            // pointer-and-length layout).
             let (ptr, len) = self.view_parts(&args[0])?;
             return Ok(Some(self.make_str(ptr, len)?.into()));
         }

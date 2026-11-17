@@ -199,6 +199,9 @@ pub enum Builtin {
     /// `f64.from_bits(bits)` and `f32.from_bits(bits)`: the value with those bits (`spec/stdlib.md`, "Float
     /// functions").
     FloatFromBits(FloatTy),
+    /// `__view_as_text(view)`: reinterprets a `[u8]` view as a `str` without checking it. `std` uses it after
+    /// validating the bytes (`str.from_utf8`); it requires `unsafe` (E0161).
+    ViewAsText,
 }
 
 /// A floating-point function the compiler provides on `f64` and `f32` (`spec/stdlib.md`, "Float functions").
@@ -361,6 +364,8 @@ pub enum Method {
     Chars,
     /// `String.as_str()`: a `str` view of the bytes.
     AsStr,
+    /// `str.as_bytes()` and `String.as_bytes()`: the UTF-8 bytes as a `[u8]` view.
+    AsBytes,
     /// `x.len()` on `str`, `[T]`, `String`, and arrays.
     Len,
     /// `s.starts_with(prefix)` on `str` (and `String`).
@@ -506,6 +511,7 @@ impl Method {
                 | Method::MapEntryOrInsert
                 | Method::MapEntryOrInsertWith
                 | Method::Chars
+                | Method::AsBytes
                 | Method::Iter
                 | Method::IterMut
                 | Method::IterNext

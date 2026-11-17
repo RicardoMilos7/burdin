@@ -610,6 +610,12 @@ impl<'p> Interp<'p, '_> {
                 Value::Float(v)
             }
             Builtin::HeapNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
+            // The unchecked bytes-to-text cast keeps the bytes: the interpreter has already checked them when
+            // `std` calls it through `str.from_utf8`.
+            Builtin::ViewAsText => {
+                let bytes = self.peek(&args[0], |v| v.elems().iter().map(|b| b.int() as u8).collect::<Vec<u8>>())?;
+                Value::Str(Rc::from(bytes))
+            }
             Builtin::SharedNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
             // Allocation is a run-time operation: the interpreter models containers abstractly and has no
             // allocator (`spec/allocators.md`, AL10).
@@ -1024,6 +1030,12 @@ impl<'p> Interp<'p, '_> {
             }
             Method::Chars => Value::Chars(self.peek(recv, |v| Rc::from(v.bytes()))?, 0),
             Method::AsStr => Value::Str(self.peek(recv, |v| Rc::from(v.bytes()))?),
+            Method::AsBytes => {
+                let bytes = self.peek(recv, |v| v.bytes().to_vec())?;
+                let items: Vec<Value> = bytes.iter().map(|b| Value::Int(i128::from(*b))).collect();
+                let n = items.len();
+                Value::Slice(Rc::new(items), 0, n)
+            }
             Method::Len => {
                 let n = self.peek(recv, |v| match v {
                     Value::Str(b) => b.len(),

@@ -70,6 +70,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__alloc" => Builtin::RawAlloc,
         "__realloc" => Builtin::RawRealloc,
         "__dealloc" => Builtin::RawDealloc,
+        "__view_as_text" => Builtin::ViewAsText,
         _ => return None,
     })
 }
@@ -82,6 +83,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
         Builtin::TargetOs | Builtin::TargetArch => Ty::Str,
         Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
+        Builtin::ViewAsText => Ty::Str,
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(os_code())),
@@ -201,7 +203,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
             vec![ParamSig::plain(Ty::Str)]
         }
-        Builtin::StdoutWriteBytes | Builtin::StderrWriteBytes => {
+        Builtin::StdoutWriteBytes | Builtin::StderrWriteBytes | Builtin::ViewAsText => {
             vec![ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))]
         }
         // The environment primitives take the raw text; the `std` wrappers add the UTF-8 checks and the error
@@ -528,6 +530,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             };
             (Method::SliceSortBy, vec![value_param(less)], Ty::Unit)
         }
+        ("as_bytes", Ty::String | Ty::Str) => (Method::AsBytes, vec![], Ty::Slice(Box::new(Ty::Int(IntTy::U8)))),
         ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::List(_, _) | Ty::Map(..)) => {
             (Method::Len, vec![], Ty::Int(IntTy::Usize))
         }
@@ -704,6 +707,23 @@ mod tests {
         }
         assert_eq!(builtin_sig(Builtin::FileError, &globals).ret, error);
         assert!(builtin_sig(Builtin::FileError, &globals).params.is_empty());
+    }
+
+    #[test]
+    fn string_bytes_and_view_cast_signatures() {
+        let bytes = Ty::Slice(Box::new(Ty::Int(IntTy::U8)));
+        for recv in [Ty::Str, Ty::String] {
+            let (found, params, ret) = method("as_bytes", &recv).unwrap();
+            assert_eq!(found, Method::AsBytes, "{recv}");
+            assert!(params.is_empty());
+            assert_eq!(ret, bytes);
+            assert!(found.result_borrows_receiver(), "{recv}");
+        }
+        assert_eq!(builtin("__view_as_text"), Some(Builtin::ViewAsText));
+        let sig = builtin_sig(Builtin::ViewAsText, &Globals::default());
+        assert_eq!(sig.params.len(), 1);
+        assert_eq!(sig.params[0].ty, bytes);
+        assert_eq!(sig.ret, Ty::Str);
     }
 
     #[test]

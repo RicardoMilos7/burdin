@@ -362,6 +362,11 @@ impl<'a> Checker<'a> {
                     self.access_place(&args[0], Access::BorrowMut);
                     self.expr(&args[1], Mode::Move);
                 }
+                // The text views the bytes it was made from, so the result keeps that view borrowed.
+                tir::Builtin::ViewAsText => {
+                    self.expr(&args[0], Mode::Use);
+                    self.add_loan(&args[0], false);
+                }
                 _ => {
                     for arg in args {
                         self.expr(arg, Mode::Use);
