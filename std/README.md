@@ -9,6 +9,7 @@ program, then copies its public names into every module (the prelude). A project
 | --- | --- |
 | `std.bd` | the `Error` marker interface and the dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`, `__test_assert_eq`, `unreachable` |
 | `io.bd` | `read_to_string`, `write_file`, and the `stdin`, `stdout`, and `stderr` handles (`spec/stdlib.md`, Streams) |
+| `fs.bd` | `read_dir`, `create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`, `metadata`, `canonicalize`, `walk`, and `walk_glob`, with `Metadata` and `FileKind` (`spec/stdlib.md`, "Directories, metadata, and walking") |
 | `env.bd` | `args` |
 | `process.bd` | `exit`, `run` |
 | `mem.bd` | `swap`, `replace` |
@@ -25,7 +26,8 @@ type of a failed `assert`/`assert_eq` in a `burdin test` build; a normal build k
 Some names in the stage 0 table are compiler built-ins rather than Burdin code, because the language cannot
 express them yet: `Option`, `Result`, `Heap`, `List`, `Map`, `String`, `Shared`, `str`, the `str`/`[T]` intrinsics,
 the number methods (`to_string`, `parse`, `wrapping_*`, `checked_*`, `min`, `max`, `abs`), the
-`__read_to_string`, `__write_file`, `__stdout_write`, `__stdout_write_line`, `__stdout_flush`, `__stderr_write`,
+`__read_to_string`, `__write_file`, `__read_dir`, `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`,
+`__metadata`, `__canonicalize`, `__stdout_write`, `__stdout_write_line`, `__stdout_flush`, `__stderr_write`,
 `__stderr_write_line`, `__is_terminal`, `__stdin_read_line`, `__stdin_read_to_string`, `__args`, `__exit`,
 `__run`, `__swap`, and `__replace` primitives the modules above call, and
 `print`/`println`/`eprint`/`eprintln`/`panic`. The I/O and integer-parse primitives are

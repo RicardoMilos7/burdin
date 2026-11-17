@@ -1,0 +1,24 @@
+//@ run
+//> absolute true
+//> suffix true
+//> relative false
+//> same true
+//> directory true
+
+// `canonicalize` returns an absolute path with `.` and `..` resolved and the system's separators. The path must
+// exist (spec/stdlib.md).
+
+fn norm(path: str): String {
+    canonicalize(path).unwrap().replace("\\", "/")
+}
+
+fn main() {
+    create_dir_all("d/e").unwrap()
+    write_file("d/e/f.txt", "x").unwrap()
+    let full = norm("d/e/f.txt")
+    println("absolute {}", Path.new(full.as_str()).is_absolute())
+    println("suffix {}", full.ends_with("d/e/f.txt"))
+    println("relative {}", full.starts_with("d/"))
+    println("same {}", norm("d/./e/../e/f.txt") == full)
+    println("directory {}", norm("d/e").ends_with("d/e"))
+}
