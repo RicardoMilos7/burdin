@@ -80,8 +80,40 @@ pub enum Builtin {
     StdinAvail,
     /// `__stdin_next_byte()`: takes the next buffered byte of standard input (only after `__stdin_avail` was positive).
     StdinNextByte,
+    /// `__read_dir(path)`: the names of the entries in a directory (`spec/stdlib.md`, issue #411).
+    ReadDir,
+    /// `__create_dir(path)`: creates one directory.
+    CreateDir,
+    /// `__remove_dir(path)`: removes an empty directory.
+    RemoveDir,
+    /// `__remove_file(path)`: removes a file or a symbolic link.
+    RemoveFile,
+    /// `__rename(from, to)`: renames a file or a directory, replacing `to`.
+    RenamePath,
+    /// `__metadata(path)`: `(size, mode, modified, accessed, flags)`, the system's `stat` fields.
+    Metadata,
+    /// `__canonicalize(path)`: the absolute, normalized path.
+    Canonicalize,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
+    /// `__env_get(name)`: the raw bytes of an environment variable, or `None` when it is unset (or, on
+    /// Windows, not valid Unicode). `spec/stdlib.md`, "Environment variables and the working directory".
+    EnvGet,
+    /// `__env_set(name, value)`: sets a variable from bytes. The result is `0` on success, `1` for an invalid
+    /// name, `2` for an invalid value, and `3` for an operating-system failure.
+    EnvSet,
+    /// `__env_set_bytes(name, value)`: the same with a byte view instead of a `str`.
+    EnvSetBytes,
+    /// `__env_remove(name)`: removes a variable. The result is `0` on success, `1` for an invalid name, and `3`
+    /// for an operating-system failure.
+    EnvRemove,
+    /// `__current_dir()`: the raw bytes of the working directory, or `None` when it cannot be read.
+    CurrentDir,
+    /// `__set_current_dir(path)`: changes the working directory. The result is `0` on success, `1` for an
+    /// invalid path, and `3` for an operating-system failure.
+    SetCurrentDir,
+    /// `__set_current_dir_bytes(path)`: the same with a byte view instead of a `str`.
+    SetCurrentDirBytes,
     /// `process.exit(code)`: ends the process.
     ProcessExit,
     /// `assert(condition)`: panics when it is false.
@@ -149,6 +181,15 @@ pub enum Method {
     /// `Map<K, V>.get_or_insert(key, value): &mut V`: the value stored under `key`, inserting `value` first when
     /// the key is absent. An existing value is kept and the incoming key and value are dropped.
     MapGetOrInsert,
+    /// `Map<K, V>.entry(key): MapEntry<K, V>`: a pending lookup that owns `key` and borrows the map exclusively.
+    /// The probe happens once, here; the entry operations insert into the slot it found.
+    MapEntry,
+    /// `MapEntry<K, V>.or_insert(value): &mut V`: the value stored under the entry's key, inserting `key` and
+    /// `value` first when the key is absent. An existing value is kept and the incoming value is dropped.
+    MapEntryOrInsert,
+    /// `MapEntry<K, V>.or_insert_with(make): &mut V`: like `or_insert`, but the value comes from calling `make`,
+    /// which runs only when the key is absent. The closure is consumed either way.
+    MapEntryOrInsertWith,
     /// `Map<K, V>.remove(key): Option<V>`.
     MapRemove,
     /// `Map<K, V>.contains_key(key): bool`.
@@ -204,6 +245,10 @@ impl Method {
             Method::Push => index == 1,
             Method::ListInsert => index == 2,
             Method::MapInsert | Method::MapGetOrInsert => index == 1 || index == 2,
+            // `entry` takes the key it will insert. The entry operations consume the entry and the value (or the
+            // closure) they are given.
+            Method::MapEntry => index == 1,
+            Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => index == 0 || index == 1,
             // Unwrapping consumes the `Option` or `Result`.
             Method::Unwrap | Method::Expect => index == 0,
             // `into_iter` takes the collection, the array, the map, or the range by value.
@@ -226,6 +271,7 @@ impl Method {
                 | Method::Clear
                 | Method::MapInsert
                 | Method::MapGetOrInsert
+                | Method::MapEntry
                 | Method::MapGetMut
                 | Method::MapRemove
                 | Method::IterNext
@@ -240,6 +286,9 @@ impl Method {
                 | Method::MapGet
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
+                | Method::MapEntry
+                | Method::MapEntryOrInsert
+                | Method::MapEntryOrInsertWith
                 | Method::Chars
                 | Method::Iter
                 | Method::IterNext
@@ -261,6 +310,13 @@ mod tests {
         assert!(Method::MapInsert.owns_argument(2));
         assert!(Method::MapGetOrInsert.owns_argument(1));
         assert!(Method::MapGetOrInsert.owns_argument(2));
+        // `entry` moves its key into the entry; the entry operations consume the entry and their value.
+        assert!(Method::MapEntry.owns_argument(1));
+        assert!(!Method::MapEntry.owns_argument(0));
+        for method in [Method::MapEntryOrInsert, Method::MapEntryOrInsertWith] {
+            assert!(method.owns_argument(0), "{method:?}");
+            assert!(method.owns_argument(1), "{method:?}");
+        }
         assert!(Method::Unwrap.owns_argument(0));
         assert!(Method::Expect.owns_argument(0));
         assert!(!Method::Len.owns_argument(0));
@@ -285,6 +341,7 @@ mod tests {
             Method::Clear,
             Method::MapInsert,
             Method::MapGetOrInsert,
+            Method::MapEntry,
             Method::MapGetMut,
             Method::MapRemove,
         ] {
@@ -293,7 +350,14 @@ mod tests {
         for method in [Method::ToString, Method::Len, Method::Clone, Method::ListLast, Method::MapGet, Method::AsStr] {
             assert!(!method.mutates_receiver(), "{method:?}");
         }
-        for method in [Method::ListLast, Method::MapGet, Method::Chars] {
+        for method in [
+            Method::ListLast,
+            Method::MapGet,
+            Method::MapEntry,
+            Method::MapEntryOrInsert,
+            Method::MapEntryOrInsertWith,
+            Method::Chars,
+        ] {
             assert!(method.result_borrows_receiver(), "{method:?}");
         }
         for method in [Method::Push, Method::ListPop, Method::ListContains, Method::Len] {

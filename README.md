@@ -56,9 +56,10 @@ is on `PATH`, drop the prefix.
 
 ### Dependencies and licenses
 
-The compiler has one direct external Rust dependency, `inkwell` 0.11 (Apache-2.0), which binds LLVM 21
-through `llvm-sys` (MIT). Every other crate in [`Cargo.lock`](Cargo.lock) is transitively required by
-those two and is reviewed in [`tests/dependencies.txt`](tests/dependencies.txt); the policy and the
+The compiler has two direct external Rust dependencies: `inkwell` 0.11 (Apache-2.0), which binds LLVM 21
+through `llvm-sys` (MIT), and `libc` 0.2 (MIT OR Apache-2.0), whose C type layouts the generated runtime
+reads for directory listings and metadata. Every other crate in [`Cargo.lock`](Cargo.lock) is transitively
+required by them and is reviewed in [`tests/dependencies.txt`](tests/dependencies.txt); the policy and the
 review are in [`docs/dependencies.md`](docs/dependencies.md).
 
 - External requirements are exact (`=x.y.z`), and the committed `Cargo.lock` records the resolved

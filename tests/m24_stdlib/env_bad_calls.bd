@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// The environment functions check their argument counts and types like any other `std` function.
+
+fn main() {
+    env.get()                  //~ E0004
+    env.set("A")               //~ E0004
+    env.get(1)                 //~ E0003
+    env.set_bytes("A", "text") //~ E0003
+    env.current_dir("x")       //~ E0004
+}

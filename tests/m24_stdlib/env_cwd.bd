@@ -1,0 +1,38 @@
+//@ run
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+//> cannot set the working directory
+//> true
+//> true
+//> true
+
+// Reading and changing the working directory. The runner starts each test in a fresh temporary directory, so the
+// path is only compared with itself and a made-up directory cannot exist.
+
+fn main() {
+    let here = env.current_dir().unwrap()
+    println("{}", here.len() > 0)
+    let bytes = env.current_dir_bytes().unwrap()
+    println("{}", bytes.len() > 0)
+    println("{}", bytes.to_text().unwrap() == here)
+
+    println("{}", env.set_current_dir(".").is_ok())
+    println("{}", env.current_dir().unwrap() == here)
+    write_file("env_cwd_marker.tmp", "x").unwrap()
+    println("{}", read_to_string("env_cwd_marker.tmp").unwrap().as_str() == "x")
+
+    println("{}", env.set_current_dir("no-such-dir-412").is_err())
+    match env.set_current_dir("no-such-dir-412") {
+        Ok(_) => println("ok"),
+        Err(e) => println("{e}"),
+    }
+    println("{}", env.current_dir().unwrap() == here)
+    let dot = BytesMut.from_text(".")
+    println("{}", env.set_current_dir_bytes(dot.as_slice()).is_ok())
+    println("{}", env.current_dir().unwrap() == here)
+}

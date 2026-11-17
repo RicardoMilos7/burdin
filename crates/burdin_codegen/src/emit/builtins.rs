@@ -488,6 +488,145 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
             }
+            // The directory and metadata primitives (`spec/stdlib.md`, issue #411). Each reports a status of
+            // zero for success; the `std` wrappers turn a failure into the real `IoError` variant.
+            Builtin::ReadDir => {
+                let (ptr, len) = self.str_parts(&args[0])?;
+                let out = self.alloca(self.string_ty.into(), "dir.list")?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.read_dir, &[ptr.into(), len.into(), out.into()], "")
+                    .map_err(llvm_err)?;
+                let status = call.try_as_basic_value().basic().expect("read_dir returns a status").into_int_value();
+                let zero = self.cx.i32_type().const_zero();
+                let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_dir returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "dir.out")?;
+                let good = self.new_block("dir.ok");
+                let bad = self.new_block("dir.err");
+                let end = self.new_block("dir.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let list = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, list, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                // The runtime leaves an empty list behind, so dropping it is safe and frees nothing.
+                self.drop_value(out, &Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global))?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
+                let (ptr, len) = self.str_parts(&args[0])?;
+                let mut values: Vec<BasicMetadataValueEnum> = vec![ptr.into(), len.into()];
+                if b == Builtin::RenamePath {
+                    let (to, to_len) = self.str_parts(&args[1])?;
+                    values.push(to.into());
+                    values.push(to_len.into());
+                }
+                let function = match b {
+                    Builtin::CreateDir => self.rt.create_dir,
+                    Builtin::RemoveDir => self.rt.remove_dir,
+                    Builtin::RemoveFile => self.rt.remove_file,
+                    _ => self.rt.rename,
+                };
+                let call = self.builder.build_call(function, &values, "").map_err(llvm_err)?;
+                let status =
+                    call.try_as_basic_value().basic().expect("a path change returns a status").into_int_value();
+                let zero = self.cx.i32_type().const_zero();
+                let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a path change returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::Metadata => {
+                let (ptr, len) = self.str_parts(&args[0])?;
+                let raw = self.alloca(self.cx.i64_type().array_type(5).into(), "meta.raw")?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.metadata, &[ptr.into(), len.into(), raw.into()], "")
+                    .map_err(llvm_err)?;
+                let status = call.try_as_basic_value().basic().expect("metadata returns a status").into_int_value();
+                let zero = self.cx.i32_type().const_zero();
+                let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("metadata returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "meta.out")?;
+                let good = self.new_block("meta.ok");
+                let bad = self.new_block("meta.err");
+                let end = self.new_block("meta.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let tuple_ty = self.llvm_ty(ok_ty).expect("a tuple has a value");
+                let mut tuple = undef(tuple_ty).into_struct_value();
+                for i in 0..5u64 {
+                    let at = self.offset_ptr(raw, self.usize_ty.const_int(i * 8, false))?;
+                    let field = self.builder.build_load(self.cx.i64_type(), at, "").map_err(llvm_err)?;
+                    tuple = self
+                        .builder
+                        .build_insert_value(tuple, field, i as u32, "")
+                        .map_err(llvm_err)?
+                        .into_struct_value();
+                }
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, tuple, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::Canonicalize => {
+                let (ptr, len) = self.str_parts(&args[0])?;
+                let out = self.alloca(self.string_ty.into(), "canon.string")?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.canonicalize, &[ptr.into(), len.into(), out.into()], "")
+                    .map_err(llvm_err)?;
+                let status = call.try_as_basic_value().basic().expect("canonicalize returns a status").into_int_value();
+                let zero = self.cx.i32_type().const_zero();
+                let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("canonicalize returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "canon.out")?;
+                let good = self.new_block("canon.ok");
+                let bad = self.new_block("canon.err");
+                let end = self.new_block("canon.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(out, &Ty::String)?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
             Builtin::EnvArgs => {
                 let out = self.alloca(self.string_ty.into(), "args.list")?;
                 let out = self
@@ -496,6 +635,74 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 self.builder.build_call(self.rt.args, &[out.into()], "").map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::EnvGet | Builtin::CurrentDir => {
+                let out = self.alloca(self.string_ty.into(), "env.out")?;
+                self.builder.build_store(out, self.string_ty.const_zero()).map_err(llvm_err)?;
+                let call = if b == Builtin::EnvGet {
+                    let s = self.expr_mode(&args[0], Mode::Use)?;
+                    let s = self.need(s, &Ty::Str).into_struct_value();
+                    let ptr = self.builder.build_extract_value(s, 0, "env.name").map_err(llvm_err)?;
+                    let len = self.builder.build_extract_value(s, 1, "env.name.len").map_err(llvm_err)?;
+                    self.builder.build_call(self.rt.env_get, &[ptr.into(), len.into(), out.into()], "")
+                } else {
+                    self.builder.build_call(self.rt.current_dir, &[out.into()], "")
+                }
+                .map_err(llvm_err)?;
+                let found = call.try_as_basic_value().basic().expect("the read returns a flag").into_int_value();
+                let found = self
+                    .builder
+                    .build_int_compare(IntPredicate::NE, found, self.cx.i32_type().const_zero(), "")
+                    .map_err(llvm_err)?;
+                let list = self.builder.build_load(self.string_ty, out, "env.bytes").map_err(llvm_err)?;
+                let inner = Ty::List(Box::new(Ty::Int(burdin_tir::IntTy::U8)), burdin_tir::Alloc::Global);
+                let opt_ty = self.option_ty(&inner);
+                let agg = self
+                    .builder
+                    .build_insert_value(opt_ty.const_zero(), found, 0, "env.some")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                let agg =
+                    self.builder.build_insert_value(agg, list, 1, "env.value").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(agg.into()));
+            }
+            Builtin::EnvSet | Builtin::EnvSetBytes => {
+                let name = self.expr_mode(&args[0], Mode::Use)?;
+                let name = self.need(name, &Ty::Str).into_struct_value();
+                let nptr = self.builder.build_extract_value(name, 0, "env.name").map_err(llvm_err)?;
+                let nlen = self.builder.build_extract_value(name, 1, "env.name.len").map_err(llvm_err)?;
+                let value_ty = args[1].ty.clone();
+                let value = self.expr_mode(&args[1], Mode::Use)?;
+                let value = self.need(value, &value_ty).into_struct_value();
+                let vptr = self.builder.build_extract_value(value, 0, "env.value").map_err(llvm_err)?;
+                let vlen = self.builder.build_extract_value(value, 1, "env.value.len").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.env_set, &[nptr.into(), nlen.into(), vptr.into(), vlen.into()], "")
+                    .map_err(llvm_err)?;
+                let status = call.try_as_basic_value().basic().expect("env_set returns a status");
+                return Ok(Some(status));
+            }
+            Builtin::EnvRemove => {
+                let name = self.expr_mode(&args[0], Mode::Use)?;
+                let name = self.need(name, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(name, 0, "env.name").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(name, 1, "env.name.len").map_err(llvm_err)?;
+                let call =
+                    self.builder.build_call(self.rt.env_remove, &[ptr.into(), len.into()], "").map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
+            Builtin::SetCurrentDir | Builtin::SetCurrentDirBytes => {
+                let ty = args[0].ty.clone();
+                let path = self.expr_mode(&args[0], Mode::Use)?;
+                let path = self.need(path, &ty).into_struct_value();
+                let ptr = self.builder.build_extract_value(path, 0, "cwd.path").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(path, 1, "cwd.path.len").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.set_current_dir, &[ptr.into(), len.into()], "")
+                    .map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
             }
             Builtin::ProcessExit => {
                 let code = self.expr_mode(&args[0], Mode::Use)?;
@@ -685,6 +892,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::Clear
                 | Method::MapInsert
                 | Method::MapGetOrInsert
+                | Method::MapEntry
+                | Method::MapEntryOrInsert
+                | Method::MapEntryOrInsertWith
                 | Method::MapGet
                 | Method::MapGetMut
                 | Method::MapRemove
@@ -814,6 +1024,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             _ => return Err(format!("unsupported method {m:?} on `{recv_ty}`")),
         };
         Ok(Some(v))
+    }
+
+    /// The pointer and length of a `str` expression's bytes.
+    fn str_parts(&mut self, e: &'a tir::Expr) -> GenResult<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>)> {
+        let s = self.expr_mode(e, Mode::Use)?;
+        let s = self.need(s, &Ty::Str).into_struct_value();
+        let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;
+        let len = self.builder.build_extract_value(s, 1, "").map_err(llvm_err)?;
+        Ok((ptr, len))
     }
 
     pub(super) fn string_of(&mut self, v: BasicValueEnum<'ctx>, ty: &Ty) -> GenResult<BasicValueEnum<'ctx>> {

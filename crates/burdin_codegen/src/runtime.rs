@@ -49,6 +49,41 @@ const HEADER: u64 = 40;
 /// The magic word that marks a live checking-allocator block.
 const MAGIC: u64 = 0x4255_5244_4e41_4c4c;
 
+/// The offset of `d_name` in a `struct dirent`, read from the host's own C layout.
+#[cfg(unix)]
+const DIRENT_NAME_OFFSET: u64 = std::mem::offset_of!(libc::dirent, d_name) as u64;
+/// Windows has no `dirent`; its directory listing reads `WIN32_FIND_DATAA` instead.
+#[cfg(windows)]
+const DIRENT_NAME_OFFSET: u64 = 0;
+/// The size of a `struct stat`, rounded up to whole 8-byte words so the buffer is 8-byte aligned.
+const STAT_WORDS: u32 = (std::mem::size_of::<libc::stat>() as u32).div_ceil(8);
+/// The fields the runtime reads from `struct stat`, as the host's C layout puts them.
+const STAT_SIZE_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_size) as u64;
+const STAT_MODE_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_mode) as u64;
+const STAT_ATIME_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_atime) as u64;
+const STAT_MTIME_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_mtime) as u64;
+/// `st_mode` is 16 bits on macOS and Windows, and 32 on Linux.
+#[cfg(any(target_os = "macos", windows))]
+const STAT_MODE_BYTES: u32 = 2;
+#[cfg(not(any(target_os = "macos", windows)))]
+const STAT_MODE_BYTES: u32 = 4;
+/// The Windows `WIN32_FIND_DATAA` layout: `dwFileAttributes` first and `cFileName` after the fixed fields.
+const FIND_DATA_FILE_NAME_OFFSET: u64 = 44;
+/// `WIN32_FIND_DATAA` is 320 bytes with its 4-byte alignment.
+const FIND_DATA_WORDS: u32 = 40;
+/// `FILE_ATTRIBUTE_REPARSE_POINT`, the bit that marks a link or junction on Windows.
+const FILE_ATTRIBUTE_REPARSE_POINT: u64 = 0x400;
+/// `INVALID_FILE_ATTRIBUTES`, what `GetFileAttributesA` returns on failure.
+const INVALID_FILE_ATTRIBUTES: u64 = 0xFFFF_FFFF;
+/// `MOVEFILE_REPLACE_EXISTING`: `MoveFileExA` replaces an existing destination, as POSIX `rename` does.
+const MOVEFILE_REPLACE_EXISTING: u64 = 1;
+/// The `S_IFMT` mask and the file, directory, and link kinds it selects (`_S_IFMT` and the `_S_IF*` values on
+/// Windows agree with the POSIX ones for these three kinds).
+const S_IFMT: u64 = 0o170000;
+const S_IFREG: u64 = 0o100000;
+const S_IFDIR: u64 = 0o040000;
+const S_IFLNK: u64 = 0o120000;
+
 /// The runtime functions the generated code calls.
 pub(crate) struct Runtime<'ctx> {
     /// `(fd: i32, ptr, len: usize, newline: i32)`
@@ -128,8 +163,33 @@ pub(crate) struct Runtime<'ctx> {
     pub read_to_string: FunctionValue<'ctx>,
     /// `(path, path_len, text, text_len) -> i1`: writes a whole file.
     pub write_file: FunctionValue<'ctx>,
+    /// `(path, path_len, out: *List<String>) -> i32`: the names in a directory, or -1.
+    pub read_dir: FunctionValue<'ctx>,
+    /// `(path, path_len) -> i32`: creates one directory, or -1.
+    pub create_dir: FunctionValue<'ctx>,
+    /// `(path, path_len) -> i32`: removes an empty directory, or -1.
+    pub remove_dir: FunctionValue<'ctx>,
+    /// `(path, path_len) -> i32`: removes a file or a symbolic link, or -1.
+    pub remove_file: FunctionValue<'ctx>,
+    /// `(from, from_len, to, to_len) -> i32`: renames a file or a directory, replacing `to`; -1 on failure.
+    pub rename: FunctionValue<'ctx>,
+    /// `(path, path_len, out: *RawMetadata) -> i32`: the entry's size, mode, times, and kind, or -1.
+    pub metadata: FunctionValue<'ctx>,
+    /// `(path, path_len, out: *String) -> i32`: the absolute, normalized path, or -1.
+    pub canonicalize: FunctionValue<'ctx>,
     /// `(out: *List<String>)`: the process arguments, program name first.
     pub args: FunctionValue<'ctx>,
+    /// `(name, name_len, out: *List<u8>) -> i32`: the raw bytes of an environment variable; 1 when found.
+    pub env_get: FunctionValue<'ctx>,
+    /// `(name, name_len, value, value_len) -> i32`: 0 on success, 1 for an invalid name, 2 for an invalid value,
+    /// and 3 for an operating-system failure.
+    pub env_set: FunctionValue<'ctx>,
+    /// `(name, name_len) -> i32`: 0 on success, 1 for an invalid name, and 3 for an operating-system failure.
+    pub env_remove: FunctionValue<'ctx>,
+    /// `(out: *List<u8>) -> i32`: the raw bytes of the working directory; 1 when read.
+    pub current_dir: FunctionValue<'ctx>,
+    /// `(path, path_len) -> i32`: 0 on success, 1 for an invalid path, and 3 for an operating-system failure.
+    pub set_current_dir: FunctionValue<'ctx>,
     /// `(code: i32)`: ends the process.
     pub exit: FunctionValue<'ctx>,
     /// `(command, command_len) -> i32`: runs a shell command; -1 on failure, the exit code otherwise.
@@ -469,7 +529,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             parse_u64: self.parse_int(&h, false)?,
             read_to_string: self.read_to_string(&h, alloc_string, string_push_str)?,
             write_file: self.write_file(&h)?,
+            read_dir: self.read_dir(&h)?,
+            create_dir: self.create_dir()?,
+            remove_dir: self.remove_dir()?,
+            remove_file: self.remove_file()?,
+            rename: self.rename()?,
+            metadata: self.metadata()?,
+            canonicalize: self.canonicalize(&h)?,
             args: self.args(argc.as_pointer_value(), argv.as_pointer_value(), alloc_string)?,
+            env_get: self.env_get()?,
+            env_set: self.env_set()?,
+            env_remove: self.env_remove()?,
+            current_dir: self.current_dir()?,
+            set_current_dir: self.set_current_dir()?,
             exit: self.exit()?,
             run: self.run_command()?,
         })
@@ -2782,6 +2854,489 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
+    /// `read_dir(path, path_len, out: *List<String>) -> i32`: the entry names, or -1. `.` and `..` are
+    /// skipped. Every failure leaves an empty, valid list in `out`.
+    fn read_dir(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into()];
+        let f = self.function("burdin_rt_read_dir", i32_ty.fn_type(&params, false));
+        let (path, plen, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        for (i, name) in ["list.ptr", "list.len", "list.cap"].iter().enumerate() {
+            let field = self.b.build_struct_gep(self.string_ty, out, i as u32, name).map_err(llvm_err)?;
+            if i == 0 {
+                self.b.build_store(field, ptr_ty.const_null()).map_err(llvm_err)?;
+            } else {
+                self.b.build_store(field, usize_ty.const_zero()).map_err(llvm_err)?;
+            }
+        }
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        if self.windows {
+            self.read_dir_windows(f, cpath, free, out, h)?;
+        } else {
+            self.read_dir_unix(f, cpath, free, out, h)?;
+        }
+        Ok(f)
+    }
+
+    /// The POSIX half of `read_dir`: `opendir`/`readdir`/`closedir` and `d_name` at the host's offset.
+    fn read_dir_unix(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        path: PointerValue<'ctx>,
+        free: FunctionValue<'ctx>,
+        out: PointerValue<'ctx>,
+        h: &Helpers<'ctx>,
+    ) -> GenResult<()> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let opendir = libc(self.module, "opendir", ptr_ty.fn_type(&[ptr_ty.into()], false));
+        let readdir = libc(self.module, "readdir", ptr_ty.fn_type(&[ptr_ty.into()], false));
+        let closedir = libc(self.module, "closedir", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let dir = self.call(opendir, &[path.into()])?.expect("opendir returns a pointer").into_pointer_value();
+        let missing = self.b.build_is_null(dir, "").map_err(llvm_err)?;
+        let open = self.block(f, "read_dir.open");
+        let fail = self.block(f, "read_dir.fail");
+        self.b.build_conditional_branch(missing, fail, open).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.call(free, &[path.into()])?;
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+
+        self.b.position_at_end(open);
+        let scan = self.block(f, "read_dir.scan");
+        let entry = self.block(f, "read_dir.entry");
+        let append = self.block(f, "read_dir.append");
+        let done = self.block(f, "read_dir.done");
+        self.b.build_unconditional_branch(scan).map_err(llvm_err)?;
+
+        self.b.position_at_end(scan);
+        let ent = self.call(readdir, &[dir.into()])?.expect("readdir returns a pointer").into_pointer_value();
+        let end = self.b.build_is_null(ent, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(end, done, entry).map_err(llvm_err)?;
+
+        self.b.position_at_end(entry);
+        let name = self.offset(ent, usize_ty.const_int(DIRENT_NAME_OFFSET, false))?;
+        let nlen = self.call(strlen, &[name.into()])?.expect("strlen returns a size").into_int_value();
+        let skip = self.is_dot_or_dotdot(name, nlen)?;
+        self.b.build_conditional_branch(skip, scan, append).map_err(llvm_err)?;
+
+        self.b.position_at_end(append);
+        self.list_append_name(f, out, name, nlen, h)?;
+        self.b.build_unconditional_branch(scan).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        self.call(closedir, &[dir.into()])?;
+        self.call(free, &[path.into()])?;
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// The Windows half of `read_dir`: `FindFirstFileA` over `path\*`, with `WIN32_FIND_DATAA`'s layout.
+    fn read_dir_windows(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        path: PointerValue<'ctx>,
+        free: FunctionValue<'ctx>,
+        out: PointerValue<'ctx>,
+        h: &Helpers<'ctx>,
+    ) -> GenResult<()> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let find_first = libc(self.module, "FindFirstFileA", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let find_next = libc(self.module, "FindNextFileA", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let find_close = libc(self.module, "FindClose", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let len = self.call(strlen, &[path.into()])?.expect("strlen returns a size").into_int_value();
+        // `path` + (`\` unless it already ends in a separator) + `*` + NUL. The empty path reads its own
+        // NUL byte as the "last" one, which never needs a separator.
+        let has_char = self.b.build_int_compare(IntPredicate::UGT, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let last_index = self
+            .b
+            .build_select(
+                has_char,
+                self.b.build_int_sub(len, usize_ty.const_int(1, false), "").map_err(llvm_err)?,
+                usize_ty.const_zero(),
+                "",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let last_at = self.offset(path, last_index)?;
+        let last = self.b.build_load(self.i8(), last_at, "path.last").map_err(llvm_err)?.into_int_value();
+        let i8_ty = self.i8();
+        let slash = self
+            .b
+            .build_int_compare(IntPredicate::EQ, last, i8_ty.const_int(u64::from(b'/'), false), "")
+            .map_err(llvm_err)?;
+        let backslash = self
+            .b
+            .build_int_compare(IntPredicate::EQ, last, i8_ty.const_int(u64::from(b'\\'), false), "")
+            .map_err(llvm_err)?;
+        let separator = self.b.build_or(slash, backslash, "").map_err(llvm_err)?;
+        let needs_sep =
+            self.b.build_and(has_char, self.b.build_not(separator, "").map_err(llvm_err)?, "").map_err(llvm_err)?;
+        let extra = self
+            .b
+            .build_select(needs_sep, usize_ty.const_int(1, false), usize_ty.const_zero(), "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let total = self.b.build_int_add(len, extra, "").map_err(llvm_err)?;
+        let total = self.b.build_int_add(total, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let pattern = self.call_rt_alloc(total)?;
+        self.b.build_memcpy(pattern, 1, path, 1, len).map_err(|e| format!("LLVM builder error: {e}"))?;
+        let sep_at = self.offset(pattern, len)?;
+        let sep_byte = self
+            .b
+            .build_select(needs_sep, i8_ty.const_int(u64::from(b'\\'), false), i8_ty.const_zero(), "")
+            .map_err(llvm_err)?;
+        self.b.build_store(sep_at, sep_byte).map_err(llvm_err)?;
+        let star_at = self.offset(pattern, self.b.build_int_add(len, extra, "").map_err(llvm_err)?)?;
+        self.b.build_store(star_at, i8_ty.const_int(u64::from(b'*'), false)).map_err(llvm_err)?;
+        let nul_at =
+            self.offset(pattern, self.b.build_int_sub(total, usize_ty.const_int(1, false), "").map_err(llvm_err)?)?;
+        self.b.build_store(nul_at, i8_ty.const_zero()).map_err(llvm_err)?;
+
+        let data = self.b.build_alloca(self.i64().array_type(FIND_DATA_WORDS), "find.data").map_err(llvm_err)?;
+        let handle = self
+            .call(find_first, &[pattern.into(), data.into()])?
+            .expect("FindFirstFileA returns a handle")
+            .into_pointer_value();
+        let handle_int = self.b.build_ptr_to_int(handle, usize_ty, "find.handle").map_err(llvm_err)?;
+        let invalid =
+            self.b.build_int_compare(IntPredicate::EQ, handle_int, usize_ty.const_all_ones(), "").map_err(llvm_err)?;
+        let open = self.block(f, "read_dir.open");
+        let fail = self.block(f, "read_dir.fail");
+        self.b.build_conditional_branch(invalid, fail, open).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.call_rt_free(pattern)?;
+        self.call(free, &[path.into()])?;
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+
+        self.b.position_at_end(open);
+        let entry = self.block(f, "read_dir.entry");
+        let append = self.block(f, "read_dir.append");
+        let next = self.block(f, "read_dir.next");
+        let done = self.block(f, "read_dir.done");
+        self.b.build_unconditional_branch(entry).map_err(llvm_err)?;
+
+        self.b.position_at_end(entry);
+        let name = self.offset(data, usize_ty.const_int(FIND_DATA_FILE_NAME_OFFSET, false))?;
+        let nlen = self.call(strlen, &[name.into()])?.expect("strlen returns a size").into_int_value();
+        let skip = self.is_dot_or_dotdot(name, nlen)?;
+        self.b.build_conditional_branch(skip, next, append).map_err(llvm_err)?;
+
+        self.b.position_at_end(append);
+        self.list_append_name(f, out, name, nlen, h)?;
+        self.b.build_unconditional_branch(next).map_err(llvm_err)?;
+
+        self.b.position_at_end(next);
+        let more = self
+            .call(find_next, &[handle.into(), data.into()])?
+            .expect("FindNextFileA returns a flag")
+            .into_int_value();
+        let has_more = self.b.build_int_compare(IntPredicate::NE, more, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(has_more, entry, done).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        self.call(find_close, &[handle.into()])?;
+        self.call_rt_free(pattern)?;
+        self.call(free, &[path.into()])?;
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// Whether the NUL-terminated `name` of `nlen` bytes is `.` or `..`.
+    fn is_dot_or_dotdot(&mut self, name: PointerValue<'ctx>, nlen: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let (usize_ty, i8_ty) = (self.usize_ty, self.i8());
+        let dot = i8_ty.const_int(u64::from(b'.'), false);
+        let first = self.b.build_load(i8_ty, name, "name.first").map_err(llvm_err)?.into_int_value();
+        let first_dot = self.b.build_int_compare(IntPredicate::EQ, first, dot, "").map_err(llvm_err)?;
+        let one =
+            self.b.build_int_compare(IntPredicate::EQ, nlen, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let two =
+            self.b.build_int_compare(IntPredicate::EQ, nlen, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let second_at = self.offset(name, usize_ty.const_int(1, false))?;
+        let second = self.b.build_load(i8_ty, second_at, "name.second").map_err(llvm_err)?.into_int_value();
+        let second_dot = self.b.build_int_compare(IntPredicate::EQ, second, dot, "").map_err(llvm_err)?;
+        let parent = self.b.build_and(two, second_dot, "").map_err(llvm_err)?;
+        let dot_or_parent = self.b.build_or(one, parent, "").map_err(llvm_err)?;
+        self.b.build_and(first_dot, dot_or_parent, "name.skip").map_err(llvm_err)
+    }
+
+    /// Appends the NUL-terminated `name` of `nlen` bytes to the `{ptr, len, cap}` list at `out`, growing the
+    /// buffer when it is full. The builder is left in the block after the append.
+    fn list_append_name(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        out: PointerValue<'ctx>,
+        name: PointerValue<'ctx>,
+        nlen: IntValue<'ctx>,
+        h: &Helpers<'ctx>,
+    ) -> GenResult<()> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let elem_size = 3 * u64::from(self.usize_ty.get_bit_width() / 8);
+        let ptr_field = self.b.build_struct_gep(self.string_ty, out, 0, "list.ptr").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "list.len").map_err(llvm_err)?;
+        let cap_field = self.b.build_struct_gep(self.string_ty, out, 2, "list.cap").map_err(llvm_err)?;
+        let len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let cap = self.b.build_load(usize_ty, cap_field, "").map_err(llvm_err)?.into_int_value();
+        let full = self.b.build_int_compare(IntPredicate::EQ, len, cap, "").map_err(llvm_err)?;
+        let grow = self.block(f, "list.grow");
+        let append = self.block(f, "list.append");
+        self.b.build_conditional_branch(full, grow, append).map_err(llvm_err)?;
+
+        self.b.position_at_end(grow);
+        let empty = self.b.build_int_compare(IntPredicate::EQ, cap, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let twice = self.b.build_int_mul(cap, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let grown = self
+            .b
+            .build_select(empty, usize_ty.const_int(8, false), twice, "list.cap")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let old = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let bytes = self.b.build_int_mul(grown, usize_ty.const_int(elem_size, false), "").map_err(llvm_err)?;
+        let fresh = self.call_rt_realloc(old, bytes)?;
+        self.b.build_store(ptr_field, fresh).map_err(llvm_err)?;
+        self.b.build_store(cap_field, grown).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(append).map_err(llvm_err)?;
+
+        self.b.position_at_end(append);
+        let len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let ptr = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, ptr, &[len], "list.elem") }.map_err(llvm_err)?;
+        self.call(h.alloc_string, &[elem.into(), name.into(), nlen.into()])?;
+        let next = self.b.build_int_add(len, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(len_field, next).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// `create_dir(path, path_len) -> i32`: `mkdir`/`_mkdir`.
+    fn create_dir(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_create_dir", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let (path, plen) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        let status = if self.windows {
+            let mkdir = libc(self.module, "_mkdir", i32_ty.fn_type(&[ptr_ty.into()], false));
+            self.call(mkdir, &[cpath.into()])?
+        } else {
+            let mkdir = libc(self.module, "mkdir", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into()], false));
+            self.call(mkdir, &[cpath.into(), i32_ty.const_int(0o777, false).into()])?
+        };
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&status.expect("mkdir returns an int").into_int_value())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `remove_dir(path, path_len) -> i32`: `rmdir`/`_rmdir`.
+    fn remove_dir(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        self.remove_path("burdin_rt_remove_dir", "rmdir", "_rmdir")
+    }
+
+    /// `remove_file(path, path_len) -> i32`: `unlink`/`_unlink` (a symbolic link is removed, not its target).
+    fn remove_file(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        self.remove_path("burdin_rt_remove_file", "unlink", "_unlink")
+    }
+
+    /// A one-path removal: `(path, path_len) -> i32`, the C function's status.
+    fn remove_path(&mut self, name: &str, unix: &str, windows: &str) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let f = self.function(name, i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let (path, plen) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        let symbol = if self.windows { windows } else { unix };
+        let remove = libc(self.module, symbol, i32_ty.fn_type(&[ptr_ty.into()], false));
+        let status = self.call(remove, &[cpath.into()])?;
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&status.expect("the removal returns an int").into_int_value())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `rename(from, from_len, to, to_len) -> i32`: `rename`, or `MoveFileExA` with
+    /// `MOVEFILE_REPLACE_EXISTING` on Windows.
+    fn rename(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()];
+        let f = self.function("burdin_rt_rename", i32_ty.fn_type(&params, false));
+        let (from, flen) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let (to, tlen) = (Self::ptr_param(f, 2), Self::int_param(f, 3));
+        let cfrom = self.cstring_of(from, flen, malloc)?;
+        let cto = self.cstring_of(to, tlen, malloc)?;
+        if self.windows {
+            let move_file =
+                libc(self.module, "MoveFileExA", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false));
+            let ok = self
+                .call(
+                    move_file,
+                    &[cfrom.into(), cto.into(), i32_ty.const_int(MOVEFILE_REPLACE_EXISTING, false).into()],
+                )?
+                .expect("MoveFileExA returns a flag")
+                .into_int_value();
+            self.call(free, &[cfrom.into()])?;
+            self.call(free, &[cto.into()])?;
+            let moved = self.b.build_int_compare(IntPredicate::NE, ok, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let status = self
+                .b
+                .build_select(moved, i32_ty.const_zero(), i32_ty.const_all_ones(), "")
+                .map_err(llvm_err)?
+                .into_int_value();
+            self.b.build_return(Some(&status)).map_err(llvm_err)?;
+        } else {
+            let rename = libc(self.module, "rename", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+            let status = self.call(rename, &[cfrom.into(), cto.into()])?;
+            self.call(free, &[cfrom.into()])?;
+            self.call(free, &[cto.into()])?;
+            self.b.build_return(Some(&status.expect("rename returns an int").into_int_value())).map_err(llvm_err)?;
+        }
+        Ok(f)
+    }
+
+    /// `metadata(path, path_len, out: *RawMetadata) -> i32`: five 8-byte words, `{ size, mode, modified,
+    /// accessed, flags }`. The entry itself is read (`lstat` on Unix), so a symbolic link reports its own kind.
+    fn metadata(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i64());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let symbol = if self.windows {
+            "_stat64"
+        } else if self.darwin && cfg!(target_arch = "x86_64") {
+            // The modern 64-bit-inode layout; plain `stat` is the legacy struct on Intel macOS.
+            "lstat$INODE64"
+        } else {
+            "lstat"
+        };
+        let stat = libc(self.module, symbol, i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into()];
+        let f = self.function("burdin_rt_metadata", i32_ty.fn_type(&params, false));
+        let (path, plen, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        let buf = self.b.build_alloca(i64_ty.array_type(STAT_WORDS), "stat.buf").map_err(llvm_err)?;
+        let status = self.call(stat, &[cpath.into(), buf.into()])?.expect("stat returns an int").into_int_value();
+        let ok = self.b.build_int_compare(IntPredicate::EQ, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let fill = self.block(f, "meta.fill");
+        let fail = self.block(f, "meta.fail");
+        self.b.build_conditional_branch(ok, fill, fail).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+
+        self.b.position_at_end(fill);
+        let load = |b: &Builder<'ctx>, offset: u64, ty: IntType<'ctx>, name: &str| -> GenResult<IntValue<'ctx>> {
+            let at = self.offset(buf, usize_ty.const_int(offset, false))?;
+            Ok(b.build_load(ty, at, name).map_err(llvm_err)?.into_int_value())
+        };
+        let size = load(&self.b, STAT_SIZE_OFFSET, i64_ty, "stat.size")?;
+        let mode_ty = if STAT_MODE_BYTES == 2 { self.cx.i16_type() } else { self.cx.i32_type() };
+        let mode_raw = load(&self.b, STAT_MODE_OFFSET, mode_ty, "stat.mode")?;
+        let mode = self.b.build_int_z_extend(mode_raw, i64_ty, "stat.mode.wide").map_err(llvm_err)?;
+        let modified = load(&self.b, STAT_MTIME_OFFSET, i64_ty, "stat.mtime")?;
+        let accessed = load(&self.b, STAT_ATIME_OFFSET, i64_ty, "stat.atime")?;
+        let kind = self.b.build_and(mode, i64_ty.const_int(S_IFMT, false), "stat.kind").map_err(llvm_err)?;
+        let is_file =
+            self.b.build_int_compare(IntPredicate::EQ, kind, i64_ty.const_int(S_IFREG, false), "").map_err(llvm_err)?;
+        let is_dir =
+            self.b.build_int_compare(IntPredicate::EQ, kind, i64_ty.const_int(S_IFDIR, false), "").map_err(llvm_err)?;
+        let is_symlink = if self.windows {
+            // `_stat64` follows a link, so the kind comes from the entry's attributes instead.
+            let attributes = libc(self.module, "GetFileAttributesA", i32_ty.fn_type(&[ptr_ty.into()], false));
+            let attrs =
+                self.call(attributes, &[cpath.into()])?.expect("GetFileAttributesA returns an int").into_int_value();
+            let invalid = self
+                .b
+                .build_int_compare(IntPredicate::EQ, attrs, i32_ty.const_int(INVALID_FILE_ATTRIBUTES, false), "")
+                .map_err(llvm_err)?;
+            let reparse =
+                self.b.build_and(attrs, i32_ty.const_int(FILE_ATTRIBUTE_REPARSE_POINT, false), "").map_err(llvm_err)?;
+            let is_link =
+                self.b.build_int_compare(IntPredicate::NE, reparse, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            self.b.build_and(self.b.build_not(invalid, "").map_err(llvm_err)?, is_link, "").map_err(llvm_err)?
+        } else {
+            self.b.build_int_compare(IntPredicate::EQ, kind, i64_ty.const_int(S_IFLNK, false), "").map_err(llvm_err)?
+        };
+        let no = self.cx.bool_type().const_zero();
+        let file_flag = self.b.build_select(is_symlink, no, is_file, "").map_err(llvm_err)?.into_int_value();
+        let dir_flag = self.b.build_select(is_symlink, no, is_dir, "").map_err(llvm_err)?.into_int_value();
+        let file_flag = self.b.build_int_z_extend(file_flag, i64_ty, "").map_err(llvm_err)?;
+        let dir_flag = self.b.build_int_z_extend(dir_flag, i64_ty, "").map_err(llvm_err)?;
+        let link_flag = self.b.build_int_z_extend(is_symlink, i64_ty, "").map_err(llvm_err)?;
+        let dir_flag = self.b.build_left_shift(dir_flag, i64_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let link_flag = self.b.build_left_shift(link_flag, i64_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let flags = self.b.build_or(file_flag, dir_flag, "").map_err(llvm_err)?;
+        let flags = self.b.build_or(flags, link_flag, "").map_err(llvm_err)?;
+        for (offset, value) in [(0, size), (8, mode), (16, modified), (24, accessed), (32, flags)] {
+            let at = self.offset(out, usize_ty.const_int(offset, false))?;
+            self.b.build_store(at, value).map_err(llvm_err)?;
+        }
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `canonicalize(path, path_len, out: *String) -> i32`: the absolute, normalized path, or -1. On Windows the
+    /// result is lexical (`_fullpath`), and the path must exist; elsewhere it is `realpath`, which also resolves
+    /// links.
+    fn canonicalize(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into()];
+        let f = self.function("burdin_rt_canonicalize", i32_ty.fn_type(&params, false));
+        let (path, plen, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        // Every failure leaves an empty, valid `String` behind.
+        self.call(h.alloc_string, &[out.into(), ptr_ty.const_null().into(), usize_ty.const_zero().into()])?;
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        if self.windows {
+            // `_fullpath` succeeds even for a path that does not exist; `canonicalize` must not.
+            let access = libc(self.module, "_access", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into()], false));
+            let status = self
+                .call(access, &[cpath.into(), i32_ty.const_zero().into()])?
+                .expect("_access returns an int")
+                .into_int_value();
+            let missing =
+                self.b.build_int_compare(IntPredicate::NE, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let resolve = self.block(f, "canon.resolve");
+            let fail = self.block(f, "canon.fail");
+            self.b.build_conditional_branch(missing, fail, resolve).map_err(llvm_err)?;
+            self.b.position_at_end(fail);
+            self.call(free, &[cpath.into()])?;
+            self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+            self.b.position_at_end(resolve);
+        }
+        let resolved = if self.windows {
+            let full_path =
+                libc(self.module, "_fullpath", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+            self.call(full_path, &[ptr_ty.const_null().into(), cpath.into(), usize_ty.const_zero().into()])?
+                .expect("_fullpath returns a pointer")
+                .into_pointer_value()
+        } else {
+            let realpath = libc(self.module, "realpath", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+            self.call(realpath, &[cpath.into(), ptr_ty.const_null().into()])?
+                .expect("realpath returns a pointer")
+                .into_pointer_value()
+        };
+        let missing = self.b.build_is_null(resolved, "").map_err(llvm_err)?;
+        let ok = self.block(f, "canon.ok");
+        let fail = self.block(f, "canon.fail");
+        self.b.build_conditional_branch(missing, fail, ok).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+
+        self.b.position_at_end(ok);
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let len = self.call(strlen, &[resolved.into()])?.expect("strlen returns a size").into_int_value();
+        self.call(h.alloc_string, &[out.into(), resolved.into(), len.into()])?;
+        self.call(free, &[resolved.into()])?;
+        self.call(free, &[cpath.into()])?;
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
     /// The path bytes copied into a `malloc`ed buffer with a terminating NUL.
     fn cstring_of(
         &mut self,
@@ -2876,5 +3431,836 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let result = self.b.build_select(failed, minus_one, code, "").map_err(llvm_err)?;
         self.b.build_return(Some(&result)).map_err(llvm_err)?;
         Ok(f)
+    }
+
+    // ----- environment and working directory -------------------------------------------
+
+    /// Whether `ptr[0..len]` contains `byte` (libc `memchr`).
+    fn has_byte(&mut self, ptr: PointerValue<'ctx>, len: IntValue<'ctx>, byte: u8) -> GenResult<IntValue<'ctx>> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let memchr =
+            libc(self.module, "memchr", ptr_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), usize_ty.into()], false));
+        let found = self
+            .call(memchr, &[ptr.into(), i32_ty.const_int(u64::from(byte), false).into(), len.into()])?
+            .expect("memchr returns a pointer")
+            .into_pointer_value();
+        let null = self.b.build_is_null(found, "").map_err(llvm_err)?;
+        self.b.build_not(null, "").map_err(llvm_err)
+    }
+
+    /// Stores the `{ ptr, len, cap }` words of a byte list at `out`.
+    fn store_byte_list(
+        &mut self,
+        out: PointerValue<'ctx>,
+        ptr: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let f0 = self.b.build_struct_gep(self.string_ty, out, 0, "").map_err(llvm_err)?;
+        let f1 = self.b.build_struct_gep(self.string_ty, out, 1, "").map_err(llvm_err)?;
+        let f2 = self.b.build_struct_gep(self.string_ty, out, 2, "").map_err(llvm_err)?;
+        self.b.build_store(f0, ptr).map_err(llvm_err)?;
+        self.b.build_store(f1, len).map_err(llvm_err)?;
+        self.b.build_store(f2, len).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// Copies `len` bytes from `src` into a fresh Burdin allocation and stores it at `out`.
+    fn copy_to_byte_list(
+        &mut self,
+        out: PointerValue<'ctx>,
+        src: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let buf = self.call_rt_alloc(len)?;
+        self.b.build_memcpy(buf, 1, src, 1, len).map_err(llvm_err)?;
+        self.store_byte_list(out, buf, len)
+    }
+
+    /// Stores an empty list at `out` and returns zero from the current function.
+    fn return_missing(&mut self, out: PointerValue<'ctx>) -> GenResult<()> {
+        let zero = self.string_ty.const_zero();
+        self.b.build_store(out, zero).map_err(llvm_err)?;
+        self.b.build_return(Some(&self.i32().const_zero())).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// `env_get(name, name_len, out: *List<u8>) -> i32`: copies the value's bytes into `out`; 1 when the variable
+    /// exists. A name with an embedded NUL can never name an entry.
+    fn env_get(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let f =
+            self.function("burdin_rt_env_get", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into()], false));
+        let (name, name_len, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let nul = self.has_byte(name, name_len, 0)?;
+        let found = self.block(f, "env.get");
+        let missing = self.block(f, "env.missing");
+        self.b.build_conditional_branch(nul, missing, found).map_err(llvm_err)?;
+        self.b.position_at_end(missing);
+        self.return_missing(out)?;
+        self.b.position_at_end(found);
+        if self.windows {
+            self.env_get_windows(f, name, name_len, out)?;
+        } else {
+            self.env_get_unix(f, name, name_len, out)?;
+        }
+        Ok(f)
+    }
+
+    fn env_get_unix(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        name: PointerValue<'ctx>,
+        name_len: IntValue<'ctx>,
+        out: PointerValue<'ctx>,
+    ) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let getenv = libc(self.module, "getenv", ptr_ty.fn_type(&[ptr_ty.into()], false));
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let cname = self.cstring_of(name, name_len, malloc)?;
+        let value = self.call(getenv, &[cname.into()])?.expect("getenv returns a pointer").into_pointer_value();
+        self.call(free, &[cname.into()])?;
+        let null = self.b.build_is_null(value, "").map_err(llvm_err)?;
+        let present = self.block(f, "env.present");
+        let missing = self.block(f, "env.unset");
+        self.b.build_conditional_branch(null, missing, present).map_err(llvm_err)?;
+        self.b.position_at_end(missing);
+        self.return_missing(out)?;
+        self.b.position_at_end(present);
+        let len = self.call(strlen, &[value.into()])?.expect("strlen returns a size").into_int_value();
+        self.copy_to_byte_list(out, value, len)?;
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn env_get_windows(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        name: PointerValue<'ctx>,
+        name_len: IntValue<'ctx>,
+        out: PointerValue<'ctx>,
+    ) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let get = libc(
+            self.module,
+            "GetEnvironmentVariableW",
+            i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false),
+        );
+        let units = self.b.build_alloca(usize_ty, "env.name.units").map_err(llvm_err)?;
+        let wide_name = self.utf8_to_wide(name, name_len, units)?;
+        let wide_null = self.b.build_is_null(wide_name, "").map_err(llvm_err)?;
+        let lookup = self.block(f, "env.lookup");
+        let fail = self.block(f, "env.fail");
+        self.b.build_conditional_branch(wide_null, fail, lookup).map_err(llvm_err)?;
+        self.b.position_at_end(lookup);
+        let needed = self
+            .call(get, &[wide_name.into(), ptr_ty.const_null().into(), i32_ty.const_zero().into()])?
+            .expect("GetEnvironmentVariableW returns a size")
+            .into_int_value();
+        let none = self.b.build_int_compare(IntPredicate::EQ, needed, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let alloc = self.block(f, "env.alloc");
+        let free_name = self.block(f, "env.free.name");
+        self.b.build_conditional_branch(none, free_name, alloc).map_err(llvm_err)?;
+        self.b.position_at_end(free_name);
+        self.call(free, &[wide_name.into()])?;
+        self.b.build_unconditional_branch(fail).map_err(llvm_err)?;
+        self.b.position_at_end(alloc);
+        let units_needed = self.b.build_int_z_extend(needed, usize_ty, "").map_err(llvm_err)?;
+        let size = self.b.build_int_mul(units_needed, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let wbuf = self.call(malloc, &[size.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let buf_null = self.b.build_is_null(wbuf, "").map_err(llvm_err)?;
+        let second = self.block(f, "env.second");
+        self.b.build_conditional_branch(buf_null, free_name, second).map_err(llvm_err)?;
+        self.b.position_at_end(second);
+        let n = self
+            .call(get, &[wide_name.into(), wbuf.into(), needed.into()])?
+            .expect("GetEnvironmentVariableW returns a length")
+            .into_int_value();
+        self.call(free, &[wide_name.into()])?;
+        let empty = self.b.build_int_compare(IntPredicate::EQ, n, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let check_empty = self.block(f, "env.check.empty");
+        let convert = self.block(f, "env.convert");
+        self.b.build_conditional_branch(empty, check_empty, convert).map_err(llvm_err)?;
+        self.b.position_at_end(check_empty);
+        // A value of length zero is an empty variable when the first call asked for one WCHAR (the terminator)
+        // and a variable that disappeared otherwise.
+        let vanished =
+            self.b.build_int_compare(IntPredicate::UGT, needed, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let empty_ok = self.block(f, "env.empty");
+        let free_buf = self.block(f, "env.free.buf");
+        self.b.build_conditional_branch(vanished, free_buf, empty_ok).map_err(llvm_err)?;
+        self.b.position_at_end(free_buf);
+        self.call(free, &[wbuf.into()])?;
+        self.b.build_unconditional_branch(fail).map_err(llvm_err)?;
+        self.b.position_at_end(empty_ok);
+        self.call(free, &[wbuf.into()])?;
+        let zero = self.string_ty.const_zero();
+        self.b.build_store(out, zero).map_err(llvm_err)?;
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(convert);
+        let bytes = self.b.build_alloca(usize_ty, "env.bytes").map_err(llvm_err)?;
+        let data = self.wide_to_utf8(wbuf, n, bytes)?;
+        self.call(free, &[wbuf.into()])?;
+        let data_null = self.b.build_is_null(data, "").map_err(llvm_err)?;
+        let copy = self.block(f, "env.copy");
+        self.b.build_conditional_branch(data_null, fail, copy).map_err(llvm_err)?;
+        self.b.position_at_end(copy);
+        let len = self.b.build_load(usize_ty, bytes, "env.len").map_err(llvm_err)?.into_int_value();
+        self.copy_to_byte_list(out, data, len)?;
+        self.call(free, &[data.into()])?;
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.return_missing(out)?;
+        Ok(())
+    }
+
+    /// `env_set(name, name_len, value, value_len) -> i32`: 0 on success, 1 for an invalid name, 2 for an invalid
+    /// value (an embedded NUL, or on Windows bytes that are not UTF-8), and 3 when the system refuses.
+    fn env_set(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let f = self.function(
+            "burdin_rt_env_set",
+            i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()], false),
+        );
+        let (name, name_len, value, value_len) =
+            (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
+        let empty =
+            self.b.build_int_compare(IntPredicate::EQ, name_len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let eq = self.has_byte(name, name_len, b'=')?;
+        let nul = self.has_byte(name, name_len, 0)?;
+        let bad = self.b.build_or(self.b.build_or(empty, eq, "").map_err(llvm_err)?, nul, "").map_err(llvm_err)?;
+        let bad_name = self.block(f, "env.bad.name");
+        let check_value = self.block(f, "env.check.value");
+        self.b.build_conditional_branch(bad, bad_name, check_value).map_err(llvm_err)?;
+        self.b.position_at_end(bad_name);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(check_value);
+        let vnul = self.has_byte(value, value_len, 0)?;
+        let bad_value = self.block(f, "env.bad.value");
+        let store = self.block(f, "env.store");
+        self.b.build_conditional_branch(vnul, bad_value, store).map_err(llvm_err)?;
+        self.b.position_at_end(bad_value);
+        self.b.build_return(Some(&i32_ty.const_int(2, false))).map_err(llvm_err)?;
+        self.b.position_at_end(store);
+        if self.windows {
+            self.env_set_windows(f, name, name_len, value, value_len)?;
+        } else {
+            self.env_set_unix(name, name_len, value, value_len)?;
+        }
+        Ok(f)
+    }
+
+    fn env_set_unix(
+        &mut self,
+        name: PointerValue<'ctx>,
+        name_len: IntValue<'ctx>,
+        value: PointerValue<'ctx>,
+        value_len: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let setenv = libc(self.module, "setenv", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false));
+        let cname = self.cstring_of(name, name_len, malloc)?;
+        let cvalue = self.cstring_of(value, value_len, malloc)?;
+        let rc = self
+            .call(setenv, &[cname.into(), cvalue.into(), i32_ty.const_int(1, false).into()])?
+            .expect("setenv returns an int")
+            .into_int_value();
+        self.call(free, &[cname.into()])?;
+        self.call(free, &[cvalue.into()])?;
+        let ok = self.b.build_int_compare(IntPredicate::EQ, rc, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let status = self.b.build_select(ok, i32_ty.const_zero(), i32_ty.const_int(3, false), "").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn env_set_windows(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        name: PointerValue<'ctx>,
+        name_len: IntValue<'ctx>,
+        value: PointerValue<'ctx>,
+        value_len: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let set = libc(self.module, "SetEnvironmentVariableW", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let units = self.b.build_alloca(usize_ty, "env.name.units").map_err(llvm_err)?;
+        let wide_name = self.utf8_to_wide(name, name_len, units)?;
+        let name_null = self.b.build_is_null(wide_name, "").map_err(llvm_err)?;
+        let bad_name = self.block(f, "env.bad.name.utf8");
+        let value_bb = self.block(f, "env.value.utf8");
+        self.b.build_conditional_branch(name_null, bad_name, value_bb).map_err(llvm_err)?;
+        self.b.position_at_end(bad_name);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(value_bb);
+        let vunits = self.b.build_alloca(usize_ty, "env.value.units").map_err(llvm_err)?;
+        let wide_value = self.utf8_to_wide(value, value_len, vunits)?;
+        let value_null = self.b.build_is_null(wide_value, "").map_err(llvm_err)?;
+        let bad_value = self.block(f, "env.bad.value.utf8");
+        let call_set = self.block(f, "env.call.set");
+        self.b.build_conditional_branch(value_null, bad_value, call_set).map_err(llvm_err)?;
+        self.b.position_at_end(bad_value);
+        self.call(free, &[wide_name.into()])?;
+        self.b.build_return(Some(&i32_ty.const_int(2, false))).map_err(llvm_err)?;
+        self.b.position_at_end(call_set);
+        let rc = self
+            .call(set, &[wide_name.into(), wide_value.into()])?
+            .expect("SetEnvironmentVariableW returns a flag")
+            .into_int_value();
+        self.call(free, &[wide_name.into()])?;
+        self.call(free, &[wide_value.into()])?;
+        let failed = self.b.build_int_compare(IntPredicate::EQ, rc, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let status =
+            self.b.build_select(failed, i32_ty.const_int(3, false), i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// `env_remove(name, name_len) -> i32`: 0 on success, 1 for an invalid name, and 3 when the system refuses.
+    fn env_remove(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let f = self.function("burdin_rt_env_remove", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let (name, name_len) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let empty =
+            self.b.build_int_compare(IntPredicate::EQ, name_len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let eq = self.has_byte(name, name_len, b'=')?;
+        let nul = self.has_byte(name, name_len, 0)?;
+        let bad = self.b.build_or(self.b.build_or(empty, eq, "").map_err(llvm_err)?, nul, "").map_err(llvm_err)?;
+        let bad_name = self.block(f, "env.remove.bad.name");
+        let remove = self.block(f, "env.remove.do");
+        self.b.build_conditional_branch(bad, bad_name, remove).map_err(llvm_err)?;
+        self.b.position_at_end(bad_name);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(remove);
+        if self.windows {
+            self.env_remove_windows(f, name, name_len)?;
+        } else {
+            self.env_remove_unix(name, name_len)?;
+        }
+        Ok(f)
+    }
+
+    fn env_remove_unix(&mut self, name: PointerValue<'ctx>, name_len: IntValue<'ctx>) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let unsetenv = libc(self.module, "unsetenv", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let cname = self.cstring_of(name, name_len, malloc)?;
+        let rc = self.call(unsetenv, &[cname.into()])?.expect("unsetenv returns an int").into_int_value();
+        self.call(free, &[cname.into()])?;
+        let ok = self.b.build_int_compare(IntPredicate::EQ, rc, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let status = self.b.build_select(ok, i32_ty.const_zero(), i32_ty.const_int(3, false), "").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn env_remove_windows(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        name: PointerValue<'ctx>,
+        name_len: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let set = libc(self.module, "SetEnvironmentVariableW", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let last_error = libc(self.module, "GetLastError", i32_ty.fn_type(&[], false));
+        let units = self.b.build_alloca(usize_ty, "env.name.units").map_err(llvm_err)?;
+        let wide_name = self.utf8_to_wide(name, name_len, units)?;
+        let name_null = self.b.build_is_null(wide_name, "").map_err(llvm_err)?;
+        let bad_name = self.block(f, "env.remove.bad.utf8");
+        let call_set = self.block(f, "env.remove.set");
+        self.b.build_conditional_branch(name_null, bad_name, call_set).map_err(llvm_err)?;
+        self.b.position_at_end(bad_name);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(call_set);
+        let rc = self
+            .call(set, &[wide_name.into(), ptr_ty.const_null().into()])?
+            .expect("SetEnvironmentVariableW returns a flag")
+            .into_int_value();
+        let error = self.call(last_error, &[])?.expect("GetLastError returns a code").into_int_value();
+        self.call(free, &[wide_name.into()])?;
+        // Deleting a variable that is not there is a success, as it is on Unix.
+        let failed = self.b.build_int_compare(IntPredicate::EQ, rc, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let absent =
+            self.b.build_int_compare(IntPredicate::EQ, error, i32_ty.const_int(203, false), "").map_err(llvm_err)?;
+        let ok = self.b.build_or(self.b.build_not(failed, "").map_err(llvm_err)?, absent, "").map_err(llvm_err)?;
+        let status = self.b.build_select(ok, i32_ty.const_zero(), i32_ty.const_int(3, false), "").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// `current_dir(out: *List<u8>) -> i32`: copies the working directory's bytes into `out`; 1 when read.
+    fn current_dir(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, i32_ty) = (self.ptr_ty, self.i32());
+        let f = self.function("burdin_rt_current_dir", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let out = Self::ptr_param(f, 0);
+        if self.windows {
+            self.current_dir_windows(f, out)?;
+        } else {
+            self.current_dir_unix(f, out)?;
+        }
+        Ok(f)
+    }
+
+    fn current_dir_unix(&mut self, f: FunctionValue<'ctx>, out: PointerValue<'ctx>) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let getcwd = libc(self.module, "getcwd", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let buf = self
+            .call(getcwd, &[ptr_ty.const_null().into(), usize_ty.const_zero().into()])?
+            .expect("getcwd returns a pointer")
+            .into_pointer_value();
+        let null = self.b.build_is_null(buf, "").map_err(llvm_err)?;
+        let read = self.block(f, "cwd.read");
+        let missing = self.block(f, "cwd.missing");
+        self.b.build_conditional_branch(null, missing, read).map_err(llvm_err)?;
+        self.b.position_at_end(missing);
+        self.return_missing(out)?;
+        self.b.position_at_end(read);
+        let len = self.call(strlen, &[buf.into()])?.expect("strlen returns a size").into_int_value();
+        self.copy_to_byte_list(out, buf, len)?;
+        self.call(free, &[buf.into()])?;
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn current_dir_windows(&mut self, f: FunctionValue<'ctx>, out: PointerValue<'ctx>) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let get = libc(self.module, "GetCurrentDirectoryW", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false));
+        let needed = self
+            .call(get, &[i32_ty.const_zero().into(), ptr_ty.const_null().into()])?
+            .expect("GetCurrentDirectoryW returns a size")
+            .into_int_value();
+        let none = self.b.build_int_compare(IntPredicate::EQ, needed, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let alloc = self.block(f, "cwd.alloc");
+        let missing = self.block(f, "cwd.missing");
+        self.b.build_conditional_branch(none, missing, alloc).map_err(llvm_err)?;
+        self.b.position_at_end(alloc);
+        let units = self.b.build_int_z_extend(needed, usize_ty, "").map_err(llvm_err)?;
+        let size = self.b.build_int_mul(units, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let wbuf = self.call(malloc, &[size.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let buf_null = self.b.build_is_null(wbuf, "").map_err(llvm_err)?;
+        let read = self.block(f, "cwd.read");
+        self.b.build_conditional_branch(buf_null, missing, read).map_err(llvm_err)?;
+        self.b.position_at_end(read);
+        let n = self
+            .call(get, &[needed.into(), wbuf.into()])?
+            .expect("GetCurrentDirectoryW returns a length")
+            .into_int_value();
+        let failed = self.b.build_int_compare(IntPredicate::EQ, n, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let convert = self.block(f, "cwd.convert");
+        let free_buf = self.block(f, "cwd.free");
+        self.b.build_conditional_branch(failed, free_buf, convert).map_err(llvm_err)?;
+        self.b.position_at_end(free_buf);
+        self.call(free, &[wbuf.into()])?;
+        self.b.build_unconditional_branch(missing).map_err(llvm_err)?;
+        self.b.position_at_end(convert);
+        let bytes = self.b.build_alloca(usize_ty, "cwd.bytes").map_err(llvm_err)?;
+        let data = self.wide_to_utf8(wbuf, n, bytes)?;
+        self.call(free, &[wbuf.into()])?;
+        let data_null = self.b.build_is_null(data, "").map_err(llvm_err)?;
+        let copy = self.block(f, "cwd.copy");
+        self.b.build_conditional_branch(data_null, missing, copy).map_err(llvm_err)?;
+        self.b.position_at_end(copy);
+        let len = self.b.build_load(usize_ty, bytes, "cwd.len").map_err(llvm_err)?.into_int_value();
+        self.copy_to_byte_list(out, data, len)?;
+        self.call(free, &[data.into()])?;
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(missing);
+        self.return_missing(out)?;
+        Ok(())
+    }
+
+    /// `set_current_dir(path, path_len) -> i32`: 0 on success, 1 for an invalid path, and 3 when the system refuses.
+    fn set_current_dir(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let f = self.function("burdin_rt_set_current_dir", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
+        let (path, path_len) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
+        let nul = self.has_byte(path, path_len, 0)?;
+        let bad = self.block(f, "cwd.bad");
+        let change = self.block(f, "cwd.change");
+        self.b.build_conditional_branch(nul, bad, change).map_err(llvm_err)?;
+        self.b.position_at_end(bad);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(change);
+        if self.windows {
+            self.set_current_dir_windows(f, path, path_len)?;
+        } else {
+            self.set_current_dir_unix(path, path_len)?;
+        }
+        Ok(f)
+    }
+
+    fn set_current_dir_unix(&mut self, path: PointerValue<'ctx>, path_len: IntValue<'ctx>) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let chdir = libc(self.module, "chdir", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let cpath = self.cstring_of(path, path_len, malloc)?;
+        let rc = self.call(chdir, &[cpath.into()])?.expect("chdir returns an int").into_int_value();
+        self.call(free, &[cpath.into()])?;
+        let ok = self.b.build_int_compare(IntPredicate::EQ, rc, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let status = self.b.build_select(ok, i32_ty.const_zero(), i32_ty.const_int(3, false), "").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn set_current_dir_windows(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        path: PointerValue<'ctx>,
+        path_len: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let set = libc(self.module, "SetCurrentDirectoryW", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let units = self.b.build_alloca(usize_ty, "cwd.units").map_err(llvm_err)?;
+        let wide = self.utf8_to_wide(path, path_len, units)?;
+        let wide_null = self.b.build_is_null(wide, "").map_err(llvm_err)?;
+        let bad = self.block(f, "cwd.bad.utf8");
+        let call_set = self.block(f, "cwd.call.set");
+        self.b.build_conditional_branch(wide_null, bad, call_set).map_err(llvm_err)?;
+        self.b.position_at_end(bad);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(call_set);
+        let rc = self.call(set, &[wide.into()])?.expect("SetCurrentDirectoryW returns a flag").into_int_value();
+        self.call(free, &[wide.into()])?;
+        let failed = self.b.build_int_compare(IntPredicate::EQ, rc, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let status =
+            self.b.build_select(failed, i32_ty.const_int(3, false), i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_return(Some(&status)).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// Converts UTF-8 bytes to a `malloc`ed NUL-terminated UTF-16 string. Returns a null pointer at run time when
+    /// the bytes are not valid UTF-8 or the allocation fails, and stores the code-unit count in `units_out`.
+    fn utf8_to_wide(
+        &mut self,
+        ptr: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+        units_out: PointerValue<'ctx>,
+    ) -> GenResult<PointerValue<'ctx>> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let convert = libc(
+            self.module,
+            "MultiByteToWideChar",
+            i32_ty.fn_type(
+                &[i32_ty.into(), i32_ty.into(), ptr_ty.into(), i32_ty.into(), ptr_ty.into(), i32_ty.into()],
+                false,
+            ),
+        );
+        let f = self.b.get_insert_block().and_then(|b| b.get_parent()).expect("positioned in a function");
+        let result = self.b.build_alloca(ptr_ty, "wide.out").map_err(llvm_err)?;
+        self.b.build_store(result, ptr_ty.const_null()).map_err(llvm_err)?;
+        self.b.build_store(units_out, usize_ty.const_zero()).map_err(llvm_err)?;
+        let done = self.block(f, "wide.done");
+        // An empty string has no code units, and `MultiByteToWideChar` reports zero for it; allocate the
+        // terminating NUL directly.
+        let empty = self.b.build_int_compare(IntPredicate::EQ, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let empty_bb = self.block(f, "wide.empty");
+        let count = self.block(f, "wide.count");
+        self.b.build_conditional_branch(empty, empty_bb, count).map_err(llvm_err)?;
+        self.b.position_at_end(empty_bb);
+        let two = usize_ty.const_int(2, false);
+        let zero_wide = self.call(malloc, &[two.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let zero_null = self.b.build_is_null(zero_wide, "").map_err(llvm_err)?;
+        let empty_store = self.block(f, "wide.empty.store");
+        self.b.build_conditional_branch(zero_null, done, empty_store).map_err(llvm_err)?;
+        self.b.position_at_end(empty_store);
+        self.b.build_store(zero_wide, self.cx.i16_type().const_zero()).map_err(llvm_err)?;
+        self.b.build_store(result, zero_wide).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(count);
+        let (code_page, flags) = (i32_ty.const_int(65001, false), i32_ty.const_int(0x8, false));
+        let len32 = self.b.build_int_truncate(len, i32_ty, "").map_err(llvm_err)?;
+        let needed = self
+            .call(
+                convert,
+                &[
+                    code_page.into(),
+                    flags.into(),
+                    ptr.into(),
+                    len32.into(),
+                    ptr_ty.const_null().into(),
+                    i32_ty.const_zero().into(),
+                ],
+            )?
+            .expect("MultiByteToWideChar returns a count")
+            .into_int_value();
+        let none = self.b.build_int_compare(IntPredicate::EQ, needed, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let alloc = self.block(f, "wide.alloc");
+        self.b.build_conditional_branch(none, done, alloc).map_err(llvm_err)?;
+        self.b.position_at_end(alloc);
+        let units = self.b.build_int_z_extend(needed, usize_ty, "").map_err(llvm_err)?;
+        let size = self.b.build_int_add(units, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let bytes = self.b.build_int_mul(size, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let wide = self.call(malloc, &[bytes.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let null = self.b.build_is_null(wide, "").map_err(llvm_err)?;
+        let fill = self.block(f, "wide.fill");
+        self.b.build_conditional_branch(null, done, fill).map_err(llvm_err)?;
+        self.b.position_at_end(fill);
+        let converted = self
+            .call(convert, &[code_page.into(), flags.into(), ptr.into(), len32.into(), wide.into(), needed.into()])?
+            .expect("MultiByteToWideChar returns a count")
+            .into_int_value();
+        let bad = self.b.build_int_compare(IntPredicate::EQ, converted, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let store = self.block(f, "wide.store");
+        let free_wide = self.block(f, "wide.free");
+        self.b.build_conditional_branch(bad, free_wide, store).map_err(llvm_err)?;
+        self.b.position_at_end(free_wide);
+        self.call(free, &[wide.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(store);
+        let term = unsafe { self.b.build_in_bounds_gep(self.cx.i16_type(), wide, &[units], "") }.map_err(llvm_err)?;
+        self.b.build_store(term, self.cx.i16_type().const_zero()).map_err(llvm_err)?;
+        self.b.build_store(units_out, units).map_err(llvm_err)?;
+        self.b.build_store(result, wide).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_load(ptr_ty, result, "wide.result").map_err(llvm_err).map(|v| v.into_pointer_value())
+    }
+
+    /// Converts `units` UTF-16 code units to a `malloc`ed UTF-8 buffer, storing the byte count in `bytes_out`.
+    /// Returns a null pointer at run time when the units are not valid Unicode or the allocation fails.
+    fn wide_to_utf8(
+        &mut self,
+        wide: PointerValue<'ctx>,
+        units: IntValue<'ctx>,
+        bytes_out: PointerValue<'ctx>,
+    ) -> GenResult<PointerValue<'ctx>> {
+        let (ptr_ty, usize_ty, i32_ty) = (self.ptr_ty, self.usize_ty, self.i32());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let convert = libc(
+            self.module,
+            "WideCharToMultiByte",
+            i32_ty.fn_type(
+                &[
+                    i32_ty.into(),
+                    i32_ty.into(),
+                    ptr_ty.into(),
+                    i32_ty.into(),
+                    ptr_ty.into(),
+                    i32_ty.into(),
+                    ptr_ty.into(),
+                    ptr_ty.into(),
+                ],
+                false,
+            ),
+        );
+        let f = self.b.get_insert_block().and_then(|b| b.get_parent()).expect("positioned in a function");
+        let result = self.b.build_alloca(ptr_ty, "utf8.out").map_err(llvm_err)?;
+        self.b.build_store(result, ptr_ty.const_null()).map_err(llvm_err)?;
+        self.b.build_store(bytes_out, usize_ty.const_zero()).map_err(llvm_err)?;
+        let (code_page, flags) = (i32_ty.const_int(65001, false), i32_ty.const_int(0x80, false));
+        let units32 = self.b.build_int_truncate(units, i32_ty, "").map_err(llvm_err)?;
+        let needed = self
+            .call(
+                convert,
+                &[
+                    code_page.into(),
+                    flags.into(),
+                    wide.into(),
+                    units32.into(),
+                    ptr_ty.const_null().into(),
+                    i32_ty.const_zero().into(),
+                    ptr_ty.const_null().into(),
+                    ptr_ty.const_null().into(),
+                ],
+            )?
+            .expect("WideCharToMultiByte returns a count")
+            .into_int_value();
+        let none = self.b.build_int_compare(IntPredicate::EQ, needed, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let alloc = self.block(f, "utf8.alloc");
+        let done = self.block(f, "utf8.done");
+        self.b.build_conditional_branch(none, done, alloc).map_err(llvm_err)?;
+        self.b.position_at_end(alloc);
+        let size = self.b.build_int_z_extend(needed, usize_ty, "").map_err(llvm_err)?;
+        let bytes = self.call(malloc, &[size.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let null = self.b.build_is_null(bytes, "").map_err(llvm_err)?;
+        let fill = self.block(f, "utf8.fill");
+        self.b.build_conditional_branch(null, done, fill).map_err(llvm_err)?;
+        self.b.position_at_end(fill);
+        let converted = self
+            .call(
+                convert,
+                &[
+                    code_page.into(),
+                    flags.into(),
+                    wide.into(),
+                    units32.into(),
+                    bytes.into(),
+                    needed.into(),
+                    ptr_ty.const_null().into(),
+                    ptr_ty.const_null().into(),
+                ],
+            )?
+            .expect("WideCharToMultiByte returns a count")
+            .into_int_value();
+        let bad = self.b.build_int_compare(IntPredicate::EQ, converted, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let store = self.block(f, "utf8.store");
+        let free_bytes = self.block(f, "utf8.free");
+        self.b.build_conditional_branch(bad, free_bytes, store).map_err(llvm_err)?;
+        self.b.position_at_end(free_bytes);
+        self.call(free, &[bytes.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(store);
+        self.b.build_store(bytes_out, size).map_err(llvm_err)?;
+        self.b.build_store(result, bytes).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_load(ptr_ty, result, "utf8.result").map_err(llvm_err).map(|v| v.into_pointer_value())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The runtime must verify on both platform paths. The environment and working-directory functions are the
+    /// only part of the runtime with two implementations, and the suite can execute only the host's, so this
+    /// checks the IR of the other one too.
+    #[test]
+    fn the_runtime_verifies_on_every_platform_path() {
+        for windows in [false, true] {
+            for checking in [false, true] {
+                let cx = Context::create();
+                let module = cx.create_module("runtime");
+                let ptr = cx.ptr_type(AddressSpace::default());
+                let usize_ty = cx.i64_type();
+                let string_ty = cx.struct_type(&[ptr.into(), usize_ty.into(), usize_ty.into()], false);
+                generate(&cx, &module, usize_ty, string_ty, windows, false, checking)
+                    .unwrap_or_else(|e| panic!("generating the runtime (windows={windows}) failed: {e}"));
+                module.verify().unwrap_or_else(|e| {
+                    panic!("the runtime (windows={windows}, checking={checking}) does not verify: {e}")
+                });
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    use std::ffi::CStr;
+    use std::ffi::{CString, c_char, c_int, c_void};
+
+    /// The host's own `stat`/`lstat`, with the same symbol the runtime calls. The test reads the fields the
+    /// runtime reads through `STAT_*_OFFSET`, so a wrong layout fails on the host that has it.
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    unsafe extern "C" {
+        #[link_name = "lstat$INODE64"]
+        fn host_lstat(path: *const c_char, buf: *mut c_void) -> c_int;
+    }
+    #[cfg(all(unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
+    unsafe extern "C" {
+        #[link_name = "lstat"]
+        fn host_lstat(path: *const c_char, buf: *mut c_void) -> c_int;
+    }
+    #[cfg(windows)]
+    unsafe extern "C" {
+        #[link_name = "_stat64"]
+        fn host_lstat(path: *const c_char, buf: *mut c_void) -> c_int;
+    }
+
+    fn stat_probe(path: &std::path::Path) -> [i64; STAT_WORDS as usize] {
+        let cpath = CString::new(path.to_str().expect("a UTF-8 temporary path")).expect("no NUL in the path");
+        let mut buf = [0i64; STAT_WORDS as usize];
+        // SAFETY: `buf` is `size_of::<libc::stat>()` bytes rounded up to whole words and 8-byte aligned, which
+        // is what the C function writes; the path is NUL-terminated.
+        let status = unsafe { host_lstat(cpath.as_ptr(), buf.as_mut_ptr().cast()) };
+        assert_eq!(status, 0, "stat of {}", path.display());
+        buf
+    }
+
+    fn field(buf: &[i64], offset: u64, bytes: u32) -> i64 {
+        // SAFETY: every offset this module reads is inside the buffer (checked by `stat_layout_fits_the_buffer`),
+        // and a `stat` result is a plain sequence of integers.
+        unsafe {
+            let at = (buf.as_ptr() as *const u8).add(offset as usize);
+            match bytes {
+                2 => i64::from(*(at as *const i16)),
+                4 => i64::from(*(at as *const i32)),
+                _ => *(at as *const i64),
+            }
+        }
+    }
+
+    #[test]
+    fn stat_layout_fits_the_buffer() {
+        let bytes = u64::from(STAT_WORDS) * 8;
+        assert!(STAT_SIZE_OFFSET + 8 <= bytes, "st_size is inside the buffer");
+        assert!(STAT_MODE_OFFSET + u64::from(STAT_MODE_BYTES) <= bytes, "st_mode is inside the buffer");
+        assert!(STAT_ATIME_OFFSET + 8 <= bytes, "st_atime is inside the buffer");
+        assert!(STAT_MTIME_OFFSET + 8 <= bytes, "st_mtime is inside the buffer");
+        assert!(u64::from(STAT_WORDS) * 8 >= std::mem::size_of::<libc::stat>() as u64);
+    }
+
+    #[test]
+    fn stat_layout_matches_the_host() {
+        let dir = std::env::temp_dir().join(format!("burdin-stat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a temporary directory");
+        let path = dir.join("probe.txt");
+        std::fs::write(&path, b"12345").expect("a probe file");
+        let buf = stat_probe(&path);
+        assert_eq!(field(&buf, STAT_SIZE_OFFSET, 8), 5, "st_size is the file's length");
+        let meta = std::fs::metadata(&path).expect("the probe file's metadata");
+        assert_eq!(field(&buf, STAT_SIZE_OFFSET, 8) as u64, meta.len());
+        let modified = meta.modified().expect("a modification time");
+        let seconds = modified.duration_since(std::time::UNIX_EPOCH).expect("after the epoch").as_secs() as i64;
+        assert_eq!(field(&buf, STAT_MTIME_OFFSET, 8), seconds, "st_mtime is in seconds since the epoch");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = field(&buf, STAT_MODE_OFFSET, STAT_MODE_BYTES) as u32;
+            assert_eq!(mode & 0o7777, meta.permissions().mode() & 0o7777, "st_mode is the file's mode");
+            let kind = mode & 0o170000;
+            assert_eq!(kind, 0o100000, "a regular file");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Reading a directory through `readdir` at `DIRENT_NAME_OFFSET` yields the entry names. The listing order is
+    /// the system's, so the test creates a known entry and checks the names it reads include `.`, `..`, and that
+    /// entry; a wrong offset reads garbage instead.
+    #[cfg(unix)]
+    #[test]
+    fn dirent_name_offset_matches_the_host() {
+        unsafe extern "C" {
+            fn opendir(path: *const c_char) -> *mut c_void;
+            fn readdir(dir: *mut c_void) -> *mut c_void;
+            fn closedir(dir: *mut c_void) -> c_int;
+        }
+        let dir = std::env::temp_dir().join(format!("burdin-dirent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a temporary directory");
+        std::fs::write(dir.join("probe-name.txt"), b"x").expect("a probe file");
+        let cpath = CString::new(dir.to_str().expect("a UTF-8 temporary path")).expect("no NUL in the path");
+        let mut names = Vec::new();
+        // SAFETY: `opendir` gets a NUL-terminated path, `readdir` returns a `struct dirent` whose `d_name` this
+        // module reads at the host's offset, and the stream is closed once.
+        unsafe {
+            let stream = opendir(cpath.as_ptr());
+            assert!(!stream.is_null(), "opendir({})", dir.display());
+            loop {
+                let entry = readdir(stream);
+                if entry.is_null() {
+                    break;
+                }
+                let name = CStr::from_ptr((entry as *const u8).add(DIRENT_NAME_OFFSET as usize) as *const c_char);
+                names.push(name.to_string_lossy().into_owned());
+            }
+            closedir(stream);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(names.iter().any(|name| name == "."), "the listing has `.`: {names:?}");
+        assert!(names.iter().any(|name| name == ".."), "the listing has `..`: {names:?}");
+        assert!(names.iter().any(|name| name == "probe-name.txt"), "the entry name is read: {names:?}");
     }
 }

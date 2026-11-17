@@ -8,3 +8,4 @@ publish.workspace = true
 burdin_diag.workspace = true
 burdin_tir.workspace = true
 inkwell.workspace = true
+libc.workspace = true

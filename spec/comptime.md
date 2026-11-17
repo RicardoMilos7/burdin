@@ -246,7 +246,7 @@ const HEADER: [u8; 4] = embed("magic.bin")
 (`comptime_for_unroll`, `comptime_for_errors`), constants of every materializable kind (`const_values`,
 `const_cycle_through_call`), `comptime assert` (`assert_passes`, `assert_fails`, `assert_message_literal`), the
 budget (`budget_infinite_loop`, `budget_recursion`), a comptime panic (`comptime_panic`, `comptime_overflow`),
-purity (`purity_print`, `purity_file`), materialization (`not_materializable`), runtime locals (`runtime_local`),
+purity (`purity_print`, `purity_file`, `purity_env`), materialization (`not_materializable`), runtime locals (`runtime_local`),
 memory rules at compile time (`comptime_moves`, `comptime_drop`), and the interpreter's coverage of the language
 (`interp_*`). The `[differential]` test attribute reuses the interpreter and is specified in
 [`test-runner.md`](test-runner.md#differential-tests), with `tests/m10_test_runner/attributes_differential.bd` and

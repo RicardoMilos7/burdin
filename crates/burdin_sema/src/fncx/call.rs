@@ -969,6 +969,7 @@ impl FnCx<'_> {
                 Method::MapGet
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
+                | Method::MapEntry
                 | Method::MapRemove
                 | Method::MapContainsKey
                 | Method::MapInsert,

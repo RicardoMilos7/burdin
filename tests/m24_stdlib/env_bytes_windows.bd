@@ -1,0 +1,24 @@
+//@ run
+//@ skip-platform: linux macos
+//> Some(Bytes[195, 169])
+//> true
+//> true
+
+// On Windows the environment is UTF-16 and the byte functions use UTF-8: valid bytes round-trip, bytes that are
+// not UTF-8 are rejected, and text outside ASCII survives the conversion.
+
+fn main() {
+    let name = "BURDIN_TEST_ENV_412_WIN"
+    env.remove(name).unwrap()
+    let mut raw = List<u8>.new()
+    raw.push(195)
+    raw.push(169)
+    env.set_bytes(name, raw[0..raw.len()]).unwrap()
+    println("{:?}", env.get_bytes(name))
+    let mut bad = List<u8>.new()
+    bad.push(255)
+    println("{}", env.set_bytes(name, bad[0..bad.len()]).is_err())
+    env.set(name, "héllo 😀").unwrap()
+    println("{}", env.get(name).unwrap().as_str() == "héllo 😀")
+    env.remove(name).unwrap()
+}

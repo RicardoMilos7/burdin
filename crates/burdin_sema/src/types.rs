@@ -335,6 +335,16 @@ impl Globals {
                 let alloc = self.container_alloc(args.get(2), subst, module, diags);
                 Ty::Map(Box::new(key), Box::new(value), alloc)
             }
+            // The type `map.entry(key)` returns (`spec/stdlib.md`, "Map entry operations"). The entry itself is
+            // second-class; its key and value are the map's, so they must be storable.
+            ("MapEntry", 2) | ("MapEntry", 3) => {
+                let key = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                let value = self.resolve_type_in(&args[1], self_ty, subst, module, diags);
+                check_storable(&key, args[0].span, "a `Map` key", diags);
+                check_storable(&value, args[1].span, "a `Map` value", diags);
+                let alloc = self.container_alloc(args.get(2), subst, module, diags);
+                Ty::MapEntry(Box::new(key), Box::new(value), alloc)
+            }
             _ => return None,
         })
     }
@@ -402,6 +412,7 @@ impl Globals {
             | Ty::CString
             | Ty::List(_, _)
             | Ty::Map(..)
+            | Ty::MapEntry(..)
             | Ty::Shared(_)
             | Ty::Chars
             | Ty::Fn { .. }
