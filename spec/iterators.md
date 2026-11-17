@@ -40,7 +40,9 @@ method of their own:
 owning ones (`ArrayIntoIter`, `ListIntoIter`, `MapIntoIter`) drop the items they have not yielded; `MapIntoIter`
 also clears each entry it moves out, so the map's storage is never dropped twice. `MapIter` and `RangeIter` only
 read their source and have no drop glue. `Chars.next` decodes one scalar value with the same UTF-8 decoder as
-`for c in s.chars()` and advances by its byte width.
+`for c in s.chars()` and advances by its byte width. `List.drain(range)` also yields a `ListIntoIter<T>`: it removes
+the range from the list and hands the removed elements over in a buffer with the default allocator
+(`stdlib.md`).
 
 **IT6 `next`.** `it.next()` requires a mutable place (E0113), like any `mut self` receiver, and returns
 `Option<T>`. On a type parameter the call goes through the `Iterator` bound; on a user type it is the `next` method

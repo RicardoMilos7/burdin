@@ -548,6 +548,11 @@ impl<'a> Analyzer<'a> {
                     tir::Method::AsStr
                         | tir::Method::Clone
                         | tir::Method::ListLast
+                        | tir::Method::ListFirst
+                        | tir::Method::ListFirstMut
+                        | tir::Method::ListLastMut
+                        | tir::Method::ListGet
+                        | tir::Method::ListGetMut
                         | tir::Method::MapGet
                         | tir::Method::MapGetMut
                         | tir::Method::MapGetOrInsert
@@ -572,6 +577,11 @@ impl<'a> Analyzer<'a> {
                     tir::Method::AsStr
                     | tir::Method::Clone
                     | tir::Method::ListLast
+                    | tir::Method::ListFirst
+                    | tir::Method::ListFirstMut
+                    | tir::Method::ListLastMut
+                    | tir::Method::ListGet
+                    | tir::Method::ListGetMut
                     | tir::Method::MapGet
                     | tir::Method::MapGetMut
                     | tir::Method::MapGetOrInsert

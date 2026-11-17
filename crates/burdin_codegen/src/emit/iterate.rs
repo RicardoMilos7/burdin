@@ -90,7 +90,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// A `{ ptr, len, cap, index }` value of the list and map iterators.
-    fn seq_value(
+    pub(super) fn seq_value(
         &mut self,
         alloc: &burdin_tir::Alloc,
         fields: &[(u32, BasicValueEnum<'ctx>)],
