@@ -5,6 +5,7 @@
 // match of a valid separator in valid text always starts and ends on a character boundary, and `trim` walks whole
 // characters. The pieces a function returns are `String`s, because a `List` cannot hold views.
 
+use iter.Iterator
 use unicode.{is_whitespace, len_utf8}
 
 /// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
@@ -466,4 +467,15 @@ fn List<String>.join(self, sep: str): String {
         first = false
     }
     out
+}
+
+/// Appends every `char` `iter` yields: `text.extend_iter(other.chars())`.
+fn String.extend_iter<I: Iterator<char>>(mut self, own iter: I) {
+    let mut iter = iter
+    loop {
+        match iter.next() {
+            Some(c) => self.push(c),
+            None => break,
+        }
+    }
 }

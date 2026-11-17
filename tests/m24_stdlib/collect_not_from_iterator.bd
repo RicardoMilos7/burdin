@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// The target of `collect` must implement `FromIterator<T>` for the items the iterator yields (IT17, IT18).
+
+struct Plain {
+    n: i32
+}
+
+fn main() {
+    let a: Plain = [1, 2].into_iter().collect() //~ E0141
+    let b: i32 = [1, 2].into_iter().collect() //~ E0141
+    let c: String = [1, 2].into_iter().collect() //~ E0141
+    let d: Map<i32, i32> = [1, 2].into_iter().collect() //~ E0141
+    let e: List<i64> = [1, 2].into_iter().collect() //~ E0141
+    println("{a.n} {b} {c}")
+}

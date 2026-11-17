@@ -6,7 +6,7 @@
 
 use alloc.{Allocator, Global}
 use fmt.{Debug, Formatter}
-use iter.{Iterable, Iterator}
+use iter.{FromIterator, Iterable, Iterator}
 use ops.PartialEq
 
 /// A set of distinct values.
@@ -30,6 +30,21 @@ Set<T> where T: Eq {
     fn from_list(own items: List<T>): Set<T> {
         let mut set = Set<T>.new()
         set.extend(items)
+        set
+    }
+
+    /// A set of the elements of an array: `Set.from([1, 2, 3])`. A repeated element is stored once.
+    fn from<const N: usize>(own items: [T; N]): Set<T> {
+        let mut set = Set<T>.new()
+        set.extend_iter(items.into_iter())
+        set
+    }
+}
+
+Set<T>: FromIterator<T> where T: Eq {
+    fn from_iter<I: Iterator<T>>(own iter: I): Set<T> {
+        let mut set = Set<T>.new()
+        set.extend_iter(iter)
         set
     }
 }
@@ -87,6 +102,20 @@ Set<T, A> where T: Eq, A: Allocator {
                 Some(x) => {
                     let _ = self.insert(x)
                 },
+                None => break,
+            }
+        }
+    }
+
+    /// Adds every item `iter` yields; a repeated element is stored once. `set.extend_iter(other.into_iter())` moves
+    /// the elements of another collection in, and `set.extend_iter(xs.iter().map(...))` feeds a chain.
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I) {
+        let mut iter = iter
+        loop {
+            match iter.next() {
+                Some(x) => {
+                    let _ = self.insert(x)
+                }
                 None => break,
             }
         }

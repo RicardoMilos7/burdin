@@ -118,6 +118,7 @@ asks for it.
 | `try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F)` | `Result<A, E>` | folds until `f` returns an `Err`, which ends the fold and is returned; the rest of the items are not visited |
 | `try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F)` | `Result<(), E>` | calls `f` on every item until it returns an `Err` |
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
+| `collect<C: FromIterator<T>>(own self)` | `C` | builds any collection that implements `FromIterator<T>`; the expected type names `C` (IT17) |
 
 **Adapters for a particular kind of source (IT13).** `flatten`, `cloned`, `copied`, `cycle`, and `rev` need a bound on
 the interface's own item type or on the source itself (the items are iterators, the items are views, the source is
@@ -299,3 +300,79 @@ Tests: `tests/m13_iterators/`; the adapters of IT9, IT13, and IT14 are covered b
 `iter_cloned_needs_clone`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch` (E0141), `iter_cloned_needs_views`,
 `iter_flatten_needs_iterators`, `iter_zip_needs_iterator` (E0003).
 Mutable iteration (IT15) is covered by `tests/m24_stdlib/iter_mut_*`.
+
+## Collecting and extending (issue #708; IT16-IT22)
+
+`to_list` is the one way a chain becomes a collection that stage 1 started with. These rules give every collection the
+same two entry points: build one from an iterator (`FromIterator`, `collect`, `from`) and add an iterator's items to one
+that exists (`extend_iter`). They live in `std/src/iter.bd` and, for the collections, next to each collection.
+
+**IT16 `FromIterator<T>`.** `std` declares
+
+```
+interface FromIterator<T> {
+    fn from_iter<I: Iterator<T>>(own iter: I): Self
+}
+```
+
+A type implements it with a `Type: FromIterator<T> { ... }` block, and `Type.from_iter(it)` builds a value from every
+item `it` yields, in order. `Set<T>`, `Deque<T>`, and `PriorityHeap<T>` implement it in `std`, a program implements it
+for its own types (`m24_stdlib/collect_user_type`), and a generic function can build any implementer with
+`C.from_iter(it)` where `C: FromIterator<T>`. The method has a type parameter of its own (`I`), so a call through a bound
+matches `I` against the argument (the checker's symbolic call), and a call on a concrete type is an ordinary generic
+associated function.
+
+**IT17 `collect` and its target.** `Iterator<T>` has the default method `collect<C: FromIterator<T>>(own self): C`, which
+is `C.from_iter(self)`. The language has no explicit type arguments on a member call (`x.collect<Set<i32>>()` is E0002;
+grammar.md, "member type arguments"), so **the target is named by the expected type**: the annotation of a `let`, the
+declared type of a parameter, the return type, a field's type. A call with no expected type cannot tell what `C` stands
+for (E0003), and a target that does not implement `FromIterator<T>` for the items the iterator yields is E0141. Collecting
+is eager: it consumes the whole iterator, except where IT19 says it stops early.
+
+```
+let names: Set<String> = people.iter().map(|p| p.name.clone()).collect()
+fn evens(xs: List<i32>): List<i32> { xs.into_iter().filter(|x| *x % 2 == 0).collect() }
+```
+
+**IT18 Built-in targets.** The compiler implements `FromIterator` for these types without an impl block, and
+`Type.from_iter(it)` is the call of a `std` function that builds it (`__list_from_iter` and the others in `iter.bd`):
+
+| Target | Items | Rule |
+| --- | --- | --- |
+| `List<T>` | `T` | in order; `T` must be an owned type, so a chain of views is not a target (E0141) |
+| `Map<K, V>` | `(K, V)` | `K: Eq`, and neither type a view; a later pair replaces the value of an earlier one with the same key, like `insert`, and the replaced value is dropped |
+| `String` | `char`, `str`, `String`, or `&String` | the pieces are appended in order |
+| `Set<T>`, `Deque<T>`, `PriorityHeap<T>` | `T` | by their `std` impl blocks; a set keeps one of each element, a heap orders by `Ord` |
+
+Anything else is E0141: a `String` from integers, a `Map` from items that are not pairs, a `List<i64>` from `i32` items.
+
+**IT19 `Option` and `Result`.** `Option<C>` implements `FromIterator<Option<T>>` and `Result<C, E>` implements
+`FromIterator<Result<T, E>>` whenever `C: FromIterator<T>`. The iterator is read until its first `None` or `Err`, which
+is the result, and it is not asked for another item. When every item is `Some`/`Ok`, the payloads are gathered in a list
+and then handed to `C.from_iter`, so the target is built only on success and the gathered items of a failed collection
+are dropped at once. The rule nests: `Result<Option<List<i32>>, E>` is a target for items of type
+`Result<Option<i32>, E>`, because `Option<List<i32>>` implements `FromIterator<Option<i32>>`. The payload type `T` of
+`Iterator<Result<T, E>>` is found by the inference from an `Iterator` bound (IT13).
+
+**IT20 `extend_iter`.** Every collection adds the items of any iterator to itself: `list.extend_iter(it)`,
+`map.extend_iter(it)` (pairs), `set.extend_iter(it)`, `deque.extend_iter(it)`, `heap.extend_iter(it)`, and
+`string.extend_iter(it)` (`char` items). It takes an `Iterator<T>`, so a collection is passed through `into_iter()` (the
+items move) or `iter()` (for a collection of `Copy` elements the items are the elements themselves). `extend(own
+List<T>)` keeps its meaning; the names differ because the language has no overloading, and `extend_iter` is the form
+that takes a chain. Unlike `collect`, `extend_iter` works for every allocator (IT22).
+
+**IT21 `from` an array.** `List<T>.from([a, b, c])` and `Map<K, V>.from([(k, v), ...])`, and `Set<T>.from`,
+`Deque<T>.from`, and `PriorityHeap<T>.from`, build a collection from an array literal, moving the elements. `List.from`
+and `Map.from` also work without type arguments, taking them from the array or the expected type; the other three need
+the type arguments written or an expected type for a `Set`. The elements of the array take their type from the expected
+type, so `let xs: List<i64> = List.from([1, 2, 3])` is a list of `i64`. A map key is an owned value, so
+`Map.from([("a", 1)])` is E0120 at the call, because a `str` is a view: write `String.from("a")`.
+
+**IT22 Allocators.** `from_iter`, `collect`, and `from` build a collection that uses the default allocator, because a
+constructor has no allocator value to store (`allocators.md`, AL4). `List<T, A>.from_iter(it)` and the other
+constructors on a `List` or `Map` with another allocator are E0272, and `collect` into one is E0141 (it does not
+implement `FromIterator`); `Set<T, A>` with another allocator is E0141 too. To fill a container that stores an allocator,
+make it with `new_in` and call `extend_iter`, which is generic over the allocator (`m24_stdlib/collect_allocator`). There
+is no `collect_in`.
+
+Tests: `tests/m24_stdlib/collect_*`, `extend_iter`, and `from_array` (listed in `stdlib.md`, "Collecting and extending").

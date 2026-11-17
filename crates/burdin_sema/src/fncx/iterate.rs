@@ -5,6 +5,7 @@
 use super::{FnCx, error_expr, mk};
 use crate::generics::{Bound, Request, SYMBOLIC_CALL};
 use crate::globals::adt_key;
+use crate::types::check_storable;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{is_place_expr, place_root};
@@ -20,6 +21,7 @@ impl FnCx<'_> {
         name: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
+        expect: Option<&Ty>,
     ) -> Option<tir::Expr> {
         let recv_ty = recv.ty.clone();
         let builtin_item = self.globals.builtin_iterator_item(&recv_ty, &self.bounds);
@@ -92,7 +94,7 @@ impl FnCx<'_> {
         }
         let key = (iface, method, recv_ty.clone(), vec![item.clone()]);
         if let Some(info) = self.globals.builtin_method_templates.get(&key).cloned() {
-            return Some(self.generic_method_call(info, recv, &name.name, args, span));
+            return Some(self.generic_method_call(info, recv, &name.name, args, span, expect));
         }
         // The template is created on the next pass; still check the arguments so their own errors show now.
         for a in args {
@@ -105,6 +107,153 @@ impl FnCx<'_> {
             iface_args: vec![item],
         });
         Some(error_expr(span))
+    }
+
+    /// `from_iter` on a built-in collection (`List`, `Map`, `String`, `Option`, `Result`) and `from` on a `List` or a
+    /// `Map` (`spec/iterators.md`, IT18): a call to the `std` function that builds it. `None` when `ty` and `name`
+    /// are not one of those, so the ordinary associated-function lookup runs next. The target is `ty`, so the
+    /// function's type arguments come from it and from the argument.
+    pub(super) fn builtin_collection_call(
+        &mut self,
+        ty: &Ty,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<tir::Expr> {
+        let from_array = name.name == "from";
+        if name.name != "from_iter" && !from_array {
+            return None;
+        }
+        let std_name = match (ty, from_array) {
+            (Ty::List(..), false) => "__list_from_iter",
+            (Ty::List(..), true) => "__list_from",
+            (Ty::Map(..), false) => "__map_from_iter",
+            (Ty::Map(..), true) => "__map_from",
+            (Ty::Option(_), false) => "__option_from_iter",
+            (Ty::Result(..), false) => "__result_from_iter",
+            (Ty::String, false) => "",
+            _ => return None,
+        };
+        if let Ty::List(_, alloc) | Ty::Map(_, _, alloc) = ty
+            && !alloc.is_global()
+        {
+            self.diags.error(
+                Code::MISSING_ALLOCATOR,
+                span,
+                format!(
+                    "`{}` builds a `{ty}` with the default allocator, which this type does not use; make it with `new_in` and add the items with `extend_iter`",
+                    name.name
+                ),
+            );
+            return Some(self.args_then_error(args, span));
+        }
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{}` takes 1 argument, but {} were given", name.name, args.len()),
+            );
+            return Some(self.args_then_error(args, span));
+        }
+        if let Ty::Map(key, value, _) = ty {
+            check_storable(key, span, "a `Map` key", self.diags);
+            check_storable(value, span, "a `Map` value", self.diags);
+        }
+        let hint = if from_array { self.array_hint(ty) } else { None };
+        let arg = self.expr(&args[0].expr, hint.as_ref());
+        Some(self.collection_from(ty, std_name, name, args, arg, span))
+    }
+
+    /// The element type hint for the array `List<T>.from` and `Map<K, V>.from` take: an array of `T`, or of `(K, V)`.
+    fn array_hint(&self, ty: &Ty) -> Option<Ty> {
+        match ty {
+            Ty::List(elem, _) => Some(Ty::Array(elem.clone(), 0)),
+            Ty::Map(key, value, _) => Some(Ty::Array(Box::new(Ty::Tuple(vec![(**key).clone(), (**value).clone()])), 0)),
+            _ => None,
+        }
+    }
+
+    /// `List.from(array)` and `Map.from(array)` written without type arguments: the types come from the array and
+    /// from the expected type.
+    pub(super) fn untyped_collection_from(
+        &mut self,
+        collection: &str,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{collection}.from` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let hint = expect.and_then(|ty| self.array_hint(ty));
+        let arg = self.expr(&args[0].expr, hint.as_ref());
+        if collection == "Map"
+            && let Ty::Array(pair, _) = &arg.ty
+            && let Ty::Tuple(parts) = &**pair
+            && let [key, value] = parts.as_slice()
+        {
+            check_storable(key, span, "a `Map` key", self.diags);
+            check_storable(value, span, "a `Map` value", self.diags);
+        }
+        let std_name = if collection == "List" { "__list_from" } else { "__map_from" };
+        let ty = expect.filter(|ty| matches!((collection, ty), ("List", Ty::List(..)) | ("Map", Ty::Map(..))));
+        let Some(g) = self.globals.std_generic(std_name) else {
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{collection}.from` needs the standard library"));
+            return error_expr(span);
+        };
+        self.generic_call_checked(g, name, args, vec![arg], span, ty)
+    }
+
+    /// The call of the `std` function `std_name` with the checked argument `arg`; a `String` picks the function by
+    /// the item type of the iterator.
+    fn collection_from(
+        &mut self,
+        ty: &Ty,
+        std_name: &str,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        arg: tir::Expr,
+        span: Span,
+    ) -> tir::Expr {
+        let std_name = if *ty == Ty::String {
+            let Some(item) = self.globals.iterator_item(&arg.ty, &self.bounds) else {
+                if arg.ty != Ty::Error {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!("`{}` needs an iterator, but this is a `{}`", name.name, arg.ty),
+                    );
+                }
+                return error_expr(span);
+            };
+            match &item {
+                Ty::Char => "__string_from_chars",
+                Ty::Str => "__string_from_strs",
+                Ty::String => "__string_from_strings",
+                Ty::Ref { inner, .. } if **inner == Ty::String => "__string_from_string_views",
+                _ => {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!("a `String` is built from `char`, `str`, or `String` items, but this iterator yields `{item}`"),
+                    );
+                    return error_expr(span);
+                }
+            }
+        } else {
+            std_name
+        };
+        let Some(g) = self.globals.std_generic(std_name) else {
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{}` needs the standard library", name.name));
+            return error_expr(span);
+        };
+        self.generic_call_checked(g, name, args, vec![arg], span, Some(ty))
     }
 
     /// `it.sum()` and `it.product()`: the sum or product of an iterator of integers or floats, written as an

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A map key is an owned value, so a `str` key cannot be built from an array, typed or not (IT21).
+
+fn main() {
+    let a = Map.from([("a", 1)]) //~ E0120
+    let b = Map<str, i32>.from([("b", 2)]) //~ E0120
+    println("{a.len()} {b.len()}")
+}

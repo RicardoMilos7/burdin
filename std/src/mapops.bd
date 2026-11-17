@@ -7,6 +7,9 @@
 // The compiler provides `get_mut`, `get_or_insert`, `entry`, and the entry's `or_insert` and `or_insert_with`;
 // the rest is written here on top of them.
 
+use alloc.Allocator
+use iter.Iterator
+
 /// The value for `key`, storing the result of `make` first when there is none. The entry probes the key once and
 /// `make` runs only when the key is absent, so it may be expensive. The returned reference keeps the map
 /// exclusively borrowed until its last use.
@@ -23,6 +26,20 @@ fn Map<K, V>.update<F: FnOnce(&mut V)>(mut self, key: K, own change: F): bool wh
             true
         }
         None => false,
+    }
+}
+
+/// Stores every `(key, value)` pair `iter` yields, in order; a key that is already there gets the new value, like
+/// `insert`: `map.extend_iter(other.into_iter())`.
+fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, own iter: I) where K: Eq, A: Allocator {
+    let mut iter = iter
+    loop {
+        match iter.next() {
+            Some((key, value)) => {
+                self.insert(key, value)
+            }
+            None => break,
+        }
     }
 }
 
