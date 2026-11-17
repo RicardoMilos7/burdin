@@ -152,7 +152,10 @@ note at the operation:
   `Write` default built on it) and `flush`;
 - input: the `Stdin` handle's `read`, `read_until`, `read_line`, and `read_to_string` (and so every `Read` and
   `BufRead` default built on them), and `is_terminal` on any stream handle;
-- files, the environment, and processes: `read_to_string`, `write_file`, `env.args`, `process.exit`, `process.run`;
+- files, the environment, and processes: `read_to_string`, `write_file`, `env.args`, `env.get`/`env.get_bytes`,
+  `env.current_dir`/`env.current_dir_bytes`, `env.set`/`env.set_bytes`/`env.remove`, `env.set_current_dir` and its
+  byte form, `process.exit`, `process.run`, and `Command.spawn`/`Command.status`/`Command.output`, a `Child`'s
+  `stdin`/`stdout`/`stderr`, `Child.wait`, and `Child.wait_with_output` (`stdlib.md`, "Child processes");
 - the system's clocks, entropy, and sleeping: `Instant.now`, `SystemTime.now` (so `SystemClock`'s methods), `sleep`,
   and `random_seed` (so `Random.from_entropy`); a `Duration`, a `DateTime`, a `ManualClock`, and a seeded `Random`
   are pure and work at compile time;

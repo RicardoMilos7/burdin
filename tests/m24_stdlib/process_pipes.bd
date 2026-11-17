@@ -1,0 +1,79 @@
+//@ run
+//@ skip-platform: windows
+//> line=Some("first")
+//> line=Some("second")
+//> line=Some("last")
+//> line=None
+//> echo=hello world ok=true
+//> err=oops
+//> both=a/b
+//> null=true
+//> closed=true true
+
+// Pipes: `Child.stdout`, `Child.stderr`, and `Child.stdin` connect the parent to the child's streams. A handle
+// closes when it is dropped, so dropping the write end is how the parent tells a reader that the input ended,
+// and `wait_with_output` drains both output pipes without letting one block the other.
+
+fn main() {
+    // A line at a time, including a last line with no terminator.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf 'first\nsecond\nlast'")
+    cmd.stdout(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    let mut out = child.stdout().unwrap()
+    println("line={:?}", out.read_line().unwrap())
+    println("line={:?}", out.read_line().unwrap())
+    println("line={:?}", out.read_line().unwrap())
+    println("line={:?}", out.read_line().unwrap())
+    child.wait().unwrap()
+
+    // Write to the child's standard input; dropping the handle closes it and `cat` sees the end of the input.
+    let mut cmd = Command.new("cat")
+    cmd.stdin(Stdio.Piped)
+    cmd.stdout(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    {
+        let input = child.stdin().unwrap()
+        input.write("hello world\n").unwrap()
+    }
+    let text = child.stdout().unwrap().read_to_string().unwrap()
+    let status = child.wait().unwrap()
+    println("echo={} ok={}", text.trim(), status.success())
+
+    // Standard error has its own handle.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf oops >&2")
+    cmd.stderr(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    println("err={}", child.stderr().unwrap().read_to_string().unwrap())
+    child.wait().unwrap()
+
+    // `wait_with_output` reads both pipes and waits.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf a; printf b >&2")
+    cmd.stdout(Stdio.Piped)
+    cmd.stderr(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    let output = child.wait_with_output().unwrap()
+    println("both={}/{}", output.stdout, output.stderr)
+
+    // A null stream discards what the child writes.
+    let mut cmd = Command.new("sh")
+    cmd.arg("-c")
+    cmd.arg("printf hidden")
+    cmd.stdout(Stdio.Null)
+    println("null={}", cmd.status().unwrap().success())
+
+    // Dropping the write end without writing closes it, so the child reads an empty input.
+    let mut cmd = Command.new("cat")
+    cmd.stdin(Stdio.Piped)
+    cmd.stdout(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    child.stdin().unwrap()
+    let text = child.stdout().unwrap().read_to_string().unwrap()
+    let status = child.wait().unwrap()
+    println("closed={} {}", text.len() == 0, status.success())
+}

@@ -1,0 +1,132 @@
+//@ run
+//@ skip-platform: linux macos
+//> out=[hello] code=Some(0) ok=true
+//> exit=Some(7) ok=false
+//> err=[oops]
+//> env=[value]
+//> cwd=[inside]
+//> pipe=[hello] ok=true
+//> line=Some("one")
+//> line=Some("two")
+//> line=None
+//> both=[a]/[b]
+//> before
+//> inherited
+//> after
+//> twice=true
+//> missing=true
+//> badcwd=true
+//> empty=true
+//> null=true
+
+// `Command` on Windows: `CreateProcessW` receives the program, arguments, environment, and working directory,
+// and the child's standard streams are pipes or the null device. `cmd.exe` is the child here only because it is a
+// program every Windows installation has; `Command` never goes through it as a shell.
+
+fn main() {
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("echo hello")
+    let result = cmd.output().unwrap()
+    println("out=[{}] code={:?} ok={}", result.stdout.trim(), result.status.code(), result.status.success())
+
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("exit 7")
+    let result = cmd.output().unwrap()
+    println("exit={:?} ok={}", result.status.code(), result.status.success())
+
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("echo oops 1>&2")
+    let result = cmd.output().unwrap()
+    println("err=[{}]", result.stderr.trim())
+
+    // Environment names are case-insensitive on Windows.
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("echo %BURDIN_419_CASE%")
+    cmd.env("Burdin_419_Case", "value")
+    let result = cmd.output().unwrap()
+    println("env=[{}]", result.stdout.trim())
+
+    // The child starts in the directory `cwd` names.
+    create_dir("sub").unwrap()
+    write_file("sub/marker.txt", "inside").unwrap()
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("type marker.txt")
+    cmd.cwd("sub")
+    let result = cmd.output().unwrap()
+    println("cwd=[{}]", result.stdout.trim())
+
+    // A pipe to the child's standard input; dropping the handle closes it.
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("findstr .")
+    cmd.stdin(Stdio.Piped)
+    cmd.stdout(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    {
+        let input = child.stdin().unwrap()
+        input.write("hello\n").unwrap()
+    }
+    let echoed = child.stdout().unwrap().read_to_string().unwrap()
+    let status = child.wait().unwrap()
+    println("pipe=[{}] ok={}", echoed.trim(), status.success())
+
+    // Lines, including the end of the output.
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("(echo one&echo two)")
+    cmd.stdout(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    let mut out = child.stdout().unwrap()
+    println("line={:?}", out.read_line().unwrap())
+    println("line={:?}", out.read_line().unwrap())
+    println("line={:?}", out.read_line().unwrap())
+    child.wait().unwrap()
+
+    // `wait_with_output` reads both pipes and waits.
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("echo a & echo b 1>&2")
+    cmd.stdout(Stdio.Piped)
+    cmd.stderr(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    let output = child.wait_with_output().unwrap()
+    println("both=[{}]/[{}]", output.stdout.trim(), output.stderr.trim())
+
+    // An inherited stream is the parent's: the parent's buffered line is written before the child's.
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("echo inherited")
+    println("before")
+    cmd.status().unwrap()
+    println("after")
+
+    // A child is waited for once.
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("exit 0")
+    let mut child = cmd.spawn().unwrap()
+    child.wait().unwrap()
+    println("twice={}", child.wait().is_err())
+
+    // A program that does not exist, and a working directory that does not, are spawn errors.
+    let cmd = Command.new("burdin-no-such-program-419.exe")
+    println("missing={}", cmd.spawn().is_err())
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("exit 0")
+    cmd.cwd("burdin-no-such-directory-419")
+    println("badcwd={}", cmd.spawn().is_err())
+    println("empty={}", Command.new("").spawn().is_err())
+
+    // A null stream discards what the child writes.
+    let mut cmd = Command.new("cmd.exe")
+    cmd.arg("/C")
+    cmd.arg("echo hidden")
+    cmd.stdout(Stdio.Null)
+    println("null={}", cmd.status().unwrap().success())
+}

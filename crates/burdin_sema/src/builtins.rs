@@ -36,6 +36,15 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__entropy" => Builtin::Entropy,
         "__sleep" => Builtin::Sleep,
         "__args" => Builtin::EnvArgs,
+        "__env_list" => Builtin::EnvList,
+        "__process_spawn" => Builtin::ProcessSpawn,
+        "__process_wait" => Builtin::ProcessWait,
+        "__process_close" => Builtin::ProcessClose,
+        "__pipe_read_to_string" => Builtin::PipeReadToString,
+        "__pipe_read_line" => Builtin::PipeReadLine,
+        "__pipe_read_both" => Builtin::PipeReadBoth,
+        "__pipe_write" => Builtin::PipeWrite,
+        "__pipe_close" => Builtin::PipeClose,
         "__env_get" => Builtin::EnvGet,
         "__env_set" => Builtin::EnvSet,
         "__env_set_bytes" => Builtin::EnvSetBytes,
@@ -92,7 +101,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::Clock => Ty::Int(IntTy::I64),
         Builtin::Entropy => Ty::Int(IntTy::U64),
-        Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
+        Builtin::EnvArgs | Builtin::EnvList => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::EnvGet | Builtin::CurrentDir => {
             Ty::Option(Box::new(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global)))
         }
@@ -100,7 +109,24 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::EnvSetBytes
         | Builtin::EnvRemove
         | Builtin::SetCurrentDir
-        | Builtin::SetCurrentDirBytes => Ty::Int(IntTy::I32),
+        | Builtin::SetCurrentDirBytes
+        | Builtin::PipeWrite => Ty::Int(IntTy::I32),
+        Builtin::ProcessWait => Ty::Int(IntTy::I64),
+        // `(pid: i32, process: usize, stdin: usize, stdout: usize, stderr: usize)`: the child's identity and the
+        // pipe ends `std` wraps. `process` is the Windows process handle and 0 on Unix.
+        Builtin::ProcessSpawn => Ty::Result(
+            Box::new(Ty::Tuple(vec![
+                Ty::Int(IntTy::I32),
+                Ty::Int(IntTy::Usize),
+                Ty::Int(IntTy::Usize),
+                Ty::Int(IntTy::Usize),
+                Ty::Int(IntTy::Usize),
+            ])),
+            Box::new(io_error()),
+        ),
+        Builtin::PipeReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
+        Builtin::PipeReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
+        Builtin::PipeReadBoth => Ty::Result(Box::new(Ty::Tuple(vec![Ty::String, Ty::String])), Box::new(io_error())),
         Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
         _ => Ty::Unit,
@@ -108,6 +134,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
     let params = match b {
         Builtin::StringNew
         | Builtin::EnvArgs
+        | Builtin::EnvList
         | Builtin::Unreachable
         | Builtin::TargetOs
         | Builtin::TargetArch
@@ -118,6 +145,27 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::StdinReadToString
         | Builtin::StdinAvail
         | Builtin::StdinNextByte => Vec::new(),
+        Builtin::ProcessClose | Builtin::PipeClose => vec![ParamSig::plain(Ty::Int(IntTy::Usize))],
+        Builtin::ProcessWait => {
+            vec![ParamSig::plain(Ty::Int(IntTy::I32)), ParamSig::plain(Ty::Int(IntTy::Usize))]
+        }
+        Builtin::PipeReadToString | Builtin::PipeReadLine => vec![ParamSig::plain(Ty::Int(IntTy::Usize))],
+        Builtin::PipeReadBoth => {
+            vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Int(IntTy::Usize))]
+        }
+        Builtin::PipeWrite => vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Str)],
+        // `(program, args, environment, working directory, Windows command line, stdin, stdout, stderr)`: the
+        // stream modes are 0 (inherit), 1 (piped), and 2 (null). `std` builds the environment and the command line.
+        Builtin::ProcessSpawn => vec![
+            ParamSig::plain(Ty::Str),
+            ParamSig::plain(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)),
+            ParamSig::plain(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)),
+            ParamSig::plain(Ty::Str),
+            ParamSig::plain(Ty::Str),
+            ParamSig::plain(Ty::Int(IntTy::I32)),
+            ParamSig::plain(Ty::Int(IntTy::I32)),
+            ParamSig::plain(Ty::Int(IntTy::I32)),
+        ],
         Builtin::IsTerminal | Builtin::Clock => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::Sleep => vec![ParamSig::plain(Ty::Int(IntTy::U64))],
         Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
@@ -387,6 +435,67 @@ mod tests {
         let remove = builtin_sig(Builtin::EnvRemove, &Globals::default());
         assert_eq!(remove.params.len(), 1);
         assert_eq!(remove.params[0].ty, Ty::Str);
+    }
+
+    #[test]
+    fn process_primitives_have_their_declared_signatures() {
+        let usize_ = Ty::Int(IntTy::Usize);
+        let strings = Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global);
+        for (name, b) in [
+            ("__env_list", Builtin::EnvList),
+            ("__process_spawn", Builtin::ProcessSpawn),
+            ("__process_wait", Builtin::ProcessWait),
+            ("__process_close", Builtin::ProcessClose),
+            ("__pipe_read_to_string", Builtin::PipeReadToString),
+            ("__pipe_read_line", Builtin::PipeReadLine),
+            ("__pipe_read_both", Builtin::PipeReadBoth),
+            ("__pipe_write", Builtin::PipeWrite),
+            ("__pipe_close", Builtin::PipeClose),
+        ] {
+            assert_eq!(builtin(name), Some(b));
+        }
+
+        let list = builtin_sig(Builtin::EnvList, &Globals::default());
+        assert!(list.params.is_empty());
+        assert_eq!(list.ret, strings.clone());
+
+        let spawn = builtin_sig(Builtin::ProcessSpawn, &Globals::default());
+        assert_eq!(spawn.params.len(), 8);
+        assert_eq!(spawn.params[0].ty, Ty::Str);
+        assert_eq!(spawn.params[1].ty, strings.clone());
+        assert_eq!(spawn.params[2].ty, strings.clone());
+        assert_eq!(spawn.params[3].ty, Ty::Str);
+        assert_eq!(spawn.params[4].ty, Ty::Str);
+        for param in spawn.params.iter().skip(5) {
+            assert_eq!(param.ty, Ty::Int(IntTy::I32));
+        }
+        assert!(matches!(&spawn.ret, Ty::Result(..)));
+
+        let wait = builtin_sig(Builtin::ProcessWait, &Globals::default());
+        assert_eq!(wait.params.len(), 2);
+        assert_eq!(wait.params[0].ty, Ty::Int(IntTy::I32));
+        assert_eq!(wait.params[1].ty, usize_.clone());
+        assert_eq!(wait.ret, Ty::Int(IntTy::I64));
+
+        let close = builtin_sig(Builtin::ProcessClose, &Globals::default());
+        assert_eq!(close.params.len(), 1);
+        assert_eq!(close.params[0].ty, usize_.clone());
+        assert_eq!(close.ret, Ty::Unit);
+
+        let line = builtin_sig(Builtin::PipeReadLine, &Globals::default());
+        assert_eq!(line.params.len(), 1);
+        assert_eq!(line.params[0].ty, usize_.clone());
+        assert!(matches!(&line.ret, Ty::Result(..)));
+
+        let both = builtin_sig(Builtin::PipeReadBoth, &Globals::default());
+        assert_eq!(both.params.len(), 2);
+        assert_eq!(both.params[1].ty, usize_.clone());
+
+        let write = builtin_sig(Builtin::PipeWrite, &Globals::default());
+        assert_eq!(write.params.len(), 2);
+        assert_eq!(write.params[0].ty, usize_.clone());
+        assert_eq!(write.params[1].ty, Ty::Str);
+        assert_eq!(write.ret, Ty::Int(IntTy::I32));
     }
 
     #[test]
