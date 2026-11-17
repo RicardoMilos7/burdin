@@ -1,0 +1,23 @@
+//@ compile-fail
+
+// The result of a function that derives from two parameters keeps both of them borrowed.
+struct Counter {
+    n: i32
+}
+
+struct Pair<A, B> {
+    first: A
+    second: B
+}
+
+fn both(a: Counter, b: Counter): Pair<&i32, &i32> {
+    Pair { first: &a.n, second: &b.n }
+}
+
+fn main() {
+    let x = Counter { n: 1 }
+    let mut y = Counter { n: 2 }
+    let p = both(x, y)
+    y.n = 5 //~ E0111
+    println("{*p.first}")
+}

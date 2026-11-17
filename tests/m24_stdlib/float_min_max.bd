@@ -1,0 +1,69 @@
+//@ run
+//> min 2 2
+//> max 3 3
+//> min_nan 2 2
+//> max_nan 2 2
+//> min_nan_nan true false
+//> min_zero 0
+//> min_zero_rev 9223372036854775808
+//> max_zero 0
+//> max_zero_rev 9223372036854775808
+//> clamp 3
+//> clamp 0
+//> clamp 2
+//> clamp_nan true
+//> clamp_f32 3
+//> total_lt true
+//> total_gt true
+//> total_eq true
+//> total_neg_zero true
+//> total_neg_inf true
+//> total_neg_nan true
+//> total_pos_nan true
+//> total_f32 true
+//> sorted true 13830554455654793216 9223372036854775808 0 4607182418800017408 true
+
+// `min`, `max`, `clamp`, and `total_cmp` (issue #703; spec/stdlib.md, "Float functions"). `min` and `max` return
+// the other value when one is NaN, and the receiver when the two compare equal (including `0.0` and `-0.0`).
+
+fn main() {
+    println("min {} {}", (2.0).min(3.0), (3.0).min(2.0))
+    println("max {} {}", (2.0).max(3.0), (3.0).max(2.0))
+    println("min_nan {} {}", f64.NAN.min(2.0), (2.0).min(f64.NAN))
+    println("max_nan {} {}", f64.NAN.max(2.0), (2.0).max(f64.NAN))
+    println("min_nan_nan {} {}", f64.NAN.min(f64.NAN).is_nan(), (2.0).min(f64.NAN).is_nan())
+    println("min_zero {}", (0.0).min(-0.0).to_bits())
+    println("min_zero_rev {}", (-0.0).min(0.0).to_bits())
+    println("max_zero {}", (0.0).max(-0.0).to_bits())
+    println("max_zero_rev {}", (-0.0).max(0.0).to_bits())
+
+    println("clamp {}", (5.0).clamp(0.0, 3.0))
+    println("clamp {}", (-1.0).clamp(0.0, 3.0))
+    println("clamp {}", (2.0).clamp(0.0, 3.0))
+    println("clamp_nan {}", f64.NAN.clamp(0.0, 3.0).is_nan())
+
+    let f32_value: f32 = 5.0
+    println("clamp_f32 {}", f32_value.clamp(0.0, 3.0))
+
+    // The total order: -NaN < -inf < negative numbers < -0.0 < 0.0 < positive numbers < inf < NaN.
+    println("total_lt {}", (1.0).total_cmp(2.0).is_lt())
+    println("total_gt {}", (2.0).total_cmp(1.0).is_gt())
+    println("total_eq {}", (1.0).total_cmp(1.0).is_eq())
+    println("total_neg_zero {}", (-0.0).total_cmp(0.0).is_lt())
+    println("total_neg_inf {}", f64.NEG_INFINITY.total_cmp(-1.0e308).is_lt())
+    println("total_neg_nan {}", f64.from_bits(0xfff8000000000000).total_cmp(f64.NEG_INFINITY).is_lt())
+    println("total_pos_nan {}", f64.INFINITY.total_cmp(f64.from_bits(0x7ff8000000000000)).is_lt())
+
+    let f32_neg_zero: f32 = -0.0
+    let f32_zero: f32 = 0.0
+    println("total_f32 {}", f32_neg_zero.total_cmp(f32_zero).is_lt())
+
+    // `total_cmp` is a comparator: sorting puts every value in the total order.
+    let mut values = List<f64>.new()
+    for v in [f64.from_bits(0x7ff8000000000000), 1.0, -1.0, 0.0, -0.0, f64.NEG_INFINITY] {
+        values.push(v)
+    }
+    values.sort_by(|a, b| a.total_cmp(*b))
+    println("sorted {} {} {} {} {} {}", values[0].is_infinite(), values[1].to_bits(), values[2].to_bits(),
+        values[3].to_bits(), values[4].to_bits(), values[5].is_nan())
+}

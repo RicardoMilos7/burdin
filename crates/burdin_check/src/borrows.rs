@@ -145,9 +145,11 @@ impl<'a> Checker<'a> {
 
     /// Records a loan on the place `e`, if it is one. Its holders are attached by the enclosing `let`.
     fn add_loan(&mut self, e: &tir::Expr, mutable: bool) {
-        let place =
-            burdin_tir::place::tir_place(e).map(|(root, path, _)| (root, path)).or_else(|| self.reference_origin(e));
-        if let Some((root, path)) = place {
+        let places: Vec<(LocalId, Vec<usize>)> = match burdin_tir::place::tir_place(e) {
+            Some((root, path, _)) => vec![(root, path)],
+            None => self.reference_origin(e),
+        };
+        for (root, path) in places {
             self.loans.push(Loan { root, path, mutable, holders: Vec::new(), start: self.stmt });
         }
     }
@@ -155,19 +157,26 @@ impl<'a> Checker<'a> {
     /// The storage a borrowed expression views when it is not itself a plain place: a call's reference result
     /// derives from its origin argument (RF5). A user `Index` implementation lowers to exactly such a call, so a
     /// re-borrow of an element (`&mut v[i]`) is tracked against the container (`spec/operators.md`, OP10).
-    fn reference_origin(&self, e: &tir::Expr) -> Option<(LocalId, Vec<usize>)> {
+    fn reference_origin(&self, e: &tir::Expr) -> Vec<(LocalId, Vec<usize>)> {
         use tir::ExprKind as K;
         match &e.kind {
             K::DerefRef(base) | K::Field(base, _) => self.reference_origin(base),
             K::Call(f, args) => {
-                let sig = self.env.sigs.get(f.0)?;
+                let Some(sig) = self.env.sigs.get(f.0) else { return Vec::new() };
                 if !sig.ret.is_second_class() {
-                    return None;
+                    return Vec::new();
                 }
-                let arg = args.get(sig.ret_origin?)?;
-                burdin_tir::place::tir_place(arg)
-                    .map(|(root, path, _)| (root, path))
-                    .or_else(|| self.reference_origin(arg))
+                // A result that derives from several arguments (a struct holding views of two sources) borrows
+                // from the storage of each of them (RT3a).
+                let mut places = Vec::new();
+                for index in &sig.ret_origins {
+                    let Some(arg) = args.get(*index) else { continue };
+                    match burdin_tir::place::tir_place(arg) {
+                        Some((root, path, _)) => places.push((root, path)),
+                        None => places.extend(self.reference_origin(arg)),
+                    }
+                }
+                places
             }
             // The entry operations hand out the map's storage from a temporary entry value, so a loan taken on
             // the entry belongs to the map the entry borrows. Other chainable views take their loan where their
@@ -177,12 +186,13 @@ impl<'a> Checker<'a> {
                 tir::Method::MapEntry | tir::Method::MapEntryOrInsert | tir::Method::MapEntryOrInsertWith,
                 args,
             ) => {
-                let arg = args.first()?;
-                burdin_tir::place::tir_place(arg)
-                    .map(|(root, path, _)| (root, path))
-                    .or_else(|| self.reference_origin(arg))
+                let Some(arg) = args.first() else { return Vec::new() };
+                match burdin_tir::place::tir_place(arg) {
+                    Some((root, path, _)) => vec![(root, path)],
+                    None => self.reference_origin(arg),
+                }
             }
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
@@ -579,17 +589,18 @@ impl<'a> Checker<'a> {
         }
         // A second-class result derived from an argument keeps that argument borrowed until the last use of the
         // result (RF5).
-        if !self.skip_result_loan
-            && sig.ret.is_second_class()
-            && let Some(index) = sig.ret_origin
-            && let Some(param) = sig.params.get(index)
-            // A result that derives from an `own` parameter borrows from a value the callee drops, which the
-            // origin check already rejects (RT2).
-            && !param.own
-            && let Some(arg) = args.get(index)
-        {
-            let mutable = param.exclusive || matches!(sig.ret, Ty::Ref { mutable: true, .. });
-            self.add_loan(arg, mutable);
+        if !self.skip_result_loan && sig.ret.is_second_class() {
+            for &index in &sig.ret_origins {
+                let Some(param) = sig.params.get(index) else { continue };
+                // A result that derives from an `own` parameter borrows from a value the callee drops, which the
+                // origin check already rejects (RT2).
+                if param.own {
+                    continue;
+                }
+                let Some(arg) = args.get(index) else { continue };
+                let mutable = param.exclusive || matches!(sig.ret, Ty::Ref { mutable: true, .. });
+                self.add_loan(arg, mutable);
+            }
         }
     }
 }

@@ -1,0 +1,40 @@
+//@ run
+//> bits true true
+//> neg_zero true
+//> round_trip true
+//> round_trip_bits true
+//> payload true
+//> nan_sign true
+//> inf true
+//> neg_inf true
+//> bits_f32 true true
+//> round_trip_f32 true
+//> payload_f32 true true
+//> inf_f32 true
+//> width true
+
+// `to_bits` and `from_bits` (issue #703; spec/stdlib.md, "Float functions"): the bit pattern of a value and the
+// value with a given bit pattern. The compiler implements both as a bit cast, so a NaN payload survives the round
+// trip and `-0.0` keeps its sign.
+
+fn main() {
+    println("bits {} {}", (1.0).to_bits() == 0x3ff0000000000000, (2.0).to_bits() == 0x4000000000000000)
+    println("neg_zero {}", (-0.0).to_bits() == 0x8000000000000000)
+    println("round_trip {}", f64.from_bits(0x3ff8000000000000) == 1.5)
+    println("round_trip_bits {}", f64.from_bits((0.1).to_bits()).to_bits() == (0.1).to_bits())
+    println("payload {}", f64.from_bits(0x7ff8000000000abc).to_bits() == 0x7ff8000000000abc)
+    println("nan_sign {}", f64.from_bits(0xfff8000000000000).is_sign_negative())
+    println("inf {}", f64.from_bits(0x7ff0000000000000).is_infinite())
+    println("neg_inf {}", f64.from_bits(0xfff0000000000000) == f64.NEG_INFINITY)
+
+    let one: f32 = 1.0
+    let neg_zero: f32 = -0.0
+    println("bits_f32 {} {}", one.to_bits() == 0x3f800000, neg_zero.to_bits() == 0x80000000)
+    println("round_trip_f32 {}", f32.from_bits(0x3fc00000) == 1.5)
+    let payload: f32 = f32.from_bits(0x7fc00abc)
+    println("payload_f32 {} {}", payload.to_bits() == 0x7fc00abc, payload.is_nan())
+    println("inf_f32 {}", f32.from_bits(0x7f800000).is_infinite())
+
+    let value: f64 = 1.0 / 3.0
+    println("width {}", f64.from_bits(value.to_bits()) == value)
+}

@@ -1,0 +1,26 @@
+//@ run
+//> 24 1 0
+//> 7.5 0.5 0 1
+//> 120 -6
+//> 55 3628800
+
+// `sum` and `product` work on integers and floats, and on views of them. An empty iterator gives 0 for `sum` and 1 for
+// `product`.
+
+fn main() {
+    let xs = [1, 2, 3, 4]
+    let empty = List<i32>.new()
+    println("{xs.iter().product()} {empty.iter().product()} {empty.iter().sum()}")
+
+    let fs = [1.5, 2.0, 4.0]
+    let half = [0.5]
+    let nothing = List<f64>.new()
+    println("{fs.iter().sum()} {half.iter().product()} {nothing.iter().sum()} {nothing.iter().product()}")
+
+    let mut ys = List<i64>.new()
+    for y in [2 as i64, 3, 4, 5] {
+        ys.push(y)
+    }
+    println("{ys.iter().product()} {(1..4).iter().map(|x| 0 - x).sum()}")
+    println("{(1..11).iter().sum()} {(1..11).iter().product()}")
+}

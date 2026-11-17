@@ -7,7 +7,7 @@
 //> 0
 //> 5 6
 
-// `for x in mut xs` walks a `List` and yields `&mut T`: every element is rewritten in place (IT13). `xs.iter_mut()`
+// `for x in mut xs` walks a `List` and yields `&mut T`: every element is rewritten in place (IT15). `xs.iter_mut()`
 // is the same walk written out. The collection is usable again once the loop ends, and `break` and `continue` work as
 // in every other loop.
 

@@ -5,7 +5,7 @@
 //> 9
 
 // An array is walked through `for x in mut a` and `a.iter_mut()` the same way as a list: the array must be a mutable
-// place, and its elements are rewritten in place (IT13).
+// place, and its elements are rewritten in place (IT15).
 
 fn main() {
     let mut a = [1, 2, 3]

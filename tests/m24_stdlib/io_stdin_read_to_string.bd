@@ -6,11 +6,11 @@
 //> true
 //> true
 
-// `Stdin.read_to_string` returns the rest of the input as one `String` (the bytes are not checked for UTF-8), and a
+// `Stdin.read_to_string` (from `Read`) returns the rest of the input as one `String` (the bytes are not checked for UTF-8), and a
 // second call at the end of the input returns the empty string.
 
 fn main() {
-    let input = stdin()
+    let mut input = stdin()
     let text = input.read_to_string().unwrap()
     println("{}", text.len())
     println("{}", text.as_str() == "alpha\nbeta\nomega")

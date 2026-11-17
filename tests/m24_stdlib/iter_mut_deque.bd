@@ -4,7 +4,7 @@
 //> 4
 
 // `Deque` declares `iter_mut(mut self)` in `std`, so `for x in mut d` walks it from the front to the back and writes
-// every element, whichever of its two halves holds it (IT13).
+// every element, whichever of its two halves holds it (IT15).
 
 fn main() {
     let mut d = Deque<i32>.new()

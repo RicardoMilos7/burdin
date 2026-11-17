@@ -7,7 +7,7 @@ use crate::types::check_storable;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{Place, is_place_expr, place_mentions, place_root, places_overlap};
-use burdin_tir::{self as tir, Builtin, FuncId, IntTy, Method, ParamSig, Pat, Ty};
+use burdin_tir::{self as tir, Builtin, FloatTy, FuncId, IntTy, Method, ParamSig, Pat, Ty};
 
 impl FnCx<'_> {
     pub(super) fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
@@ -709,7 +709,11 @@ impl FnCx<'_> {
         if let Some((receiver, exclusive)) = receiver {
             let mut places = Vec::new();
             place_mentions(receiver, &mut places);
-            entries.push((exclusive, receiver.span, places));
+            // A chain that is computed here (`xs.iter()`) is a temporary view of the places it mentions, not a
+            // place the call borrows exclusively: its loans are the borrow checker's business (RF5), so `xs.iter()`
+            // as the receiver of `zip` may sit beside another argument that reads `xs`.
+            let temporary_view = receiver.ty.is_second_class() && !is_place_expr(receiver);
+            entries.push((exclusive && !temporary_view, receiver.span, places));
         }
         for (p, a) in params.iter().zip(args) {
             let mut places = Vec::new();
@@ -1414,15 +1418,25 @@ impl FnCx<'_> {
             return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
         }
         // `f64.parse(s)` and the other associated functions of a float type are `std` functions named
-        // `__<type>_<name>` (spec/stdlib.md, "Floats").
-        if let Ty::Float(_) = ty
-            && let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", ty, name.name))
-        {
-            let sig = self.globals.sigs[f.0].clone();
-            let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
-                return error_expr(span);
-            };
-            return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+        // `__<type>_<name>` (spec/stdlib.md, "Floats"), except `from_bits`, which is the compiler's bit cast.
+        if let Ty::Float(ft) = ty {
+            if name.name == "from_bits" {
+                let bits = match ft {
+                    FloatTy::F32 => Ty::Int(IntTy::U32),
+                    FloatTy::F64 => Ty::Int(IntTy::U64),
+                };
+                let Some(checked) = self.args(&name.name, &[ParamSig::plain(bits)], args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::FloatFromBits(*ft), checked), ty.clone(), span);
+            }
+            if let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", ty, name.name)) {
+                let sig = self.globals.sigs[f.0].clone();
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+            }
         }
         // The associated functions of `String` (the only built-in owning type with any so far).
         if *ty == Ty::String && name.name != "default" {

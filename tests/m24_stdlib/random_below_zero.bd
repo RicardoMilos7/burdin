@@ -1,0 +1,11 @@
+//@ run-abort
+//@ stderr: Random.below: the bound is zero
+//> before
+
+// There is no integer in `0..0`, so `below(0)` panics (spec/stdlib.md, "Random numbers").
+
+fn main() {
+    println("before")
+    let mut r = Random.seeded(1)
+    println("{r.below(0)}")
+}

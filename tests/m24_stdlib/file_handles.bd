@@ -1,0 +1,136 @@
+//@ run
+//> write 4
+//> read 4 0 255 254 65
+//> append 7 0 255 254 65 0 128 10
+//> create 5
+//> sync true
+//> flush true
+//> close true
+//> seek 2 34
+//> seek end 2 89
+//> seek position 10
+//> seek eof 0
+//> set_len 2 he
+//> set_len 5 5 0 0 0
+//> copy 7 true
+//> exists true false
+//> drop removed true
+//> options 5 01234
+//> buffered hello, file
+
+// File handles and the byte-level whole-file helpers (spec/stdlib.md, "Files and file handles"). A file is a
+// sequence of bytes on every system: 0x00, 0xFF, and bytes that are not valid UTF-8 come back exactly.
+
+fn same_bytes(a: List<u8>, b: List<u8>): bool {
+    if a.len() != b.len() {
+        return false
+    }
+    let mut i: usize = 0
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+fn main() {
+    // `fs.write` creates or replaces the file; `fs.read` gives every byte back.
+    let mut binary = List<u8>.new()
+    binary.push(0)
+    binary.push(255)
+    binary.push(254)
+    binary.push(65)
+    write("data.bin", binary[0..binary.len()]).unwrap()
+    let first = read("data.bin").unwrap()
+    println("write {}", first.len())
+    println("read {} {} {} {} {}", first.len(), first[0], first[1], first[2], first[3])
+
+    // `fs.append` adds to the end and creates a missing file.
+    let mut more = List<u8>.new()
+    more.push(0)
+    more.push(128)
+    more.push(10)
+    append("data.bin", more[0..more.len()]).unwrap()
+    let both = read("data.bin").unwrap()
+    println(
+        "append {} {} {} {} {} {} {} {}",
+        both.len(),
+        both[0],
+        both[1],
+        both[2],
+        both[3],
+        both[4],
+        both[5],
+        both[6],
+    )
+
+    // `File.create` writes through the handle and `close` reports what a drop would discard.
+    let mut created = File.create("created.txt").unwrap()
+    let hello = "hello".to_utf8()
+    created.write_all(hello[0..hello.len()]).unwrap()
+    println("create {}", read("created.txt").unwrap().len())
+    println("sync {}", created.sync_all().is_ok())
+    println("flush {}", created.flush().is_ok())
+    println("close {}", created.close().is_ok())
+
+    // Seeking moves the position the reads and writes use.
+    let digits = "0123456789".to_utf8()
+    write("digits.txt", digits[0..digits.len()]).unwrap()
+    let mut numbered = File.open("digits.txt").unwrap()
+    let mut middle = List<u8>.new()
+    numbered.seek(SeekFrom.Start(3)).unwrap()
+    let n = numbered.read(mut middle, 2).unwrap()
+    println("seek {} {}", n, from_utf8(middle[0..middle.len()]).unwrap())
+    let mut end = List<u8>.new()
+    numbered.seek(SeekFrom.End(-2)).unwrap()
+    let m = numbered.read(mut end, 2).unwrap()
+    println("seek end {} {}", m, from_utf8(end[0..end.len()]).unwrap())
+    println("seek position {}", numbered.seek(SeekFrom.Current(0)).unwrap())
+    let mut none = List<u8>.new()
+    println("seek eof {}", numbered.read(mut none, 4).unwrap())
+
+    // `set_len` cuts the file and extends it with zeros.
+    let mut resized = File.create("len.txt").unwrap()
+    resized.write_all(hello[0..hello.len()]).unwrap()
+    resized.set_len(2).unwrap()
+    let short = read("len.txt").unwrap()
+    println("set_len 2 {}", from_utf8(short[0..short.len()]).unwrap())
+    resized.set_len(5).unwrap()
+    let long = read("len.txt").unwrap()
+    println("set_len 5 {} {} {} {}", long.len(), long[2], long[3], long[4])
+
+    // `fs.copy_file` copies the bytes; `fs.exists` asks the system.
+    let copied = fs.copy_file("data.bin", "copy.bin").unwrap()
+    println("copy {} {}", copied, same_bytes(read("data.bin").unwrap(), read("copy.bin").unwrap()))
+    println("exists {} {}", fs.exists("data.bin"), fs.exists("no-such-file"))
+
+    // Dropping the handle closes it, so the file can be removed at once on every system.
+    {
+        let mut dropped = File.create("drop.txt").unwrap()
+        let one = "x".to_utf8()
+        dropped.write_all(one[0..one.len()]).unwrap()
+    }
+    println("drop removed {}", remove_file("drop.txt").is_ok())
+
+    // `OpenOptions` opens one handle for both reading and writing.
+    let mut options = OpenOptions.new()
+    options.read(true)
+    options.write(true)
+    options.create(true)
+    let mut read_write = options.open("options.txt").unwrap()
+    let text = "01234".to_utf8()
+    read_write.write_all(text[0..text.len()]).unwrap()
+    read_write.seek(SeekFrom.Start(0)).unwrap()
+    let mut back = List<u8>.new()
+    let n = read_write.read(mut back, 5).unwrap()
+    println("options {} {}", n, from_utf8(back[0..back.len()]).unwrap())
+
+    // The buffered wrappers take a file handle like any other reader or writer.
+    let mut buffered_out = BufWriter.new(File.create("buffered.txt").unwrap())
+    buffered_out.write_text("hello, file").unwrap()
+    buffered_out.flush().unwrap()
+    let mut buffered_in = BufReader.new(File.open("buffered.txt").unwrap())
+    println("buffered {}", buffered_in.read_line().unwrap().unwrap())
+}

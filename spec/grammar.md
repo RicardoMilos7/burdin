@@ -351,7 +351,7 @@ MatchExpr     = "match" Expr "{" { Arm } "}" ;
 Arm           = ( "else" | Pattern [ "if" Expr ] ) "=>" ( Block | Expr ) [ Sep ] ;
 LoopExpr      = "loop" Block ;
 WhileExpr     = "while" Expr Block ;
-ForExpr       = "for" Pattern "in" [ "mut" ] Expr Block ;    (* `mut`: iterate `iter_mut()`, spec/iterators.md IT13 *)
+ForExpr       = "for" Pattern "in" [ "mut" ] Expr Block ;    (* `mut`: iterate `iter_mut()`, spec/iterators.md IT15 *)
 ```
 
 A closure body is a single expression; a block is one of the expressions, so `|x| { ... }` is a closure whose body is

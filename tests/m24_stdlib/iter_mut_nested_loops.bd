@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // Two mutable loops over the same collection would hold two writable views of one element, so the inner loop is a
-// conflict. A mutable loop and an iterator that is still in use conflict the same way (IT13).
+// conflict. A mutable loop and an iterator that is still in use conflict the same way (IT15).
 
 fn nested() {
     let mut xs = List<i32>.new()

@@ -4,9 +4,10 @@
 //> 108 111
 //> 100 101 12
 //> 9
+//> 11 22
 
 // The mutable iterator is an ordinary `Iterator<&mut T>`, so `enumerate`, `take`, `skip`, and the rest of the
-// adapters apply to it (IT13). Each one passes the writable view through.
+// adapters apply to it (IT15). Each one passes the writable view through.
 
 fn main() {
     let mut xs = List<i32>.new()
@@ -43,4 +44,16 @@ fn main() {
     })
     println("{zs[0]} {zs[1]} {zs[2]}")
     println("{xs.iter_mut().count()}")
+
+    // `zip` pairs a writable view with a read-only one from another list.
+    let mut a = List<i32>.new()
+    a.push(1)
+    a.push(2)
+    let mut b = List<i32>.new()
+    b.push(10)
+    b.push(20)
+    for (x, y) in a.iter_mut().zip(b.iter()) {
+        *x = *x + y
+    }
+    println("{a[0]} {a[1]}")
 }

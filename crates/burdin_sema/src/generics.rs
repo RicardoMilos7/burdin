@@ -744,7 +744,7 @@ impl Globals {
         }
         // A view satisfies what its target does: a chain is generic over the view type of its source, and its
         // bounds (`D: Index<T>`) ask about the borrowed collection (`spec/iterators.md` IT12). A mutable view
-        // carries a mutable iterator's source, whose bounds (`D: IndexMut<T>`) do the same (IT13).
+        // carries a mutable iterator's source, whose bounds (`D: IndexMut<T>`) do the same (IT15).
         if let Ty::Ref { inner, .. } = ty {
             return self.implements(inner, iface, args, env);
         }
@@ -931,7 +931,7 @@ impl Globals {
                         let params = sig.params.iter().map(|p| self.subst_param(p, &subst)).collect();
                         let ret = self.subst_ty(&sig.ret, &subst);
                         return Some((
-                            Signature { params, ret, has_self: sig.has_self, ret_origin: None },
+                            Signature { params, ret, has_self: sig.has_self, ret_origins: Vec::new() },
                             sig.has_self,
                             m.is_unsafe,
                         ));

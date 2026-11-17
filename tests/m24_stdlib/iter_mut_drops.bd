@@ -6,7 +6,7 @@
 //> drop 20
 
 // A mutable iterator owns nothing: writing `*x = v` drops the element it replaces exactly once, and the new element
-// is dropped with the list (IT13).
+// is dropped with the list (IT15).
 
 struct Token {
     id: i32

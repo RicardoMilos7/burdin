@@ -214,6 +214,8 @@ pub(crate) struct Globals {
     /// The `std.Iterator<T>` and `std.Iterable<T>` interfaces, when the standard library declares them.
     pub(crate) iterator_iface: Option<usize>,
     pub(crate) iterable_iface: Option<usize>,
+    /// The `std.DoubleEndedIterator<T>` interface: an iterator that can also take items from its back (IT14).
+    pub(crate) double_ended_iface: Option<usize>,
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,
@@ -436,12 +438,34 @@ impl Globals {
         })
     }
 
+    /// The generic function behind an iterator adapter that needs a particular kind of source (`it.flatten()`,
+    /// `it.cloned()`, `it.copied()`, `it.cycle()`), looked up in the standard library (spec/iterators.md, IT13).
+    pub(crate) fn iterator_adapter_fn(&self, name: &str) -> Option<usize> {
+        if !matches!(name, "flatten" | "cloned" | "copied" | "cycle" | "rev") {
+            return None;
+        }
+        self.std_generic(&format!("__iter_{name}"))
+    }
+
     /// The generic function behind an eager `List` method (`xs.map(f)`), looked up in the standard library.
     pub(crate) fn eager_list_fn(&self, name: &str) -> Option<usize> {
         if !matches!(name, "map" | "filter" | "fold" | "any" | "all" | "find") {
             return None;
         }
         let name = format!("__list_{name}");
+        self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
+            Global::Generic(g) => Some(g),
+            _ => None,
+        })
+    }
+
+    /// The generic function in `std` behind an iterator consumer that needs a bound on the item type (`min`, `max`,
+    /// `eq`, `cmp`), which an interface default method cannot state.
+    pub(crate) fn iterator_item_fn(&self, name: &str) -> Option<usize> {
+        if !matches!(name, "min" | "max" | "eq" | "cmp") {
+            return None;
+        }
+        let name = format!("__iter_{name}");
         self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
             Global::Generic(g) => Some(g),
             _ => None,

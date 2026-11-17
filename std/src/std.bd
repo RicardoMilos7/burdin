@@ -1,7 +1,8 @@
 // The stage 0 standard library, written in Burdin.
 //
 // The compiler provides the primitives that need to reach the operating system or raw memory (file I/O,
-// process control, the arguments, and the memory helpers); everything a Burdin program can express is here.
+// process control, the arguments, the environment, the working directory, and the memory helpers); everything a
+// Burdin program can express is here.
 
 use fmt.{Debug, Display, Formatter}
 
@@ -105,6 +106,11 @@ error enum IoError {
     Read { path: String } "cannot read {path}"
     Write { path: String } "cannot write {path}"
     Run { command: String } "cannot run {command}"
+    UnexpectedEof "unexpected end of input"
+    WriteZero "the writer accepted no bytes"
+    InvalidData "the bytes are not valid text"
+    Seek "seek to a position before the start"
+    InvalidInput "invalid open options"
 }
 
 /// The error type of `i32.parse` and the other integer parsers.

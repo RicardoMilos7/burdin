@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // A writable view copied out of the loop keeps the collection borrowed until its last use, so the collection cannot
-// be changed while the copy is still live (IT13).
+// be changed while the copy is still live (IT15).
 
 fn held_from_loop() {
     let mut xs = List<i32>.new()

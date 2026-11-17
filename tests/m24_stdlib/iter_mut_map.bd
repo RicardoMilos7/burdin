@@ -3,7 +3,7 @@
 //> 11 22 33
 //> 4
 
-// A map is walked as `(&K, &mut V)`: the keys are read, the values are rewritten in place (IT13). The order of the
+// A map is walked as `(&K, &mut V)`: the keys are read, the values are rewritten in place (IT15). The order of the
 // walk is unspecified, so the program only looks at order-independent results.
 
 fn main() {

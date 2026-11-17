@@ -218,7 +218,7 @@ pub enum Ty {
     MapIntoIter(Box<Ty>, Box<Ty>, Alloc),
     /// A mutable iterator over the elements of a `List<T>` or an array `[T; N]` (`iter_mut()`): the address of the
     /// next element and the number left, like a slice. It yields `&mut T` and holds an exclusive loan on the
-    /// collection for its whole life (spec/iterators.md, IT13).
+    /// collection for its whole life (spec/iterators.md, IT15).
     IterMut(Box<Ty>),
     /// A mutable iterator over a `Map<K, V>` (`iter_mut()`): the same state as [`Ty::MapIter`]. It yields
     /// `(&K, &mut V)` and holds an exclusive loan on the map.

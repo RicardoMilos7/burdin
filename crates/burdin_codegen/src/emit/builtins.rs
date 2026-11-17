@@ -2,9 +2,12 @@
 
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
-use burdin_tir::{self as tir, BinOp, Builtin, Method, Ty};
-use inkwell::IntPredicate;
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
+use burdin_tir::{self as tir, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
+use inkwell::intrinsics::Intrinsic;
+use inkwell::module::Linkage;
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, FunctionValue};
+use inkwell::{FloatPredicate, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn builtin(
@@ -60,6 +63,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .build_call(self.rt.f64_to_string, &[v.into(), prec.into(), single.into(), out.into()], "")
                     .map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::FloatFromBits(ft) => {
+                let bits = self.expr_mode(&args[0], Mode::Use)?.expect("an integer has a value").into_int_value();
+                let target: BasicTypeEnum<'ctx> = match ft {
+                    FloatTy::F32 => self.cx.f32_type().into(),
+                    FloatTy::F64 => self.cx.f64_type().into(),
+                };
+                return Ok(Some(self.builder.build_bit_cast(bits, target, "float").map_err(llvm_err)?));
             }
             Builtin::StringNew => {
                 let out = self.alloca(self.string_ty.into(), "string")?;
@@ -238,6 +249,278 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 return Ok(Some(value.into()));
             }
+            Builtin::EnvList => {
+                let out = self.alloca(self.string_ty.into(), "env.list")?;
+                self.builder.build_call(self.rt.env_list, &[out.into()], "").map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::ProcessSpawn => {
+                let program = self.expr_mode(&args[0], Mode::Use)?;
+                let program = self.need(program, &Ty::Str).into_struct_value();
+                let pptr = self.builder.build_extract_value(program, 0, "spawn.program").map_err(llvm_err)?;
+                let plen = self.builder.build_extract_value(program, 1, "spawn.program.len").map_err(llvm_err)?;
+                let list = self.expr_mode(&args[1], Mode::Use)?;
+                let list_ty = args[1].ty.clone();
+                let list = self.need(list, &list_ty).into_struct_value();
+                let aptr = self.builder.build_extract_value(list, 0, "spawn.args").map_err(llvm_err)?;
+                let alen = self.builder.build_extract_value(list, 1, "spawn.args.len").map_err(llvm_err)?;
+                let list = self.expr_mode(&args[2], Mode::Use)?;
+                let env_ty = args[2].ty.clone();
+                let list = self.need(list, &env_ty).into_struct_value();
+                let eptr = self.builder.build_extract_value(list, 0, "spawn.env").map_err(llvm_err)?;
+                let elen = self.builder.build_extract_value(list, 1, "spawn.env.len").map_err(llvm_err)?;
+                let (cptr, clen) = self.str_parts(&args[3])?;
+                let (nptr, nlen) = self.str_parts(&args[4])?;
+                let modes: Vec<BasicMetadataValueEnum<'ctx>> = (5..8)
+                    .map(|i| {
+                        let value = self.expr_mode(&args[i], Mode::Use)?;
+                        Ok(self.need_int(value, &Ty::Int(burdin_tir::IntTy::I32)).into())
+                    })
+                    .collect::<GenResult<Vec<_>>>()?;
+                let raw = self.alloca(self.cx.i64_type().array_type(5).into(), "spawn.raw")?;
+                let mut values: Vec<BasicMetadataValueEnum<'ctx>> =
+                    vec![pptr.into(), plen.into(), aptr.into(), alen.into(), eptr.into(), elen.into()];
+                values.push(cptr.into());
+                values.push(clen.into());
+                values.push(nptr.into());
+                values.push(nlen.into());
+                values.extend(modes);
+                values.push(raw.into());
+                let call = self.builder.build_call(self.rt.process_spawn, &values, "").map_err(llvm_err)?;
+                let status =
+                    call.try_as_basic_value().basic().expect("process_spawn returns a status").into_int_value();
+                let zero = self.cx.i32_type().const_zero();
+                let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("process_spawn returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "spawn.result")?;
+                let good = self.new_block("spawn.ok");
+                let bad = self.new_block("spawn.err");
+                let end = self.new_block("spawn.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let tuple_ty = self.llvm_ty(ok_ty).expect("the child tuple has a value");
+                let mut tuple = undef(tuple_ty).into_struct_value();
+                for i in 0..5u64 {
+                    let at = self.offset_ptr(raw, self.usize_ty.const_int(i * 8, false))?;
+                    let field = self.builder.build_load(self.cx.i64_type(), at, "").map_err(llvm_err)?;
+                    let field = if i == 0 {
+                        self.builder
+                            .build_int_truncate(field.into_int_value(), self.cx.i32_type(), "")
+                            .map_err(llvm_err)?
+                            .into()
+                    } else {
+                        field
+                    };
+                    tuple = self
+                        .builder
+                        .build_insert_value(tuple, field, i as u32, "")
+                        .map_err(llvm_err)?
+                        .into_struct_value();
+                }
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, tuple, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::ProcessWait => {
+                let pid = self.expr_mode(&args[0], Mode::Use)?;
+                let pid = self.need_int(pid, &Ty::Int(burdin_tir::IntTy::I32));
+                let process = self.expr_mode(&args[1], Mode::Use)?;
+                let process = self.need_int(process, &Ty::Int(burdin_tir::IntTy::Usize));
+                let call = self
+                    .builder
+                    .build_call(self.rt.process_wait, &[pid.into(), process.into()], "wait")
+                    .map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
+            Builtin::ProcessClose => {
+                let process = self.expr_mode(&args[0], Mode::Use)?;
+                let process = self.need_int(process, &Ty::Int(burdin_tir::IntTy::Usize));
+                self.builder.build_call(self.rt.process_close, &[process.into()], "").map_err(llvm_err)?;
+                return Ok(None);
+            }
+            Builtin::PipeReadToString => {
+                let handle = self.expr_mode(&args[0], Mode::Use)?;
+                let handle = self.need_int(handle, &Ty::Int(burdin_tir::IntTy::Usize));
+                let out = self.alloca(self.string_ty.into(), "pipe.string")?;
+                self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.pipe_read_to_string, &[handle.into(), out.into()], "")
+                    .map_err(llvm_err)?;
+                let status = call.try_as_basic_value().basic().expect("a pipe read returns a status").into_int_value();
+                let zero = self.cx.i32_type().const_zero();
+                let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a pipe read returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "pipe.result")?;
+                let good = self.new_block("pipe.ok");
+                let bad = self.new_block("pipe.err");
+                let end = self.new_block("pipe.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(out, &Ty::String)?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::PipeReadLine => {
+                let handle = self.expr_mode(&args[0], Mode::Use)?;
+                let handle = self.need_int(handle, &Ty::Int(burdin_tir::IntTy::Usize));
+                let out = self.alloca(self.string_ty.into(), "pipe.line")?;
+                self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let status = self
+                    .builder
+                    .build_call(self.rt.pipe_read_line, &[handle.into(), out.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("a pipe read returns a status")
+                    .into_int_value();
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a pipe read returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "pipe.result")?;
+                let i32_ty = self.cx.i32_type();
+                let good = self.new_block("pipe.line.ok");
+                let bad = self.new_block("pipe.line.err");
+                let end = self.new_block("pipe.line.end");
+                let failed = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, status, i32_ty.const_zero(), "")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(failed, bad, good).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let Ty::Option(inner) = &**ok_ty else { unreachable!("a pipe read returns Option<String>") };
+                let eof = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, status, i32_ty.const_int(1, false), "")
+                    .map_err(llvm_err)?;
+                let some = self.builder.build_not(eof, "some").map_err(llvm_err)?;
+                let opt_ty = self.option_ty(inner);
+                let option = self
+                    .builder
+                    .build_insert_value(opt_ty.const_zero(), some, 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                let option =
+                    self.builder.build_insert_value(option, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, option, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(out, &Ty::String)?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::PipeReadBoth => {
+                let first = self.expr_mode(&args[0], Mode::Use)?;
+                let first = self.need_int(first, &Ty::Int(burdin_tir::IntTy::Usize));
+                let second = self.expr_mode(&args[1], Mode::Use)?;
+                let second = self.need_int(second, &Ty::Int(burdin_tir::IntTy::Usize));
+                let array_ty = self.string_ty.array_type(2);
+                let out = self.alloca(array_ty.into(), "both.strings")?;
+                let zero = self.usize_ty.const_zero();
+                let first_slot =
+                    unsafe { self.builder.build_in_bounds_gep(array_ty, out, &[zero, zero], "both.first") }
+                        .map_err(llvm_err)?;
+                let second_slot = unsafe {
+                    self.builder.build_in_bounds_gep(
+                        array_ty,
+                        out,
+                        &[zero, self.usize_ty.const_int(1, false)],
+                        "both.second",
+                    )
+                }
+                .map_err(llvm_err)?;
+                self.builder.build_call(self.rt.string_new, &[first_slot.into()], "").map_err(llvm_err)?;
+                self.builder.build_call(self.rt.string_new, &[second_slot.into()], "").map_err(llvm_err)?;
+                let status = self
+                    .builder
+                    .build_call(self.rt.pipe_read_both, &[first.into(), second.into(), out.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("a pipe read returns a status")
+                    .into_int_value();
+                let zero_i32 = self.cx.i32_type().const_zero();
+                let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero_i32, "").map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a pipe read returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "both.result")?;
+                let good = self.new_block("both.ok");
+                let bad = self.new_block("both.err");
+                let end = self.new_block("both.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let tuple_ty = self.llvm_ty(ok_ty).expect("the pair has a value");
+                let mut tuple = undef(tuple_ty).into_struct_value();
+                let first_value = self.builder.build_load(self.string_ty, first_slot, "").map_err(llvm_err)?;
+                let second_value = self.builder.build_load(self.string_ty, second_slot, "").map_err(llvm_err)?;
+                tuple =
+                    self.builder.build_insert_value(tuple, first_value, 0, "").map_err(llvm_err)?.into_struct_value();
+                tuple =
+                    self.builder.build_insert_value(tuple, second_value, 1, "").map_err(llvm_err)?.into_struct_value();
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, tuple, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(first_slot, &Ty::String)?;
+                self.drop_value(second_slot, &Ty::String)?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::PipeWrite => {
+                let handle = self.expr_mode(&args[0], Mode::Use)?;
+                let handle = self.need_int(handle, &Ty::Int(burdin_tir::IntTy::Usize));
+                let (ptr, len) = self.str_parts(&args[1])?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.pipe_write, &[handle.into(), ptr.into(), len.into()], "")
+                    .map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
+            Builtin::PipeClose => {
+                let handle = self.expr_mode(&args[0], Mode::Use)?;
+                let handle = self.need_int(handle, &Ty::Int(burdin_tir::IntTy::Usize));
+                self.builder.build_call(self.rt.pipe_close, &[handle.into()], "").map_err(llvm_err)?;
+                return Ok(None);
+            }
             Builtin::IntParse(int_ty) => {
                 let s = self.expr_mode(&args[0], Mode::Use)?;
                 let s = self.need(s, &Ty::Str).into_struct_value();
@@ -330,15 +613,163 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
-            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            // The file-handle primitives (`spec/stdlib.md`, "Files and file handles"). Each reports a descriptor,
+            // a byte count, a position, or zero for success; a negative result is the failure.
+            Builtin::FileOpen => {
+                let (ptr, len) = self.str_parts(&args[0])?;
+                let mut values: Vec<BasicMetadataValueEnum> = vec![ptr.into(), len.into()];
+                let i32_ty = self.cx.i32_type();
+                for arg in &args[1..7] {
+                    let v = self.expr_mode(arg, Mode::Use)?;
+                    let v = self.need(v, &Ty::Bool).into_int_value();
+                    let v = self.builder.build_int_z_extend(v, i32_ty, "").map_err(llvm_err)?;
+                    values.push(v.into());
+                }
+                let fd = self
+                    .builder
+                    .build_call(self.rt.file_open, &values, "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("open returns a descriptor")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, fd, i32_ty.const_zero(), "opened")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_open returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, fd, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileRead => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let Some(buf) = self.place_ptr(&args[1])? else {
+                    return Err("the file read buffer is not a place".into());
+                };
+                let max = self.expr_mode(&args[2], Mode::Use)?;
+                let max = self.need_int(max, &Ty::Int(burdin_tir::IntTy::Usize));
+                let n = self
+                    .builder
+                    .build_call(self.rt.file_read, &[fd.into(), buf.into(), max.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("file_read returns a count")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, n, self.usize_ty.const_zero(), "read")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_read returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, n, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileWrite => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let data = self.expr_mode(&args[1], Mode::Use)?;
+                let data = self.need(data, &args[1].ty).into_struct_value();
+                let ptr = self.builder.build_extract_value(data, 0, "").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(data, 1, "").map_err(llvm_err)?;
+                let n = self
+                    .builder
+                    .build_call(self.rt.file_write, &[fd.into(), ptr.into(), len.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("file_write returns a count")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, n, self.usize_ty.const_zero(), "written")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_write returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, n, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileSeek => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let offset = self.expr_mode(&args[1], Mode::Use)?;
+                let offset = self.need_int(offset, &Ty::Int(burdin_tir::IntTy::I64));
+                let whence = self.expr_mode(&args[2], Mode::Use)?;
+                let whence = self.need_int(whence, &Ty::Int(burdin_tir::IntTy::I32));
+                let position = self
+                    .builder
+                    .build_call(self.rt.file_seek, &[fd.into(), offset.into(), whence.into()], "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("file_seek returns a position")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, position, self.cx.i64_type().const_zero(), "position")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_seek returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let mut value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                value = self.builder.build_insert_value(value, position, 1, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::FileSync | Builtin::FileSetLen | Builtin::FileClose => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let mut values: Vec<BasicMetadataValueEnum> = vec![fd.into()];
+                if b == Builtin::FileSetLen {
+                    let size = self.expr_mode(&args[1], Mode::Use)?;
+                    let size = self.need_int(size, &Ty::Int(burdin_tir::IntTy::U64));
+                    values.push(size.into());
+                }
+                let function = match b {
+                    Builtin::FileSync => self.rt.file_sync,
+                    Builtin::FileSetLen => self.rt.file_set_len,
+                    _ => self.rt.file_close,
+                };
+                let status = self
+                    .builder
+                    .build_call(function, &values, "")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("a file operation returns a status")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, status, self.cx.i32_type().const_zero(), "ok")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a file operation returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let value =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(value.into()));
+            }
+            Builtin::StdoutWrite
+            | Builtin::StdoutWriteLine
+            | Builtin::StderrWrite
+            | Builtin::StderrWriteLine
+            | Builtin::StdoutWriteBytes
+            | Builtin::StderrWriteBytes => {
+                // A `str` and a `[u8]` are the same `{ ptr, len }` pair, so one path writes both.
                 let text = self.expr_mode(&args[0], Mode::Use)?;
-                let text = self.need(text, &Ty::Str).into_struct_value();
+                let text = self.need(text, &args[0].ty).into_struct_value();
                 let ptr = self.builder.build_extract_value(text, 0, "ptr").map_err(llvm_err)?;
                 let len = self.builder.build_extract_value(text, 1, "len").map_err(llvm_err)?;
                 let (fd, newline) = match b {
-                    Builtin::StdoutWrite => (1, 0),
+                    Builtin::StdoutWrite | Builtin::StdoutWriteBytes => (1, 0),
                     Builtin::StdoutWriteLine => (1, 1),
-                    Builtin::StderrWrite => (2, 0),
+                    Builtin::StderrWrite | Builtin::StderrWriteBytes => (2, 0),
                     Builtin::StderrWriteLine => (2, 1),
                     _ => unreachable!("only the four write builtins match"),
                 };
@@ -351,6 +782,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 ];
                 self.builder.build_call(self.rt.print, &args, "").map_err(llvm_err)?;
                 return Ok(None);
+            }
+            Builtin::StdinAvail => {
+                let avail = self
+                    .builder
+                    .build_call(self.rt.in_avail, &[], "avail")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("in_avail returns a count");
+                return Ok(Some(avail));
+            }
+            Builtin::StdinNextByte => {
+                let byte = self
+                    .builder
+                    .build_call(self.rt.in_next, &[], "byte")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("in_next returns a byte");
+                return Ok(Some(byte));
             }
             Builtin::StdoutFlush => {
                 self.builder.build_call(self.rt.flush, &[], "").map_err(llvm_err)?;
@@ -601,6 +1052,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
             }
+            Builtin::Clock => {
+                let kind = self.expr_mode(&args[0], Mode::Use)?;
+                let kind = self.need_int(kind, &Ty::Int(burdin_tir::IntTy::I32));
+                let call = self.builder.build_call(self.rt.clock, &[kind.into()], "").map_err(llvm_err)?;
+                return Ok(Some(call.try_as_basic_value().basic().expect("clock returns nanoseconds")));
+            }
+            Builtin::Entropy => {
+                let call = self.builder.build_call(self.rt.entropy, &[], "").map_err(llvm_err)?;
+                return Ok(Some(call.try_as_basic_value().basic().expect("entropy returns bits")));
+            }
+            Builtin::Sleep => {
+                let nanos = self.expr_mode(&args[0], Mode::Use)?;
+                let nanos = self.need_int(nanos, &Ty::Int(burdin_tir::IntTy::U64));
+                self.builder.build_call(self.rt.sleep, &[nanos.into()], "").map_err(llvm_err)?;
+                return Ok(None);
+            }
             Builtin::EnvArgs => {
                 let out = self.alloca(self.string_ty.into(), "args.list")?;
                 let out = self
@@ -609,6 +1076,74 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 self.builder.build_call(self.rt.args, &[out.into()], "").map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::EnvGet | Builtin::CurrentDir => {
+                let out = self.alloca(self.string_ty.into(), "env.out")?;
+                self.builder.build_store(out, self.string_ty.const_zero()).map_err(llvm_err)?;
+                let call = if b == Builtin::EnvGet {
+                    let s = self.expr_mode(&args[0], Mode::Use)?;
+                    let s = self.need(s, &Ty::Str).into_struct_value();
+                    let ptr = self.builder.build_extract_value(s, 0, "env.name").map_err(llvm_err)?;
+                    let len = self.builder.build_extract_value(s, 1, "env.name.len").map_err(llvm_err)?;
+                    self.builder.build_call(self.rt.env_get, &[ptr.into(), len.into(), out.into()], "")
+                } else {
+                    self.builder.build_call(self.rt.current_dir, &[out.into()], "")
+                }
+                .map_err(llvm_err)?;
+                let found = call.try_as_basic_value().basic().expect("the read returns a flag").into_int_value();
+                let found = self
+                    .builder
+                    .build_int_compare(IntPredicate::NE, found, self.cx.i32_type().const_zero(), "")
+                    .map_err(llvm_err)?;
+                let list = self.builder.build_load(self.string_ty, out, "env.bytes").map_err(llvm_err)?;
+                let inner = Ty::List(Box::new(Ty::Int(burdin_tir::IntTy::U8)), burdin_tir::Alloc::Global);
+                let opt_ty = self.option_ty(&inner);
+                let agg = self
+                    .builder
+                    .build_insert_value(opt_ty.const_zero(), found, 0, "env.some")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                let agg =
+                    self.builder.build_insert_value(agg, list, 1, "env.value").map_err(llvm_err)?.into_struct_value();
+                return Ok(Some(agg.into()));
+            }
+            Builtin::EnvSet | Builtin::EnvSetBytes => {
+                let name = self.expr_mode(&args[0], Mode::Use)?;
+                let name = self.need(name, &Ty::Str).into_struct_value();
+                let nptr = self.builder.build_extract_value(name, 0, "env.name").map_err(llvm_err)?;
+                let nlen = self.builder.build_extract_value(name, 1, "env.name.len").map_err(llvm_err)?;
+                let value_ty = args[1].ty.clone();
+                let value = self.expr_mode(&args[1], Mode::Use)?;
+                let value = self.need(value, &value_ty).into_struct_value();
+                let vptr = self.builder.build_extract_value(value, 0, "env.value").map_err(llvm_err)?;
+                let vlen = self.builder.build_extract_value(value, 1, "env.value.len").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.env_set, &[nptr.into(), nlen.into(), vptr.into(), vlen.into()], "")
+                    .map_err(llvm_err)?;
+                let status = call.try_as_basic_value().basic().expect("env_set returns a status");
+                return Ok(Some(status));
+            }
+            Builtin::EnvRemove => {
+                let name = self.expr_mode(&args[0], Mode::Use)?;
+                let name = self.need(name, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(name, 0, "env.name").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(name, 1, "env.name.len").map_err(llvm_err)?;
+                let call =
+                    self.builder.build_call(self.rt.env_remove, &[ptr.into(), len.into()], "").map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
+            }
+            Builtin::SetCurrentDir | Builtin::SetCurrentDirBytes => {
+                let ty = args[0].ty.clone();
+                let path = self.expr_mode(&args[0], Mode::Use)?;
+                let path = self.need(path, &ty).into_struct_value();
+                let ptr = self.builder.build_extract_value(path, 0, "cwd.path").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(path, 1, "cwd.path.len").map_err(llvm_err)?;
+                let call = self
+                    .builder
+                    .build_call(self.rt.set_current_dir, &[ptr.into(), len.into()], "")
+                    .map_err(llvm_err)?;
+                return Ok(call.try_as_basic_value().basic());
             }
             Builtin::ProcessExit => {
                 let code = self.expr_mode(&args[0], Mode::Use)?;
@@ -676,12 +1211,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        if let Method::Float(op) = m {
+            return self.float_method(op, args);
+        }
         // `iter_mut` builds the same value as `iter`: the mutable iterators share the borrowing ones' layout.
         if matches!(m, Method::Iter | Method::IterMut | Method::IntoIter) {
             return self.iter_value(args, m == Method::IntoIter);
         }
         if m == Method::IterNext {
             return self.iter_next(args, ty);
+        }
+        if m == Method::IterNextBack {
+            return self.iter_next_back(args, ty);
         }
         if m == Method::AsPtr {
             // A `CString` receiver that is not a place is a temporary of the statement: keep it in a slot so its
@@ -933,6 +1474,140 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(Some(v))
     }
 
+    /// The floating-point methods the compiler provides (`spec/stdlib.md`, "Float functions"). An exactly
+    /// rounded operation lowers to an LLVM intrinsic; one with no intrinsic calls the C math library.
+    fn float_method(&mut self, op: FloatOp, args: &'a [tir::Expr]) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let ft = match &args[0].ty {
+            Ty::Float(f) => *f,
+            other => return Err(format!("a floating-point method on `{other}`")),
+        };
+        let mut values = Vec::with_capacity(args.len());
+        for a in args {
+            let v = self.expr_mode(a, Mode::Use)?;
+            values.push(self.need(v, &a.ty));
+        }
+        let t: BasicTypeEnum<'ctx> = match ft {
+            FloatTy::F32 => self.cx.f32_type().into(),
+            FloatTy::F64 => self.cx.f64_type().into(),
+        };
+        if op == FloatOp::ToBits {
+            let bits_ty: BasicTypeEnum<'ctx> = match ft {
+                FloatTy::F32 => self.cx.i32_type().into(),
+                FloatTy::F64 => self.cx.i64_type().into(),
+            };
+            let bits = self.builder.build_bit_cast(values[0].into_float_value(), bits_ty, "bits").map_err(llvm_err)?;
+            return Ok(Some(bits));
+        }
+        let call_args: Vec<BasicMetadataValueEnum<'ctx>> = values.iter().map(|v| (*v).into()).collect();
+        let math = |base: &str| c_math_name(ft, base);
+        let v = match op {
+            FloatOp::Abs => self.intrinsic_call("llvm.fabs", &[t], &call_args)?,
+            FloatOp::Sqrt => self.intrinsic_call("llvm.sqrt", &[t], &call_args)?,
+            FloatOp::Cbrt => {
+                let name = math("cbrt");
+                self.c_math_call(&name, &[t], t, &call_args)?
+            }
+            FloatOp::Powi => self.intrinsic_call("llvm.powi", &[t, self.cx.i32_type().into()], &call_args)?,
+            FloatOp::Powf => self.intrinsic_call("llvm.pow", &[t], &call_args)?,
+            FloatOp::Exp => self.intrinsic_call("llvm.exp", &[t], &call_args)?,
+            FloatOp::Exp2 => self.intrinsic_call("llvm.exp2", &[t], &call_args)?,
+            FloatOp::Ln => self.intrinsic_call("llvm.log", &[t], &call_args)?,
+            FloatOp::Log2 => self.intrinsic_call("llvm.log2", &[t], &call_args)?,
+            FloatOp::Log10 => self.intrinsic_call("llvm.log10", &[t], &call_args)?,
+            FloatOp::Floor => self.intrinsic_call("llvm.floor", &[t], &call_args)?,
+            FloatOp::Ceil => self.intrinsic_call("llvm.ceil", &[t], &call_args)?,
+            FloatOp::Round => self.intrinsic_call("llvm.round", &[t], &call_args)?,
+            FloatOp::RoundTiesEven => self.round_ties_even(values[0].into_float_value())?,
+            FloatOp::Trunc => self.intrinsic_call("llvm.trunc", &[t], &call_args)?,
+            FloatOp::Sin => self.intrinsic_call("llvm.sin", &[t], &call_args)?,
+            FloatOp::Cos => self.intrinsic_call("llvm.cos", &[t], &call_args)?,
+            FloatOp::Tan => self.intrinsic_call("llvm.tan", &[t], &call_args)?,
+            FloatOp::Asin => self.intrinsic_call("llvm.asin", &[t], &call_args)?,
+            FloatOp::Acos => self.intrinsic_call("llvm.acos", &[t], &call_args)?,
+            FloatOp::Atan => self.intrinsic_call("llvm.atan", &[t], &call_args)?,
+            FloatOp::Atan2 => self.intrinsic_call("llvm.atan2", &[t], &call_args)?,
+            FloatOp::Sinh => self.intrinsic_call("llvm.sinh", &[t], &call_args)?,
+            FloatOp::Cosh => self.intrinsic_call("llvm.cosh", &[t], &call_args)?,
+            FloatOp::Tanh => self.intrinsic_call("llvm.tanh", &[t], &call_args)?,
+            FloatOp::Hypot => {
+                let name = math("hypot");
+                self.c_math_call(&name, &[t, t], t, &call_args)?
+            }
+            FloatOp::MulAdd => self.intrinsic_call("llvm.fma", &[t], &call_args)?,
+            FloatOp::Copysign => self.intrinsic_call("llvm.copysign", &[t], &call_args)?,
+            FloatOp::ToBits => unreachable!("handled before the call"),
+        };
+        Ok(Some(v))
+    }
+
+    /// Calls an LLVM intrinsic, declaring it for the parameter types that choose an overloaded one.
+    fn intrinsic_call(
+        &mut self,
+        name: &str,
+        params: &[BasicTypeEnum<'ctx>],
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<BasicValueEnum<'ctx>> {
+        let intrinsic = Intrinsic::find(name).ok_or_else(|| format!("missing LLVM intrinsic `{name}`"))?;
+        let decl = intrinsic
+            .get_declaration(self.module, params)
+            .ok_or_else(|| format!("cannot declare the LLVM intrinsic `{name}`"))?;
+        self.call_value(decl, args)
+    }
+
+    /// `round_ties_even` without `llvm.roundeven`, whose lowering calls the C library's `roundeven`: the MSVC
+    /// CRT has no such symbol. Round halfway cases away from zero, then step a tie toward zero when that leaves
+    /// an odd integer. Every step is exact, and none depends on the current rounding mode. The `copysign` keeps
+    /// a result of zero negative when the input was (`(-0.5).round_ties_even()` is `-0.0`).
+    fn round_ties_even(&mut self, x: FloatValue<'ctx>) -> GenResult<BasicValueEnum<'ctx>> {
+        let float_ty = x.get_type();
+        let t: BasicTypeEnum<'ctx> = float_ty.into();
+        let rounded = self.intrinsic_call("llvm.round", &[t], &[x.into()])?.into_float_value();
+        let diff = self.builder.build_float_sub(x, rounded, "round.diff").map_err(llvm_err)?;
+        let abs_diff = self.intrinsic_call("llvm.fabs", &[t], &[diff.into()])?.into_float_value();
+        let half = float_ty.const_float(0.5);
+        let one = float_ty.const_float(1.0);
+        let is_tie =
+            self.builder.build_float_compare(FloatPredicate::OEQ, abs_diff, half, "round.tie").map_err(llvm_err)?;
+        let halved = self.builder.build_float_mul(rounded, half, "round.halved").map_err(llvm_err)?;
+        let truncated = self.intrinsic_call("llvm.trunc", &[t], &[halved.into()])?.into_float_value();
+        let is_even =
+            self.builder.build_float_compare(FloatPredicate::OEQ, halved, truncated, "round.even").map_err(llvm_err)?;
+        let is_odd = self.builder.build_not(is_even, "round.odd").map_err(llvm_err)?;
+        let fix = self.builder.build_and(is_tie, is_odd, "round.fix").map_err(llvm_err)?;
+        let signed_one = self.intrinsic_call("llvm.copysign", &[t], &[one.into(), x.into()])?.into_float_value();
+        let stepped = self.builder.build_float_sub(rounded, signed_one, "round.stepped").map_err(llvm_err)?;
+        let stepped = self.intrinsic_call("llvm.copysign", &[t], &[stepped.into(), x.into()])?;
+        let rounded_value: BasicValueEnum<'ctx> = rounded.into();
+        self.builder.build_select(fix, stepped, rounded_value, "round.even").map_err(llvm_err)
+    }
+
+    /// Calls the C math library function `name`, declaring it with the given signature.
+    fn c_math_call(
+        &mut self,
+        name: &str,
+        params: &[BasicTypeEnum<'ctx>],
+        ret: BasicTypeEnum<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<BasicValueEnum<'ctx>> {
+        let param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = params.iter().map(|t| (*t).into()).collect();
+        let fn_ty = ret.fn_type(&param_tys, false);
+        let decl = match self.module.get_function(name) {
+            Some(existing) if existing.get_type() == fn_ty => existing,
+            Some(_) => return Err(format!("the C math function `{name}` conflicts with another declaration")),
+            None => self.module.add_function(name, fn_ty, Some(Linkage::External)),
+        };
+        self.call_value(decl, args)
+    }
+
+    fn call_value(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<BasicValueEnum<'ctx>> {
+        let call = self.builder.build_call(f, args, "").map_err(llvm_err)?;
+        call.try_as_basic_value().basic().ok_or_else(|| format!("`{}` returns a value", f.get_name().to_string_lossy()))
+    }
+
     /// The pointer and length of a `str` expression's bytes.
     fn str_parts(&mut self, e: &'a tir::Expr) -> GenResult<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>)> {
         let s = self.expr_mode(e, Mode::Use)?;
@@ -982,5 +1657,14 @@ pub(super) fn wrapping_op(m: Method) -> BinOp {
         Method::WrappingAdd | Method::CheckedAdd => BinOp::Add,
         Method::WrappingSub | Method::CheckedSub => BinOp::Sub,
         _ => BinOp::Mul,
+    }
+}
+
+/// The C math library symbol for `base` at the given precision: the single-precision functions take an `f`
+/// suffix (`sinf`, `atan2f`), as C99 defines them.
+fn c_math_name(ft: FloatTy, base: &str) -> String {
+    match ft {
+        FloatTy::F32 => format!("{base}f"),
+        FloatTy::F64 => base.to_string(),
     }
 }

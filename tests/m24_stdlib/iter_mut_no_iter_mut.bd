@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // Only the types that declare `iter_mut` can be walked with `for x in mut`: a slice is a read-only view, and a plain
-// `for` loop yields places that cannot be written (IT13).
+// `for` loop yields places that cannot be written. A mutable iterator is not double-ended, so `rev` rejects it (IT15).
 
 struct Bag {
     n: i32
@@ -16,6 +16,14 @@ fn slice(s: [i32]) {
 fn bag(b: Bag) {
     for x in mut b { //~ E0002
         *x = 1
+    }
+}
+
+fn backwards() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    for x in xs.iter_mut().rev() { //~ E0141
+        *x = 2
     }
 }
 

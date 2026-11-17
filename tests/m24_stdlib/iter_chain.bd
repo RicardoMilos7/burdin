@@ -1,0 +1,74 @@
+//@ run
+//> 1
+//> 2
+//> 3
+//> 10
+//> 20
+//> 1
+//> 2
+//> 3
+//> 100
+//> 101
+//> 2
+//> 1
+//> a
+//> b
+//> c
+//> 2
+//> 2
+//> 36
+//> Some(0) Some(1) Some(7) Some(8) None None
+//> 4
+
+// `chain` yields every item of the first iterator and then every item of the second. Both must yield the same type.
+
+struct Countdown {
+    from: i32
+}
+
+Countdown: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.from <= 0 {
+            return None
+        }
+        let v = self.from
+        self.from = v - 1
+        Some(v)
+    }
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [1, 2, 3] {
+        xs.push(x)
+    }
+    let mut ys = List<i32>.new()
+    ys.push(10)
+    ys.push(20)
+    // Two lists.
+    for x in xs.iter().chain(ys.iter()) {
+        println("{x}")
+    }
+    // A list, a range, and a user iterator.
+    for x in xs.iter().chain((100..102).iter()).chain(Countdown { from: 2 }) {
+        println("{x}")
+    }
+    // Views of items that are not `Copy`.
+    let mut a = List<String>.new()
+    a.push(String.from("a"))
+    let mut b = List<String>.new()
+    b.push(String.from("b"))
+    b.push(String.from("c"))
+    for s in a.iter().chain(b.iter()) {
+        println("{s}")
+    }
+    // The first source can be empty, and so can the second.
+    let empty = List<i32>.new()
+    println("{empty.iter().chain(ys.iter()).count()}")
+    println("{ys.iter().chain(empty.iter()).count()}")
+    // A chain is an iterator: it can be chained again, and a consumer can end it early.
+    println("{xs.iter().chain(ys.iter()).sum()}")
+    let mut c = (0..2).iter().chain((7..9).iter())
+    println("{c.next():?} {c.next():?} {c.next():?} {c.next():?} {c.next():?} {c.next():?}")
+    println("{xs.iter().chain(ys.iter()).take(4).count()}")
+}

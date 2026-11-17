@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn for_loops_take_an_optional_mut_marker() {
-        // `for x in mut xs` is the mutable form (spec/iterators.md, IT13); the marker is part of the header, so the
+        // `for x in mut xs` is the mutable form (spec/iterators.md, IT15); the marker is part of the header, so the
         // iterated expression is still just `xs` (and a struct literal is not allowed there).
         let (file, out) = render("fn f() {\nfor x in mut xs { }\nfor y in xs { }\nfor z in mut a.b { }\n}\n");
         assert_eq!(out, "");

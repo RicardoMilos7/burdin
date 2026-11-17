@@ -313,10 +313,7 @@ impl FnCx<'_> {
         let ret = self.ret.clone();
         match (&ret, &value_ty) {
             (Ty::Error, _) | (_, Ty::Error) => error_expr(span),
-            (Ty::Option(ret_inner), Ty::Option(inner)) => {
-                if !compatible(inner, ret_inner) {
-                    self.mismatch(span, ret_inner, inner);
-                }
+            (Ty::Option(_), Ty::Option(inner)) => {
                 let inner = (**inner).clone();
                 let owned = self.owns_scrutinee(&value);
                 let (id, mode) = self.payload_local("ok", inner.clone(), owned);
@@ -331,10 +328,7 @@ impl FnCx<'_> {
                 let matched = mk(tir::ExprKind::Match(Box::new(value), arms), inner, span);
                 self.wrap_scrutinee(matched, owned_temp, span)
             }
-            (Ty::Result(ret_ok, ret_err), Ty::Result(ok, err)) => {
-                if !compatible(ok, ret_ok) {
-                    self.mismatch(span, ret_ok, ok);
-                }
+            (Ty::Result(_, ret_err), Ty::Result(ok, err)) => {
                 let ok = (**ok).clone();
                 let err = (**err).clone();
                 let ret_err = (**ret_err).clone();

@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // `for x in mut xs` borrows `xs` exclusively for the whole loop, so the body cannot grow, shrink, read, or move the
-// collection: the buffer could move under the iterator (IT13).
+// collection: the buffer could move under the iterator (IT15).
 
 fn push_inside() {
     let mut xs = List<i32>.new()

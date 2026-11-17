@@ -73,8 +73,10 @@ impl TypeDefs<'_> {
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
             | Ty::MapEntry(..)
-            | Ty::MapIntoIter(..)
-            | Ty::RangeIter(..) => false,
+            | Ty::MapIntoIter(..) => false,
+            // A range iterator is two endpoints and a flag, so it can be cloned (`cycle` clones its source), but it
+            // is not `Copy`: a copy would advance on its own and surprise the program.
+            Ty::RangeIter(inner, _) => prop == Property::Clone && self.holds(inner, prop, seen),
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
             Ty::String | Ty::CString => prop == Property::Clone,
@@ -257,6 +259,16 @@ mod tests {
         assert!(!defs.is_clone(&closure));
         assert!(defs.needs_drop(&closure));
         assert!(!defs.has_drop_impl(&closure));
+    }
+
+    #[test]
+    fn a_range_iterator_is_cloned_but_never_copied() {
+        let defs = TypeDefs { structs: &[], enums: &[] };
+        let range = Ty::RangeIter(Box::new(int()), false);
+        assert!(defs.is_clone(&range), "`cycle` clones its source");
+        assert!(!defs.is_copy(&range), "a copy would advance on its own");
+        let owning = Ty::ListIntoIter(Box::new(int()), Alloc::Global);
+        assert!(!defs.is_clone(&owning), "an owning iterator is neither copied nor cloned");
     }
 
     #[test]
