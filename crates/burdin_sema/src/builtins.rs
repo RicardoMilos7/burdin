@@ -39,6 +39,9 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__rename" => Builtin::RenamePath,
         "__metadata" => Builtin::Metadata,
         "__canonicalize" => Builtin::Canonicalize,
+        "__clock" => Builtin::Clock,
+        "__entropy" => Builtin::Entropy,
+        "__sleep" => Builtin::Sleep,
         "__args" => Builtin::EnvArgs,
         "__env_list" => Builtin::EnvList,
         "__process_spawn" => Builtin::ProcessSpawn,
@@ -109,6 +112,8 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
             Box::new(io_error()),
         ),
         Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
+        Builtin::Clock => Ty::Int(IntTy::I64),
+        Builtin::Entropy => Ty::Int(IntTy::U64),
         Builtin::EnvArgs | Builtin::EnvList => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::EnvGet | Builtin::CurrentDir => {
             Ty::Option(Box::new(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global)))
@@ -147,6 +152,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::Unreachable
         | Builtin::TargetOs
         | Builtin::TargetArch
+        | Builtin::Entropy
         | Builtin::CurrentDir
         | Builtin::StdoutFlush
         | Builtin::StdinReadLine
@@ -174,7 +180,8 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
             ParamSig::plain(Ty::Int(IntTy::I32)),
             ParamSig::plain(Ty::Int(IntTy::I32)),
         ],
-        Builtin::IsTerminal => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        Builtin::IsTerminal | Builtin::Clock => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        Builtin::Sleep => vec![ParamSig::plain(Ty::Int(IntTy::U64))],
         Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
             vec![ParamSig::plain(Ty::Str)]
         }
@@ -678,6 +685,29 @@ mod tests {
         let tty = builtin_sig(Builtin::IsTerminal, &globals);
         assert_eq!(tty.params[0].ty, Ty::Int(IntTy::I32));
         assert_eq!(tty.ret, Ty::Bool);
+    }
+
+    #[test]
+    fn clock_entropy_and_sleep_signatures() {
+        let globals = Globals::default();
+        assert_eq!(builtin("__clock"), Some(Builtin::Clock));
+        assert_eq!(builtin("__entropy"), Some(Builtin::Entropy));
+        assert_eq!(builtin("__sleep"), Some(Builtin::Sleep));
+
+        // `__clock(kind: i32): i64`: nanoseconds from the real-time (0) or the monotonic clock.
+        let clock = builtin_sig(Builtin::Clock, &globals);
+        assert_eq!(clock.params.len(), 1);
+        assert_eq!(clock.params[0].ty, Ty::Int(IntTy::I32));
+        assert_eq!(clock.ret, Ty::Int(IntTy::I64));
+        // `__entropy(): u64`.
+        let entropy = builtin_sig(Builtin::Entropy, &globals);
+        assert!(entropy.params.is_empty());
+        assert_eq!(entropy.ret, Ty::Int(IntTy::U64));
+        // `__sleep(nanos: u64)`.
+        let sleep = builtin_sig(Builtin::Sleep, &globals);
+        assert_eq!(sleep.params.len(), 1);
+        assert_eq!(sleep.params[0].ty, Ty::Int(IntTy::U64));
+        assert_eq!(sleep.ret, Ty::Unit);
     }
 
     #[test]

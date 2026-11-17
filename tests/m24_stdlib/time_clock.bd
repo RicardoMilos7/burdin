@@ -1,0 +1,67 @@
+//@ run
+//> monotonic true
+//> sleep true
+//> wall clock after 2020 true
+//> real elapsed true
+//> manual 0ns
+//> manual 1.5s
+//> manual system 1700000001 1700000003
+//> jump 100 3.5s
+//> generic 250ms 250ms
+//> expired false true
+
+// `Clock` is what time-dependent code takes as a parameter. `SystemClock` reads the operating system and
+// `ManualClock` moves only when it is told to, so a test decides what time it is (spec/stdlib.md, "Time").
+
+struct Timer {
+    started: Instant
+    limit: Duration
+}
+
+fn start_timer<C: Clock>(clock: C, limit: Duration): Timer {
+    Timer { started: clock.now(), limit: limit }
+}
+
+fn expired<C: Clock>(timer: Timer, clock: C): bool {
+    clock.now().duration_since(timer.started) >= timer.limit
+}
+
+fn measure<C: Clock>(clock: C, since: Instant): Duration {
+    clock.now().duration_since(since)
+}
+
+fn main() {
+    let first = Instant.now()
+    let second = Instant.now()
+    println("monotonic {second >= first}")
+    sleep(Duration.from_millis(20))
+    let waited = first.elapsed()
+    // The system may wake a sleeper a little early or late, so the bounds are loose.
+    println("sleep {waited >= Duration.from_millis(15) && waited < Duration.from_secs(30)}")
+    sleep(Duration.zero())
+    println("wall clock after 2020 {SystemTime.now().unix_secs() > 1_577_836_800}")
+    let real = SystemClock { }
+    let began = real.now()
+    println("real elapsed {measure(real, began) < Duration.from_secs(30)}")
+
+    let mut clock = ManualClock.new(SystemTime.from_unix_secs(1_700_000_000))
+    let start = clock.now()
+    println("manual {measure(clock, start)}")
+    clock.advance(Duration.from_millis(1500))
+    println("manual {measure(clock, start)}")
+    let at = clock.system_time().unix_secs()
+    clock.advance(Duration.from_secs(2))
+    println("manual system {at} {clock.system_time().unix_secs()}")
+    clock.set_system_time(SystemTime.from_unix_secs(100))
+    println("jump {clock.system_time().unix_secs()} {measure(clock, start)}")
+
+    let mut c = ManualClock.new(SystemTime.unix_epoch())
+    let timer = start_timer(c, Duration.from_millis(250))
+    c.advance(Duration.from_millis(250))
+    println("generic {c.now().since_start()} {c.now().duration_since(timer.started)}")
+    let mut d = ManualClock.new(SystemTime.unix_epoch())
+    let t2 = start_timer(d, Duration.from_secs(1))
+    let early = expired(t2, d)
+    d.advance(Duration.from_secs(1))
+    println("expired {early} {expired(t2, d)}")
+}

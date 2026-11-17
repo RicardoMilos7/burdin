@@ -251,6 +251,12 @@ pub(crate) struct Runtime<'ctx> {
     pub canonicalize: FunctionValue<'ctx>,
     /// `(out: *List<String>)`: the process arguments, program name first.
     pub args: FunctionValue<'ctx>,
+    /// `(kind: i32) -> i64`: nanoseconds from the real-time clock (kind 0) or the monotonic clock.
+    pub clock: FunctionValue<'ctx>,
+    /// `() -> i64`: 64 random bits from the operating system.
+    pub entropy: FunctionValue<'ctx>,
+    /// `(nanos: i64)`: suspends the thread.
+    pub sleep: FunctionValue<'ctx>,
     /// `(out: *List<String>)`: every environment entry as `NAME=VALUE`, in the order the system reports them.
     pub env_list: FunctionValue<'ctx>,
     /// `(program, program_len, args, args_len, env, env_len, cwd, cwd_len, command_line, command_line_len,
@@ -586,6 +592,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         argv.set_linkage(Linkage::Internal);
         // The standard-input block buffer, shared by every read of standard input.
         let in_fill = self.in_fill()?;
+        let clock = self.clock()?;
         Ok(Runtime {
             print: self.print(&h)?,
             flush: h.flush,
@@ -638,6 +645,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             metadata: self.metadata()?,
             canonicalize: self.canonicalize(&h)?,
             args: self.args(argc.as_pointer_value(), argv.as_pointer_value(), alloc_string)?,
+            clock,
+            entropy: self.entropy(clock)?,
+            sleep: self.sleep()?,
             env_list: self.env_list(alloc_string)?,
             process_spawn: self.process_spawn()?,
             process_wait: self.process_wait()?,
@@ -3765,6 +3775,131 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_store(f0, base).map_err(llvm_err)?;
         self.b.build_store(f1, n).map_err(llvm_err)?;
         self.b.build_store(f2, n).map_err(llvm_err)?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `clock(kind: i32) -> i64`: nanoseconds from a system clock. Kind 0 is the real-time clock, counted from the
+    /// Unix epoch (`clock_gettime(CLOCK_REALTIME)`, `GetSystemTimePreciseAsFileTime` on Windows); any other kind is
+    /// the monotonic clock, counted from an unspecified start (`clock_gettime(CLOCK_MONOTONIC)`,
+    /// `QueryPerformanceCounter` on Windows). An `i64` of nanoseconds covers the years 1678 to 2262.
+    fn clock(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, i32_ty, i64_ty) = (self.ptr_ty, self.i32(), self.i64());
+        let f = self.function("burdin_rt_clock", i64_ty.fn_type(&[i32_ty.into()], false));
+        let kind = Self::int_param(f, 0);
+        let buf = self.b.build_alloca(i64_ty.array_type(2), "clock.buf").map_err(llvm_err)?;
+        let nanos_per_second = i64_ty.const_int(1_000_000_000, false);
+        let is_real = self.b.build_int_compare(IntPredicate::EQ, kind, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        if self.windows {
+            let real = self.block(f, "clock.real");
+            let mono = self.block(f, "clock.mono");
+            self.b.build_conditional_branch(is_real, real, mono).map_err(llvm_err)?;
+            self.b.position_at_end(real);
+            let void_ty = self.cx.void_type();
+            let precise = libc(self.module, "GetSystemTimePreciseAsFileTime", void_ty.fn_type(&[ptr_ty.into()], false));
+            self.call(precise, &[buf.into()])?;
+            let ticks = self.b.build_load(i64_ty, buf, "").map_err(llvm_err)?.into_int_value();
+            // 100 ns ticks since 1601-01-01; the Unix epoch is 116444736000000000 ticks later.
+            let since_epoch =
+                self.b.build_int_sub(ticks, i64_ty.const_int(116_444_736_000_000_000, false), "").map_err(llvm_err)?;
+            let nanos = self.b.build_int_mul(since_epoch, i64_ty.const_int(100, false), "").map_err(llvm_err)?;
+            self.b.build_return(Some(&nanos)).map_err(llvm_err)?;
+            self.b.position_at_end(mono);
+            let counter_fn = libc(self.module, "QueryPerformanceCounter", i32_ty.fn_type(&[ptr_ty.into()], false));
+            let frequency_fn = libc(self.module, "QueryPerformanceFrequency", i32_ty.fn_type(&[ptr_ty.into()], false));
+            let freq_buf = self.b.build_alloca(i64_ty, "clock.freq").map_err(llvm_err)?;
+            self.call(counter_fn, &[buf.into()])?;
+            self.call(frequency_fn, &[freq_buf.into()])?;
+            let counter = self.b.build_load(i64_ty, buf, "").map_err(llvm_err)?.into_int_value();
+            let frequency = self.b.build_load(i64_ty, freq_buf, "").map_err(llvm_err)?.into_int_value();
+            // `counter * 1e9 / frequency` without the overflow of the product: whole seconds, then the remainder.
+            let seconds = self.b.build_int_unsigned_div(counter, frequency, "").map_err(llvm_err)?;
+            let rest = self.b.build_int_unsigned_rem(counter, frequency, "").map_err(llvm_err)?;
+            let whole = self.b.build_int_mul(seconds, nanos_per_second, "").map_err(llvm_err)?;
+            let scaled = self.b.build_int_mul(rest, nanos_per_second, "").map_err(llvm_err)?;
+            let part = self.b.build_int_unsigned_div(scaled, frequency, "").map_err(llvm_err)?;
+            let nanos = self.b.build_int_add(whole, part, "").map_err(llvm_err)?;
+            self.b.build_return(Some(&nanos)).map_err(llvm_err)?;
+        } else {
+            #[cfg(unix)]
+            let monotonic = libc::CLOCK_MONOTONIC as u64;
+            #[cfg(not(unix))]
+            let monotonic = 1;
+            let id = self
+                .b
+                .build_select(is_real, i32_ty.const_zero(), i32_ty.const_int(monotonic, false), "")
+                .map_err(llvm_err)?;
+            let clock_gettime =
+                libc(self.module, "clock_gettime", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false));
+            self.call(clock_gettime, &[id.into(), buf.into()])?;
+            let seconds = self.b.build_load(i64_ty, buf, "").map_err(llvm_err)?.into_int_value();
+            let at = self.offset(buf, self.usize_ty.const_int(8, false))?;
+            let fraction = self.b.build_load(i64_ty, at, "").map_err(llvm_err)?.into_int_value();
+            let whole = self.b.build_int_mul(seconds, nanos_per_second, "").map_err(llvm_err)?;
+            let nanos = self.b.build_int_add(whole, fraction, "").map_err(llvm_err)?;
+            self.b.build_return(Some(&nanos)).map_err(llvm_err)?;
+        }
+        Ok(f)
+    }
+
+    /// `entropy() -> i64`: 64 random bits from the operating system (`getentropy`, `rand_s` on Windows). If the
+    /// system refuses, the bits come from the real-time clock instead, so a seed is never a constant.
+    fn entropy(&mut self, clock: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, i32_ty, i64_ty) = (self.ptr_ty, self.i32(), self.i64());
+        let f = self.function("burdin_rt_entropy", i64_ty.fn_type(&[], false));
+        let buf = self.b.build_alloca(i64_ty, "entropy.buf").map_err(llvm_err)?;
+        self.b.build_store(buf, i64_ty.const_zero()).map_err(llvm_err)?;
+        let status = if self.windows {
+            // `rand_s` writes 32 bits at a time and returns an errno value, zero for success.
+            let rand_s = libc(self.module, "rand_s", i32_ty.fn_type(&[ptr_ty.into()], false));
+            let high = self.call(rand_s, &[buf.into()])?.expect("rand_s returns a status").into_int_value();
+            let at = self.offset(buf, self.usize_ty.const_int(4, false))?;
+            let low = self.call(rand_s, &[at.into()])?.expect("rand_s returns a status").into_int_value();
+            self.b.build_or(high, low, "").map_err(llvm_err)?
+        } else {
+            let getentropy =
+                libc(self.module, "getentropy", i32_ty.fn_type(&[ptr_ty.into(), self.usize_ty.into()], false));
+            self.call(getentropy, &[buf.into(), self.usize_ty.const_int(8, false).into()])?
+                .expect("getentropy returns a status")
+                .into_int_value()
+        };
+        let ok = self.b.build_int_compare(IntPredicate::EQ, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let good = self.block(f, "entropy.ok");
+        let fallback = self.block(f, "entropy.fallback");
+        self.b.build_conditional_branch(ok, good, fallback).map_err(llvm_err)?;
+        self.b.position_at_end(good);
+        let bits = self.b.build_load(i64_ty, buf, "").map_err(llvm_err)?;
+        self.b.build_return(Some(&bits)).map_err(llvm_err)?;
+        self.b.position_at_end(fallback);
+        let now = self.call(clock, &[i32_ty.const_zero().into()])?.expect("clock returns nanoseconds");
+        self.b.build_return(Some(&now)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `sleep(nanos: i64)`: suspends the calling thread for about `nanos` nanoseconds (`nanosleep`, `Sleep` in whole
+    /// milliseconds rounded up on Windows). A signal can end the Unix sleep early.
+    fn sleep(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, i32_ty, i64_ty) = (self.ptr_ty, self.i32(), self.i64());
+        let f = self.function("burdin_rt_sleep", self.cx.void_type().fn_type(&[i64_ty.into()], false));
+        let nanos = Self::int_param(f, 0);
+        if self.windows {
+            let millis_unit = i64_ty.const_int(1_000_000, false);
+            let rounded = self.b.build_int_add(nanos, i64_ty.const_int(999_999, false), "").map_err(llvm_err)?;
+            let millis = self.b.build_int_unsigned_div(rounded, millis_unit, "").map_err(llvm_err)?;
+            let millis = self.b.build_int_truncate(millis, i32_ty, "").map_err(llvm_err)?;
+            let sleep = libc(self.module, "Sleep", self.cx.void_type().fn_type(&[i32_ty.into()], false));
+            self.call(sleep, &[millis.into()])?;
+        } else {
+            let buf = self.b.build_alloca(i64_ty.array_type(2), "sleep.buf").map_err(llvm_err)?;
+            let per_second = i64_ty.const_int(1_000_000_000, false);
+            let seconds = self.b.build_int_unsigned_div(nanos, per_second, "").map_err(llvm_err)?;
+            let fraction = self.b.build_int_unsigned_rem(nanos, per_second, "").map_err(llvm_err)?;
+            self.b.build_store(buf, seconds).map_err(llvm_err)?;
+            let at = self.offset(buf, self.usize_ty.const_int(8, false))?;
+            self.b.build_store(at, fraction).map_err(llvm_err)?;
+            let nanosleep = libc(self.module, "nanosleep", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+            self.call(nanosleep, &[buf.into(), ptr_ty.const_null().into()])?;
+        }
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(f)
     }

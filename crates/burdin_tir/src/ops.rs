@@ -109,6 +109,13 @@ pub enum Builtin {
     Metadata,
     /// `__canonicalize(path)`: the absolute, normalized path.
     Canonicalize,
+    /// `__clock(kind)`: nanoseconds from the real-time clock (kind 0, since the Unix epoch) or the monotonic clock
+    /// (any other kind, from an unspecified start) (`spec/stdlib.md`, issue #195).
+    Clock,
+    /// `__entropy()`: 64 random bits from the operating system.
+    Entropy,
+    /// `__sleep(nanos)`: suspends the thread for about that long.
+    Sleep,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
     /// `__env_get(name)`: the raw bytes of an environment variable, or `None` when it is unset (or, on
