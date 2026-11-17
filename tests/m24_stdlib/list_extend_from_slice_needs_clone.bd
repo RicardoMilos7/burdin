@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// `extend_from_slice` clones every element, so the element type must be `Clone` (E0141).
+
+struct Plain {
+    x: i32
+}
+
+fn main() {
+    let mut xs = List<Plain>.new()
+    let mut ys = List<Plain>.new()
+    ys.push(Plain { x: 1 })
+    xs.extend_from_slice(ys[0..ys.len()]) //~ E0141
+}

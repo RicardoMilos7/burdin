@@ -124,10 +124,13 @@ with harness.temporary_dir("burdin-flags-") as work:
         )
         if harness.PLATFORM in ("linux", "macos"):
             checks += 1
-            if strip_size is None or strip_size > 131072:
+            # The budget moved from 128 KiB to 144 KiB with the standard-library roundout of issues #712-#716
+            # (Map views, String bytes/UTF-8/editing, assertions, interface coverage): every standard-library
+            # function is emitted into the binary, so a larger `std` shows up even in hello-world.
+            if strip_size is None or strip_size > 147456:
                 add_problem(
                     f"stripped hello is {strip_size if strip_size is not None else '?'} bytes, "
-                    "over the 128 KiB budget"
+                    "over the 144 KiB budget"
                 )
             checks += 1
             nm = harness.which("nm")
@@ -142,6 +145,18 @@ with harness.temporary_dir("burdin-flags-") as work:
                 leftover = "".join(line + " " for line in matches)
             if leftover:
                 add_problem(f"--strip left Burdin symbols in the executable: {leftover}")
+            if harness.PLATFORM == "linux" and nm is not None:
+                # Only a function the program can reach is exported for panic backtraces. A function nothing
+                # reaches is emitted as an internal stub, so the whole embedded standard library does not land
+                # in the dynamic symbol table of every executable (issue #710).
+                checks += 1
+                exported = harness.text(
+                    harness.run([nm, "-D", str(harness.executable_in(work, "hello_strip"))]).stdout
+                )
+                if "burdin.main" not in exported:
+                    add_problem("the dynamic symbol table does not name burdin.main, so a backtrace would lose it")
+                if "burdin.std.slice.ext." in exported:
+                    add_problem("the dynamic symbol table exports slice functions the program never reaches")
 
     std_output = build_and_run("burdin build std-heavy", "stdheavy.bd", "std_plain", "--strip")
     if std_output is not None:

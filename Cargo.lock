@@ -98,6 +98,7 @@ name = "burdin_tir"
 version = "0.1.0"
 dependencies = [
  "burdin_diag",
+ "libc",
 ]
 
 [[package]]

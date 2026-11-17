@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A `chunks` iterator borrows the list it views, so pushing to the list while it is live is E0111.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    let chunks = xs.as_slice().chunks(2)
+    xs.push(3) //~ E0111
+    for chunk in chunks {
+        println("{}", chunk.len())
+    }
+}

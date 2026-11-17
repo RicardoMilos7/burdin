@@ -1,0 +1,30 @@
+//@ run
+//> 10 11 12 13
+//> 20 21 22 23
+//> 4
+
+// `Deque` declares `iter_mut(mut self)` in `std`, so `for x in mut d` walks it from the front to the back and writes
+// every element, whichever of its two halves holds it (IT15).
+
+fn main() {
+    let mut d = Deque<i32>.new()
+    d.push_back(2)
+    d.push_back(3)
+    d.push_front(1)
+    d.push_front(0)
+    for x in mut d {
+        *x = *x + 10
+    }
+    println("{d[0]} {d[1]} {d[2]} {d[3]}")
+    let mut it = d.iter_mut()
+    loop {
+        match it.next() {
+            Some(x) => {
+                *x = *x + 10
+            }
+            None => break,
+        }
+    }
+    println("{d[0]} {d[1]} {d[2]} {d[3]}")
+    println("{d.len()}")
+}

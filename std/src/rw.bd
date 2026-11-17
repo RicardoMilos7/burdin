@@ -1,0 +1,541 @@
+// Readers, writers, and buffered I/O (issue #409; spec/stdlib.md, "Readers and writers").
+//
+// `Read`, `Write`, `Seek`, and `BufRead` are the interfaces every byte source and sink implements. `Cursor` is the
+// in-memory implementation of all four over a `List<u8>`; `BufReader` and `BufWriter` wrap any reader or writer with
+// a buffer. A source reports its progress in bytes and appends what it reads to a `List<u8>` the caller owns, so a
+// read never allocates a buffer of its own. Every operation returns `Result<T, IoError>`, so `?` carries a failure
+// outward through any depth of wrappers.
+
+use bytes.BytesMut
+use encoding.{from_utf8, to_utf8}
+use fmt.{Debug, Formatter}
+use iter.Iterator
+use mem
+use std.IoError
+
+// ---- the interfaces ----
+
+/// A source of bytes.
+interface Read {
+    /// Appends up to `max` bytes to `buf` and returns how many it appended. `Ok(0)` means the end of the input, or
+    /// that `max` was 0. A source that has some bytes ready may append fewer than `max`.
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError>
+
+    /// Appends exactly `count` bytes to `buf`. A source that ends first is `IoError.UnexpectedEof`, and the bytes it
+    /// did produce stay in `buf`.
+    fn read_exact(mut self, mut buf: List<u8>, count: usize): Result<(), IoError> {
+        let mut left = count
+        while left > 0 {
+            let n = self.read(mut buf, left)?
+            if n == 0 {
+                return Err(IoError.UnexpectedEof)
+            }
+            left = left - n
+        }
+        Ok(())
+    }
+
+    /// Appends everything left to `buf` and returns how many bytes that was.
+    fn read_to_end(mut self, mut buf: List<u8>): Result<usize, IoError> {
+        let mut total: usize = 0
+        loop {
+            let n = self.read(mut buf, 4096)?
+            if n == 0 {
+                return Ok(total)
+            }
+            total = total + n
+        }
+    }
+
+    /// Reads everything left as text. The bytes must be valid UTF-8, or the result is `IoError.InvalidData`.
+    fn read_to_string(mut self): Result<String, IoError> {
+        let mut bytes = List<u8>.new()
+        self.read_to_end(mut bytes)?
+        match from_utf8(bytes[0..bytes.len()]) {
+            Ok(text) => Ok(text),
+            Err(_) => Err(IoError.InvalidData),
+        }
+    }
+}
+
+/// A sink of bytes.
+interface Write {
+    /// Writes a prefix of `data` and returns how many bytes it took. `Ok(0)` for a non-empty `data` means the sink
+    /// can take no more.
+    fn write(mut self, data: [u8]): Result<usize, IoError>
+
+    /// Pushes every byte the sink holds back to what it wraps, so none is lost if the program ends now.
+    fn flush(mut self): Result<(), IoError>
+
+    /// Writes all of `data`, calling `write` until it is taken. A sink that takes no bytes is `IoError.WriteZero`.
+    fn write_all(mut self, data: [u8]): Result<(), IoError> {
+        let mut done: usize = 0
+        while done < data.len() {
+            let n = self.write(data[done..data.len()])?
+            if n == 0 {
+                return Err(IoError.WriteZero)
+            }
+            done = done + n
+        }
+        Ok(())
+    }
+
+    /// Writes the UTF-8 bytes of `text`.
+    fn write_text(mut self, text: str): Result<(), IoError> {
+        let bytes = text.to_utf8()
+        self.write_all(bytes[0..bytes.len()])
+    }
+
+    /// Writes `text` and one `\n`.
+    fn write_line(mut self, text: str): Result<(), IoError> {
+        self.write_text(text)?
+        let mut newline = List<u8>.new()
+        newline.push(10)
+        self.write_all(newline[0..1])
+    }
+}
+
+/// Where a `seek` is measured from.
+enum SeekFrom derives (Clone, Copy, Eq, Debug) {
+    /// This many bytes after the start.
+    Start(u64)
+    /// This many bytes after the end; a negative offset is before it.
+    End(i64)
+    /// This many bytes after the current position; a negative offset is before it.
+    Current(i64)
+}
+
+/// A source or sink with a position that can move.
+interface Seek {
+    /// Moves to `from` and returns the new position, in bytes from the start. A position before the start is
+    /// `IoError.Seek` and leaves the position as it was; a position past the end is allowed.
+    fn seek(mut self, from: SeekFrom): Result<u64, IoError>
+
+    /// The current position, in bytes from the start.
+    fn position(mut self): Result<u64, IoError> {
+        self.seek(SeekFrom.Current(0))
+    }
+
+    /// Moves back to the start.
+    fn rewind(mut self): Result<(), IoError> {
+        self.seek(SeekFrom.Start(0))?
+        Ok(())
+    }
+}
+
+/// A source that keeps what it has read ahead, so it can read up to a delimiter.
+interface BufRead requires Read {
+    /// Appends bytes to `buf` up to and including the first `delim`, or up to the end of the input. The result is
+    /// the number of bytes appended, `0` at the end of the input.
+    fn read_until(mut self, delim: u8, mut buf: List<u8>): Result<usize, IoError>
+
+    /// Reads one line without its terminator: the `\n`, and the `\r` of a `\r\n` pair, are dropped. `Ok(None)` is the
+    /// end of the input, and the last line may have no terminator. The bytes must be valid UTF-8
+    /// (`IoError.InvalidData`).
+    fn read_line(mut self): Result<Option<String>, IoError> {
+        let mut bytes = List<u8>.new()
+        let n = self.read_until(10, mut bytes)?
+        if n == 0 {
+            return Ok(None)
+        }
+        let mut end = bytes.len()
+        if end > 0 && bytes[end - 1] == 10 {
+            end = end - 1
+            if end > 0 && bytes[end - 1] == 13 {
+                end = end - 1
+            }
+        }
+        match from_utf8(bytes[0..end]) {
+            Ok(text) => Ok(Some(text)),
+            Err(_) => Err(IoError.InvalidData),
+        }
+    }
+
+    /// An iterator over the lines of the input, each a `Result` because a read can fail. It ends at the end of the
+    /// input, and after the first error.
+    fn lines(own self): Lines<Self> {
+        Lines { inner: self, done: false }
+    }
+}
+
+/// The lines of a `BufRead`, from `lines`.
+struct Lines<R> {
+    inner: R
+    done: bool
+}
+
+Lines<R>: Iterator<Result<String, IoError>> where R: BufRead {
+    fn next(mut self): Option<Result<String, IoError>> {
+        if self.done {
+            return None
+        }
+        match self.inner.read_line() {
+            Ok(Some(line)) => Some(Ok(line)),
+            Ok(None) => {
+                self.done = true
+                None
+            }
+            Err(e) => {
+                self.done = true
+                Some(Err(e))
+            }
+        }
+    }
+}
+
+/// Copies every byte `from` has left into `to` and returns how many it copied. It does not flush `to`.
+fn copy<R: Read, W: Write>(mut from: R, mut to: W): Result<u64, IoError> {
+    let mut chunk = List<u8>.new()
+    let mut total: u64 = 0
+    loop {
+        chunk.clear()
+        let n = from.read(mut chunk, 4096)?
+        if n == 0 {
+            return Ok(total)
+        }
+        to.write_all(chunk[0..chunk.len()])?
+        total = total + (n as u64)
+    }
+}
+
+// ---- Cursor: reading, writing, and seeking in memory ----
+
+/// A byte buffer with a position. It reads from the position, writes over what is there at the position (growing the
+/// buffer at the end), and seeks within it, so it stands in for a file in tests and for any in-memory source or sink.
+struct Cursor {
+    priv data: List<u8>
+    priv pos: usize
+}
+
+Cursor {
+    /// A cursor at the start of `data`.
+    fn new(own data: List<u8>): Cursor {
+        Cursor { data: data, pos: 0 }
+    }
+
+    /// An empty cursor, for writing.
+    fn empty(): Cursor {
+        Cursor { data: List<u8>.new(), pos: 0 }
+    }
+
+    /// A cursor at the start of the UTF-8 bytes of `text`.
+    fn from_text(text: str): Cursor {
+        Cursor { data: text.to_utf8(), pos: 0 }
+    }
+
+    /// The bytes the cursor holds, whatever the position.
+    fn get_ref(self): &List<u8> {
+        &self.data
+    }
+
+    /// The buffer, without copying it.
+    fn into_inner(own self): List<u8> {
+        self.data
+    }
+}
+
+Cursor: Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        let mut n: usize = 0
+        while n < max && self.pos < self.data.len() {
+            buf.push(self.data[self.pos])
+            self.pos = self.pos + 1
+            n = n + 1
+        }
+        Ok(n)
+    }
+}
+
+Cursor: BufRead {
+    fn read_until(mut self, delim: u8, mut buf: List<u8>): Result<usize, IoError> {
+        let mut n: usize = 0
+        while self.pos < self.data.len() {
+            let b = self.data[self.pos]
+            buf.push(b)
+            self.pos = self.pos + 1
+            n = n + 1
+            if b == delim {
+                break
+            }
+        }
+        Ok(n)
+    }
+}
+
+Cursor: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        while self.data.len() < self.pos {
+            self.data.push(0)
+        }
+        let mut i: usize = 0
+        while i < data.len() {
+            if self.pos < self.data.len() {
+                self.data[self.pos] = data[i]
+            } else {
+                self.data.push(data[i])
+            }
+            self.pos = self.pos + 1
+            i = i + 1
+        }
+        Ok(data.len())
+    }
+
+    fn flush(mut self): Result<(), IoError> {
+        Ok(())
+    }
+}
+
+Cursor: Seek {
+    fn seek(mut self, from: SeekFrom): Result<u64, IoError> {
+        let target = match from {
+            SeekFrom.Start(n) => n as i64,
+            SeekFrom.End(d) => (self.data.len() as i64) + d,
+            SeekFrom.Current(d) => (self.pos as i64) + d,
+        }
+        if target < 0 {
+            return Err(IoError.Seek)
+        }
+        self.pos = target as usize
+        Ok(target as u64)
+    }
+}
+
+// ---- the byte buffer as a sink ----
+
+BytesMut: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        self.extend(data)
+        Ok(data.len())
+    }
+
+    fn flush(mut self): Result<(), IoError> {
+        Ok(())
+    }
+}
+
+// ---- BufReader ----
+
+/// Wraps a reader with a buffer, so many small reads become few large ones and lines can be read.
+struct BufReader<R: Read> {
+    priv inner: R
+    priv buf: List<u8>
+    priv pos: usize
+    priv cap: usize
+}
+
+BufReader<R> where R: Read {
+    /// A buffered reader with a 4096-byte buffer.
+    fn new(own inner: R): BufReader<R> {
+        BufReader { inner: inner, buf: List<u8>.new(), pos: 0, cap: 4096 }
+    }
+
+    /// A buffered reader that asks `inner` for `capacity` bytes at a time. A capacity of 0 panics.
+    fn with_capacity(capacity: usize, own inner: R): BufReader<R> {
+        if capacity == 0 {
+            panic("BufReader capacity is 0")
+        }
+        BufReader { inner: inner, buf: List<u8>.new(), pos: 0, cap: capacity }
+    }
+
+    /// The reader this one wraps.
+    fn get_ref(self): &R {
+        &self.inner
+    }
+
+    /// How many bytes are buffered, read from the wrapped reader but not yet returned.
+    fn buffered(self): usize {
+        self.buf.len() - self.pos
+    }
+
+    /// The wrapped reader. The buffered bytes are lost.
+    fn into_inner(own self): R {
+        self.inner
+    }
+
+    /// Makes sure the buffer holds at least one byte unless the input has ended; returns how many it holds.
+    priv fn fill(mut self): Result<usize, IoError> {
+        if self.pos >= self.buf.len() {
+            self.buf.clear()
+            self.pos = 0
+            self.inner.read(mut self.buf, self.cap)?
+        }
+        Ok(self.buf.len() - self.pos)
+    }
+}
+
+BufReader<R>: Read where R: Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        if max == 0 {
+            return Ok(0)
+        }
+        if self.pos >= self.buf.len() && max >= self.cap {
+            return self.inner.read(mut buf, max)
+        }
+        let have = self.fill()?
+        let mut n = max
+        if have < n {
+            n = have
+        }
+        let mut i: usize = 0
+        while i < n {
+            buf.push(self.buf[self.pos + i])
+            i = i + 1
+        }
+        self.pos = self.pos + n
+        Ok(n)
+    }
+}
+
+BufReader<R>: BufRead where R: Read {
+    fn read_until(mut self, delim: u8, mut buf: List<u8>): Result<usize, IoError> {
+        let mut total: usize = 0
+        loop {
+            let have = self.fill()?
+            if have == 0 {
+                return Ok(total)
+            }
+            let mut found = false
+            while self.pos < self.buf.len() && !found {
+                let b = self.buf[self.pos]
+                buf.push(b)
+                self.pos = self.pos + 1
+                total = total + 1
+                found = b == delim
+            }
+            if found {
+                return Ok(total)
+            }
+        }
+    }
+}
+
+BufReader<R>: Seek where R: Read + Seek {
+    fn seek(mut self, from: SeekFrom): Result<u64, IoError> {
+        // The wrapped reader is ahead of this one by the buffered bytes, so a relative seek starts behind it.
+        let target = match from {
+            SeekFrom.Current(d) => SeekFrom.Current(d - (self.buffered() as i64)),
+            other => other,
+        }
+        let at = self.inner.seek(target)?
+        self.buf.clear()
+        self.pos = 0
+        Ok(at)
+    }
+}
+
+// ---- BufWriter ----
+
+/// Wraps a writer with a buffer, so many small writes become few large ones. Dropping it flushes what is buffered,
+/// ignoring a failure; call `flush` to see one.
+struct BufWriter<W: Write> {
+    // The wrapped writer is the only element of this list. `into_inner` takes it out, and a `Drop` type cannot give
+    // up a field, so the list stands in for an `Option` that can lend the writer as a mutable place.
+    priv inner: List<W>
+    priv buf: List<u8>
+    priv cap: usize
+}
+
+BufWriter<W> where W: Write {
+    /// A buffered writer with a 4096-byte buffer.
+    fn new(own inner: W): BufWriter<W> {
+        BufWriter.with_capacity(4096, inner)
+    }
+
+    /// A buffered writer that holds `capacity` bytes before it writes. A capacity of 0 panics.
+    fn with_capacity(capacity: usize, own inner: W): BufWriter<W> {
+        if capacity == 0 {
+            panic("BufWriter capacity is 0")
+        }
+        let mut list = List<W>.new()
+        list.push(inner)
+        BufWriter { inner: list, buf: List<u8>.new(), cap: capacity }
+    }
+
+    /// The writer this one wraps. What is still buffered has not reached it.
+    fn get_ref(self): &W {
+        &self.inner[0]
+    }
+
+    /// How many bytes are buffered, written to this one but not yet to the wrapped writer.
+    fn buffered(self): usize {
+        self.buf.len()
+    }
+
+    /// Flushes, then returns the wrapped writer.
+    fn into_inner(own self): Result<W, IoError> {
+        let mut me = self
+        me.flush()?
+        match me.inner.pop() {
+            Some(w) => Ok(w),
+            None => panic("BufWriter has no writer"),
+        }
+    }
+
+    /// Writes the buffered bytes to the wrapped writer. On a failure the bytes it did not take stay buffered.
+    priv fn flush_buf(mut self): Result<(), IoError> {
+        if self.inner.len() == 0 {
+            return Ok(())
+        }
+        // The pending bytes move out of the buffer while they are written, so the call borrows no other part of `self`.
+        let pending = mem.replace(mut self.buf, List<u8>.new())
+        let mut done: usize = 0
+        let mut failure: Option<IoError> = None
+        while done < pending.len() && failure.is_none() {
+            match self.inner[0].write(pending[done..pending.len()]) {
+                Ok(0) => {
+                    failure = Some(IoError.WriteZero)
+                }
+                Ok(n) => {
+                    done = done + n
+                }
+                Err(e) => {
+                    failure = Some(e)
+                }
+            }
+        }
+        let mut i = done
+        while i < pending.len() {
+            self.buf.push(pending[i])
+            i = i + 1
+        }
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+}
+
+BufWriter<W>: Write where W: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        if self.buf.len() + data.len() > self.cap {
+            self.flush_buf()?
+        }
+        if data.len() >= self.cap {
+            return self.inner[0].write(data)
+        }
+        let mut i: usize = 0
+        while i < data.len() {
+            self.buf.push(data[i])
+            i = i + 1
+        }
+        Ok(data.len())
+    }
+
+    fn flush(mut self): Result<(), IoError> {
+        self.flush_buf()?
+        self.inner[0].flush()
+    }
+}
+
+BufWriter<W>: Seek where W: Write + Seek {
+    fn seek(mut self, from: SeekFrom): Result<u64, IoError> {
+        self.flush_buf()?
+        self.inner[0].seek(from)
+    }
+}
+
+BufWriter<W>: Drop {
+    fn drop(mut self) {
+        let _ = self.flush_buf()
+    }
+}

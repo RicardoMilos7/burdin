@@ -1,0 +1,44 @@
+//@ run
+//> 3 3
+//> true
+//> 2
+
+// The views, `reserve`, and `shrink_to_fit` work on a map that stores its allocator: growing the table after a
+// reserve allocates through that allocator (`spec/allocators.md`, AL3).
+
+struct Counter {
+    count: CPtr<i32>
+}
+
+Counter: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { *self.count = *self.count + 1 }
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe { __dealloc(ptr, size, align) }
+    }
+}
+
+fn main() {
+    let mut count = 0
+    let mut m = unsafe { Map<i32, i32, Counter>.new_in(Counter { count: &mut count as CPtr<i32> }) }
+    m.insert(1, 10)
+    m.insert(2, 20)
+    m.insert(3, 30)
+    let mut keys = List<i32>.new()
+    for key in m.keys() {
+        keys.push(*key)
+    }
+    println("{} {}", keys.len(), m.values().count())
+    m.reserve(100)
+    m.shrink_to_fit()
+    println("{}", count > 0)
+    m.retain(|key, value| *key != 2)
+    println("{}", m.len())
+}

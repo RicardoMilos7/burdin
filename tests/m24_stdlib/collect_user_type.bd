@@ -1,0 +1,67 @@
+//@ run
+//> 6
+//> 3 [10, 20, 30]
+//> 5 3
+//> [1, 2, 3]
+//> 3
+
+// A user type joins `collect` by implementing `FromIterator<T>`, and a generic function can build any such type
+// through `C.from_iter` (IT16, IT13).
+
+struct Total {
+    sum: i32
+}
+
+Total: FromIterator<i32> {
+    fn from_iter<I: Iterator<i32>>(own iter: I): Total {
+        let mut it = iter
+        let mut sum = 0
+        loop {
+            match it.next() {
+                Some(n) => {
+                    sum = sum + n
+                }
+                None => {
+                    return Total { sum: sum }
+                }
+            }
+        }
+    }
+}
+
+struct Tagged<T> {
+    tag: i32
+    items: List<T>
+}
+
+Tagged<T>: FromIterator<T> {
+    fn from_iter<I: Iterator<T>>(own iter: I): Tagged<T> {
+        let items: List<T> = iter.collect()
+        Tagged { tag: items.len() as i32, items: items }
+    }
+}
+
+fn gather<C: FromIterator<i32>>(): C {
+    C.from_iter([1, 2, 3].into_iter())
+}
+
+fn collect_all<C: FromIterator<i32>, I: Iterator<i32>>(own it: I): C {
+    it.collect()
+}
+
+fn main() {
+    let total: Total = [1, 2, 3].into_iter().collect()
+    println("{total.sum}")
+
+    let tagged: Tagged<i32> = [10, 20, 30].into_iter().collect()
+    println("{tagged.tag} {tagged.items:?}")
+
+    let from_generic: Total = gather()
+    let size: Set<i32> = gather()
+    println("{from_generic.sum - 1} {size.len()}")
+
+    let list: List<i32> = collect_all([1, 2, 3].into_iter())
+    println("{list:?}")
+    let heap: PriorityHeap<i32> = collect_all([1, 2, 3].into_iter())
+    println("{heap.len()}")
+}

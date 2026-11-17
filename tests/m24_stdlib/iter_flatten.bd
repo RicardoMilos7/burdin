@@ -1,0 +1,75 @@
+//@ run
+//> fl 0
+//> fl 1
+//> fl 2
+//> fl 0
+//> fl 1
+//> row 1
+//> row 2
+//> row 1
+//> row 3
+//> row 2
+//> row 1
+//> 10
+//> 0
+//> 5
+//> Some(0) Some(0) Some(1)
+//> 2
+
+// `flatten` yields the items of each iterator the source yields. It applies to any iterator whose items are
+// iterators: a `map` that returns ranges, or a user iterator of user iterators.
+
+struct Countdown {
+    from: i32
+}
+
+Countdown: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.from <= 0 {
+            return None
+        }
+        let v = self.from
+        self.from = v - 1
+        Some(v)
+    }
+}
+
+struct Rows {
+    next_row: i32
+    rows: i32
+}
+
+Rows: Iterator<Countdown> {
+    fn next(mut self): Option<Countdown> {
+        if self.next_row >= self.rows {
+            return None
+        }
+        let n = self.next_row
+        self.next_row = n + 1
+        Some(Countdown { from: n })
+    }
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [3, 0, 2] {
+        xs.push(x)
+    }
+    // A list mapped to ranges, then flattened.
+    for x in xs.iter().map(|n| (0..n).iter()).flatten() {
+        println("fl {x}")
+    }
+    // A user iterator of user iterators.
+    for x in (Rows { next_row: 0, rows: 4 }).flatten() {
+        println("row {x}")
+    }
+    println("{(0..4).iter().map(|n| Countdown { from: n }).flatten().sum()}")
+    // Nothing to flatten, and an empty inner iterator in the middle.
+    let empty = List<i32>.new()
+    println("{empty.iter().map(|n| (0..n).iter()).flatten().count()}")
+    println("{xs.iter().map(|n| (0..n).iter()).flatten().count()}")
+    // The result is an iterator like any other.
+    let mut f = (0..3).iter().map(|n| (0..n).iter()).flatten()
+    println("{f.next():?} {f.next():?} {f.next():?}")
+    println("{(0..4).iter().map(|n| (0..n).iter()).flatten().skip(2).take(3).sum()}")
+}

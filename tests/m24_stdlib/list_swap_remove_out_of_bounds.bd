@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: swap_remove: index out of bounds
+//> before
+
+// `swap_remove` panics when the index is out of bounds, like `remove`.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    println("before")
+    let _ = xs.swap_remove(1)
+}

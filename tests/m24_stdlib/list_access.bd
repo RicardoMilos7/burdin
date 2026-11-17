@@ -1,0 +1,57 @@
+//@ run
+//> true 0
+//> 10 30
+//> 20 true
+//> 11 21 31
+//> true true true
+//> 6 1
+//> true
+//> true true
+
+// The non-panicking accessors: `get` and `get_mut` answer an `Option` instead of panicking, `first`, `first_mut`,
+// `last_mut`, and `is_empty` complete the pair `last` already had. The `*_mut` forms hand out a mutable view of
+// the element and need a mutable list.
+
+fn show(xs: List<i32>) {
+    let mut out = String.new()
+    let mut first = true
+    for x in xs {
+        if !first {
+            out.push_str(" ")
+        }
+        out.push_str(x.to_string())
+        first = false
+    }
+    println(out)
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    println("{} {}", xs.is_empty(), xs.len())
+    xs.push(10)
+    xs.push(20)
+    xs.push(30)
+    println("{} {}", *xs.first().unwrap(), *xs.last().unwrap())
+    println("{} {}", *xs.get(1).unwrap(), xs.get(3).is_none())
+    *xs.get_mut(1).unwrap() = 21
+    *xs.first_mut().unwrap() = 11
+    *xs.last_mut().unwrap() = 31
+    show(xs)
+
+    let mut empty = List<i32>.new()
+    let no_first = empty.first().is_none()
+    let no_last = empty.last_mut().is_none()
+    let no_get = empty.get(0).is_none()
+    println("{} {} {}", no_first, no_last, no_get)
+
+    let mut one = List<i32>.new()
+    one.push(5)
+    *one.first_mut().unwrap() = 6
+    println("{} {}", *one.first().unwrap(), one.len())
+    println("{}", empty.is_empty())
+
+    // An element type with no runtime representation: the accessors still report presence.
+    let mut units = List<()>.new()
+    units.push(())
+    println("{} {}", units.first().is_some(), units.get(1).is_none())
+}

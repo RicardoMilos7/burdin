@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// The first source of a zip stays borrowed too.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let mut ys = List<i32>.new()
+    ys.push(2)
+    let mut it = xs.iter().zip(ys.iter())
+    let first = it.next()
+    xs.push(3) //~ E0111
+    let second = it.next()
+}

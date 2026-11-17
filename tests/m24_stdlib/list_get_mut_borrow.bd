@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A mutable view of an element keeps the list exclusively borrowed: no other use of the list may overlap it
+// (E0111).
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let first = xs.get_mut(0).unwrap()
+    xs.push(2) //~ E0111
+    *first = 3
+}

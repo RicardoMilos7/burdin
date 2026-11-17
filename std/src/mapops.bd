@@ -1,11 +1,111 @@
-// The entry operations of `Map<K, V>` (issue #482; spec/stdlib.md, "Map entry operations"): `entry(key)` probes
-// once for a key and returns an entry that `or_insert` or `or_insert_with` fills in.
+// The rest of `Map<K, V>` (spec/stdlib.md, "Map": the entry operations of issue #482, the views and construction of
+// issue #712).
 //
 //     let count = counts.entry(word).or_insert(0)
 //     *count = *count + 1
+//     for key in counts.keys() { ... }
 //
-// The compiler provides `get_mut`, `get_or_insert`, `entry`, and the entry's `or_insert` and `or_insert_with`;
-// the rest is written here on top of them.
+// The compiler provides the operations that reach the table itself (`insert`, `get`, `get_mut`, `get_or_insert`,
+// `entry`, `remove`, `remove_entry`, `retain`, `reserve`, `shrink_to_fit`, and the iterators); the views, the
+// constructors, and the helpers built on them are written here.
+
+use alloc.Allocator
+use iter.{Iterable, Iterator}
+use mem
+
+/// The iterator `map.keys()` returns: a view of each key, in the map's iteration order. It borrows the map, so it
+/// is second-class like every iterator over borrowed storage.
+struct MapKeys<I, K, V> {
+    priv inner: I
+}
+
+/// The iterator `map.values()` returns: a view of each value, in the map's iteration order.
+struct MapValues<I, K, V> {
+    priv inner: I
+}
+
+/// The iterator `map.into_keys()` returns: the map's keys, moved out of the map.
+struct MapIntoKeys<I, K, V> {
+    priv inner: I
+}
+
+/// The iterator `map.into_values()` returns: the map's values, moved out of the map.
+struct MapIntoValues<I, K, V> {
+    priv inner: I
+}
+
+MapKeys<I, K, V>: Iterator<&K> where I: Iterator<(&K, &V)> {
+    /// The next key, or `None` when the map is exhausted.
+    fn next(mut self): Option<&K> {
+        match self.inner.next() {
+            Some((key, _)) => Some(key),
+            None => None,
+        }
+    }
+}
+
+MapValues<I, K, V>: Iterator<&V> where I: Iterator<(&K, &V)> {
+    /// The next value, or `None` when the map is exhausted.
+    fn next(mut self): Option<&V> {
+        match self.inner.next() {
+            Some((_, value)) => Some(value),
+            None => None,
+        }
+    }
+}
+
+MapIntoKeys<I, K, V>: Iterator<K> where I: Iterator<(K, V)> {
+    /// The next key, or `None` when the map is exhausted. The value is dropped.
+    fn next(mut self): Option<K> {
+        match self.inner.next() {
+            Some((key, _)) => Some(key),
+            None => None,
+        }
+    }
+}
+
+MapIntoValues<I, K, V>: Iterator<V> where I: Iterator<(K, V)> {
+    /// The next value, or `None` when the map is exhausted. The key is dropped.
+    fn next(mut self): Option<V> {
+        match self.inner.next() {
+            Some((_, value)) => Some(value),
+            None => None,
+        }
+    }
+}
+
+fn Map<K, V, A>.keys(self): MapKeys<MapEntries<K, V>, K, V> {
+    MapKeys { inner: self.iter() }
+}
+
+fn Map<K, V, A>.values(self): MapValues<MapEntries<K, V>, K, V> {
+    MapValues { inner: self.iter() }
+}
+
+fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoEntries<K, V, A>, K, V> {
+    MapIntoKeys { inner: self.into_iter() }
+}
+
+fn Map<K, V, A>.into_values(own self): MapIntoValues<MapIntoEntries<K, V, A>, K, V> {
+    MapIntoValues { inner: self.into_iter() }
+}
+
+/// Whether the map has no entries.
+fn Map<K, V, A>.is_empty(self): bool {
+    self.len() == 0
+}
+
+/// The map's entries, key and value, moved out of the map, which is left empty and usable. A map with a stored
+/// allocator keeps its allocator; only the default-allocator map has this method.
+fn Map<K, V>.drain(mut self): MapIntoEntries<K, V> {
+    mem.replace(mut self, Map<K, V>.new()).into_iter()
+}
+
+/// Inserts every `(key, value)` item, replacing the value of a key that is already there (as `insert` does).
+/// The default-allocator spelling of `extend_iter`.
+fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
+    self.extend_iter(items)
+}
 
 /// The value for `key`, storing the result of `make` first when there is none. The entry probes the key once and
 /// `make` runs only when the key is absent, so it may be expensive. The returned reference keeps the map
@@ -23,6 +123,20 @@ fn Map<K, V>.update<F: FnOnce(&mut V)>(mut self, key: K, own change: F): bool wh
             true
         }
         None => false,
+    }
+}
+
+/// Stores every `(key, value)` pair `iter` yields, in order; a key that is already there gets the new value, like
+/// `insert`: `map.extend_iter(other.into_iter())`.
+fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, own iter: I) where K: Eq, A: Allocator {
+    let mut iter = iter
+    loop {
+        match iter.next() {
+            Some((key, value)) => {
+                self.insert(key, value)
+            }
+            None => break,
+        }
     }
 }
 

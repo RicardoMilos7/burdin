@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// `iter_mut` takes its collection as `mut self`, so the collection must be a mutable place (E0113).
+
+fn main() {
+    let xs = List<i32>.new()
+    for x in mut xs { //~ E0113
+        *x = 1
+    }
+    let a = [1, 2]
+    let mut it = a.iter_mut() //~ E0113
+    let _ = it.next()
+}

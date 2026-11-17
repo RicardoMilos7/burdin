@@ -49,12 +49,13 @@ impl Origin {
         self.temp |= other.temp;
     }
 
-    /// The parameter a second-class result derives from, if the signature can say it.
-    fn summary(&self) -> Option<usize> {
-        if self.temp || !self.locals.is_empty() || self.params.len() != 1 {
-            return None;
+    /// The parameters a second-class result derives from, if the signature can say it: none for static data
+    /// or for a value that borrows from the function's own storage (an error reported elsewhere).
+    fn summary(&self) -> Vec<usize> {
+        if self.temp || !self.locals.is_empty() {
+            return Vec::new();
         }
-        self.params.iter().next().copied()
+        self.params.iter().copied().collect()
     }
 
     /// Whether returning this value would return storage of the function itself (RT2).
@@ -77,8 +78,8 @@ pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], dia
                 analyzer.body()
             };
             let summary = origin.summary();
-            if sigs[i].ret_origin != summary {
-                sigs[i].ret_origin = summary;
+            if sigs[i].ret_origins != summary {
+                sigs[i].ret_origins = summary;
                 changed = true;
             }
         }
@@ -94,8 +95,11 @@ pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], dia
             let mut analyzer = Analyzer::new(sigs, &functions[i], Some(diags));
             analyzer.body()
         };
-        functions[i].ret_origin = sigs[i].ret_origin;
-        if functions[i].ret.is_second_class() && origin.params.len() > 1 {
+        functions[i].ret_origins = sigs[i].ret_origins.clone();
+        // A result that is itself a view derives from exactly one parameter (RT3); a struct, enum, or tuple of
+        // views may derive from several, and its holder keeps every one of them borrowed (RT3a).
+        let aggregate = matches!(functions[i].ret, tir::Ty::Struct(_) | tir::Ty::Enum(_) | tir::Ty::Tuple(_));
+        if functions[i].ret.is_second_class() && !aggregate && origin.params.len() > 1 {
             let f = &functions[i];
             let names: Vec<String> = origin.params.iter().map(|p| f.locals[f.params[*p].0].name.clone()).collect();
             diags.error(
@@ -508,11 +512,14 @@ impl<'a> Analyzer<'a> {
                 if !sig.ret.is_second_class() {
                     return Origin::temp();
                 }
-                match sig.ret_origin {
-                    Some(index) if index < storages.len() => storages[index].clone(),
-                    // Static, or a signature that is already known to be invalid.
-                    _ => Origin::default(),
+                // Static (no origin), or the union of the storage of every argument the result derives from.
+                let mut origin = Origin::default();
+                for &index in &sig.ret_origins {
+                    if let Some(storage) = storages.get(index) {
+                        origin.join(storage);
+                    }
                 }
+                origin
             }
             K::Builtin(b, args) => {
                 let mut origins = Vec::with_capacity(args.len());
@@ -522,6 +529,8 @@ impl<'a> Analyzer<'a> {
                 match b {
                     // The old value comes out of the place, so a view result derives from it.
                     tir::Builtin::Replace => origins.into_iter().next().unwrap_or_default(),
+                    // The text views the bytes it was made from.
+                    tir::Builtin::ViewAsText => origins.into_iter().next().unwrap_or_default(),
                     // An empty container owns its (empty) buffer; storing it borrows nothing. The same holds for
                     // a container with a stored allocator and for a `Shared` cell.
                     tir::Builtin::ListNew
@@ -539,18 +548,33 @@ impl<'a> Analyzer<'a> {
                 let receiver_view = matches!(
                     m,
                     tir::Method::AsStr
+                        | tir::Method::AsSlice
                         | tir::Method::Clone
                         | tir::Method::ListLast
+                        | tir::Method::ListFirst
+                        | tir::Method::ListFirstMut
+                        | tir::Method::ListLastMut
+                        | tir::Method::ListGet
+                        | tir::Method::ListGetMut
+                        | tir::Method::SliceGet
+                        | tir::Method::SliceGetRange
+                        | tir::Method::SliceLast
+                        | tir::Method::SliceChunks
+                        | tir::Method::SliceWindows
                         | tir::Method::MapGet
                         | tir::Method::MapGetMut
                         | tir::Method::MapGetOrInsert
+                        | tir::Method::MapGetOr
                         | tir::Method::MapEntry
                         | tir::Method::MapEntryOrInsert
                         | tir::Method::MapEntryOrInsertWith
                         | tir::Method::SharedGet
                         | tir::Method::Chars
+                        | tir::Method::AsBytes
                         | tir::Method::Iter
+                        | tir::Method::IterMut
                         | tir::Method::IterNext
+                        | tir::Method::IterNextBack
                         | tir::Method::Unwrap
                         | tir::Method::Expect
                 );
@@ -561,19 +585,34 @@ impl<'a> Analyzer<'a> {
                 match m {
                     // A view of the receiver, or a copy of it.
                     tir::Method::AsStr
+                    | tir::Method::AsSlice
                     | tir::Method::Clone
                     | tir::Method::ListLast
+                    | tir::Method::ListFirst
+                    | tir::Method::ListFirstMut
+                    | tir::Method::ListLastMut
+                    | tir::Method::ListGet
+                    | tir::Method::ListGetMut
+                    | tir::Method::SliceGet
+                    | tir::Method::SliceGetRange
+                    | tir::Method::SliceLast
+                    | tir::Method::SliceChunks
+                    | tir::Method::SliceWindows
                     | tir::Method::MapGet
                     | tir::Method::MapGetMut
                     | tir::Method::MapGetOrInsert
+                    | tir::Method::MapGetOr
                     | tir::Method::MapEntry
                     | tir::Method::MapEntryOrInsert
                     | tir::Method::MapEntryOrInsertWith
                     | tir::Method::SharedGet
                     | tir::Method::Chars
+                    | tir::Method::AsBytes
                     // An iterator borrows the collection it walks; the items it yields point into it.
                     | tir::Method::Iter
+                    | tir::Method::IterMut
                     | tir::Method::IterNext
+                    | tir::Method::IterNextBack
                     // Unwrapping an `Option<&T>` hands out the view inside it.
                     | tir::Method::Unwrap
                     | tir::Method::Expect => origins.into_iter().next().unwrap_or_default(),
@@ -702,18 +741,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_summary_needs_exactly_one_parameter() {
-        assert_eq!(Origin::param(0).summary(), Some(0));
-        assert_eq!(Origin::param(2).summary(), Some(2));
-        assert_eq!(Origin::local(LocalId(3)).summary(), None);
-        assert_eq!(Origin::temp().summary(), None);
-        assert_eq!(Origin::default().summary(), None);
+    fn a_summary_lists_the_parameters_of_a_result() {
+        assert_eq!(Origin::param(0).summary(), vec![0]);
+        assert_eq!(Origin::param(2).summary(), vec![2]);
+        assert!(Origin::local(LocalId(3)).summary().is_empty());
+        assert!(Origin::temp().summary().is_empty());
+        assert!(Origin::default().summary().is_empty());
         let mut two = Origin::param(0);
         two.join(&Origin::param(1));
-        assert_eq!(two.summary(), None, "two parameters cannot be attributed");
+        assert_eq!(two.summary(), vec![0, 1], "an aggregate result may derive from two parameters (RT3a)");
         let mut mixed = Origin::param(0);
         mixed.join(&Origin::local(LocalId(1)));
-        assert_eq!(mixed.summary(), None, "a local cannot escape in a view");
+        assert!(mixed.summary().is_empty(), "a local cannot escape in a view");
     }
 
     #[test]
@@ -728,7 +767,7 @@ mod tests {
         let mut b = Origin::temp();
         b.join(&Origin::temp());
         assert!(b.temp);
-        assert!(Origin::param(0).summary().is_some());
+        assert!(!Origin::param(0).summary().is_empty());
     }
 
     #[test]

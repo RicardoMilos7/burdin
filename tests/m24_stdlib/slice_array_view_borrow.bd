@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A view of an array keeps the array borrowed: writing an element while the view is used is E0111.
+
+fn main() {
+    let mut arr = [1, 2, 3]
+    let chunks = arr[0..3].chunks(2)
+    arr[0] = 9 //~ E0111
+    for chunk in chunks {
+        println("{}", chunk.len())
+    }
+}

@@ -1,0 +1,19 @@
+//@ run
+//@ stdin: alpha
+//@ stdin: beta\r
+//@ stdin-eof: gamma
+//> [alpha]
+//> [beta]
+//> [gamma]
+//> 3 lines
+
+// A `BufReader` and `lines` work over standard input like over any other reader.
+
+fn main() {
+    let mut count = 0
+    for item in BufReader.new(stdin()).lines() {
+        println("[{}]", item.unwrap())
+        count = count + 1
+    }
+    println("{} lines", count)
+}

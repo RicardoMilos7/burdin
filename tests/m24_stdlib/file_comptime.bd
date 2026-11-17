@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// The file operations reach the operating system, so a comptime evaluation that reaches one is E0224
+// (spec/comptime.md, CT9; spec/stdlib.md, "Files and file handles"). A helper that calls one is impure too, and the
+// error is reported where the comptime evaluation starts.
+
+fn opened(): bool {
+    File.open("x").is_ok()
+}
+
+fn main() {
+    let a = comptime File.open("x").is_ok() //~ E0224
+    let b = comptime File.create("x").is_ok() //~ E0224
+    let c = comptime read("x").is_ok() //~ E0224
+    let d = comptime copy_file("x", "y").is_ok() //~ E0224
+    let e = comptime exists("x") //~ E0224
+    let f = comptime opened() //~ E0224
+}

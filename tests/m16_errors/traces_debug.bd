@@ -8,7 +8,7 @@
 // (spec/errors.md, ERR7). Only the line and column are printed, because the file path is a temporary path.
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string() })
+    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
 }
 
 fn load(): Result<i32> {

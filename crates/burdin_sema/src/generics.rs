@@ -742,9 +742,15 @@ impl Globals {
         {
             return answer;
         }
-        // A shared view satisfies what its target does: a chain is generic over the view type of its source, and
-        // its bounds (`D: Index<T>`) ask about the borrowed collection (`spec/iterators.md` IT12).
-        if let Ty::Ref { mutable: false, inner } = ty {
+        if Some(iface) == self.from_iterator_iface
+            && let Some(answer) = self.builtin_from_iterator(ty, args, env)
+        {
+            return answer;
+        }
+        // A view satisfies what its target does: a chain is generic over the view type of its source, and its
+        // bounds (`D: Index<T>`) ask about the borrowed collection (`spec/iterators.md` IT12). A mutable view
+        // carries a mutable iterator's source, whose bounds (`D: IndexMut<T>`) do the same (IT15).
+        if let Ty::Ref { inner, .. } = ty {
             return self.implements(inner, iface, args, env);
         }
         if let Some(have) = self.builtin_iface_args(ty, iface, env) {
@@ -802,6 +808,7 @@ impl Globals {
             Ty::Ref { inner, .. } => part(inner),
             Ty::Unit => debug,
             Ty::Option(t) | Ty::List(t, _) | Ty::Heap(t, _) => debug && part(t),
+            Ty::Map(k, v, _) => debug && part(k) && part(v),
             Ty::Result(t, e) => debug && part(t) && part(e),
             Ty::Tuple(ts) => debug && (2..=4).contains(&ts.len()) && ts.iter().all(part),
             Ty::Struct(_) | Ty::Enum(_) => return None,
@@ -900,6 +907,9 @@ impl Globals {
             | Ty::Option(_)
             | Ty::Error
             | Ty::Never => true,
+            // The default map is empty and belongs to the default allocator: a stored allocator has no value to
+            // build its default from.
+            Ty::Map(_, _, alloc) => alloc.is_global(),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_default(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -930,7 +940,7 @@ impl Globals {
                         let params = sig.params.iter().map(|p| self.subst_param(p, &subst)).collect();
                         let ret = self.subst_ty(&sig.ret, &subst);
                         return Some((
-                            Signature { params, ret, has_self: sig.has_self, ret_origin: None },
+                            Signature { params, ret, has_self: sig.has_self, ret_origins: Vec::new() },
                             sig.has_self,
                             m.is_unsafe,
                         ));
@@ -939,6 +949,20 @@ impl Globals {
             }
         }
         None
+    }
+
+    /// Whether the method `name` that the bounds of a type parameter provide has type parameters of its own
+    /// (`fn from_iter<I: Iterator<T>>(own it: I): Self`).
+    pub(crate) fn bound_method_generic(&self, recv: &Ty, name: &str, env: &Env) -> bool {
+        let Ty::Param(pname) = recv else { return false };
+        env.iter().filter(|(n, _)| n == &**pname).any(|(_, bounds)| {
+            bounds.iter().any(|bound| {
+                self.bound_closure(bound).into_iter().any(|b| match b {
+                    Bound::User(i, _) => self.interfaces[i].methods.iter().any(|m| m.name == name && m.generic),
+                    _ => false,
+                })
+            })
+        })
     }
 
     /// `Self`-free spelling of a type for names of instances: `Stack<i32>`.

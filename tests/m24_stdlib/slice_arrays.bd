@@ -1,0 +1,60 @@
+//@ run
+//> 4 false Some(4)
+//> true false
+//> 1 2 4 9
+//> 9 1
+//> 3 1
+//> 9 4
+//> 2 1
+//> 4
+//> Some(4)
+//> Some(7)
+
+// An array has every slice method through an implicit view of its elements (`spec/stdlib.md`, "Slices"): the
+// method call takes `arr[0..N]`, so the elements are borrowed like any other slice view and a mutating method
+// needs the array binding to be mutable.
+
+fn show(xs: [i32]) {
+    let mut out = String.new()
+    let mut first = true
+    let mut i: usize = 0
+    while i < xs.len() {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(xs[i].to_string())
+        first = false
+        i = i + 1
+    }
+    println(out)
+}
+
+fn main() {
+    let mut arr = [4, 2, 9, 1]
+    println("{} {} {:?}", arr.len(), arr.is_empty(), arr.first())
+    println("{} {}", arr.contains(9), arr.contains(7))
+    arr.sort()
+    show(arr[0..4])
+    arr.reverse()
+    println("{} {}", arr[0], arr[3])
+    let mut first = true
+    for chunk in arr.chunks(3) {
+        if !first {
+            print(" ")
+        }
+        print("{chunk.len()}")
+        first = false
+    }
+    println("")
+    let (head, tail) = arr.split_at(2)
+    show(head)
+    show(tail)
+    let copy = arr.to_list()
+    println("{}", copy.len())
+    match arr.get(1..3) {
+        Some(part) => println("{:?}", part.first()),
+        None => println("none"),
+    }
+    // A temporary array is materialized for the view.
+    println("{:?}", [7, 8, 9].first())
+}

@@ -1,6 +1,17 @@
-use std.IoError
+// Processes (issue #419; spec/stdlib.md, "Child processes").
+//
+// `process.run` goes through the system shell. `Command` starts a program directly: the program and each
+// argument are passed to the operating system one by one, so nothing in an argument is interpreted by a shell.
+// The compiler's primitives (`__env_list`, `__process_spawn`, `__process_wait`, `__process_close`,
+// `__pipe_read_to_string`, `__pipe_read_line`, `__pipe_read_both`, `__pipe_write`, and `__pipe_close`) reach the
+// operating system; the builder, the environment merge, the Windows command line, and the error values are
+// Burdin. Every function here is impure: a comptime evaluation that reaches one fails with E0224.
 
-// The current process and child processes.
+use mem.replace
+use option.take
+use std.{IoError, IoErrorKind}
+use target.{Os, os}
+use unicode.to_lowercase
 
 /// Ends the process with `code`.
 fn exit(code: i32): ! {
@@ -11,6 +22,655 @@ fn exit(code: i32): ! {
 fn run(command: str): Result<i32, IoError> {
     match __run(command) {
         Ok(status) => Ok(status),
-        Err(_) => Err(IoError.Run { command: command.to_string() }),
+        Err(code) => Err(IoError.Run {
+            command: command.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
+    }
+}
+
+/// How a child's standard stream is connected.
+enum Stdio derives (Copy, Clone, Eq) {
+    /// The child uses the parent's stream.
+    Inherit
+    /// The parent gets a handle: `Child.stdin`, `Child.stdout`, or `Child.stderr`.
+    Piped
+    /// The stream is the system's null device.
+    Null
+}
+
+/// A program to start, with its arguments, environment, working directory, and standard streams. Build one with
+/// `Command.new`, change it, and start it with `spawn`, `status`, or `output`; nothing runs until then.
+struct Command {
+    priv program: String
+    priv arguments: List<String>
+    priv environment: List<String>
+    priv removals: List<String>
+    priv clear_environment: bool
+    priv directory: Option<String>
+    priv stdin_mode: Stdio
+    priv stdout_mode: Stdio
+    priv stderr_mode: Stdio
+}
+
+Command {
+    /// A command for `program`, with no arguments, the parent's environment and working directory, and inherited
+    /// standard streams.
+    fn new(program: str): Command {
+        Command {
+            program: program.to_string(),
+            arguments: List<String>.new(),
+            environment: List<String>.new(),
+            removals: List<String>.new(),
+            clear_environment: false,
+            directory: None,
+            stdin_mode: Stdio.Inherit,
+            stdout_mode: Stdio.Inherit,
+            stderr_mode: Stdio.Inherit,
+        }
+    }
+
+    /// Adds one argument. It is passed exactly as it is: spaces, quotes, and shell metacharacters have no special
+    /// meaning.
+    fn arg(mut self, value: str) {
+        self.arguments.push(value.to_string())
+    }
+
+    /// Adds each element of `values` as an argument, in order.
+    fn args(mut self, own values: List<String>) {
+        for value in values.into_iter() {
+            self.arguments.push(value)
+        }
+    }
+
+    /// Sets the environment variable `key` to `value` in the child. An earlier value for the same key is
+    /// replaced. The key is written as `key=value`; it should not contain `=` or a NUL byte.
+    fn env(mut self, key: str, value: str) {
+        let mut entry = key.to_string()
+        entry.push('=')
+        entry.push_str(value)
+        let mut i: usize = 0
+        while i < self.environment.len() {
+            if __same_env_name(__entry_name(self.environment[i].as_str()), key) {
+                break
+            }
+            i = i + 1
+        }
+        if i < self.environment.len() {
+            self.environment.remove(i)
+        }
+        self.environment.push(entry)
+    }
+
+    /// Removes `key` from the child's environment, whether it came from the parent or from `env`.
+    fn env_remove(mut self, key: str) {
+        let mut i: usize = 0
+        while i < self.environment.len()
+            && !__same_env_name(__entry_name(self.environment[i].as_str()), key)
+        {
+            i = i + 1
+        }
+        if i < self.environment.len() {
+            self.environment.remove(i)
+        }
+        self.removals.push(key.to_string())
+    }
+
+    /// Starts the child with an empty environment. The variables `env` adds are still set.
+    fn env_clear(mut self) {
+        self.clear_environment = true
+    }
+
+    /// Runs the child in `directory` instead of the parent's working directory.
+    fn cwd(mut self, directory: str) {
+        self.directory = Some(directory.to_string())
+    }
+
+    /// Sets how the child's standard input is connected. The default is `Stdio.Inherit`.
+    fn stdin(mut self, mode: Stdio) {
+        self.stdin_mode = mode
+    }
+
+    /// Sets how the child's standard output is connected. The default is `Stdio.Inherit`.
+    fn stdout(mut self, mode: Stdio) {
+        self.stdout_mode = mode
+    }
+
+    /// Sets how the child's standard error is connected. The default is `Stdio.Inherit`.
+    fn stderr(mut self, mode: Stdio) {
+        self.stderr_mode = mode
+    }
+
+    /// Starts the child and returns the handle that waits for it. The command's stream modes decide which handles
+    /// are present on the `Child`.
+    fn spawn(own self): Result<Child, IoError> {
+        let stdin_mode = self.stdin_mode
+        let stdout_mode = self.stdout_mode
+        let stderr_mode = self.stderr_mode
+        __spawn(self, stdin_mode, stdout_mode, stderr_mode)
+    }
+
+    /// Starts the child with the command's streams, waits for it, and returns its exit status.
+    fn status(own self): Result<ExitStatus, IoError> {
+        let stdin_mode = self.stdin_mode
+        let stdout_mode = self.stdout_mode
+        let stderr_mode = self.stderr_mode
+        let mut child: Child = match __spawn(self, stdin_mode, stdout_mode, stderr_mode) {
+            Ok(child) => child,
+            Err(failure) => return Err(failure),
+        }
+        child.wait()
+    }
+
+    /// Starts the child with standard output and standard error piped and a null standard input, reads both output
+    /// streams to the end, and waits. The result holds everything the child wrote there.
+    fn output(own self): Result<Output, IoError> {
+        let mut child: Child = match __spawn(self, Stdio.Null, Stdio.Piped, Stdio.Piped) {
+            Ok(child) => child,
+            Err(failure) => return Err(failure),
+        }
+        child.wait_with_output()
+    }
+}
+
+/// A started child process.
+struct Child {
+    priv command: String
+    priv pid: i32
+    priv process: usize
+    priv waited: bool
+    priv input: Option<ChildStdin>
+    priv output: Option<ChildStdout>
+    priv errors: Option<ChildStderr>
+}
+
+Child {
+    /// The process id the operating system gave the child.
+    fn id(self): i32 {
+        self.pid
+    }
+
+    /// The child's standard input, when it was piped. The handle is handed out once; a second call is `None`.
+    fn stdin(mut self): Option<ChildStdin> {
+        self.input.take()
+    }
+
+    /// The child's standard output, when it was piped. The handle is handed out once.
+    fn stdout(mut self): Option<ChildStdout> {
+        self.output.take()
+    }
+
+    /// The child's standard error, when it was piped. The handle is handed out once.
+    fn stderr(mut self): Option<ChildStderr> {
+        self.errors.take()
+    }
+
+    /// Waits for the child and returns its exit status. The child's standard input is closed first, so a program
+    /// that reads it sees the end of the input instead of waiting. Waiting twice is an error.
+    fn wait(mut self): Result<ExitStatus, IoError> {
+        if self.waited {
+            return Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: None })
+        }
+        self.waited = true
+        // The handle's `Drop` closes the pipe at the end of this statement.
+        match self.input.take() {
+            Some(_) => {}
+            None => {}
+        }
+        let raw = __process_wait(self.pid, self.process)
+        if raw == -1 {
+            return Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: None })
+        }
+        Ok(__exit_status(raw))
+    }
+
+    /// Closes the child's standard input, reads the piped standard output and standard error to the end, and waits,
+    /// so a child that writes a lot to one of them cannot block on the other. A stream that was not piped is empty
+    /// in the result.
+    fn wait_with_output(mut self): Result<Output, IoError> {
+        // Close the child's input before reading, so a program that reads it first sees the end of the input.
+        match self.input.take() {
+            Some(_) => {}
+            None => {}
+        }
+        let mut stdout_handle: usize = 0
+        let mut stderr_handle: usize = 0
+        match self.output.take() {
+            Some(mut handle) => {
+                stdout_handle = handle.into_raw()
+            }
+            None => {}
+        }
+        match self.errors.take() {
+            Some(mut handle) => {
+                stderr_handle = handle.into_raw()
+            }
+            None => {}
+        }
+        let mut stdout_text = String.new()
+        let mut stderr_text = String.new()
+        if stdout_handle != 0 && stderr_handle != 0 {
+            let captured = __pipe_read_both(stdout_handle, stderr_handle)
+            __pipe_close(stdout_handle)
+            __pipe_close(stderr_handle)
+            match captured {
+                Ok(pair) => {
+                    stdout_text = pair.0
+                    stderr_text = pair.1
+                }
+                Err(code) => {
+                    return Err(IoError.Read {
+                        path: String.from("<child>"),
+                        kind: __failure_kind(code),
+                        os_code: __failure_code(code),
+                    })
+                }
+            }
+        } else if stdout_handle != 0 {
+            match __pipe_read_to_string(stdout_handle) {
+                Ok(text) => {
+                    stdout_text = text
+                }
+                Err(code) => {
+                    __pipe_close(stdout_handle)
+                    return Err(IoError.Read {
+                        path: String.from("<stdout>"),
+                        kind: __failure_kind(code),
+                        os_code: __failure_code(code),
+                    })
+                }
+            }
+            __pipe_close(stdout_handle)
+        } else if stderr_handle != 0 {
+            match __pipe_read_to_string(stderr_handle) {
+                Ok(text) => {
+                    stderr_text = text
+                }
+                Err(code) => {
+                    __pipe_close(stderr_handle)
+                    return Err(IoError.Read {
+                        path: String.from("<stderr>"),
+                        kind: __failure_kind(code),
+                        os_code: __failure_code(code),
+                    })
+                }
+            }
+            __pipe_close(stderr_handle)
+        }
+        let status: ExitStatus = match self.wait() {
+            Ok(status) => status,
+            Err(failure) => return Err(failure),
+        }
+        Ok(Output { status, stdout: stdout_text, stderr: stderr_text })
+    }
+}
+
+Child: Drop {
+    fn drop(mut self) {
+        __process_close(self.process)
+    }
+}
+
+/// The write end of a child's standard input, piped with `Stdio.Piped`. It closes when it is dropped.
+struct ChildStdin {
+    priv handle: usize
+}
+
+ChildStdin {
+    /// Writes every byte of `text`. The child's standard input is unbuffered, so the bytes reach it during the
+    /// call.
+    fn write(self, text: str): Result<(), IoError> {
+        if __pipe_write(self.handle, text) == 0 {
+            Ok(())
+        } else {
+            Err(IoError.Write { path: String.from("<stdin>"), kind: IoErrorKind.Other, os_code: None })
+        }
+    }
+
+    /// Takes the raw descriptor out without closing it.
+    priv fn into_raw(mut self): usize {
+        replace(mut self.handle, 0)
+    }
+}
+
+ChildStdin: Drop {
+    fn drop(mut self) {
+        if self.handle != 0 {
+            __pipe_close(self.handle)
+        }
+    }
+}
+
+/// The read end of a child's standard output, piped with `Stdio.Piped`. It closes when it is dropped.
+struct ChildStdout {
+    priv handle: usize
+}
+
+ChildStdout {
+    /// Reads everything left, up to the end of the child's output.
+    fn read_to_string(self): Result<String, IoError> {
+        match __pipe_read_to_string(self.handle) {
+            Ok(text) => Ok(text),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stdout>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
+        }
+    }
+
+    /// Reads one line without its terminator (`\n`, or the `\r\n` pair). `Ok(None)` is the end of the output; the
+    /// last line may have no terminator.
+    fn read_line(self): Result<Option<String>, IoError> {
+        match __pipe_read_line(self.handle) {
+            Ok(line) => Ok(line),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stdout>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
+        }
+    }
+
+    /// Takes the raw descriptor out without closing it.
+    priv fn into_raw(mut self): usize {
+        replace(mut self.handle, 0)
+    }
+}
+
+ChildStdout: Drop {
+    fn drop(mut self) {
+        if self.handle != 0 {
+            __pipe_close(self.handle)
+        }
+    }
+}
+
+/// The read end of a child's standard error, piped with `Stdio.Piped`. It closes when it is dropped.
+struct ChildStderr {
+    priv handle: usize
+}
+
+ChildStderr {
+    /// Reads everything left, up to the end of the child's error output.
+    fn read_to_string(self): Result<String, IoError> {
+        match __pipe_read_to_string(self.handle) {
+            Ok(text) => Ok(text),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stderr>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
+        }
+    }
+
+    /// Reads one line without its terminator. `Ok(None)` is the end of the output.
+    fn read_line(self): Result<Option<String>, IoError> {
+        match __pipe_read_line(self.handle) {
+            Ok(line) => Ok(line),
+            Err(code) => Err(IoError.Read {
+                path: String.from("<stderr>"),
+                kind: __failure_kind(code),
+                os_code: __failure_code(code),
+            }),
+        }
+    }
+
+    /// Takes the raw descriptor out without closing it.
+    priv fn into_raw(mut self): usize {
+        replace(mut self.handle, 0)
+    }
+}
+
+ChildStderr: Drop {
+    fn drop(mut self) {
+        if self.handle != 0 {
+            __pipe_close(self.handle)
+        }
+    }
+}
+
+/// How a child ended.
+struct ExitStatus derives (Copy, Clone, Eq) {
+    priv exit_code: Option<i32>
+    priv term_signal: Option<i32>
+}
+
+ExitStatus {
+    /// The exit code, or `None` when a signal ended the child. Windows always reports a code.
+    fn code(self): Option<i32> {
+        self.exit_code
+    }
+
+    /// The signal that ended the child, or `None` when it exited normally. Unix only.
+    fn signal(self): Option<i32> {
+        self.term_signal
+    }
+
+    /// Whether the child exited with code 0.
+    fn success(self): bool {
+        match self.exit_code {
+            Some(code) => code == 0,
+            None => false,
+        }
+    }
+}
+
+/// Everything the child wrote to the streams `Command.output` (or `Child.wait_with_output`) captured.
+struct Output {
+    status: ExitStatus
+    stdout: String
+    stderr: String
+}
+
+// ---- the spawn machinery ---------------------------------------------------------------
+
+/// Starts `command` with the given stream modes and wraps the primitive's result.
+priv fn __spawn(
+    command: Command,
+    stdin_mode: Stdio,
+    stdout_mode: Stdio,
+    stderr_mode: Stdio,
+): Result<Child, IoError> {
+    let environment = __child_environment(command.clear_environment, command.environment, command.removals)
+    let directory = match command.directory {
+        Some(path) => path.clone(),
+        None => String.new(),
+    }
+    let command_line = comptime if os() == Os.Windows {
+        __windows_command_line(command.program.as_str(), command.arguments)
+    } else {
+        String.new()
+    }
+    match __process_spawn(
+        command.program.as_str(),
+        command.arguments,
+        environment,
+        directory.as_str(),
+        command_line.as_str(),
+        __mode(stdin_mode),
+        __mode(stdout_mode),
+        __mode(stderr_mode),
+    ) {
+        Ok(parts) => {
+            let (pid, process, input, output, errors) = parts
+            Ok(Child {
+                command: command.program.clone(),
+                pid,
+                process,
+                waited: false,
+                input: __child_stdin(input),
+                output: __child_stdout(output),
+                errors: __child_stderr(errors),
+            })
+        }
+        Err(code) => Err(IoError.Run {
+            command: command.program.clone(),
+            kind: __failure_kind(code),
+            os_code: __failure_code(code),
+        }),
+    }
+}
+
+/// The kind of a process or pipe failure. Those primitives report 0 when the runtime path has no OS code, and 0
+/// is `Other` (`spec/errors.md`, ERR10-ERR11).
+priv fn __failure_kind(code: i32): IoErrorKind {
+    if code > 0 { __io_kind(code) } else { IoErrorKind.Other }
+}
+
+/// The OS code of a process or pipe failure, when the primitive reported one.
+priv fn __failure_code(code: i32): Option<i32> {
+    if code > 0 { Some(code) } else { None }
+}
+
+/// The primitive's stream mode: 0 inherited, 1 piped, 2 null.
+priv fn __mode(mode: Stdio): i32 {
+    match mode {
+        Stdio.Inherit => 0,
+        Stdio.Piped => 1,
+        Stdio.Null => 2,
+    }
+}
+
+priv fn __child_stdin(handle: usize): Option<ChildStdin> {
+    if handle == 0 {
+        None
+    } else {
+        Some(ChildStdin { handle })
+    }
+}
+
+priv fn __child_stdout(handle: usize): Option<ChildStdout> {
+    if handle == 0 {
+        None
+    } else {
+        Some(ChildStdout { handle })
+    }
+}
+
+priv fn __child_stderr(handle: usize): Option<ChildStderr> {
+    if handle == 0 {
+        None
+    } else {
+        Some(ChildStderr { handle })
+    }
+}
+
+/// The final environment of the child: the inherited entries that are neither removed nor overridden, then the
+/// entries `env` set.
+priv fn __child_environment(
+    clear: bool,
+    overrides: List<String>,
+    removals: List<String>,
+): List<String> {
+    let mut environment = List<String>.new()
+    if !clear {
+        let inherited = __env_list()
+        for entry in inherited {
+            if __listed(__entry_name(entry.as_str()), overrides)
+                || __listed(__entry_name(entry.as_str()), removals)
+            {
+                continue
+            }
+            environment.push(entry.clone())
+        }
+    }
+    for entry in overrides {
+        environment.push(entry.clone())
+    }
+    environment
+}
+
+/// Whether `name` names one of the `NAME=VALUE` entries.
+priv fn __listed(name: str, entries: List<String>): bool {
+    for entry in entries {
+        if __same_env_name(name, __entry_name(entry.as_str())) {
+            return true
+        }
+    }
+    false
+}
+
+/// The name part of a `NAME=VALUE` environment entry.
+priv fn __entry_name(entry: str): str {
+    match entry.find('=') {
+        Some(at) => entry[0..at],
+        None => entry,
+    }
+}
+
+/// Whether two environment names are the same. Windows ignores case; Unix does not.
+priv fn __same_env_name(a: str, b: str): bool {
+    comptime if os() == Os.Windows {
+        a.to_lowercase() == b.to_lowercase()
+    } else {
+        a == b
+    }
+}
+
+/// The exit status a primitive's wait result describes: 0 and up is a code, below -1 a signal, and -1 is the
+/// failure the caller reports as an error.
+priv fn __exit_status(raw: i64): ExitStatus {
+    if raw >= 0 {
+        ExitStatus { exit_code: Some(raw as i32), term_signal: None }
+    } else if raw == -1 {
+        ExitStatus { exit_code: None, term_signal: None }
+    } else {
+        ExitStatus { exit_code: None, term_signal: Some((-(raw + 1)) as i32) }
+    }
+}
+
+/// The command line `CreateProcessW` parses, with each word quoted by the C runtime's rules. Only Windows uses it;
+/// on Unix the program and each argument are passed as separate strings.
+priv fn __windows_command_line(program: str, arguments: List<String>): String {
+    let mut line = String.new()
+    __append_quoted(mut line, program)
+    for argument in arguments {
+        line.push(' ')
+        __append_quoted(mut line, argument.as_str())
+    }
+    line
+}
+
+/// Appends one word, wrapped in quotes when it is empty or contains a space or a tab, and with a quote escaped by
+/// the backslashes that precede it doubled.
+priv fn __append_quoted(mut out: String, argument: str) {
+    let mut quote = argument.len() == 0
+    for c in argument.chars() {
+        if c == ' ' || c == '\t' {
+            quote = true
+        }
+    }
+    if quote {
+        out.push('"')
+    }
+    let mut backslashes = 0
+    for c in argument.chars() {
+        if c == '\\' {
+            backslashes = backslashes + 1
+        } else {
+            if c == '"' {
+                __push_backslashes(mut out, backslashes * 2 + 1)
+            } else {
+                __push_backslashes(mut out, backslashes)
+            }
+            backslashes = 0
+            out.push(c)
+        }
+    }
+    if quote {
+        __push_backslashes(mut out, backslashes * 2)
+        out.push('"')
+    } else {
+        __push_backslashes(mut out, backslashes)
+    }
+}
+
+priv fn __push_backslashes(mut out: String, count: i32) {
+    let mut i: i32 = 0
+    while i < count {
+        out.push('\\')
+        i = i + 1
     }
 }

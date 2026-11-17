@@ -7,7 +7,7 @@
 // Elements that compare equal come out in the order they were pushed.
 
 use fmt.{Debug, Formatter}
-use iter.{Iterable, Iterator}
+use iter.{FromIterator, Iterable, Iterator}
 use ops.Index
 
 /// A priority queue: `pop` returns the greatest element.
@@ -61,6 +61,13 @@ PriorityHeap<T> where T: Ord {
         out
     }
 
+    /// A heap of the elements of an array: `PriorityHeap.from([3, 1, 2])`.
+    fn from<const N: usize>(own items: [T; N]): PriorityHeap<T> {
+        let mut out = PriorityHeap<T>.new()
+        out.extend_iter(items.into_iter())
+        out
+    }
+
     /// The number of elements.
     fn len(self): usize {
         self.items.len()
@@ -81,6 +88,17 @@ PriorityHeap<T> where T: Ord {
     fn extend(mut self, own items: List<T>) {
         for x in items.into_iter() {
             self.push(x)
+        }
+    }
+
+    /// Adds every item `iter` yields.
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I) {
+        let mut iter = iter
+        loop {
+            match iter.next() {
+                Some(x) => self.push(x),
+                None => break,
+            }
         }
     }
 
@@ -120,6 +138,14 @@ PriorityHeap<T>: Index<T> where T: Ord {
             panic("PriorityHeap index out of bounds")
         }
         &self.items[self.items.len() - 1 - i]
+    }
+}
+
+PriorityHeap<T>: FromIterator<T> where T: Ord {
+    fn from_iter<I: Iterator<T>>(own iter: I): PriorityHeap<T> {
+        let mut out = PriorityHeap<T>.new()
+        out.extend_iter(iter)
+        out
     }
 }
 

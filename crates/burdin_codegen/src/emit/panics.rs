@@ -1,7 +1,8 @@
 //! Panics and the run-time checks that raise them.
 
-use super::{Codegen, GenResult, llvm_err};
+use super::{Codegen, GenResult, Mode, llvm_err};
 use burdin_diag::Span;
+use burdin_tir::{self as tir, Ty};
 use inkwell::IntPredicate;
 use inkwell::values::{BasicValueEnum, IntValue, LLVMTailCallKind};
 
@@ -48,6 +49,40 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let m = self.str_literal(msg.as_bytes());
         let ptr = m.get_field_at_index(0).expect("str has a pointer");
         let len = m.get_field_at_index(1).expect("str has a length");
+        self.emit_panic(ptr, len, span)?;
+        self.builder.position_at_end(pass);
+        Ok(())
+    }
+
+    /// Panics unless `ok` holds. With `msg`, the panic reports the formatted message, which is evaluated in the
+    /// failure block only (`assert(cond, "message {x}")`); without it, the panic reports `fallback`.
+    pub(super) fn check_message(
+        &mut self,
+        ok: IntValue<'ctx>,
+        msg: Option<&'a tir::Expr>,
+        fallback: &str,
+        span: Span,
+    ) -> GenResult<()> {
+        let pass = self.new_block("check.ok");
+        let fail = self.new_block("check.fail");
+        self.builder.build_conditional_branch(ok, pass, fail).map_err(llvm_err)?;
+        self.builder.position_at_end(fail);
+        let (ptr, len) = match msg {
+            Some(m) => {
+                let s = self.expr_mode(m, Mode::Use)?;
+                let s = self.need(s, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(s, 0, "msg.ptr").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(s, 1, "msg.len").map_err(llvm_err)?;
+                (ptr, len)
+            }
+            None => {
+                let m = self.str_literal(fallback.as_bytes());
+                (
+                    m.get_field_at_index(0).expect("str has a pointer"),
+                    m.get_field_at_index(1).expect("str has a length"),
+                )
+            }
+        };
         self.emit_panic(ptr, len, span)?;
         self.builder.position_at_end(pass);
         Ok(())

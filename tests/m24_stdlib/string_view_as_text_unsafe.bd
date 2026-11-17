@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// Reinterpreting bytes as text without checking them upholds the `str` invariant only when the bytes are valid
+// UTF-8, so the primitive `std` uses after validation requires `unsafe` (E0161).
+
+fn main() {
+    let bytes: [u8; 3] = [97, 98, 99]
+    let _ = __view_as_text(bytes[0..3]) //~ E0161
+}

@@ -1,0 +1,59 @@
+//@ run
+//> 100 101 102
+//> 3 4 105
+//> 108 111
+//> 100 101 12
+//> 9
+//> 11 22
+
+// The mutable iterator is an ordinary `Iterator<&mut T>`, so `enumerate`, `take`, `skip`, and the rest of the
+// adapters apply to it (IT15). Each one passes the writable view through.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for i in 0..9 {
+        xs.push(i + 3)
+    }
+    // `enumerate` pairs the index with the view.
+    let mut ys = List<i32>.new()
+    ys.push(0)
+    ys.push(0)
+    ys.push(0)
+    for (i, y) in ys.iter_mut().enumerate() {
+        *y = 100 + i as i32
+    }
+    println("{ys[0]} {ys[1]} {ys[2]}")
+
+    // `skip` then `take` pick a window; the rest stays untouched.
+    for x in xs.iter_mut().skip(2).take(1) {
+        *x = *x + 100
+    }
+    println("{xs[0]} {xs[1]} {xs[2]}")
+    for x in xs.iter_mut().skip(5).step_by(3) {
+        *x = *x + 100
+    }
+    println("{xs[5]} {xs[8]}")
+
+    // The consumers work too: `count` and `for_each`.
+    let mut zs = List<i32>.new()
+    zs.push(100)
+    zs.push(101)
+    zs.push(10)
+    zs.iter_mut().skip(2).for_each(|z| {
+        *z = *z + 2
+    })
+    println("{zs[0]} {zs[1]} {zs[2]}")
+    println("{xs.iter_mut().count()}")
+
+    // `zip` pairs a writable view with a read-only one from another list.
+    let mut a = List<i32>.new()
+    a.push(1)
+    a.push(2)
+    let mut b = List<i32>.new()
+    b.push(10)
+    b.push(20)
+    for (x, y) in a.iter_mut().zip(b.iter()) {
+        *x = *x + y
+    }
+    println("{a[0]} {a[1]}")
+}

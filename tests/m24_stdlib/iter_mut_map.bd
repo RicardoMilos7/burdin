@@ -1,0 +1,35 @@
+//@ run
+//> 3
+//> 11 22 33
+//> 4
+
+// A map is walked as `(&K, &mut V)`: the keys are read, the values are rewritten in place (IT15). The order of the
+// walk is unspecified, so the program only looks at order-independent results.
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 10)
+    m.insert(2, 20)
+    m.insert(3, 30)
+    let mut keys = 0
+    for (k, v) in mut m {
+        keys = keys + 1
+        *v = *v + *k
+    }
+    println("{keys}")
+    let a = m.get(1).unwrap()
+    let b = m.get(2).unwrap()
+    let c = m.get(3).unwrap()
+    println("{*a} {*b} {*c}")
+
+    // Strings as values.
+    let mut words = Map<i32, String>.new()
+    words.insert(1, String.from("x"))
+    words.insert(2, String.from("y"))
+    let mut total = 0
+    for (k, w) in mut words {
+        w.push_str("!")
+        total = total + w.len() as i32
+    }
+    println("{total}")
+}

@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: chunks: chunk size must be non-zero
+//> before
+
+// A chunk size of zero has no meaning; making the iterator panics.
+
+fn main() {
+    let arr = [1, 2, 3]
+    println("before")
+    for chunk in arr[0..3].chunks(0) {
+        println("{}", chunk.len())
+    }
+}

@@ -1,0 +1,22 @@
+//@ run
+//> BytesMut[104, 105, 33, 10, 255, 0]
+//> BytesMut[104, 105, 33, 10, 255, 0, 97, 98]
+
+// A `BytesMut` is a `Write` sink: writing appends to the buffer, and a `BufWriter` can wrap it.
+
+fn main() {
+    let mut b = BytesMut.new()
+    b.write_text("hi!").unwrap()
+    b.write_line("").unwrap()
+    let mut raw = List<u8>.new()
+    raw.push(255)
+    raw.push(0)
+    b.write_all(raw[0..2]).unwrap()
+    println("{:?}", b)
+
+    let mut w = BufWriter.new(b)
+    w.write(raw[0..0]).unwrap()
+    w.write_all(BytesMut.from_text("ab").as_slice()).unwrap()
+    let inner = w.into_inner().unwrap()
+    println("{:?}", inner)
+}

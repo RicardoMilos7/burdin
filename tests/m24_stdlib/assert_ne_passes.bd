@@ -1,0 +1,11 @@
+//@ run
+//> different
+
+// `assert_ne` passes when the values differ, for the types `Eq` covers.
+
+fn main() {
+    assert_ne(1, 2)
+    assert_ne("left", "right")
+    assert_ne(String.from("a"), String.from("b"))
+    println("different")
+}

@@ -1,0 +1,39 @@
+//@ run
+//> alpha, beta, gamma
+//> []
+//> x+y
+//> 1 2 3 4 5
+
+// `join` on a slice of texts and `concat` on a slice of slices (`spec/stdlib.md`, "Slices"). Both build an
+// owned value: a `String` or a `List<T>` of clones.
+
+fn show(xs: [i32]) {
+    let mut out = String.new()
+    let mut first = true
+    let mut i: usize = 0
+    while i < xs.len() {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(xs[i].to_string())
+        first = false
+        i = i + 1
+    }
+    println(out)
+}
+
+fn main() {
+    let words = ["alpha", "beta", "gamma"]
+    println("{}", words[0..3].join(", "))
+    println("[{}]", words[0..0].join(", "))
+
+    let mut owned = List<String>.new()
+    owned.push(String.from("x"))
+    owned.push(String.from("y"))
+    println("{}", owned.as_slice().join("+"))
+
+    let one = [1, 2]
+    let two = [3, 4, 5]
+    let nested = [one[0..2], two[0..3]]
+    show(nested[0..2].concat().as_slice())
+}

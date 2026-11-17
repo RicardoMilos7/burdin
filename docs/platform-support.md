@@ -67,7 +67,7 @@ stops being a CI step, or when a milestone it names leaves the workflow's confor
   not set `BURDIN_CC=clang`, so neither path is tested there. `--pgo-use` compiles the profile through `opt` and
   `llc` and then links normally; it is not exercised on Windows either.
 - **The size budget is not enforced.** `--strip` maps to `/OPT:REF /OPT:ICF` and the program runs the same, but
-  `tests/check_build_flags.py` enforces its 128 KiB and 512 KiB budgets only on Linux and macOS.
+  `tests/check_build_flags.py` enforces its 144 KiB and 512 KiB budgets only on Linux and macOS.
 - **Exit statuses are truncated to 8 bits**, and an abort is only required to be abnormal. `burdin run` passes a
   Windows status through after truncation (a non-zero status stays non-zero); the `//@ run-abort` tests assert an
   abnormal end on every platform rather than a particular status, because POSIX's SIGABRT status has no Windows

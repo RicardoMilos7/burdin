@@ -1,0 +1,9 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: the two values differ
+
+// A debug build checks the comparison forms too.
+
+fn main() {
+    debug_assert_eq(1, 2)
+}

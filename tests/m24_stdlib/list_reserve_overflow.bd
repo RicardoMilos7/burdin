@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: reserve: capacity overflow
+//> before
+
+// A reservation whose length would overflow `usize` panics instead of wrapping into a small allocation.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    println("before")
+    xs.reserve(18446744073709551615)
+}

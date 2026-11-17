@@ -1,0 +1,31 @@
+//@ run
+//> 99 98
+
+// A method of the type itself wins over the adapters the compiler resolves on every iterator (`rev`, `cycle`, ...), as
+// every method wins over an extension.
+
+struct Foo {
+    n: i32
+}
+
+Foo: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.n == 0 { return None }
+        self.n = self.n - 1
+        Some(self.n)
+    }
+}
+
+Foo {
+    fn rev(self): i32 {
+        99
+    }
+    fn cycle(self): i32 {
+        98
+    }
+}
+
+fn main() {
+    let f = Foo { n: 3 }
+    println("{f.rev()} {f.cycle()}")
+}

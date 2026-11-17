@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `drain` takes a range of `usize`, in either spelling (E0003).
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let _ = xs.drain(1) //~ E0003
+}

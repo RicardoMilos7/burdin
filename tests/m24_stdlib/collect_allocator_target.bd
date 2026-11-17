@@ -1,0 +1,30 @@
+//@ compile-fail
+
+// `from_iter` has no allocator value to store, so building a `List` or a `Map` that stores an allocator is E0272, and
+// a `collect` into one does not implement `FromIterator` (E0141) (IT22).
+
+struct Counter {
+    count: CPtr<i32>
+}
+
+Counter: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe { __dealloc(ptr, size, align) }
+    }
+}
+
+fn main() {
+    let a = List<i32, Counter>.from_iter([1, 2].into_iter()) //~ E0272
+    let b = Map<i32, i32, Counter>.from([(1, 1)]) //~ E0272
+    let c: List<i32, Counter> = [1, 2].into_iter().collect() //~ E0141
+    let d: Set<i32, Counter> = [1, 2].into_iter().collect() //~ E0141
+    println("{a.len()} {b.len()} {c.len()} {d.len()}")
+}

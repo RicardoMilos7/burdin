@@ -243,6 +243,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Unit | Ty::Never | Ty::Param(_) | Ty::Const(_) | Ty::Error | Ty::Chars => {
                 self.debug_unspecified(&Self::debug_name(ty))
             }
+            Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Bool => self.debug_basic("bool", 8, DW_ATE_BOOLEAN),
             Ty::Char => self.debug_basic("char", 32, DW_ATE_UTF),
             Ty::Int(i) => {
@@ -332,7 +333,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_product(&name, &members)
             }
-            Ty::ListIntoIter(..) | Ty::MapIter(..) | Ty::MapIntoIter(..) => {
+            Ty::IterMut(..) => {
+                let name = Self::debug_name(ty);
+                self.debug_words(&name, &[("ptr", 8), ("len", 8)])
+            }
+            Ty::ListIntoIter(..) | Ty::MapIter(..) | Ty::MapIterMut(..) | Ty::MapIntoIter(..) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
             }

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A writing slice method borrows its receiver exclusively, so an argument that reads the same slice is E0110.
+
+fn main() {
+    let mut arr = [1, 2, 3]
+    let mut xs = arr[0..3]
+    xs.fill(xs[0]) //~ E0110
+}

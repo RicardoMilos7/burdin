@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `append` moves the elements of a list of the same type, allocator included (E0003).
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let mut ys = List<i32>.new_in(Arena.new())
+    ys.push(2)
+    xs.append(ys) //~ E0003
+}
