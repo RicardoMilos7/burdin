@@ -700,7 +700,7 @@ when it is not `Global`; `new_in` is the constructor that takes the value (`List
 `Map<K, V>.new_in(alloc)`, `Heap.new_in(alloc, value)`). `Arena.new()` makes an empty arena, `bytes_allocated()`
 reports the rounded bytes handed out since the last reset, and `reset()` frees every block and leaves the arena
 usable. `Shared<T>` is shared by `clone()`, read by `get(): &T`, counted by `strong_count(): usize`, and is not
-`Copy`. The rules are [`allocators.md`](allocators.md) AL1-AL8.
+`Copy`; its count is atomic, and it is `Send` and `Sync` when `T` is both ([`shared.md`](shared.md) SH1-SH2). The rules are [`allocators.md`](allocators.md) AL1-AL8.
 
 ## `List<T>`
 
@@ -2219,6 +2219,42 @@ select { v = rx.recv() => ..., tx.send(x) => ..., default => ... }     // an exp
 
 Tests: `s2_channels/producer_consumer`, `close_semantics`, `bounded_capacity`, `select_priority`, `select_default`,
 `stress_mpmc`, and the rest of the folder (`channels.md` lists them by rule).
+
+## Shared state: markers, atomics, and locks (issue #213)
+
+`std.marker`, `std.atomic`, and `std.sync` are specified in [`shared.md`](shared.md); this is the surface. All of it is
+in the prelude.
+
+```
+interface Send { }                                     // derived; `unsafe T: Send { }` declares it (SH4, SH5)
+interface Sync { }
+
+AtomicBool, AtomicI32, AtomicU32, AtomicI64, AtomicU64, AtomicIsize, AtomicUsize     // T below is the value type
+fn AtomicT.new(value: T): AtomicT
+AtomicT {
+    fn load(self): T                                   fn store(self, value: T)
+    fn swap(self, value: T): T                         fn compare_exchange(self, current: T, new: T): Result<T, T>
+    fn fetch_add(self, value: T): T                    fn fetch_sub(self, value: T): T       // integers
+    fn fetch_and / fetch_or / fetch_xor(self, value: T): T                                   // all, bool included
+    fn fetch_max / fetch_min(self, value: T): T                                              // integers
+}
+
+fn Mutex<T>.new(own value: T): Mutex<T>
+Mutex<T> {
+    fn lock<R, F: FnOnce(&mut T): R>(self, own f: F): R            // waits; runs f with the value
+    fn try_lock<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> // never waits
+    fn get_mut(mut self): &mut T                       fn into_inner(own self): T
+}
+fn RwLock<T>.new(own value: T): RwLock<T>
+RwLock<T> {
+    fn read<R, F: FnOnce(&T): R>(self, own f: F): R               fn try_read(...): Option<R>
+    fn write<R, F: FnOnce(&mut T): R>(self, own f: F): R          fn try_write(...): Option<R>
+    fn get_mut(mut self): &mut T                       fn into_inner(own self): T
+}
+```
+
+Tests: `s2_shared/atomic_ops`, `mutex_basic`, `rwlock_basic`, `send_derived`, and the rest of the folder (`shared.md`
+lists them by rule).
 
 ## Tests
 

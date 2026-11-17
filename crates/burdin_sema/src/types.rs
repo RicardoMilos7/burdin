@@ -76,6 +76,7 @@ impl Globals {
                     sig: std::rc::Rc::new(burdin_tir::FnSig { params, ret: Box::new(ret) }),
                     kind: crate::generics::ast_kind(*kind),
                     borrowed: false,
+                    send: burdin_tir::FnSend::unknown(),
                 }
             }
             ast::TypeKind::Path(segments) if segments.len() == 1 => {
@@ -234,7 +235,9 @@ impl Globals {
             resolved.push(ty.clone());
             env.push((info.params[i].clone(), ty));
         }
-        self.check_adt_bounds(g, &resolved, span, diags);
+        if !self.check_adt_bounds(g, &resolved, span, diags) {
+            return Ty::Error;
+        }
         // A channel holds the values sent through it until they are received, so they must own their storage. `T`
         // appears in no field of `Channel<T>` (the queue is behind a raw pointer), so the field check cannot see it
         // (spec/channels.md, CH4).
@@ -478,7 +481,7 @@ pub(crate) fn compatible(actual: &Ty, expected: &Ty) -> bool {
 /// provides (CL5). A closure value may be used where a weaker call capability is expected.
 pub(crate) fn fn_compatible(actual: &Ty, expected: &Ty) -> bool {
     match (actual, expected) {
-        (Ty::Fn { sig: asig, kind: ak, borrowed: ab }, Ty::Fn { sig: esig, kind: ek, borrowed: eb }) => {
+        (Ty::Fn { sig: asig, kind: ak, borrowed: ab, .. }, Ty::Fn { sig: esig, kind: ek, borrowed: eb, .. }) => {
             asig == esig && ab == eb && ak.at_least(*ek)
         }
         _ => false,

@@ -6,6 +6,7 @@
 //
 // The record shared by the thread and its handle is a `repr(C)` struct behind `CPtr`, like the scheduler's.
 
+use marker.{Send, Sync}
 use option.take
 
 /// The state shared by a running thread and its handle. `lock` guards every field after it; `done_cv` wakes the thread
@@ -31,7 +32,7 @@ struct Thread<T> {
 
 /// Runs `f` on a new operating-system thread and returns its handle. The closure moves its captures into the thread,
 /// and the thread ends when `f` returns. A panic in the thread aborts the process.
-fn spawn<T, F: FnOnce(): T>(own f: F): Thread<T> {
+fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): Thread<T> {
     unsafe {
         let st = __alloc(ThreadState.size() + Option<T>.size(), 8) as CPtr<ThreadState>
         (*st).lock = __mutex_new()
@@ -134,6 +135,10 @@ Thread<T> {
         }
     }
 }
+
+unsafe Thread<T>: Send where T: Send { }
+
+unsafe Thread<T>: Sync where T: Send { }
 
 Thread<T>: Drop {
     fn drop(mut self) {

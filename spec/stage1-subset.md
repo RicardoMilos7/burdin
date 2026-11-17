@@ -165,7 +165,7 @@ default type parameters are written on trailing struct/enum type parameters (`st
 Global>`), resolved where the type is declared (E0271 otherwise), and a bare inherent or `Drop` impl covers every
 instance; `Arena` is a first-class bump allocator whose blocks are freed by reset and drop, not a second-class
 type, because ownership of the arena value keeps every safe buffer alive; `Shared<T>` is a non-atomic
-reference-counted cell now (atomic, with `Send`, in stage 2), cloned by sharing and dropped once by its last
+reference-counted cell now (atomic, with `Send`, since milestone 2.3), cloned by sharing and dropped once by its last
 owner; and a `burdin test` build allocates through a checking allocator whose live list reports leaks with the
 source site the compiler recorded, failing an otherwise passing test. The new diagnostics are E0270, E0271, and
 E0272; there is no e9000 site for allocators.
@@ -261,7 +261,7 @@ code; do not invent them inside the implementation.
    Default type parameters on trailing struct/enum parameters make `List<T>` mean `List<T, Global>`. `Arena` is a
    first-class bump allocator with 4096-byte blocks and `reset`, not a second-class type: every safe way to get a
    buffer makes the container own the arena. `Shared<T>` is a non-atomic reference-counted cell in stage 1 (the
-   `Rc` option), and stage 2 makes it atomic and adds `Send` and the concurrency rules. The leak-detecting
+   `Rc` option), and milestone 2.3 made it atomic and added `Send` and the concurrency rules (`spec/shared.md`). The leak-detecting
    allocator is used by `burdin test` builds only: it records a 40-byte header with the source site the compiler
    assigned to the allocation, panics on a double free, and reports still-live blocks after an otherwise passing
    test (`test leak: ...`, `allocated at path:line:column`), failing it. The rules are `spec/allocators.md`
@@ -352,7 +352,14 @@ Milestone 2.2 is complete: `tests/s2_channels` passes in debug and release, and 
 `close`; a sent value is moved, and a view type cannot be a channel's element (E0120). `select` is a contextual
 keyword that the parser rewrites into ordinary code over a few members of `Channel`: the first ready arm in source
 order runs, `default` makes it non-blocking, and an arm guard (`if cond`) switches an arm off. The decisions are
-`spec/channels.md` CH1-CH10. The `Send` marker is still 2.3.
+`spec/channels.md` CH1-CH10.
+
+Milestone 2.3 is complete: `tests/s2_shared` passes in debug and release, and its stress tests run repeatedly in CI.
+`Shared<T>` counts its handles atomically; `std.atomic` has seven atomic types (32- and 64-bit, sequentially consistent);
+`Mutex<T>` and `RwLock<T>` guard a value through closures (`m.lock(|v| ...)`), park the waiting task, and cannot be
+poisoned; and `Send` and `Sync` are derived from a type's parts, declared with `unsafe Type: Send { }` where the
+compiler cannot see why a type is safe, and required by `task.spawn`, `thread.spawn`, `Scope.spawn`, and `Channel<T>`
+(E0280, E0281). The decisions are `spec/shared.md` SH1-SH11.
 
 ### Stage 3: tooling and ecosystem
 

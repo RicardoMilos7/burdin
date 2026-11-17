@@ -193,8 +193,9 @@ allocated through `Global`.
   cell when it is cloned (`shared_in_struct.bd`).
 * The value of a `Shared<T>` is stored, so it must be storable: `Shared.new(&n)` is `E0120` (`shared_view.bd`).
 
-The count is **not atomic** in stage 1. There are no threads, `Send`, or `Sync` in the language yet; stage 2
-turns the count into an atomic and adds the `Send` marker and the sharing rules that go with it. A cycle of
+The count was not atomic in stage 1. Milestone 2.3 made it atomic and added the `Send` marker and the sharing rules
+that go with it (`spec/shared.md`, SH1-SH2): `clone` is a relaxed increment, a drop is a release decrement with an
+acquire fence before the value is freed, and a `Shared<T>` is `Send` and `Sync` when `T` is both. A cycle of
 `Shared` handles leaks, as an `Rc` cycle does; there are no weak handles yet. The cell is allocated with
 `Global`, so a `Shared` cannot be arena-backed today.
 

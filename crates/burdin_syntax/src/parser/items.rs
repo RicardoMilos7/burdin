@@ -49,6 +49,13 @@ impl Parser<'_> {
         let start = self.span();
         let is_priv = self.eat(&TokenKind::Priv);
         match self.kind() {
+            // `unsafe Type: Send { }`: an `unsafe` followed by a type name is an impl block, not a function.
+            TokenKind::Unsafe if !is_priv && matches!(self.nth_kind(1), TokenKind::Ident(_) | TokenKind::SelfType) => {
+                self.bump();
+                let mut block = self.impl_block(start)?;
+                block.is_unsafe = true;
+                Ok(Some(Item::Impl(block)))
+            }
             TokenKind::Fn | TokenKind::Unsafe if self.extension_ahead() => {
                 Ok(Some(Item::Extension(self.extension_decl(is_priv, start)?)))
             }
@@ -366,7 +373,7 @@ impl Parser<'_> {
             methods.push(self.fn_decl(is_priv, fn_start)?);
         }
         self.close(&TokenKind::RBrace)?;
-        Ok(ImplBlock { ty, interface, where_clause, methods, span: start.to(self.prev_span()) })
+        Ok(ImplBlock { is_unsafe: false, ty, interface, where_clause, methods, span: start.to(self.prev_span()) })
     }
 
     /// `test "name" { ... }` or `test "name" [attrs] { ... }`. The test is compiled as a function with no

@@ -219,6 +219,9 @@ pub struct InterfaceFn {
 /// `Type { fn ... }` or `Type: Interface { fn ... }`.
 #[derive(Debug, Clone)]
 pub struct ImplBlock {
+    /// Written `unsafe Type: Send { }`: the programmer promises what the compiler cannot check
+    /// (`spec/shared.md`, SH5). Only the `Send` and `Sync` markers take it.
+    pub is_unsafe: bool,
     pub ty: Type,
     pub interface: Option<Type>,
     pub where_clause: Vec<WherePred>,

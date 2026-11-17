@@ -597,7 +597,8 @@ impl FnCx<'_> {
             self.diags.error(Code::TYPE_MISMATCH, span, format!("`__closure_own` needs a closure, found `{}`", f.ty));
             return error_expr(span);
         };
-        let ty = Ty::Fn { sig: std::rc::Rc::new(sig), kind: tir::FnKind::FnOnce, borrowed: false };
+        let ty =
+            Ty::Fn { sig: std::rc::Rc::new(sig), kind: tir::FnKind::FnOnce, borrowed: false, send: tir::FnSend::yes() };
         mk(tir::ExprKind::Builtin(Builtin::ClosureOwn, vec![f]), ty, span)
     }
 

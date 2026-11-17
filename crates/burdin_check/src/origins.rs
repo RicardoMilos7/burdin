@@ -343,10 +343,11 @@ impl<'a> Analyzer<'a> {
             }
             // A `Heap` owns its pointee; a reference points at someone else's storage.
             K::Deref(base) => self.place_origin(base),
-            K::PtrDeref(base) => {
-                self.expr(base);
-                Origin::temp()
-            }
+            // A raw pointer's pointee belongs to no local. A view of it derives from the storage that holds the
+            // pointer, so a method of a handle type (`self.ptr`) can return a view that lives as long as the
+            // handle is borrowed; `unsafe` is the promise that the pointee lives that long. A pointer held in a
+            // local or a temporary gives a local or temporary origin, which cannot be returned (RT2).
+            K::PtrDeref(base) => self.place_origin(base),
             K::DerefRef(base) => self.expr(base),
             _ => {
                 self.expr(e);

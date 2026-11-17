@@ -96,7 +96,7 @@ impl FnCx<'_> {
     /// bound means the closure is consumed, so its captures move.
     fn expected_closure(&self, expect: Option<&Ty>) -> Option<(FnSig, FnKind, bool)> {
         match expect? {
-            Ty::Fn { sig, kind, borrowed } => Some(((**sig).clone(), *kind, !*borrowed)),
+            Ty::Fn { sig, kind, borrowed, .. } => Some(((**sig).clone(), *kind, !*borrowed)),
             Ty::Param(_) => {
                 self.globals.fn_call_sig(expect?, &self.bounds).map(|(sig, kind)| (sig, kind, kind == FnKind::FnOnce))
             }
@@ -318,6 +318,27 @@ impl FnCx<'_> {
         // (`str`, `&T`, a slice): the record then holds a pointer to storage it does not own (CL3).
         let borrowed =
             modes.iter().any(|m| *m != CaptureMode::Move) || ctx.captures.iter().any(|c| c.ty.is_second_class());
+        // Whether the closure may move to another task: each capture it moves must be `Send`, each one it only reads
+        // must be `Sync` (a shared view of it crosses), and each one it writes must be `Send` (an exclusive view).
+        let send = ctx
+            .captures
+            .iter()
+            .zip(&modes)
+            .find_map(|(c, mode)| {
+                let sync = *mode == CaptureMode::Borrow;
+                let why = child.globals.marker_violation(&c.ty, sync, &child.bounds)?;
+                let (how, name) = match mode {
+                    CaptureMode::Move => ("moves", "Send"),
+                    CaptureMode::Borrow => ("borrows", "Sync"),
+                    CaptureMode::BorrowMut => ("borrows mutably", "Send"),
+                };
+                Some(format!(
+                    "the closure {how} `{}` of type `{}`, which is not `{name}`: {why}",
+                    child.locals[c.local.0].name, c.ty
+                ))
+            })
+            .map(tir::FnSend::no)
+            .unwrap_or_else(tir::FnSend::yes);
         let sig = FnSig { params: param_tys, ret: Box::new(ret_ty.clone()) };
         if let Some((_, expected_kind, _)) = &expected
             && !kind.at_least(*expected_kind)
@@ -367,7 +388,7 @@ impl FnCx<'_> {
         // mistake from being reported again as a type mismatch by the enclosing position.
         let ty = match expect {
             Some(t @ Ty::Fn { .. }) if !arity_ok => t.clone(),
-            _ => Ty::Fn { sig: Rc::new(sig), kind, borrowed },
+            _ => Ty::Fn { sig: Rc::new(sig), kind, borrowed, send },
         };
         mk(tir::ExprKind::Closure { closure: index, captures: expr_captures }, ty, span)
     }
@@ -1005,9 +1026,12 @@ fn block_has_return(b: &ast::Block) -> bool {
 /// parameter (CL9).
 pub(super) fn bound_hint(globals: &Globals, bounds: &[crate::generics::Bound]) -> Option<Ty> {
     bounds.iter().find_map(|b| match b {
-        crate::generics::Bound::Fn(i, kind) => {
-            Some(Ty::Fn { sig: Rc::new(globals.bound_fn_sig(*i, &[])), kind: *kind, borrowed: *kind != FnKind::FnOnce })
-        }
+        crate::generics::Bound::Fn(i, kind) => Some(Ty::Fn {
+            sig: Rc::new(globals.bound_fn_sig(*i, &[])),
+            kind: *kind,
+            borrowed: *kind != FnKind::FnOnce,
+            send: tir::FnSend::unknown(),
+        }),
         _ => None,
     })
 }

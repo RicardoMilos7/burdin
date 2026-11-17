@@ -1,0 +1,48 @@
+//@ run
+//> holder takes the lock
+//> waiter is not spinning: the holder runs on the only worker
+//> holder releases after the message
+//> waiter got the lock after the holder: [holder, waiter]
+
+// With one worker, a task that waits for a mutex must *park* so the holder can run (spec/shared.md, SH9): a waiter that
+// kept the worker would deadlock this program. The holder keeps the lock while it waits for a channel message, which is
+// allowed, and the waiter takes the lock only after the holder lets go.
+
+fn main() {
+    task.set_workers(1)
+    let order = Shared.new(Mutex.new(List<String>.new()))
+    let gate = Shared.new(Mutex.new(0))
+    let go = Channel<i32>.bounded(1)
+    let held = Channel<i32>.bounded(1)
+
+    let holder_gate = gate.clone()
+    let holder_order = order.clone()
+    let go_rx = go.clone()
+    let held_tx = held.clone()
+    let holder = task.spawn(|| {
+        holder_gate.get().lock(|unused| {
+            println("holder takes the lock")
+            let _ = held_tx.send(1)
+            let _ = go_rx.recv()
+            println("holder releases after the message")
+            holder_order.get().lock(|l| { l.push("holder".to_string()) })
+        })
+    })
+
+    let waiter_gate = gate.clone()
+    let waiter_order = order.clone()
+    let waiter = task.spawn(|| {
+        waiter_gate.get().lock(|unused| {
+            waiter_order.get().lock(|l| { l.push("waiter".to_string()) })
+        })
+    })
+
+    let _ = held.recv()
+    println("waiter is not spinning: the holder runs on the only worker")
+    task.yield()
+    let _ = go.send(1)
+    holder.join()
+    waiter.join()
+    let names = order.get().lock(|l| format("[{}, {}]", l[0], l[1]))
+    println("waiter got the lock after the holder: {}", names)
+}

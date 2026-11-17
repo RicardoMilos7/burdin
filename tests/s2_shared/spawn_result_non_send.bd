@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// What a task returns moves back to the thread that joins it, so the result must be `Send` as well (spec/shared.md, SH4).
+
+struct Cursor {
+    ptr: CPtr<u8>
+}
+
+fn open(): Cursor {
+    Cursor { ptr: unsafe { CPtr.null() } }
+}
+
+fn main() {
+    let h = task.spawn(|| open()) //~ E0280
+    let t = thread.spawn(|| open()) //~ E0280
+}

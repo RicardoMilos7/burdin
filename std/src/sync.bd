@@ -1,0 +1,360 @@
+// Locks (spec/shared.md, SH8-SH11): `Mutex<T>` and `RwLock<T>`.
+//
+// A lock owns the value it protects, and the only way to reach the value is through the lock: `m.lock(|v| ...)` waits
+// until the value is free, runs the closure with an exclusive view of it, and lets the lock go when the closure returns.
+// There is no guard value to keep, so a view of the protected value cannot outlive the lock, and a lock cannot be
+// forgotten. The closure's result is what `lock` returns.
+//
+// Waiting is cooperative. A task that has to wait parks (its worker runs other tasks) and a thread blocks; both are
+// woken by the thread that releases the lock. The lock's state and the list of waiters are guarded by the scheduler's
+// one lock (`__sched_lock`), the lock that guards channels, so a wake-up cannot be lost. A task may keep a lock while it
+// waits for something else, such as a channel; the other tasks that want the lock wait for it.
+//
+// There is no poisoning: a panic aborts the whole process (spec/tasks.md, TK8), so no task can ever see a lock that a
+// panicking task left behind.
+
+use marker.{Send, Sync}
+use task.{__Waiter, __sched_lock, __sched_unlock, __waiter_block, __waiter_free, __waiter_new, __waiter_notify}
+
+/// The type-erased state of a lock. Guarded by the scheduler's lock.
+priv struct LockHead repr(C) {
+    /// 1 while a writer holds the lock.
+    writer: usize
+    /// The number of readers holding the lock.
+    readers: usize
+    /// The number of writers waiting. A new reader waits while there is one, so writers are not starved.
+    queued_writers: usize
+    /// Everyone waiting for the lock to change.
+    waiters: CPtr<LockLink>
+}
+
+/// A waiter's registration with one lock: it is in the lock's list while `linked` is 1.
+priv struct LockLink repr(C) {
+    next: CPtr<LockLink>
+    waiter: CPtr<__Waiter>
+    head: CPtr<LockHead>
+    linked: usize
+}
+
+priv fn __new_head(): CPtr<LockHead> {
+    unsafe {
+        let h = __alloc(LockHead.size(), 8) as CPtr<LockHead>
+        (*h).writer = 0
+        (*h).readers = 0
+        (*h).queued_writers = 0
+        (*h).waiters = CPtr.null()
+        h
+    }
+}
+
+priv fn __free_head(h: CPtr<LockHead>) {
+    unsafe {
+        __dealloc(h as CPtr<u8>, LockHead.size(), 8)
+    }
+}
+
+// ---- the lock protocol (the scheduler's lock must be held, except where said) ----------------------------------------
+
+priv fn __link(l: CPtr<LockLink>) {
+    unsafe {
+        let h = (*l).head
+        (*l).next = (*h).waiters
+        (*h).waiters = l
+        (*l).linked = 1
+    }
+}
+
+priv fn __unlink(l: CPtr<LockLink>) {
+    unsafe {
+        if (*l).linked == 0 {
+            return
+        }
+        let h = (*l).head
+        if (*h).waiters == l {
+            (*h).waiters = (*l).next
+        } else {
+            let mut cur = (*h).waiters
+            while (*cur).next != l {
+                cur = (*cur).next
+            }
+            (*cur).next = (*l).next
+        }
+        (*l).next = CPtr.null()
+        (*l).linked = 0
+    }
+}
+
+/// Wakes everyone waiting. A waiter that is woken looks at the lock again and waits again if it still has to.
+priv fn __wake_all(h: CPtr<LockHead>) {
+    unsafe {
+        let mut l = (*h).waiters
+        while !l.is_null() {
+            __waiter_notify((*l).waiter)
+            l = (*l).next
+        }
+    }
+}
+
+priv fn __try_write(h: CPtr<LockHead>): bool {
+    unsafe {
+        if (*h).writer == 0 && (*h).readers == 0 {
+            (*h).writer = 1
+            return true
+        }
+        false
+    }
+}
+
+priv fn __try_read(h: CPtr<LockHead>): bool {
+    unsafe {
+        if (*h).writer == 0 && (*h).queued_writers == 0 {
+            (*h).readers = (*h).readers + 1
+            return true
+        }
+        false
+    }
+}
+
+/// Waits until `__try_write` (`writer` is true) or `__try_read` succeeds, then returns with the lock held. Takes and
+/// releases the scheduler's lock itself.
+priv fn __acquire(h: CPtr<LockHead>, writer: bool) {
+    unsafe {
+        __sched_lock()
+        if writer && __try_write(h) {
+            __sched_unlock()
+            return
+        }
+        if !writer && __try_read(h) {
+            __sched_unlock()
+            return
+        }
+        if writer {
+            (*h).queued_writers = (*h).queued_writers + 1
+        }
+        let waiter = __waiter_new()
+        let link = __alloc(LockLink.size(), 8) as CPtr<LockLink>
+        (*link).next = CPtr.null()
+        (*link).waiter = waiter
+        (*link).head = h
+        (*link).linked = 0
+        loop {
+            (*waiter).notified = 0
+            __link(link)
+            __waiter_block(waiter)
+            __sched_lock()
+            __unlink(link)
+            if writer {
+                // This writer is already counted in `queued_writers`, which `__try_write` does not look at.
+                if __try_write(h) {
+                    (*h).queued_writers = (*h).queued_writers - 1
+                    break
+                }
+            } else if __try_read(h) {
+                break
+            }
+        }
+        __sched_unlock()
+        __dealloc(link as CPtr<u8>, LockLink.size(), 8)
+        __waiter_free(waiter)
+    }
+}
+
+/// Takes the lock without waiting: `true` when it is held now.
+priv fn __try_acquire(h: CPtr<LockHead>, writer: bool): bool {
+    unsafe {
+        __sched_lock()
+        let got = if writer { __try_write(h) } else { __try_read(h) }
+        __sched_unlock()
+        got
+    }
+}
+
+/// Lets a writer go and wakes the waiters.
+priv fn __release_write(h: CPtr<LockHead>) {
+    unsafe {
+        __sched_lock()
+        (*h).writer = 0
+        __wake_all(h)
+        __sched_unlock()
+    }
+}
+
+/// Lets a reader go; the last reader wakes the waiters.
+priv fn __release_read(h: CPtr<LockHead>) {
+    unsafe {
+        __sched_lock()
+        (*h).readers = (*h).readers - 1
+        if (*h).readers == 0 {
+            __wake_all(h)
+        }
+        __sched_unlock()
+    }
+}
+
+// ---- Mutex ----------------------------------------------------------------------------------------------------------
+
+/// A value that one task at a time can use. `lock` waits for the value and runs a closure with an exclusive view of it.
+/// A lock is shared by borrowing it (`task.scope`) or by putting it in a `Shared` (`Shared.new(Mutex.new(0))`).
+/// Calling `lock` again on the same mutex from inside the closure waits forever. See spec/shared.md, SH8-SH9.
+struct Mutex<T> {
+    head: CPtr<u8>
+    /// The protected value, as the only element of a list: its storage is on the heap, so a view of it stays where it is
+    /// when the mutex moves.
+    value: List<T>
+}
+
+// The mutex hands its value to one task at a time, so it may be shared when the value may move between tasks
+// (spec/shared.md, SH5).
+unsafe Mutex<T>: Send where T: Send { }
+
+unsafe Mutex<T>: Sync where T: Send { }
+
+Mutex<T> {
+    /// A mutex that holds `value`.
+    fn new(own value: T): Mutex<T> {
+        let mut list = List<T>.new()
+        list.push(value)
+        Mutex { head: unsafe { __new_head() as CPtr<u8> }, value: list }
+    }
+
+    /// Waits until no other task holds the mutex, runs `f` with an exclusive view of the value, releases the mutex, and
+    /// returns what `f` returned.
+    fn lock<R, F: FnOnce(&mut T): R>(self, own f: F): R {
+        unsafe {
+            __acquire(self.head as CPtr<LockHead>, true)
+            let p = (&self.value[0]) as CPtr<T>
+            let result = f(&mut (*p))
+            __release_write(self.head as CPtr<LockHead>)
+            result
+        }
+    }
+
+    /// Like `lock`, but never waits: when another task holds the mutex, `f` does not run and the result is `None`.
+    fn try_lock<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
+        unsafe {
+            if !__try_acquire(self.head as CPtr<LockHead>, true) {
+                return None
+            }
+            let p = (&self.value[0]) as CPtr<T>
+            let result = f(&mut (*p))
+            __release_write(self.head as CPtr<LockHead>)
+            Some(result)
+        }
+    }
+
+    /// An exclusive view of the value. No lock is taken: `mut self` already says that nobody else can reach the mutex.
+    fn get_mut(mut self): &mut T {
+        &mut self.value[0]
+    }
+
+    /// Takes the value out of the mutex.
+    fn into_inner(own self): T {
+        let mut inner = self
+        match inner.value.pop() {
+            Some(v) => v,
+            None => panic("Mutex: the value is missing"),
+        }
+    }
+}
+
+Mutex<T>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            __free_head(self.head as CPtr<LockHead>)
+        }
+    }
+}
+
+// ---- RwLock ---------------------------------------------------------------------------------------------------------
+
+/// A value that many tasks can read at once or one task can write. `read` runs a closure with a shared view, `write` with
+/// an exclusive one. A new reader waits while a writer is waiting, so writers are not starved; a task that calls `read`
+/// again from inside a `read` closure while a writer is waiting waits forever. See spec/shared.md, SH10.
+struct RwLock<T> {
+    head: CPtr<u8>
+    value: List<T>
+}
+
+// Several readers see the value at once, so sharing it needs the value to be `Sync` as well as `Send`.
+unsafe RwLock<T>: Send where T: Send { }
+
+unsafe RwLock<T>: Sync where T: Send + Sync { }
+
+RwLock<T> {
+    /// A lock that holds `value`.
+    fn new(own value: T): RwLock<T> {
+        let mut list = List<T>.new()
+        list.push(value)
+        RwLock { head: unsafe { __new_head() as CPtr<u8> }, value: list }
+    }
+
+    /// Waits until no writer holds the lock, runs `f` with a shared view of the value, and returns what `f` returned.
+    fn read<R, F: FnOnce(&T): R>(self, own f: F): R {
+        unsafe {
+            __acquire(self.head as CPtr<LockHead>, false)
+            let p = (&self.value[0]) as CPtr<T>
+            let result = f(&(*p))
+            __release_read(self.head as CPtr<LockHead>)
+            result
+        }
+    }
+
+    /// Waits until nobody holds the lock, runs `f` with an exclusive view of the value, and returns what `f` returned.
+    fn write<R, F: FnOnce(&mut T): R>(self, own f: F): R {
+        unsafe {
+            __acquire(self.head as CPtr<LockHead>, true)
+            let p = (&self.value[0]) as CPtr<T>
+            let result = f(&mut (*p))
+            __release_write(self.head as CPtr<LockHead>)
+            result
+        }
+    }
+
+    /// Like `read`, but never waits: `None` when a writer holds the lock or is waiting for it.
+    fn try_read<R, F: FnOnce(&T): R>(self, own f: F): Option<R> {
+        unsafe {
+            if !__try_acquire(self.head as CPtr<LockHead>, false) {
+                return None
+            }
+            let p = (&self.value[0]) as CPtr<T>
+            let result = f(&(*p))
+            __release_read(self.head as CPtr<LockHead>)
+            Some(result)
+        }
+    }
+
+    /// Like `write`, but never waits: `None` when anyone holds the lock.
+    fn try_write<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
+        unsafe {
+            if !__try_acquire(self.head as CPtr<LockHead>, true) {
+                return None
+            }
+            let p = (&self.value[0]) as CPtr<T>
+            let result = f(&mut (*p))
+            __release_write(self.head as CPtr<LockHead>)
+            Some(result)
+        }
+    }
+
+    /// An exclusive view of the value. No lock is taken: `mut self` says nobody else can reach the lock.
+    fn get_mut(mut self): &mut T {
+        &mut self.value[0]
+    }
+
+    /// Takes the value out of the lock.
+    fn into_inner(own self): T {
+        let mut inner = self
+        match inner.value.pop() {
+            Some(v) => v,
+            None => panic("RwLock: the value is missing"),
+        }
+    }
+}
+
+RwLock<T>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            __free_head(self.head as CPtr<LockHead>)
+        }
+    }
+}

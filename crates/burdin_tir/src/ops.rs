@@ -246,6 +246,92 @@ pub enum Builtin {
     /// One of the task runtime's primitives (`spec/tasks.md`, TK2): threads, locks, contexts, and the two slots the
     /// scheduler keeps.
     Rt(RtOp),
+    /// One of the atomic primitives (`spec/shared.md`, SH7): a sequentially consistent operation on a 32-bit or
+    /// 64-bit word that `std.atomic` builds the atomic types from.
+    Atomic(AtomicOp, AtomicWidth),
+}
+
+/// The width of the word an atomic primitive works on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtomicWidth {
+    W32,
+    W64,
+}
+
+impl AtomicWidth {
+    pub fn bits(self) -> u32 {
+        match self {
+            AtomicWidth::W32 => 32,
+            AtomicWidth::W64 => 64,
+        }
+    }
+}
+
+/// An atomic operation. Every one is sequentially consistent (`spec/shared.md`, SH7). Except `Load`, `Store`, `Cas`,
+/// and `Fence`, an operation returns the value the word held before it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtomicOp {
+    /// `__atomic_load_u32(p)`, `__atomic_load_u64(p)`: the word's value.
+    Load,
+    /// `__atomic_store_u32(p, v)`: writes the word.
+    Store,
+    /// `__atomic_swap_u32(p, v)`: writes the word and returns the old value.
+    Swap,
+    /// `__atomic_add_u32(p, v)`: adds with wrap-around and returns the old value.
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+    /// `__atomic_cas_u32(p, expected, new)`: writes `new` when the word equals `expected`; returns the value the
+    /// word held, so the exchange happened exactly when it equals `expected`.
+    Cas,
+    /// `__atomic_fence()`: a sequentially consistent fence.
+    Fence,
+}
+
+impl AtomicOp {
+    /// The primitive's name without the width suffix.
+    pub fn name(self) -> &'static str {
+        match self {
+            AtomicOp::Load => "__atomic_load",
+            AtomicOp::Store => "__atomic_store",
+            AtomicOp::Swap => "__atomic_swap",
+            AtomicOp::Add => "__atomic_add",
+            AtomicOp::Sub => "__atomic_sub",
+            AtomicOp::And => "__atomic_and",
+            AtomicOp::Or => "__atomic_or",
+            AtomicOp::Xor => "__atomic_xor",
+            AtomicOp::Cas => "__atomic_cas",
+            AtomicOp::Fence => "__atomic_fence",
+        }
+    }
+
+    /// Every operation that works on a word (everything but the fence).
+    pub const WORD_OPS: [AtomicOp; 9] = [
+        AtomicOp::Load,
+        AtomicOp::Store,
+        AtomicOp::Swap,
+        AtomicOp::Add,
+        AtomicOp::Sub,
+        AtomicOp::And,
+        AtomicOp::Or,
+        AtomicOp::Xor,
+        AtomicOp::Cas,
+    ];
+
+    /// The operation and width an `__atomic_*` primitive name stands for.
+    pub fn from_name(name: &str) -> Option<Builtin> {
+        if name == "__atomic_fence" {
+            return Some(Builtin::Atomic(AtomicOp::Fence, AtomicWidth::W64));
+        }
+        let (stem, width) = match name.rsplit_once('_')? {
+            (stem, "u32") => (stem, AtomicWidth::W32),
+            (stem, "u64") => (stem, AtomicWidth::W64),
+            _ => return None,
+        };
+        AtomicOp::WORD_OPS.iter().find(|op| op.name() == stem).map(|op| Builtin::Atomic(*op, width))
+    }
 }
 
 /// A floating-point function the compiler provides on `f64` and `f32` (`spec/stdlib.md`, "Float functions").

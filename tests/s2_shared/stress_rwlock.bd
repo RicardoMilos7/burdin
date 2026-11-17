@@ -1,0 +1,63 @@
+//@ run
+//> 3 writers x 400 and 5 readers x 800: pairs always equal, final 1200
+//> the readers saw 0 broken pairs
+
+// Readers and writers on one `RwLock` (spec/shared.md, SH10). The value is a pair that a writer changes in two steps with
+// a yield between them; a reader that got in between the steps would see two different numbers, so a lock that let a reader
+// overlap a writer counts broken pairs. Readers wait for a waiting writer, so the writers also finish: a starved writer
+// or a lost wake-up hangs the test. CI repeats it.
+
+struct Pair {
+    left: i64
+    right: i64
+}
+
+fn main() {
+    task.set_workers(4)
+    let lock = Shared.new(RwLock.new(Pair { left: 0, right: 0 }))
+    let broken = Shared.new(AtomicUsize.new(0))
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut w = 0
+    while w < 3 {
+        let lock = lock.clone()
+        handles.push(task.spawn(|| {
+            let mut i = 0
+            while i < 400 {
+                lock.get().write(|p| {
+                    p.left = p.left + 1
+                    if i % 3 == 0 {
+                        task.yield()
+                    }
+                    p.right = p.right + 1
+                })
+                i = i + 1
+            }
+        }))
+        w = w + 1
+    }
+    let mut r = 0
+    while r < 5 {
+        let lock = lock.clone()
+        let broken = broken.clone()
+        handles.push(task.spawn(|| {
+            let mut i = 0
+            while i < 800 {
+                let same = lock.get().read(|p| p.left == p.right)
+                if !same {
+                    let _ = broken.get().fetch_add(1)
+                }
+                if i % 4 == 0 {
+                    task.yield()
+                }
+                i = i + 1
+            }
+        }))
+        r = r + 1
+    }
+    for h in handles.into_iter() {
+        h.join()
+    }
+    let total = lock.get().read(|p| p.left)
+    println("3 writers x 400 and 5 readers x 800: pairs always equal, final {}", total)
+    println("the readers saw {} broken pairs", broken.get().load())
+}

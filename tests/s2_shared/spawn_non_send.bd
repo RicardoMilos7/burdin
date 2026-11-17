@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// A task's closure moves to another thread, so everything it captures must be `Send` (spec/shared.md, SH4). `Cursor`
+// holds a raw pointer, and a raw pointer is never `Send`; the diagnostic names the closure's capture and the field that
+// is to blame.
+
+struct Source {
+    id: i32
+    cursor: Cursor
+}
+
+struct Cursor {
+    ptr: CPtr<u8>
+}
+
+fn main() {
+    let source = Source { id: 1, cursor: Cursor { ptr: unsafe { CPtr.null() } } }
+    let h = task.spawn(|| source.id) //~ E0280
+    let _ = h.join()
+}

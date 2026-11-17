@@ -1,0 +1,23 @@
+//@ compile-fail
+
+// A generic function has to ask for `Send` before it may pass its parameter to a task (spec/shared.md, SH4): a type
+// parameter is `Send` only through a bound. Calling a function that asks for `Send` with a type that is not is E0280 at
+// the call.
+
+struct Raw {
+    ptr: CPtr<u8>
+}
+
+fn forgot<T>(own value: T): T {
+    task.spawn(|| value).join() //~ E0280
+}
+
+fn asks<T: Send>(own value: T): T {
+    task.spawn(|| value).join()
+}
+
+fn main() {
+    let a = asks(5)
+    let b = asks("text".to_string())
+    let c = asks(Raw { ptr: unsafe { CPtr.null() } }) //~ E0280
+}

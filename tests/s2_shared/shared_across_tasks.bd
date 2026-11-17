@@ -1,0 +1,79 @@
+//@ run
+//> every task read the same text: true
+//> handles alive while tasks run: 5, after they finish: 1
+//> pipeline result: 55
+
+// `Shared<T>` across tasks (spec/shared.md, SH1-SH3): the cell is read through `get()` by several tasks at once (`T` is
+// `Sync` when it is plain data), each task owns a handle that goes away when the task ends, and a `Shared` can be sent
+// through a channel like any other `Send` value.
+
+fn main() {
+    task.set_workers(3)
+    let text = Shared.new("shared across tasks".to_string())
+    let mut handles = List<task.JoinHandle<bool>>.new()
+    let mut t = 0
+    while t < 4 {
+        let mine = text.clone()
+        handles.push(task.spawn(|| mine.get().len() == 19))
+        t = t + 1
+    }
+    let mut all = true
+    for h in handles.into_iter() {
+        if !h.join() {
+            all = false
+        }
+    }
+    println("every task read the same text: {}", all)
+
+    // The handles can be counted while the tasks are parked, and again once they are gone.
+    let gate = Channel<i32>.bounded(1)
+    let ready = Channel<i32>.unbounded()
+    let mut waiting = List<task.JoinHandle<()>>.new()
+    let mut k = 0
+    while k < 4 {
+        let mine = text.clone()
+        let rx = gate.clone()
+        let tx = ready.clone()
+        waiting.push(task.spawn(|| {
+            let _ = tx.send(1)
+            let _ = rx.recv()
+            let _ = mine.get().len()
+        }))
+        k = k + 1
+    }
+    let mut seen = 0
+    while seen < 4 {
+        let _ = ready.recv()
+        seen = seen + 1
+    }
+    let during = text.strong_count()
+    gate.close()
+    for h in waiting.into_iter() {
+        h.join()
+    }
+    println("handles alive while tasks run: {}, after they finish: {}", during, text.strong_count())
+
+    // A handle travels through a channel to the task that uses it.
+    let filled = Shared.new(vec_to_ten())
+    let result_pipe = Channel<Shared<List<i32>>>.bounded(1)
+    let _ = result_pipe.send(filled.clone())
+    let worker = task.spawn(|| {
+        let got = result_pipe.recv().unwrap()
+        let mut sum = 0
+        for n in got.get().iter() {
+            sum = sum + n
+        }
+        sum
+    })
+    println("pipeline result: {}", worker.join())
+}
+
+fn vec_to_ten(): List<i32> {
+    let mut v = List<i32>.new()
+    let mut i = 1
+    while i <= 10 {
+        v.push(i)
+        i = i + 1
+    }
+    v
+}

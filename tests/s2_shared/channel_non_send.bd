@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// A value sent through a channel moves to another task, so a channel of a type that is not `Send` cannot exist
+// (spec/shared.md, SH4; spec/channels.md, CH4). The raw pointer is found through two levels of fields.
+
+struct Inner {
+    ptr: CPtr<u8>
+}
+
+struct Outer {
+    id: i32
+    inner: Inner
+}
+
+fn main() {
+    let a = Channel<Outer>.bounded(2) //~ E0280
+    let b: Channel<CPtr<u8>> = Channel<CPtr<u8>>.unbounded() //~ E0280
+    let ok = Channel<(i32, String)>.unbounded()
+}

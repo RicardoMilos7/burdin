@@ -1,0 +1,52 @@
+//@ run
+//> handle 7 used on another task, and Sync lets a scope borrow it: 7 7
+
+// A type that holds a raw pointer is neither `Send` nor `Sync`; the programmer who knows better says so with an `unsafe`
+// impl block (spec/shared.md, SH5). `Handle` below is a number the program keeps behind a pointer and only ever reads, so
+// moving it is fine (`Send`) and several tasks may read it at once (`Sync`). The `where` clause of a generic type carries the
+// condition: `Wrapper<T>` is `Send` when its `T` is.
+
+struct Handle {
+    cell: CPtr<i32>
+}
+
+unsafe Handle: Send { }
+
+unsafe Handle: Sync { }
+
+struct Wrapper<T> {
+    cell: CPtr<u8>
+    value: T
+}
+
+unsafe Wrapper<T>: Send where T: Send { }
+
+fn make(n: i32): Handle {
+    unsafe {
+        let p = __alloc(4, 4) as CPtr<i32>
+        *p = n
+        Handle { cell: p }
+    }
+}
+
+fn read(h: Handle): i32 {
+    unsafe {
+        *h.cell
+    }
+}
+
+fn main() {
+    let h = make(7)
+    let moved = task.spawn(|| read(h)).join()
+    let k = make(7)
+    let mut borrowed = 0
+    task.scope(|s| {
+        s.spawn(|| {
+            borrowed = unsafe { *k.cell }
+        })
+    })
+    let w = Wrapper { cell: unsafe { CPtr.null() }, value: 3 }
+    let wv = task.spawn(|| w.value).join()
+    let _ = wv
+    println("handle {} used on another task, and Sync lets a scope borrow it: {} {}", moved, moved, borrowed)
+}

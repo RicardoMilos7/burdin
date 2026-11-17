@@ -1,0 +1,74 @@
+//@ burdin-test passed=6 failed=0
+
+// `burdin test` runs with the checking allocator, so a lock, an atomic, or a shared cell that left its state, a waiter, or a
+// value behind would fail the test with a leak report (spec/shared.md, SH11).
+
+test "a mutex frees its state and its value" {
+    let m = Mutex.new("text".to_string())
+    m.lock(|s| { s.push_str(" more") })
+    assert_eq(m.lock(|s| s.len()), 9)
+}
+
+test "a mutex that made a task wait leaves no waiter behind" {
+    let m = Shared.new(Mutex.new(0))
+    let held = Channel<i32>.bounded(1)
+    let release = Channel<i32>.bounded(1)
+    let m2 = m.clone()
+    let held2 = held.clone()
+    let release2 = release.clone()
+    let holder = task.spawn(|| {
+        m2.get().lock(|n| {
+            let _ = held2.send(1)
+            let _ = release2.recv()
+            *n = *n + 1
+        })
+    })
+    let _ = held.recv()
+    let waiter = task.spawn(|| m.get().lock(|n| { *n = *n + 10 }))
+    task.yield()
+    let _ = release.send(1)
+    holder.join()
+    waiter.join()
+}
+
+test "a read-write lock frees its state after readers and writers" {
+    let rw = RwLock.new(List<String>.new())
+    rw.write(|l| { l.push("a".to_string()) })
+    assert_eq(rw.read(|l| l.len()), 1)
+    let v = rw.into_inner()
+    assert_eq(v.len(), 1)
+}
+
+test "atomics free their cells" {
+    let a = AtomicU64.new(1)
+    let b = AtomicBool.new(true)
+    let c = AtomicI32.new(-1)
+    let _ = a.fetch_add(1)
+    b.store(false)
+    assert_eq(c.load() as i64 + a.load() as i64, 1)
+}
+
+test "a shared lock in many tasks is freed with its last handle" {
+    let shared = Shared.new(Mutex.new(List<String>.new()))
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut i = 0
+    while i < 4 {
+        let mine = shared.clone()
+        let text = format("task {}", i)
+        handles.push(task.spawn(|| {
+            mine.get().lock(|l| { l.push(text) })
+        }))
+        i = i + 1
+    }
+    for h in handles.into_iter() {
+        h.join()
+    }
+    assert_eq(shared.get().lock(|l| l.len()), 4)
+}
+
+test "a try_lock that fails frees nothing it did not take" {
+    let m = Shared.new(Mutex.new("x".to_string()))
+    let inner = m.clone()
+    let outer = m.get().lock(|unused| inner.get().try_lock(|s| s.len()))
+    assert_eq(outer, None)
+}

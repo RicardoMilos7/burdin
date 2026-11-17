@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// A closure type does not list its captures. The closure expression decides whether it is `Send`, so a closure written
+// at the call, or kept in a variable, carries its answer; a closure type written as an annotation (`Fn(): i32`) does not
+// say what the closure behind it captured, so it is not known to be `Send` (spec/shared.md, SH4).
+
+fn run(f: FnOnce(): i32): i32 {
+    task.spawn(|| f()).join() //~ E0280
+}
+
+fn main() {
+    let n = 5
+    let kept = || n + 1
+    let a = task.spawn(kept).join()
+    let b = run(|| 1)
+}

@@ -155,6 +155,47 @@ pub struct FnSig {
     pub ret: Box<Ty>,
 }
 
+/// Whether a closure's captures are all `Send` (`spec/shared.md`, SH4). A closure type does not list its captures, so
+/// the closure expression decides this when it is checked and the type carries the answer. It is not part of the
+/// type's identity: two closure types with the same signature are the same type, and a closure written as a type
+/// annotation (`f: Fn(): ()`) is not known to be `Send`.
+#[derive(Clone, Debug)]
+pub struct FnSend {
+    /// Every capture may move to another task.
+    pub ok: bool,
+    /// When not, which capture is to blame and why, for the diagnostic.
+    pub why: Option<Rc<str>>,
+}
+
+impl FnSend {
+    /// A closure with nothing to block it: a function used as a value, or one whose captures are all `Send`.
+    pub fn yes() -> FnSend {
+        FnSend { ok: true, why: None }
+    }
+
+    /// A closure whose captures are not known: a closure type written as an annotation or a bound.
+    pub fn unknown() -> FnSend {
+        FnSend { ok: false, why: None }
+    }
+
+    /// A closure that captures something that is not `Send`.
+    pub fn no(why: String) -> FnSend {
+        FnSend { ok: false, why: Some(why.into()) }
+    }
+}
+
+impl PartialEq for FnSend {
+    fn eq(&self, _: &FnSend) -> bool {
+        true
+    }
+}
+
+impl Eq for FnSend {}
+
+impl std::hash::Hash for FnSend {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
     Unit,
@@ -165,11 +206,13 @@ pub enum Ty {
     Str,
     String,
     /// A closure interface value: `Fn(A, B): R`, `FnMut(...)`, or `FnOnce(...)`. `borrowed` marks a closure with
-    /// borrow captures, which is second-class (`spec/memory-rules.md` CL3).
+    /// borrow captures, which is second-class (`spec/memory-rules.md` CL3). `send` records that every capture of
+    /// the closure the type came from may move to another task (`spec/shared.md`, SH4).
     Fn {
         sig: Rc<FnSig>,
         kind: FnKind,
         borrowed: bool,
+        send: FnSend,
     },
     /// A shared (`&T`) or mutable (`&mut T`) reference. The value is the address of the referent.
     Ref {
@@ -429,9 +472,15 @@ mod tests {
             sig: Rc::new(sig(vec![Ty::Int(IntTy::I32)], Ty::Int(IntTy::I32))),
             kind: FnKind::Fn,
             borrowed: false,
+            send: FnSend::unknown(),
         };
         assert_eq!(f.to_string(), "Fn(i32): i32");
-        let g = Ty::Fn { sig: Rc::new(sig(vec![], Ty::Unit)), kind: FnKind::FnMut, borrowed: true };
+        let g = Ty::Fn {
+            sig: Rc::new(sig(vec![], Ty::Unit)),
+            kind: FnKind::FnMut,
+            borrowed: true,
+            send: FnSend::unknown(),
+        };
         assert_eq!(g.to_string(), "FnMut(): ()");
         assert!(g.is_second_class(), "a borrowing closure is second-class");
         assert!(!f.is_second_class());

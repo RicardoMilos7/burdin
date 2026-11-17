@@ -81,6 +81,7 @@ fn generated_impl(
         })
         .collect();
     ast::ImplBlock {
+        is_unsafe: false,
         ty: path(&type_name.name, args),
         interface: Some(path(&derive.name.name, Vec::new())),
         where_clause,

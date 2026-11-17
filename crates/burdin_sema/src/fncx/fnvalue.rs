@@ -138,7 +138,7 @@ impl FnCx<'_> {
             func,
         };
         self.closures.borrow_mut().push(closure);
-        let ty = Ty::Fn { sig: Rc::new(fn_sig), kind: tir::FnKind::Fn, borrowed: false };
+        let ty = Ty::Fn { sig: Rc::new(fn_sig), kind: tir::FnKind::Fn, borrowed: false, send: tir::FnSend::yes() };
         mk(tir::ExprKind::Closure { closure: index, captures: Vec::new() }, ty, span)
     }
 }

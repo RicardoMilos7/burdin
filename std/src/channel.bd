@@ -14,6 +14,7 @@
 // (spec/channels.md, CH7); a program does not call them.
 
 use iter.{Iterable, Iterator}
+use marker.{Send, Sync}
 use option.take
 use task.{__Waiter, __sched_bump, __sched_epoch, __sched_lock, __sched_unlock, __waiter_block, __waiter_free, __waiter_new, __waiter_notify}
 
@@ -219,9 +220,15 @@ priv fn __recv_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
 
 /// A typed queue shared by tasks and threads. A handle can be cloned and sent anywhere; every handle sends, receives,
 /// and closes. Values are received in the order they were sent. See spec/channels.md for the exact rules.
-struct Channel<T> {
+struct Channel<T: Send> {
     head: CPtr<u8>
 }
+
+// A channel is a handle that any task may use: the queue is guarded by the scheduler's lock, and the values in it move
+// from the sender to one receiver (spec/shared.md, SH5).
+unsafe Channel<T>: Send where T: Send { }
+
+unsafe Channel<T>: Sync where T: Send { }
 
 priv fn __new_head(capacity: usize): CPtr<u8> {
     unsafe {

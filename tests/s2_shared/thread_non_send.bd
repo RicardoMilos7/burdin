@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// `thread.spawn` asks for `Send` like `task.spawn` does, and a scoped task asks for it of everything the task moves or
+// borrows (spec/shared.md, SH4, SH6).
+
+struct Cursor {
+    ptr: CPtr<u8>
+}
+
+fn main() {
+    let c = Cursor { ptr: unsafe { CPtr.null() } }
+    let t = thread.spawn(|| { //~ E0280
+        let _ = unsafe { c.ptr.is_null() }
+    })
+}

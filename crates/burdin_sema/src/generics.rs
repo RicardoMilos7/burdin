@@ -153,7 +153,11 @@ type Wheres<'a> = [(String, Vec<Bound>)];
 impl Globals {
     /// E0141: the arguments of a generic type instantiation must meet the bounds on its parameters. An argument
     /// that still mentions a type parameter is left to the symbolic check of the enclosing body.
-    pub(crate) fn check_adt_bounds(&self, template: usize, args: &[Ty], span: Span, diags: &mut Diagnostics) {
+    ///
+    /// Returns `false` when a `Send` or `Sync` bound is not met, so the caller does not create an instance whose
+    /// methods would report the same failure again from inside the standard library.
+    pub(crate) fn check_adt_bounds(&self, template: usize, args: &[Ty], span: Span, diags: &mut Diagnostics) -> bool {
+        let mut ok = true;
         let info = &self.generic_adts[template];
         let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(args.iter().cloned()).collect();
         for ((pname, bounds), arg) in info.params.iter().zip(&info.bounds).zip(args) {
@@ -162,18 +166,13 @@ impl Globals {
             }
             for bound in bounds {
                 if !self.satisfies_with(arg, bound, &[], &subst) {
-                    diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!(
-                            "`{arg}` does not implement `{}`, which `{pname}` of `{}` requires",
-                            self.bound_name(bound),
-                            info.name
-                        ),
-                    );
+                    let (code, message) = self.bound_unmet(arg, bound, &[], &format!("`{pname}` of `{}`", info.name));
+                    diags.error(code, span, message);
+                    ok &= code != Code::NOT_SEND;
                 }
             }
         }
+        ok
     }
 
     /// The instance of a generic type for these arguments. If there is none yet, asks for it and gives `Error`
@@ -274,7 +273,7 @@ impl Globals {
                 self.unify(pv, av, bindings);
                 self.unify_alloc(pa, aa, bindings);
             }
-            (Ty::Fn { sig: psig, kind: pk, borrowed: pb }, Ty::Fn { sig: asig, kind: ak, borrowed: ab })
+            (Ty::Fn { sig: psig, kind: pk, borrowed: pb, .. }, Ty::Fn { sig: asig, kind: ak, borrowed: ab, .. })
                 if pk.at_least(*ak) && pb == ab && psig.params.len() == asig.params.len() =>
             {
                 for (p, a) in psig.params.iter().zip(&asig.params) {
@@ -342,13 +341,14 @@ impl Globals {
             Ty::Shared(t) => Ty::Shared(go(t)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),
             Ty::Range(t, inclusive) => Ty::Range(go(t), *inclusive),
-            Ty::Fn { sig, kind, borrowed } => Ty::Fn {
+            Ty::Fn { sig, kind, borrowed, send } => Ty::Fn {
                 sig: Rc::new(FnSig {
                     params: sig.params.iter().map(|t| self.subst_ty(t, env)).collect(),
                     ret: Box::new(self.subst_ty(&sig.ret, env)),
                 }),
                 kind: *kind,
                 borrowed: *borrowed,
+                send: send.clone(),
             },
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
             Ty::Any(a) => {
@@ -733,6 +733,14 @@ impl Globals {
     /// Whether a struct or enum has a `Type: Interface<Args> { ... }` block for a user interface, with its `where`
     /// clauses met. A built-in collection satisfies the standard iterator protocol without an impl block.
     fn implements(&self, ty: &Ty, iface: usize, args: &[Ty], env: &Env) -> bool {
+        // `Send` and `Sync` are derived from the type's parts unless the type declares them itself
+        // (`spec/shared.md`, SH4).
+        if let Some(sync) = self.marker_kind(iface) {
+            if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) && self.has_impl_head(ty, iface) {
+                return self.impl_blocks_cover(ty, iface, args, env);
+            }
+            return self.marker_violation(ty, sync, env).is_none();
+        }
         // An `any I` satisfies `I` itself and every interface `I` requires, through its vtable (AN8).
         if let Ty::Any(a) = ty {
             return self.any_satisfies(a, iface, args);
@@ -756,6 +764,11 @@ impl Globals {
         if let Some(have) = self.builtin_iface_args(ty, iface, env) {
             return self.bound_args_match(&have, args);
         }
+        self.impl_blocks_cover(ty, iface, args, env)
+    }
+
+    /// Whether some impl block of `iface` covers the struct or enum `ty`, with its `where` clauses met.
+    pub(crate) fn impl_blocks_cover(&self, ty: &Ty, iface: usize, args: &[Ty], env: &Env) -> bool {
         let Some(key) = adt_key(ty) else { return false };
         self.impls.iter().any(|info| {
             if info.iface != iface {

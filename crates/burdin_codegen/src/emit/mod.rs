@@ -4,6 +4,7 @@
 mod aggregate;
 mod alloc;
 mod any;
+mod atomic;
 mod builtins;
 mod closure;
 pub(crate) use debug::DebugInfo;

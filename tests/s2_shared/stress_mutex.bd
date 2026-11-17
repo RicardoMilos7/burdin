@@ -1,0 +1,37 @@
+//@ run
+//> 16 tasks x 2000 increments with yields inside the lock: 32000
+//> no update was lost and nobody was left waiting
+
+// Mutual exclusion and wake-ups under contention (spec/shared.md, SH9). Each task reads the counter, sometimes yields while
+// it holds the lock, and writes the value back plus one: a task that got in during the yield would be overwritten, so a
+// broken lock loses increments, and a lost wake-up leaves a task parked forever and hangs the test. CI repeats it.
+
+fn main() {
+    task.set_workers(4)
+    let counter = Shared.new(Mutex.new(0))
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut t = 0
+    while t < 16 {
+        let counter = counter.clone()
+        let seed = t
+        handles.push(task.spawn(|| {
+            let mut i = 0
+            while i < 2000 {
+                counter.get().lock(|n| {
+                    let seen = *n
+                    if (i + seed) % 5 == 0 {
+                        task.yield()
+                    }
+                    *n = seen + 1
+                })
+                i = i + 1
+            }
+        }))
+        t = t + 1
+    }
+    for h in handles.into_iter() {
+        h.join()
+    }
+    println("16 tasks x 2000 increments with yields inside the lock: {}", counter.get().lock(|n| *n))
+    println("no update was lost and nobody was left waiting")
+}

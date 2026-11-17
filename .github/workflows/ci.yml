@@ -207,20 +207,22 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: python3 tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels
+        run: python3 tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels
+        run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).
-      - name: Channel stress tests (repeated)
+      - name: Channel and shared-state stress tests (repeated)
         run: |
           python3 tests/run_tests.py --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
+          python3 tests/run_tests.py --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python3 tests/run_tests.py --release --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
+          python3 tests/run_tests.py --release --repeat 20 s2_shared/stress s2_shared/shared_count_stress
 
   # macOS on arm64: proves the host-triple target, the C libc calls, and LLVM-C linking on Apple's
   # toolchain (issues #16, #17, #18). Homebrew's LLVM is keg-only, so point inkwell at its prefix and
@@ -392,20 +394,22 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: python3 tests/run_tests.py -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels
+        run: python3 tests/run_tests.py -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: python3 tests/run_tests.py -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels
+        run: python3 tests/run_tests.py -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).
-      - name: Channel stress tests (repeated)
+      - name: Channel and shared-state stress tests (repeated)
         run: |
           python3 tests/run_tests.py -v --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
+          python3 tests/run_tests.py -v --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python3 tests/run_tests.py -v --release --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
+          python3 tests/run_tests.py -v --release --repeat 20 s2_shared/stress s2_shared/shared_count_stress
 
   windows:
     runs-on: windows-latest
@@ -607,20 +611,22 @@ jobs:
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
-        run: python tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels
+        run: python tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
-        run: python tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels
+        run: python tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).
-      - name: Channel stress tests (repeated)
+      - name: Channel and shared-state stress tests (repeated)
         run: |
           python tests/run_tests.py --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
+          python tests/run_tests.py --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python tests/run_tests.py --release --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
+          python tests/run_tests.py --release --repeat 20 s2_shared/stress s2_shared/shared_count_stress
 
       # The default linker on Windows is already `cl`; this proves the `BURDIN_CC` override takes the same path.
       - name: Conformance tests with BURDIN_CC=cl

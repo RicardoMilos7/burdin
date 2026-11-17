@@ -96,10 +96,10 @@ refused would otherwise be lost silently.
 * A channel handle may be borrowed by scoped tasks. `send`, `recv`, `close`, and the rest take `self`, a read-only borrow,
   so any number of tasks in a `scope` can use the one handle, which is allowed by TK7 (reads are shared), and every
   operation synchronizes inside the channel (`tests/s2_channels/scoped_tasks`).
-* **`Send` marker.** The derived `Send` marker waits for milestone 2.3, as `tasks.md` TK11 decided. When it exists, `T:
-  Send` becomes a requirement of `Channel<T>.send`, and a non-`Send` type across a channel is rejected then. Until then
-  the program must not send a value that holds a raw `CPtr` or a `Shared<T>` it also uses elsewhere: those are the types
-  whose sharing is unsafe in 2.1 and 2.2.
+* **`Send` marker.** `Channel<T>` requires `T: Send` (`spec/shared.md`, SH4): `Channel<Cursor>` where `Cursor` holds a raw
+  `CPtr` is E0280 at the type, with the field that makes it not `Send` in the message (`tests/s2_shared/channel_non_send`).
+  `Channel<T>` is itself `Send` and `Sync` when `T` is `Send`, so a handle can be moved to a task or borrowed by scoped
+  tasks.
 
 ## CH5. The operations
 
@@ -261,8 +261,6 @@ such method). `select` introduces no new error code (`select_type_errors`, `send
   scale across workers yet.
 * `select` has no timeout arm, no rendezvous channels, and no "nil channel"; a guard switches an arm off. The deadline
   arm belongs with timers, which the I/O milestone (2.4) brings.
-* The `Send` marker, and with it the rejection of a non-`Send` value across a channel, is milestone 2.3 (CH4, `tasks.md`
-  TK11).
 * A `select` that uses a channel expression with a side effect evaluates it once, but clones its handle, so the handle count
   of the channel is one higher while the `select` runs.
 * Like the rest of stage 2, exercised so far only on Linux x86-64 (`tasks.md`, Known limits).

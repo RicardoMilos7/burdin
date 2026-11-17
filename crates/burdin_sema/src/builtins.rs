@@ -71,7 +71,13 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__realloc" => Builtin::RawRealloc,
         "__dealloc" => Builtin::RawDealloc,
         "__view_as_text" => Builtin::ViewAsText,
-        _ => return RtOp::ALL.iter().find(|(n, _)| *n == name).map(|(_, op)| Builtin::Rt(*op)),
+        _ => {
+            return RtOp::ALL
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, op)| Builtin::Rt(*op))
+                .or_else(|| burdin_tir::AtomicOp::from_name(name));
+        }
     })
 }
 
@@ -86,6 +92,7 @@ fn rt_sig(op: RtOp) -> Signature {
             sig: Rc::new(FnSig { params: Vec::new(), ret: Box::new(Ty::Unit) }),
             kind: FnKind::FnOnce,
             borrowed: false,
+            send: burdin_tir::FnSend::unknown(),
         })
     };
     let usize_ty = || Ty::Int(IntTy::Usize);
@@ -110,9 +117,32 @@ fn rt_sig(op: RtOp) -> Signature {
     Signature { params, ret, has_self: false, ret_origins: Vec::new() }
 }
 
+/// The signature of an atomic primitive (`spec/shared.md`, SH7): a raw pointer to a word of the width's unsigned
+/// type, and values of that type.
+fn atomic_sig(op: burdin_tir::AtomicOp, width: burdin_tir::AtomicWidth) -> Signature {
+    use burdin_tir::AtomicOp;
+    let word = || match width {
+        burdin_tir::AtomicWidth::W32 => Ty::Int(IntTy::U32),
+        burdin_tir::AtomicWidth::W64 => Ty::Int(IntTy::U64),
+    };
+    let ptr = || ParamSig::plain(Ty::CPtr(Box::new(word())));
+    let value = || ParamSig::plain(word());
+    let (params, ret) = match op {
+        AtomicOp::Load => (vec![ptr()], word()),
+        AtomicOp::Store => (vec![ptr(), value()], Ty::Unit),
+        AtomicOp::Cas => (vec![ptr(), value(), value()], word()),
+        AtomicOp::Fence => (Vec::new(), Ty::Unit),
+        _ => (vec![ptr(), value()], word()),
+    };
+    Signature { params, ret, has_self: false, ret_origins: Vec::new() }
+}
+
 pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
     if let Builtin::Rt(op) = b {
         return rt_sig(op);
+    }
+    if let Builtin::Atomic(op, width) = b {
+        return atomic_sig(op, width);
     }
     // The I/O primitives report the operating system's own error code; the `std` wrappers turn it into the
     // `IoError` of `spec/errors.md` ERR10 with `__io_kind` for the portable kind (ERR11).
@@ -486,6 +516,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
                 }),
                 kind: FnKind::FnMut,
                 borrowed: false,
+                send: burdin_tir::FnSend::unknown(),
             };
             (Method::MapRetain, vec![value_param(keep)], Ty::Unit)
         }
@@ -505,6 +536,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
                 sig: Rc::new(FnSig { params: Vec::new(), ret: v.clone() }),
                 kind: FnKind::FnOnce,
                 borrowed: false,
+                send: burdin_tir::FnSend::unknown(),
             };
             (Method::MapEntryOrInsertWith, vec![value_param(make)], view)
         }
@@ -564,6 +596,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
                 }),
                 kind: FnKind::FnMut,
                 borrowed: true,
+                send: burdin_tir::FnSend::unknown(),
             };
             (Method::SliceSortBy, vec![value_param(less)], Ty::Unit)
         }

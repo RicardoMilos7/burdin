@@ -221,6 +221,9 @@ pub(crate) struct Globals {
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,
+    /// The `std.Send` and `std.Sync` marker interfaces (`spec/shared.md`, SH4).
+    pub(crate) send_iface: Option<usize>,
+    pub(crate) sync_iface: Option<usize>,
     /// The standard library's operator interfaces (`spec/operators.md`, OP2), when it declares them.
     pub(crate) op_ifaces: Option<OpIfaces>,
     /// The standard library's `Allocator` interface and its default allocator type `Global`
