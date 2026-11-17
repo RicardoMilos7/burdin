@@ -405,13 +405,15 @@ impl<'p> Interp<'p, '_> {
         Ok(match b {
             Builtin::Print | Builtin::Println => return Err(impure("printing", span)),
             Builtin::Eprint | Builtin::Eprintln => return Err(impure("printing to standard error", span)),
-            Builtin::StdoutWrite | Builtin::StdoutWriteLine => return Err(impure("writing to standard output", span)),
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StdoutWriteBytes => {
+                return Err(impure("writing to standard output", span));
+            }
             Builtin::StdoutFlush => return Err(impure("flushing standard output", span)),
-            Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            Builtin::StderrWrite | Builtin::StderrWriteLine | Builtin::StderrWriteBytes => {
                 return Err(impure("writing to standard error", span));
             }
             Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
-            Builtin::StdinReadLine | Builtin::StdinReadToString => {
+            Builtin::StdinReadLine | Builtin::StdinReadToString | Builtin::StdinAvail | Builtin::StdinNextByte => {
                 return Err(impure("reading standard input", span));
             }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
@@ -427,6 +429,15 @@ impl<'p> Interp<'p, '_> {
             Builtin::Entropy => return Err(impure("reading system entropy", span)),
             Builtin::Sleep => return Err(impure("sleeping", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
+            Builtin::EnvGet => return Err(impure("reading an environment variable", span)),
+            Builtin::EnvSet | Builtin::EnvSetBytes => {
+                return Err(impure("setting an environment variable", span));
+            }
+            Builtin::EnvRemove => return Err(impure("removing an environment variable", span)),
+            Builtin::CurrentDir => return Err(impure("reading the working directory", span)),
+            Builtin::SetCurrentDir | Builtin::SetCurrentDirBytes => {
+                return Err(impure("changing the working directory", span));
+            }
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
             Builtin::CPtrNull => return Err(impure("making a C pointer", span)),
@@ -763,6 +774,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::Iter | Method::IntoIter => self.iter_value(recv, m == Method::IntoIter, span)?,
             Method::IterNext => self.iter_next(recv, ty, span)?,
+            Method::IterNextBack => self.iter_next_back(recv, ty, span)?,
             Method::SharedGet => {
                 let inner = self.peek(recv, |v| match v {
                     Value::Heap(b) => (**b).clone(),
@@ -847,6 +859,62 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             other => return Err(internal(format!("`next` on {other:?}"), span)),
+        };
+        Ok(Value::Opt(next.map(Box::new)))
+    }
+
+    /// `it.next_back()` on a slice, a range iterator, or `Chars` (spec/iterators.md, IT14).
+    fn iter_next_back(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
+        let item_is_view = matches!(ty, Ty::Option(t) if matches!(**t, Ty::Ref { .. }));
+        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
+        let place = self.eval_place(recv)?;
+        let it = self.place_mut(&place, span)?;
+        let it = match it {
+            Value::Borrow(_) => return Err(internal("`next_back` on a shared iterator", span)),
+            other => other,
+        };
+        let next = match it {
+            Value::Slice(xs, lo, hi) => {
+                if *lo >= *hi {
+                    None
+                } else {
+                    *hi -= 1;
+                    let v = xs[*hi].clone();
+                    Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
+                }
+            }
+            Value::Chars(bytes, at) => {
+                let mut start = bytes.len();
+                if start <= *at {
+                    None
+                } else {
+                    start -= 1;
+                    while start > *at && (bytes[start] & 0xc0) == 0x80 {
+                        start -= 1;
+                    }
+                    let c = decode(bytes, start).map(|(c, _)| c);
+                    let kept: Rc<[u8]> = Rc::from(&bytes[..start]);
+                    *bytes = kept;
+                    c.map(Value::Char)
+                }
+            }
+            Value::RangeIter(lo, hi, done) => {
+                if *done || (inclusive && *lo > *hi) || (!inclusive && *lo >= *hi) {
+                    None
+                } else if inclusive {
+                    let v = *hi;
+                    if *lo == *hi {
+                        *done = true;
+                    } else {
+                        *hi -= 1;
+                    }
+                    Some(Value::Int(v))
+                } else {
+                    *hi -= 1;
+                    Some(Value::Int(*hi))
+                }
+            }
+            other => return Err(internal(format!("`next_back` on {other:?}"), span)),
         };
         Ok(Value::Opt(next.map(Box::new)))
     }

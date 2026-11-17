@@ -1,0 +1,54 @@
+//@ run
+//> 1 2
+//> a b
+//> 3
+//> Right(5)
+
+// A tuple, or an instance of a generic struct or enum, that holds views may derive from several parameters (RT3a): the
+// result keeps every source borrowed.
+struct Counter {
+    n: i32
+}
+
+struct Pair<A, B> {
+    first: A
+    second: B
+}
+
+enum Choice<T> {
+    Left(T)
+    Right(T)
+}
+
+fn both(a: Counter, b: Counter): Pair<&i32, &i32> {
+    Pair { first: &a.n, second: &b.n }
+}
+
+fn words(a: str, b: str): (str, str) {
+    (a, b)
+}
+
+fn three(a: Counter, b: Counter, c: Counter): (&i32, &i32, &i32) {
+    (&a.n, &b.n, &c.n)
+}
+
+fn either(a: Counter, b: Counter, left: bool): Choice<&i32> {
+    if left { Choice.Left(&a.n) } else { Choice.Right(&b.n) }
+}
+
+fn main() {
+    let x = Counter { n: 1 }
+    let y = Counter { n: 2 }
+    let p = both(x, y)
+    println("{*p.first} {*p.second}")
+    let (s, t) = words("a", "b")
+    println("{s} {t}")
+    let z = Counter { n: 0 }
+    let (a, b, c) = three(x, y, z)
+    println("{*a + *b + *c}")
+    let five = Counter { n: 5 }
+    match either(x, five, false) {
+        Choice.Left(v) => println("Left({*v})"),
+        Choice.Right(v) => println("Right({*v})"),
+    }
+}

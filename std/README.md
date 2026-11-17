@@ -9,6 +9,7 @@ program, then copies its public names into every module (the prelude). A project
 | --- | --- |
 | `std.bd` | the `Error` marker interface and the dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`, `__test_assert_eq`, `unreachable` |
 | `io.bd` | `read_to_string`, `write_file`, and the `stdin`, `stdout`, and `stderr` handles (`spec/stdlib.md`, Streams) |
+| `rw.bd` | the `Read`, `Write`, `Seek`, and `BufRead` interfaces, `SeekFrom`, `Cursor`, `BufReader`, `BufWriter`, `Lines`, and `copy` (`spec/stdlib.md`, Readers and writers) |
 | `fs.bd` | `read_dir`, `create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`, `metadata`, `canonicalize`, `walk`, and `walk_glob`, with `Metadata` and `FileKind` (`spec/stdlib.md`, "Directories, metadata, and walking") |
 | `time.bd` | `Duration`, `Instant`, `SystemTime`, `DateTime`, `Weekday`, the `Clock` interface with `SystemClock` and `ManualClock`, and `sleep` (`spec/stdlib.md`, Time) |
 | `random.bd` | `Random` (a seeded xoshiro256** generator) and `random_seed` (`spec/stdlib.md`, Random numbers) |

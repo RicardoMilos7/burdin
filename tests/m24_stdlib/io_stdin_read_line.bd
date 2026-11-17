@@ -11,11 +11,11 @@
 //> tail:[tail]
 //> none: true
 
-// `Stdin.read_line` returns one line without its terminator, strips the `\r` of a `\r\n` pair, returns the last
+// `Stdin` is a `BufRead`: `read_line` returns one line without its terminator, strips the `\r` of a `\r\n` pair, returns the last
 // line even when it has no terminator, and reports the end of the input as `None`.
 
 fn main() {
-    let input = stdin()
+    let mut input = stdin()
     let first = input.read_line().unwrap().unwrap()
     println("first:[{first}]")
     let second = input.read_line().unwrap().unwrap()

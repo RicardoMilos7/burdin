@@ -87,6 +87,7 @@ impl FnCx<'_> {
         let per_param: Vec<Option<tir::Expr>> =
             slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
         bound_fn_inference(globals, &info.params, &info.bounds, &pattern.params, &per_param, &mut bindings);
+        bound_iterator_inference(globals, &info.params, &info.bounds, &self.bounds, &mut bindings);
         if let Some(expected) = expect {
             globals.unify(&pattern.ret, expected, &mut bindings);
         }
@@ -557,6 +558,7 @@ impl FnCx<'_> {
         let per_param: Vec<Option<tir::Expr>> =
             slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
         bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &per_param, &mut bindings);
+        bound_iterator_inference(globals, &params, &bounds, &self.bounds, &mut bindings);
         let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
         let mut targs = Vec::new();
         for pname in &params {
@@ -676,6 +678,7 @@ impl FnCx<'_> {
         let per_param: Vec<Option<tir::Expr>> =
             slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
         bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &per_param, &mut bindings);
+        bound_iterator_inference(globals, &params, &bounds, &self.bounds, &mut bindings);
         let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
         let mut targs = Vec::new();
         for pname in &params {
@@ -816,5 +819,93 @@ fn bound_fn_inference(
             }
             globals.unify(&want.ret, &actual.ret, bindings);
         }
+    }
+}
+
+/// Infers the type parameters that appear only in an `Iterator` bound (`fn zip<U, J: Iterator<U>>`): once the
+/// parameter that owns the bound (`J`) is bound to a concrete type, the item type of that type's `Iterator`
+/// implementation (built in or declared) fixes the parameters inside the bound (`U`). A bound that names a
+/// parameter already bound is left to the ordinary bound check.
+fn bound_iterator_inference(
+    globals: &crate::globals::Globals,
+    params: &[String],
+    bounds: &[Vec<Bound>],
+    env: &crate::generics::Env,
+    bindings: &mut Vec<(String, Ty)>,
+) {
+    let Some(iterator) = globals.iterator_iface else { return };
+    // One bound can bind the owner of the next (`flatten`: `I: Iterator<J>` binds `J`, then `J: Iterator<U>` binds
+    // `U`), so go around until a pass binds nothing new.
+    for _ in 0..=params.len() {
+        let before = bindings.len();
+        for (k, pname) in params.iter().enumerate() {
+            let Some(owner) = bindings.iter().find(|(n, _)| n == pname).map(|(_, t)| t.clone()) else { continue };
+            let Some(bs) = bounds.get(k) else { continue };
+            for b in bs {
+                let Bound::User(iface, args) = b else { continue };
+                if *iface != iterator || args.len() != 1 {
+                    continue;
+                }
+                let Some(item) = globals.iterator_item(&owner, env) else { continue };
+                globals.unify(&args[0], &item, bindings);
+            }
+        }
+        if bindings.len() == before {
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generics::param_ty;
+    use burdin_tir::IntTy;
+
+    fn i32_() -> Ty {
+        Ty::Int(IntTy::I32)
+    }
+
+    fn globals() -> crate::globals::Globals {
+        crate::globals::Globals { iterator_iface: Some(0), ..Default::default() }
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn an_iterator_bound_binds_the_item_type() {
+        // `fn zip<U, J: Iterator<U>>` called with a slice for `J`: `U` is the slice's item.
+        let params = names(&["U", "J"]);
+        let bounds = vec![Vec::new(), vec![Bound::User(0, vec![param_ty("U")])]];
+        let mut bindings = vec![("J".to_string(), Ty::Slice(Box::new(i32_())))];
+        bound_iterator_inference(&globals(), &params, &bounds, &[], &mut bindings);
+        assert_eq!(bindings.iter().find(|(n, _)| n == "U").map(|(_, t)| t.clone()), Some(i32_()));
+    }
+
+    #[test]
+    fn one_bound_can_feed_the_next() {
+        // `fn flatten<I: Iterator<J>, J: Iterator<U>, U>`: `I` fixes `J`, and then `J` fixes `U`, even though `J` is
+        // listed before `I`.
+        let params = names(&["J", "I", "U"]);
+        let bounds =
+            vec![vec![Bound::User(0, vec![param_ty("U")])], vec![Bound::User(0, vec![param_ty("J")])], Vec::new()];
+        let items = Ty::Slice(Box::new(Ty::Slice(Box::new(Ty::Char))));
+        let mut bindings = vec![("I".to_string(), items)];
+        bound_iterator_inference(&globals(), &params, &bounds, &[], &mut bindings);
+        let found = |name: &str| bindings.iter().find(|(n, _)| n == name).map(|(_, t)| t.clone());
+        // A slice is `Copy`, so a slice of slices yields the inner slice itself, and that is `J`.
+        assert!(found("J").is_some());
+        assert_eq!(found("U"), Some(Ty::Char));
+    }
+
+    #[test]
+    fn a_bound_on_something_that_is_not_an_iterator_binds_nothing() {
+        let params = names(&["U", "J"]);
+        let bounds = vec![Vec::new(), vec![Bound::User(0, vec![param_ty("U")])]];
+        let mut bindings = vec![("J".to_string(), i32_())];
+        bound_iterator_inference(&globals(), &params, &bounds, &[], &mut bindings);
+        assert!(bindings.iter().all(|(n, _)| n != "U"), "an integer has no items");
     }
 }

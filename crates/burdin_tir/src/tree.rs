@@ -28,10 +28,10 @@ pub struct Function {
     /// Every place read in a move context, as a local and a field path from it. The code generator
     /// allocates a runtime drop flag for each of them.
     pub moved: Vec<MovedPlace>,
-    /// The parameter a second-class return value derives from (memory-rules.md, RT1). `None` when the result is
-    /// static (or the return type is not second-class). The borrow checker uses it to keep the argument borrowed
-    /// until the last use of the result (RF5).
-    pub ret_origin: Option<usize>,
+    /// The parameters a second-class return value derives from (memory-rules.md, RT1, RT3a). Empty when the
+    /// result is static (or the return type is not second-class). The borrow checker uses them to keep the
+    /// arguments borrowed until the last use of the result (RF5).
+    pub ret_origins: Vec<usize>,
     /// A generic function or method checked against its bounds, with type parameters still in its types. It has
     /// no code: every use calls an instantiation, which is an ordinary function.
     pub symbolic: bool,

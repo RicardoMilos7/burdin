@@ -1,0 +1,49 @@
+//@ run
+//> copied 11 bytes
+//> hello world
+//> copied 0 bytes
+//> through a buffered pair: 5000 bytes, equal true
+
+// `copy` moves every byte a reader has left into a writer, in chunks, and returns the count.
+
+fn pattern(count: usize): List<u8> {
+    let mut out = List<u8>.new()
+    let mut i: usize = 0
+    while i < count {
+        out.push((i % 251) as u8)
+        i = i + 1
+    }
+    out
+}
+
+fn same(a: List<u8>, b: List<u8>): bool {
+    if a.len() != b.len() {
+        return false
+    }
+    let mut i: usize = 0
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+fn main() {
+    let mut src = Cursor.from_text("hello world")
+    let mut dst = Cursor.empty()
+    let n = copy(mut src, mut dst).unwrap()
+    println("copied {} bytes", n)
+    dst.rewind().unwrap()
+    println("{}", dst.read_to_string().unwrap())
+
+    let n2 = copy(mut src, mut dst).unwrap()
+    println("copied {} bytes", n2)
+
+    let mut reader = BufReader.with_capacity(64, Cursor.new(pattern(5000)))
+    let mut writer = BufWriter.with_capacity(100, Cursor.empty())
+    let moved = copy(mut reader, mut writer).unwrap()
+    let out = writer.into_inner().unwrap()
+    println("through a buffered pair: {} bytes, equal {}", moved, same(out.into_inner(), pattern(5000)))
+}

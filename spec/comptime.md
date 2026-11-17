@@ -148,9 +148,10 @@ comptime assert(BUFFER_SIZE % 64 == 0, "the buffer must be a whole number of cac
 Comptime is pure and deterministic. Evaluating any of these is E0224, reported at the comptime expression with a
 note at the operation:
 
-- output: `print`, `println`, `eprint`, `eprintln`, and the `Stdout`/`Stderr` handles' `write`, `write_line`,
-  and `flush`;
-- input: the `Stdin` handle's `read_line` and `read_to_string`, and `is_terminal` on any stream handle;
+- output: `print`, `println`, `eprint`, `eprintln`, and the `Stdout`/`Stderr` handles' `write` (and so every
+  `Write` default built on it) and `flush`;
+- input: the `Stdin` handle's `read`, `read_until`, `read_line`, and `read_to_string` (and so every `Read` and
+  `BufRead` default built on them), and `is_terminal` on any stream handle;
 - files, the environment, and processes: `read_to_string`, `write_file`, `env.args`, `process.exit`, `process.run`;
 - the system's clocks, entropy, and sleeping: `Instant.now`, `SystemTime.now` (so `SystemClock`'s methods), `sleep`,
   and `random_seed` (so `Random.from_entropy`); a `Duration`, a `DateTime`, a `ManualClock`, and a seeded `Random`
@@ -248,7 +249,7 @@ const HEADER: [u8; 4] = embed("magic.bin")
 (`comptime_for_unroll`, `comptime_for_errors`), constants of every materializable kind (`const_values`,
 `const_cycle_through_call`), `comptime assert` (`assert_passes`, `assert_fails`, `assert_message_literal`), the
 budget (`budget_infinite_loop`, `budget_recursion`), a comptime panic (`comptime_panic`, `comptime_overflow`),
-purity (`purity_print`, `purity_file`), materialization (`not_materializable`), runtime locals (`runtime_local`),
+purity (`purity_print`, `purity_file`, `purity_env`), materialization (`not_materializable`), runtime locals (`runtime_local`),
 memory rules at compile time (`comptime_moves`, `comptime_drop`), and the interpreter's coverage of the language
 (`interp_*`). The `[differential]` test attribute reuses the interpreter and is specified in
 [`test-runner.md`](test-runner.md#differential-tests), with `tests/m10_test_runner/attributes_differential.bd` and
