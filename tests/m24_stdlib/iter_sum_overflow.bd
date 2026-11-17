@@ -1,0 +1,13 @@
+//@ run-abort
+//@ debug-only
+//> before
+//@ stderr: overflow
+
+// Integer `sum` and `product` add and multiply with the ordinary `+` and `*`: the checked build panics on overflow and
+// the release build wraps (so this test runs in the debug profile only).
+
+fn main() {
+    println("before")
+    let xs = [200 as u8, 100]
+    println("{xs.iter().sum()}")
+}

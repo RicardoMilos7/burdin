@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// `min`, `max`, and `cmp` need an item with `Ord`; `eq` needs `Eq` (a struct without `derives` has neither). A float has neither `Ord` nor a total order, and a
+// view of a `String` is not an owned `String`, so `min_by` with a comparator is the tool for both.
+
+fn main() {
+    let fs = [1.5, 0.5]
+    let a = fs.iter().min() //~ E0141
+    let b = fs.iter().max() //~ E0141
+    let c = fs.iter().cmp(fs.iter()) //~ E0141
+
+    let mut ws = List<String>.new()
+    ws.push(String.from("a"))
+    let d = ws.iter().min() //~ E0141
+
+    let ps = [Point { x: 1 }]
+    let e = ps.iter().eq(ps.iter()) //~ E0141
+}
+
+struct Point {
+    x: i32
+}

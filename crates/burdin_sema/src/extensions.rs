@@ -216,7 +216,12 @@ impl<'t> Sema<'t> {
     fn iterator_name(&self, recv: &Ty, name: &str) -> bool {
         let spelled = if name == "any" { "any_item" } else { name };
         let iterator = self.globals.iterator_item(recv, &[]).is_some();
-        if iterator && (spelled == "next" || spelled == "sum") {
+        if iterator
+            && (spelled == "next"
+                || spelled == "sum"
+                || spelled == "product"
+                || self.globals.iterator_item_fn(spelled).is_some())
+        {
             return true;
         }
         if iterator

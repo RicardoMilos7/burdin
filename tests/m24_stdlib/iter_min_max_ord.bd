@@ -1,0 +1,36 @@
+//@ run
+//> Some(10) Some(50)
+//> Some("fig") Some("pear")
+//> None None
+//> Some(2) Some(5)
+//> Some((1, 9)) Some((2, 4))
+
+// `min` and `max` need an item with `Ord`; an empty iterator gives `None`. Items of a `List` of non-`Copy` values are
+// views and have no `Ord`, so those lists go through `into_iter` and the items are owned.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [30, 10, 50, 20, 50] {
+        xs.push(x)
+    }
+    println("{xs.iter().min():?} {xs.iter().max():?}")
+
+    let mut lo = List<String>.new()
+    lo.push(String.from("pear"))
+    lo.push(String.from("fig"))
+    let mut hi = List<String>.new()
+    hi.push(String.from("fig"))
+    hi.push(String.from("pear"))
+    println("{lo.into_iter().min():?} {hi.into_iter().max():?}")
+
+    let none = List<i32>.new()
+    println("{none.iter().min():?} {(0..0).iter().map(|x| x * 2).max():?}")
+
+    println("{(2..6).iter().min():?} {(2..6).iter().filter(|x| *x < 6).max():?}")
+
+    let mut pairs = List<(i32, i32)>.new()
+    pairs.push((2, 1))
+    pairs.push((1, 9))
+    pairs.push((1, 10))
+    println("{pairs.into_iter().filter(|p| p.1 != 10).min():?} {(5..9).iter().map(|i| (i % 3, 9 - i)).max():?}")
+}

@@ -112,6 +112,8 @@ asks for it.
 | `partition<F: FnMut(&T): bool>(mut self, own f: F)` | `(List<T>, List<T>)` | accepted items, then rejected items, in order |
 | `min_by` / `max_by` `<F: FnMut(&T, &T): Ordering>(mut self, own f: F)` | `Option<T>` | least (first of equals) / greatest (last of equals) under the comparator |
 | `min_by_key` / `max_by_key` `<K: Ord, F: FnMut(&T): K>(mut self, own f: F)` | `Option<T>` | the same, ordered by a key |
+| `try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F)` | `Result<A, E>` | folds until `f` returns an `Err`, which ends the fold and is returned; the rest of the items are not visited |
+| `try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F)` | `Result<(), E>` | calls `f` on every item until it returns an `Err` |
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
 
 **Adapters that are not provided (issue #706).** Three constraints of the current language rule these out; each is a
@@ -125,20 +127,50 @@ language change, not a library one, and stays open on the issue:
 - `rev` needs a source that can walk backwards, and the built-in iterators are not `Iterator` implementers that a
   `DoubleEndedIterator<T>` interface could be added to; `cycle` needs a clonable iterator. Neither exists yet.
 
-**Consumers that are not provided (issue #707).** `min`, `max`, `eq`, and `cmp` between iterators need a bound on the
-interface's own item type (`where T: Ord`), which a default method cannot state (E9000); use `min_by`/`max_by` with
-`a.cmp(*b)` and `fold`. `unzip` needs the pair's two types, which only appear in a bound, so a call cannot infer them.
-`rposition` needs a double-ended source (see the adapters above). `product` and the float `sum` need compiler support
-like integer `sum`, and `try_fold` and `try_for_each` are not written yet; `fold` covers the first, and a `for` loop with
-`?` the others.
+**Consumers that need a bound on the item (issue #707).** `min`, `max`, `eq`, and `cmp` between iterators need
+`T: Ord` (`T: Eq` for `eq`) on the interface's own item type, which a default method cannot state (a method-level
+`where` names only the method's own parameters, E9000). They are therefore generic functions in `std`
+(`__iter_min`, `__iter_max`, `__iter_eq`, `__iter_cmp`) that the compiler calls for an iterator receiver, handing them the
+item type as `T`; they are not interface methods, so a user type cannot override them, and on a type parameter bounded by
+`Iterator<T>` they work too (`fn smallest<I: Iterator<i32>>(own it: I) { it.min() }`).
 
-`any` is reserved as an identifier (it belongs to m15), so `std` declares the method as `any_item`; the compiler
-spells the call `.any(...)`. The default methods are instantiated on demand for each receiver type, whether the
+| Method | Result | Notes |
+| --- | --- | --- |
+| `min()` | `Option<T>` | the least item (the first of equals); `T: Ord`; `None` when empty |
+| `max()` | `Option<T>` | the greatest item (the last of equals); `T: Ord`; `None` when empty |
+| `eq(other)` | `bool` | both iterators yield equal items and end together; `T: Eq` |
+| `cmp(other)` | `Ordering` | lexicographic; a prefix is less than the longer iterator; `T: Ord` |
+
+The item must itself have `Ord` (or `Eq`): an owned item does, a shared view (`&String`, the item of a `List` of
+non-`Copy` values) does not, and a float has neither. Both are E0141; `min_by`/`max_by` with a comparator
+(`a.cmp(*b)`), or `into_iter` over an owned list, are the ways around it. Integers and other `Copy` items are yielded by
+value, so `xs.iter().min()` works on a `List<i32>`.
+
+**`sum` and `product`.** The compiler writes both as an ordinary loop over `+` or `*`, starting from 0 and 1, on an
+iterator of integers or floats or of views of them (anything else is E0141). Overflow is therefore the overflow of the
+operator: an integer `sum` or `product` that overflows panics in the checked (debug) build and wraps in the release
+build, exactly as `a + b` does; a float never traps. An empty iterator gives 0 for `sum` and 1 for `product`.
+
+**`try_fold` and `try_for_each`** short-circuit on a `Result`. The error type `E` is inferred from the closure's
+return type; a closure with an early `return Err(..)` needs its return type written (`|x|: Result<(), i32> { ... }`). An
+`Option` version is not provided: `fold` with an `Option` accumulator, or a `for` loop with `?`, covers it. They are
+interface default methods, so they are not callable on a type parameter bounded by `Iterator<T>` (default methods with
+their own type parameters do not resolve through a bound yet).
+
+**Consumers that are not provided (issue #707).** `unzip` needs the pair's two types, which only appear in a bound, so
+a call cannot infer them. `rposition` needs a double-ended source (see the adapters above). These stay open on the
+issue, as do the language changes they wait for.
+
+
+`any` is a keyword (it begins the `any I` existential type, `existentials.md`), so a method cannot be declared with that
+name and `std` declares it as `any_item` (decided in issue #707: the name stays); the compiler spells the call
+`.any(...)`. The default methods are instantiated on demand for each receiver type, whether the
 receiver is built in or a user type. They are ordinary `std` code: `MapIter`, `FilterIter`, `TakeIter`, and
 `SkipIter` are generic structs whose `next` calls the source's `next` and the closure.
 
-`it.sum()` is compiler-known: on an iterator of integers it synthesizes the loop that adds every item, and it is
-E0141 on an iterator that yields anything else. `sum` also accepts integer views (`&T` where `T` is an integer).
+`it.sum()` and `it.product()` are compiler-known: on an iterator of integers or floats they synthesize the loop that
+adds or multiplies every item, and they are E0141 on an iterator that yields anything else. They also accept views of
+numbers (`&T` where `T` is an integer or a float).
 
 **IT10 Eager `List` methods.** On a `List<T>` receiver, these names resolve to the private generic functions in
 `std` that borrow the list, pass the closure a view of each element, and return owned results:

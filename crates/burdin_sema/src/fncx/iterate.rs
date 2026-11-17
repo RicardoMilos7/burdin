@@ -39,17 +39,25 @@ impl FnCx<'_> {
             }
             return Some(mk(tir::ExprKind::Method(Method::IterNext, vec![recv]), Ty::Option(Box::new(item)), span));
         }
-        if name.name == "sum"
+        if (name.name == "sum" || name.name == "product")
             && args.is_empty()
             && let Some(item) = self.globals.iterator_item(&recv.ty, &self.bounds)
         {
-            return Some(self.iterator_sum(recv, &item, span));
+            return Some(self.iterator_sum(recv, &item, name.name == "product", span));
         }
         // The eager `List` methods are generic functions in `std`; the receiver is their first argument.
         if let Ty::List(_, _) = &recv_ty
             && let Some(g) = self.globals.eager_list_fn(&name.name)
         {
             return Some(self.generic_call_with_receiver(g, recv, &name.name, args, span));
+        }
+        // `min`, `max`, `eq`, and `cmp` need `T: Ord` (or `Eq`) on the interface's own item type, so they are
+        // functions in `std` that take the iterator; the compiler hands them the item type.
+        if let Some(item) = self.globals.iterator_item(&recv_ty, &self.bounds)
+            && let Some(g) = self.globals.iterator_item_fn(&name.name)
+        {
+            let seed = [("T".to_string(), item)];
+            return Some(self.generic_call_with_receiver_seeded(g, recv, &name.name, args, &seed, span));
         }
         // An iterator has no impl block for the interface's defaults, whether it is built in or a user type, so
         // the template is instantiated on demand. Registering the defaults on every instance instead would
@@ -78,17 +86,19 @@ impl FnCx<'_> {
         Some(error_expr(span))
     }
 
-    /// `it.sum()`: the sum of an iterator of integers, written as an ordinary loop by the compiler because
-    /// stage 1 has no arithmetic bound to express it in `std`.
-    fn iterator_sum(&mut self, recv: tir::Expr, item: &Ty, span: Span) -> tir::Expr {
+    /// `it.sum()` and `it.product()`: the sum or product of an iterator of integers or floats, written as an
+    /// ordinary loop by the compiler because stage 1 has no arithmetic bound to express it in `std`. The loop uses
+    /// the ordinary `+` or `*`, so an integer overflow behaves as it does there (spec/iterators.md, IT9).
+    fn iterator_sum(&mut self, recv: tir::Expr, item: &Ty, product: bool, span: Span) -> tir::Expr {
+        let method = if product { "product" } else { "sum" };
         let int = match item {
-            Ty::Int(i) => Ty::Int(*i),
-            Ty::Ref { inner, .. } if matches!(**inner, Ty::Int(_)) => (**inner).clone(),
+            Ty::Int(_) | Ty::Float(_) => item.clone(),
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Int(_) | Ty::Float(_)) => (**inner).clone(),
             _ => {
                 self.diags.error(
                     Code::BOUND_NOT_SATISFIED,
                     span,
-                    format!("`sum` needs an iterator of integers, but this one yields `{item}`"),
+                    format!("`{method}` needs an iterator of integers or floats, but this one yields `{item}`"),
                 );
                 return error_expr(span);
             }
@@ -106,7 +116,7 @@ impl FnCx<'_> {
         };
         let added = mk(
             tir::ExprKind::Binary(
-                BinOp::Add,
+                if product { BinOp::Mul } else { BinOp::Add },
                 Box::new(mk(tir::ExprKind::Local(sum), int.clone(), span)),
                 Box::new(value),
             ),
@@ -129,7 +139,11 @@ impl FnCx<'_> {
             mk(tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)) }), Ty::Unit, span);
         let init = tir::Stmt::Let(Pat::Binding(it, self.bind_mode(&iter_ty, true)), recv, None);
         let zero_mode = self.bind_mode(&int, true);
-        let zero = tir::Stmt::Let(Pat::Binding(sum, zero_mode), mk(tir::ExprKind::Int(0), int.clone(), span), None);
+        let start = match (&int, product) {
+            (Ty::Float(_), _) => tir::ExprKind::Float(if product { 1.0 } else { 0.0 }),
+            (_, _) => tir::ExprKind::Int(i128::from(product)),
+        };
+        let zero = tir::Stmt::Let(Pat::Binding(sum, zero_mode), mk(start, int.clone(), span), None);
         let block = tir::Block {
             stmts: vec![init, zero, tir::Stmt::Expr(looped)],
             tail: Some(Box::new(mk(tir::ExprKind::Local(sum), int.clone(), span))),

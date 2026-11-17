@@ -448,6 +448,19 @@ impl Globals {
         })
     }
 
+    /// The generic function in `std` behind an iterator consumer that needs a bound on the item type (`min`, `max`,
+    /// `eq`, `cmp`), which an interface default method cannot state.
+    pub(crate) fn iterator_item_fn(&self, name: &str) -> Option<usize> {
+        if !matches!(name, "min" | "max" | "eq" | "cmp") {
+            return None;
+        }
+        let name = format!("__iter_{name}");
+        self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
+            Global::Generic(g) => Some(g),
+            _ => None,
+        })
+    }
+
     /// The first package-private struct or enum a type mentions, for the public-signature rule (E0150).
     pub(crate) fn private_adt(&self, ty: &Ty) -> Option<String> {
         match ty {

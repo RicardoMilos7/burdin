@@ -1,0 +1,47 @@
+//@ run
+//> drop 2
+//> drop 3
+//> kept 1
+//> drop 1
+//> drop 4
+//> drop 1
+//> kept 9
+//> drop 9
+
+// `min` and `max` consume the iterator: every item that does not win is dropped as soon as it loses, and the winner
+// is handed to the caller, which drops it at the end of its scope.
+
+struct Item {
+    value: i32
+}
+
+Item: Drop {
+    fn drop(mut self) {
+        println("drop {self.value}")
+    }
+}
+
+Item: PartialOrd {
+    fn lt(self, other: Item): bool {
+        self.value < other.value
+    }
+}
+
+fn items(a: i32, b: i32, c: i32): List<Item> {
+    let mut xs = List<Item>.new()
+    xs.push(Item { value: a })
+    xs.push(Item { value: b })
+    xs.push(Item { value: c })
+    xs
+}
+
+fn main() {
+    match items(1, 2, 3).into_iter().min() {
+        Some(m) => println("kept {m.value}"),
+        None => println("none"),
+    }
+    match items(9, 4, 1).into_iter().max() {
+        Some(m) => println("kept {m.value}"),
+        None => println("none"),
+    }
+}
