@@ -317,6 +317,27 @@ mod tests {
     }
 
     #[test]
+    fn for_loops_take_an_optional_mut_marker() {
+        // `for x in mut xs` is the mutable form (spec/iterators.md, IT15); the marker is part of the header, so the
+        // iterated expression is still just `xs` (and a struct literal is not allowed there).
+        let (file, out) = render("fn f() {\nfor x in mut xs { }\nfor y in xs { }\nfor z in mut a.b { }\n}\n");
+        assert_eq!(out, "");
+        let Some(Item::Fn(f)) = file.items.first() else { panic!("expected a function") };
+        let marks: Vec<bool> = f
+            .body
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::Expr(Expr { kind: ExprKind::For { mutable, .. }, .. }) => Some(*mutable),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(marks, [true, false, true]);
+        let Stmt::Expr(Expr { kind: ExprKind::For { iter, .. }, .. }) = &f.body.stmts[0] else { panic!() };
+        assert!(matches!(&iter.kind, ExprKind::Name { .. }), "{:?}", iter.kind);
+    }
+
+    #[test]
     fn extension_declarations_parse() {
         // `fn Type.name(...)`: the receiver is the type path before the last dot, including its type
         // arguments, and a `<...>` after the method name is the method's own generic list (spec/extensions.md).

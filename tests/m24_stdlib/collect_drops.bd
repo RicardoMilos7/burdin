@@ -1,0 +1,45 @@
+//@ run
+//> drop 7
+//> map has 1
+//> drop 8
+//> drop 10
+//> drop 20
+//> after error
+//> three
+//> drop 30
+//> drop 40
+
+// Collecting moves every item into the target exactly once. A pair whose key is already in a map drops the value it
+// replaces, and a `Result` collection that stops at an error drops what it gathered and never asks for the items
+// after the error (IT18, IT19).
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn token(id: i32): Result<Token, String> {
+    if id == 3 {
+        return Err(String.from("three"))
+    }
+    Ok(Token { id: id * 10 })
+}
+
+fn main() {
+    {
+        let map: Map<i32, Token> = [7, 8].into_iter().map(|n| (1, Token { id: n })).collect()
+        println("map has {map.len()}")
+    }
+    let failed: Result<List<Token>, String> = [1, 2, 3, 4].into_iter().map(|n| token(n)).collect()
+    println("after error")
+    match failed {
+        Ok(_) => println("unexpected"),
+        Err(message) => println("{message}"),
+    }
+    let kept: List<Token> = [3, 4].into_iter().map(|n| Token { id: n * 10 }).collect()
+}

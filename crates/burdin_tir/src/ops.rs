@@ -1,6 +1,6 @@
 //! Ids, built-in functions and methods, and operators.
 
-use crate::ty::IntTy;
+use crate::ty::{FloatTy, IntTy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FuncId(pub usize);
@@ -55,12 +55,33 @@ pub enum Builtin {
     ReadToString,
     /// `write_file(path, text)`: writes the bytes.
     WriteFile,
+    /// `__file_open(path, read, write, append, truncate, create, create_new)`: opens a file and returns its
+    /// descriptor (`spec/stdlib.md`, "Files and file handles").
+    FileOpen,
+    /// `__file_read(fd, buf, max)`: appends up to `max` bytes of the file to `buf` and returns how many.
+    FileRead,
+    /// `__file_write(fd, data)`: writes a prefix of `data` and returns how many bytes it took.
+    FileWrite,
+    /// `__file_seek(fd, offset, whence)`: moves the position and returns it (`whence` is 0, 1, or 2).
+    FileSeek,
+    /// `__file_sync(fd)`: makes the file's contents durable.
+    FileSync,
+    /// `__file_set_len(fd, size)`: truncates the file, or extends it with zeros.
+    FileSetLen,
+    /// `__file_close(fd)`: closes the descriptor.
+    FileClose,
+    /// `__file_error()`: the OS code of the last failed file operation (`spec/errors.md`, ERR11).
+    FileError,
     /// `__stdout_write(text)`: appends to the standard-output buffer.
     StdoutWrite,
     /// `__stdout_write_line(text)`: appends `text` and a newline to the standard-output buffer.
     StdoutWriteLine,
     /// `__stdout_flush()`: writes the standard-output buffer now.
     StdoutFlush,
+    /// `__stdout_write_bytes(data)`: appends the bytes of a `[u8]` to the standard-output buffer.
+    StdoutWriteBytes,
+    /// `__stderr_write_bytes(data)`: writes the bytes of a `[u8]` to standard error, unbuffered.
+    StderrWriteBytes,
     /// `__stderr_write(text)`: writes `text` to standard error, unbuffered.
     StderrWrite,
     /// `__stderr_write_line(text)`: writes `text` and a newline to standard error, unbuffered.
@@ -71,6 +92,13 @@ pub enum Builtin {
     StdinReadLine,
     /// `__stdin_read_to_string()`: the rest of standard input as a `String`.
     StdinReadToString,
+    /// `__stdin_avail()`: how many bytes of standard input are buffered, reading a block first when none are; 0 is
+    /// the end of the input and -1 a read error.
+    StdinAvail,
+    /// `__stdin_next_byte()`: takes the next buffered byte of standard input (only after `__stdin_avail` was positive).
+    StdinNextByte,
+    /// `__stdin_error()`: the OS code of the last standard-input read error (`spec/errors.md`, ERR11).
+    StdinError,
     /// `__read_dir(path)`: the names of the entries in a directory (`spec/stdlib.md`, issue #411).
     ReadDir,
     /// `__create_dir(path)`: creates one directory.
@@ -85,8 +113,36 @@ pub enum Builtin {
     Metadata,
     /// `__canonicalize(path)`: the absolute, normalized path.
     Canonicalize,
+    /// `__io_kind(code)`: the portable `IoErrorKind` of an operating system error code (`spec/errors.md`,
+    /// ERR11). The compiler knows the target's table (`ioerror`).
+    IoErrorKind,
+    /// `__clock(kind)`: nanoseconds from the real-time clock (kind 0, since the Unix epoch) or the monotonic clock
+    /// (any other kind, from an unspecified start) (`spec/stdlib.md`, issue #195).
+    Clock,
+    /// `__entropy()`: 64 random bits from the operating system.
+    Entropy,
+    /// `__sleep(nanos)`: suspends the thread for about that long.
+    Sleep,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
+    /// `__env_get(name)`: the raw bytes of an environment variable, or `None` when it is unset (or, on
+    /// Windows, not valid Unicode). `spec/stdlib.md`, "Environment variables and the working directory".
+    EnvGet,
+    /// `__env_set(name, value)`: sets a variable from bytes. The result is `0` on success, `1` for an invalid
+    /// name, `2` for an invalid value, and `3` for an operating-system failure.
+    EnvSet,
+    /// `__env_set_bytes(name, value)`: the same with a byte view instead of a `str`.
+    EnvSetBytes,
+    /// `__env_remove(name)`: removes a variable. The result is `0` on success, `1` for an invalid name, and `3`
+    /// for an operating-system failure.
+    EnvRemove,
+    /// `__current_dir()`: the raw bytes of the working directory, or `None` when it cannot be read.
+    CurrentDir,
+    /// `__set_current_dir(path)`: changes the working directory. The result is `0` on success, `1` for an
+    /// invalid path, and `3` for an operating-system failure.
+    SetCurrentDir,
+    /// `__set_current_dir_bytes(path)`: the same with a byte view instead of a `str`.
+    SetCurrentDirBytes,
     /// `process.exit(code)`: ends the process.
     ProcessExit,
     /// `assert(condition)`: panics when it is false.
@@ -97,6 +153,29 @@ pub enum Builtin {
     Unreachable,
     /// `process.run(command)`: runs a command through the system shell.
     RunCommand,
+    /// `__env_list()`: every environment entry as `NAME=VALUE`, in the order the system reports them.
+    EnvList,
+    /// `__process_spawn(program, args, env, cwd, command_line, stdin, stdout, stderr)`: starts a child without a
+    /// shell. The tuple is `(pid, process, stdin, stdout, stderr)`; `process` is the Windows process handle (0 on
+    /// Unix) and each pipe handle is 0 when the stream is not piped. `command_line` is the quoted Windows command
+    /// line and is ignored on Unix.
+    ProcessSpawn,
+    /// `__process_wait(pid, process)`: waits for the child. The result is the exit code, `-1` for a failure to
+    /// wait, or `-(signal + 1)` when a signal ended the child.
+    ProcessWait,
+    /// `__process_close(process)`: releases the Windows process handle. It does nothing on Unix.
+    ProcessClose,
+    /// `__pipe_read_to_string(handle)`: every byte left in the pipe.
+    PipeReadToString,
+    /// `__pipe_read_line(handle)`: one line without its terminator, or `None` at the end of the pipe.
+    PipeReadLine,
+    /// `__pipe_read_both(first, second)`: both pipes read to the end, in one pass, so a child writing a lot to one
+    /// of them cannot block the other.
+    PipeReadBoth,
+    /// `__pipe_write(handle, text)`: writes every byte. The result is `0` on success and `-1` on failure.
+    PipeWrite,
+    /// `__pipe_close(handle)`: closes a pipe end. It is a no-op for handle 0.
+    PipeClose,
     /// `__float_str(v, prec, single)`: the text of a float (see the runtime's `f64_to_string`).
     FloatStr,
     /// `mem.swap(a, b)`: exchanges two places.
@@ -110,6 +189,47 @@ pub enum Builtin {
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.
     TargetArch,
+    /// `f64.from_bits(bits)` and `f32.from_bits(bits)`: the value with those bits (`spec/stdlib.md`, "Float
+    /// functions").
+    FloatFromBits(FloatTy),
+}
+
+/// A floating-point function the compiler provides on `f64` and `f32` (`spec/stdlib.md`, "Float functions").
+/// The receiver's type picks the precision: an exactly rounded operation lowers to an LLVM intrinsic, and one
+/// without an intrinsic calls the C math library. The functions `std` can write in Burdin are extension methods
+/// there instead (`min`, `max`, `clamp`, `signum`, and the predicates).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloatOp {
+    Abs,
+    Sqrt,
+    Cbrt,
+    Powi,
+    Powf,
+    Exp,
+    Exp2,
+    Ln,
+    Log2,
+    Log10,
+    Floor,
+    Ceil,
+    Round,
+    RoundTiesEven,
+    Trunc,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    Sinh,
+    Cosh,
+    Tanh,
+    Hypot,
+    MulAdd,
+    Copysign,
+    /// `to_bits(self)`: the bit pattern as an unsigned integer of the same width.
+    ToBits,
 }
 
 /// Built-in methods of the primitive types.
@@ -125,6 +245,9 @@ pub enum Method {
     Min,
     Max,
     Abs,
+    /// An `f64` or `f32` function (`spec/stdlib.md`, "Float functions"); the receiver's type picks the
+    /// precision.
+    Float(FloatOp),
     /// `String.push_str(str)`: appends bytes, growing the buffer.
     PushStr,
     /// `String.push(char)`: appends one UTF-8 character.
@@ -197,10 +320,15 @@ pub enum Method {
     IsNull,
     /// `xs.iter()`: the borrowing iterator of a collection, a range, or `Chars` (IT4).
     Iter,
+    /// `xs.iter_mut()`: the mutable iterator of a `List`, an array, or a `Map` (IT15). It yields `&mut T` and borrows
+    /// the collection exclusively.
+    IterMut,
     /// `xs.into_iter()`: the owning iterator of a `List`, a `Map`, an array, a range, or `Chars` (IT5).
     IntoIter,
     /// `it.next()`: advances an iterator and returns its next item (IT6).
     IterNext,
+    /// `it.next_back()`: takes the last item of a double-ended built-in iterator (IT14).
+    IterNextBack,
     /// `x.clone()`: a deep copy derived by the compiler.
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.
@@ -275,7 +403,9 @@ impl Method {
                 | Method::MapEntry
                 | Method::MapGetMut
                 | Method::MapRemove
+                | Method::IterMut
                 | Method::IterNext
+                | Method::IterNextBack
                 | Method::SliceSwap
                 | Method::SliceFill
                 | Method::SliceCopyFromSlice
@@ -297,7 +427,9 @@ impl Method {
                 | Method::MapEntryOrInsertWith
                 | Method::Chars
                 | Method::Iter
+                | Method::IterMut
                 | Method::IterNext
+                | Method::IterNextBack
                 | Method::SharedGet
                 | Method::AsSlice
                 | Method::SliceGet
@@ -356,6 +488,7 @@ mod tests {
             Method::MapEntry,
             Method::MapGetMut,
             Method::MapRemove,
+            Method::IterMut,
         ] {
             assert!(method.mutates_receiver(), "{method:?}");
         }
@@ -369,6 +502,7 @@ mod tests {
             Method::MapEntryOrInsert,
             Method::MapEntryOrInsertWith,
             Method::Chars,
+            Method::IterMut,
         ] {
             assert!(method.result_borrows_receiver(), "{method:?}");
         }

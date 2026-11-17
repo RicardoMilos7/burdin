@@ -1,0 +1,69 @@
+//@ run
+//> fm 0
+//> fm 0
+//> fm 1
+//> fm 0
+//> fm 1
+//> fm 2
+//> cd 3
+//> cd 2
+//> cd 1
+//> cd 2
+//> cd 1
+//> open 1
+//> Some(0)
+//> open 2
+//> Some(0)
+//> Some(1)
+//> open 3
+//> Some(0)
+//> 0
+//> 10
+//> 4
+
+// `flat_map` maps each item to an iterator and yields the items of those iterators one after another. The closure
+// returns an owning iterator; the next one is created only when the previous one runs out.
+
+struct Countdown {
+    from: i32
+}
+
+Countdown: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.from <= 0 {
+            return None
+        }
+        let v = self.from
+        self.from = v - 1
+        Some(v)
+    }
+}
+
+fn main() {
+    // A range of ranges.
+    for x in (0..4).iter().flat_map(|n| (0..n).iter()) {
+        println("fm {x}")
+    }
+    // A list source and a user iterator as the inner iterator.
+    let mut xs = List<i32>.new()
+    for x in [3, 0, 2] {
+        xs.push(x)
+    }
+    for x in xs.iter().flat_map(|n| Countdown { from: n }) {
+        println("cd {x}")
+    }
+    // The inner iterator is created lazily, one item at a time.
+    let mut it = (1..4).iter().flat_map(|n| {
+        println("open {n}")
+        (0..n).iter()
+    })
+    println("{it.next():?}")
+    println("{it.next():?}")
+    println("{it.next():?}")
+    println("{it.next():?}")
+    // A source that yields nothing, and the adapters and consumers after `flat_map`.
+    let empty = List<i32>.new()
+    println("{empty.iter().flat_map(|n| (0..n).iter()).count()}")
+    println("{(0..5).iter().flat_map(|n| (0..n).iter()).sum()}")
+    println("{(0..5).iter().flat_map(|n| (0..n).iter()).take(4).count()}")
+}

@@ -243,7 +243,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0262 | Invalid generated modules: a generated path is not a module name, a generated module repeats a source module's name, or the output directory cannot be read |
 | E0270 | An allocator-aware container whose allocator type does not implement `Allocator` |
 | E0271 | Invalid default type parameter: a parameter without a default after one with a default, a const parameter's default, or a default on a declaration that takes none (a function, an interface, or a type alias) |
-| E0272 | A container with a stored allocator created with `new`, which has no allocator value to store; it is made with `new_in` |
+| E0272 | A container with a stored allocator created with `new`, `from_iter`, or `from`, which have no allocator value to store; it is made with `new_in` |
 
 ### Codes without a compile-fail test
 
@@ -286,7 +286,8 @@ executable form. The design document leaves them open; where a rule says "deviat
    afterwards, and gives a read-only element place usable like a value. Maps use `for (k, v) in map` (also a borrow).
    `for c in s.chars()`. Mutating the collection in the body is E0111. Ranges are ordinary values of
    `Range<T>`/`RangeInclusive<T>` (issue #53), iterated by `for i in r` without borrowing `r`.
-   `spec/memory-rules.md` IT1-IT3.
+   `spec/memory-rules.md` IT1-IT3. `for x in mut xs` (issue #709) borrows exclusively and yields `&mut T`;
+   `spec/memory-rules.md` IT15.
 7. **Library names and signatures.** The surface is written down with signatures in `spec/stdlib.md`: numeric
    methods, `String` and `str` methods and slicing, `List`, `Map`, `Heap`, `Option`/`Result`, file, process, and
    environment functions, the C bridge names, and `unreachable()`. Unknown names are E0002 and wrong arities E0004.

@@ -97,6 +97,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::MapIter(k, v) => {
                 format!("MapIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
+            Ty::IterMut(inner) => format!("IterMut<{}>", self.structural_key_in(inner, seen)),
+            Ty::MapIterMut(k, v) => {
+                format!("MapIterMut<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
+            }
             Ty::MapIntoIter(k, v, _) => {
                 format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
@@ -238,6 +242,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | Ty::CPtr(_)
             | Ty::Chars
             | Ty::MapIter(..)
+            | Ty::IterMut(_)
+            | Ty::MapIterMut(..)
             | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..) => Ok(()),
@@ -607,6 +613,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
+            // A range iterator is plain integers and a flag.
+            Ty::RangeIter(..) => self.copy_bits(dst, src, ty),
             Ty::String => {
                 self.builder.build_call(self.rt.string_clone, &[dst.into(), src.into()], "").map_err(llvm_err)?;
                 Ok(())

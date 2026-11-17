@@ -209,7 +209,21 @@ returned expression static (RT4).
 **RT2** An origin must be a read-only, `mut`, or reference/view-typed parameter. An `own` parameter, a local, or a temporary is dropped at return,
 so a result derived from one is E0122, reported at the returned expression.
 
-**RT3** Two or more origin parameters is E0121, reported at the function signature.
+**RT3** Two or more origin parameters is E0121, reported at the function signature, unless the result is a tuple or an
+instance of a struct or enum (RT3a): a result that is a view (`&T`, `&mut T`, `str`, `[T]`) or a built-in wrapper of one
+(`Option<&T>`, `Result`, an array, a list) derives from exactly one parameter.
+
+**RT3a Several origins in an aggregate.** A result that is a tuple, or an instance of a generic struct or enum, that
+holds views (`(&i32, &i32)`, `Pair<&i32, &i32>`, a chain such as `ZipIter<[i32], i32, [i32], i32>`) may derive from several
+parameters. The signature's return origin is then the set of those parameters (`Signature.ret_origins`), a call's
+result takes the union of the storage of the matching arguments, and the borrow checker keeps every one of them
+borrowed while the result is live (RF5): writing or moving any source is E0111 or E0100. The reason for the
+asymmetry with RT3 is that a result that is a single view would force a caller to guess which source it came from,
+while an aggregate that holds several views is exactly their union. An origin that is a local or a temporary is still
+E0122 (RT2).
+Tests: `m06_conventions/return_aggregate_two_sources` (run); errors: `return_aggregate_two_sources_borrow`,
+`return_aggregate_first_source_borrow` (E0111), `return_option_ref_two_sources` (E0121);
+`m24_stdlib/iter_zip`, `iter_chain` (the chains), `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`.
 
 **RT4 Static.** String literals are static views. A literal can be returned from any function, whatever its parameters,
 in any returned expression: a tail expression, `return`, a block, an `if` branch, or a `match` arm. A `const` of type
@@ -249,6 +263,15 @@ yields the integers of the range. A range is an ordinary `Copy` value, so `for i
 evaluates `r` once and does not borrow it.
 Tests: `m09_stdlib/for_borrows_list`, `for_borrow_forms`, `range_forms`; errors: `for_mutate_array`, `for_mutate_map`
 (E0111), `for_binding_readonly` (E0005).
+
+**IT15 Mutable iteration.** `for pattern in mut C { ... }` calls `C.iter_mut()` (`mut` receiver, so `C` must be a
+mutable place, E0113) and walks the iterator, whose items are `&mut T` (`iterators.md`, IT15). The call borrows `C`
+exclusively from the start of the loop until the last use of the iterator or of a view derived from it: any other
+access to `C` or a place overlapping it inside the body, a `push`, a read, or another loop over `C`, is E0111 (RF3). A
+view of an element copied into a local that outlives the loop (`held = x`) holds the loan until its last use. Keys
+of a `Map` are `&K`: writing through one is E0005. A `for` without `mut` is unchanged (IT1, IT2).
+Tests: `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`; errors: `iter_mut_mutates_collection`,
+`iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable` (E0113), `iter_mut_map_key_readonly` (E0005).
 
 **IT4-IT12 The protocol.** Stage 1 adds `Iterator<T>` and `Iterable<T>` in `std`, compiler-known `iter`, `into_iter`,
 and `next` for arrays, slices, `List`, `Map`, `Chars`, and ranges, user-defined `for` loops, the lazy adapters, and
@@ -440,5 +463,5 @@ Tests: `tests/m12_closures/`.
 
 E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2, MU4 · E0100 MV2, MV5, MV8, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
 E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7 · E0113 CV2, MU3, MU4, CL6 · E0114 CV2 · E0115 CV2 ·
-E0120 SC2, CL3 · E0121 RT3 · E0122 RT2 · E0123 RT5, CL3 · E0130 DR8, CP, CL10 · E0141 CL5, CL6 · E0161 US, CL11 ·
+E0120 SC2, CL3 · E0121 RT3, RT3a · E0122 RT2 · E0123 RT5, CL3 · E0130 DR8, CP, CL10 · E0141 CL5, CL6 · E0161 US, CL11 ·
 E0171 CL3, CL9, CL11.

@@ -87,6 +87,7 @@ impl FnCx<'_> {
         let per_param: Vec<Option<tir::Expr>> =
             slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
         bound_fn_inference(globals, &info.params, &info.bounds, &pattern.params, &per_param, &mut bindings);
+        bound_iterator_inference(globals, &info.params, &info.bounds, &self.bounds, &mut bindings);
         if let Some(expected) = expect {
             globals.unify(&pattern.ret, expected, &mut bindings);
         }
@@ -165,6 +166,7 @@ impl FnCx<'_> {
         name: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
+        expect: Option<&Ty>,
     ) -> tir::Expr {
         if name.name == "clone" && args.is_empty() && self.param_has(&recv.ty, Bound::Clone) {
             let ty = recv.ty.clone();
@@ -179,6 +181,13 @@ impl FnCx<'_> {
             && let Some(g) = self.globals.std_generic("__ord_cmp")
         {
             return self.generic_call_with_receiver(g, recv, "cmp", args, span);
+        }
+        // `sum`, `product`, `min`, `max`, `eq`, and `cmp` of an iterator are compiler-known or functions in `std`,
+        // not interface methods, so they apply to a type parameter bounded by `Iterator` here.
+        if (matches!(name.name.as_str(), "sum" | "product") || self.globals.iterator_item_fn(&name.name).is_some())
+            && let Some(e) = self.iterator_method(recv.clone(), name, args, span, expect)
+        {
+            return e;
         }
         let found = self.globals.bound_method(&recv.ty, &name.name, &self.bounds);
         let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| sig.has_self) else {
@@ -197,16 +206,60 @@ impl FnCx<'_> {
             );
         }
         let (receiver, rest, ret) = (sig.params[0].clone(), sig.params[1..].to_vec(), sig.ret.clone());
+        let generic = self.globals.bound_method_generic(&recv.ty, &name.name, &self.bounds);
         let receiver_place = Some((&recv, receiver.exclusive));
-        let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
-            return error_expr(span);
+        let checked = if generic {
+            self.generic_bound_args(&name.name, (&rest, ret), args, receiver_place, (span, expect))
+        } else {
+            self.args(&name.name, &rest, args, receiver_place, span).map(|c| (c, ret))
         };
+        let Some((mut checked, ret)) = checked else { return error_expr(span) };
         checked.insert(0, recv);
         mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span)
     }
 
+    /// The arguments of a call to a method that a bound provides and that has type parameters of its own
+    /// (`C.from_iter(it)` with `C: FromIterator<T>`). Inside generic code there is no instance to call, so the
+    /// method's parameters are matched against the argument types and replaced in the result type; the bounds of
+    /// those parameters are checked where the call is instantiated.
+    fn generic_bound_args(
+        &mut self,
+        name: &str,
+        (params, ret): (&[ParamSig], Ty),
+        args: &[ast::Arg],
+        receiver_place: Option<(&tir::Expr, bool)>,
+        (span, expect): (Span, Option<&Ty>),
+    ) -> Option<(Vec<tir::Expr>, Ty)> {
+        if args.len() != params.len() {
+            let _ = self.args(name, params, args, receiver_place, span);
+            return None;
+        }
+        let globals = self.globals;
+        let mut bindings: Vec<(String, Ty)> = Vec::new();
+        let mut written = Vec::new();
+        for (a, p) in args.iter().zip(params) {
+            let e = self.expr_arg(&a.expr, None, p.mut_param);
+            globals.unify(&p.ty, &e.ty, &mut bindings);
+            written.push(e);
+        }
+        if let Some(expected) = expect {
+            globals.unify(&ret, expected, &mut bindings);
+        }
+        let params: Vec<ParamSig> = params.iter().map(|p| globals.subst_param(p, &bindings)).collect();
+        let ret = globals.subst_ty(&ret, &bindings);
+        let checked = self.args_pre(name, &params, args, receiver_place, span, Some(written))?;
+        Some((checked, ret))
+    }
+
     /// `T.function(...)` on a type parameter.
-    pub(super) fn param_assoc_call(&mut self, ty: &Ty, name: &ast::Ident, args: &[ast::Arg], span: Span) -> tir::Expr {
+    pub(super) fn param_assoc_call(
+        &mut self,
+        ty: &Ty,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
         if name.name == "default" && args.is_empty() && self.param_has(ty, Bound::Default) {
             return mk(tir::ExprKind::Call(SYMBOLIC_CALL, Vec::new()), ty.clone(), span);
         }
@@ -226,8 +279,14 @@ impl FnCx<'_> {
                 format!("calling the unsafe function `{}` requires an `unsafe` block", name.name),
             );
         }
-        let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else { return error_expr(span) };
-        mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), sig.ret, span)
+        let generic = self.globals.bound_method_generic(ty, &name.name, &self.bounds);
+        let checked = if generic {
+            self.generic_bound_args(&name.name, (&sig.params, sig.ret), args, None, (span, expect))
+        } else {
+            self.args(&name.name, &sig.params, args, None, span).map(|c| (c, sig.ret))
+        };
+        let Some((checked, ret)) = checked else { return error_expr(span) };
+        mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span)
     }
 
     /// The instance of generic type `g` once the arguments are known: from `bindings`, and from the expected type
@@ -350,7 +409,7 @@ impl FnCx<'_> {
             if ty == Ty::Error {
                 return self.args_then_error(args, span);
             }
-            return self.assoc_call(&ty, name, args, span);
+            return self.assoc_call(&ty, name, args, span, expect);
         };
         let pattern = globals.sigs[f.0].clone();
         if pattern.has_self {
@@ -392,6 +451,9 @@ impl FnCx<'_> {
         }
         let Some(actual) = crate::globals::adt_key(&ty) else { return error_expr(span) };
         let Some(&func) = globals.methods.get(&(actual, name.name.clone())) else { return error_expr(span) };
+        if let Some(info) = globals.method_templates.get(&func).cloned() {
+            return self.generic_assoc_method_call(info, &name.name, args, Some(checked), span, expect);
+        }
         let sig = globals.sigs[func.0].clone();
         let Some(checked) = self.args_pre(&name.name, &sig.params, args, None, span, Some(checked)) else {
             return error_expr(span);
@@ -523,6 +585,7 @@ impl FnCx<'_> {
         name: &str,
         args: &[ast::Arg],
         span: Span,
+        expect: Option<&Ty>,
     ) -> tir::Expr {
         let globals = self.globals;
         let pattern = globals.sigs[info.identity.0].clone();
@@ -567,6 +630,10 @@ impl FnCx<'_> {
         let per_param: Vec<Option<tir::Expr>> =
             slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
         bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &per_param, &mut bindings);
+        if let Some(expected) = expect {
+            globals.unify(&pattern.ret, expected, &mut bindings);
+        }
+        bound_iterator_inference(globals, &params, &bounds, &self.bounds, &mut bindings);
         let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
         let mut targs = Vec::new();
         for pname in &params {
@@ -635,6 +702,108 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Call(f, checked), sig.ret, span)
     }
 
+    /// A call to an associated function that has type parameters of its own (`Set<i32>.from([1, 2])`,
+    /// `Set<i32>.from_iter(it)`): the arguments are checked first, the type arguments come from them and then from the
+    /// expected type, and the call goes to the instance for those arguments. `pre` holds arguments that are already
+    /// checked, one per written argument.
+    pub(super) fn generic_assoc_method_call(
+        &mut self,
+        info: GenericMethod,
+        name: &str,
+        args: &[ast::Arg],
+        pre: Option<Vec<tir::Expr>>,
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
+        let globals = self.globals;
+        let pattern = globals.sigs[info.identity.0].clone();
+        let params = info.params.clone();
+        let bounds = info.bounds.clone();
+        let Some(slots) = self.arg_slots(name, &pattern.params, args, span) else {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            return error_expr(span);
+        };
+        let mut bindings = Vec::new();
+        let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
+        for (i, p) in pattern.params.iter().enumerate() {
+            let Some(ai) = slots[i] else { continue };
+            let hint = generic_hint(globals, &p.ty, &params, &bounds, &bindings);
+            let e = match pre.as_ref().and_then(|pre| pre.get(ai)) {
+                Some(e) => e.clone(),
+                None => self.expr_arg(&args[ai].expr, hint.as_ref(), p.mut_param),
+            };
+            globals.unify(&p.ty, &e.ty, &mut bindings);
+            checked[ai] = Some(e);
+        }
+        let per_param: Vec<Option<tir::Expr>> =
+            slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
+        bound_fn_inference(globals, &params, &bounds, &pattern.params, &per_param, &mut bindings);
+        if let Some(expected) = expect {
+            globals.unify(&pattern.ret, expected, &mut bindings);
+        }
+        bound_iterator_inference(globals, &params, &bounds, &self.bounds, &mut bindings);
+        let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
+        let mut targs = Vec::new();
+        for pname in &params {
+            match bindings.iter().find(|(n, _)| n == pname) {
+                Some((_, t)) => targs.push(t.clone()),
+                None => {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        span,
+                        format!("cannot tell what `{pname}` stands for in this call to `{name}`"),
+                    );
+                    return error_expr(span);
+                }
+            }
+        }
+        if targs.contains(&Ty::Error) {
+            return error_expr(span);
+        }
+        let mut subst = bindings.clone();
+        subst.extend(params.iter().cloned().zip(targs.iter().cloned()));
+        let mut ok = true;
+        for (k, t) in targs.iter().enumerate() {
+            for b in &bounds[k] {
+                if !globals.satisfies_with(t, b, &self.bounds, &subst) {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!(
+                            "`{t}` does not implement `{}`, which `{}` of `{name}` requires",
+                            globals.bound_name(b),
+                            params[k]
+                        ),
+                    );
+                    ok = false;
+                }
+            }
+        }
+        if !ok {
+            return error_expr(span);
+        }
+        let symbolic = targs.iter().any(|t| globals.ty_has_param(t));
+        if symbolic {
+            let ps: Vec<ParamSig> = pattern.params.iter().map(|p| globals.subst_param(p, &subst)).collect();
+            let ret = globals.subst_ty(&pattern.ret, &subst);
+            let Some(checked) = self.args_pre(name, &ps, args, None, span, Some(written)) else {
+                return error_expr(span);
+            };
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span);
+        }
+        let Some(&f) = globals.method_instances.get(&(info.template, targs.clone())) else {
+            globals.requests.borrow_mut().push(Request::Method(info.template, targs));
+            return error_expr(span);
+        };
+        let sig = globals.sigs[f.0].clone();
+        let Some(checked) = self.args_pre(name, &sig.params, args, None, span, Some(written)) else {
+            return error_expr(span);
+        };
+        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+    }
+
     /// A call to a generic function whose first argument is an already-checked receiver (`xs.map(f)` calls the
     /// eager `List` helper `__list_map(xs, f)`).
     pub(super) fn generic_call_with_receiver(
@@ -643,6 +812,21 @@ impl FnCx<'_> {
         recv: tir::Expr,
         name: &str,
         args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        self.generic_call_with_receiver_seeded(g, recv, name, args, &[], span)
+    }
+
+    /// Like [`Self::generic_call_with_receiver`], with type arguments the caller already knows. A parameter that
+    /// appears only in a bound (`I: Iterator<T>`) cannot be inferred from the arguments, so the iterator
+    /// helpers pass the item type here.
+    pub(super) fn generic_call_with_receiver_seeded(
+        &mut self,
+        g: usize,
+        recv: tir::Expr,
+        name: &str,
+        args: &[ast::Arg],
+        seed: &[(String, Ty)],
         span: Span,
     ) -> tir::Expr {
         let globals = self.globals;
@@ -683,7 +867,7 @@ impl FnCx<'_> {
                 format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
             );
         }
-        let mut bindings = Vec::new();
+        let mut bindings = seed.to_vec();
         globals.unify(&receiver.ty, &recv.ty, &mut bindings);
         let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
         for (i, p) in pattern.params[1..].iter().enumerate() {
@@ -696,6 +880,7 @@ impl FnCx<'_> {
         let per_param: Vec<Option<tir::Expr>> =
             slots.iter().map(|slot| slot.and_then(|ai| checked[ai].clone())).collect();
         bound_fn_inference(globals, &params, &bounds, &pattern.params[1..], &per_param, &mut bindings);
+        bound_iterator_inference(globals, &params, &bounds, &self.bounds, &mut bindings);
         let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
         let mut targs = Vec::new();
         for pname in &params {
@@ -740,7 +925,7 @@ impl FnCx<'_> {
         let symbolic = targs.iter().any(|t| globals.ty_has_param(t))
             || globals.ty_has_param(&recv.ty)
             || globals.ty_has_param(&globals.subst_ty(&pattern.ret, &subst));
-        let receiver_place = Some((&recv, receiver.exclusive));
+        let receiver_place = Some((&recv, receiver.exclusive && !receiver.own));
         if symbolic {
             let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);
@@ -836,5 +1021,93 @@ fn bound_fn_inference(
             }
             globals.unify(&want.ret, &actual.ret, bindings);
         }
+    }
+}
+
+/// Infers the type parameters that appear only in an `Iterator` bound (`fn zip<U, J: Iterator<U>>`): once the
+/// parameter that owns the bound (`J`) is bound to a concrete type, the item type of that type's `Iterator`
+/// implementation (built in or declared) fixes the parameters inside the bound (`U`). A bound that names a
+/// parameter already bound is left to the ordinary bound check.
+fn bound_iterator_inference(
+    globals: &crate::globals::Globals,
+    params: &[String],
+    bounds: &[Vec<Bound>],
+    env: &crate::generics::Env,
+    bindings: &mut Vec<(String, Ty)>,
+) {
+    let Some(iterator) = globals.iterator_iface else { return };
+    // One bound can bind the owner of the next (`flatten`: `I: Iterator<J>` binds `J`, then `J: Iterator<U>` binds
+    // `U`), so go around until a pass binds nothing new.
+    for _ in 0..=params.len() {
+        let before = bindings.len();
+        for (k, pname) in params.iter().enumerate() {
+            let Some(owner) = bindings.iter().find(|(n, _)| n == pname).map(|(_, t)| t.clone()) else { continue };
+            let Some(bs) = bounds.get(k) else { continue };
+            for b in bs {
+                let Bound::User(iface, args) = b else { continue };
+                if *iface != iterator || args.len() != 1 {
+                    continue;
+                }
+                let Some(item) = globals.iterator_item(&owner, env) else { continue };
+                globals.unify(&args[0], &item, bindings);
+            }
+        }
+        if bindings.len() == before {
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generics::param_ty;
+    use burdin_tir::IntTy;
+
+    fn i32_() -> Ty {
+        Ty::Int(IntTy::I32)
+    }
+
+    fn globals() -> crate::globals::Globals {
+        crate::globals::Globals { iterator_iface: Some(0), ..Default::default() }
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn an_iterator_bound_binds_the_item_type() {
+        // `fn zip<U, J: Iterator<U>>` called with a slice for `J`: `U` is the slice's item.
+        let params = names(&["U", "J"]);
+        let bounds = vec![Vec::new(), vec![Bound::User(0, vec![param_ty("U")])]];
+        let mut bindings = vec![("J".to_string(), Ty::Slice(Box::new(i32_())))];
+        bound_iterator_inference(&globals(), &params, &bounds, &[], &mut bindings);
+        assert_eq!(bindings.iter().find(|(n, _)| n == "U").map(|(_, t)| t.clone()), Some(i32_()));
+    }
+
+    #[test]
+    fn one_bound_can_feed_the_next() {
+        // `fn flatten<I: Iterator<J>, J: Iterator<U>, U>`: `I` fixes `J`, and then `J` fixes `U`, even though `J` is
+        // listed before `I`.
+        let params = names(&["J", "I", "U"]);
+        let bounds =
+            vec![vec![Bound::User(0, vec![param_ty("U")])], vec![Bound::User(0, vec![param_ty("J")])], Vec::new()];
+        let items = Ty::Slice(Box::new(Ty::Slice(Box::new(Ty::Char))));
+        let mut bindings = vec![("I".to_string(), items)];
+        bound_iterator_inference(&globals(), &params, &bounds, &[], &mut bindings);
+        let found = |name: &str| bindings.iter().find(|(n, _)| n == name).map(|(_, t)| t.clone());
+        // A slice is `Copy`, so a slice of slices yields the inner slice itself, and that is `J`.
+        assert!(found("J").is_some());
+        assert_eq!(found("U"), Some(Ty::Char));
+    }
+
+    #[test]
+    fn a_bound_on_something_that_is_not_an_iterator_binds_nothing() {
+        let params = names(&["U", "J"]);
+        let bounds = vec![Vec::new(), vec![Bound::User(0, vec![param_ty("U")])]];
+        let mut bindings = vec![("J".to_string(), i32_())];
+        bound_iterator_inference(&globals(), &params, &bounds, &[], &mut bindings);
+        assert!(bindings.iter().all(|(n, _)| n != "U"), "an integer has no items");
     }
 }

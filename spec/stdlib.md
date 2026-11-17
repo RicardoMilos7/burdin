@@ -32,52 +32,152 @@ stderr correct before an abnormal end.
 ## Streams (issue #410)
 
 The three standard streams also have explicit handles. A handle is a zero-sized value, so passing or copying one
-costs nothing, and every handle to a stream shares the same runtime buffer.
+costs nothing, and every handle to a stream shares the same runtime buffer. The handles implement the reader and
+writer interfaces of "Readers and writers" below, so any code written against `Read`, `Write`, or `BufRead` accepts a
+stream, and `BufReader`, `BufWriter`, and `copy` work on them.
 
 ```
 fn stdout(): Stdout
 fn stderr(): Stderr
 fn stdin(): Stdin
 
-Stdout {
-    fn write(self, text: str)
-    fn write_line(self, text: str)
-    fn flush(self)
-    fn is_terminal(self): bool
-}
+Stdout: Write { }                    // write(mut self, data: [u8]), flush(mut self), and the Write defaults
+Stderr: Write { }
+Stdin: Read, BufRead { }             // read(mut self, ...), read_until(mut self, ...), read_line, read_to_string
 
-Stderr {
-    fn write(self, text: str)
-    fn write_line(self, text: str)
-    fn flush(self)                  // does nothing: standard error is unbuffered
-    fn is_terminal(self): bool
-}
-
-Stdin {
-    fn read_line(self): Result<Option<String>, IoError>
-    fn read_to_string(self): Result<String, IoError>
-    fn is_terminal(self): bool
-}
+Stdout { fn is_terminal(self): bool }
+Stderr { fn is_terminal(self): bool }
+Stdin  { fn is_terminal(self): bool }
 ```
 
-- `Stdout.write` appends to the buffer `print` and `println` use, so the bytes of the handle and of `print` stay in
-  the order the program wrote them. `write_line` appends one `\n`; on a terminal the buffer is flushed after that
-  newline. `flush` writes the buffered bytes now, including what `print` wrote. The other flush points are the ones
-  in "Output" above.
-- `Stderr.write` and `Stderr.write_line` are unbuffered: the bytes reach the operating system during the call, so
-  they are already out when a later panic message is written. `Stderr.flush` exists so the two output handles are
-  used alike and does nothing.
-- `Stdin.read_line` returns one line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair.
-  `Ok(None)` is the end of the input, and the last line may have no terminator. `read_to_string` returns
-  everything left, as the empty `String` at the end. The runtime reads standard input a block at a time and keeps
-  the unread bytes for the next call. As with files, the bytes are not checked for UTF-8.
-- A read error is `IoError.Read` with the path `<stdin>` (`errors.md`, ERR10). A write error is ignored, exactly
-  as `print` ignores one.
+- `Stdout.write` appends all of `data` to the buffer `print` and `println` use, so the bytes of the handle and of
+  `print` stay in the order the program wrote them. `write_text` and `write_line` come from `Write`; on a terminal the
+  buffer is flushed after a line, as for `println`. `flush` writes the buffered bytes now, including what `print`
+  wrote. The other flush points are the ones in "Output" above.
+- `Stderr.write` is unbuffered: the bytes reach the operating system during the call, so they are already out when a
+  later panic message is written. `Stderr.flush` does nothing and returns `Ok(())`.
+- A write error is ignored, exactly as `print` ignores one, so a stream's `write` always takes all of `data` and
+  returns `Ok(data.len())`.
+- `Stdin.read` appends up to `max` bytes the runtime has buffered, reading one block from the operating system only
+  when the buffer is empty, so it returns as soon as some input is available and never waits for `max` bytes;
+  `Ok(0)` is the end of the input. `read_exact`, `read_to_end`, and `read_until` keep reading. `read_line` returns one
+  line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair. `Ok(None)` is the end of the input,
+  and the last line may have no terminator. `read_to_string` returns everything left, as the empty `String` at the
+  end. All of them take bytes from the same buffer, so they can be mixed. Unlike the `Read` and `BufRead` defaults,
+  `Stdin.read_line` and `Stdin.read_to_string` do not check the bytes for UTF-8, as with files.
+- A read error is `IoError.Read` with the path `<stdin>`, the portable kind, and the OS code (`errors.md`,
+  ERR10-ERR11).
+- Because the handles implement interfaces whose methods take `mut self`, a handle is bound with `mut`
+  (`let mut out = stdout()`); a temporary such as `stdout().write_line("x")` needs no binding.
 - `is_terminal` asks the operating system whether that stream is a terminal. It is false under the conformance
   runner, for a pipe, and for a file.
 - `burdin test` gives each test process a closed standard input (`test-runner.md`, Isolation), so a read sees the
   end of the input and never waits for a person.
 - None of these runs at compile time: reaching one in a comptime evaluation is E0224 (`comptime.md`, CT9).
+
+## Readers and writers (issue #409)
+
+`Read`, `Write`, `Seek`, and `BufRead` are the interfaces that byte sources and sinks implement; `Cursor`,
+`BufReader`, and `BufWriter` are the implementations `std` provides. Every operation returns
+`Result<T, IoError>`, so a failure passes out of any depth of wrappers with `?`.
+
+```
+interface Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError>
+    fn read_exact(mut self, mut buf: List<u8>, count: usize): Result<(), IoError>
+    fn read_to_end(mut self, mut buf: List<u8>): Result<usize, IoError>
+    fn read_to_string(mut self): Result<String, IoError>
+}
+
+interface Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError>
+    fn flush(mut self): Result<(), IoError>
+    fn write_all(mut self, data: [u8]): Result<(), IoError>
+    fn write_text(mut self, text: str): Result<(), IoError>
+    fn write_line(mut self, text: str): Result<(), IoError>
+}
+
+enum SeekFrom derives (Clone, Copy, Eq, Debug) { Start(u64), End(i64), Current(i64) }
+
+interface Seek {
+    fn seek(mut self, from: SeekFrom): Result<u64, IoError>
+    fn position(mut self): Result<u64, IoError>
+    fn rewind(mut self): Result<(), IoError>
+}
+
+interface BufRead requires Read {
+    fn read_until(mut self, delim: u8, mut buf: List<u8>): Result<usize, IoError>
+    fn read_line(mut self): Result<Option<String>, IoError>
+    fn lines(own self): Lines<Self>                  // Iterator<Result<String, IoError>>
+}
+
+fn copy<R: Read, W: Write>(mut from: R, mut to: W): Result<u64, IoError>
+
+struct Cursor {                                      // reads, writes, and seeks in a List<u8>
+    fn new(own data: List<u8>): Cursor
+    fn empty(): Cursor
+    fn from_text(text: str): Cursor
+    fn get_ref(self): &List<u8>
+    fn into_inner(own self): List<u8>
+}
+
+struct BufReader<R: Read> {                          // Read, BufRead, and Seek when R is Seek
+    fn new(own inner: R): BufReader<R>               // a 4096-byte buffer
+    fn with_capacity(capacity: usize, own inner: R): BufReader<R>
+    fn get_ref(self): &R
+    fn buffered(self): usize
+    fn into_inner(own self): R
+}
+
+struct BufWriter<W: Write> {                         // Write, and Seek when W is Seek
+    fn new(own inner: W): BufWriter<W>               // a 4096-byte buffer
+    fn with_capacity(capacity: usize, own inner: W): BufWriter<W>
+    fn get_ref(self): &W
+    fn buffered(self): usize
+    fn into_inner(own self): Result<W, IoError>
+}
+```
+
+- **Reading appends.** `read` appends at most `max` bytes to the caller's list and returns how many it appended, so
+  no read allocates a buffer of its own. `Ok(0)` is the end of the input (or a `max` of 0). A reader may append fewer
+  bytes than asked for. `read_exact` keeps reading until `count` bytes have been appended, and a source that ends
+  first is `IoError.UnexpectedEof`; the bytes it did produce stay in the list. `read_to_end` appends everything left
+  and returns the count. `read_to_string` collects it as text, and bytes that are not valid UTF-8 are
+  `IoError.InvalidData` (the file functions above do not check, as they return what the file holds).
+- **Writing takes a prefix.** `write` takes a prefix of `data` and returns its length. `write_all` calls it until every
+  byte is taken, and a sink that takes none of a non-empty `data` is `IoError.WriteZero`. `write_text` writes the
+  UTF-8 bytes of a string and `write_line` adds one `\n`. `flush` pushes what the writer holds to what it wraps; a
+  writer that holds nothing returns `Ok(())`.
+- **`BufRead`.** `read_until` appends up to and including the first `delim` byte, or up to the end of the input, and
+  returns how many bytes it appended (`0` at the end). `read_line` is the one `Stdin` provides, for any
+  buffered reader: it drops the `\n` and the `\r` of a `\r\n`, returns `Ok(None)` at the end, accepts a last line with
+  no terminator, and reports bytes that are not valid UTF-8 as `IoError.InvalidData`. `lines` yields each line as a
+  `Result`, and stops after the first error.
+- **`Cursor`** holds a `List<u8>` and a position. It reads and `read_until`s from the position, writes over the bytes
+  at the position (growing the list at the end, and filling the gap with zeros when the position is past the end),
+  and seeks. `Seek.position` is `seek(SeekFrom.Current(0))`.
+- **`seek`** returns the new position in bytes from the start. A position before the start is `IoError.Seek` and
+  leaves the position as it was; a position past the end is allowed. `SeekFrom.End(n)` and `SeekFrom.Current(n)` take
+  a signed offset.
+- **`BufReader`** asks the wrapped reader for its capacity at a time, so many small reads cost one inner read; a read
+  of at least the capacity, with nothing buffered, goes straight to the wrapped reader. `capacity` 0 panics. A seek
+  counts the buffered bytes, so `Current` is relative to what the program has read, and then discards the buffer.
+  `into_inner` returns the wrapped reader and drops what was buffered.
+- **`BufWriter`** holds writes until the next one would overflow the capacity, then writes the buffer to the wrapped
+  writer; a write of at least the capacity goes straight through after the buffer is flushed. `capacity` 0 panics.
+  `flush` writes the buffer and flushes the wrapped writer. A failed write leaves the bytes the wrapped writer did not
+  take in the buffer. **Dropping a `BufWriter` flushes the buffer and ignores a failure**; call `flush` or
+  `into_inner` to see one. `into_inner` flushes, returns the writer, and leaves nothing for the drop to write twice.
+  A seek flushes first.
+- **`BytesMut`** implements `Write`: writing appends to the buffer. The standard-stream handles implement the
+  interfaces too (see "Streams"). File handles are issue #702, which will implement `Read`, `Write`, and `Seek`.
+
+The tests are `m24_stdlib/rw_cursor_read`, `rw_cursor_write_seek`, `rw_read_exact_eof`, `rw_read_chunks`, `rw_write_all`,
+`rw_bufreader_lines`, `rw_bufreader_buffering`, `rw_bufwriter`, `rw_bufwriter_drop`, `rw_seek_buffered`, `rw_copy`,
+`rw_bytesmut_write`, `rw_error_propagation`, `rw_reader_needs_read`, `rw_bufreader_capacity_zero`, and
+`rw_bufwriter_capacity_zero`; the stream handles are covered by `io_stdout_handle`, `io_stdout_write_bytes`,
+`io_stderr_write_bytes`, `io_stdin_read_line`, `io_stdin_read_to_string`, `io_stdin_read_bytes`, and
+`io_stdin_buffered_lines`.
 
 ## Numbers and parsing
 
@@ -155,7 +255,7 @@ an error, not `1`.
 `N` is the size of the type in bytes (1, 2, 4, or 8). The target is little-endian everywhere Burdin runs, so `ne` is
 `le`. The `from_*_bytes` functions are the one case of an associated function that is not `parse`: `T.name(...)` on an
 integer type looks `name` up as the std function `__T_name`, and `T.NAME` as the std constant `__T_NAME`. A name that
-does not exist is the usual `E0002`. The floating-point functions are a separate issue (#703).
+does not exist is the usual `E0002`. The floating-point functions are below.
 
 ### Floats (issue #417)
 
@@ -173,6 +273,83 @@ prefix, and an exponent without digits, is `Invalid`. A number past the range of
 zero, as in C. The value is the correctly rounded one (it is computed by the C library's `strtod`/`strtof` after the
 grammar check), so a float written with `to_string`, which is the shortest text that reads back as the same number
 (`format.md`, FM7), parses back to the same float: `f64.parse(x.to_string()) == x` for every finite `x`.
+
+### Float functions (issue #703)
+
+`f64` and `f32` have the functions below. `T` stands for either type. The compiler provides the ones that lower to
+an LLVM intrinsic or to a C math library call, as it does for the integer methods; the rest are extension methods in
+`std/src/float.bd` (`extensions.md`), so the prelude makes them visible everywhere.
+
+```
+// Exactly rounded: the result is the IEEE 754 result. Compiled code and the comptime interpreter agree bit for bit.
+fn T.abs(self): T                    fn T.sqrt(self): T                 fn T.floor(self): T
+fn T.ceil(self): T                   fn T.round(self): T                fn T.round_ties_even(self): T
+fn T.trunc(self): T                  fn T.mul_add(self, a: T, b: T): T   fn T.copysign(self, sign: T): T
+fn T.to_bits(self): u64              // u32 for `f32`
+fn f64.from_bits(bits: u64): f64     fn f32.from_bits(bits: u32): f32    // associated functions, not methods
+
+// The C math library's results, through an LLVM intrinsic where one exists.
+fn T.powi(self, exp: i32): T         fn T.powf(self, exp: T): T          fn T.cbrt(self): T
+fn T.exp(self): T                    fn T.exp2(self): T                 fn T.ln(self): T
+fn T.log2(self): T                   fn T.log10(self): T                fn T.sin(self): T
+fn T.cos(self): T                    fn T.tan(self): T                  fn T.asin(self): T
+fn T.acos(self): T                   fn T.atan(self): T                 fn T.atan2(self, other: T): T
+fn T.sinh(self): T                   fn T.cosh(self): T                 fn T.tanh(self): T
+fn T.hypot(self, other: T): T
+
+// Written in `std`.
+fn T.is_nan(self): bool              fn T.is_infinite(self): bool       fn T.is_finite(self): bool
+fn T.is_sign_negative(self): bool    fn T.signum(self): T               fn T.fract(self): T
+fn T.log(self, base: T): T           fn T.min(self, other: T): T        fn T.max(self, other: T): T
+fn T.clamp(self, min: T, max: T): T  fn T.to_degrees(self): T           fn T.to_radians(self): T
+fn T.total_cmp(self, other: T): Ordering     // the float order; floats have no `cmp`
+
+// The associated constants, each in its type's precision.
+f64.PI  f64.E  f64.TAU  f64.SQRT_2  f64.LN_2  f64.LN_10  f64.INFINITY  f64.NEG_INFINITY  f64.NAN
+f64.EPSILON  f64.MIN  f64.MAX  f64.MIN_POSITIVE
+f32.PI  f32.E  f32.TAU  f32.SQRT_2  f32.LN_2  f32.LN_10  f32.INFINITY  f32.NEG_INFINITY  f32.NAN
+f32.EPSILON  f32.MIN  f32.MAX  f32.MIN_POSITIVE
+```
+
+The exact semantics:
+
+- `abs` clears the sign bit: `abs(-0.0)` is `0.0`, and a NaN keeps its payload but loses its sign. A NaN payload is
+  otherwise unspecified, including the one `NAN` has.
+- `round` rounds a half away from zero (`2.5` is `3.0`, `-2.5` is `-3.0`); `round_ties_even` rounds a half to the
+  even neighbour (`2.5` is `2.0`, `3.5` is `4.0`); `trunc` rounds toward zero; `floor` and `ceil` round down and
+  up. `fract` is `self - self.trunc()`, so it is NaN for an infinite or NaN value.
+- `signum` is `1.0`, `-1.0`, or NaN: it follows the sign bit, so `(-0.0).signum()` is `-1.0` and a NaN gives NaN.
+  `is_sign_negative` likewise reads the sign bit, so it is true for `-0.0` and for a NaN written with that bit.
+- `min` and `max` return the other value when one of them is NaN, and the receiver when the two compare equal. The
+  rule for equal values makes the signed zeros deterministic: `0.0.min(-0.0)` is `0.0` and `-0.0.min(0.0)` is
+  `-0.0`, and the same for `max`. Both values are bit-identical in compiled code and at compile time.
+- `clamp` panics with `clamp: min is NaN, max is NaN, or min is greater than max` when a bound is NaN or `min` is
+  greater than `max`; it is the value limited to `min..=max`, and a NaN receiver gives NaN.
+- `is_nan` is `self != self`, `is_infinite` is equality with either infinity, and `is_finite` is `abs(self) <
+  INFINITY`.
+- `log(base)` is `self.ln() / base.ln()`; `to_degrees` is `self * (180.0 / PI)` and `to_radians` is `self * (PI /
+  180.0)`, with the constant in the receiver's precision.
+- `total_cmp` is the IEEE 754 totalOrder as an `Ordering`: `-NaN < -inf < ... < -0.0 < 0.0 < ... < inf < NaN`, and
+  NaNs are ordered by their bit patterns. It is the comparator `sort_by` and `PriorityHeap` use for floats; floats
+  have no `cmp` (`E0002`). `Ordering` is described below.
+- `to_bits` and `from_bits` are a bit cast: every bit of the value is kept, including a NaN payload and the sign of
+  `-0.0`. The integer is `u64` for `f64` and `u32` for `f32`.
+- The constants are each type's value, so `f32.PI` is `3.1415927`. `MIN` and `MAX` are the finite extremes,
+  `MIN_POSITIVE` is the smallest positive normal value, and `EPSILON` is the gap between `1.0` and the next value.
+  `INFINITY`, `NEG_INFINITY`, and `NAN` are written as divisions (`1.0 / 0.0`, `-1.0 / 0.0`, `0.0 / 0.0`) because a
+  float literal must be finite; `NAN`'s payload and sign are unspecified.
+- Compiled code and the comptime interpreter agree bit for bit on the exactly rounded operations, and the
+  differential tests assert the bits (`test-runner.md`, "Differential tests"). The transcendental functions are the
+  C library's, through an LLVM intrinsic where LLVM has one (`tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
+  `cosh`, and `tanh` do in LLVM 21; `cbrt` and `hypot` are direct library calls), so their last bit is the
+  library's and is not promised across platforms.
+
+`f64.NAME` is the std constant `__f64_NAME` and `f32.NAME` is `__f32_NAME`, as for the integer constants. An unknown
+method is `E0002`, an unknown constant `E0002`, a wrong argument count `E0004`, and a wrong argument type `E0003`;
+`f64.pow` and `f64.cmp` are `E0002`, and the integer functions do not apply to floats.
+
+Tests: `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`,
+`float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names`.
 
 ## Characters (issue #416)
 
@@ -638,6 +815,7 @@ struct Set<T: Eq, A: Allocator = Global> {
     fn new(): Set<T>                               // only when A is `Global`
     fn new_in(own alloc: A): Set<T, A>
     fn from_list(own items: List<T>): Set<T>       // a repeated element is stored once
+    fn from<const N: usize>(own items: [T; N]): Set<T>   // from an array (issue #708)
     fn len(self): usize
     fn is_empty(self): bool
     fn contains(self, value: T): bool
@@ -645,6 +823,7 @@ struct Set<T: Eq, A: Allocator = Global> {
     fn remove(mut self, value: T): bool
     fn clear(mut self)
     fn extend(mut self, own items: List<T>)
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I)   // issue #708
     fn into_list(own self): List<T>                // consumes the set, in no particular order
     fn iter(self): SetIter<MapEntries<T, bool>, T> // yields &T; `for x in set` borrows the set
 }
@@ -662,8 +841,8 @@ fn is_superset(self, other: Set<T>): bool
 fn is_disjoint(self, other: Set<T>): bool
 ```
 
-`Set<T>` implements `PartialEq` (same elements, regardless of order), `Debug` (`{1, 2, 3}`, in iteration order), and
-`Iterable<&T>`. `MapEntries<K, V>` is the nameable type of the iterator `map.iter()` returns, added so a library type
+`Set<T>` implements `PartialEq` (same elements, regardless of order), `Debug` (`{1, 2, 3}`, in iteration order),
+`Iterable<&T>`, and, for the default allocator, `FromIterator<T>` (issue #708). `MapEntries<K, V>` is the nameable type of the iterator `map.iter()` returns, added so a library type
 can wrap it. Operations that copy elements need `Clone`; they return a set that uses the default allocator.
 
 Tests: `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq`.
@@ -680,6 +859,7 @@ allocator.
 struct Deque<T> {
     fn new(): Deque<T>
     fn from_list(own items: List<T>): Deque<T>
+    fn from<const N: usize>(own items: [T; N]): Deque<T>      // from an array (issue #708)
     fn len(self): usize
     fn is_empty(self): bool
     fn push_front(mut self, own value: T)
@@ -691,8 +871,10 @@ struct Deque<T> {
     fn get(self, i: usize): Option<&T>
     fn clear(mut self)
     fn extend(mut self, own items: List<T>)        // at the back, in order
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I)   // at the back, in order (issue #708)
     fn into_list(own self): List<T>                 // front to back
     fn iter(self): DequeIter<&Deque<T>, T>          // yields &T from the front to the back
+    fn iter_mut(mut self): DequeIterMut<&mut Deque<T>, T>   // yields &mut T from the front to the back (IT15)
     fn clone(self): Deque<T>                        // T: Clone
 }
 ```
@@ -700,9 +882,11 @@ struct Deque<T> {
 `Deque<T>` implements `Index<T>` and `IndexMut<T>` (`d[i]` counts from the front and panics with `Deque index out of
 bounds` past the end), `PartialEq` (same length and equal elements), `Debug` (`[1, 2, 3]`), and `Iterable<&T>`.
 `DequeIter<D, T>` is generic over the view of the deque it walks and needs `D: Index<T> + DequeLen`; for that, a
-shared view `&X` satisfies an interface bound that `X` satisfies.
+shared view `&X` satisfies an interface bound that `X` satisfies. `DequeIterMut<D, T>` needs `D: IndexMut<T> + DequeLen`,
+and a mutable view `&mut X` satisfies the bounds `X` does as well.
 
-Tests: `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds`.
+Tests: `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds`,
+`iter_mut_deque`.
 
 ## `PriorityHeap<T>` (issue #192)
 
@@ -717,10 +901,12 @@ pushed. The element type only needs an `Ord` bound, which a type with a `Partial
 struct PriorityHeap<T: Ord> {
     fn new(): PriorityHeap<T>
     fn from_list(own items: List<T>): PriorityHeap<T>
+    fn from<const N: usize>(own items: [T; N]): PriorityHeap<T>   // from an array (issue #708)
     fn len(self): usize
     fn is_empty(self): bool
     fn push(mut self, own value: T)
     fn extend(mut self, own items: List<T>)
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I)   // issue #708
     fn pop(mut self): Option<T>                       // the greatest element
     fn peek(self): Option<&T>
     fn clear(mut self)
@@ -837,7 +1023,9 @@ Path {   // extension methods, the same operations with the receiver as the path
 Every function is impure: a comptime evaluation that reaches one fails with E0224. A read that only inspects the
 file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
 (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`) reports `IoError.Write`.
-`rename` names its destination `to` in the error.
+Each error carries the portable kind and the OS code (`errors.md`, ERR10-ERR11). `rename` names its destination `to`
+in the error. `remove_dir_all` on a path that is not a directory has kind `NotADirectory` and no OS code, because
+`std` saw the kind before any system call failed.
 
 - `read_dir` returns the entry names, not paths, without `.` and `..`, in the order the system returns them; sort the
   list for a deterministic order. A missing path or a file is an error. The names join with `Path.join`.
@@ -865,6 +1053,212 @@ file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) report
   are separators in a pattern.
 
 Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
+
+## Files and file handles (issue #702)
+
+The file operations live in `std.fs`, beside the directory operations; the prelude makes every name below visible
+unqualified. A file is opened through `OpenOptions` or the two shortcuts `File.open` and `File.create`, and the
+handle owns the system descriptor. Bytes are never translated: on every system a file is binary, so `0x00` and text
+that is not valid UTF-8 come back exactly as they were written.
+
+```
+struct OpenOptions {
+    fn new(): OpenOptions
+    fn read(mut self, on: bool)                fn write(mut self, on: bool)
+    fn append(mut self, on: bool)              fn truncate(mut self, on: bool)
+    fn create(mut self, on: bool)              fn create_new(mut self, on: bool)
+    fn open(self, path: str): Result<File, IoError>
+}
+
+struct File {
+    fn open(path: str): Result<File, IoError>          // `read` only
+    fn create(path: str): Result<File, IoError>        // write, create, and truncate
+    fn sync_all(self): Result<(), IoError>
+    fn set_len(mut self, size: u64): Result<(), IoError>
+    fn close(own self): Result<(), IoError>            // reports the error a drop would discard
+}
+File: Read     // read(mut buf: List<u8>, max: usize): Result<usize, IoError>
+File: Write    // write(data: [u8]): Result<usize, IoError>; flush(): Result<(), IoError> (there is no buffer)
+File: Seek     // seek(from: SeekFrom): Result<u64, IoError>; position() and rewind() come from `Seek`
+File: Drop     // closes the descriptor
+
+fn read(path: str): Result<List<u8>, IoError>
+fn write(path: str, data: [u8]): Result<(), IoError>
+fn append(path: str, data: [u8]): Result<(), IoError>
+fn copy_file(from: str, to: str): Result<u64, IoError>
+fn exists(path: str): bool
+```
+
+- `File.open` opens for reading, and `File.create` opens for writing, creating the file when it is missing and
+  emptying it when it exists. `OpenOptions.new()` starts with every option off; each setter changes one option.
+- `OpenOptions.open` rejects a set with no read, write, or append access, `truncate` without write or append access,
+  and `append` together with `truncate`, with `IoError.InvalidInput`, before it reaches the system. `create_new`
+  implies `create` and fails when the file exists. A handle opened only for appending is opened for writing, and
+  every write through it goes to the end whatever the position.
+- A system failure is `IoError.Read` when the options only read and `IoError.Write` otherwise, and names the path
+  the handle was opened with; a seek before the start is `IoError.Seek`.
+- `read` appends up to `max` bytes to the caller's list, growing it, and returns how many bytes it appended; `0` is
+  the end of the file. The `Read` defaults (`read_exact`, `read_to_end`, `read_to_string`) and the `Write` defaults
+  (`write_all`, `write_text`, `write_line`) are built on it, and `BufReader` and `BufWriter` wrap a `File` like any
+  other reader or writer.
+- `flush` succeeds without doing anything, because a file handle has no buffer; `sync_all` is the durability call
+  (`fsync` on Unix, `_commit` on Windows). `set_len` cuts the file or extends it with zero bytes.
+- Dropping the handle closes the descriptor. `close` closes it too and returns the failure a drop would discard;
+  it marks the handle closed, so the drop that follows does not close the descriptor again. Closing a descriptor
+  twice is an invalid descriptor, which the Windows CRT treats as a fatal parameter error.
+- `read`, `write`, and `append` are the byte-level counterparts of `read_to_string` and `write_file`; `write`
+  creates or replaces, and `append` creates a missing file. `copy_file` copies the bytes only, not permissions, and
+  returns how many it copied. It is not named `copy` because `std.rw` already exports the reader/writer `copy` under
+  that name, and the prelude has only the unqualified name for one of them; write `fs.copy_file(...)` for a file.
+  `exists` is `Path.exists`.
+- Every operation is impure: a comptime evaluation that reaches one fails with E0224.
+
+Tests: `m24_stdlib/file_handles`, `file_errors`, `file_comptime`.
+
+## Time (issue #195)
+
+```
+struct Duration derives (Copy, Clone, Eq, Ord, Hash, Default)   // a non-negative length of time
+struct Instant derives (Copy, Clone, Eq, Ord, Hash, Debug)      // a reading of the monotonic clock
+struct SystemTime derives (Copy, Clone, Eq, Ord, Hash, Debug)   // a reading of the real-time clock
+struct DateTime derives (Copy, Clone, Eq, Ord, Hash, Debug)     // a calendar date and time of day, in UTC
+enum Weekday derives (Copy, Clone, Eq, Ord, Hash, Debug)        // Monday ... Sunday
+interface Clock { fn now(self): Instant   fn system_time(self): SystemTime }
+struct SystemClock { }                                          // zero-sized; the operating system's clocks
+struct ManualClock                                              // moves only when told to
+fn sleep(d: Duration)
+
+Duration {
+    fn zero(): Duration                                  fn from_nanos(n: u64): Duration
+    fn from_micros(n: u64): Duration                     fn from_millis(n: u64): Duration
+    fn from_secs(n: u64): Duration                       fn from_secs_f64(secs: f64): Duration
+    fn as_nanos(self): u64      fn as_micros(self): u64  fn as_millis(self): u64     fn as_secs(self): u64
+    fn as_secs_f64(self): f64
+    fn subsec_nanos(self): u32  fn subsec_micros(self): u32                          fn subsec_millis(self): u32
+    fn is_zero(self): bool
+    fn checked_add(self, other: Duration): Option<Duration>
+    fn checked_sub(self, other: Duration): Option<Duration>
+    fn saturating_sub(self, other: Duration): Duration   fn abs_diff(self, other: Duration): Duration
+    fn times(self, n: u64): Duration                     fn divide(self, n: u64): Duration
+}                                                        // and `+`, `-` through Add and Sub; Display and Debug
+
+Instant {
+    fn now(): Instant                                    fn from_start(since_start: Duration): Instant
+    fn since_start(self): Duration                       fn elapsed(self): Duration
+    fn duration_since(self, earlier: Instant): Duration
+    fn checked_add(self, d: Duration): Option<Instant>   fn checked_sub(self, d: Duration): Option<Instant>
+}
+
+SystemTime {
+    fn now(): SystemTime                                 fn unix_epoch(): SystemTime
+    fn from_unix_secs(secs: i64): SystemTime             fn from_unix_nanos(nanos: i64): SystemTime
+    fn unix_secs(self): i64     fn unix_nanos(self): i64 fn subsec_nanos(self): u32
+    fn duration_since(self, earlier: SystemTime): Option<Duration>
+    fn checked_add(self, d: Duration): Option<SystemTime>
+    fn checked_sub(self, d: Duration): Option<SystemTime>
+    fn to_utc(self): DateTime
+}
+
+DateTime {   // the fields year: i32, month, day, hour, minute, second, nanosecond: u32 are public
+    fn new(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32, nanosecond: u32): Option<DateTime>
+    fn from_unix_secs(secs: i64): DateTime               fn to_unix_secs(self): i64
+    fn to_system_time(self): SystemTime
+    fn is_leap_year(self): bool   fn ordinal(self): u32  fn weekday(self): Weekday
+    fn format(self, pattern: str): String
+}                                                        // and Display (ISO 8601)
+
+ManualClock {
+    fn new(start: SystemTime): ManualClock
+    fn advance(mut self, d: Duration)                    fn set_system_time(mut self, time: SystemTime)
+}
+```
+
+- **Durations.** A `Duration` is one `u64` of nanoseconds, so it is never negative and tops out at about 584 years.
+  Every operation that could leave that range panics in every build profile, not only in debug: `from_micros`,
+  `from_millis`, `from_secs`, and `times` when the product does not fit, `+` when the sum does not fit, `-` when
+  the right side is longer, `from_secs_f64` for a negative, NaN, or too large value, and `divide(0)`. The `checked_`
+  forms return `None` instead, and `saturating_sub` stops at zero. `from_secs_f64` truncates to a whole nanosecond.
+  The `as_` functions round down, and `subsec_*` give the part after the last whole second.
+- **Writing a duration.** `Display` (and `Debug`, which is the same) writes the largest unit that gives a whole part,
+  with the fraction after it and no trailing zeros: `1.5s`, `250ms`, `42µs`, `7ns`, `0ns`. Width, fill, and
+  alignment apply; the precision does not.
+- **Two clocks.** `Instant` is the monotonic clock: it never goes backward, its zero is unspecified, and only the
+  difference between two readings means anything, so it is what measures how long something took.
+  `duration_since` is zero when `earlier` is not earlier, and `elapsed` is `Instant.now().duration_since(self)`.
+  `SystemTime` is the real-time clock: nanoseconds since 1970-01-01 00:00:00 UTC in an `i64` (the years 1678 to 2262,
+  negative before 1970). It can be set, so it can jump backward, which is why `SystemTime.duration_since` returns an
+  `Option`. `unix_secs` rounds toward the past, so a time before the epoch still has a `subsec_nanos` from 0 to
+  999,999,999. The monotonic clock is `clock_gettime(CLOCK_MONOTONIC)` and `QueryPerformanceCounter`; the real-time
+  clock is `clock_gettime(CLOCK_REALTIME)` and `GetSystemTimePreciseAsFileTime`.
+- **Calendar.** `DateTime` is the proleptic Gregorian calendar in UTC with no leap seconds and no time zones. The
+  conversions with Unix seconds are exact, before 1970 too; `from_unix_secs` panics when the year does not fit the
+  `i32` field. `DateTime.new` returns
+  `None` for a month outside 1 to 12, a day the month does not have (February 29 only in a leap year: divisible by 4,
+  except centuries that are not divisible by 400), an hour above 23, a minute or second above 59, or a nanosecond
+  above 999,999,999. The fields are public, so a value built by hand can be invalid; the derived ordering is
+  chronological because the fields run from the year down to the nanosecond. `to_system_time` panics outside the
+  range of `SystemTime`. `weekday` returns a `Weekday` and `ordinal` is 1 for January 1.
+- **Formatting a date.** `Display` writes ISO 8601 in UTC: `2026-11-17T09:41:07Z`, with the fraction of a second
+  after the seconds when it is not zero (`2023-11-14T22:13:20.12345Z`, no trailing zeros). `format(pattern)` expands
+  `%Y` (the year, at least four digits, with a minus sign when negative), `%m`, `%d`, `%H`, `%M`, `%S` (two digits
+  each), `%f` (nine digits of nanoseconds), `%j` (the day of the year, three digits), and `%%`. Any other text is
+  copied, including an unknown code such as `%q` and a `%` at the end.
+- **Determinism for tests.** Code that needs the time takes a `C: Clock` instead of calling `Instant.now()` or
+  `SystemTime.now()`. `SystemClock` forwards to the operating system. `ManualClock` starts its monotonic clock at
+  `Instant.from_start(Duration.zero())` and its real-time clock at the time given to `new`; `advance` moves both
+  forward (and panics if a reading would not fit), and `set_system_time` moves only the real-time clock, to model the
+  system clock being set. Everything else here (`Duration`, `DateTime`, the calendar functions, `ManualClock`) is
+  pure.
+- **Sleeping.** `sleep(d)` suspends the thread for about `d`. The system may round it up to its timer resolution
+  (whole milliseconds on Windows), and on Unix a signal can end it early. A long sleep is made of sleeps of at most
+  one hour.
+- **Compile time.** `Instant.now`, `SystemTime.now`, `SystemClock`'s methods, and `sleep` reach the operating
+  system, so a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9). The rest is pure and
+  works in a `const` or a `comptime` expression.
+
+Tests: `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`,
+`time_clock`, `time_comptime`, `time_comptime_impure`.
+
+## Random numbers (issue #195)
+
+```
+fn random_seed(): u64                                   // 64 random bits from the operating system
+struct Random derives (Clone, Eq)
+
+Random {
+    fn seeded(seed: u64): Random                        fn from_entropy(): Random
+    fn next_u64(mut self): u64                          fn next_u32(mut self): u32
+    fn next_bool(mut self): bool                        fn next_f64(mut self): f64
+    fn below(mut self, bound: u64): u64
+    fn range(mut self, low: i64, high: i64): i64        fn range_f64(mut self, low: f64, high: f64): f64
+    fn index(mut self, len: usize): Option<usize>
+    fn shuffle<T>(mut self, mut items: List<T>)
+}
+```
+
+- **The generator.** `Random` is xoshiro256** with its 256 bits of state filled from the seed by SplitMix64. It is
+  written in Burdin and uses only wrapping integer arithmetic, so a seed gives the same numbers on every platform,
+  in every build profile, and at compile time. Every seed works, including 0, because SplitMix64 never leaves the
+  state all zero for the four draws it makes. `clone` copies the state, so a clone replays the same numbers. It is a
+  statistical generator, not a cryptographic one: its output must not be used for keys or tokens.
+- **The seed source.** `random_seed()` is the one impure function: 64 bits from `getentropy` on Unix and `rand_s` on
+  Windows. If the system refuses, the bits come from the real-time clock, so a seed is never a constant. A test that
+  needs determinism seeds with a constant (`Random.seeded(42)`); a program that wants a different sequence each run
+  uses `Random.from_entropy()`, which is `Random.seeded(random_seed())`.
+- **Draws.** `next_u64` is the generator's output and `next_u32` is its high 32 bits. `next_bool` is the high bit.
+  `next_f64` is from 0.0 up to but not including 1.0, in steps of 2^-53. `below(bound)` is uniform over `0..bound`
+  with no modulo bias (a draw that would favor the low values is discarded and drawn again) and panics when `bound`
+  is zero. `range(low, high)` is uniform over `low..high` for any two `i64` values, including the whole `i64` range,
+  and panics unless `low < high`. `range_f64` is `low + next_f64() * (high - low)` and panics unless `low < high`
+  and the width is finite. `index(len)` is `Some` of a uniform index below `len`, or `None` for an empty collection.
+- **Shuffling.** `shuffle` is Fisher-Yates over `0..len` using `below`, so every order is equally likely and the
+  result is a function of the generator's state alone. An empty list and a one-element list are unchanged and
+  consume no numbers.
+- **Compile time.** `random_seed` and `from_entropy` fail with E0224 at compile time; `seeded` and every draw are
+  pure and work there (`comptime.md`, CT9).
+
+Tests: `m24_stdlib/random_seeded` (known answers from an independent implementation), `random_properties`,
+`random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure`.
 
 ## `Heap<T>`
 
@@ -896,13 +1290,31 @@ stops after the upper endpoint without computing `upper + 1`, so it does not ove
 ## Iteration
 
 `std` declares `Iterator<T>` (`next`, plus the default methods `map`, `filter`, `take`, `skip`, `fold`, `count`,
-`any_item`, `all`, `find`, and `to_list`; and, from issue #706, `enumerate`, `take_while`, `skip_while`, `map_while`,
-`step_by`, `inspect`, and `peekable`; and, from issue #707, `last`, `nth`, `position`, `for_each`, `reduce`,
-`partition`, `min_by`, `max_by`, `min_by_key`, and `max_by_key`) and the marker `Iterable<T>`. The compiler implements both for arrays,
-slices, `List`, `Map`, `Chars`, and ranges, and adds `sum` for iterators of integers; `std` declares the adapter
+`any_item`, `all`, `find`, `to_list`, and, from issue #708, `collect`; and, from issue #706, `enumerate`, `zip`, `chain`, `flat_map`, `take_while`,
+`skip_while`, `map_while`, `step_by`, `inspect`, and `peekable`; and, from issue #707, `last`, `nth`, `position`,
+`for_each`, `reduce`, `partition`, `min_by`, `max_by`, `min_by_key`, `max_by_key`, `try_fold`, and `try_for_each`), the
+marker `Iterable<T>`, and `DoubleEndedIterator<T>` (`next_back`). The adapters that need a particular kind of source are
+compiler-resolved functions on any iterator: `flatten`, `cloned`, `copied`, `cycle`, and `rev` (`iterators.md`, IT13,
+IT14). The compiler implements both for arrays, slices, `List`, `Map`, `Chars`, and ranges, and adds `sum` and `product`
+for iterators of integers or floats; `std` also holds the functions behind `min`, `max`, `eq`, and `cmp` between
+iterators, which need a bound on the item type; `std` declares the adapter
 types `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter`. A program implements the interfaces to make its own type
 work with `for` and the adapters. The rules, the item types, and the second-class restrictions are in
 [`iterators.md`](iterators.md).
+
+### Mutable iteration (issue #709)
+
+```
+fn List<T>.iter_mut(mut self): IterMut<T>               // built in; yields &mut T
+fn [T; N].iter_mut(mut self): IterMut<T>                // built in; the array must be a mutable place
+fn Map<K, V>.iter_mut(mut self): MapIterMut<K, V>       // built in; yields (&K, &mut V)
+fn Deque<T>.iter_mut(mut self): DequeIterMut<&mut Deque<T>, T>   // in std; yields &mut T
+for x in mut xs { ... }                                  // the same as `for x in xs.iter_mut() { ... }`
+```
+
+The iterator borrows the collection exclusively, its items are `&mut T` (`*x = ...`), a map's keys stay `&K`, and the
+adapters of `Iterator<T>` apply to it. A slice, a `Set`, and a `PriorityHeap` have no `iter_mut`. The rules, the
+decisions, and the reasons are `iterators.md` IT15 and `memory-rules.md` IT15.
 
 ## `Ordering`, `cmp`, and `Reverse<T>` (issue #705)
 
@@ -1033,6 +1445,7 @@ fn List<T>.rposition<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.reverse(mut self)
 fn List<T>.dedup(mut self) where T: Eq                      // removes consecutive duplicates
 fn List<T>.extend(mut self, own other: List<T>)             // moves the elements of `other`
+fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, iter: I) where A: Allocator   // issue #708
 fn List<T>.extend_from(mut self, other: List<T>) where T: Clone
 fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone
 fn List<T>.truncate(mut self, len: usize)
@@ -1045,6 +1458,47 @@ parameter, and views returned from an extension would dangle.
 
 Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops`,
 `list_swap_out_of_bounds`.
+
+## Collecting and extending (issue #708)
+
+`std.iter` declares `FromIterator<T>` and `Iterator<T>.collect`; every collection takes the items of an iterator with
+`extend_iter` and an array with `from`. The rules, with IDs, are `iterators.md` IT16-IT22, and the decisions are:
+
+- **Naming the target.** The language has no explicit type arguments on a member call, so `it.collect()` takes its
+  target from the **expected type**: `let s: Set<i32> = it.collect()`, a parameter, a return type, a field. With no
+  expected type it is E0003 ("cannot tell what `C` stands for"); a target that is not `FromIterator` for the items is
+  E0141. A type can also be named on the call itself, `Set<i32>.from_iter(it)`.
+- **The protocol.** `FromIterator<T>` has one method, `from_iter<I: Iterator<T>>(own iter: I): Self`. A user type
+  implements it (IT16); `Set`, `Deque`, and `PriorityHeap` do in `std`; `List`, `Map`, `String`, `Option`, and
+  `Result` do in the compiler (IT18, IT19).
+- **Allocators.** `collect` and `from_iter` build with the default allocator; for another allocator make the container
+  with `new_in` and call `extend_iter` (IT22). There is no `collect_in`.
+- **Extending.** `extend_iter` takes any `Iterator<T>`; the older `extend(own List<T>)` is unchanged (IT20).
+
+```
+interface FromIterator<T> { fn from_iter<I: Iterator<T>>(own iter: I): Self }
+fn Iterator<T>.collect<C: FromIterator<T>>(own self): C
+
+List<T>.from_iter(it)       Map<K, V>.from_iter(it)       String.from_iter(it)
+Option<C>.from_iter(it)     Result<C, E>.from_iter(it)    Set<T>.from_iter(it)
+Deque<T>.from_iter(it)      PriorityHeap<T>.from_iter(it)
+
+List<T>.from(array)         Map<K, V>.from(array of pairs)      // also `List.from(...)` and `Map.from(...)`
+Set<T>.from(array)          Deque<T>.from(array)                PriorityHeap<T>.from(array)
+
+fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, iter: I)
+fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, iter: I) where K: Eq
+fn String.extend_iter<I: Iterator<char>>(mut self, iter: I)
+Set<T, A>.extend_iter    Deque<T>.extend_iter    PriorityHeap<T>.extend_iter     // iter: I where I: Iterator<T>
+```
+
+`String.from_iter` accepts items of `char`, `str`, `String`, and `&String`; `String.extend_iter` takes `char` items, because
+an extension cannot pick its body by item type. A `Map` built from pairs keeps the last value of a repeated key.
+
+Tests: `m24_stdlib/collect_basic`, `collect_adapters`, `collect_result_option`, `collect_drops`, `collect_user_type`,
+`collect_allocator`, `collect_comptime`, `collect_views`, `extend_iter`, `from_array`, and the compile-fail cases
+`collect_needs_target` (E0003), `collect_not_from_iterator` (E0141), `collect_allocator_target` (E0272, E0141),
+`collect_map_needs_eq` (E0141), `collect_view_target` (E0141), and `from_array_view_key` (E0120).
 
 ## Errors
 
@@ -1074,13 +1528,28 @@ prints the wrapped error's `Display` (`errors.md`, ERR4). `TraceFrame` implement
 `Error` and a propagation frame at each `?` that passes a `Result<..., Error>` outward, and a release build records
 none (`errors.md`, ERR7).
 
-`std` declares its error types (`errors.md`, ERR10):
+`std` declares its error types (`errors.md`, ERR10-ERR11):
 
 ```
+enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+    NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
+    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut  Other
+}
+IoErrorKind: Display { fn fmt(self, mut f: Formatter) }   // "not found", "permission denied", ...
+
 error enum IoError {
-    Read { path: String }    "cannot read {path}"
-    Write { path: String }   "cannot write {path}"
-    Run { command: String }  "cannot run {command}"
+    Read { path: String, kind: IoErrorKind, os_code: Option<i32> }      "cannot read {path}: {kind}"
+    Write { path: String, kind: IoErrorKind, os_code: Option<i32> }     "cannot write {path}: {kind}"
+    Run { command: String, kind: IoErrorKind, os_code: Option<i32> }    "cannot run {command}: {kind}"
+    UnexpectedEof            "unexpected end of input"
+    WriteZero                "the writer accepted no bytes"
+    InvalidData              "the bytes are not valid text"
+    Seek                     "seek to a position before the start"
+    InvalidInput             "invalid open options"
+}
+IoError {
+    fn kind(self): IoErrorKind
+    fn os_code(self): Option<i32>
 }
 
 error enum ParseIntError {
@@ -1089,7 +1558,13 @@ error enum ParseIntError {
 ```
 
 `read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
-`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`.
+`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The kind is portable and the OS code is the
+platform's own (`errno`, or the Win32 error code); the message ends with the kind's text, so a missing file prints
+`cannot read missing.txt: not found`. The readers and writers return `UnexpectedEof` (`read_exact` on a source that
+ended), `WriteZero` (`write_all` on a sink that takes nothing), `InvalidData` (text that is not UTF-8), and `Seek`
+(a position before the start); `OpenOptions.open` returns `InvalidInput` for an option set it rejects ("Files and
+file handles"). Those five are failures `std` observed itself, so they carry no OS code; `kind()` still classifies
+them (`errors.md`, ERR11).
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
@@ -1109,10 +1584,128 @@ fn process.run(command: str): Result<i32, IoError>
 `read_to_string` and `write_file` read and write raw bytes: there is no newline translation on Windows and no UTF-8
 normalization, so a string written and read back is byte-identical (`len` is the byte count). `process.run` runs the
 command through the system shell and returns its status: the POSIX wait status is shifted, the Windows status is
-returned as is. On failure each returns the matching `IoError` variant, and an integer `parse` returns
-`ParseIntError.Invalid` (`errors.md`, ERR10).
+returned as is. On failure each returns the matching `IoError` variant with its kind and OS code, and an integer
+`parse` returns `ParseIntError.Invalid` (`errors.md`, ERR10-ERR11). The byte-level helpers (`read`, `write`,
+`append`, `copy_file`, `exists`) and the owning `File` handle are in "Files and file handles".
 
 None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+
+### Environment variables and the working directory (issue #412)
+
+```
+error enum EnvError {
+    Name { name: String }        "invalid environment variable name {name}"
+    Value { name: String }       "invalid value for environment variable {name}"
+    Access { name: String }      "cannot access environment variable {name}"
+    WorkingDirectory             "cannot read the working directory"
+    SetWorkingDirectory          "cannot set the working directory"
+}
+
+fn env.get(name: str): Option<String>              fn env.get_bytes(name: str): Option<Bytes>
+fn env.set(name: str, value: str): Result<(), EnvError>
+fn env.set_bytes(name: str, value: [u8]): Result<(), EnvError>
+fn env.remove(name: str): Result<(), EnvError>
+fn env.current_dir(): Result<String, EnvError>     fn env.current_dir_bytes(): Result<Bytes, EnvError>
+fn env.set_current_dir(path: str): Result<(), EnvError>
+fn env.set_current_dir_bytes(path: [u8]): Result<(), EnvError>
+```
+
+**Encoding.** A name is valid when it is not empty and contains neither `=` nor a NUL byte; a value may be any bytes
+except NUL. On Unix an environment value and a path are byte strings: `get` and `current_dir` report `None` and
+`WorkingDirectory` when the bytes are not valid UTF-8, and the `_bytes` functions return them exactly. Windows stores
+the environment and the working directory as UTF-16, so the primitives convert to and from UTF-8; a value that is not
+valid Unicode (an unpaired surrogate) is reported as absent and cannot be set, and the byte and text functions agree.
+
+**Behavior.** `get` is `None` when the variable is unset, while an empty value is `Some("")` because the variable is
+present. `set` replaces an existing value, and `remove` succeeds when the variable is unset. `set` and `remove` report
+`Name` for an invalid name, `Value` for an invalid value, and `Access` when the system refuses. `current_dir` has no
+trailing separator except at a root, and `set_current_dir` reports `SetWorkingDirectory` when the path is not a
+directory. A change is visible to a child started with `process.run`.
+
+None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+
+Tests: `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`,
+`env_test_mode`.
+
+### Child processes (issue #419)
+
+`Command` starts a program directly: the program and each argument reach the operating system as separate words,
+with no shell in between, so nothing in an argument is interpreted.
+
+```
+enum Stdio { Inherit  Piped  Null }
+
+Command {
+    fn new(program: str): Command
+    fn arg(mut self, value: str)
+    fn args(mut self, own values: List<String>)
+    fn env(mut self, key: str, value: str)
+    fn env_remove(mut self, key: str)
+    fn env_clear(mut self)
+    fn cwd(mut self, directory: str)
+    fn stdin(mut self, mode: Stdio)
+    fn stdout(mut self, mode: Stdio)
+    fn stderr(mut self, mode: Stdio)
+    fn spawn(own self): Result<Child, IoError>
+    fn status(own self): Result<ExitStatus, IoError>
+    fn output(own self): Result<Output, IoError>
+}
+
+Child {
+    fn id(self): i32
+    fn stdin(mut self): Option<ChildStdin>
+    fn stdout(mut self): Option<ChildStdout>
+    fn stderr(mut self): Option<ChildStderr>
+    fn wait(mut self): Result<ExitStatus, IoError>
+    fn wait_with_output(mut self): Result<Output, IoError>
+}
+
+ChildStdin  { fn write(self, text: str): Result<(), IoError> }
+ChildStdout {
+    fn read_to_string(self): Result<String, IoError>
+    fn read_line(self): Result<Option<String>, IoError>
+}
+ChildStderr { ... the same two readers ... }
+
+struct ExitStatus { fn code(self): Option<i32>   fn signal(self): Option<i32>   fn success(self): bool }
+struct Output { status: ExitStatus   stdout: String   stderr: String }
+```
+
+- **Starting.** `Command.new` names the program; `arg` and `args` add arguments, in order. `spawn` starts the child
+  and returns its handle, `status` starts it, waits, and returns the exit status, and `output` pipes standard output
+  and standard error, gives the child a null standard input, reads both streams to the end, waits, and returns them
+  with the status. Nothing runs until one of those three is called. On Unix the program is executed with `execvp`;
+  on Windows `CreateProcessW` receives the quoted command line the C runtime parses. An argument keeps any spaces,
+  quotes, or shell metacharacters.
+- **Streams.** Each standard stream is `Stdio.Inherit` (the default), `Stdio.Piped` (the parent gets a
+  `ChildStdin`/`ChildStdout`/`ChildStderr`), or `Stdio.Null` (the system's null device). `output` pipes standard
+  output and standard error and gives the child a null standard input. `stdin`, `stdout`, and `stderr` on
+  a `Child` hand out the piped handle once and return `None` afterwards.
+- **Environment.** The child inherits the parent's environment unless `env_clear` empties it. `env` sets an entry,
+  replacing an earlier value for the name, and `env_remove` removes one. Windows compares names without regard to
+  case; Unix compares them exactly. The entry is written `key=value`, and an embedded NUL in the program, an
+  argument, an environment key or value, or the working directory makes the spawn fail.
+- **Working directory.** `cwd` selects it; otherwise the child uses the parent's.
+- **Waits.** `wait` closes the child's standard input first, so a program reading it sees the end of the input
+  instead of waiting, and then waits for the child. A child that exited normally has `code()` (an `i32`; Windows
+  reports a code for every child) and `success()` is `code() == Some(0)`; a child ended by a signal has
+  `signal()` (Unix only) and no code. Waiting for the same child twice is an error. `wait_with_output` closes the
+  child's standard input, reads the piped output streams together, so a child writing a lot to one of them cannot
+  block the other, and then waits; a stream that was not piped is empty in the result.
+- **Pipes.** A write to `ChildStdin` is unbuffered and writes every byte. `read_to_string` reads to the end of the
+  stream; `read_line` returns one line without its terminator (`\n`, or the `\r` of a `\r\n`), `Ok(None)` at the
+  end, and the last line may have no terminator. A handle closes when it is dropped; dropping the `ChildStdin`
+  without writing is how the parent signals the end of the input. A `Child` closes its process handle when it is
+  dropped, but it does not wait for the child.
+- **Errors.** A spawn failure — a program that does not exist, an argument or environment entry the system cannot
+  take, or a pipe or process that cannot be created — is `IoError.Run` with the program name. A pipe read failure is
+  `IoError.Read` with `<stdout>`, `<stderr>`, or `<child>`, and a write failure is `IoError.Write` with `<stdin>`.
+  A program name without a separator is looked up on `PATH`: on Unix the search uses the child's environment, while
+  on Windows `CreateProcessW` searches the calling process's `PATH`.
+- None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+
+Tests: `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`,
+and `m20_comptime/purity_process`.
 
 ## The compilation target
 
@@ -1220,31 +1813,39 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
 | Slices and arrays | `m24_stdlib/slice_read`, `slice_write`, `slice_chunks`, `slice_arrays`, `list_as_slice`, `slice_bytes_ascii`, `slice_join_concat`, `slice_binary_search`, `slice_strings`, `slice_edges`, `slice_drops`, `slice_chunks_borrow`, `slice_split_at_mut_borrow`, `slice_as_slice_borrow`, `slice_array_view_borrow`, `slice_fill_needs_clone`, `slice_to_list_needs_clone`, `slice_copy_needs_copy`, `slice_sort_needs_ord`, `slice_reverse_immutable`, `slice_view_immutable_list`, `slice_write_exclusivity`, `slice_comptime_write`, `slice_comptime_read`, `slice_chunks_zero`, `slice_windows_zero`, `slice_split_at_bounds`, `slice_rotate_bounds`, `slice_swap_bounds`, `slice_copy_length`, `slice_clone_length` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
-| Iteration | `m13_iterators/*` (`iterators.md`) |
+| Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
 | Characters of a text | `m24_stdlib/text_characters` |
-| Iterator consumers | `m24_stdlib/iter_last_nth_position`, `iter_for_each_reduce`, `iter_partition`, `iter_min_max` |
-| Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable` |
+| Iterator consumers | `m24_stdlib/iter_last_nth_position`, `iter_for_each_reduce`, `iter_partition`, `iter_min_max`, `iter_min_max_ord`, `iter_min_max_drops`, `iter_min_needs_ord`, `iter_eq_cmp`, `iter_sum_product`, `iter_product_needs_number`, `iter_sum_overflow`, `iter_product_overflow`, `iter_try_fold`, `iter_consumers_user_iterator` |
+| Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable`, `iter_zip`, `iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`, `iter_adapters_no_leaks`, `iter_adapters_comptime`; errors `iter_zip_from_temporary`, `iter_zip_in_struct_field`, `iter_chain_in_collection`, `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`, `iter_rev_needs_double_ended`, `iter_rev_through_adapter`, `iter_cloned_needs_clone`, `iter_cloned_needs_views`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch`, `iter_flatten_needs_iterators`, `iter_zip_needs_iterator` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
+| Readers and writers | `m24_stdlib/rw_cursor_read`, `rw_cursor_write_seek`, `rw_read_exact_eof`, `rw_read_chunks`, `rw_write_all`, `rw_bufreader_lines`, `rw_bufreader_buffering`, `rw_bufwriter`, `rw_bufwriter_drop`, `rw_seek_buffered`, `rw_copy`, `rw_bytesmut_write`, `rw_error_propagation`, `rw_reader_needs_read`, `rw_bufreader_capacity_zero`, `rw_bufwriter_capacity_zero` |
 | Byte buffers | `m24_stdlib/bytes_mut`, `bytes_share`, `bytes_slice_out_of_bounds`, `bytes_index_out_of_bounds`, `shared_get_view`, `shared_get_view_outlives` |
 | `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
+| Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_comptime` |
+| Time | `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_comptime`, `time_comptime_impure` |
+| Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
+| Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
+| Mutable iteration | `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`, `iter_mut_adapters`, `iter_mut_drops`, `iter_mut_mutates_collection`, `iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable`, `iter_mut_map_key_readonly`, `iter_mut_no_iter_mut`, `iter_mut_comptime` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
 | `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
-| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
+| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors`, `m24_stdlib/io_error_kinds`, `io_error_kind_display`, `io_error_kind_mapping` |
+| Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode` |
+| Child processes | `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`, `m20_comptime/purity_process` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |
 | Dynamic errors, `main`, assertions | `m16_errors/dynamic_error_downcast`, `error_context_chain`, `error_context_non_error`, `traces_debug`, `main_result_ok`, `main_result_err`, `main_result_typed`, `main_result_alias`, `assert_typed`, `std_errors` |

@@ -1,0 +1,50 @@
+//@ run
+//> buffered 0, inner writes 0
+//> buffered 5, inner writes 0
+//> buffered 7, inner writes 0
+//> buffered 3, inner writes 1
+//> after flush: buffered 0, inner writes 2
+//> big write: inner writes 3
+//> hello, world!BIG-PAYLOAD
+
+// A `BufWriter` holds small writes until the buffer would overflow, writes them to the wrapped writer in one call, and
+// passes a write at least as large as the buffer straight through. `flush` pushes everything out.
+
+struct Counted {
+    out: List<u8>
+    writes: i32
+}
+
+Counted: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        self.writes = self.writes + 1
+        let mut i: usize = 0
+        while i < data.len() {
+            self.out.push(data[i])
+            i = i + 1
+        }
+        Ok(data.len())
+    }
+
+    fn flush(mut self): Result<(), IoError> {
+        Ok(())
+    }
+}
+
+fn main() {
+    let mut w = BufWriter.with_capacity(8, Counted { out: List<u8>.new(), writes: 0 })
+    println("buffered {}, inner writes {}", w.buffered(), w.get_ref().writes)
+    w.write_text("hello").unwrap()
+    println("buffered {}, inner writes {}", w.buffered(), w.get_ref().writes)
+    w.write_text(", ").unwrap()
+    println("buffered {}, inner writes {}", w.buffered(), w.get_ref().writes)
+    w.write_text("wor").unwrap()
+    println("buffered {}, inner writes {}", w.buffered(), w.get_ref().writes)
+    w.write_text("ld!").unwrap()
+    w.flush().unwrap()
+    println("after flush: buffered {}, inner writes {}", w.buffered(), w.get_ref().writes)
+    w.write_text("BIG-PAYLOAD").unwrap()
+    println("big write: inner writes {}", w.get_ref().writes)
+    let inner = w.into_inner().unwrap()
+    println("{}", from_utf8(inner.out[0..inner.out.len()]).unwrap())
+}

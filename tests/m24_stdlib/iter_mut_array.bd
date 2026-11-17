@@ -1,0 +1,43 @@
+//@ run
+//> 2 3 4
+//> 4 6 8
+//> 11 22
+//> 9
+
+// An array is walked through `for x in mut a` and `a.iter_mut()` the same way as a list: the array must be a mutable
+// place, and its elements are rewritten in place (IT15).
+
+fn main() {
+    let mut a = [1, 2, 3]
+    for x in mut a {
+        *x = *x + 1
+    }
+    println("{a[0]} {a[1]} {a[2]}")
+    let mut it = a.iter_mut()
+    loop {
+        match it.next() {
+            Some(x) => {
+                *x = *x * 2
+            }
+            None => break,
+        }
+    }
+    println("{a[0]} {a[1]} {a[2]}")
+
+    // Nested arrays: the inner array is a mutable element place too.
+    let mut grid = [[0, 0], [0, 0]]
+    let mut n = 0
+    for row in mut grid {
+        n = n + 1
+        for cell in mut *row {
+            *cell = n
+        }
+    }
+    println("{grid[0][0]}{grid[0][1]} {grid[1][0]}{grid[1][1]}")
+
+    let mut last = [0]
+    for z in mut last {
+        *z = 9
+    }
+    println("{last[0]}")
+}

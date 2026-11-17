@@ -7,7 +7,7 @@ use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
-    /// `xs.iter()` and `xs.into_iter()`: builds the iterator value of the receiver's type.
+    /// `xs.iter()`, `xs.iter_mut()`, and `xs.into_iter()`: builds the iterator value of the receiver's type.
     pub(super) fn iter_value(
         &mut self,
         args: &'a [burdin_tir::Expr],
@@ -116,6 +116,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let elem = (**elem).clone();
                 self.next_slice(&args[0], &elem, &item, ty)
             }
+            // A mutable list or array iterator walks the same `{ptr, len}` state as a slice; its item is always the
+            // element's address.
+            Ty::IterMut(elem) => {
+                let elem = (**elem).clone();
+                self.next_slice(&args[0], &elem, &item, ty)
+            }
             Ty::Chars => self.next_chars(&args[0], ty),
             Ty::ListIntoIter(elem, alloc) => {
                 let (elem, alloc) = ((**elem).clone(), alloc.clone());
@@ -125,7 +131,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let elem = (**elem).clone();
                 self.next_array_into(&args[0], &elem, *n, ty)
             }
-            Ty::MapIter(k, v) => {
+            Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {
                 let (k, v) = ((**k).clone(), (**v).clone());
                 self.next_map(&args[0], &k, &v, &item, ty, false, &burdin_tir::Alloc::Global)
             }
@@ -146,6 +152,29 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.next_chunks(&args[0], &elem, false, true, ty)
             }
             other => Err(format!("`next` on `{other}` has no built-in implementation")),
+        }
+    }
+
+    /// `it.next_back()` on a slice, `Chars`, or a range iterator (spec/iterators.md, IT14).
+    pub(super) fn iter_next_back(
+        &mut self,
+        args: &'a [burdin_tir::Expr],
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Ty::Option(item) = ty else { return Err("an iterator's `next_back` returns an `Option`".into()) };
+        let item = item.as_ref().clone();
+        let recv_ty = args[0].ty.clone();
+        match &recv_ty {
+            Ty::Slice(elem) => {
+                let elem = (**elem).clone();
+                self.next_back_slice(&args[0], &elem, &item, ty)
+            }
+            Ty::Chars => self.next_back_chars(&args[0], ty),
+            Ty::RangeIter(elem, inclusive) => {
+                let elem = (**elem).clone();
+                self.next_back_range(&args[0], &elem, *inclusive, ty)
+            }
+            other => Err(format!("`next_back` on `{other}` has no built-in implementation")),
         }
     }
 
@@ -215,6 +244,120 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(slot, advanced).map_err(llvm_err)?;
         if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
             let some = self.some_value(item, payload);
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `[T].next_back()`: yields the last element (a copy for a `Copy` element, a view otherwise) and shortens
+    /// the slice from the back.
+    fn next_back_slice(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        elem: &Ty,
+        item: &Ty,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let s = self.builder.build_load(self.str_ty, slot, "slice.iter").map_err(llvm_err)?.into_struct_value();
+        let base = self.builder.build_extract_value(s, 0, "slice.ptr").map_err(llvm_err)?.into_pointer_value();
+        let len = self.builder.build_extract_value(s, 1, "slice.len").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "next.out")?;
+        let empty =
+            self.builder.build_int_compare(IntPredicate::EQ, len, self.usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let none_bb = self.new_block("back.none");
+        let some_bb = self.new_block("back.some");
+        let end = self.new_block("back.end");
+        self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let none = self.option_ty(item).const_zero();
+            self.builder.build_store(out, none).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let one = self.usize_ty.const_int(1, false);
+        let last = self.builder.build_int_sub(len, one, "").map_err(llvm_err)?;
+        // The last element, as a view of the buffer or a copy of it.
+        let last_ptr = match self.llvm_ty(elem) {
+            Some(t) => {
+                // SAFETY (LLVM): `last < len`, because the slice is not empty.
+                unsafe { self.builder.build_in_bounds_gep(t, base, &[last], "back.ptr") }.map_err(llvm_err)?
+            }
+            None => base,
+        };
+        let payload = if matches!(item, Ty::Ref { .. }) {
+            Some(last_ptr.into())
+        } else {
+            match self.llvm_ty(elem) {
+                Some(t) => Some(self.builder.build_load(t, last_ptr, "item").map_err(llvm_err)?),
+                None => None,
+            }
+        };
+        let shortened = self.make_str(base.into(), last.into())?;
+        self.builder.build_store(slot, shortened).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(item, payload);
+            self.builder.build_store(out, some).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `Chars.next_back()`: decodes the last character and drops its bytes from the back.
+    fn next_back_chars(&mut self, recv: &'a burdin_tir::Expr, ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let s = self.builder.build_load(self.str_ty, slot, "chars.iter").map_err(llvm_err)?.into_struct_value();
+        let base = self.builder.build_extract_value(s, 0, "chars.ptr").map_err(llvm_err)?.into_pointer_value();
+        let len = self.builder.build_extract_value(s, 1, "chars.len").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "char.out")?;
+        let empty =
+            self.builder.build_int_compare(IntPredicate::EQ, len, self.usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let none_bb = self.new_block("back.none");
+        let some_bb = self.new_block("back.some");
+        let end = self.new_block("back.end");
+        self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(&Ty::Char).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        // Walk back over at most three continuation bytes (`10xxxxxx`) to the first byte of the character.
+        let i8_ty = self.cx.i8_type();
+        let one = self.usize_ty.const_int(1, false);
+        let mut start = self.builder.build_int_sub(len, one, "").map_err(llvm_err)?;
+        for _ in 0..3 {
+            // SAFETY (LLVM): `start < len`, because it only ever decreases from `len - 1`.
+            let p = unsafe { self.builder.build_in_bounds_gep(i8_ty, base, &[start], "") }.map_err(llvm_err)?;
+            let b = self.builder.build_load(i8_ty, p, "b").map_err(llvm_err)?.into_int_value();
+            let top = self.builder.build_and(b, i8_ty.const_int(0xC0, false), "").map_err(llvm_err)?;
+            let continuation = self
+                .builder
+                .build_int_compare(IntPredicate::EQ, top, i8_ty.const_int(0x80, false), "")
+                .map_err(llvm_err)?;
+            let not_first = self
+                .builder
+                .build_int_compare(IntPredicate::UGT, start, self.usize_ty.const_zero(), "")
+                .map_err(llvm_err)?;
+            let step = self.builder.build_and(continuation, not_first, "").map_err(llvm_err)?;
+            let before = self.builder.build_int_sub(start, one, "").map_err(llvm_err)?;
+            start = self.builder.build_select(step, before, start, "").map_err(llvm_err)?.into_int_value();
+        }
+        let (cp, _) = self.decode_char_at(base, len, start)?;
+        let shortened = self.make_str(base.into(), start.into())?;
+        self.builder.build_store(slot, shortened).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(&Ty::Char, Some(cp.into()));
             self.builder.build_store(out, some).map_err(llvm_err)?;
         }
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
@@ -537,6 +680,73 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.position_at_end(none_bb);
         if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
             self.builder.build_store(out, self.option_ty(item).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.load_option(out, ty)
+    }
+
+    /// `RangeIter.next_back()`: yields the endpoints from the top down. An inclusive range yields its upper
+    /// endpoint first and stops after the lower one without overflowing its type.
+    fn next_back_range(
+        &mut self,
+        recv: &'a burdin_tir::Expr,
+        elem: &Ty,
+        inclusive: bool,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = self.place_ptr(recv)? else {
+            self.expr_mode(recv, Mode::Use)?;
+            return Ok(None);
+        };
+        let tt = self.product_ty(&[elem.clone(), elem.clone(), Ty::Bool]);
+        let lo_ptr = self.builder.build_struct_gep(tt, slot, 0, "range.lo").map_err(llvm_err)?;
+        let hi_ptr = self.builder.build_struct_gep(tt, slot, 1, "range.hi").map_err(llvm_err)?;
+        let done_ptr = self.builder.build_struct_gep(tt, slot, 2, "range.done").map_err(llvm_err)?;
+        let Ty::Int(ity) = elem else { return Err("a range iterator needs an integer element".into()) };
+        let int_t = self.int_ty(*ity);
+        let t: BasicTypeEnum<'ctx> = int_t.into();
+        let lo = self.builder.build_load(t, lo_ptr, "lo").map_err(llvm_err)?.into_int_value();
+        let hi = self.builder.build_load(t, hi_ptr, "hi").map_err(llvm_err)?.into_int_value();
+        let done = self.builder.build_load(self.cx.bool_type(), done_ptr, "done").map_err(llvm_err)?.into_int_value();
+        let out = self.option_slot(ty, "next.out")?;
+        let signed = ity.signed();
+        let valid_pred = match (inclusive, signed) {
+            (true, true) => IntPredicate::SLE,
+            (true, false) => IntPredicate::ULE,
+            (false, true) => IntPredicate::SLT,
+            (false, false) => IntPredicate::ULT,
+        };
+        let in_range = self.builder.build_int_compare(valid_pred, lo, hi, "").map_err(llvm_err)?;
+        let not_done = self.builder.build_not(done, "").map_err(llvm_err)?;
+        let valid = self.builder.build_and(not_done, in_range, "").map_err(llvm_err)?;
+        let none_bb = self.new_block("range.none");
+        let some_bb = self.new_block("range.some");
+        let end = self.new_block("range.end");
+        self.builder.build_conditional_branch(valid, some_bb, none_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(none_bb);
+        self.builder.build_store(done_ptr, self.cx.bool_type().const_int(1, false)).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            self.builder.build_store(out, self.option_ty(elem).const_zero()).map_err(llvm_err)?;
+        }
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(some_bb);
+        let one = int_t.const_int(1, false);
+        let below = self.builder.build_int_sub(hi, one, "").map_err(llvm_err)?;
+        let (yielded, next_hi, last) = if inclusive {
+            // The upper endpoint is yielded; after the lower one nothing is left.
+            let last = self.builder.build_int_compare(IntPredicate::EQ, lo, hi, "").map_err(llvm_err)?;
+            let next_hi = self.builder.build_select(last, hi, below, "").map_err(llvm_err)?.into_int_value();
+            (hi, next_hi, last)
+        } else {
+            // `lo < hi`, so `hi - 1` does not underflow and is the last endpoint.
+            (below, below, self.cx.bool_type().const_zero())
+        };
+        self.builder.build_store(hi_ptr, next_hi).map_err(llvm_err)?;
+        self.builder.build_store(done_ptr, last).map_err(llvm_err)?;
+        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
+            let some = self.some_value(elem, Some(yielded.into()));
+            self.builder.build_store(out, some).map_err(llvm_err)?;
         }
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(end);

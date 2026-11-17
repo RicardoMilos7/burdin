@@ -349,7 +349,7 @@ impl FnCx<'_> {
             locals: child.locals,
             body: block,
             moved: Vec::new(),
-            ret_origin: None,
+            ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
         };
@@ -817,7 +817,7 @@ impl FreeNames {
                 self.expr(cond);
                 self.block(body);
             }
-            K::For { pattern, iter, body } => {
+            K::For { pattern, iter, body, .. } => {
                 self.expr(iter);
                 self.scopes.push(Vec::new());
                 self.bind(pattern);

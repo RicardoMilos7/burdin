@@ -1,0 +1,51 @@
+//@ run
+//> 2 3
+//> ann bob
+//> 3
+//> 6
+//> 14
+//> 0:1
+//> 1:2
+//> 2:3
+//> 3
+//> Some("ann") Some("bob") Some("cy") None
+
+// `cloned` and `copied` turn an iterator of views into an iterator of owned values: `cloned` clones each item, and
+// `copied` copies a `Copy` item. A list of `Copy` items already yields values, so they apply to the iterators
+// that yield views: a list of strings, a deque, and a map's keys through a `map`.
+
+fn main() {
+    let mut names = List<String>.new()
+    names.push(String.from("ann"))
+    names.push(String.from("bob"))
+    // The items are owned, so they can be collected into a list that outlives the source.
+    let mut owned = List<String>.new()
+    for s in names.iter().cloned() {
+        owned.push(s)
+    }
+    names.push(String.from("cy"))
+    println("{owned.len()} {names.len()}")
+    println("{owned[0]} {owned[1]}")
+    // `to_list` of the cloned items is an ordinary owned list.
+    let copy = names.iter().cloned().to_list()
+    println("{copy.len()}")
+
+    let mut d = Deque<i32>.new()
+    d.push_back(2)
+    d.push_back(3)
+    d.push_front(1)
+    // `copied` over views of a `Copy` element.
+    let mut total = 0
+    for x in d.iter().copied() {
+        total = total + x
+    }
+    println("{total}")
+    println("{d.iter().copied().map(|x| x * x).sum()}")
+    // The adapters still compose after them.
+    for (i, x) in d.iter().copied().enumerate() {
+        println("{i}:{x}")
+    }
+    println("{names.iter().cloned().count()}")
+    let mut it = names.iter().cloned()
+    println("{it.next():?} {it.next():?} {it.next():?} {it.next():?}")
+}
