@@ -76,7 +76,7 @@ impl Sema<'_> {
                 };
             }
         }
-        self.globals.io_error_ty = self.globals.std_adt_ty("IoError");
+        self.globals.io_error_kind_ty = self.globals.std_adt_ty("IoErrorKind");
         self.globals.parse_int_error_ty = self.globals.std_adt_ty("ParseIntError");
         // The one-segment standard modules are usable as modules: `env.args()`, `mem.swap(...)`.
         let aliases: Vec<(String, usize)> = std_modules

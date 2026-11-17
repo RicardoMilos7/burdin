@@ -11,6 +11,10 @@ fn exit(code: i32): ! {
 fn run(command: str): Result<i32, IoError> {
     match __run(command) {
         Ok(status) => Ok(status),
-        Err(_) => Err(IoError.Run { command: command.to_string() }),
+        Err(code) => Err(IoError.Run {
+            command: command.to_string(),
+            kind: __io_kind(code),
+            os_code: Some(code),
+        }),
     }
 }

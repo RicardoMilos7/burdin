@@ -1,0 +1,91 @@
+//@ run
+//> cannot read missing.txt: not found
+//> not found some
+//> cannot write plain: already exists
+//> already exists some
+//> cannot read plain: not a directory
+//> not a directory some
+//> cannot write d: directory not empty
+//> directory not empty some
+//> cannot write plain: not a directory
+//> not a directory none
+//> cannot run no-such-command: other
+//> other none
+
+// Every I/O failure carries the portable kind and, when a system call reported it, the raw OS code
+// (spec/errors.md, ERR10-ERR11). The exact code is the platform's own: `errno` on Linux and macOS, the Win32
+// error code on Windows.
+
+fn report(failure: IoError) {
+    println("{failure}")
+    if failure.os_code().is_some() {
+        println("{} some", failure.kind())
+    } else {
+        println("{} none", failure.kind())
+    }
+}
+
+fn main() {
+    match read_to_string("missing.txt") {
+        Ok(_) => println("read succeeded"),
+        Err(e) => {
+            // ENOENT and ERROR_FILE_NOT_FOUND are both 2.
+            assert(e.os_code() == Some(2))
+            report(e)
+        }
+    }
+
+    write_file("plain", "x").unwrap()
+    match create_dir("plain") {
+        Ok(_) => println("create succeeded"),
+        Err(e) => {
+            comptime if target.os() == target.Os.Windows {
+                assert(e.os_code() == Some(183)) // ERROR_ALREADY_EXISTS
+            } else {
+                assert(e.os_code() == Some(17)) // EEXIST
+            }
+            report(e)
+        }
+    }
+
+    match read_dir("plain") {
+        Ok(_) => println("read_dir succeeded"),
+        Err(e) => {
+            comptime if target.os() == target.Os.Windows {
+                assert(e.os_code() == Some(267)) // ERROR_DIRECTORY
+            } else {
+                assert(e.os_code() == Some(20)) // ENOTDIR
+            }
+            report(e)
+        }
+    }
+
+    create_dir("d").unwrap()
+    write_file("d/f", "x").unwrap()
+    match remove_dir("d") {
+        Ok(_) => println("remove_dir succeeded"),
+        Err(e) => {
+            comptime if target.os() == target.Os.Windows {
+                assert(e.os_code() == Some(145)) // ERROR_DIR_NOT_EMPTY
+            } else if target.os() == target.Os.MacOs {
+                assert(e.os_code() == Some(66)) // ENOTEMPTY
+            } else {
+                assert(e.os_code() == Some(39)) // ENOTEMPTY
+            }
+            report(e)
+        }
+    }
+
+    // `std` itself sees that `plain` is not a directory: no system call failed, so there is no code.
+    match remove_dir_all("plain") {
+        Ok(_) => println("remove_dir_all succeeded"),
+        Err(e) => {
+            assert(e.os_code().is_none())
+            report(e)
+        }
+    }
+
+    // `process.run` fails only when the shell cannot start, which a test cannot arrange portably, so the third
+    // variant is built directly (spec/errors.md, ERR10).
+    report(IoError.Run { command: "no-such-command".to_string(), kind: IoErrorKind.Other, os_code: None })
+}

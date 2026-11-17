@@ -7,7 +7,7 @@ program, then copies its public names into every module (the prelude). A project
 
 | Module | Contents |
 | --- | --- |
-| `std.bd` | the `Error` marker interface and the dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`, `__test_assert_eq`, `unreachable` |
+| `std.bd` | the `Error` marker interface and the dynamic `Error`, `TraceFrame`, the `IoError` error enum and its `IoErrorKind`, `ParseIntError`, and `AssertError`, `CStr`, `assert`, `assert_eq`, `__test_assert`, `__test_assert_eq`, `unreachable` |
 | `io.bd` | `read_to_string`, `write_file`, and the `stdin`, `stdout`, and `stderr` handles (`spec/stdlib.md`, Streams) |
 | `fs.bd` | `read_dir`, `create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`, `metadata`, `canonicalize`, `walk`, and `walk_glob`, with `Metadata` and `FileKind` (`spec/stdlib.md`, "Directories, metadata, and walking") |
 | `env.bd` | `args` |
@@ -27,12 +27,13 @@ Some names in the stage 0 table are compiler built-ins rather than Burdin code, 
 express them yet: `Option`, `Result`, `Heap`, `List`, `Map`, `String`, `Shared`, `str`, the `str`/`[T]` intrinsics,
 the number methods (`to_string`, `parse`, `wrapping_*`, `checked_*`, `min`, `max`, `abs`), the
 `__read_to_string`, `__write_file`, `__read_dir`, `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`,
-`__metadata`, `__canonicalize`, `__stdout_write`, `__stdout_write_line`, `__stdout_flush`, `__stderr_write`,
-`__stderr_write_line`, `__is_terminal`, `__stdin_read_line`, `__stdin_read_to_string`, `__args`, `__exit`,
-`__run`, `__swap`, and `__replace` primitives the modules above call, and
-`print`/`println`/`eprint`/`eprintln`/`panic`. The I/O and integer-parse primitives are
-typed with the `std` error types but produce a placeholder error value; the `std` wrappers replace it with the
-real variant (`spec/errors.md`, ERR10).
+`__metadata`, `__canonicalize`, `__io_kind`, `__stdout_write`, `__stdout_write_line`, `__stdout_flush`,
+`__stderr_write`, `__stderr_write_line`, `__is_terminal`, `__stdin_read_line`, `__stdin_read_to_string`, `__args`,
+`__exit`, `__run`, `__swap`, and `__replace` primitives the modules above call, and
+`print`/`println`/`eprint`/`eprintln`/`panic`. The I/O primitives are typed `Result<..., i32>`: the error is the
+operating system's code, and the `std` wrappers use `__io_kind` to build the `IoError` with its portable kind
+(`spec/errors.md`, ERR10-ERR11). The integer-parse primitives are typed with `ParseIntError` and produce a
+placeholder error value; the `std` wrappers replace it with `Invalid`.
 
 Because the sources are embedded at compile time, changing a file here requires rebuilding `burdin`
 (`cargo build`). To use a modified standard library without rebuilding, point a package at its own `std`

@@ -71,8 +71,8 @@ Stdin {
   `Ok(None)` is the end of the input, and the last line may have no terminator. `read_to_string` returns
   everything left, as the empty `String` at the end. The runtime reads standard input a block at a time and keeps
   the unread bytes for the next call. As with files, the bytes are not checked for UTF-8.
-- A read error is `IoError.Read` with the path `<stdin>` (`errors.md`, ERR10). A write error is ignored, exactly
-  as `print` ignores one.
+- A read error is `IoError.Read` with the path `<stdin>`, the portable kind, and the OS code (`errors.md`,
+  ERR10-ERR11). A write error is ignored, exactly as `print` ignores one.
 - `is_terminal` asks the operating system whether that stream is a terminal. It is false under the conformance
   runner, for a pipe, and for a file.
 - `burdin test` gives each test process a closed standard input (`test-runner.md`, Isolation), so a read sees the
@@ -744,7 +744,9 @@ Path {   // extension methods, the same operations with the receiver as the path
 Every function is impure: a comptime evaluation that reaches one fails with E0224. A read that only inspects the
 file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
 (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`) reports `IoError.Write`.
-`rename` names its destination `to` in the error.
+Each error carries the portable kind and the OS code (`errors.md`, ERR10-ERR11). `rename` names its destination `to`
+in the error. `remove_dir_all` on a path that is not a directory has kind `NotADirectory` and no OS code, because
+`std` saw the kind before any system call failed.
 
 - `read_dir` returns the entry names, not paths, without `.` and `..`, in the order the system returns them; sort the
   list for a deterministic order. A missing path or a file is an error. The names join with `Path.join`.
@@ -981,13 +983,23 @@ prints the wrapped error's `Display` (`errors.md`, ERR4). `TraceFrame` implement
 `Error` and a propagation frame at each `?` that passes a `Result<..., Error>` outward, and a release build records
 none (`errors.md`, ERR7).
 
-`std` declares its error types (`errors.md`, ERR10):
+`std` declares its error types (`errors.md`, ERR10-ERR11):
 
 ```
+enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+    NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
+    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut  Other
+}
+IoErrorKind: Display { fn fmt(self, mut f: Formatter) }   // "not found", "permission denied", ...
+
 error enum IoError {
-    Read { path: String }    "cannot read {path}"
-    Write { path: String }   "cannot write {path}"
-    Run { command: String }  "cannot run {command}"
+    Read { path: String, kind: IoErrorKind, os_code: Option<i32> }      "cannot read {path}: {kind}"
+    Write { path: String, kind: IoErrorKind, os_code: Option<i32> }     "cannot write {path}: {kind}"
+    Run { command: String, kind: IoErrorKind, os_code: Option<i32> }    "cannot run {command}: {kind}"
+}
+IoError {
+    fn kind(self): IoErrorKind
+    fn os_code(self): Option<i32>
 }
 
 error enum ParseIntError {
@@ -996,7 +1008,9 @@ error enum ParseIntError {
 ```
 
 `read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
-`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`.
+`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The kind is portable and the OS code is the
+platform's own (`errno`, or the Win32 error code); the message ends with the kind's text, so a missing file prints
+`cannot read missing.txt: not found`.
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
@@ -1016,8 +1030,8 @@ fn process.run(command: str): Result<i32, IoError>
 `read_to_string` and `write_file` read and write raw bytes: there is no newline translation on Windows and no UTF-8
 normalization, so a string written and read back is byte-identical (`len` is the byte count). `process.run` runs the
 command through the system shell and returns its status: the POSIX wait status is shifted, the Windows status is
-returned as is. On failure each returns the matching `IoError` variant, and an integer `parse` returns
-`ParseIntError.Invalid` (`errors.md`, ERR10).
+returned as is. On failure each returns the matching `IoError` variant with its kind and OS code, and an integer
+`parse` returns `ParseIntError.Invalid` (`errors.md`, ERR10-ERR11).
 
 None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
 
@@ -1150,7 +1164,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
-| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
+| Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors`, `m24_stdlib/io_error_kinds`, `io_error_kind_display`, `io_error_kind_mapping` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |
 | Dynamic errors, `main`, assertions | `m16_errors/dynamic_error_downcast`, `error_context_chain`, `error_context_non_error`, `traces_debug`, `main_result_ok`, `main_result_err`, `main_result_typed`, `main_result_alias`, `assert_typed`, `std_errors` |

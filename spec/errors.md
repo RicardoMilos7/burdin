@@ -176,9 +176,9 @@ it reports the failure, so `burdin test` shows it with the captured output. A no
 
 ```
 error enum IoError {
-    Read { path: String }     "cannot read {path}"
-    Write { path: String }    "cannot write {path}"
-    Run { command: String }   "cannot run {command}"
+    Read { path: String, kind: IoErrorKind, os_code: Option<i32> }      "cannot read {path}: {kind}"
+    Write { path: String, kind: IoErrorKind, os_code: Option<i32> }     "cannot write {path}: {kind}"
+    Run { command: String, kind: IoErrorKind, os_code: Option<i32> }    "cannot run {command}: {kind}"
 }
 
 error enum ParseIntError {
@@ -194,9 +194,69 @@ directory operations (`read_dir`, `metadata`, `canonicalize`, `walk`, and `walk_
 ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, and
 `rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking").
 
-The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, and the integer parsers) are
-typed with the same error types but produce a placeholder error value; the `std` wrappers replace it with the
-real variant. A program calls the `std` functions, not the primitives.
+The message ends with the kind's text, so a missing file prints `cannot read missing.txt: not found`. `kind()` is
+the portable classification of ERR11, and `os_code()` is the operating system's own code when a system call reported
+the failure. A failure `std` detects itself has `os_code() == None`; the ones that exist today are `remove_dir_all`
+on a path that is not a directory (`IoErrorKind.NotADirectory`) and a symbolic link `remove_dir_all` cannot remove
+(`IoErrorKind.Other`).
+
+The compiler primitives behind the I/O functions (`__read_to_string`, `__write_file`, `__run`, `__read_dir`,
+`__create_dir`, `__remove_dir`, `__remove_file`, `__rename`, `__metadata`, `__canonicalize`, `__stdin_read_line`,
+and `__stdin_read_to_string`) are typed `Result<..., i32>`: the error is the operating system's code, which the
+`std` wrapper turns into the `IoError` with `__io_kind(code)` (ERR11). The integer parsers stay typed with
+`ParseIntError` and produce a placeholder error value, which the `std` wrapper replaces with `Invalid`.
+
+## ERR11. I/O error kinds and OS codes
+
+The kind is portable; the code is not. `std` declares the kinds once and `IoError` carries one:
+
+```
+enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+    NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
+    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut  Other
+}
+```
+
+`IoErrorKind` implements `Display` with lowercase text, and that text is what an `IoError` message ends with:
+`not found`, `permission denied`, `already exists`, `is a directory`, `not a directory`, `directory not empty`,
+`invalid input`, `invalid data`, `unexpected end of file`, `interrupted`, `broken pipe`, `would block`, `timed out`,
+and `other`. The message is stable, so a test can compare it.
+
+`IoError.kind()` returns the kind and `IoError.os_code()` returns `Some(code)` when a system call reported the
+failure. The compiler maps a code with the target's table (`burdin_tir::ioerror`): `errno` on Linux and macOS, and
+the Win32 error code (`GetLastError`, which the CRT also leaves in `_doserrno` for its file functions) on Windows.
+The codes that matter are:
+
+| Kind | Linux / macOS | Windows |
+| --- | --- | --- |
+| `NotFound` | `ENOENT` | `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND`, `ERROR_INVALID_DRIVE` |
+| `PermissionDenied` | `EACCES`, `EPERM`, `EROFS` | `ERROR_ACCESS_DENIED`, `ERROR_WRITE_PROTECT`, `ERROR_SHARING_VIOLATION` |
+| `AlreadyExists` | `EEXIST` | `ERROR_ALREADY_EXISTS`, `ERROR_FILE_EXISTS` |
+| `IsADirectory` | `EISDIR` | none: removing a directory is `ERROR_ACCESS_DENIED`, so `PermissionDenied` |
+| `NotADirectory` | `ENOTDIR` | `ERROR_DIRECTORY` |
+| `DirectoryNotEmpty` | `ENOTEMPTY` (39 on Linux, 66 on macOS) | `ERROR_DIR_NOT_EMPTY` |
+| `InvalidInput` | `EINVAL`, `ENAMETOOLONG`, `ELOOP` | `ERROR_INVALID_PARAMETER`, `ERROR_INVALID_NAME`, `ERROR_FILENAME_EXCED_RANGE` |
+| `InvalidData` | `EILSEQ`, `ENOEXEC` | `ERROR_INVALID_DATA`, `ERROR_CRC` |
+| `UnexpectedEof` | none | `ERROR_HANDLE_EOF` |
+| `Interrupted` | `EINTR` | `ERROR_OPERATION_ABORTED` |
+| `BrokenPipe` | `EPIPE` | `ERROR_BROKEN_PIPE`, `ERROR_NO_DATA` |
+| `WouldBlock` | `EAGAIN` (11 on Linux, 35 on macOS) | `ERROR_IO_PENDING` |
+| `TimedOut` | `ETIMEDOUT` (110 on Linux, 60 on macOS) | `ERROR_SEM_TIMEOUT`, `ERROR_TIMEOUT` |
+| `Other` | every other code | every other code |
+
+The numeric values are the platform's; a program that compares `os_code()` with a number is platform-specific and
+should ask `target.os()` first (`comptime.md`, CT5), while `kind()` is the same on every platform.
+
+Two decisions are recorded here (issue #701):
+
+- **The operation and the path stay variants.** `Read`, `Write`, and `Run` already say which operation failed, and
+  each carries its own `path` or `command`. A single struct with an `operation` field would make every match write
+  the operation again, let a `Run` carry a path, and buy nothing: the three payloads differ only in that name.
+  `kind` and `os_code` are fields of all three, so `kind()` and `os_code()` are the same method on every variant.
+- **`UnexpectedEof` and `InvalidData` are I/O kinds, not a reader-layer error.** The reader/writer layer (#409)
+  returns `IoError` too, so a short read or malformed bytes need no second error type and every caller keeps one
+  `Result<..., IoError>`. An OS code that means malformed data maps to `InvalidData`, and Windows' EOF code maps to
+  `UnexpectedEof`; the reader layer produces either without an OS code, which `os_code()` reports as `None`.
 
 ## Diagnostics
 

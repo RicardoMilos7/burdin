@@ -3,6 +3,7 @@
 //! panic locations).
 
 pub mod defs;
+pub mod ioerror;
 pub mod ops;
 pub mod place;
 pub mod program;

@@ -237,8 +237,8 @@ pub(crate) struct Globals {
     /// The typed `assert` and `assert_eq` of a `burdin test` build (`spec/errors.md`, ERR9).
     pub(crate) test_assert: Option<FuncId>,
     pub(crate) test_assert_eq: Option<usize>,
-    /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10).
-    pub(crate) io_error_ty: Option<Ty>,
+    /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10-ERR11).
+    pub(crate) io_error_kind_ty: Option<Ty>,
     pub(crate) parse_int_error_ty: Option<Ty>,
     /// The generic method template each registered generic method stands for.
     pub(crate) method_templates: HashMap<FuncId, crate::generics::GenericMethod>,

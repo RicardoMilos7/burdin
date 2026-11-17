@@ -1,11 +1,11 @@
 //@ run-abort
-//@ stderr: loading settings: cannot read cfg.toml
+//@ stderr: loading settings: cannot read cfg.toml: not found
 //> before
 
 // An `Err` from `main` prints its chain to standard error and exits non-zero (spec/errors.md, ERR8).
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string() })
+    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
 }
 
 fn main(): Result<i32> {

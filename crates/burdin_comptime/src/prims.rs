@@ -460,6 +460,20 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::TargetOs => Value::str(tir::target_os()),
             Builtin::TargetArch => Value::str(tir::target_arch()),
+            // The portable kind of an OS error code (`spec/errors.md`, ERR11). It is pure, so it evaluates at
+            // compile time like the target queries above.
+            Builtin::IoErrorKind => {
+                let code = self.eval(&args[0], Mode::Use)?.int() as i32;
+                let Ty::Enum(a) = ty else { unreachable!("`__io_kind` returns IoErrorKind") };
+                let variants = &self.p.enums[a.id].variants;
+                let name = tir::ioerror::kind_name(tir::ioerror::host_platform(), code);
+                let index = variants
+                    .iter()
+                    .position(|v| v.name == name)
+                    .or_else(|| variants.iter().position(|v| v.name == "Other"))
+                    .unwrap_or(0);
+                Value::Variant(index, Vec::new())
+            }
             Builtin::StringNew => Value::String(Vec::new()),
             Builtin::StringFrom => {
                 let bytes = self.peek(&args[0], |v| v.bytes().to_vec())?;

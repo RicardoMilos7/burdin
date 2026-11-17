@@ -85,6 +85,9 @@ pub enum Builtin {
     Metadata,
     /// `__canonicalize(path)`: the absolute, normalized path.
     Canonicalize,
+    /// `__io_kind(code)`: the portable `IoErrorKind` of an operating system error code (`spec/errors.md`,
+    /// ERR11). The compiler knows the target's table (`ioerror`).
+    IoErrorKind,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
     /// `process.exit(code)`: ends the process.
