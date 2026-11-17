@@ -25,9 +25,59 @@ and `format` returns the `String`. A call with one argument takes no format stri
 still writes any `str` value, and a `String` argument is converted by IC1.
 Standard output is buffered and standard error is not; the buffer is flushed when it fills, after a line when
 stdout is a terminal, and before the process ends through a normal return, `process.exit`, a panic, or the
-stack-overflow guard. A program never sees the difference except through the timing of the bytes (there is no
-explicit output handle in stage 0); the flush points are what keep the order of stdout and stderr correct before
-an abnormal end.
+stack-overflow guard. The `stdout` handle below writes into the same buffer, and its `flush` is the same flush; a
+program that does not use the handles sees no difference. The flush points are what keep the order of stdout and
+stderr correct before an abnormal end.
+
+## Streams (issue #410)
+
+The three standard streams also have explicit handles. A handle is a zero-sized value, so passing or copying one
+costs nothing, and every handle to a stream shares the same runtime buffer.
+
+```
+fn stdout(): Stdout
+fn stderr(): Stderr
+fn stdin(): Stdin
+
+Stdout {
+    fn write(self, text: str)
+    fn write_line(self, text: str)
+    fn flush(self)
+    fn is_terminal(self): bool
+}
+
+Stderr {
+    fn write(self, text: str)
+    fn write_line(self, text: str)
+    fn flush(self)                  // does nothing: standard error is unbuffered
+    fn is_terminal(self): bool
+}
+
+Stdin {
+    fn read_line(self): Result<Option<String>, IoError>
+    fn read_to_string(self): Result<String, IoError>
+    fn is_terminal(self): bool
+}
+```
+
+- `Stdout.write` appends to the buffer `print` and `println` use, so the bytes of the handle and of `print` stay in
+  the order the program wrote them. `write_line` appends one `\n`; on a terminal the buffer is flushed after that
+  newline. `flush` writes the buffered bytes now, including what `print` wrote. The other flush points are the ones
+  in "Output" above.
+- `Stderr.write` and `Stderr.write_line` are unbuffered: the bytes reach the operating system during the call, so
+  they are already out when a later panic message is written. `Stderr.flush` exists so the two output handles are
+  used alike and does nothing.
+- `Stdin.read_line` returns one line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair.
+  `Ok(None)` is the end of the input, and the last line may have no terminator. `read_to_string` returns
+  everything left, as the empty `String` at the end. The runtime reads standard input a block at a time and keeps
+  the unread bytes for the next call. As with files, the bytes are not checked for UTF-8.
+- A read error is `IoError.Read` with the path `<stdin>` (`errors.md`, ERR10). A write error is ignored, exactly
+  as `print` ignores one.
+- `is_terminal` asks the operating system whether that stream is a terminal. It is false under the conformance
+  runner, for a pipe, and for a file.
+- `burdin test` gives each test process a closed standard input (`test-runner.md`, Isolation), so a read sees the
+  end of the input and never waits for a person.
+- None of these runs at compile time: reaching one in a comptime evaluation is E0224 (`comptime.md`, CT9).
 
 ## Numbers and parsing
 

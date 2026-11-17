@@ -1,0 +1,12 @@
+//@ run-abort
+//> buffered
+//@ stderr: unbuffered
+//@ stderr: panic: boom
+
+// A panic flushes buffered standard output first, and standard error is already out because it is unbuffered.
+
+fn main() {
+    stdout().write_line("buffered")
+    stderr().write_line("unbuffered")
+    panic("boom")
+}

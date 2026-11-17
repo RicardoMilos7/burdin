@@ -217,4 +217,5 @@ to the sign and the padding as in decimal.
 ## FM10. Where the text goes
 
 `print` and `eprint` write through the same buffered stdout and unbuffered stderr as before
-(`spec/stdlib.md`, Output): the text is one write, and the flush points are unchanged.
+(`spec/stdlib.md`, Output): the text is one write, and the flush points are unchanged. The `Stdout` and `Stderr`
+handles write into the same buffer and are subject to the same rules (`spec/stdlib.md`, Streams).

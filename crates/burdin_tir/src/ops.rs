@@ -55,6 +55,22 @@ pub enum Builtin {
     ReadToString,
     /// `write_file(path, text)`: writes the bytes.
     WriteFile,
+    /// `__stdout_write(text)`: appends to the standard-output buffer.
+    StdoutWrite,
+    /// `__stdout_write_line(text)`: appends `text` and a newline to the standard-output buffer.
+    StdoutWriteLine,
+    /// `__stdout_flush()`: writes the standard-output buffer now.
+    StdoutFlush,
+    /// `__stderr_write(text)`: writes `text` to standard error, unbuffered.
+    StderrWrite,
+    /// `__stderr_write_line(text)`: writes `text` and a newline to standard error, unbuffered.
+    StderrWriteLine,
+    /// `__is_terminal(fd)`: whether the file descriptor is a terminal.
+    IsTerminal,
+    /// `__stdin_read_line()`: one line of standard input without its terminator, or `None` at end of input.
+    StdinReadLine,
+    /// `__stdin_read_to_string()`: the rest of standard input as a `String`.
+    StdinReadToString,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
     /// `process.exit(code)`: ends the process.

@@ -330,6 +330,138 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
+                let text = self.expr_mode(&args[0], Mode::Use)?;
+                let text = self.need(text, &Ty::Str).into_struct_value();
+                let ptr = self.builder.build_extract_value(text, 0, "ptr").map_err(llvm_err)?;
+                let len = self.builder.build_extract_value(text, 1, "len").map_err(llvm_err)?;
+                let (fd, newline) = match b {
+                    Builtin::StdoutWrite => (1, 0),
+                    Builtin::StdoutWriteLine => (1, 1),
+                    Builtin::StderrWrite => (2, 0),
+                    Builtin::StderrWriteLine => (2, 1),
+                    _ => unreachable!("only the four write builtins match"),
+                };
+                let i32_ty = self.cx.i32_type();
+                let args: [BasicMetadataValueEnum; 4] = [
+                    i32_ty.const_int(fd, false).into(),
+                    ptr.into(),
+                    len.into(),
+                    i32_ty.const_int(newline, false).into(),
+                ];
+                self.builder.build_call(self.rt.print, &args, "").map_err(llvm_err)?;
+                return Ok(None);
+            }
+            Builtin::StdoutFlush => {
+                self.builder.build_call(self.rt.flush, &[], "").map_err(llvm_err)?;
+                return Ok(None);
+            }
+            Builtin::IsTerminal => {
+                let fd = self.expr_mode(&args[0], Mode::Use)?;
+                let fd = self.need_int(fd, &Ty::Int(burdin_tir::IntTy::I32));
+                let tty = self
+                    .builder
+                    .build_call(self.rt.is_terminal, &[fd.into()], "tty")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("is_terminal returns a bool");
+                return Ok(Some(tty));
+            }
+            Builtin::StdinReadLine => {
+                let out = self.alloca(self.string_ty.into(), "stdin.line")?;
+                self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let status = self
+                    .builder
+                    .build_call(self.rt.in_read_line, &[out.into()], "status")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("read_line returns a status")
+                    .into_int_value();
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_line returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "stdin.out")?;
+                let i32_ty = self.cx.i32_type();
+                let good = self.new_block("stdin.ok");
+                let bad = self.new_block("stdin.err");
+                let end = self.new_block("stdin.end");
+                let failed = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, status, i32_ty.const_zero(), "failed")
+                    .map_err(llvm_err)?;
+                self.builder.build_conditional_branch(failed, bad, good).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                // The runtime's 1 is the end of input with nothing read; a line of zero bytes is still a line.
+                let Ty::Option(inner) = &**ok_ty else { unreachable!("read_line returns Option<String>") };
+                let eof = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, status, i32_ty.const_int(1, false), "eof")
+                    .map_err(llvm_err)?;
+                let some = self.builder.build_not(eof, "some").map_err(llvm_err)?;
+                let opt_ty = self.option_ty(inner);
+                let option = self
+                    .builder
+                    .build_insert_value(opt_ty.const_zero(), some, 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                let option =
+                    self.builder.build_insert_value(option, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, option, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(out, &Ty::String)?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
+            Builtin::StdinReadToString => {
+                let out = self.alloca(self.string_ty.into(), "stdin.text")?;
+                self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let status = self
+                    .builder
+                    .build_call(self.rt.in_read_to_string, &[out.into()], "status")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("read_to_string returns a status")
+                    .into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, status, self.cx.i32_type().const_zero(), "ok")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_to_string returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "stdin.out")?;
+                let good = self.new_block("stdin.ok");
+                let bad = self.new_block("stdin.err");
+                let end = self.new_block("stdin.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(out, &Ty::String)?;
+                self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
             Builtin::EnvArgs => {
                 let out = self.alloca(self.string_ty.into(), "args.list")?;
                 let out = self

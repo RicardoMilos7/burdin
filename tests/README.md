@@ -63,13 +63,16 @@ Directives are line comments at any position in the root file.
 | `//@ failed-test: name` | That test must be reported as failed. May repeat. |
 | `//@ exit-code: N` | Expected exit code with `run`. |
 | `//@ args: a b` | Command-line arguments passed after the program name. |
+| `//@ stdin: text` | One line of standard input for a `run`/`run-abort` test, followed by `\n`. May repeat; the lines are joined in file order. `\n`, `\r`, and `\\` are escapes. |
+| `//@ stdin-eof: text` | Text appended after the `stdin` lines with no terminator. May repeat. A test with neither directive reads an empty standard input. |
 | `//@ debug-only` | Skip in release profile (overflow checks). |
 | `//@ skip-platform: os` | Skip on that host: `linux`, `macos`, or `windows`; several may be listed. |
 | `//@ link-lib: NAME` | Extra library to link. |
 | `//@ undecided: text` | Skipped; documents an open design question. |
 
-Runner rules: run each test in a fresh empty temporary directory as the working directory; compare
-stdout after normalizing `\r\n` to `\n`; every `compile-fail` file must report all of its errors (no
+Runner rules: run each test in a fresh empty temporary directory as the working directory; give standard input
+the `//@ stdin:`/`//@ stdin-eof:` bytes (an empty pipe when neither is present, so a test never waits for input);
+compare stdout after normalizing `\r\n` to `\n`; every `compile-fail` file must report all of its errors (no
 stopping at the first error) and no others. The `test` item's attributes (`[ignore]`, `[timeout(ms)]`,
 `[should_panic]`, `[should_fail]`, `[differential]`) and the `burdin test` flags are specified in
 [`spec/test-runner.md`](../spec/test-runner.md).

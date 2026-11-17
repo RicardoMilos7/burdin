@@ -403,6 +403,15 @@ impl<'p> Interp<'p, '_> {
         Ok(match b {
             Builtin::Print | Builtin::Println => return Err(impure("printing", span)),
             Builtin::Eprint | Builtin::Eprintln => return Err(impure("printing to standard error", span)),
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine => return Err(impure("writing to standard output", span)),
+            Builtin::StdoutFlush => return Err(impure("flushing standard output", span)),
+            Builtin::StderrWrite | Builtin::StderrWriteLine => {
+                return Err(impure("writing to standard error", span));
+            }
+            Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
+            Builtin::StdinReadLine | Builtin::StdinReadToString => {
+                return Err(impure("reading standard input", span));
+            }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
             Builtin::WriteFile => return Err(impure("writing a file", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
