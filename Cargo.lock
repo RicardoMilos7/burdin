@@ -41,6 +41,7 @@ dependencies = [
  "burdin_diag",
  "burdin_tir",
  "inkwell",
+ "libc",
 ]
 
 [[package]]

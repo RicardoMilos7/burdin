@@ -1,0 +1,70 @@
+//@ run
+//> create true
+//> create again true
+//> create all true
+//> create all again true
+//> entries ["a"]
+//> inner ["b", "notes.txt"]
+//> file 5 true false false true
+//> dir true false true
+//> renamed true
+//> old gone true
+//> inner ["b", "renamed.txt"]
+//> parent missing true
+//> remove nonempty true
+//> remove missing true
+//> remove all true
+//> gone true
+//> file remove dir all true
+//> file removed true
+//> path methods true true true true
+
+// Directories and metadata (spec/stdlib.md): create one directory or a tree, list a directory's names, read a
+// file's size, kind, mode, and modification time, rename a file, and remove a tree. The test runs in a fresh empty
+// directory.
+
+fn names(path: str): String {
+    let mut list = read_dir(path).unwrap()
+    list.sort_by(|a, b| a.cmp(*b))
+    format("{list:?}")
+}
+
+fn main() {
+    println("create {}", create_dir("work").is_ok())
+    println("create again {}", create_dir("work").is_err())
+    println("create all {}", create_dir_all("work/a/b").is_ok())
+    println("create all again {}", create_dir_all("work/a/b").is_ok())
+    println("entries {}", names("work"))
+    write_file("work/a/notes.txt", "hello").unwrap()
+    println("inner {}", names("work/a"))
+    let file = metadata("work/a/notes.txt").unwrap()
+    println(
+        "file {} {} {} {} {}",
+        file.size,
+        file.is_file(),
+        file.is_dir(),
+        file.is_symlink(),
+        file.mode & 0o400 != 0,
+    )
+    let dir = metadata("work/a").unwrap()
+    println("dir {} {} {}", dir.is_dir(), dir.is_file(), dir.modified > 0)
+    println("renamed {}", rename("work/a/notes.txt", "work/a/renamed.txt").is_ok())
+    println("old gone {}", metadata("work/a/notes.txt").is_err())
+    println("inner {}", names("work/a"))
+    println("parent missing {}", create_dir("missing/child").is_err())
+    println("remove nonempty {}", remove_dir("work").is_err())
+    println("remove missing {}", remove_dir("no-such-dir").is_err())
+    println("remove all {}", remove_dir_all("work").is_ok())
+    println("gone {}", metadata("work").is_err())
+    write_file("solo", "x").unwrap()
+    println("file remove dir all {}", remove_dir_all("solo").is_err())
+    println("file removed {}", remove_file("solo").is_ok())
+    let here = Path.new(".")
+    println(
+        "path methods {} {} {} {}",
+        here.read_dir().is_ok(),
+        here.metadata().unwrap().is_dir(),
+        here.canonicalize().is_ok(),
+        here.walk().is_ok(),
+    )
+}

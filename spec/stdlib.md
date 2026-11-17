@@ -688,9 +688,72 @@ resolves symbolic links.
   root, and writes the rules' separator; an empty result is `.`. It is lexical, so it can change what a path with
   symbolic links names.
 - `exists` is true when the system can see the path (the C library's `access`, or `_access` on Windows, with no mode bits). It is impure, so a
-  comptime evaluation that reaches it fails with E0224. Directory listing and metadata are #411.
+  comptime evaluation that reaches it fails with E0224. Directory listing, metadata, and walking are the next section.
 
 Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists`.
+
+## Directories, metadata, and walking (issue #411)
+
+```
+enum FileKind derives (Copy, Clone, Eq, Debug) { File  Dir  Symlink  Other }
+
+struct Metadata derives (Clone, Copy, Eq, Debug) {
+    size: u64                 // bytes
+    mode: u32                 // the system's mode bits
+    modified: i64             // seconds since the Unix epoch
+    accessed: i64             // seconds since the Unix epoch
+    kind: FileKind
+}
+Metadata { fn is_file(self): bool    fn is_dir(self): bool    fn is_symlink(self): bool }
+
+fn read_dir(path: str): Result<List<String>, IoError>
+fn create_dir(path: str): Result<(), IoError>          fn create_dir_all(path: str): Result<(), IoError>
+fn remove_dir(path: str): Result<(), IoError>          fn remove_dir_all(path: str): Result<(), IoError>
+fn remove_file(path: str): Result<(), IoError>
+fn rename(from: str, to: str): Result<(), IoError>
+fn metadata(path: str): Result<Metadata, IoError>
+fn canonicalize(path: str): Result<String, IoError>
+fn walk(root: str): Result<List<String>, IoError>
+fn walk_glob(root: str, pattern: str): Result<List<String>, IoError>
+
+Path {   // extension methods, the same operations with the receiver as the path
+    fn read_dir(self): Result<List<String>, IoError>        fn metadata(self): Result<Metadata, IoError>
+    fn canonicalize(self): Result<String, IoError>          fn walk(self): Result<List<String>, IoError>
+    fn walk_glob(self, pattern: str): Result<List<String>, IoError>
+}
+```
+
+Every function is impure: a comptime evaluation that reaches one fails with E0224. A read that only inspects the
+file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
+(`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`) reports `IoError.Write`.
+`rename` names its destination `to` in the error.
+
+- `read_dir` returns the entry names, not paths, without `.` and `..`, in the order the system returns them; sort the
+  list for a deterministic order. A missing path or a file is an error. The names join with `Path.join`.
+- `create_dir` creates one directory and requires the parent to exist; an existing directory is an error.
+  `create_dir_all` creates every missing parent, treats an existing directory as success, and reports a path that
+  exists as a file.
+- `remove_dir` removes an empty directory only. `remove_dir_all` removes a directory and everything under it; a
+  symbolic link is removed as a link and never followed, and a path that is not a directory is an error.
+- `remove_file` removes a file or a symbolic link; a directory is an error.
+- `rename` renames a file or a directory and replaces an existing `to`, on Unix and Windows alike.
+- `metadata` reads the entry itself and does not follow a symbolic link (`lstat` on Unix), so `kind` is the entry's
+  kind. `mode` is the system's mode bits: the `S_IFMT` file-kind bits agree between Unix and Windows for `File`,
+  `Dir`, and `Symlink`, and the permission bits are the system's. `modified` and `accessed` are seconds since the
+  Unix epoch. On Windows the CRT's `_stat64` follows a link, so a link's size and times may describe its target,
+  while `kind` is still `Symlink` when the entry is a reparse point.
+- `canonicalize` returns an absolute path with `.` and `..` resolved, using the system's separators. The path must
+  exist. On Unix it is `realpath`, which also resolves symbolic links; on Windows it is `_fullpath`, which only
+  normalizes the text and keeps a link's name.
+- `walk` returns every file and directory under `root`, recursively, as a path relative to `root` with the system's
+  separator, sorted, without `root` itself. A symbolic link is listed but not followed. A directory that cannot be
+  read makes the whole walk fail.
+- `walk_glob` is `walk` filtered by `pattern`, matched against the whole relative path. `*` matches any run of
+  characters inside one path segment, `?` matches one character inside a segment, and `**` matches across segments;
+  a `**` followed by a separator also matches no segment, so `**/*.bd` finds a top-level file too. Both `/` and `\`
+  are separators in a pattern.
+
+Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
 
 ## `Heap<T>`
 
@@ -1061,6 +1124,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
+| Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

@@ -189,7 +189,10 @@ error enum ParseIntError {
 `read_to_string` returns `Result<String, IoError>` with `IoError.Read`; `write_file` returns
 `Result<(), IoError>` with `IoError.Write`; `process.run` returns `Result<i32, IoError>` with `IoError.Run`.
 The `Stdin` handle's `read_line` and `read_to_string` return `IoError.Read` with the path `<stdin>` (`stdlib.md`,
-Streams). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`.
+Streams). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
+directory operations (`read_dir`, `metadata`, `canonicalize`, `walk`, and `walk_glob`) use `IoError.Read`, and the
+ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, and
+`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking").
 
 The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, and the integer parsers) are
 typed with the same error types but produce a placeholder error value; the `std` wrappers replace it with the

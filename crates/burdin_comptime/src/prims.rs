@@ -414,6 +414,13 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
             Builtin::WriteFile => return Err(impure("writing a file", span)),
+            Builtin::ReadDir => return Err(impure("reading a directory", span)),
+            Builtin::CreateDir => return Err(impure("creating a directory", span)),
+            Builtin::RemoveDir => return Err(impure("removing a directory", span)),
+            Builtin::RemoveFile => return Err(impure("removing a file", span)),
+            Builtin::RenamePath => return Err(impure("renaming a path", span)),
+            Builtin::Metadata => return Err(impure("reading file metadata", span)),
+            Builtin::Canonicalize => return Err(impure("resolving a path", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),

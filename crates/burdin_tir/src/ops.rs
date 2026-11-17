@@ -71,6 +71,20 @@ pub enum Builtin {
     StdinReadLine,
     /// `__stdin_read_to_string()`: the rest of standard input as a `String`.
     StdinReadToString,
+    /// `__read_dir(path)`: the names of the entries in a directory (`spec/stdlib.md`, issue #411).
+    ReadDir,
+    /// `__create_dir(path)`: creates one directory.
+    CreateDir,
+    /// `__remove_dir(path)`: removes an empty directory.
+    RemoveDir,
+    /// `__remove_file(path)`: removes a file or a symbolic link.
+    RemoveFile,
+    /// `__rename(from, to)`: renames a file or a directory, replacing `to`.
+    RenamePath,
+    /// `__metadata(path)`: `(size, mode, modified, accessed, flags)`, the system's `stat` fields.
+    Metadata,
+    /// `__canonicalize(path)`: the absolute, normalized path.
+    Canonicalize,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
     /// `process.exit(code)`: ends the process.

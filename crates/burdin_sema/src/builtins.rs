@@ -20,6 +20,13 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__is_terminal" => Builtin::IsTerminal,
         "__stdin_read_line" => Builtin::StdinReadLine,
         "__stdin_read_to_string" => Builtin::StdinReadToString,
+        "__read_dir" => Builtin::ReadDir,
+        "__create_dir" => Builtin::CreateDir,
+        "__remove_dir" => Builtin::RemoveDir,
+        "__remove_file" => Builtin::RemoveFile,
+        "__rename" => Builtin::RenamePath,
+        "__metadata" => Builtin::Metadata,
+        "__canonicalize" => Builtin::Canonicalize,
         "__args" => Builtin::EnvArgs,
         "__float_str" => Builtin::FloatStr,
         "__exit" => Builtin::ProcessExit,
@@ -47,6 +54,25 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
         Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::IsTerminal => Ty::Bool,
+        Builtin::ReadDir => {
+            Ty::Result(Box::new(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)), Box::new(io_error()))
+        }
+        Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
+            Ty::Result(Box::new(Ty::Unit), Box::new(io_error()))
+        }
+        // `(size: u64, mode: u64, modified: i64, accessed: i64, flags: u64)`: the raw `stat` fields, which
+        // `std` turns into `Metadata`.
+        Builtin::Metadata => Ty::Result(
+            Box::new(Ty::Tuple(vec![
+                Ty::Int(IntTy::U64),
+                Ty::Int(IntTy::U64),
+                Ty::Int(IntTy::I64),
+                Ty::Int(IntTy::I64),
+                Ty::Int(IntTy::U64),
+            ])),
+            Box::new(io_error()),
+        ),
+        Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
@@ -68,6 +94,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
+        Builtin::RenamePath => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
         Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
