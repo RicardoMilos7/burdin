@@ -7,7 +7,7 @@
 //> 1 b
 
 // A chain of adapters collects like any iterator. A later pair of a `Map` replaces an earlier one with the same key,
-// like `insert`, and a `PriorityHeap` orders what it collects (IT15).
+// like `insert`, and a `PriorityHeap` orders what it collects (IT18).
 
 fn main() {
     let evens: List<i32> = [1, 2, 3, 4, 5, 6].into_iter().filter(|x| *x % 2 == 0).collect()

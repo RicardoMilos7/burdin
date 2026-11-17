@@ -10,7 +10,7 @@
 //> 6
 //> 2 9
 
-// `collect` builds the collection the context asks for: the expected type names the target (IT14, IT15).
+// `collect` builds the collection the context asks for: the expected type names the target (IT17, IT18).
 
 fn first_three(): List<i32> {
     [1, 2, 3, 4].into_iter().take(3).collect()

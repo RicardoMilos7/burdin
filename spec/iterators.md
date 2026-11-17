@@ -18,7 +18,7 @@ interface Iterator<T> {
 interface Iterable<T> { }
 ```
 
-`Iterator<T>` is the stateful object a chain is made of: `next` borrows the iterator exclusively, advances it, and
+`Iterator<T>` is the stateful object a chain is made of (IT14 adds the second interface, `DoubleEndedIterator<T>`): `next` borrows the iterator exclusively, advances it, and
 returns the next item, or `None` once it is exhausted. `Iterable<T>` is a marker: a type implements it to say that
 `for` accepts it, and the compiler checks that the type provides `iter(self): I` where `I: Iterator<T>`. A type may
 implement one or both. Any later call to `next` after it returned `None` is unspecified but must not misbehave: the
@@ -98,6 +98,9 @@ asks for it.
 | `all(FnMut(T): bool)` | `bool` | stops at the first rejected item |
 | `find<F: FnMut(&T): bool>(mut self, own f: F)` | `Option<T>` | stops at the first accepted item |
 | `enumerate(own self)` | `EnumerateIter<Self, T>` | `(index, item)` pairs, counting from 0 |
+| `zip<U, J: Iterator<U>>(own self, own other: J)` | `ZipIter<Self, T, J, U>` | `(item, other item)` pairs; ends when either source ends |
+| `chain<J: Iterator<T>>(own self, own other: J)` | `ChainIter<Self, J, T>` | every item of `self`, then every item of `other`; both yield the same type |
+| `flat_map<U, J: Iterator<U>, F: FnMut(T): J>(own self, own f: F)` | `FlatMapIter<Self, T, J, U, F>` | the items of the iterator `f` returns for each item, one iterator at a time |
 | `take_while<F: FnMut(&T): bool>(own self, own f: F)` | `TakeWhileIter<Self, T, F>` | items up to, not including, the first one `f` rejects |
 | `skip_while<F: FnMut(&T): bool>(own self, own f: F)` | `SkipWhileIter<Self, T, F>` | drops items while `f` accepts them, then yields the rest |
 | `map_while<U, F: FnMut(T): Option<U>>(own self, own f: F)` | `MapWhileIter<Self, T, U, F>` | applies `f`, stops at the first `None` |
@@ -112,35 +115,114 @@ asks for it.
 | `partition<F: FnMut(&T): bool>(mut self, own f: F)` | `(List<T>, List<T>)` | accepted items, then rejected items, in order |
 | `min_by` / `max_by` `<F: FnMut(&T, &T): Ordering>(mut self, own f: F)` | `Option<T>` | least (first of equals) / greatest (last of equals) under the comparator |
 | `min_by_key` / `max_by_key` `<K: Ord, F: FnMut(&T): K>(mut self, own f: F)` | `Option<T>` | the same, ordered by a key |
+| `try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F)` | `Result<A, E>` | folds until `f` returns an `Err`, which ends the fold and is returned; the rest of the items are not visited |
+| `try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F)` | `Result<(), E>` | calls `f` on every item until it returns an `Err` |
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
-| `collect<C: FromIterator<T>>(own self)` | `C` | builds any collection that implements `FromIterator<T>`; the expected type names `C` (IT14) |
+| `collect<C: FromIterator<T>>(own self)` | `C` | builds any collection that implements `FromIterator<T>`; the expected type names `C` (IT17) |
 
-**Adapters that are not provided (issue #706).** Three constraints of the current language rule these out; each is a
-language change, not a library one, and stays open on the issue:
+**Adapters for a particular kind of source (IT13).** `flatten`, `cloned`, `copied`, `cycle`, and `rev` need a bound on
+the interface's own item type or on the source itself (the items are iterators, the items are views, the source is
+`Clone`, the source is double-ended), which a default method of `Iterator<T>` cannot state. The compiler resolves
+`it.flatten()`, `it.cloned()`, `it.copied()`, `it.cycle()`, and `it.rev()` on any iterator, built in or user-defined, to
+private generic functions in `std` that take the iterator as `own it: I`:
 
-- `zip` and `chain` take two iterators and return one chain over both. When both are second-class (a list `iter()`),
-  the result derives from two parameters, which RT3 rejects with E0121. A change would need a return origin that is a
-  set of parameters.
-- `flat_map`, `flatten`, `cloned`, and `copied` need a type that appears only in a bound (`J: Iterator<U>`, a view's
-  target), and a call cannot infer a type parameter from a bound alone ("cannot tell what `U` stands for"), except
-  from an `Iterator<T>` bound (IT20), which does not cover these.
-- `rev` needs a source that can walk backwards, and the built-in iterators are not `Iterator` implementers that a
-  `DoubleEndedIterator<T>` interface could be added to; `cycle` needs a clonable iterator. Neither exists yet.
+| Method | Result | Needs |
+| --- | --- | --- |
+| `it.flatten()` | `FlattenIter<I, J, U>` | the items are iterators: `I: Iterator<J>`, `J: Iterator<U>`; yields every `U` |
+| `it.cloned()` | `ClonedIter<I, U>` | the items are views: `I: Iterator<&U>`, `U: Clone`; yields owned clones |
+| `it.copied()` | `CopiedIter<I, U>` | the items are views: `I: Iterator<&U>`, `U: Copy`; yields copies |
+| `it.cycle()` | `CycleIter<I, T>` | `I: Iterator<T> + Clone`; clones the source at the end of every pass, forever |
+| `it.rev()` | `RevIter<I, T>` | `I: Iterator<T> + DoubleEndedIterator<T>` (IT14) |
 
-**Consumers that are not provided (issue #707).** `min`, `max`, `eq`, and `cmp` between iterators need a bound on the
-interface's own item type (`where T: Ord`), which a default method cannot state (E9000); use `min_by`/`max_by` with
-`a.cmp(*b)` and `fold`. `unzip` needs the pair's two types, which only appear in a bound, so a call cannot infer them.
-`rposition` needs a double-ended source (see the adapters above). `product` and the float `sum` need compiler support
-like integer `sum`, and `try_fold` and `try_for_each` are not written yet; `fold` covers the first, and a `for` loop with
-`?` the others.
+A source that does not fit is E0141 (the bound is not met) or E0003 (the type parameter has nothing to be inferred
+from: `(0..3).iter().flatten()`, `[1, 2].iter().cloned()`). A list of `Copy` items yields the items themselves, so
+`cloned`/`copied` apply to the iterators that yield views: a list of non-`Copy` items, a `Deque`, and the like. A method
+declared on the type itself (inherent or interface) wins over these names, like every method over an extension.
 
-`any` is reserved as an identifier (it belongs to m15), so `std` declares the method as `any_item`; the compiler
-spells the call `.any(...)`. The default methods are instantiated on demand for each receiver type, whether the
+**Inference from `Iterator` bounds.** A type parameter that appears only inside an `Iterator<...>` bound
+(`zip<U, J: Iterator<U>>`) is bound by the item type of the argument's type, once the owner of the bound (`J`) is
+known: the built-in iterator's item or the `T` of the user's `Type: Iterator<T>` block. One bound can feed another
+(`flatten`: `I` fixes `J`, then `J` fixes `U`). It is the counterpart of the closure-signature inference for `Fn`
+bounds.
+
+**IT14 Walking backwards.** `rev` takes a `DoubleEndedIterator<T>`, a second interface `std` declares:
+
+```
+interface DoubleEndedIterator<T> {
+    fn next_back(mut self): Option<T>
+}
+```
+
+`next_back` takes the last remaining item, or `None`; `next` and `next_back` take from the two ends and meet in the
+middle, and an exhausted iterator keeps returning `None` from both. The compiler implements the interface, with the
+same item type as `next`, for the slice iterator (the `iter()` of an array or a `List`), the range iterator (an
+inclusive range yields its upper endpoint first and never computes a bound outside its type), and `Chars` (walking back
+by scalar value, so `"añ😀".chars().rev()` yields `😀`, `ñ`, `a`). The owning iterators (`ArrayIntoIter`,
+`ListIntoIter`, `MapIntoIter`) and `MapIter` are not double-ended: `list.into_iter().rev()` is E0141. `std` implements it
+for `DequeIter`, for `RevIter` (its `next_back` is the source's `next`), and for the adapters whose order follows their
+source's: `MapIter`, `FilterIter`, `InspectIter`, `ChainIter`, `ClonedIter`, and `CopiedIter`. The adapters that count
+from the front or hold a lookahead (`enumerate`, `zip`, `take`, `skip`, `step_by`, `take_while`, `skip_while`,
+`peekable`) are not, so `rev` after them is E0141; put `rev` before them. A user type implements
+`DoubleEndedIterator<T>` with a `next_back` method next to its `Iterator<T>` block to join `rev`. A `for` loop over a
+range, an array, a list, or a string can use `.iter().rev()` (a range written `(0..n)` is `Iterable`, not an
+iterator, so it needs `.iter()` first).
+
+**Several sources in one result (RT3a).** `zip` and `chain` return a chain over two views, so the return origin of a
+function is a set of parameters, not one (`memory-rules.md`, RT3a): the result of a call derives from the storage of
+each argument in the set, and both stay borrowed while the result is live. A result that is a view itself (`&T`,
+`str`, `[T]`, or an `Option` of one) still derives from exactly one parameter (RT3). An adapter that takes `own` iterators
+as arguments is not rejected by the exclusivity rule when its receiver is a chain computed in the same call, so
+`xs.iter().zip(xs.iter().skip(1))` is allowed: both are shared views of the same list.
+
+**Not provided.** `cycle` needs a clonable source, and a closure is never `Clone` (`memory-rules.md`, CL10), so a chain
+with `map`, `filter`, `inspect`, or a closure-taking adapter cannot be cycled; `cycle` the plain source and apply the
+adapter after it. An owning iterator is not `Clone`, so `into_iter().cycle()` is E0141. `rev` over `enumerate`, `zip`,
+`take`, and `skip` would need the length of the source (an `ExactSizeIterator`), which stage 1 does not have.
+
+**Consumers that need a bound on the item (issue #707).** `min`, `max`, `eq`, and `cmp` between iterators need
+`T: Ord` (`T: Eq` for `eq`) on the interface's own item type, which a default method cannot state (a method-level
+`where` names only the method's own parameters, E9000). They are therefore generic functions in `std`
+(`__iter_min`, `__iter_max`, `__iter_eq`, `__iter_cmp`) that the compiler calls for an iterator receiver, handing them the
+item type as `T`; they are not interface methods, so a user type cannot override them, and on a type parameter bounded by
+`Iterator<T>` they work too (`fn smallest<I: Iterator<i32>>(own it: I) { it.min() }`).
+
+| Method | Result | Notes |
+| --- | --- | --- |
+| `min()` | `Option<T>` | the least item (the first of equals); `T: Ord`; `None` when empty |
+| `max()` | `Option<T>` | the greatest item (the last of equals); `T: Ord`; `None` when empty |
+| `eq(other)` | `bool` | both iterators yield equal items and end together; `T: Eq` |
+| `cmp(other)` | `Ordering` | lexicographic; a prefix is less than the longer iterator; `T: Ord` |
+
+The item must itself have `Ord` (or `Eq`): an owned item does, a shared view (`&String`, the item of a `List` of
+non-`Copy` values) does not, and a float has neither. Both are E0141; `min_by`/`max_by` with a comparator
+(`a.cmp(*b)`), or `into_iter` over an owned list, are the ways around it. Integers and other `Copy` items are yielded by
+value, so `xs.iter().min()` works on a `List<i32>`.
+
+**`sum` and `product`.** The compiler writes both as an ordinary loop over `+` or `*`, starting from 0 and 1, on an
+iterator of integers or floats or of views of them (anything else is E0141). Overflow is therefore the overflow of the
+operator: an integer `sum` or `product` that overflows panics in the checked (debug) build and wraps in the release
+build, exactly as `a + b` does; a float never traps. An empty iterator gives 0 for `sum` and 1 for `product`.
+
+**`try_fold` and `try_for_each`** short-circuit on a `Result`. The error type `E` is inferred from the closure's
+return type; a closure with an early `return Err(..)` needs its return type written (`|x|: Result<(), i32> { ... }`). An
+`Option` version is not provided: `fold` with an `Option` accumulator, or a `for` loop with `?`, covers it. They are
+interface default methods, so they are not callable on a type parameter bounded by `Iterator<T>` (default methods with
+their own type parameters do not resolve through a bound yet).
+
+**Consumers that are not provided (issue #707).** `unzip` needs the pair's two types, which only appear in a bound, so
+a call cannot infer them. `rposition` needs a double-ended source (IT14), which exists now, but it is not written yet. These stay open on the
+issue, as do the language changes they wait for.
+
+
+`any` is a keyword (it begins the `any I` existential type, `existentials.md`), so a method cannot be declared with that
+name and `std` declares it as `any_item` (decided in issue #707: the name stays); the compiler spells the call
+`.any(...)`. The default methods are instantiated on demand for each receiver type, whether the
 receiver is built in or a user type. They are ordinary `std` code: `MapIter`, `FilterIter`, `TakeIter`, and
 `SkipIter` are generic structs whose `next` calls the source's `next` and the closure.
 
-`it.sum()` is compiler-known: on an iterator of integers it synthesizes the loop that adds every item, and it is
-E0141 on an iterator that yields anything else. `sum` also accepts integer views (`&T` where `T` is an integer).
+`it.sum()` and `it.product()` are compiler-known: on an iterator of integers or floats they synthesize the loop that
+adds or multiplies every item, and they are E0141 on an iterator that yields anything else. They also accept views of
+numbers (`&T` where `T` is an integer or a float).
 
 **IT10 Eager `List` methods.** On a `List<T>` receiver, these names resolve to the private generic functions in
 `std` that borrow the list, pass the closure a view of each element, and return owned results:
@@ -167,19 +249,65 @@ evaluates `r` once and has the same no-overflow behavior.
 the source's view type (and a closure may be second-class too), so the chain is second-class (`memory-rules.md`,
 SC3). It may be a local, a parameter, a temporary, or an argument; it cannot be a struct field, an enum payload, a
 `List`/`Map`/`Heap` element, or a `const` (E0120), and a chain over a temporary cannot be stored in a local (E0123).
-Returning a chain from a function is allowed when it derives from exactly one view-typed parameter (RT2), which is
-how `iter()`/`into_iter()` and the adapters return one. The loans a chain holds last as long as the chain value
+Returning a chain from a function is allowed when it derives from view-typed parameters (RT2): from exactly one for
+`iter()`/`into_iter()` and most adapters, and from several for `zip` and `chain` (RT3a). The loans a chain holds last as long as the chain value
 (CL7/RF2): while a chain over a collection is live and used, the collection cannot be written or moved.
 
-Tests: `tests/m13_iterators/`.
+**IT15 Mutable iteration (issue #709).** A loop can write every element of a collection in place. Decisions:
 
-## Collecting and extending (issue #708; IT13-IT20)
+- *Spelling.* Both forms exist and mean the same thing: `xs.iter_mut()` returns an iterator, and `for pattern in mut xs`
+  is `for pattern in xs.iter_mut()`. The `mut` after `in` follows the call-site marker of `mut` arguments (CV2): it says
+  the loop borrows `xs` exclusively. `xs` must be a mutable place (E0113), like any `mut self` receiver.
+- *The item is a `&mut T`, not a new kind of place.* The loop binding is an ordinary `&mut T` value, so an element is
+  read and written with `*x` (`*x = *x + 1`), and fields and methods work through it without a `*` (RF1). This keeps
+  IT2 unchanged (a plain loop binding is still a read-only place) and needs no new binding rule: `Option<&mut T>`
+  and `&mut V` already come out of `get_mut` and `entry`.
+- *Sources.*
+
+| Type | `iter_mut()` gives | `next()` yields |
+| --- | --- | --- |
+| `[T; N]` (a mutable place) | `IterMut<T>` | `&mut T` |
+| `List<T>` | `IterMut<T>` | `&mut T` |
+| `Map<K, V>` | `MapIterMut<K, V>` | `(&K, &mut V)` |
+| `Deque<T>` | `DequeIterMut<&mut Deque<T>, T>` | `&mut T` |
+
+  A map's keys stay read-only (assigning through `&K` is E0005), and the order of a map walk is unspecified. `Deque`
+  declares `iter_mut(mut self)` in `std`; a user type joins `for x in mut c` by declaring an `iter_mut(mut self)` method
+  that returns an `Iterator<U>`, with no interface to implement. A type without `iter_mut` is E0002. A slice `[T]`
+  has no `iter_mut`: a slice is a read-only view, and a writable slice type does not exist in the language yet.
+  `Heap` and `Set` have none either, because writing an element would break their ordering or hashing.
+- *Exclusivity.* `iter_mut()` borrows the collection exclusively (`memory-rules.md`, IT15): while the iterator or an
+  item derived from it is live, any use of the collection is E0111. Inside `for x in mut xs`, that makes `xs.push`,
+  `xs.insert`, `xs.remove`, `xs.len()`, reading `xs[i]`, and a second `for ... in mut xs` all E0111, so the table or
+  buffer can never move under the loop. A view copied out of the loop (`held = x`) keeps the collection borrowed
+  until the copy's last use. Liveness is per top-level statement (RF2), so when the loop sits inside a nested block
+  (an `if`, a `while`, or a block expression) the collection stays borrowed until the end of the enclosing
+  top-level statement; finish the loop in its own statement of the function body to use the collection again.
+- *Adapters.* The iterator is an ordinary `Iterator<&mut T>`, so the adapters of IT9 apply to it unchanged:
+  `enumerate` gives `(usize, &mut T)`, and `take`, `skip`, `step_by`, `take_while`, `skip_while`, `peekable`, `nth`,
+  `last`, `for_each`, and `count` work as they do over any iterator. `zip` and `chain` work too (`a.iter_mut().zip(b.iter())`), each source borrowing its own collection. `rev` does not: a
+  mutable iterator is not a `DoubleEndedIterator` (IT14), so `rev` over it is E0141.
+  `filter`, `find`, and the other adapters that hand the closure `&T` see a `&&mut T`.
+- *Compile time.* A mutable iterator mutates a run-time collection, so `iter_mut` is impure at compile time (E0224,
+  CT9), like `get_mut`.
+- *Drops.* A mutable iterator owns nothing and has no drop glue. Writing `*x = v` drops the element it replaces.
+
+Tests: `tests/m13_iterators/`; the adapters of IT9, IT13, and IT14 are covered by `tests/m24_stdlib/iter_zip`,
+`iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`,
+`iter_adapters_no_leaks`, and `iter_adapters_comptime`; errors: `iter_zip_from_temporary` (E0123),
+`iter_zip_in_struct_field`, `iter_chain_in_collection` (E0120), `iter_chain_while_mutating_second`,
+`iter_zip_while_mutating_first` (E0111), `iter_rev_needs_double_ended`, `iter_rev_through_adapter`,
+`iter_cloned_needs_clone`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch` (E0141), `iter_cloned_needs_views`,
+`iter_flatten_needs_iterators`, `iter_zip_needs_iterator` (E0003).
+Mutable iteration (IT15) is covered by `tests/m24_stdlib/iter_mut_*`.
+
+## Collecting and extending (issue #708; IT16-IT22)
 
 `to_list` is the one way a chain becomes a collection that stage 1 started with. These rules give every collection the
 same two entry points: build one from an iterator (`FromIterator`, `collect`, `from`) and add an iterator's items to one
 that exists (`extend_iter`). They live in `std/src/iter.bd` and, for the collections, next to each collection.
 
-**IT13 `FromIterator<T>`.** `std` declares
+**IT16 `FromIterator<T>`.** `std` declares
 
 ```
 interface FromIterator<T> {
@@ -194,19 +322,19 @@ for its own types (`m24_stdlib/collect_user_type`), and a generic function can b
 matches `I` against the argument (the checker's symbolic call), and a call on a concrete type is an ordinary generic
 associated function.
 
-**IT14 `collect` and its target.** `Iterator<T>` has the default method `collect<C: FromIterator<T>>(own self): C`, which
+**IT17 `collect` and its target.** `Iterator<T>` has the default method `collect<C: FromIterator<T>>(own self): C`, which
 is `C.from_iter(self)`. The language has no explicit type arguments on a member call (`x.collect<Set<i32>>()` is E0002;
 grammar.md, "member type arguments"), so **the target is named by the expected type**: the annotation of a `let`, the
 declared type of a parameter, the return type, a field's type. A call with no expected type cannot tell what `C` stands
 for (E0003), and a target that does not implement `FromIterator<T>` for the items the iterator yields is E0141. Collecting
-is eager: it consumes the whole iterator, except where IT16 says it stops early.
+is eager: it consumes the whole iterator, except where IT19 says it stops early.
 
 ```
 let names: Set<String> = people.iter().map(|p| p.name.clone()).collect()
 fn evens(xs: List<i32>): List<i32> { xs.into_iter().filter(|x| *x % 2 == 0).collect() }
 ```
 
-**IT15 Built-in targets.** The compiler implements `FromIterator` for these types without an impl block, and
+**IT18 Built-in targets.** The compiler implements `FromIterator` for these types without an impl block, and
 `Type.from_iter(it)` is the call of a `std` function that builds it (`__list_from_iter` and the others in `iter.bd`):
 
 | Target | Items | Rule |
@@ -218,37 +346,33 @@ fn evens(xs: List<i32>): List<i32> { xs.into_iter().filter(|x| *x % 2 == 0).coll
 
 Anything else is E0141: a `String` from integers, a `Map` from items that are not pairs, a `List<i64>` from `i32` items.
 
-**IT16 `Option` and `Result`.** `Option<C>` implements `FromIterator<Option<T>>` and `Result<C, E>` implements
+**IT19 `Option` and `Result`.** `Option<C>` implements `FromIterator<Option<T>>` and `Result<C, E>` implements
 `FromIterator<Result<T, E>>` whenever `C: FromIterator<T>`. The iterator is read until its first `None` or `Err`, which
 is the result, and it is not asked for another item. When every item is `Some`/`Ok`, the payloads are gathered in a list
 and then handed to `C.from_iter`, so the target is built only on success and the gathered items of a failed collection
 are dropped at once. The rule nests: `Result<Option<List<i32>>, E>` is a target for items of type
-`Result<Option<i32>, E>`, because `Option<List<i32>>` implements `FromIterator<Option<i32>>`.
+`Result<Option<i32>, E>`, because `Option<List<i32>>` implements `FromIterator<Option<i32>>`. The payload type `T` of
+`Iterator<Result<T, E>>` is found by the inference from an `Iterator` bound (IT13).
 
-**IT17 `extend_iter`.** Every collection adds the items of any iterator to itself: `list.extend_iter(it)`,
+**IT20 `extend_iter`.** Every collection adds the items of any iterator to itself: `list.extend_iter(it)`,
 `map.extend_iter(it)` (pairs), `set.extend_iter(it)`, `deque.extend_iter(it)`, `heap.extend_iter(it)`, and
 `string.extend_iter(it)` (`char` items). It takes an `Iterator<T>`, so a collection is passed through `into_iter()` (the
 items move) or `iter()` (for a collection of `Copy` elements the items are the elements themselves). `extend(own
 List<T>)` keeps its meaning; the names differ because the language has no overloading, and `extend_iter` is the form
-that takes a chain. Unlike `collect`, `extend_iter` works for every allocator (IT19).
+that takes a chain. Unlike `collect`, `extend_iter` works for every allocator (IT22).
 
-**IT18 `from` an array.** `List<T>.from([a, b, c])` and `Map<K, V>.from([(k, v), ...])`, and `Set<T>.from`,
+**IT21 `from` an array.** `List<T>.from([a, b, c])` and `Map<K, V>.from([(k, v), ...])`, and `Set<T>.from`,
 `Deque<T>.from`, and `PriorityHeap<T>.from`, build a collection from an array literal, moving the elements. `List.from`
 and `Map.from` also work without type arguments, taking them from the array or the expected type; the other three need
 the type arguments written or an expected type for a `Set`. The elements of the array take their type from the expected
 type, so `let xs: List<i64> = List.from([1, 2, 3])` is a list of `i64`. A map key is an owned value, so
 `Map.from([("a", 1)])` is E0120 at the call, because a `str` is a view: write `String.from("a")`.
 
-**IT19 Allocators.** `from_iter`, `collect`, and `from` build a collection that uses the default allocator, because a
+**IT22 Allocators.** `from_iter`, `collect`, and `from` build a collection that uses the default allocator, because a
 constructor has no allocator value to store (`allocators.md`, AL4). `List<T, A>.from_iter(it)` and the other
 constructors on a `List` or `Map` with another allocator are E0272, and `collect` into one is E0141 (it does not
 implement `FromIterator`); `Set<T, A>` with another allocator is E0141 too. To fill a container that stores an allocator,
 make it with `new_in` and call `extend_iter`, which is generic over the allocator (`m24_stdlib/collect_allocator`). There
 is no `collect_in`.
-
-**IT20 Inference from an `Iterator<T>` bound.** A generic call binds a type parameter that appears only in an
-`Iterator<T>` bound (`fn f<T, I: Iterator<T>>(it: I)`) from the item type of the iterator `I` stands for, once `I` is
-known. This is what lets `__result_from_iter` find the payload type from `Iterator<Result<T, E>>`. Other bounds still
-infer nothing.
 
 Tests: `tests/m24_stdlib/collect_*`, `extend_iter`, and `from_array` (listed in `stdlib.md`, "Collecting and extending").

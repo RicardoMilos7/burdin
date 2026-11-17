@@ -1,0 +1,12 @@
+//@ run-abort
+//@ debug-only
+//> before
+//@ stderr: overflow
+
+// `product` overflows like `*`: it panics in the checked build.
+
+fn main() {
+    println("before")
+    let xs = [100 as u8, 3]
+    println("{xs.iter().product()}")
+}

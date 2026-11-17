@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // `collect` names its target through the expected type, so a call with nothing to say what to build is an error
-// (IT14).
+// (IT17).
 
 fn main() {
     let items = [1, 2, 3].into_iter().collect() //~ E0003

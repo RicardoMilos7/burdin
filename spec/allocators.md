@@ -100,7 +100,7 @@ allocator argument stores nothing, so `List<i32, Global>.new()` is the same call
 
 `from_iter`, `from`, and `collect` build with the default allocator in the same way, so they are `E0272` (or, for
 `collect`, `E0141`) for a stored allocator; a container that stores one is filled with `extend_iter`
-(`iterators.md` IT19).
+(`iterators.md` IT22).
 
 `fn sum_with(own alloc: impl Allocator)` in `tests/m23_allocators/allocator_function_param.bd` passes the same
 parameter to `new_in` and returns the list: the returned `List<i32, A>` carries the allocator value out of the

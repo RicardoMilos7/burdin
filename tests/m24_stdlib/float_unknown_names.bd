@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// Unknown float names are the usual diagnostics (spec/stdlib.md, "Float functions"): `pow` is not a float
+// function (the names are `powi` and `powf`), `sqrt` takes no arguments, `from_bits` takes an integer, a constant
+// that does not exist has no such variant, and the integer functions do not leak to floats.
+
+fn main() {
+    println("{}", (1.0).pow(2.0))          //~ E0002
+    println("{}", (1.0).sqrt(2.0))         //~ E0004
+    println("{}", f64.from_bits(1.0))      //~ E0003
+    println("{}", f64.NOPE)                //~ E0002
+    println("{}", (1.0).isqrt())           //~ E0002
+}

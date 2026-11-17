@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // A map key needs `==`, so a map of a type without it is not a `FromIterator` target and `Map.from` rejects such
-// keys (IT15, IT18).
+// keys (IT18, IT21).
 
 struct Plain {
     id: i32

@@ -1,10 +1,18 @@
-// Floats (issue #417; spec/stdlib.md, "Floats"): parsing text into `f64` and `f32`.
+// Floats: parsing text into `f64` and `f32` (issue #417), and the constants and functions the compiler does not
+// provide itself (issue #703; spec/stdlib.md, "Floats" and "Float functions").
 //
 // `f64.parse(s)` is the std function `__f64_parse` (the compiler maps `T.name` on a float type to `__T_name`, as it
 // does for the integer types). The text is checked against the grammar below and then handed to the C library's
 // `strtod`/`strtof`, which round correctly, so `f64.parse(x.to_string()) == x` for every finite `x`: `to_string`
 // writes the shortest text that reads back as the same number (spec/format.md, FM7).
+//
+// The functions that lower to an LLVM intrinsic or a C math library call are compiler methods; the ones below are
+// extension methods (spec/extensions.md) written in Burdin, once per type because the language has no numeric
+// interface. `abs`, `sqrt`, `cbrt`, `powi`, `powf`, `exp`, `exp2`, `ln`, `log2`, `log10`, `floor`, `ceil`,
+// `round`, `round_ties_even`, `trunc`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`,
+// `tanh`, `hypot`, `mul_add`, `copysign`, and `to_bits` are the compiler's.
 
+use cmp.Ordering
 use fmt.{Debug, Display, Formatter}
 use std.Error
 use unicode.{is_ascii_digit, to_ascii_lowercase}
@@ -99,4 +107,292 @@ fn __f32_parse(s: str): Result<f32, ParseFloatError> {
     let text = CString.from(s)
     let value = unsafe { strtof(text.as_ptr(), CPtr<CPtr<CChar>>.null()) }
     Ok(value)
+}
+
+// ---- Constants (spec/stdlib.md, "Float functions") ----
+//
+// `f64.PI` and the rest are the `__f64_<name>` and `__f32_<name>` constants: the compiler maps `T.NAME` on a float
+// type to the std constant `__T_NAME`, as it does for the integer types. Each type has the constant in its own
+// precision. A float literal must be finite, so `INFINITY` and `NAN` are written as divisions.
+
+/// The ratio of a circle's circumference to its diameter.
+const __f64_PI: f64 = 3.141592653589793
+/// The base of the natural logarithm.
+const __f64_E: f64 = 2.718281828459045
+/// The ratio of a circle's circumference to its radius: `2 * PI`.
+const __f64_TAU: f64 = 6.283185307179586
+/// The square root of 2.
+const __f64_SQRT_2: f64 = 1.4142135623730951
+/// The natural logarithm of 2.
+const __f64_LN_2: f64 = 0.6931471805599453
+/// The natural logarithm of 10.
+const __f64_LN_10: f64 = 2.302585092994046
+/// Positive infinity.
+const __f64_INFINITY: f64 = 1.0 / 0.0
+/// Negative infinity.
+const __f64_NEG_INFINITY: f64 = -1.0 / 0.0
+/// The NaN value: not a number. Which NaN payload and sign bit it has is not specified.
+const __f64_NAN: f64 = 0.0 / 0.0
+/// The difference between `1.0` and the next larger value: 2^-52.
+const __f64_EPSILON: f64 = 2.220446049250313e-16
+/// The smallest finite value: the most negative one.
+const __f64_MIN: f64 = -1.7976931348623157e308
+/// The largest finite value.
+const __f64_MAX: f64 = 1.7976931348623157e308
+/// The smallest positive normal value: 2^-1022.
+const __f64_MIN_POSITIVE: f64 = 2.2250738585072014e-308
+
+/// The ratio of a circle's circumference to its diameter.
+const __f32_PI: f32 = 3.1415927
+/// The base of the natural logarithm.
+const __f32_E: f32 = 2.7182817
+/// The ratio of a circle's circumference to its radius: `2 * PI`.
+const __f32_TAU: f32 = 6.2831855
+/// The square root of 2.
+const __f32_SQRT_2: f32 = 1.4142135
+/// The natural logarithm of 2.
+const __f32_LN_2: f32 = 0.6931472
+/// The natural logarithm of 10.
+const __f32_LN_10: f32 = 2.3025851
+/// Positive infinity.
+const __f32_INFINITY: f32 = 1.0 / 0.0
+/// Negative infinity.
+const __f32_NEG_INFINITY: f32 = -1.0 / 0.0
+/// The NaN value: not a number. Which NaN payload and sign bit it has is not specified.
+const __f32_NAN: f32 = 0.0 / 0.0
+/// The difference between `1.0` and the next larger value: 2^-23.
+const __f32_EPSILON: f32 = 1.1920929e-7
+/// The smallest finite value: the most negative one.
+const __f32_MIN: f32 = -3.4028235e38
+/// The largest finite value.
+const __f32_MAX: f32 = 3.4028235e38
+/// The smallest positive normal value: 2^-126.
+const __f32_MIN_POSITIVE: f32 = 1.1754944e-38
+
+// ---- f64 ----
+
+/// Whether the value is NaN.
+fn f64.is_nan(self): bool {
+    self != self
+}
+
+/// Whether the value is positive or negative infinity.
+fn f64.is_infinite(self): bool {
+    self == f64.INFINITY || self == f64.NEG_INFINITY
+}
+
+/// Whether the value is neither infinite nor NaN.
+fn f64.is_finite(self): bool {
+    self.abs() < f64.INFINITY
+}
+
+/// Whether the sign bit is set: true for `-0.0` and for a NaN written with the sign bit, as well as for a
+/// negative number.
+fn f64.is_sign_negative(self): bool {
+    self.to_bits() >= 0x8000000000000000
+}
+
+/// The sign of the value: `1.0`, `-1.0`, or NaN. `signum(-0.0)` is `-1.0`, and `signum` of a NaN is NaN.
+fn f64.signum(self): f64 {
+    if self.is_nan() {
+        f64.NAN
+    } else if self.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+/// The fractional part: `self - self.trunc()`. An infinite or NaN value gives NaN.
+fn f64.fract(self): f64 {
+    self - self.trunc()
+}
+
+/// The natural logarithm of `self` in base `base`: `self.ln() / base.ln()`.
+fn f64.log(self, base: f64): f64 {
+    self.ln() / base.ln()
+}
+
+/// The smaller of the two values. When one is NaN, the other is returned; when the two compare equal (including
+/// `0.0` and `-0.0`), the receiver is returned.
+fn f64.min(self, other: f64): f64 {
+    if self < other {
+        self
+    } else if other < self {
+        other
+    } else if self.is_nan() {
+        other
+    } else {
+        self
+    }
+}
+
+/// The larger of the two values. When one is NaN, the other is returned; when the two compare equal (including
+/// `0.0` and `-0.0`), the receiver is returned.
+fn f64.max(self, other: f64): f64 {
+    if self > other {
+        self
+    } else if other > self {
+        other
+    } else if self.is_nan() {
+        other
+    } else {
+        self
+    }
+}
+
+/// `self` limited to `min..=max`. Panics when `min` or `max` is NaN, or when `min` is greater than `max`. A NaN
+/// receiver gives NaN.
+fn f64.clamp(self, min: f64, max: f64): f64 {
+    if min.is_nan() || max.is_nan() || min > max {
+        panic("clamp: min is NaN, max is NaN, or min is greater than max")
+    }
+    if self < min {
+        min
+    } else if self > max {
+        max
+    } else {
+        self
+    }
+}
+
+/// The value in degrees: `self * (180.0 / PI)`.
+fn f64.to_degrees(self): f64 {
+    self * (180.0 / f64.PI)
+}
+
+/// The value in radians: `self * (PI / 180.0)`.
+fn f64.to_radians(self): f64 {
+    self * (f64.PI / 180.0)
+}
+
+/// The IEEE 754 total order of the two values: `-NaN < -inf < ... < -0.0 < 0.0 < ... < inf < NaN`, with NaN
+/// payloads ordered by their bits. This is the order floats have instead of `cmp`.
+fn f64.total_cmp(self, other: f64): Ordering {
+    let a = self.to_bits()
+    let b = other.to_bits()
+    // The unsigned key that sorts like IEEE 754 totalOrder: a negative value has every bit flipped, a
+    // non-negative one only its sign bit.
+    let a_key = if a >= 0x8000000000000000 { a ^ 0xffffffffffffffff } else { a ^ 0x8000000000000000 }
+    let b_key = if b >= 0x8000000000000000 { b ^ 0xffffffffffffffff } else { b ^ 0x8000000000000000 }
+    if a_key < b_key {
+        Ordering.Less
+    } else if b_key < a_key {
+        Ordering.Greater
+    } else {
+        Ordering.Equal
+    }
+}
+
+// ---- f32 ----
+
+/// Whether the value is NaN.
+fn f32.is_nan(self): bool {
+    self != self
+}
+
+/// Whether the value is positive or negative infinity.
+fn f32.is_infinite(self): bool {
+    self == f32.INFINITY || self == f32.NEG_INFINITY
+}
+
+/// Whether the value is neither infinite nor NaN.
+fn f32.is_finite(self): bool {
+    self.abs() < f32.INFINITY
+}
+
+/// Whether the sign bit is set: true for `-0.0` and for a NaN written with the sign bit, as well as for a
+/// negative number.
+fn f32.is_sign_negative(self): bool {
+    self.to_bits() >= 0x80000000
+}
+
+/// The sign of the value: `1.0`, `-1.0`, or NaN. `signum(-0.0)` is `-1.0`, and `signum` of a NaN is NaN.
+fn f32.signum(self): f32 {
+    if self.is_nan() {
+        f32.NAN
+    } else if self.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+/// The fractional part: `self - self.trunc()`. An infinite or NaN value gives NaN.
+fn f32.fract(self): f32 {
+    self - self.trunc()
+}
+
+/// The natural logarithm of `self` in base `base`: `self.ln() / base.ln()`.
+fn f32.log(self, base: f32): f32 {
+    self.ln() / base.ln()
+}
+
+/// The smaller of the two values. When one is NaN, the other is returned; when the two compare equal (including
+/// `0.0` and `-0.0`), the receiver is returned.
+fn f32.min(self, other: f32): f32 {
+    if self < other {
+        self
+    } else if other < self {
+        other
+    } else if self.is_nan() {
+        other
+    } else {
+        self
+    }
+}
+
+/// The larger of the two values. When one is NaN, the other is returned; when the two compare equal (including
+/// `0.0` and `-0.0`), the receiver is returned.
+fn f32.max(self, other: f32): f32 {
+    if self > other {
+        self
+    } else if other > self {
+        other
+    } else if self.is_nan() {
+        other
+    } else {
+        self
+    }
+}
+
+/// `self` limited to `min..=max`. Panics when `min` or `max` is NaN, or when `min` is greater than `max`. A NaN
+/// receiver gives NaN.
+fn f32.clamp(self, min: f32, max: f32): f32 {
+    if min.is_nan() || max.is_nan() || min > max {
+        panic("clamp: min is NaN, max is NaN, or min is greater than max")
+    }
+    if self < min {
+        min
+    } else if self > max {
+        max
+    } else {
+        self
+    }
+}
+
+/// The value in degrees: `self * (180.0 / PI)`.
+fn f32.to_degrees(self): f32 {
+    self * (180.0 / f32.PI)
+}
+
+/// The value in radians: `self * (PI / 180.0)`.
+fn f32.to_radians(self): f32 {
+    self * (f32.PI / 180.0)
+}
+
+/// The IEEE 754 total order of the two values: `-NaN < -inf < ... < -0.0 < 0.0 < ... < inf < NaN`, with NaN
+/// payloads ordered by their bits. This is the order floats have instead of `cmp`.
+fn f32.total_cmp(self, other: f32): Ordering {
+    let a = self.to_bits()
+    let b = other.to_bits()
+    let a_key = if a >= 0x80000000 { a ^ 0xffffffff } else { a ^ 0x80000000 }
+    let b_key = if b >= 0x80000000 { b ^ 0xffffffff } else { b ^ 0x80000000 }
+    if a_key < b_key {
+        Ordering.Less
+    } else if b_key < a_key {
+        Ordering.Greater
+    } else {
+        Ordering.Equal
+    }
 }

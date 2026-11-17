@@ -21,9 +21,21 @@ impl Globals {
             Ty::Chars => Ty::Char,
             Ty::ListIntoIter(elem, _) | Ty::ArrayIntoIter(elem, _) | Ty::RangeIter(elem, _) => (**elem).clone(),
             Ty::MapIter(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
+            // A mutable iterator yields a writable view of each element; a map's keys stay read-only (IT15).
+            Ty::IterMut(elem) => Self::mutable_view(elem),
+            Ty::MapIterMut(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::mutable_view(value)]),
             Ty::MapIntoIter(key, value, _) => Ty::Tuple(vec![(**key).clone(), (**value).clone()]),
             _ => return None,
         })
+    }
+
+    /// The item type of one of the compiler-known iterators that can also take items from the back: a slice, a
+    /// range iterator, and `Chars` (`spec/iterators.md`, IT14). The owning and map iterators cannot.
+    pub(crate) fn builtin_double_ended_item(&self, ty: &Ty, env: &crate::generics::Env) -> Option<Ty> {
+        match ty {
+            Ty::Slice(_) | Ty::Chars | Ty::RangeIter(..) => self.builtin_iterator_item(ty, env),
+            _ => None,
+        }
     }
 
     /// The item type of one of the compiler-known iterable collections: what `iter()` yields.
@@ -62,11 +74,14 @@ impl Globals {
         if Some(iface) == self.iterable_iface {
             return self.builtin_iterable_item(ty, env).map(|item| vec![item]);
         }
+        if Some(iface) == self.double_ended_iface {
+            return self.builtin_double_ended_item(ty, env).map(|item| vec![item]);
+        }
         None
     }
 
     /// Whether a built-in type implements `FromIterator<item>` without an impl block, or `None` for a struct or an
-    /// enum, which implements it with a block (`spec/iterators.md`, IT13). A `List` and a `Map` are built with the
+    /// enum, which implements it with a block (`spec/iterators.md`, IT18). A `List` and a `Map` are built with the
     /// default allocator only, so one that stores another allocator never implements it.
     pub(crate) fn builtin_from_iterator(&self, ty: &Ty, args: &[Ty], env: &crate::generics::Env) -> Option<bool> {
         let [item] = args else { return None };
@@ -150,6 +165,10 @@ impl Globals {
             _ => globals.is_copy(elem),
         };
         if copy { elem.clone() } else { Self::shared_view(elem) }
+    }
+
+    fn mutable_view(ty: &Ty) -> Ty {
+        Ty::Ref { mutable: true, inner: Box::new(ty.clone()) }
     }
 
     fn shared_view(ty: &Ty) -> Ty {
@@ -257,6 +276,43 @@ mod tests {
         assert_eq!(g.builtin_from_iterator(&result, &[other_error], &[]), Some(false), "the errors must agree");
         // A struct or an enum answers through its impl blocks, so the built-in check has no opinion.
         assert_eq!(g.builtin_from_iterator(&i32_(), &[i32_()], &[]), None);
+    }
+
+    #[test]
+    fn mutable_iterators_yield_writable_views() {
+        let g = Globals::default();
+        let writable = |t: Ty| Ty::Ref { mutable: true, inner: Box::new(t) };
+        let shared = |t: Ty| Ty::Ref { mutable: false, inner: Box::new(t) };
+        // Every element is a `&mut T`, even a `Copy` one: that is what makes it writable (IT15).
+        assert_eq!(g.builtin_iterator_item(&Ty::IterMut(Box::new(i32_())), &[]), Some(writable(i32_())));
+        assert_eq!(g.builtin_iterator_item(&Ty::IterMut(Box::new(Ty::String)), &[]), Some(writable(Ty::String)));
+        // A map yields its keys read-only and its values writable.
+        let map = Ty::MapIterMut(Box::new(i32_()), Box::new(Ty::String));
+        assert_eq!(g.builtin_iterator_item(&map, &[]), Some(Ty::Tuple(vec![shared(i32_()), writable(Ty::String)])));
+        // They are iterators, not iterables: `for` reaches them through `iter_mut()`.
+        assert_eq!(g.builtin_iterable_item(&Ty::IterMut(Box::new(i32_())), &[]), None);
+    }
+
+    #[test]
+    fn only_slices_ranges_and_chars_walk_backwards() {
+        let g = Globals::default();
+        assert_eq!(g.builtin_double_ended_item(&Ty::Slice(Box::new(i32_())), &[]), Some(i32_()));
+        assert_eq!(g.builtin_double_ended_item(&Ty::RangeIter(Box::new(i32_()), true), &[]), Some(i32_()));
+        assert_eq!(g.builtin_double_ended_item(&Ty::Chars, &[]), Some(Ty::Char));
+        // The owning and map iterators yield from the front only.
+        let owning = Ty::ListIntoIter(Box::new(i32_()), burdin_tir::Alloc::Global);
+        assert_eq!(g.builtin_double_ended_item(&owning, &[]), None);
+        assert_eq!(g.builtin_double_ended_item(&Ty::MapIter(Box::new(Ty::Str), Box::new(i32_())), &[]), None);
+    }
+
+    #[test]
+    fn the_double_ended_interface_has_its_own_builtin_arguments() {
+        let g = Globals { iterator_iface: Some(0), double_ended_iface: Some(1), ..Default::default() };
+        let slice = Ty::Slice(Box::new(i32_()));
+        assert_eq!(g.builtin_iface_args(&slice, 1, &[]), Some(vec![i32_()]));
+        let owning = Ty::ListIntoIter(Box::new(i32_()), burdin_tir::Alloc::Global);
+        assert_eq!(g.builtin_iface_args(&owning, 0, &[]), Some(vec![i32_()]));
+        assert_eq!(g.builtin_iface_args(&owning, 1, &[]), None, "an owning iterator is not double-ended");
     }
 
     #[test]

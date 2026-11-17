@@ -7,6 +7,7 @@
 // same surface, with the lazy adapters written here as default methods.
 //
 use cmp.Ordering
+use option.take
 
 // A lazy chain borrows its source: its iterator types carry the source's view type, so a chain is second-class
 // (memory-rules SC2/SC3) and cannot be stored in a field or a collection.
@@ -39,6 +40,22 @@ interface Iterator<T> {
     /// A lazy chain of `(index, item)` pairs, counting from 0.
     fn enumerate(own self): EnumerateIter<Self, T> {
         EnumerateIter { inner: self, index: 0 }
+    }
+
+    /// A lazy chain of pairs, one item from this iterator and one from `other`, ending when either one ends.
+    fn zip<U, J: Iterator<U>>(own self, own other: J): ZipIter<Self, T, J, U> {
+        ZipIter { first: self, second: other }
+    }
+
+    /// A lazy chain of this iterator's items followed by the items of `other`.
+    fn chain<J: Iterator<T>>(own self, own other: J): ChainIter<Self, J, T> {
+        ChainIter { first: self, second: other, first_done: false }
+    }
+
+    /// A lazy chain of the items of the iterators `f` returns for each item, one after another.
+    fn flat_map<U, J: Iterator<U>, F: FnMut(T): J>(own self, own f: F): FlatMapIter<Self, T, J, U, F> {
+        let current: Option<J> = None
+        FlatMapIter { inner: self, f: f, current: current }
     }
 
     /// A lazy chain of the items up to, not including, the first one `f` rejects.
@@ -364,9 +381,52 @@ interface Iterator<T> {
         }
     }
 
+    /// Folds the items like `fold`, but `f` returns a `Result` and the first `Err` ends the fold and is returned.
+    fn try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F): Result<A, E> {
+        let mut acc = init
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    match f(acc, x) {
+                        Ok(next) => {
+                            acc = next
+                        }
+                        Err(e) => {
+                            return Err(e)
+                        }
+                    }
+                }
+                None => {
+                    return Ok(acc)
+                }
+            }
+        }
+    }
+
+    /// Calls `f` on every item, stopping at the first `Err` and returning it.
+    fn try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F): Result<(), E> {
+        let mut f = f
+        loop {
+            match self.next() {
+                Some(x) => {
+                    match f(x) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(e)
+                        }
+                    }
+                }
+                None => {
+                    return Ok(())
+                }
+            }
+        }
+    }
+
     /// Collects the remaining items into the collection the context asks for: `let names: Set<String> =
     /// it.collect()`. The target type comes from the expected type (the annotation, the parameter, or the return
-    /// type), and any type that implements `FromIterator<T>` can be a target (spec/iterators.md, IT13).
+    /// type), and any type that implements `FromIterator<T>` can be a target (spec/iterators.md, IT17).
     fn collect<C: FromIterator<T>>(own self): C {
         C.from_iter(self)
     }
@@ -388,6 +448,106 @@ interface Iterator<T> {
     }
 }
 
+/// `it.min()`: the least item; the first of equal items. `None` when the iterator is empty. The compiler supplies `T`.
+priv fn __iter_min<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
+    let mut it = it
+    match it.next() {
+        Some(first) => {
+            let mut best = first
+            loop {
+                match it.next() {
+                    Some(x) => {
+                        if x.cmp(best).is_lt() {
+                            best = x
+                        }
+                    }
+                    None => {
+                        return Some(best)
+                    }
+                }
+            }
+        }
+        None => None,
+    }
+}
+
+/// `it.max()`: the greatest item; the last of equal items. `None` when the iterator is empty.
+priv fn __iter_max<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
+    let mut it = it
+    match it.next() {
+        Some(first) => {
+            let mut best = first
+            loop {
+                match it.next() {
+                    Some(x) => {
+                        if !x.cmp(best).is_lt() {
+                            best = x
+                        }
+                    }
+                    None => {
+                        return Some(best)
+                    }
+                }
+            }
+        }
+        None => None,
+    }
+}
+
+/// `a.eq(b)`: whether both iterators yield equal items and end together.
+priv fn __iter_eq<T: Eq, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): bool {
+    let mut a = a
+    let mut b = b
+    loop {
+        match a.next() {
+            Some(x) => {
+                match b.next() {
+                    Some(y) => {
+                        if x != y {
+                            return false
+                        }
+                    }
+                    None => {
+                        return false
+                    }
+                }
+            }
+            None => {
+                return b.next().is_none()
+            }
+        }
+    }
+}
+
+/// `a.cmp(b)`: compares item by item; the shorter iterator is less when it is a prefix of the other.
+priv fn __iter_cmp<T: Ord, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): Ordering {
+    let mut a = a
+    let mut b = b
+    loop {
+        match a.next() {
+            Some(x) => {
+                match b.next() {
+                    Some(y) => {
+                        let order = x.cmp(y)
+                        if !order.is_eq() {
+                            return order
+                        }
+                    }
+                    None => {
+                        return Ordering.Greater
+                    }
+                }
+            }
+            None => {
+                if b.next().is_none() {
+                    return Ordering.Equal
+                }
+                return Ordering.Less
+            }
+        }
+    }
+}
+
 /// Whether the comparator `f` puts `a` strictly before `b`. The items are plain (borrowed) parameters, so the views
 /// handed to `f` end with the call and the caller can still move the items.
 priv fn __is_less<T, F: FnMut(&T, &T): Ordering>(mut f: F, a: T, b: T): bool {
@@ -400,12 +560,19 @@ priv fn __accepts<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
     f(&x)
 }
 
+/// An iterator that can also take items from its back. `rev` walks such an iterator backwards. The built-in
+/// slice, range, and `Chars` iterators implement it in the compiler (spec/iterators.md, IT14).
+interface DoubleEndedIterator<T> {
+    /// The last item, or `None` when the iterator is exhausted.
+    fn next_back(mut self): Option<T>
+}
+
 /// A collection that `for` can iterate through `iter(self)`.
 interface Iterable<T> {
 }
 
 /// A type that can be built from the items of an iterator. `Iterator.collect` calls `from_iter`; the built-in
-/// `List`, `Map`, `String`, `Option`, and `Result` implement it in the compiler (spec/iterators.md, IT13).
+/// `List`, `Map`, `String`, `Option`, and `Result` implement it in the compiler (spec/iterators.md, IT16).
 interface FromIterator<T> {
     /// Builds the collection from every item `iter` yields, in order.
     fn from_iter<I: Iterator<T>>(own iter: I): Self
@@ -450,7 +617,7 @@ FilterIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
 }
 
 /// The lazy `take` chain.
-struct TakeIter<I, T> {
+struct TakeIter<I, T> derives (Clone) {
     inner: I
     remaining: usize
 }
@@ -466,7 +633,7 @@ TakeIter<I, T>: Iterator<T> where I: Iterator<T> {
 }
 
 /// The lazy `skip` chain.
-struct SkipIter<I, T> {
+struct SkipIter<I, T> derives (Clone) {
     inner: I
     remaining: usize
 }
@@ -489,7 +656,7 @@ SkipIter<I, T>: Iterator<T> where I: Iterator<T> {
 }
 
 /// The lazy `enumerate` chain.
-struct EnumerateIter<I, T> {
+struct EnumerateIter<I, T> derives (Clone) {
     inner: I
     index: usize
 }
@@ -502,6 +669,248 @@ EnumerateIter<I, T>: Iterator<(usize, T)> where I: Iterator<T> {
                 self.index = self.index + 1
                 Some((i, x))
             }
+            None => None,
+        }
+    }
+}
+
+/// The lazy `zip` chain.
+struct ZipIter<I, T, J, U> derives (Clone) {
+    first: I
+    second: J
+}
+
+ZipIter<I, T, J, U>: Iterator<(T, U)> where I: Iterator<T>, J: Iterator<U> {
+    fn next(mut self): Option<(T, U)> {
+        match self.first.next() {
+            Some(x) => {
+                match self.second.next() {
+                    Some(y) => Some((x, y)),
+                    None => None,
+                }
+            }
+            None => None,
+        }
+    }
+}
+
+/// The lazy `chain` chain.
+struct ChainIter<I, J, T> derives (Clone) {
+    first: I
+    second: J
+    first_done: bool
+}
+
+ChainIter<I, J, T>: Iterator<T> where I: Iterator<T>, J: Iterator<T> {
+    fn next(mut self): Option<T> {
+        if !self.first_done {
+            match self.first.next() {
+                Some(x) => {
+                    return Some(x)
+                }
+                None => {
+                    self.first_done = true
+                }
+            }
+        }
+        self.second.next()
+    }
+}
+
+/// The lazy `flat_map` chain: `current` is the inner iterator being drained, if any.
+struct FlatMapIter<I, T, J, U, F: FnMut(T): J> {
+    inner: I
+    f: F
+    current: Option<J>
+}
+
+FlatMapIter<I, T, J, U, F>: Iterator<U> where I: Iterator<T>, J: Iterator<U>, F: FnMut(T): J {
+    fn next(mut self): Option<U> {
+        loop {
+            match self.current.take() {
+                Some(it) => {
+                    let mut it = it
+                    match it.next() {
+                        Some(x) => {
+                            self.current = Some(it)
+                            return Some(x)
+                        }
+                        None => {}
+                    }
+                }
+                None => {
+                    match self.inner.next() {
+                        Some(x) => {
+                            self.current = Some(self.f(x))
+                        }
+                        None => {
+                            return None
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The lazy `flatten` chain: `current` is the inner iterator being drained, if any.
+struct FlattenIter<I, J, U> derives (Clone) {
+    inner: I
+    current: Option<J>
+}
+
+FlattenIter<I, J, U>: Iterator<U> where I: Iterator<J>, J: Iterator<U> {
+    fn next(mut self): Option<U> {
+        loop {
+            match self.current.take() {
+                Some(it) => {
+                    let mut it = it
+                    match it.next() {
+                        Some(x) => {
+                            self.current = Some(it)
+                            return Some(x)
+                        }
+                        None => {}
+                    }
+                }
+                None => {
+                    match self.inner.next() {
+                        Some(it) => {
+                            self.current = Some(it)
+                        }
+                        None => {
+                            return None
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The lazy `cloned` chain: an owned copy of each viewed item.
+struct ClonedIter<I, U> derives (Clone) {
+    inner: I
+}
+
+ClonedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Clone {
+    fn next(mut self): Option<U> {
+        match self.inner.next() {
+            Some(x) => Some((*x).clone()),
+            None => None,
+        }
+    }
+}
+
+/// The lazy `copied` chain: a copy of each viewed item.
+struct CopiedIter<I, U> derives (Clone) {
+    inner: I
+}
+
+CopiedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Copy {
+    fn next(mut self): Option<U> {
+        match self.inner.next() {
+            Some(x) => Some(*x),
+            None => None,
+        }
+    }
+}
+
+/// The lazy `cycle` chain: `current` is the pass being walked and `original` is the pristine copy of the source.
+struct CycleIter<I, T> derives (Clone) {
+    original: I
+    current: I
+}
+
+CycleIter<I, T>: Iterator<T> where I: Iterator<T> + Clone {
+    fn next(mut self): Option<T> {
+        match self.current.next() {
+            Some(x) => Some(x),
+            None => {
+                self.current = self.original.clone()
+                self.current.next()
+            }
+        }
+    }
+}
+
+/// The lazy `rev` chain: the source's items from the back.
+struct RevIter<I, T> derives (Clone) {
+    inner: I
+}
+
+RevIter<I, T>: Iterator<T> where I: DoubleEndedIterator<T> {
+    fn next(mut self): Option<T> {
+        self.inner.next_back()
+    }
+}
+
+RevIter<I, T>: DoubleEndedIterator<T> where I: Iterator<T> + DoubleEndedIterator<T> {
+    fn next_back(mut self): Option<T> {
+        self.inner.next()
+    }
+}
+
+MapIter<I, T, U, F>: DoubleEndedIterator<U> where I: DoubleEndedIterator<T>, F: FnMut(T): U {
+    fn next_back(mut self): Option<U> {
+        match self.inner.next_back() {
+            Some(x) => Some(self.f(x)),
+            None => None,
+        }
+    }
+}
+
+FilterIter<I, T, F>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, F: FnMut(&T): bool {
+    fn next_back(mut self): Option<T> {
+        loop {
+            match self.inner.next_back() {
+                Some(x) => {
+                    if self.f(&x) {
+                        return Some(x)
+                    }
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+}
+
+InspectIter<I, T, F>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, F: FnMut(&T) {
+    fn next_back(mut self): Option<T> {
+        match self.inner.next_back() {
+            Some(x) => {
+                self.f(&x)
+                Some(x)
+            }
+            None => None,
+        }
+    }
+}
+
+ChainIter<I, J, T>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, J: DoubleEndedIterator<T> {
+    fn next_back(mut self): Option<T> {
+        match self.second.next_back() {
+            Some(x) => Some(x),
+            None => self.first.next_back(),
+        }
+    }
+}
+
+ClonedIter<I, U>: DoubleEndedIterator<U> where I: DoubleEndedIterator<&U>, U: Clone {
+    fn next_back(mut self): Option<U> {
+        match self.inner.next_back() {
+            Some(x) => Some((*x).clone()),
+            None => None,
+        }
+    }
+}
+
+CopiedIter<I, U>: DoubleEndedIterator<U> where I: DoubleEndedIterator<&U>, U: Copy {
+    fn next_back(mut self): Option<U> {
+        match self.inner.next_back() {
+            Some(x) => Some(*x),
             None => None,
         }
     }
@@ -584,7 +993,7 @@ MapWhileIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): Option<
 }
 
 /// The lazy `step_by` chain.
-struct StepByIter<I, T> {
+struct StepByIter<I, T> derives (Clone) {
     inner: I
     step: usize
     first: bool
@@ -672,6 +1081,38 @@ PeekIter<I, T>: Iterator<T> where I: Iterator<T> {
     }
 }
 
+// The adapters whose receiver must be an iterator of a particular shape (items that are iterators, items that are
+// views, a source that can be cloned) are not methods of `Iterator<T>`, because a default method cannot put a bound on
+// the interface's own item type. The compiler resolves `it.flatten()`, `it.cloned()`, `it.copied()`, and `it.cycle()`
+// on any iterator to these functions (spec/iterators.md, IT13).
+
+/// `it.flatten()`: the items of each iterator the source yields.
+priv fn __iter_flatten<I: Iterator<J>, J: Iterator<U>, U>(own it: I): FlattenIter<I, J, U> {
+    let current: Option<J> = None
+    FlattenIter { inner: it, current: current }
+}
+
+/// `it.cloned()`: owned clones of the items a source of views yields.
+priv fn __iter_cloned<I: Iterator<&U>, U: Clone>(own it: I): ClonedIter<I, U> {
+    ClonedIter { inner: it }
+}
+
+/// `it.copied()`: copies of the items a source of views yields.
+priv fn __iter_copied<I: Iterator<&U>, U: Copy>(own it: I): CopiedIter<I, U> {
+    CopiedIter { inner: it }
+}
+
+/// `it.rev()`: the items from the back; the source must be double-ended.
+priv fn __iter_rev<I: Iterator<T> + DoubleEndedIterator<T>, T>(own it: I): RevIter<I, T> {
+    RevIter { inner: it }
+}
+
+/// `it.cycle()`: the items again and again; the source must be clonable.
+priv fn __iter_cycle<I: Iterator<T> + Clone, T>(own it: I): CycleIter<I, T> {
+    let original = it.clone()
+    CycleIter { original: original, current: it }
+}
+
 // The eager `List` methods. They borrow the list and return owned results, and their closures receive views
 // (Burdin Language Design, "Collections and iteration"). The compiler resolves `xs.map(f)` and the other names
 // below to these functions (spec/iterators.md, IT9).
@@ -741,7 +1182,7 @@ priv fn __list_find<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Opti
     None
 }
 
-// The `FromIterator` implementations of the built-in collections (spec/iterators.md, IT13). The compiler resolves
+// The `FromIterator` implementations of the built-in collections (spec/iterators.md, IT18). The compiler resolves
 // `List<T>.from_iter(it)`, `Map<K, V>.from_iter(it)`, `String.from_iter(it)`, `Option<C>.from_iter(it)`, and
 // `Result<C, E>.from_iter(it)` to these functions, and `List<T>.from(array)` and `Map<K, V>.from(array)` to the
 // `__list_from` and `__map_from` pair at the end.

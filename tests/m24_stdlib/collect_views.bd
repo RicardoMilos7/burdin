@@ -4,7 +4,7 @@
 
 // A `String` is built from views of `String` items, which the list keeps, and from the owned items of a consumed
 // list. A chain over borrowed items cannot be collected into a `List`, because a list element must be an owned value
-// (`to_list` makes the second-class list for a chain that is used where it was made) (IT15).
+// (`to_list` makes the second-class list for a chain that is used where it was made) (IT18).
 
 fn main() {
     let words: List<String> = [String.from("a"), String.from("b"), String.from("c")].into_iter().collect()

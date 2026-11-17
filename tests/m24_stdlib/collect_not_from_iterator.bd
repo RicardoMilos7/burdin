@@ -1,6 +1,6 @@
 //@ compile-fail
 
-// The target of `collect` must implement `FromIterator<T>` for the items the iterator yields (IT14, IT15).
+// The target of `collect` must implement `FromIterator<T>` for the items the iterator yields (IT17, IT18).
 
 struct Plain {
     n: i32

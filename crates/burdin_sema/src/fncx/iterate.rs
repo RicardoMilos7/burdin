@@ -41,15 +41,44 @@ impl FnCx<'_> {
             }
             return Some(mk(tir::ExprKind::Method(Method::IterNext, vec![recv]), Ty::Option(Box::new(item)), span));
         }
-        if name.name == "sum"
+        if name.name == "next_back" && args.is_empty() {
+            let item = self.globals.builtin_double_ended_item(&recv_ty, &self.bounds)?;
+            if is_place_expr(&recv) && !self.place_mutable(&recv) {
+                let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+                let whose = local.unwrap_or_else(|| "this receiver".to_string());
+                self.diags.error(
+                    Code::MUT_OF_IMMUTABLE,
+                    recv.span,
+                    format!("`next_back` changes its receiver, but `{whose}` is not mutable"),
+                );
+            }
+            return Some(mk(tir::ExprKind::Method(Method::IterNextBack, vec![recv]), Ty::Option(Box::new(item)), span));
+        }
+        if (name.name == "sum" || name.name == "product")
             && args.is_empty()
             && let Some(item) = self.globals.iterator_item(&recv.ty, &self.bounds)
         {
-            return Some(self.iterator_sum(recv, &item, span));
+            return Some(self.iterator_sum(recv, &item, name.name == "product", span));
         }
         // The eager `List` methods are generic functions in `std`; the receiver is their first argument.
         if let Ty::List(_, _) = &recv_ty
             && let Some(g) = self.globals.eager_list_fn(&name.name)
+        {
+            return Some(self.generic_call_with_receiver(g, recv, &name.name, args, span));
+        }
+        // `min`, `max`, `eq`, and `cmp` need `T: Ord` (or `Eq`) on the interface's own item type, so they are
+        // functions in `std` that take the iterator; the compiler hands them the item type.
+        if let Some(item) = self.globals.iterator_item(&recv_ty, &self.bounds)
+            && let Some(g) = self.globals.iterator_item_fn(&name.name)
+        {
+            let seed = [("T".to_string(), item)];
+            return Some(self.generic_call_with_receiver_seeded(g, recv, &name.name, args, &seed, span));
+        }
+        // The adapters that need items that are iterators or views, or a clonable source, are generic functions in
+        // `std` that take the iterator as their first argument (IT13).
+        if args.is_empty()
+            && self.globals.iterator_item(&recv_ty, &self.bounds).is_some()
+            && let Some(g) = self.globals.iterator_adapter_fn(&name.name)
         {
             return Some(self.generic_call_with_receiver(g, recv, &name.name, args, span));
         }
@@ -81,7 +110,7 @@ impl FnCx<'_> {
     }
 
     /// `from_iter` on a built-in collection (`List`, `Map`, `String`, `Option`, `Result`) and `from` on a `List` or a
-    /// `Map` (`spec/iterators.md`, IT13): a call to the `std` function that builds it. `None` when `ty` and `name`
+    /// `Map` (`spec/iterators.md`, IT18): a call to the `std` function that builds it. `None` when `ty` and `name`
     /// are not one of those, so the ordinary associated-function lookup runs next. The target is `ty`, so the
     /// function's type arguments come from it and from the argument.
     pub(super) fn builtin_collection_call(
@@ -227,17 +256,19 @@ impl FnCx<'_> {
         self.generic_call_checked(g, name, args, vec![arg], span, Some(ty))
     }
 
-    /// `it.sum()`: the sum of an iterator of integers, written as an ordinary loop by the compiler because
-    /// stage 1 has no arithmetic bound to express it in `std`.
-    fn iterator_sum(&mut self, recv: tir::Expr, item: &Ty, span: Span) -> tir::Expr {
+    /// `it.sum()` and `it.product()`: the sum or product of an iterator of integers or floats, written as an
+    /// ordinary loop by the compiler because stage 1 has no arithmetic bound to express it in `std`. The loop uses
+    /// the ordinary `+` or `*`, so an integer overflow behaves as it does there (spec/iterators.md, IT9).
+    fn iterator_sum(&mut self, recv: tir::Expr, item: &Ty, product: bool, span: Span) -> tir::Expr {
+        let method = if product { "product" } else { "sum" };
         let int = match item {
-            Ty::Int(i) => Ty::Int(*i),
-            Ty::Ref { inner, .. } if matches!(**inner, Ty::Int(_)) => (**inner).clone(),
+            Ty::Int(_) | Ty::Float(_) => item.clone(),
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Int(_) | Ty::Float(_)) => (**inner).clone(),
             _ => {
                 self.diags.error(
                     Code::BOUND_NOT_SATISFIED,
                     span,
-                    format!("`sum` needs an iterator of integers, but this one yields `{item}`"),
+                    format!("`{method}` needs an iterator of integers or floats, but this one yields `{item}`"),
                 );
                 return error_expr(span);
             }
@@ -255,7 +286,7 @@ impl FnCx<'_> {
         };
         let added = mk(
             tir::ExprKind::Binary(
-                BinOp::Add,
+                if product { BinOp::Mul } else { BinOp::Add },
                 Box::new(mk(tir::ExprKind::Local(sum), int.clone(), span)),
                 Box::new(value),
             ),
@@ -278,7 +309,11 @@ impl FnCx<'_> {
             mk(tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)) }), Ty::Unit, span);
         let init = tir::Stmt::Let(Pat::Binding(it, self.bind_mode(&iter_ty, true)), recv, None);
         let zero_mode = self.bind_mode(&int, true);
-        let zero = tir::Stmt::Let(Pat::Binding(sum, zero_mode), mk(tir::ExprKind::Int(0), int.clone(), span), None);
+        let start = match (&int, product) {
+            (Ty::Float(_), _) => tir::ExprKind::Float(if product { 1.0 } else { 0.0 }),
+            (_, _) => tir::ExprKind::Int(i128::from(product)),
+        };
+        let zero = tir::Stmt::Let(Pat::Binding(sum, zero_mode), mk(start, int.clone(), span), None);
         let block = tir::Block {
             stmts: vec![init, zero, tir::Stmt::Expr(looped)],
             tail: Some(Box::new(mk(tir::ExprKind::Local(sum), int.clone(), span))),
@@ -356,6 +391,40 @@ impl FnCx<'_> {
             mk(tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)) }), Ty::Unit, span);
         let init = tir::Stmt::Let(Pat::Binding(it, self.bind_mode(&iter_ty, true)), iterable, None);
         mk(tir::ExprKind::Block(tir::Block { stmts: vec![init], tail: Some(Box::new(looped)) }), Ty::Unit, span)
+    }
+
+    /// `for pattern in mut e`: the loop calls `e.iter_mut()` and walks the iterator it returns, whose items are
+    /// writable views (IT15). The collection is borrowed exclusively until the loop ends. The method is a
+    /// compiler-known one for `List`, arrays, and `Map`, and an ordinary `iter_mut(mut self)` method for a user
+    /// type; either way the result must be an `Iterator`.
+    pub(super) fn for_mut(
+        &mut self,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        body: &ast::Block,
+        span: Span,
+    ) -> tir::Expr {
+        let name = ast::Ident { name: "iter_mut".to_string(), span: iter.span };
+        let iterator = self.method_call(iter, &name, &[], span, None);
+        if iterator.ty == Ty::Error {
+            // The iterable did not resolve; the body is still checked for its own errors.
+            self.scopes.push(Default::default());
+            self.loops.push(false);
+            let _ = self.pattern(pattern, &Ty::Error, true);
+            let _ = self.block(body, None);
+            self.loops.pop();
+            self.scopes.pop();
+            return error_expr(span);
+        }
+        let Some(item) = self.globals.iterator_item(&iterator.ty, &self.bounds) else {
+            self.diags.error(
+                Code::BOUND_NOT_SATISFIED,
+                span,
+                format!("`iter_mut()` returns `{}`, which is not an `Iterator`", iterator.ty),
+            );
+            return error_expr(span);
+        };
+        self.protocol_for(pattern, iterator, item, body, span)
     }
 
     /// The iterator a `for` over an `Iterable` starts: `value.iter()`, or a symbolic iterator for a type

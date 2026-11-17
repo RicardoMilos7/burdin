@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// An adapter that counts from the front (`enumerate`) is not double-ended, so `rev` is rejected after it.
+fn main() {
+    let xs = [1, 2, 3]
+    for (i, x) in xs.iter().enumerate().rev() { //~ E0141
+        println("{i}:{x}")
+    }
+}

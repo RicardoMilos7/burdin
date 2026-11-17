@@ -1674,7 +1674,7 @@ A container stores its allocator value when its allocator type is not `Global` (
 `Heap<i32, Arena>`). The `new` constructor has no allocator value to store, so it exists only for the default
 allocator; calling it for such a container is this error, and so is `from_iter` or `from`, which build a `List` or a
 `Map` with the default allocator (`List<i32, Arena>.from_iter(it)`). `spec/allocators.md` AL4,
-`spec/iterators.md` IT19.
+`spec/iterators.md` IT22.
 
 <!-- error-example: E0272 -->
 ```burdin

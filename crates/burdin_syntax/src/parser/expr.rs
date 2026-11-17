@@ -473,9 +473,14 @@ impl Parser<'_> {
                 self.bump();
                 let pattern = self.pattern()?;
                 self.expect(&TokenKind::In)?;
+                // `for x in mut xs` borrows the collection exclusively and yields writable elements.
+                let mutable = self.eat(&TokenKind::Mut);
                 let iter = self.expr_r(Restriction::NoStructLiteral)?;
                 let body = self.block()?;
-                Ok(Expr { span: start.to(body.span), kind: ExprKind::For { pattern, iter: Box::new(iter), body } })
+                Ok(Expr {
+                    span: start.to(body.span),
+                    kind: ExprKind::For { pattern, iter: Box::new(iter), mutable, body },
+                })
             }
             TokenKind::Return => {
                 self.bump();

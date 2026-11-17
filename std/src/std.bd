@@ -1,7 +1,8 @@
 // The stage 0 standard library, written in Burdin.
 //
 // The compiler provides the primitives that need to reach the operating system or raw memory (file I/O,
-// process control, the arguments, and the memory helpers); everything a Burdin program can express is here.
+// process control, the arguments, the environment, the working directory, and the memory helpers); everything a
+// Burdin program can express is here.
 
 use fmt.{Debug, Display, Formatter}
 
@@ -100,11 +101,92 @@ priv fn __error_context(own e: Error, message: str): Error {
     Error { value: e.value, frames: e.frames, context }
 }
 
-/// The error type of the I/O functions (`spec/errors.md`, ERR10).
+/// The portable kind of an I/O failure (`spec/errors.md`, ERR11): what went wrong, without the platform's own
+/// error code. An operating system code the compiler does not classify is `Other`; the code is still available
+/// through `IoError.os_code()`.
+enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    IsADirectory
+    NotADirectory
+    DirectoryNotEmpty
+    InvalidInput
+    InvalidData
+    UnexpectedEof
+    Interrupted
+    BrokenPipe
+    WouldBlock
+    TimedOut
+    Other
+}
+
+IoErrorKind: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str(match self {
+            IoErrorKind.NotFound => "not found",
+            IoErrorKind.PermissionDenied => "permission denied",
+            IoErrorKind.AlreadyExists => "already exists",
+            IoErrorKind.IsADirectory => "is a directory",
+            IoErrorKind.NotADirectory => "not a directory",
+            IoErrorKind.DirectoryNotEmpty => "directory not empty",
+            IoErrorKind.InvalidInput => "invalid input",
+            IoErrorKind.InvalidData => "invalid data",
+            IoErrorKind.UnexpectedEof => "unexpected end of file",
+            IoErrorKind.Interrupted => "interrupted",
+            IoErrorKind.BrokenPipe => "broken pipe",
+            IoErrorKind.WouldBlock => "would block",
+            IoErrorKind.TimedOut => "timed out",
+            IoErrorKind.Other => "other",
+        })
+    }
+}
+
+/// The error type of the I/O functions (`spec/errors.md`, ERR10). `kind` is the portable classification and
+/// `os_code` is the operating system's own code when the system reported the failure; `std` itself detects a
+/// few failures (such as removing a path that is not a directory) and stores `None` there. The reader and writer
+/// interfaces report the failures that no system call observed (`spec/stdlib.md`, "Readers and writers"); they
+/// carry no path and no code, and `kind()` classifies them too.
 error enum IoError {
-    Read { path: String } "cannot read {path}"
-    Write { path: String } "cannot write {path}"
-    Run { command: String } "cannot run {command}"
+    Read { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot read {path}: {kind}"
+    Write { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot write {path}: {kind}"
+    Run { command: String, kind: IoErrorKind, os_code: Option<i32> } "cannot run {command}: {kind}"
+    UnexpectedEof "unexpected end of input"
+    WriteZero "the writer accepted no bytes"
+    InvalidData "the bytes are not valid text"
+    Seek "seek to a position before the start"
+    InvalidInput "invalid open options"
+}
+
+IoError {
+    /// What went wrong, portably (`spec/errors.md`, ERR11).
+    fn kind(self): IoErrorKind {
+        match self {
+            IoError.Read { path: _, kind, os_code: _ } => kind,
+            IoError.Write { path: _, kind, os_code: _ } => kind,
+            IoError.Run { command: _, kind, os_code: _ } => kind,
+            IoError.UnexpectedEof => IoErrorKind.UnexpectedEof,
+            IoError.InvalidData => IoErrorKind.InvalidData,
+            IoError.WriteZero => IoErrorKind.Other,
+            IoError.Seek => IoErrorKind.InvalidInput,
+            IoError.InvalidInput => IoErrorKind.InvalidInput,
+        }
+    }
+
+    /// The operating system's own error code: `errno` on Linux and macOS, the Win32 error code on Windows. `None`
+    /// when `std` detected the failure itself and no system call reported it.
+    fn os_code(self): Option<i32> {
+        match self {
+            IoError.Read { path: _, kind: _, os_code } => os_code,
+            IoError.Write { path: _, kind: _, os_code } => os_code,
+            IoError.Run { command: _, kind: _, os_code } => os_code,
+            IoError.UnexpectedEof
+            | IoError.WriteZero
+            | IoError.InvalidData
+            | IoError.Seek
+            | IoError.InvalidInput => None,
+        }
+    }
 }
 
 /// The error type of `i32.parse` and the other integer parsers.

@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: clamp: min is NaN, max is NaN, or min is greater than max
+//> before
+
+// `clamp` panics when a bound is NaN (spec/stdlib.md, "Float functions").
+
+fn main() {
+    println("before")
+    println("{}", (1.0).clamp(f64.NAN, 3.0))
+}

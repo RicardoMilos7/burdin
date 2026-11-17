@@ -419,6 +419,8 @@ impl Globals {
             | Ty::ListIntoIter(..)
             | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
+            | Ty::IterMut(_)
+            | Ty::MapIterMut(..)
             | Ty::MapIntoIter(..)
             | Ty::RangeIter(..)
             | Ty::Any(_) => false,

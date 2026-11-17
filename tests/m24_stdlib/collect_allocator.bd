@@ -4,7 +4,7 @@
 //> 2
 
 // `collect` and `from_iter` build a collection with the default allocator, so a container that stores another
-// allocator is filled with `extend_iter` instead: it works for every allocator (IT17, IT19).
+// allocator is filled with `extend_iter` instead: it works for every allocator (IT20, IT22).
 
 struct Counter {
     count: CPtr<i32>

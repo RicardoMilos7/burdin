@@ -9,7 +9,7 @@
 
 // A collection is built from an array literal with `from`: `List.from`, `Map.from`, and, with the type arguments
 // written, `Set<T>.from`, `Deque<T>.from`, and `PriorityHeap<T>.from`. The element type comes from the array, or from
-// the expected type (IT18).
+// the expected type (IT21).
 
 fn main() {
     let list = List.from([1, 2, 3])

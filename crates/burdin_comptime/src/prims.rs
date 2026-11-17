@@ -5,7 +5,9 @@
 use crate::interp::{Fault, Interp, Mode, R, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
-use burdin_tir::{self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatTy, IntTy, Method, Program, Ty, UnOp};
+use burdin_tir::{
+    self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatOp, FloatTy, IntTy, Method, Program, Ty, UnOp,
+};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -41,6 +43,79 @@ fn round_float(v: f64, ty: &Ty) -> f64 {
     match ty {
         Ty::Float(FloatTy::F32) => f64::from(v as f32),
         _ => v,
+    }
+}
+
+/// One floating-point operation in `f64` precision (`spec/stdlib.md`, "Float functions"). `to_bits` and
+/// `from_bits` are handled with the integer values they produce and consume.
+fn float_op64(op: FloatOp, x: f64, args: &[Value]) -> f64 {
+    match op {
+        FloatOp::Abs => x.abs(),
+        FloatOp::Sqrt => x.sqrt(),
+        FloatOp::Cbrt => x.cbrt(),
+        FloatOp::Powi => x.powi(args[0].int() as i32),
+        FloatOp::Powf => x.powf(args[0].float()),
+        FloatOp::Exp => x.exp(),
+        FloatOp::Exp2 => x.exp2(),
+        FloatOp::Ln => x.ln(),
+        FloatOp::Log2 => x.log2(),
+        FloatOp::Log10 => x.log10(),
+        FloatOp::Floor => x.floor(),
+        FloatOp::Ceil => x.ceil(),
+        FloatOp::Round => x.round(),
+        FloatOp::RoundTiesEven => x.round_ties_even(),
+        FloatOp::Trunc => x.trunc(),
+        FloatOp::Sin => x.sin(),
+        FloatOp::Cos => x.cos(),
+        FloatOp::Tan => x.tan(),
+        FloatOp::Asin => x.asin(),
+        FloatOp::Acos => x.acos(),
+        FloatOp::Atan => x.atan(),
+        FloatOp::Atan2 => x.atan2(args[0].float()),
+        FloatOp::Sinh => x.sinh(),
+        FloatOp::Cosh => x.cosh(),
+        FloatOp::Tanh => x.tanh(),
+        FloatOp::Hypot => x.hypot(args[0].float()),
+        FloatOp::MulAdd => x.mul_add(args[0].float(), args[1].float()),
+        FloatOp::Copysign => x.copysign(args[0].float()),
+        FloatOp::ToBits => unreachable!("`to_bits` returns an integer"),
+    }
+}
+
+/// The `f32` form of [`float_op64`]: every step is in single precision, so computing in `f64` first cannot
+/// round twice and disagree with compiled code.
+fn float_op32(op: FloatOp, x: f32, args: &[Value]) -> f32 {
+    let arg = |i: usize| args[i].float() as f32;
+    match op {
+        FloatOp::Abs => x.abs(),
+        FloatOp::Sqrt => x.sqrt(),
+        FloatOp::Cbrt => x.cbrt(),
+        FloatOp::Powi => x.powi(args[0].int() as i32),
+        FloatOp::Powf => x.powf(arg(0)),
+        FloatOp::Exp => x.exp(),
+        FloatOp::Exp2 => x.exp2(),
+        FloatOp::Ln => x.ln(),
+        FloatOp::Log2 => x.log2(),
+        FloatOp::Log10 => x.log10(),
+        FloatOp::Floor => x.floor(),
+        FloatOp::Ceil => x.ceil(),
+        FloatOp::Round => x.round(),
+        FloatOp::RoundTiesEven => x.round_ties_even(),
+        FloatOp::Trunc => x.trunc(),
+        FloatOp::Sin => x.sin(),
+        FloatOp::Cos => x.cos(),
+        FloatOp::Tan => x.tan(),
+        FloatOp::Asin => x.asin(),
+        FloatOp::Acos => x.acos(),
+        FloatOp::Atan => x.atan(),
+        FloatOp::Atan2 => x.atan2(arg(0)),
+        FloatOp::Sinh => x.sinh(),
+        FloatOp::Cosh => x.cosh(),
+        FloatOp::Tanh => x.tanh(),
+        FloatOp::Hypot => x.hypot(arg(0)),
+        FloatOp::MulAdd => x.mul_add(arg(0), arg(1)),
+        FloatOp::Copysign => x.copysign(arg(0)),
+        FloatOp::ToBits => unreachable!("`to_bits` returns an integer"),
     }
 }
 
@@ -224,7 +299,8 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::Range(inner, _) => product(&[member(p, inner), member(p, inner)]),
         Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
         Ty::ListIntoIter(_, a) | Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
-        Ty::MapIter(..) => (32, 8),
+        Ty::MapIter(..) | Ty::MapIterMut(..) => (32, 8),
+        Ty::IterMut(_) => (16, 8),
         // A pending map lookup: the map's address, the key, the key's hash, the probe slot, and the found flag.
         Ty::MapEntry(key, _, _) => product(&[(8, 8), member(p, key), (8, 8), (8, 8), (1, 1)]),
         Ty::ArrayIntoIter(inner, n) => product(&[member(p, &Ty::Array(inner.clone(), *n)), (8, 8)]),
@@ -405,17 +481,31 @@ impl<'p> Interp<'p, '_> {
         Ok(match b {
             Builtin::Print | Builtin::Println => return Err(impure("printing", span)),
             Builtin::Eprint | Builtin::Eprintln => return Err(impure("printing to standard error", span)),
-            Builtin::StdoutWrite | Builtin::StdoutWriteLine => return Err(impure("writing to standard output", span)),
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StdoutWriteBytes => {
+                return Err(impure("writing to standard output", span));
+            }
             Builtin::StdoutFlush => return Err(impure("flushing standard output", span)),
-            Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            Builtin::StderrWrite | Builtin::StderrWriteLine | Builtin::StderrWriteBytes => {
                 return Err(impure("writing to standard error", span));
             }
             Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
-            Builtin::StdinReadLine | Builtin::StdinReadToString => {
+            Builtin::StdinReadLine
+            | Builtin::StdinReadToString
+            | Builtin::StdinAvail
+            | Builtin::StdinNextByte
+            | Builtin::StdinError => {
                 return Err(impure("reading standard input", span));
             }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
             Builtin::WriteFile => return Err(impure("writing a file", span)),
+            Builtin::FileOpen => return Err(impure("opening a file", span)),
+            Builtin::FileRead => return Err(impure("reading a file", span)),
+            Builtin::FileWrite => return Err(impure("writing a file", span)),
+            Builtin::FileSeek => return Err(impure("seeking in a file", span)),
+            Builtin::FileSync => return Err(impure("syncing a file", span)),
+            Builtin::FileSetLen => return Err(impure("resizing a file", span)),
+            Builtin::FileClose => return Err(impure("closing a file", span)),
+            Builtin::FileError => return Err(impure("reading a file error", span)),
             Builtin::ReadDir => return Err(impure("reading a directory", span)),
             Builtin::CreateDir => return Err(impure("creating a directory", span)),
             Builtin::RemoveDir => return Err(impure("removing a directory", span)),
@@ -423,9 +513,30 @@ impl<'p> Interp<'p, '_> {
             Builtin::RenamePath => return Err(impure("renaming a path", span)),
             Builtin::Metadata => return Err(impure("reading file metadata", span)),
             Builtin::Canonicalize => return Err(impure("resolving a path", span)),
+            Builtin::Clock => return Err(impure("reading the clock", span)),
+            Builtin::Entropy => return Err(impure("reading system entropy", span)),
+            Builtin::Sleep => return Err(impure("sleeping", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
+            Builtin::EnvList => return Err(impure("reading the environment", span)),
+            Builtin::EnvGet => return Err(impure("reading an environment variable", span)),
+            Builtin::EnvSet | Builtin::EnvSetBytes => {
+                return Err(impure("setting an environment variable", span));
+            }
+            Builtin::EnvRemove => return Err(impure("removing an environment variable", span)),
+            Builtin::CurrentDir => return Err(impure("reading the working directory", span)),
+            Builtin::SetCurrentDir | Builtin::SetCurrentDirBytes => {
+                return Err(impure("changing the working directory", span));
+            }
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
+            Builtin::ProcessSpawn => return Err(impure("starting a process", span)),
+            Builtin::ProcessWait => return Err(impure("waiting for a process", span)),
+            Builtin::ProcessClose => return Err(impure("closing a process", span)),
+            Builtin::PipeReadToString | Builtin::PipeReadLine | Builtin::PipeReadBoth => {
+                return Err(impure("reading a pipe", span));
+            }
+            Builtin::PipeWrite => return Err(impure("writing a pipe", span)),
+            Builtin::PipeClose => return Err(impure("closing a pipe", span)),
             Builtin::CPtrNull => return Err(impure("making a C pointer", span)),
             Builtin::CStringFrom => return Err(impure("allocating a C string", span)),
             Builtin::CStrToString => return Err(impure("reading a C string", span)),
@@ -460,6 +571,20 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::TargetOs => Value::str(tir::target_os()),
             Builtin::TargetArch => Value::str(tir::target_arch()),
+            // The portable kind of an OS error code (`spec/errors.md`, ERR11). It is pure, so it evaluates at
+            // compile time like the target queries above.
+            Builtin::IoErrorKind => {
+                let code = self.eval(&args[0], Mode::Use)?.int() as i32;
+                let Ty::Enum(a) = ty else { unreachable!("`__io_kind` returns IoErrorKind") };
+                let variants = &self.p.enums[a.id].variants;
+                let name = tir::ioerror::kind_name(tir::ioerror::host_platform(), code);
+                let index = variants
+                    .iter()
+                    .position(|v| v.name == name)
+                    .or_else(|| variants.iter().position(|v| v.name == "Other"))
+                    .unwrap_or(0);
+                Value::Variant(index, Vec::new())
+            }
             Builtin::StringNew => Value::String(Vec::new()),
             Builtin::StringFrom => {
                 let bytes = self.peek(&args[0], |v| v.bytes().to_vec())?;
@@ -473,6 +598,14 @@ impl<'p> Interp<'p, '_> {
                 let text = float_str(v, prec, single);
                 self.charge(text.len() as u64, span)?;
                 Value::String(text.into_bytes())
+            }
+            Builtin::FloatFromBits(ft) => {
+                let bits = self.eval(&args[0], Mode::Use)?.int();
+                let v = match ft {
+                    FloatTy::F32 => f64::from(f32::from_bits(bits as u32)),
+                    FloatTy::F64 => f64::from_bits(bits as u64),
+                };
+                Value::Float(v)
             }
             Builtin::HeapNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
             Builtin::SharedNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
@@ -679,6 +812,7 @@ impl<'p> Interp<'p, '_> {
                 Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
             }
             Method::MapGetMut | Method::MapGetOrInsert => return Err(impure("a mutable view of a map value", span)),
+            Method::IterMut => return Err(impure("a mutable iterator", span)),
             Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
                 return Err(impure("an entry into a map value", span));
             }
@@ -760,6 +894,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::Iter | Method::IntoIter => self.iter_value(recv, m == Method::IntoIter, span)?,
             Method::IterNext => self.iter_next(recv, ty, span)?,
+            Method::IterNextBack => self.iter_next_back(recv, ty, span)?,
             Method::SharedGet => {
                 let inner = self.peek(recv, |v| match v {
                     Value::Heap(b) => (**b).clone(),
@@ -768,7 +903,32 @@ impl<'p> Interp<'p, '_> {
                 Value::Borrow(Box::new(inner))
             }
             Method::SharedStrongCount => Value::Int(1),
+            Method::Float(op) => self.float_method(op, args, span)?,
         })
+    }
+
+    /// A floating-point method the compiler provides (`spec/stdlib.md`, "Float functions"), computed in the
+    /// receiver's precision so an `f32` result is the one compiled code produces.
+    fn float_method(&mut self, op: FloatOp, args: &'p [Expr], span: Span) -> R<Value> {
+        let ft = match &args[0].ty {
+            Ty::Float(f) => *f,
+            other => return Err(internal(format!("a floating-point method on `{other}`"), span)),
+        };
+        let x = self.eval(&args[0], Mode::Use)?.float();
+        if op == FloatOp::ToBits {
+            return Ok(Value::Int(match ft {
+                FloatTy::F32 => i128::from((x as f32).to_bits()),
+                FloatTy::F64 => i128::from(x.to_bits()),
+            }));
+        }
+        let mut rest = Vec::with_capacity(args.len() - 1);
+        for a in &args[1..] {
+            rest.push(self.eval(a, Mode::Use)?);
+        }
+        Ok(Value::Float(match ft {
+            FloatTy::F32 => f64::from(float_op32(op, x as f32, &rest)),
+            FloatTy::F64 => float_op64(op, x, &rest),
+        }))
     }
 
     fn iter_value(&mut self, recv: &'p Expr, into: bool, span: Span) -> R<Value> {
@@ -844,6 +1004,62 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             other => return Err(internal(format!("`next` on {other:?}"), span)),
+        };
+        Ok(Value::Opt(next.map(Box::new)))
+    }
+
+    /// `it.next_back()` on a slice, a range iterator, or `Chars` (spec/iterators.md, IT14).
+    fn iter_next_back(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
+        let item_is_view = matches!(ty, Ty::Option(t) if matches!(**t, Ty::Ref { .. }));
+        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
+        let place = self.eval_place(recv)?;
+        let it = self.place_mut(&place, span)?;
+        let it = match it {
+            Value::Borrow(_) => return Err(internal("`next_back` on a shared iterator", span)),
+            other => other,
+        };
+        let next = match it {
+            Value::Slice(xs, lo, hi) => {
+                if *lo >= *hi {
+                    None
+                } else {
+                    *hi -= 1;
+                    let v = xs[*hi].clone();
+                    Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
+                }
+            }
+            Value::Chars(bytes, at) => {
+                let mut start = bytes.len();
+                if start <= *at {
+                    None
+                } else {
+                    start -= 1;
+                    while start > *at && (bytes[start] & 0xc0) == 0x80 {
+                        start -= 1;
+                    }
+                    let c = decode(bytes, start).map(|(c, _)| c);
+                    let kept: Rc<[u8]> = Rc::from(&bytes[..start]);
+                    *bytes = kept;
+                    c.map(Value::Char)
+                }
+            }
+            Value::RangeIter(lo, hi, done) => {
+                if *done || (inclusive && *lo > *hi) || (!inclusive && *lo >= *hi) {
+                    None
+                } else if inclusive {
+                    let v = *hi;
+                    if *lo == *hi {
+                        *done = true;
+                    } else {
+                        *hi -= 1;
+                    }
+                    Some(Value::Int(v))
+                } else {
+                    *hi -= 1;
+                    Some(Value::Int(*hi))
+                }
+            }
+            other => return Err(internal(format!("`next_back` on {other:?}"), span)),
         };
         Ok(Value::Opt(next.map(Box::new)))
     }
@@ -1092,6 +1308,28 @@ mod tests {
         assert_eq!(float_str(123.0, -1, false), "1.23e+02");
         assert_eq!(float_str(0.1f32 as f64, -1, true), "1e-01");
         assert_eq!(float_str(f64::INFINITY, -1, false), "inf");
+    }
+
+    #[test]
+    fn float_operations_follow_ieee_754() {
+        // The exactly rounded operations, at the bit patterns the conformance tests pin.
+        assert_eq!(float_op64(FloatOp::Sqrt, 2.0, &[]).to_bits(), 0x3ff6a09e667f3bcd);
+        assert_eq!(float_op64(FloatOp::Abs, -0.0, &[]).to_bits(), 0);
+        assert_eq!(float_op64(FloatOp::Floor, -1.5, &[]), -2.0);
+        assert_eq!(float_op64(FloatOp::Ceil, 1.5, &[]), 2.0);
+        assert_eq!(float_op64(FloatOp::Round, 2.5, &[]), 3.0);
+        assert_eq!(float_op64(FloatOp::RoundTiesEven, 2.5, &[]), 2.0);
+        assert_eq!(float_op64(FloatOp::Trunc, -1.9, &[]), -1.0);
+        assert_eq!(float_op64(FloatOp::Powi, 2.0, &[Value::Int(10)]), 1024.0);
+        let neg = Value::Float(-1.0);
+        assert_eq!(float_op64(FloatOp::Copysign, 0.1, &[neg]).to_bits(), 0xbfb999999999999a);
+        // A fused multiply-add rounds once: 0.1 * 10 - 1 is not zero, while the two-step form is.
+        let args = [Value::Float(10.0), Value::Float(-1.0)];
+        assert_eq!(float_op64(FloatOp::MulAdd, 0.1, &args).to_bits(), 0x3c90000000000000);
+        // The same functions in f32 precision; computing in f64 first would round twice.
+        assert_eq!(float_op32(FloatOp::Sqrt, 2.0, &[]).to_bits(), 0x3fb504f3);
+        assert_eq!(float_op32(FloatOp::MulAdd, 0.1, &args).to_bits(), 0x32800000);
+        assert_eq!(float_op32(FloatOp::Abs, -0.0, &[]).to_bits(), 0);
     }
 
     #[test]

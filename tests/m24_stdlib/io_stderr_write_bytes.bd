@@ -1,0 +1,12 @@
+//@ run
+//@ stderr: bytes to stderr
+//> done
+
+// `Stderr` is a `Write` too; its bytes go straight to standard error.
+
+fn main() {
+    let mut err = stderr()
+    err.write_all("bytes to stderr\n".to_utf8()[0..16]).unwrap()
+    err.flush().unwrap()
+    println("done")
+}

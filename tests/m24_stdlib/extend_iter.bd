@@ -9,7 +9,7 @@
 
 // Every collection takes the items of any iterator with `extend_iter`: a list appends them in order, a set and a map
 // add them (a repeated element is kept once, a repeated key takes the new value), a deque appends at the back, a
-// priority heap pushes them, and a string appends characters (IT17).
+// priority heap pushes them, and a string appends characters (IT20).
 
 fn main() {
     let mut list = List.from([1, 2, 3])

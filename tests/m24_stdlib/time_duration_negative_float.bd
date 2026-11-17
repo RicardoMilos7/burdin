@@ -1,0 +1,11 @@
+//@ run-abort
+//@ stderr: Duration.from_secs_f64: the value is negative or NaN
+//> before
+
+// A negative number of seconds is not a `Duration` (spec/stdlib.md, "Time").
+
+fn main() {
+    println("before")
+    let d = Duration.from_secs_f64(-1.0)
+    println("{d}")
+}

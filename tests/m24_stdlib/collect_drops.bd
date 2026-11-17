@@ -11,7 +11,7 @@
 
 // Collecting moves every item into the target exactly once. A pair whose key is already in a map drops the value it
 // replaces, and a `Result` collection that stops at an error drops what it gathered and never asks for the items
-// after the error (IT15, IT16).
+// after the error (IT18, IT19).
 
 struct Token {
     id: i32

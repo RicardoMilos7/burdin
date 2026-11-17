@@ -97,6 +97,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::MapIter(k, v) => {
                 format!("MapIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
+            Ty::IterMut(inner) => format!("IterMut<{}>", self.structural_key_in(inner, seen)),
+            Ty::MapIterMut(k, v) => {
+                format!("MapIterMut<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
+            }
             Ty::MapIntoIter(k, v, _) => {
                 format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
@@ -232,7 +236,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Param(_) | Ty::Const(_) => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
             // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map.
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::CPtr(_) | Ty::Chars | Ty::MapIter(..) | Ty::RangeIter(..) => Ok(()),
+            Ty::Ref { .. }
+            | Ty::Slice(_)
+            | Ty::CPtr(_)
+            | Ty::Chars
+            | Ty::MapIter(..)
+            | Ty::IterMut(_)
+            | Ty::MapIterMut(..)
+            | Ty::RangeIter(..) => Ok(()),
             Ty::ListIntoIter(elem, alloc) => {
                 let elem = (**elem).clone();
                 self.drop_list_into_iter(addr, &elem, alloc)
@@ -599,6 +610,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
+            // A range iterator is plain integers and a flag.
+            Ty::RangeIter(..) => self.copy_bits(dst, src, ty),
             Ty::String => {
                 self.builder.build_call(self.rt.string_clone, &[dst.into(), src.into()], "").map_err(llvm_err)?;
                 Ok(())

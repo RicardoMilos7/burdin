@@ -3,7 +3,7 @@
 //> abc
 //> 2
 
-// `collect` works in a `comptime` block: it is ordinary `std` code, so the evaluator runs it like any other (IT14).
+// `collect` works in a `comptime` block: it is ordinary `std` code, so the evaluator runs it like any other (IT17).
 
 const SUM: i32 = comptime {
     let squares: List<i32> = [1, 2, 3].into_iter().map(|x| x * x).collect()

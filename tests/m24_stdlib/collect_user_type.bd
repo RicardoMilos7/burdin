@@ -6,7 +6,7 @@
 //> 3
 
 // A user type joins `collect` by implementing `FromIterator<T>`, and a generic function can build any such type
-// through `C.from_iter` (IT13, IT20).
+// through `C.from_iter` (IT16, IT13).
 
 struct Total {
     sum: i32

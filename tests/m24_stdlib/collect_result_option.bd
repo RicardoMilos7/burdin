@@ -11,7 +11,7 @@
 
 // Collecting `Result` items into a `Result<C, E>` stops at the first error and does not ask the iterator for more;
 // collecting `Option` items into an `Option<C>` stops at the first `None`. The target of the success value is any
-// `FromIterator` (IT16).
+// `FromIterator` (IT19).
 
 fn check(n: i32): Result<i32, String> {
     if n > 2 {

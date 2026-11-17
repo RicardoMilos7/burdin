@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // `from_iter` has no allocator value to store, so building a `List` or a `Map` that stores an allocator is E0272, and
-// a `collect` into one does not implement `FromIterator` (E0141) (IT19).
+// a `collect` into one does not implement `FromIterator` (E0141) (IT22).
 
 struct Counter {
     count: CPtr<i32>

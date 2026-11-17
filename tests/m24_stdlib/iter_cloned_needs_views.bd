@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `cloned` applies to an iterator of views. A list of integers already yields its elements by value.
+fn main() {
+    let xs = [1, 2, 3]
+    for x in xs.iter().cloned() { //~ E0003
+        println(x.to_string())
+    }
+}

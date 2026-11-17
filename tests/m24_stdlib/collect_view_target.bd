@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // A chain over borrowed items yields views, and a list or a map cannot hold a view, so these targets do not implement
-// `FromIterator` for them (IT15).
+// `FromIterator` for them (IT18).
 
 fn main() {
     let words: List<String> = [String.from("a")].into_iter().collect()

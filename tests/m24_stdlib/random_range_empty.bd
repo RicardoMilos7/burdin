@@ -1,0 +1,11 @@
+//@ run-abort
+//@ stderr: Random.range: the range is empty
+//> before
+
+// `range(low, high)` needs `low < high` (spec/stdlib.md, "Random numbers").
+
+fn main() {
+    println("before")
+    let mut r = Random.seeded(1)
+    println("{r.range(5, 5)}")
+}
