@@ -70,9 +70,15 @@ impl TypeDefs<'_> {
             Ty::ListIntoIter(..)
             | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
+            | Ty::IterMut(_)
+            | Ty::MapIterMut(..)
             | Ty::MapEntry(..)
             | Ty::MapIntoIter(..)
-            | Ty::RangeIter(..) => false,
+            | Ty::SliceChunks(..)
+            | Ty::SliceWindows(..) => false,
+            // A range iterator is two endpoints and a flag, so it can be cloned (`cycle` clones its source), but it
+            // is not `Copy`: a copy would advance on its own and surprise the program.
+            Ty::RangeIter(inner, _) => prop == Property::Clone && self.holds(inner, prop, seen),
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
             Ty::String | Ty::CString => prop == Property::Clone,
@@ -137,7 +143,13 @@ impl TypeDefs<'_> {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::Const(_) | Ty::CPtr(_) | Ty::Chars => false,
-            Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) => false,
+            Ty::Range(..)
+            | Ty::MapIter(..)
+            | Ty::RangeIter(..)
+            | Ty::IterMut(_)
+            | Ty::MapIterMut(..)
+            | Ty::SliceChunks(..)
+            | Ty::SliceWindows(..) => false,
             // An entry owns the key it would insert; dropping it without inserting drops that key.
             Ty::MapEntry(key, _, _) => self.needs_drop_seen(key, seen),
             // A closure's capture record is heap-allocated and may own its captures.
@@ -255,6 +267,16 @@ mod tests {
         assert!(!defs.is_clone(&closure));
         assert!(defs.needs_drop(&closure));
         assert!(!defs.has_drop_impl(&closure));
+    }
+
+    #[test]
+    fn a_range_iterator_is_cloned_but_never_copied() {
+        let defs = TypeDefs { structs: &[], enums: &[] };
+        let range = Ty::RangeIter(Box::new(int()), false);
+        assert!(defs.is_clone(&range), "`cycle` clones its source");
+        assert!(!defs.is_copy(&range), "a copy would advance on its own");
+        let owning = Ty::ListIntoIter(Box::new(int()), Alloc::Global);
+        assert!(!defs.is_clone(&owning), "an owning iterator is neither copied nor cloned");
     }
 
     #[test]

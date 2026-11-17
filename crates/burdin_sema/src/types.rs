@@ -308,6 +308,14 @@ impl Globals {
                 Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
                 Box::new(self.resolve_type_in(&args[1], self_ty, subst, module, diags)),
             ),
+            // The owning iterator `map.into_iter()` returns, which yields `(K, V)`. `std` names it for the
+            // `into_keys` and `into_values` views of issue #712.
+            ("MapIntoEntries", 2) | ("MapIntoEntries", 3) => {
+                let key = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                let value = self.resolve_type_in(&args[1], self_ty, subst, module, diags);
+                let alloc = self.container_alloc(args.get(2), subst, module, diags);
+                Ty::MapIntoIter(Box::new(key), Box::new(value), alloc)
+            }
             ("CPtr", 1) => Ty::CPtr(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
             ("Range", 1) | ("RangeInclusive", 1) => {
                 let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
@@ -394,6 +402,8 @@ impl Globals {
             Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &crate::generics::Bound::Eq, env),
             Ty::Option(t) => self.has_eq_in(t, env),
+            // A map compares by its entries, whatever the iteration order.
+            Ty::Map(k, v, _) => self.has_eq_in(k, env) && self.has_eq_in(v, env),
             Ty::Range(t, _) => self.has_eq_in(t, env),
             Ty::Result(t, e) => self.has_eq_in(t, env) && self.has_eq_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
@@ -411,7 +421,6 @@ impl Globals {
             | Ty::CPtr(_)
             | Ty::CString
             | Ty::List(_, _)
-            | Ty::Map(..)
             | Ty::MapEntry(..)
             | Ty::Shared(_)
             | Ty::Chars
@@ -419,8 +428,12 @@ impl Globals {
             | Ty::ListIntoIter(..)
             | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
+            | Ty::IterMut(_)
+            | Ty::MapIterMut(..)
             | Ty::MapIntoIter(..)
             | Ty::RangeIter(..)
+            | Ty::SliceChunks(..)
+            | Ty::SliceWindows(..)
             | Ty::Any(_) => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,
         }

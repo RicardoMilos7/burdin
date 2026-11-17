@@ -1,0 +1,52 @@
+//@ run
+//> 10 60 7 6
+
+// The read methods run at compile time: a slice is a copy of the values it views in the interpreter, so
+// `len`, `get` (both forms), `last`, `to_list`, `chunks`, and indexing work in a `comptime` expression
+// (spec/stdlib.md, "Slices"). The methods that write through a slice are E0224 (`slice_comptime_write`).
+
+fn total(): i32 {
+    let arr = [1, 2, 3, 4]
+    let xs = arr[0..4]
+    let mut sum = 0
+    for chunk in xs.chunks(2) {
+        for x in chunk {
+            sum = sum + x
+        }
+    }
+    sum
+}
+
+fn through_get(): i32 {
+    let arr = [10, 20, 30]
+    let xs = arr[0..3]
+    let mut sum = 0
+    let mut i: usize = 0
+    while i < xs.len() {
+        sum = sum + *xs.get(i).unwrap()
+        i = i + 1
+    }
+    sum
+}
+
+fn first_of(): i32 {
+    let arr = [7, 8]
+    let list = arr[0..2].to_list()
+    list[0]
+}
+
+fn sliced(): i32 {
+    let arr = [1, 2, 3, 4, 5]
+    let xs = arr[0..5]
+    let mid = xs.get(1..4).unwrap()
+    mid[0] + *mid.last().unwrap()
+}
+
+const A: i32 = comptime total()
+const B: i32 = comptime through_get()
+const C: i32 = comptime first_of()
+const D: i32 = comptime sliced()
+
+fn main() {
+    println("{} {} {} {}", A, B, C, D)
+}

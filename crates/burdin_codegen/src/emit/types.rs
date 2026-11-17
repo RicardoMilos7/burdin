@@ -54,11 +54,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
             // An iterator over a list or a map keeps the collection's three words and the next index.
             Ty::ListIntoIter(_, alloc) | Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
-            Ty::MapIter(..) => self.iter_seq_ty().into(),
+            Ty::MapIter(..) | Ty::MapIterMut(..) => self.iter_seq_ty().into(),
+            // A mutable list or array iterator is the next element's address and the number left, like a slice.
+            Ty::IterMut(_) => self.str_ty.into(),
             // The array owns its elements inline; the index says which one comes next.
             Ty::ArrayIntoIter(inner, n) => self.iter_array_ty(inner, *n).into(),
             // The range iterator keeps both endpoints and whether the range is exhausted.
             Ty::RangeIter(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone(), Ty::Bool]).into(),
+            // The chunks and windows iterators keep the slice view (pointer and length), the chunk or window
+            // size, and the next index.
+            Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.slice_iter_ty().into(),
             Ty::Enum(a) => self.enum_ty(a.id).into(),
         })
     }
@@ -110,6 +115,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 )
             }
         }
+    }
+
+    /// The `{ ptr, len, size, index }` layout of the chunks and windows iterators: the slice view, the chunk or
+    /// window size, and the next index.
+    pub(super) fn slice_iter_ty(&self) -> StructType<'ctx> {
+        let ptr = self.cx.ptr_type(AddressSpace::default());
+        self.cx.struct_type(&[ptr.into(), self.usize_ty.into(), self.usize_ty.into(), self.usize_ty.into()], false)
     }
 
     /// A `Heap<T>` is its pointer, or `{ ptr, allocator }` when the allocator is stored.

@@ -742,9 +742,15 @@ impl Globals {
         {
             return answer;
         }
-        // A shared view satisfies what its target does: a chain is generic over the view type of its source, and
-        // its bounds (`D: Index<T>`) ask about the borrowed collection (`spec/iterators.md` IT12).
-        if let Ty::Ref { mutable: false, inner } = ty {
+        if Some(iface) == self.from_iterator_iface
+            && let Some(answer) = self.builtin_from_iterator(ty, args, env)
+        {
+            return answer;
+        }
+        // A view satisfies what its target does: a chain is generic over the view type of its source, and its
+        // bounds (`D: Index<T>`) ask about the borrowed collection (`spec/iterators.md` IT12). A mutable view
+        // carries a mutable iterator's source, whose bounds (`D: IndexMut<T>`) do the same (IT15).
+        if let Ty::Ref { inner, .. } = ty {
             return self.implements(inner, iface, args, env);
         }
         if let Some(have) = self.builtin_iface_args(ty, iface, env) {
@@ -802,6 +808,7 @@ impl Globals {
             Ty::Ref { inner, .. } => part(inner),
             Ty::Unit => debug,
             Ty::Option(t) | Ty::List(t, _) | Ty::Heap(t, _) => debug && part(t),
+            Ty::Map(k, v, _) => debug && part(k) && part(v),
             Ty::Result(t, e) => debug && part(t) && part(e),
             Ty::Tuple(ts) => debug && (2..=4).contains(&ts.len()) && ts.iter().all(part),
             Ty::Struct(_) | Ty::Enum(_) => return None,
@@ -820,6 +827,10 @@ impl Globals {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Ord, env),
+            // `None < Some(_)`, and `Ok(_) < Err(_)`; two of a kind compare their payloads
+            // (`spec/stdlib.md`, "Interface coverage").
+            Ty::Option(t) => self.has_ord_in(t, env),
+            Ty::Result(t, e) => self.has_ord_in(t, env) && self.has_ord_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
             // A fixed-size array orders lexicographically.
             Ty::Array(t, _) => self.has_ord_in(t, env),
@@ -859,10 +870,15 @@ impl Globals {
     /// `has_hash` with the bounds of the type parameters in scope (issue #69).
     pub(crate) fn has_hash_in(&self, ty: &Ty, env: &Env) -> bool {
         match ty {
-            // Text hashes its bytes (`spec/stdlib.md`, HS2); a float is not `Hash`.
-            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Str | Ty::String | Ty::Error | Ty::Never => true,
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
+            // Text hashes its bytes (`spec/derives.md`, `Hash`).
+            Ty::Str | Ty::String => true,
             Ty::Param(name) => self.bound_in_env(name, &Bound::Hash, env),
             Ty::Option(t) => self.has_hash_in(t, env),
+            // A list hashes its elements in order and a map its entries in any order
+            // (`spec/stdlib.md`, "Interface coverage").
+            Ty::List(t, _) => self.has_hash_in(t, env),
+            Ty::Map(k, v, _) => self.has_hash_in(k, env) && self.has_hash_in(v, env),
             Ty::Range(t, _) => self.has_hash_in(t, env),
             Ty::Result(t, e) => self.has_hash_in(t, env) && self.has_hash_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
@@ -901,6 +917,11 @@ impl Globals {
             | Ty::Option(_)
             | Ty::Error
             | Ty::Never => true,
+            // The default list is empty and belongs to the default allocator, like the default map.
+            Ty::List(_, alloc) => alloc.is_global(),
+            // The default map is empty and belongs to the default allocator: a stored allocator has no value to
+            // build its default from.
+            Ty::Map(_, _, alloc) => alloc.is_global(),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_default(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -931,7 +952,7 @@ impl Globals {
                         let params = sig.params.iter().map(|p| self.subst_param(p, &subst)).collect();
                         let ret = self.subst_ty(&sig.ret, &subst);
                         return Some((
-                            Signature { params, ret, has_self: sig.has_self, ret_origin: None },
+                            Signature { params, ret, has_self: sig.has_self, ret_origins: Vec::new() },
                             sig.has_self,
                             m.is_unsafe,
                         ));
@@ -940,6 +961,20 @@ impl Globals {
             }
         }
         None
+    }
+
+    /// Whether the method `name` that the bounds of a type parameter provide has type parameters of its own
+    /// (`fn from_iter<I: Iterator<T>>(own it: I): Self`).
+    pub(crate) fn bound_method_generic(&self, recv: &Ty, name: &str, env: &Env) -> bool {
+        let Ty::Param(pname) = recv else { return false };
+        env.iter().filter(|(n, _)| n == &**pname).any(|(_, bounds)| {
+            bounds.iter().any(|bound| {
+                self.bound_closure(bound).into_iter().any(|b| match b {
+                    Bound::User(i, _) => self.interfaces[i].methods.iter().any(|m| m.name == name && m.generic),
+                    _ => false,
+                })
+            })
+        })
     }
 
     /// `Self`-free spelling of a type for names of instances: `Stack<i32>`.
@@ -1170,6 +1205,33 @@ mod tests {
             methods: Vec::new(),
         });
         assert_eq!(g.bound_closure(&Bound::User(0, Vec::new())), vec![Bound::User(0, Vec::new()), Bound::Eq]);
+    }
+
+    #[test]
+    fn interface_queries_cover_std_types() {
+        let g = Globals::default();
+        let list = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global);
+        let map = Ty::Map(Box::new(Ty::String), Box::new(i32_()), burdin_tir::Alloc::Global);
+        let floats = Ty::List(Box::new(Ty::Float(burdin_tir::FloatTy::F64)), burdin_tir::Alloc::Global);
+
+        // `Hash` covers text, lists, and maps, and requires the element types (issue #716).
+        assert!(g.has_hash(&Ty::String));
+        assert!(g.has_hash(&Ty::Str));
+        assert!(g.has_hash(&list));
+        assert!(g.has_hash(&map));
+        assert!(!g.has_hash(&Ty::Float(burdin_tir::FloatTy::F64)), "a float has no Hash");
+        assert!(!g.has_hash(&floats), "a list of floats has no Hash");
+
+        // `Default` is the empty container, and only for the default allocator.
+        assert!(g.has_default(&list));
+        assert!(g.has_default(&map));
+        let stored = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Value(Box::new(Ty::String)));
+        assert!(!g.has_default(&stored), "a stored allocator has no default");
+
+        // `Ord` covers `Option` and `Result` (issue #716).
+        assert!(g.has_ord(&opt(i32_())));
+        assert!(g.has_ord(&Ty::Result(Box::new(i32_()), Box::new(i32_()))));
+        assert!(!g.has_ord(&list), "a list has no Ord");
     }
 
     #[test]

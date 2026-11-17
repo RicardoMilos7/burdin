@@ -1,0 +1,64 @@
+//@ run
+//> buffered 0, inner reads 0
+//> a: buffered 3, inner reads 1
+//> bcd: buffered 0, inner reads 1
+//> efgh: buffered 0, inner reads 2
+//> ijklmn: inner reads 3
+//> opqrstuvwxyz 12: inner reads 5
+//> 0 0: inner reads 6
+
+// A `BufReader` asks the wrapped reader for a whole buffer at a time, so several small reads cost one inner read. A
+// read at least as large as the buffer, with nothing buffered, goes straight to the wrapped reader.
+
+struct Counted {
+    data: List<u8>
+    pos: usize
+    calls: i32
+}
+
+Counted: Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        self.calls = self.calls + 1
+        let mut n: usize = 0
+        while n < max && self.pos < self.data.len() {
+            buf.push(self.data[self.pos])
+            self.pos = self.pos + 1
+            n = n + 1
+        }
+        Ok(n)
+    }
+}
+
+fn text(bytes: List<u8>): String {
+    from_utf8(bytes[0..bytes.len()]).unwrap()
+}
+
+fn main() {
+    let source = Counted { data: "abcdefghijklmnopqrstuvwxyz".to_utf8(), pos: 0, calls: 0 }
+    let mut r = BufReader.with_capacity(4, source)
+    println("buffered {}, inner reads {}", r.buffered(), r.get_ref().calls)
+
+    let mut one = List<u8>.new()
+    r.read(mut one, 1).unwrap()
+    println("{}: buffered {}, inner reads {}", text(one), r.buffered(), r.get_ref().calls)
+
+    let mut three = List<u8>.new()
+    r.read(mut three, 3).unwrap()
+    println("{}: buffered {}, inner reads {}", text(three), r.buffered(), r.get_ref().calls)
+
+    // The buffer is empty and 4 is the capacity: this read bypasses the buffer.
+    let mut four = List<u8>.new()
+    r.read(mut four, 4).unwrap()
+    println("{}: buffered {}, inner reads {}", text(four), r.buffered(), r.get_ref().calls)
+
+    let mut six = List<u8>.new()
+    r.read_exact(mut six, 6).unwrap()
+    println("{}: inner reads {}", text(six), r.get_ref().calls)
+
+    let mut rest = List<u8>.new()
+    let n = r.read_to_end(mut rest).unwrap()
+    println("{} {}: inner reads {}", text(rest), n, r.get_ref().calls)
+
+    let mut more = List<u8>.new()
+    println("{} {}: inner reads {}", r.read(mut more, 4).unwrap(), more.len(), r.get_ref().calls)
+}

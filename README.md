@@ -248,7 +248,7 @@ Compiles the target to a native executable. On success it prints nothing and exi
   program, reads the sections with `llvm-dwarfdump` (from the `.dSYM` on macOS), and, when `gdb` is installed, stops
   on a Burdin line and prints the locals.
 - `--strip` passes the platform strip option to the linker (`-s` on ELF/Mach-O; `/OPT:REF /OPT:ICF` with MSVC) and
-  keeps the program's behavior. `tests/check_build_flags.py` enforces a 128 KiB budget for a stripped hello-world
+  keeps the program's behavior. `tests/check_build_flags.py` enforces a 144 KiB budget for a stripped hello-world
   and 512 KiB for a program using `List` and `Map` on Linux and macOS.
 - `--lto` emits LLVM bitcode and links it with `-flto`. It needs an LLVM compiler driver: set `BURDIN_CC=clang` (MSVC
   `cl` cannot link bitcode).
@@ -365,10 +365,11 @@ These properties are part of the generated runtime and are checked by the confor
   functions keep their `burdin.<name>` symbol, so the trace names them in both profiles; an optimized build may
   inline the frames around the panic. `tests/m02_basics/panic_backtrace.bd` checks both profiles and
   `panic_backtrace_names.bd` (debug-only) checks the names.
-- **Stack overflow.** The main thread gets an alternate signal stack and a `SIGSEGV` handler on Unix, and a
-  vectored exception handler for `EXCEPTION_STACK_OVERFLOW` on Windows. Unbounded recursion ends with
-  `panic: stack overflow` and status 134 instead of a raw fault; a fault that is not in the stack guard region ends
-  with `panic: invalid memory access`. `tests/m02_basics/stack_overflow_aborts.bd` covers the recursion case.
+- **Stack overflow.** The main thread gets an alternate signal stack and a `SIGSEGV` handler on Unix, and on Windows
+  a vectored exception handler for `EXCEPTION_STACK_OVERFLOW` with a 64 KiB stack guarantee reserved so the handler
+  can still flush and report. Unbounded recursion ends with `panic: stack overflow` and status 134 instead of a raw
+  fault; a fault that is not in the stack guard region ends with `panic: invalid memory access`.
+  `tests/m02_basics/stack_overflow_aborts.bd` covers the recursion case.
 - **Parallel parsing.** Modules are independent, so `burdin build`/`run`/`test` parse them in parallel. Each worker
   keeps its own diagnostics and the driver merges them in file order, so the output is byte-identical to a
   sequential run. `BURDIN_JOBS` sets the worker count (1 is sequential); `tests/check_parallel.py` compares the two

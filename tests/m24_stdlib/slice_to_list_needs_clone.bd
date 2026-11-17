@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// `to_list` clones every element, so `T` needs `Clone`.
+
+struct Plain {
+    v: i32
+}
+
+fn main() {
+    let arr = [Plain { v: 1 }, Plain { v: 2 }]
+    let copy = arr[0..2].to_list() //~ E0141
+    println("{}", copy.len())
+}

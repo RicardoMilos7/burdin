@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// `copy_from_slice` moves the bytes of the elements, so `T` needs `Copy`.
+
+struct Plain {
+    v: i32
+}
+
+fn main() {
+    let mut arr = [Plain { v: 1 }, Plain { v: 2 }]
+    let mut xs = arr[0..2]
+    let source = [Plain { v: 3 }, Plain { v: 4 }]
+    xs.copy_from_slice(source[0..2]) //~ E0141
+}

@@ -1,0 +1,120 @@
+//@ run
+//> 1 2 / 3 4 / 5 6 / 7
+//> 1 2 / 3 4 / 5 6
+//> 1 2 3 4 5 6 7
+//> no exact chunks
+//> 1 2 3 | 2 3 4 | 3 4 5 | 4 5 6 | 5 6 7
+//> 1 2 3 4 5 6 7
+//> no windows
+//> 0 0
+//> 4 5 6
+
+// `chunks`, `chunks_exact`, and `windows` yield views of the slice (spec/stdlib.md, "Slices"). The last chunk
+// of `chunks` may be short; `chunks_exact` leaves it out; a window moves one element at a time.
+
+fn show_parts(xs: [i32], sep: str) {
+    let mut i: usize = 0
+    while i < xs.len() {
+        if i > 0 {
+            print(sep)
+        }
+        print(xs[i].to_string())
+        i = i + 1
+    }
+}
+
+fn main() {
+    let arr = [1, 2, 3, 4, 5, 6, 7]
+    let xs = arr[0..7]
+
+    let mut first = true
+    for chunk in xs.chunks(2) {
+        if !first {
+            print(" / ")
+        }
+        show_parts(chunk, " ")
+        first = false
+    }
+    println("")
+
+    first = true
+    for chunk in xs.chunks_exact(2) {
+        if !first {
+            print(" / ")
+        }
+        show_parts(chunk, " ")
+        first = false
+    }
+    println("")
+
+    first = true
+    for chunk in xs.chunks(10) {
+        if !first {
+            print(" / ")
+        }
+        show_parts(chunk, " ")
+        first = false
+    }
+    println("")
+
+    let mut exact_count: usize = 0
+    for chunk in xs.chunks_exact(10) {
+        exact_count = exact_count + 1
+        show_parts(chunk, " ")
+    }
+    if exact_count == 0 {
+        println("no exact chunks")
+    }
+
+    first = true
+    for window in xs.windows(3) {
+        if !first {
+            print(" | ")
+        }
+        show_parts(window, " ")
+        first = false
+    }
+    println("")
+
+    first = true
+    for window in xs.windows(7) {
+        if !first {
+            print(" | ")
+        }
+        show_parts(window, " ")
+        first = false
+    }
+    println("")
+
+    let mut window_count: usize = 0
+    for window in xs.windows(8) {
+        window_count = window_count + 1
+        show_parts(window, " ")
+    }
+    if window_count == 0 {
+        println("no windows")
+    }
+
+    let mut empty_chunks: usize = 0
+    for chunk in arr[2..2].chunks(2) {
+        empty_chunks = empty_chunks + 1
+        show_parts(chunk, " ")
+    }
+    let mut empty_windows: usize = 0
+    for window in arr[2..2].windows(2) {
+        empty_windows = empty_windows + 1
+        show_parts(window, " ")
+    }
+    println("{} {}", empty_chunks, empty_windows)
+
+    // A chunks iterator bound to a local still walks the slice.
+    let parts = xs.chunks(3)
+    let mut index: usize = 0
+    for part in parts {
+        if index == 1 {
+            show_parts(part, " ")
+            println("")
+        }
+        index = index + 1
+    }
+}

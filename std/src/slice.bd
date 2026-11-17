@@ -1,0 +1,309 @@
+// Slice methods (`spec/stdlib.md`, "Slices").
+//
+// The compiler implements the methods that need element addresses or a checked view: `len`, `iter`, `get`,
+// `swap`, `fill`, `copy_from_slice`, `clone_from_slice`, `chunks`, `chunks_exact`, `windows`, and
+// `__sort_by`. Everything built from them is here as an extension on `[T]`, so a slice of any type gets the
+// same surface and arrays get it through their implicit view. A method that writes takes `mut self`, so the
+// slice must be a mutable place: bind the view with `let mut` before calling it.
+
+use cmp.Ordering
+
+/// Whether the slice has no elements.
+fn [T].is_empty(self): bool {
+    self.len() == 0
+}
+
+/// A view of the first element.
+fn [T].first(self): Option<&T> {
+    self.get(0)
+}
+
+/// Whether some element equals `value`.
+fn [T].contains(self, value: T): bool where T: Eq {
+    let mut i: usize = 0
+    while i < self.len() {
+        if self[i] == value {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+/// Whether the slice starts with the elements of `prefix`.
+fn [T].starts_with(self, prefix: [T]): bool where T: Eq {
+    if prefix.len() > self.len() {
+        return false
+    }
+    let mut i: usize = 0
+    while i < prefix.len() {
+        if self[i] != prefix[i] {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Whether the slice ends with the elements of `suffix`.
+fn [T].ends_with(self, suffix: [T]): bool where T: Eq {
+    if suffix.len() > self.len() {
+        return false
+    }
+    let offset = self.len() - suffix.len()
+    let mut i: usize = 0
+    while i < suffix.len() {
+        if self[offset + i] != suffix[i] {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Splits the slice at `mid`: the elements before it, then the elements from it on. Panics when `mid` is past
+/// the end.
+fn [T].split_at(self, mid: usize): ([T], [T]) {
+    if mid > self.len() {
+        panic("split_at: index out of bounds")
+    }
+    (self[0..mid], self[mid..self.len()])
+}
+
+/// Like `split_at`, on an exclusive view: the two halves may then be passed to the mutating methods.
+fn [T].split_at_mut(mut self, mid: usize): ([T], [T]) {
+    self.split_at(mid)
+}
+
+/// The first element and the rest, or `None` when the slice is empty.
+fn [T].split_first(self): Option<(&T, [T])> {
+    if self.len() == 0 {
+        None
+    } else {
+        Some((&self[0], self[1..self.len()]))
+    }
+}
+
+/// The last element and the rest, or `None` when the slice is empty.
+fn [T].split_last(self): Option<(&T, [T])> {
+    if self.len() == 0 {
+        None
+    } else {
+        let last = self.len() - 1
+        Some((&self[last], self[0..last]))
+    }
+}
+
+/// The index of `value`, or the index where it would be inserted, in a slice sorted by `Ord`. The order is
+/// checked by comparisons with `<`, so a slice that is not sorted gives an unspecified result.
+fn [T].binary_search(self, value: T): Result<usize, usize> where T: Ord {
+    self.binary_search_by(|x: &T| x.cmp(value))
+}
+
+/// Like `binary_search`, with a comparator that says how an element orders against the searched value.
+fn [T].binary_search_by<F: FnMut(&T): Ordering>(self, own compare: F): Result<usize, usize> {
+    let mut compare = compare
+    let mut low: usize = 0
+    let mut high = self.len()
+    while low < high {
+        let mid = low + (high - low) / 2
+        match compare(&self[mid]) {
+            Ordering.Less => low = mid + 1,
+            Ordering.Greater => high = mid,
+            Ordering.Equal => return Ok(mid),
+        }
+    }
+    Err(low)
+}
+
+/// Like `binary_search`, ordered by the key `key_of` computes for each element.
+fn [T].binary_search_by_key<K: Ord, F: FnMut(&T): K>(self, key: K, own key_of: F): Result<usize, usize> {
+    let mut key_of = key_of
+    self.binary_search_by(|x: &T| key_of(x).cmp(key))
+}
+
+/// The elements of every inner slice, in order, as one list of clones.
+fn [[T]].concat(self): List<T> where T: Clone {
+    let mut out = List<T>.new()
+    let mut i: usize = 0
+    while i < self.len() {
+        let part = self[i]
+        let mut j: usize = 0
+        while j < part.len() {
+            out.push(part[j].clone())
+            j = j + 1
+        }
+        i = i + 1
+    }
+    out
+}
+
+/// The texts of the slice joined with `sep` between them.
+fn [String].join(self, sep: str): String {
+    let mut out = String.new()
+    let mut i: usize = 0
+    while i < self.len() {
+        if i > 0 {
+            out.push_str(sep)
+        }
+        out.push_str(self[i].as_str())
+        i = i + 1
+    }
+    out
+}
+
+/// The texts of the slice joined with `sep` between them.
+fn [str].join(self, sep: str): String {
+    let mut out = String.new()
+    let mut i: usize = 0
+    while i < self.len() {
+        if i > 0 {
+            out.push_str(sep)
+        }
+        out.push_str(self[i])
+        i = i + 1
+    }
+    out
+}
+
+/// Reverses the elements in place.
+fn [T].reverse(mut self) {
+    if self.len() <= 1 {
+        return
+    }
+    let mut i: usize = 0
+    let mut j = self.len() - 1
+    while i < j {
+        self.swap(i, j)
+        i = i + 1
+        j = j - 1
+    }
+}
+
+/// Rotates the slice left by `mid` places: the element at `mid` becomes the first. Panics when `mid` is past
+/// the end.
+fn [T].rotate_left(mut self, mid: usize) {
+    if mid > self.len() {
+        panic("rotate_left: index out of bounds")
+    }
+    if mid == 0 || mid == self.len() {
+        return
+    }
+    self[0..mid].reverse()
+    self[mid..self.len()].reverse()
+    self.reverse()
+}
+
+/// Rotates the slice right by `mid` places: the element at `len - mid` becomes the first. Panics when `mid` is
+/// past the end.
+fn [T].rotate_right(mut self, mid: usize) {
+    if mid > self.len() {
+        panic("rotate_right: index out of bounds")
+    }
+    if mid == 0 || mid == self.len() {
+        return
+    }
+    let at = self.len() - mid
+    self[0..at].reverse()
+    self[at..self.len()].reverse()
+    self.reverse()
+}
+
+/// Sorts the elements in place, ascending, with `Ord`. The sort is stable.
+fn [T].sort(mut self) where T: Ord {
+    self.sort_by(|a: &T, b: &T| a.cmp(*b))
+}
+
+/// Sorts the elements in place with the comparator `f`, which returns how its first argument orders against
+/// its second. The sort is stable.
+fn [T].sort_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
+    let mut f = f
+    let mut less = |a: &T, b: &T| f(a, b).is_lt()
+    self.__sort_by(less)
+}
+
+/// Sorts the elements in place by the key `key` computes for each element; keys compare with `Ord`. The sort is
+/// stable.
+fn [T].sort_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
+    let mut key = key
+    let mut less = |a: &T, b: &T| key(a).cmp(key(b)).is_lt()
+    self.__sort_by(less)
+}
+
+/// Whether every element is not greater than the next one under the comparator `f`.
+fn [T].is_sorted_by<F: FnMut(&T, &T): Ordering>(self, own f: F): bool {
+    let mut f = f
+    let mut i: usize = 1
+    while i < self.len() {
+        if f(&self[i - 1], &self[i]).is_gt() {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Whether every byte is ASCII (at most `0x7F`).
+fn [u8].is_ascii(self): bool {
+    let mut i: usize = 0
+    while i < self.len() {
+        if self[i] >= 128 {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// The bytes with `A-Z` lowered to `a-z`; every other byte is copied.
+fn [u8].to_ascii_lowercase(self): List<u8> {
+    let mut out = List<u8>.new()
+    let mut i: usize = 0
+    while i < self.len() {
+        let b = self[i]
+        if b >= 65 && b <= 90 {
+            out.push(b + 32)
+        } else {
+            out.push(b)
+        }
+        i = i + 1
+    }
+    out
+}
+
+/// The bytes with `a-z` raised to `A-Z`; every other byte is copied.
+fn [u8].to_ascii_uppercase(self): List<u8> {
+    let mut out = List<u8>.new()
+    let mut i: usize = 0
+    while i < self.len() {
+        let b = self[i]
+        if b >= 97 && b <= 122 {
+            out.push(b - 32)
+        } else {
+            out.push(b)
+        }
+        i = i + 1
+    }
+    out
+}
+
+/// Whether the two byte slices are equal when ASCII letters are compared without case.
+fn [u8].eq_ignore_ascii_case(self, other: [u8]): bool {
+    if self.len() != other.len() {
+        return false
+    }
+    let mut i: usize = 0
+    while i < self.len() {
+        let a = self[i]
+        let b = other[i]
+        if a != b {
+            let lowered = if a >= 65 && a <= 90 { a + 32 } else { a }
+            let lowered_other = if b >= 65 && b <= 90 { b + 32 } else { b }
+            if lowered != lowered_other {
+                return false
+            }
+        }
+        i = i + 1
+    }
+    true
+}

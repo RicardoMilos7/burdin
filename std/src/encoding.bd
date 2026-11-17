@@ -4,7 +4,7 @@
 
 use fmt.{Debug, Display, Formatter}
 use std.Error
-use unicode.len_utf8
+use unicode.{len_utf8, to_char}
 
 /// What went wrong while decoding.
 error enum DecodeError derives (Eq, Debug) {
@@ -13,7 +13,108 @@ error enum DecodeError derives (Eq, Debug) {
     InvalidUtf8 { index: usize } "invalid UTF-8 at byte {index}"
 }
 
+/// Why a byte sequence is not valid UTF-8: the offset of the first byte that is not part of a well-formed
+/// sequence (`spec/stdlib.md`, "String bytes and UTF-8 validation").
+error enum Utf8Error derives (Eq, Debug) {
+    Invalid { index: usize } "invalid UTF-8 at byte {index}"
+}
+
 // ---- UTF-8 ----
+
+/// The byte offset of the first byte that does not start a well-formed UTF-8 sequence, or `None` when every byte
+/// belongs to one. The same rules as `from_utf8`: a bad lead or continuation byte, an overlong form, a surrogate,
+/// a value past U+10FFFF, or a sequence cut off by the end.
+priv fn __utf8_error_at(data: [u8]): Option<usize> {
+    let n = data.len()
+    let mut i: usize = 0
+    while i < n {
+        let lead = data[i] as u32
+        let mut extra: usize = 0
+        let mut cp: u32 = 0
+        if lead < 128 {
+            cp = lead
+        } else if lead >= 194 && lead <= 223 {
+            extra = 1
+            cp = lead & 31
+        } else if lead >= 224 && lead <= 239 {
+            extra = 2
+            cp = lead & 15
+        } else if lead >= 240 && lead <= 244 {
+            extra = 3
+            cp = lead & 7
+        } else {
+            return Some(i)
+        }
+        if i + extra >= n && extra > 0 {
+            return Some(i)
+        }
+        let mut k: usize = 1
+        while k <= extra {
+            let next = data[i + k] as u32
+            if next < 128 || next > 191 {
+                return Some(i)
+            }
+            cp = (cp << 6) | (next & 63)
+            k = k + 1
+        }
+        let overlong = (extra == 2 && cp < 2048) || (extra == 3 && cp < 65536)
+        let surrogate = cp >= 55296 && cp <= 57343
+        if overlong || surrogate || cp > 1114111 {
+            return Some(i)
+        }
+        i = i + extra + 1
+    }
+    None
+}
+
+/// The character starting at byte `at`, with the number of bytes it takes, or `None` when the bytes there are not
+/// a well-formed UTF-8 sequence. Callers know `at < data.len()`.
+priv fn __utf8_char_at(data: [u8], at: usize): Option<(char, usize)> {
+    let n = data.len()
+    let lead = data[at] as u32
+    let mut extra: usize = 0
+    let mut cp: u32 = 0
+    if lead < 128 {
+        cp = lead
+    } else if lead >= 194 && lead <= 223 {
+        extra = 1
+        cp = lead & 31
+    } else if lead >= 224 && lead <= 239 {
+        extra = 2
+        cp = lead & 15
+    } else if lead >= 240 && lead <= 244 {
+        extra = 3
+        cp = lead & 7
+    } else {
+        return None
+    }
+    if at + extra >= n && extra > 0 {
+        return None
+    }
+    let mut k: usize = 1
+    while k <= extra {
+        let next = data[at + k] as u32
+        if next < 128 || next > 191 {
+            return None
+        }
+        cp = (cp << 6) | (next & 63)
+        k = k + 1
+    }
+    let overlong = (extra == 2 && cp < 2048) || (extra == 3 && cp < 65536)
+    let surrogate = cp >= 55296 && cp <= 57343
+    if overlong || surrogate || cp > 1114111 {
+        return None
+    }
+    Some((cp as char, extra + 1))
+}
+
+/// U+FFFD REPLACEMENT CHARACTER. It is built from its code point because string literals have no `\u` escape.
+priv fn __replacement_char(): char {
+    match (65533 as u32).to_char() {
+        Some(c) => c,
+        None => '?',
+    }
+}
 
 /// Appends the UTF-8 bytes of `c`.
 priv fn __push_utf8(mut out: List<u8>, c: char) {
@@ -94,6 +195,47 @@ fn from_utf8(data: [u8]): Result<String, DecodeError> {
         i = i + extra + 1
     }
     Ok(out)
+}
+
+/// The text `bytes` spell, or the first invalid byte's offset. This is `String.from_utf8`
+/// (`spec/stdlib.md`, "String bytes and UTF-8 validation").
+fn __string_from_utf8(own bytes: List<u8>): Result<String, Utf8Error> {
+    let data = bytes[0..bytes.len()]
+    match __utf8_error_at(data) {
+        Some(index) => Err(Utf8Error.Invalid { index }),
+        // The bytes were just checked, so the unchecked view cast is sound here.
+        None => Ok(String.from(unsafe { __view_as_text(data) })),
+    }
+}
+
+/// A `str` view of `data` when it is valid UTF-8, or the first invalid byte's offset. The view borrows the
+/// caller's bytes; the unchecked reinterpretation happens only after the bytes have been checked.
+fn __str_from_utf8(data: [u8]): Result<str, Utf8Error> {
+    match __utf8_error_at(data) {
+        Some(index) => Err(Utf8Error.Invalid { index }),
+        None => Ok(unsafe { __view_as_text(data) }),
+    }
+}
+
+/// The text `data` spells, with every byte that is not part of a well-formed sequence replaced by U+FFFD. One
+/// replacement character is emitted per invalid byte (`spec/stdlib.md`).
+fn __string_from_utf8_lossy(data: [u8]): String {
+    let mut out = String.new()
+    let mut i: usize = 0
+    while i < data.len() {
+        match __utf8_char_at(data, i) {
+            Some(pair) => {
+                let (c, width) = pair
+                out.push(c)
+                i = i + width
+            }
+            None => {
+                out.push(__replacement_char())
+                i = i + 1
+            }
+        }
+    }
+    out
 }
 
 // ---- hexadecimal ----

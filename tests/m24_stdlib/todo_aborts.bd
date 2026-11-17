@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: not yet implemented
+
+// `todo()` marks a function whose body is still to be written.
+
+fn answer(): i32 {
+    todo()
+}
+
+fn main() {
+    println("{}", answer())
+}

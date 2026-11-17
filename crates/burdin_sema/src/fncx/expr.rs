@@ -75,7 +75,7 @@ impl FnCx<'_> {
                 let has_break = self.loops.pop().unwrap_or(false);
                 mk(tir::ExprKind::Loop(body), if has_break { Ty::Unit } else { Ty::Never }, span)
             }
-            K::For { pattern, iter, body } => self.for_expr(pattern, iter, body, span),
+            K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, span),
             K::Comptime(inner) => self.comptime_expr(inner, expect, span),
             K::ComptimeAssert(cond, message) => self.comptime_assert(cond, message.as_deref(), span),
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, expect, span),

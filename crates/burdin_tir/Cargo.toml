@@ -6,3 +6,7 @@ publish.workspace = true
 
 [dependencies]
 burdin_diag.workspace = true
+
+[dev-dependencies]
+# The I/O error tables name the host's `errno` values; the unit tests check them against the C library's.
+libc.workspace = true

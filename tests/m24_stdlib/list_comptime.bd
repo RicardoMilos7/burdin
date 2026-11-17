@@ -1,0 +1,53 @@
+//@ run
+//> 2
+//> false
+//> 1
+//> 9
+
+// The compile-time interpreter models a list by its elements, so the capacity is the length there and the
+// capacity methods do nothing (`spec/comptime.md`). The accessors and the bulk edits follow the compiled
+// behavior; `drain` yields the removed elements as an owning iterator.
+
+fn main() {
+    let a = comptime {
+        let mut xs = List<i32>.new()
+        xs.push(3)
+        xs.push(1)
+        xs.push(2)
+        xs.swap(0, 2)
+        *xs.get(0).unwrap()
+    }
+    println("{a}")
+
+    let b = comptime {
+        let mut xs = List<i32>.new()
+        xs.push(10)
+        xs.push(20)
+        let tail = xs.split_off(1)
+        xs.append(tail)
+        xs.is_empty()
+    }
+    println("{b}")
+
+    let c = comptime {
+        let mut xs = List<i32>.new()
+        xs.push(1)
+        xs.push(2)
+        xs.push(3)
+        xs.truncate(1)
+        let mut total = 0
+        for x in xs.drain(0..1) {
+            total = total + x
+        }
+        total
+    }
+    println("{c}")
+
+    let d = comptime {
+        let mut xs = List<i32>.new()
+        xs.push(7)
+        xs.push(8)
+        xs.swap_remove(0) + xs.capacity() as i32 + xs.len() as i32
+    }
+    println("{d}")
+}

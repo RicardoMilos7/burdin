@@ -1,0 +1,24 @@
+//@ run
+//> Some(4) Some(4)
+//> Some(4) Some(6) None
+//> [(0, "ab"), (2, "ab"), (4, "ab")]
+//> [(1, "ñ"), (4, "ñ")]
+//> true false true
+//> [(1, "ñ"), (4, "ñ")]
+
+// `rfind`, `rfind_str`, `match_indices`, `find_all`, and `contains_str` search the bytes; a match of a valid
+// pattern in valid text starts on a character boundary, and the offsets are byte offsets.
+
+fn main() {
+    println("{:?} {:?}", "añbñ".rfind('ñ'), String.from("añbñ").rfind('ñ'))
+    println("{:?} {:?} {:?}", "añbñ".rfind_str("ñ"), "añbñ".rfind_str(""), "añbñ".rfind_str("x"))
+    println("{:?}", "ababab".match_indices("ab"))
+    println("{:?}", "añbñ".find_all("ñ"))
+    println(
+        "{} {} {}",
+        "añbñ".contains_str("ñb"),
+        "añbñ".contains_str("zz"),
+        String.from("añbñ").contains_str("bñ"),
+    )
+    println("{:?}", String.from("añbñ").match_indices("ñ"))
+}

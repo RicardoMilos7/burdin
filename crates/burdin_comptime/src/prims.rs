@@ -5,13 +5,21 @@
 use crate::interp::{Fault, Interp, Mode, R, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
-use burdin_tir::{self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatTy, IntTy, Method, Program, Ty, UnOp};
+use burdin_tir::{
+    self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatOp, FloatTy, IntTy, Method, Program, Ty, UnOp,
+};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// Whether `at` is a character boundary of the UTF-8 text: the start, the end, or a byte that does not continue a
+/// character.
+fn char_boundary(text: &[u8], at: usize) -> bool {
+    at == 0 || at == text.len() || (text[at] & 0xC0) != 0x80
+}
 
 fn panic(msg: impl Into<String>, span: Span) -> crate::interp::Unwind {
     Fault::Panic(msg.into(), span).into()
@@ -41,6 +49,79 @@ fn round_float(v: f64, ty: &Ty) -> f64 {
     match ty {
         Ty::Float(FloatTy::F32) => f64::from(v as f32),
         _ => v,
+    }
+}
+
+/// One floating-point operation in `f64` precision (`spec/stdlib.md`, "Float functions"). `to_bits` and
+/// `from_bits` are handled with the integer values they produce and consume.
+fn float_op64(op: FloatOp, x: f64, args: &[Value]) -> f64 {
+    match op {
+        FloatOp::Abs => x.abs(),
+        FloatOp::Sqrt => x.sqrt(),
+        FloatOp::Cbrt => x.cbrt(),
+        FloatOp::Powi => x.powi(args[0].int() as i32),
+        FloatOp::Powf => x.powf(args[0].float()),
+        FloatOp::Exp => x.exp(),
+        FloatOp::Exp2 => x.exp2(),
+        FloatOp::Ln => x.ln(),
+        FloatOp::Log2 => x.log2(),
+        FloatOp::Log10 => x.log10(),
+        FloatOp::Floor => x.floor(),
+        FloatOp::Ceil => x.ceil(),
+        FloatOp::Round => x.round(),
+        FloatOp::RoundTiesEven => x.round_ties_even(),
+        FloatOp::Trunc => x.trunc(),
+        FloatOp::Sin => x.sin(),
+        FloatOp::Cos => x.cos(),
+        FloatOp::Tan => x.tan(),
+        FloatOp::Asin => x.asin(),
+        FloatOp::Acos => x.acos(),
+        FloatOp::Atan => x.atan(),
+        FloatOp::Atan2 => x.atan2(args[0].float()),
+        FloatOp::Sinh => x.sinh(),
+        FloatOp::Cosh => x.cosh(),
+        FloatOp::Tanh => x.tanh(),
+        FloatOp::Hypot => x.hypot(args[0].float()),
+        FloatOp::MulAdd => x.mul_add(args[0].float(), args[1].float()),
+        FloatOp::Copysign => x.copysign(args[0].float()),
+        FloatOp::ToBits => unreachable!("`to_bits` returns an integer"),
+    }
+}
+
+/// The `f32` form of [`float_op64`]: every step is in single precision, so computing in `f64` first cannot
+/// round twice and disagree with compiled code.
+fn float_op32(op: FloatOp, x: f32, args: &[Value]) -> f32 {
+    let arg = |i: usize| args[i].float() as f32;
+    match op {
+        FloatOp::Abs => x.abs(),
+        FloatOp::Sqrt => x.sqrt(),
+        FloatOp::Cbrt => x.cbrt(),
+        FloatOp::Powi => x.powi(args[0].int() as i32),
+        FloatOp::Powf => x.powf(arg(0)),
+        FloatOp::Exp => x.exp(),
+        FloatOp::Exp2 => x.exp2(),
+        FloatOp::Ln => x.ln(),
+        FloatOp::Log2 => x.log2(),
+        FloatOp::Log10 => x.log10(),
+        FloatOp::Floor => x.floor(),
+        FloatOp::Ceil => x.ceil(),
+        FloatOp::Round => x.round(),
+        FloatOp::RoundTiesEven => x.round_ties_even(),
+        FloatOp::Trunc => x.trunc(),
+        FloatOp::Sin => x.sin(),
+        FloatOp::Cos => x.cos(),
+        FloatOp::Tan => x.tan(),
+        FloatOp::Asin => x.asin(),
+        FloatOp::Acos => x.acos(),
+        FloatOp::Atan => x.atan(),
+        FloatOp::Atan2 => x.atan2(arg(0)),
+        FloatOp::Sinh => x.sinh(),
+        FloatOp::Cosh => x.cosh(),
+        FloatOp::Tanh => x.tanh(),
+        FloatOp::Hypot => x.hypot(arg(0)),
+        FloatOp::MulAdd => x.mul_add(arg(0), arg(1)),
+        FloatOp::Copysign => x.copysign(arg(0)),
+        FloatOp::ToBits => unreachable!("`to_bits` returns an integer"),
     }
 }
 
@@ -100,6 +181,12 @@ pub(crate) fn value_cmp(a: &Value, b: &Value) -> Ordering {
             (None, Some(_)) => Ordering::Less,
             (Some(_), None) => Ordering::Greater,
             (Some(p), Some(q)) => value_cmp(p, q),
+        },
+        // `Ok(_) < Err(_)`: the variant order of `Result`.
+        (Value::Res(x), Value::Res(y)) => match (x, y) {
+            (Ok(p), Ok(q)) | (Err(p), Err(q)) => value_cmp(p, q),
+            (Ok(_), Err(_)) => Ordering::Less,
+            (Err(_), Ok(_)) => Ordering::Greater,
         },
         (Value::Int(_) | Value::Bool(_) | Value::Char(_), Value::Int(_) | Value::Bool(_) | Value::Char(_)) => {
             a.int().cmp(&b.int())
@@ -174,6 +261,23 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
             _ => acc,
         },
         Ty::Array(t, _) => v.elems().iter().fold(acc, |h, x| hash(p, x, t, h)),
+        // A list hashes its length and then its elements in order, exactly as `hash_at` does.
+        Ty::List(t, _) => {
+            let with_len = mix(acc, v.elems().len() as u64);
+            v.elems().iter().fold(with_len, |h, x| hash(p, x, t, h))
+        }
+        // A map hashes each entry from the offset basis and XORs the results, so entry order does not matter.
+        Ty::Map(k, vty, _) => match v {
+            Value::Map(entries) => {
+                let mut h = mix(acc, entries.len() as u64);
+                for (key, value) in entries {
+                    let entry = hash(p, value, vty, hash(p, key, k, FNV_OFFSET));
+                    h ^= entry;
+                }
+                h
+            }
+            _ => acc,
+        },
         _ => acc,
     }
 }
@@ -205,6 +309,8 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::Float(FloatTy::F64) => (8, 8),
         Ty::Str | Ty::Chars | Ty::Slice(_) | Ty::Any(_) => (16, 8),
         Ty::Fn { .. } | Ty::String => (24, 8),
+        // A chunks or windows iterator keeps the slice view and two indices.
+        Ty::SliceChunks(..) | Ty::SliceWindows(..) => (32, 8),
         // A container with a stored allocator carries its value after its buffer words (`spec/allocators.md`).
         Ty::List(_, a) => container(p, (24, 8), a),
         Ty::Map(_, _, a) => container(p, (24, 8), a),
@@ -224,7 +330,8 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::Range(inner, _) => product(&[member(p, inner), member(p, inner)]),
         Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
         Ty::ListIntoIter(_, a) | Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
-        Ty::MapIter(..) => (32, 8),
+        Ty::MapIter(..) | Ty::MapIterMut(..) => (32, 8),
+        Ty::IterMut(_) => (16, 8),
         // A pending map lookup: the map's address, the key, the key's hash, the probe slot, and the found flag.
         Ty::MapEntry(key, _, _) => product(&[(8, 8), member(p, key), (8, 8), (8, 8), (1, 1)]),
         Ty::ArrayIntoIter(inner, n) => product(&[member(p, &Ty::Array(inner.clone(), *n)), (8, 8)]),
@@ -405,17 +512,31 @@ impl<'p> Interp<'p, '_> {
         Ok(match b {
             Builtin::Print | Builtin::Println => return Err(impure("printing", span)),
             Builtin::Eprint | Builtin::Eprintln => return Err(impure("printing to standard error", span)),
-            Builtin::StdoutWrite | Builtin::StdoutWriteLine => return Err(impure("writing to standard output", span)),
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StdoutWriteBytes => {
+                return Err(impure("writing to standard output", span));
+            }
             Builtin::StdoutFlush => return Err(impure("flushing standard output", span)),
-            Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            Builtin::StderrWrite | Builtin::StderrWriteLine | Builtin::StderrWriteBytes => {
                 return Err(impure("writing to standard error", span));
             }
             Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
-            Builtin::StdinReadLine | Builtin::StdinReadToString => {
+            Builtin::StdinReadLine
+            | Builtin::StdinReadToString
+            | Builtin::StdinAvail
+            | Builtin::StdinNextByte
+            | Builtin::StdinError => {
                 return Err(impure("reading standard input", span));
             }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
             Builtin::WriteFile => return Err(impure("writing a file", span)),
+            Builtin::FileOpen => return Err(impure("opening a file", span)),
+            Builtin::FileRead => return Err(impure("reading a file", span)),
+            Builtin::FileWrite => return Err(impure("writing a file", span)),
+            Builtin::FileSeek => return Err(impure("seeking in a file", span)),
+            Builtin::FileSync => return Err(impure("syncing a file", span)),
+            Builtin::FileSetLen => return Err(impure("resizing a file", span)),
+            Builtin::FileClose => return Err(impure("closing a file", span)),
+            Builtin::FileError => return Err(impure("reading a file error", span)),
             Builtin::ReadDir => return Err(impure("reading a directory", span)),
             Builtin::CreateDir => return Err(impure("creating a directory", span)),
             Builtin::RemoveDir => return Err(impure("removing a directory", span)),
@@ -423,9 +544,30 @@ impl<'p> Interp<'p, '_> {
             Builtin::RenamePath => return Err(impure("renaming a path", span)),
             Builtin::Metadata => return Err(impure("reading file metadata", span)),
             Builtin::Canonicalize => return Err(impure("resolving a path", span)),
+            Builtin::Clock => return Err(impure("reading the clock", span)),
+            Builtin::Entropy => return Err(impure("reading system entropy", span)),
+            Builtin::Sleep => return Err(impure("sleeping", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
+            Builtin::EnvList => return Err(impure("reading the environment", span)),
+            Builtin::EnvGet => return Err(impure("reading an environment variable", span)),
+            Builtin::EnvSet | Builtin::EnvSetBytes => {
+                return Err(impure("setting an environment variable", span));
+            }
+            Builtin::EnvRemove => return Err(impure("removing an environment variable", span)),
+            Builtin::CurrentDir => return Err(impure("reading the working directory", span)),
+            Builtin::SetCurrentDir | Builtin::SetCurrentDirBytes => {
+                return Err(impure("changing the working directory", span));
+            }
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
+            Builtin::ProcessSpawn => return Err(impure("starting a process", span)),
+            Builtin::ProcessWait => return Err(impure("waiting for a process", span)),
+            Builtin::ProcessClose => return Err(impure("closing a process", span)),
+            Builtin::PipeReadToString | Builtin::PipeReadLine | Builtin::PipeReadBoth => {
+                return Err(impure("reading a pipe", span));
+            }
+            Builtin::PipeWrite => return Err(impure("writing a pipe", span)),
+            Builtin::PipeClose => return Err(impure("closing a pipe", span)),
             Builtin::CPtrNull => return Err(impure("making a C pointer", span)),
             Builtin::CStringFrom => return Err(impure("allocating a C string", span)),
             Builtin::CStrToString => return Err(impure("reading a C string", span)),
@@ -434,17 +576,37 @@ impl<'p> Interp<'p, '_> {
                 return Err(panic(msg, span));
             }
             Builtin::Unreachable => return Err(panic("unreachable", span)),
-            Builtin::Assert => {
-                if !self.eval(&args[0], Mode::Use)?.bool() {
-                    return Err(panic("assertion failed", span));
+            Builtin::Assertion(kind) => {
+                // `debug_assert*` is removed from a release build; neither its condition nor its message is
+                // evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
+                if kind.is_debug() && self.release {
+                    return Ok(Value::Unit);
                 }
-                Value::Unit
-            }
-            Builtin::AssertEq => {
-                let a = self.eval(&args[0], Mode::Use)?;
-                let b = self.eval(&args[1], Mode::Use)?;
-                if !value_eq(&a, &b) {
-                    return Err(panic("assertion failed: the two values differ", span));
+                let compares = kind.compares_values();
+                let has_message = args.len() > if compares { 2 } else { 1 };
+                let failed = if compares {
+                    let a = self.eval(&args[0], Mode::Use)?;
+                    let b = self.eval(&args[1], Mode::Use)?;
+                    let equal = value_eq(&a, &b);
+                    // `assert_ne` fails when the values are equal, so its success is the negated comparison.
+                    if kind.expects_difference() { equal } else { !equal }
+                } else {
+                    !self.eval(&args[0], Mode::Use)?.bool()
+                };
+                if failed {
+                    let msg = match (has_message, args.last()) {
+                        (true, Some(m)) => self.peek(m, |v| String::from_utf8_lossy(v.bytes()).into_owned())?,
+                        _ => match kind {
+                            tir::AssertKind::Ne | tir::AssertKind::DebugAssertNe => {
+                                "assertion failed: the two values are equal".to_string()
+                            }
+                            tir::AssertKind::Eq | tir::AssertKind::DebugAssertEq => {
+                                "assertion failed: the two values differ".to_string()
+                            }
+                            _ => "assertion failed".to_string(),
+                        },
+                    };
+                    return Err(panic(msg, span));
                 }
                 Value::Unit
             }
@@ -460,6 +622,20 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::TargetOs => Value::str(tir::target_os()),
             Builtin::TargetArch => Value::str(tir::target_arch()),
+            // The portable kind of an OS error code (`spec/errors.md`, ERR11). It is pure, so it evaluates at
+            // compile time like the target queries above.
+            Builtin::IoErrorKind => {
+                let code = self.eval(&args[0], Mode::Use)?.int() as i32;
+                let Ty::Enum(a) = ty else { unreachable!("`__io_kind` returns IoErrorKind") };
+                let variants = &self.p.enums[a.id].variants;
+                let name = tir::ioerror::kind_name(tir::ioerror::host_platform(), code);
+                let index = variants
+                    .iter()
+                    .position(|v| v.name == name)
+                    .or_else(|| variants.iter().position(|v| v.name == "Other"))
+                    .unwrap_or(0);
+                Value::Variant(index, Vec::new())
+            }
             Builtin::StringNew => Value::String(Vec::new()),
             Builtin::StringFrom => {
                 let bytes = self.peek(&args[0], |v| v.bytes().to_vec())?;
@@ -474,7 +650,21 @@ impl<'p> Interp<'p, '_> {
                 self.charge(text.len() as u64, span)?;
                 Value::String(text.into_bytes())
             }
+            Builtin::FloatFromBits(ft) => {
+                let bits = self.eval(&args[0], Mode::Use)?.int();
+                let v = match ft {
+                    FloatTy::F32 => f64::from(f32::from_bits(bits as u32)),
+                    FloatTy::F64 => f64::from_bits(bits as u64),
+                };
+                Value::Float(v)
+            }
             Builtin::HeapNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
+            // The unchecked bytes-to-text cast keeps the bytes: the interpreter has already checked them when
+            // `std` calls it through `str.from_utf8`.
+            Builtin::ViewAsText => {
+                let bytes = self.peek(&args[0], |v| v.elems().iter().map(|b| b.int() as u8).collect::<Vec<u8>>())?;
+                Value::Str(Rc::from(bytes))
+            }
             Builtin::SharedNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
             // Allocation is a run-time operation: the interpreter models containers abstractly and has no
             // allocator (`spec/allocators.md`, AL10).
@@ -482,12 +672,23 @@ impl<'p> Interp<'p, '_> {
             | Builtin::RawRealloc
             | Builtin::RawDealloc
             | Builtin::ListNewIn
+            | Builtin::ListWithCapacityIn
             | Builtin::MapNewIn
             | Builtin::HeapNewIn => {
                 return Err(impure("allocating memory with an explicit allocator", span));
             }
-            Builtin::ListNew => Value::List(Vec::new()),
+            Builtin::ListNew | Builtin::ListWithCapacity => Value::List(Vec::new()),
             Builtin::MapNew => Value::Map(Vec::new()),
+            // Capacity is not modeled at compile time; the argument is still evaluated.
+            Builtin::MapWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Map(Vec::new())
+            }
+            // The capacity argument is evaluated; the interpreter's `String` has no separate capacity.
+            Builtin::StringWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::String(Vec::new())
+            }
             Builtin::IntParse(int_ty) => {
                 let parsed = self.peek(&args[0], |v| parse_int(v.bytes(), int_ty))?;
                 match parsed {
@@ -592,6 +793,60 @@ impl<'p> Interp<'p, '_> {
                 list_mut(self.place_mut(&place, span)?, span)?.push(v);
                 Value::Unit
             }
+            // The buffer's capacity is not modeled: the interpreter's `String` is a byte vector, so `capacity`
+            // reports its length and reserving or shrinking changes nothing observable.
+            Method::StringCapacity => {
+                let len = self.peek(recv, |v| v.bytes().len())?;
+                Value::Int(len as i128)
+            }
+            Method::StringReserve => {
+                let _ = self.eval(&args[1], Mode::Use)?;
+                Value::Unit
+            }
+            Method::StringShrinkToFit => Value::Unit,
+            Method::StringInsertStr => {
+                let place = self.eval_place(recv)?;
+                let at = self.eval(&args[1], Mode::Use)?.int();
+                let bytes = self.peek(&args[2], |v| v.bytes().to_vec())?;
+                self.charge(bytes.len() as u64, span)?;
+                let text = match self.place_mut(&place, span)? {
+                    Value::String(s) => s,
+                    other => return Err(internal(format!("`insert_str` on {other:?}"), span)),
+                };
+                let at = usize::try_from(at).unwrap_or(usize::MAX);
+                if at > text.len() {
+                    return Err(panic("insert_str: the index is out of bounds", span));
+                }
+                if !char_boundary(text, at) {
+                    return Err(panic("insert_str: the index is not a character boundary", span));
+                }
+                text.splice(at..at, bytes);
+                Value::Unit
+            }
+            Method::StringReplaceRange => {
+                let place = self.eval_place(recv)?;
+                let from = self.eval(&args[1], Mode::Use)?.int();
+                let to = self.eval(&args[2], Mode::Use)?.int();
+                let bytes = self.peek(&args[3], |v| v.bytes().to_vec())?;
+                self.charge(bytes.len() as u64, span)?;
+                let text = match self.place_mut(&place, span)? {
+                    Value::String(s) => s,
+                    other => return Err(internal(format!("`replace_range` on {other:?}"), span)),
+                };
+                let from = usize::try_from(from).unwrap_or(usize::MAX);
+                let to = usize::try_from(to).unwrap_or(usize::MAX);
+                if from > to || to > text.len() {
+                    return Err(panic("replace_range: the range is out of bounds", span));
+                }
+                if !char_boundary(text, from) {
+                    return Err(panic("replace_range: the start is not a character boundary", span));
+                }
+                if !char_boundary(text, to) {
+                    return Err(panic("replace_range: the end is not a character boundary", span));
+                }
+                text.splice(from..to, bytes);
+                Value::Unit
+            }
             Method::ListPop => {
                 let place = self.eval_place(recv)?;
                 Value::Opt(list_mut(self.place_mut(&place, span)?, span)?.pop().map(Box::new))
@@ -599,6 +854,127 @@ impl<'p> Interp<'p, '_> {
             Method::ListLast => {
                 let last = self.peek(recv, |v| v.elems().last().cloned())?;
                 Value::Opt(last.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+            }
+            Method::ListFirst => {
+                let first = self.peek(recv, |v| v.elems().first().cloned())?;
+                Value::Opt(first.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+            }
+            Method::ListGet => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let found = self.peek(recv, |v| usize::try_from(index).ok().and_then(|i| v.elems().get(i).cloned()))?;
+                Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+            }
+            Method::ListGetMut | Method::ListFirstMut | Method::ListLastMut => {
+                return Err(impure("a mutable view of a list element", span));
+            }
+            // The interpreter models a list by its elements: there is no capacity to change.
+            Method::ListCapacity => Value::Int(self.peek(recv, |v| v.elems().len())? as i128),
+            Method::ListIsEmpty => Value::Bool(self.peek(recv, |v| v.elems().is_empty())?),
+            Method::ListReserve | Method::ListReserveExact => {
+                let _ = self.eval(&args[1], Mode::Use)?.int();
+                Value::Unit
+            }
+            Method::ListShrinkToFit => Value::Unit,
+            Method::ListSwap => {
+                let a = self.eval(&args[1], Mode::Use)?.int();
+                let b = self.eval(&args[2], Mode::Use)?.int();
+                let place = self.eval_place(recv)?;
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let (i, j) = (usize::try_from(a).unwrap_or(usize::MAX), usize::try_from(b).unwrap_or(usize::MAX));
+                if i >= len || j >= len {
+                    return Err(bounds(a.max(b), len, span));
+                }
+                self.charge(1, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.swap(i, j);
+                Value::Unit
+            }
+            Method::ListSwapRemove => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let place = self.eval_place(recv)?;
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let i = usize::try_from(index).unwrap_or(usize::MAX);
+                if i >= len {
+                    return Err(bounds(index, len, span));
+                }
+                self.charge(1, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.swap_remove(i)
+            }
+            Method::ListTruncate => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let elem = match &recv.ty {
+                    Ty::List(t, _) => (**t).clone(),
+                    _ => Ty::Unit,
+                };
+                let place = self.eval_place(recv)?;
+                let removed = {
+                    let list = list_mut(self.place_mut(&place, span)?, span)?;
+                    let i = usize::try_from(index).unwrap_or(usize::MAX);
+                    if i >= list.len() { Vec::new() } else { list.split_off(i) }
+                };
+                for v in removed {
+                    self.charge(1, span)?;
+                    self.drop_value(v, &elem, span)?;
+                }
+                Value::Unit
+            }
+            Method::ListSplitOff => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let place = self.eval_place(recv)?;
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let i = usize::try_from(index).unwrap_or(usize::MAX);
+                if i > len {
+                    return Err(bounds(index, len, span));
+                }
+                self.charge((len - i) as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                Value::List(list.split_off(i))
+            }
+            Method::ListAppend => {
+                let place = self.eval_place(recv)?;
+                let other = self.eval(&args[1], Mode::Move)?.deref();
+                let items = match other {
+                    Value::List(items) => items,
+                    Value::Moved => Vec::new(),
+                    other => return Err(internal(format!("`append` of {other:?}"), span)),
+                };
+                self.charge(items.len() as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.extend(items);
+                Value::Unit
+            }
+            Method::ListDrain => {
+                let place = self.eval_place(recv)?;
+                let range = self.eval(&args[1], Mode::Use)?;
+                let (lo, hi) = range_bounds(&range);
+                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let lo = usize::try_from(lo).unwrap_or(usize::MAX);
+                let hi = usize::try_from(hi).unwrap_or(usize::MAX);
+                let end = if inclusive {
+                    if hi >= len {
+                        return Err(bounds(hi as i128, len, span));
+                    }
+                    hi + 1
+                } else {
+                    hi
+                };
+                if end > len || lo > end {
+                    return Err(bounds(end as i128, len, span));
+                }
+                self.charge((end - lo) as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                let removed: Vec<Value> = list.splice(lo..end, std::iter::empty()).collect();
+                Value::Items(VecDeque::from(removed))
+            }
+            Method::ListExtendFromSlice => {
+                let place = self.eval_place(recv)?;
+                let items = self.peek(&args[1], |v| v.elems().to_vec())?;
+                self.charge(items.len() as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.extend(items);
+                Value::Unit
             }
             Method::ListInsert => {
                 let place = self.eval_place(recv)?;
@@ -678,7 +1054,14 @@ impl<'p> Interp<'p, '_> {
                 })?;
                 Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
             }
-            Method::MapGetMut | Method::MapGetOrInsert => return Err(impure("a mutable view of a map value", span)),
+            Method::MapGetMut | Method::MapGetOrInsert | Method::MapGetOr => {
+                return Err(impure("a mutable view of a map value", span));
+            }
+            Method::IterMut => return Err(impure("a mutable iterator", span)),
+            Method::MapRetain => return Err(impure("a callback over a map value", span)),
+            // Capacity is not modeled at compile time: the map is a list of pairs, so reserving and shrinking
+            // change nothing observable.
+            Method::MapReserve | Method::MapShrinkToFit => Value::Unit,
             Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
                 return Err(impure("an entry into a map value", span));
             }
@@ -701,6 +1084,18 @@ impl<'p> Interp<'p, '_> {
                             self.drop_value(key, &kt, span)?;
                         }
                         Value::Opt(Some(Box::new(v)))
+                    }
+                    None => Value::Opt(None),
+                }
+            }
+            Method::MapRemoveEntry => {
+                let place = self.eval_place(recv)?;
+                let k = self.eval(&args[1], Mode::Use)?;
+                let map = map_mut(self.place_mut(&place, span)?, span)?;
+                match map.iter().position(|(key, _)| value_eq(key, &k)) {
+                    Some(i) => {
+                        let (key, v) = map.remove(i);
+                        Value::Opt(Some(Box::new(Value::Tuple(vec![key, v]))))
                     }
                     None => Value::Opt(None),
                 }
@@ -743,6 +1138,12 @@ impl<'p> Interp<'p, '_> {
             }
             Method::Chars => Value::Chars(self.peek(recv, |v| Rc::from(v.bytes()))?, 0),
             Method::AsStr => Value::Str(self.peek(recv, |v| Rc::from(v.bytes()))?),
+            Method::AsBytes => {
+                let bytes = self.peek(recv, |v| v.bytes().to_vec())?;
+                let items: Vec<Value> = bytes.iter().map(|b| Value::Int(i128::from(*b))).collect();
+                let n = items.len();
+                Value::Slice(Rc::new(items), 0, n)
+            }
             Method::Len => {
                 let n = self.peek(recv, |v| match v {
                     Value::Str(b) => b.len(),
@@ -766,6 +1167,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::Iter | Method::IntoIter => self.iter_value(recv, m == Method::IntoIter, span)?,
             Method::IterNext => self.iter_next(recv, ty, span)?,
+            Method::IterNextBack => self.iter_next_back(recv, ty, span)?,
             Method::SharedGet => {
                 let inner = self.peek(recv, |v| match v {
                     Value::Heap(b) => (**b).clone(),
@@ -774,7 +1176,143 @@ impl<'p> Interp<'p, '_> {
                 Value::Borrow(Box::new(inner))
             }
             Method::SharedStrongCount => Value::Int(1),
+            // Slices are read-only at compile time: the interpreter represents a view as a copy, so writing
+            // through one could not reach the storage it views (`spec/stdlib.md`, "Slices").
+            Method::AsSlice => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                match v {
+                    Value::List(xs) | Value::Array(xs) => {
+                        let n = xs.len();
+                        Value::Slice(Rc::new(xs), 0, n)
+                    }
+                    other => return Err(internal(format!("`as_slice` on {other:?}"), span)),
+                }
+            }
+            Method::SliceGet => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                let i = self.eval(&args[1], Mode::Use)?.deref().int().max(0) as usize;
+                match &v {
+                    Value::Slice(xs, lo, hi) => {
+                        if i < hi - lo {
+                            Value::Opt(Some(Box::new(Value::Borrow(Box::new(xs[lo + i].clone())))))
+                        } else {
+                            Value::Opt(None)
+                        }
+                    }
+                    other => return Err(internal(format!("`get` on {other:?}"), span)),
+                }
+            }
+            Method::SliceLast => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                match &v {
+                    Value::Slice(xs, lo, hi) => {
+                        if *lo < *hi {
+                            Value::Opt(Some(Box::new(Value::Borrow(Box::new(xs[*hi - 1].clone())))))
+                        } else {
+                            Value::Opt(None)
+                        }
+                    }
+                    other => return Err(internal(format!("`last` on {other:?}"), span)),
+                }
+            }
+            Method::SliceToList => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                match &v {
+                    Value::Slice(xs, lo, hi) => Value::List(xs[*lo..*hi].to_vec()),
+                    other => return Err(internal(format!("`to_list` on {other:?}"), span)),
+                }
+            }
+            Method::SliceGetRange => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                let range = self.eval(&args[1], Mode::Use)?.deref();
+                let (lo, hi) = range_bounds(&range);
+                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                match &v {
+                    Value::Slice(xs, base, end) => {
+                        let len = (end - base) as i128;
+                        let end_index = match inclusive {
+                            true if hi >= len => None,
+                            true => Some(hi + 1),
+                            false if hi > len => None,
+                            false => Some(hi),
+                        };
+                        match end_index {
+                            Some(hi) if lo >= 0 && lo <= hi => {
+                                let lo = lo as usize;
+                                let hi = hi as usize;
+                                Value::Opt(Some(Box::new(Value::Slice(xs.clone(), base + lo, base + hi))))
+                            }
+                            _ => Value::Opt(None),
+                        }
+                    }
+                    other => return Err(internal(format!("`get` on {other:?}"), span)),
+                }
+            }
+            Method::SliceChunks | Method::SliceWindows => {
+                let v = self.eval(recv, Mode::Use)?.deref();
+                let n = self.eval(&args[1], Mode::Use)?.deref().int().max(0) as usize;
+                let name = if m == Method::SliceWindows { "windows" } else { "chunks" };
+                if n == 0 {
+                    return Err(panic(format!("{name}: size must be non-zero"), span));
+                }
+                let exact = matches!(ty, Ty::SliceChunks(_, true));
+                match &v {
+                    Value::Slice(xs, base, end) => {
+                        let len = end - base;
+                        let mut items = VecDeque::new();
+                        if m == Method::SliceWindows {
+                            let mut start = 0;
+                            while start + n <= len {
+                                items.push_back(Value::Slice(xs.clone(), base + start, base + start + n));
+                                start += 1;
+                            }
+                        } else {
+                            let mut start = 0;
+                            while start < len {
+                                let take = (len - start).min(n);
+                                if exact && take < n {
+                                    break;
+                                }
+                                items.push_back(Value::Slice(xs.clone(), base + start, base + start + take));
+                                start += take;
+                            }
+                        }
+                        Value::Items(items)
+                    }
+                    other => return Err(internal(format!("`{name}` on {other:?}"), span)),
+                }
+            }
+            Method::SliceSwap
+            | Method::SliceFill
+            | Method::SliceCopyFromSlice
+            | Method::SliceCloneFromSlice
+            | Method::SliceSortBy => return Err(impure("writing through a slice", span)),
+            Method::Float(op) => self.float_method(op, args, span)?,
         })
+    }
+
+    /// A floating-point method the compiler provides (`spec/stdlib.md`, "Float functions"), computed in the
+    /// receiver's precision so an `f32` result is the one compiled code produces.
+    fn float_method(&mut self, op: FloatOp, args: &'p [Expr], span: Span) -> R<Value> {
+        let ft = match &args[0].ty {
+            Ty::Float(f) => *f,
+            other => return Err(internal(format!("a floating-point method on `{other}`"), span)),
+        };
+        let x = self.eval(&args[0], Mode::Use)?.float();
+        if op == FloatOp::ToBits {
+            return Ok(Value::Int(match ft {
+                FloatTy::F32 => i128::from((x as f32).to_bits()),
+                FloatTy::F64 => i128::from(x.to_bits()),
+            }));
+        }
+        let mut rest = Vec::with_capacity(args.len() - 1);
+        for a in &args[1..] {
+            rest.push(self.eval(a, Mode::Use)?);
+        }
+        Ok(Value::Float(match ft {
+            FloatTy::F32 => f64::from(float_op32(op, x as f32, &rest)),
+            FloatTy::F64 => float_op64(op, x, &rest),
+        }))
     }
 
     fn iter_value(&mut self, recv: &'p Expr, into: bool, span: Span) -> R<Value> {
@@ -850,6 +1388,62 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             other => return Err(internal(format!("`next` on {other:?}"), span)),
+        };
+        Ok(Value::Opt(next.map(Box::new)))
+    }
+
+    /// `it.next_back()` on a slice, a range iterator, or `Chars` (spec/iterators.md, IT14).
+    fn iter_next_back(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
+        let item_is_view = matches!(ty, Ty::Option(t) if matches!(**t, Ty::Ref { .. }));
+        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
+        let place = self.eval_place(recv)?;
+        let it = self.place_mut(&place, span)?;
+        let it = match it {
+            Value::Borrow(_) => return Err(internal("`next_back` on a shared iterator", span)),
+            other => other,
+        };
+        let next = match it {
+            Value::Slice(xs, lo, hi) => {
+                if *lo >= *hi {
+                    None
+                } else {
+                    *hi -= 1;
+                    let v = xs[*hi].clone();
+                    Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
+                }
+            }
+            Value::Chars(bytes, at) => {
+                let mut start = bytes.len();
+                if start <= *at {
+                    None
+                } else {
+                    start -= 1;
+                    while start > *at && (bytes[start] & 0xc0) == 0x80 {
+                        start -= 1;
+                    }
+                    let c = decode(bytes, start).map(|(c, _)| c);
+                    let kept: Rc<[u8]> = Rc::from(&bytes[..start]);
+                    *bytes = kept;
+                    c.map(Value::Char)
+                }
+            }
+            Value::RangeIter(lo, hi, done) => {
+                if *done || (inclusive && *lo > *hi) || (!inclusive && *lo >= *hi) {
+                    None
+                } else if inclusive {
+                    let v = *hi;
+                    if *lo == *hi {
+                        *done = true;
+                    } else {
+                        *hi -= 1;
+                    }
+                    Some(Value::Int(v))
+                } else {
+                    *hi -= 1;
+                    Some(Value::Int(*hi))
+                }
+            }
+            other => return Err(internal(format!("`next_back` on {other:?}"), span)),
         };
         Ok(Value::Opt(next.map(Box::new)))
     }
@@ -1098,6 +1692,28 @@ mod tests {
         assert_eq!(float_str(123.0, -1, false), "1.23e+02");
         assert_eq!(float_str(0.1f32 as f64, -1, true), "1e-01");
         assert_eq!(float_str(f64::INFINITY, -1, false), "inf");
+    }
+
+    #[test]
+    fn float_operations_follow_ieee_754() {
+        // The exactly rounded operations, at the bit patterns the conformance tests pin.
+        assert_eq!(float_op64(FloatOp::Sqrt, 2.0, &[]).to_bits(), 0x3ff6a09e667f3bcd);
+        assert_eq!(float_op64(FloatOp::Abs, -0.0, &[]).to_bits(), 0);
+        assert_eq!(float_op64(FloatOp::Floor, -1.5, &[]), -2.0);
+        assert_eq!(float_op64(FloatOp::Ceil, 1.5, &[]), 2.0);
+        assert_eq!(float_op64(FloatOp::Round, 2.5, &[]), 3.0);
+        assert_eq!(float_op64(FloatOp::RoundTiesEven, 2.5, &[]), 2.0);
+        assert_eq!(float_op64(FloatOp::Trunc, -1.9, &[]), -1.0);
+        assert_eq!(float_op64(FloatOp::Powi, 2.0, &[Value::Int(10)]), 1024.0);
+        let neg = Value::Float(-1.0);
+        assert_eq!(float_op64(FloatOp::Copysign, 0.1, &[neg]).to_bits(), 0xbfb999999999999a);
+        // A fused multiply-add rounds once: 0.1 * 10 - 1 is not zero, while the two-step form is.
+        let args = [Value::Float(10.0), Value::Float(-1.0)];
+        assert_eq!(float_op64(FloatOp::MulAdd, 0.1, &args).to_bits(), 0x3c90000000000000);
+        // The same functions in f32 precision; computing in f64 first would round twice.
+        assert_eq!(float_op32(FloatOp::Sqrt, 2.0, &[]).to_bits(), 0x3fb504f3);
+        assert_eq!(float_op32(FloatOp::MulAdd, 0.1, &args).to_bits(), 0x32800000);
+        assert_eq!(float_op32(FloatOp::Abs, -0.0, &[]).to_bits(), 0);
     }
 
     #[test]

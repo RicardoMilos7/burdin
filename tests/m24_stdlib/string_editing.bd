@@ -1,0 +1,46 @@
+//@ run
+//> aé😀b
+//> Some('b') aé😀
+//> añé😀
+//> 'ñ' aé😀
+//> aé
+//> ab
+//> hÉlo
+//> "É" hlo
+//> "lo" h
+
+// `insert` and `insert_str` take a byte index on a character boundary and shift the tail; `pop` and `remove` take a
+// character out and return it; `truncate` shortens; `retain` keeps the characters its predicate accepts;
+// `replace_range`, `drain`, and `split_off` edit a byte range. Every index is a character boundary.
+
+fn main() {
+    let mut s = String.from("aéb")
+    s.insert(3, '😀')
+    println("{s}")
+
+    let last = s.pop()
+    println("{:?} {s}", last)
+
+    s.insert_str(1, "ñ")
+    println("{s}")
+
+    let removed = s.remove(1)
+    println("{:?} {s}", removed)
+
+    s.truncate(3)
+    println("{s}")
+
+    let mut kept = String.from("aé😀b")
+    kept.retain(|c| c.is_ascii())
+    println("{kept}")
+
+    let mut ranged = String.from("hello")
+    ranged.replace_range(1, 3, "É")
+    println("{ranged}")
+
+    let drained = ranged.drain(1, 3)
+    println("{:?} {ranged}", drained)
+
+    let tail = ranged.split_off(1)
+    println("{:?} {ranged}", tail)
+}

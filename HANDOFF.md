@@ -1,14 +1,16 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, and thirty-sixth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, and thirty-seventh. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirty-sixth session (2026-11-16). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-seventh session (2026-11-17). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
-overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 577 conformance tests; all pass in debug and release (the
-release run skips the debug-only tests).
+overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 713 conformance tests; 711 pass in debug (two are skipped) and 706 in release (the release run
+skips the debug-only and platform-specific tests). Milestone 24 (`m24_stdlib`) is in progress: the containers, text
+helpers, encodings, paths, directories, environment, streams, and child processes have landed; the remaining
+sub-issues are time and random (#195), the tests for the new types (#196), and the follow-ups #701-#717.
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -195,6 +197,20 @@ run as a divergence with a note naming both outcomes.
 `differential_invalid.bd`, and `differential_impure.bd`, and `tests/check_test_runner.py` gains a fixture
 (`tests/runner/differential/`) whose third test depends on the unspecified `Map` iteration order, so the interpreter
 and compiled code really do disagree; the check reports it instead of passing. Every CI job already runs the script.
+
+The thirty-seventh session implemented issue #419, `process.Command`. `std/src/process.bd` adds `Command` (a program
+with arguments, environment, working directory, and standard-stream modes), `Stdio`, `Child`, `ChildStdin`,
+`ChildStdout`, `ChildStderr`, `ExitStatus`, and `Output`. `Command.new` starts nothing; `spawn` starts the child,
+`status` starts it and waits, and `output` pipes both output streams, reads them, and waits. A new set of compiler
+primitives reaches the operating system: `__env_list`, `__process_spawn`, `__process_wait`, `__process_close`,
+`__pipe_read_to_string`, `__pipe_read_line`, `__pipe_read_both`, `__pipe_write`, and `__pipe_close`. Unix forks and
+calls `execvp` with the child's own `environ`, so a changed `PATH` applies; Windows calls `CreateProcessW` with a
+command line quoted by the C runtime's rules, a UTF-16 environment block built from the final entry list, and
+inheritable pipes converted to CRT descriptors. `wait_with_output` drains both pipes together (`poll` on Unix,
+`PeekNamedPipe` on Windows), so a child writing a lot to one of them cannot block the other; a `ChildStdin` write is
+unbuffered, and every handle and the `Child` close their operating-system resources on drop. The tests are
+`tests/m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, and `process_test_mode`,
+plus `tests/m20_comptime/purity_process`; the suite is 713 tests (711 run in debug).
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -741,6 +757,12 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   package with each job count and compares the diagnostics of a 12-module failing package between 1 and 8 workers.
   **Checking is still sequential**: the issue conditions parallel checking on a query-based library, which does not
   exist yet. Parsing is the phase that scales without one.
+- **Windows stack-overflow determinism.** The Windows vectored filter ran on the system's default stack guarantee,
+  which left only a few kilobytes once the exception dispatcher had run; the handler's flush and write could then
+  fault, so the process occasionally ended without `panic: stack overflow`
+  (`m02_basics/stack_overflow_aborts` was flaky on the `windows` CI job). `burdin_rt_install_stack_guard` now calls
+  `SetThreadStackGuarantee` for 64 KiB before it adds the filter, matching the Unix alternate signal stack; a
+  runtime unit test pins the call and the size.
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -911,6 +933,10 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 31. **An arena reset cannot be checked.** `Arena` is first-class and `allocate` returns a raw `CPtr`; the compiler
     does not track which buffers a `reset` invalidates. Safe container code keeps the arena alive by owning it, but
     manual allocation and reset are `unsafe` (`spec/allocators.md` AL6).
+32. **A temporary used as a `for` iterable is not dropped.** `for x in make_list() { ... }` over a `List<String>`
+    result leaks the list and its elements under the checking allocator: the iterable's temporary is not registered
+    for the drop at the end of the loop statement. Binding it first (`let items = make_list(); for x in items`) is
+    the workaround, and `std/src/process.bd` uses it. The failure is a leak, not corruption.
 
 ## Decided in the third session
 
@@ -1584,8 +1610,8 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 2. The remaining stage 1 work is milestone 24 and the open type-system item: writing a built-in interface by
    hand (#402). Known limits to keep in mind: the comptime ones (a closure inside a function with comptime
    parameters is shared by its specializations; `Map` iteration at compile time is insertion order, CT9;
-   comptime results are not cached, CT14), the m21 ones (problems 24-27 above), the temporary-move bug (problem
-   28), and the allocator limits (problems 29-31).
+   comptime results are not cached, CT14), the m21 ones (problems 24-27 above), the temporary-move and temporary-drop bugs (problems
+   26, 28, and 32), and the allocator limits (problems 29-31).
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
    still inherits is listed in `spec/stage1-subset.md` "Fixes that ship with stage 1": moves through a runtime index,

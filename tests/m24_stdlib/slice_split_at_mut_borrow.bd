@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// The halves of `split_at_mut` borrow the list, so growing it while they are live is E0111.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    let mut view = xs[0..2]
+    let (head, tail) = view.split_at_mut(1)
+    xs.push(3) //~ E0111
+    println("{} {}", head.len(), tail.len())
+}

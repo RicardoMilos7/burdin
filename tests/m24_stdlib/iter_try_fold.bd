@@ -1,0 +1,49 @@
+//@ run
+//> Ok(10) Err(-2)
+//> Err(3) visited 3
+//> Ok(()) Err(5)
+//> Ok(24)
+
+// `try_fold` and `try_for_each` stop at the first `Err` and return it; the items after it are not visited.
+
+fn add_positive(acc: i32, x: i32): Result<i32, i32> {
+    if x < 0 {
+        return Err(x)
+    }
+    Ok(acc + x)
+}
+
+fn main() {
+    let good = [1, 2, 3, 4]
+    let bad = [1, -2, 3]
+    println("{good.iter().try_fold(0, |acc, x| add_positive(acc, x)):?} {bad.iter().try_fold(0, |acc, x| add_positive(acc, x)):?}")
+
+    let mut seen = 0
+    let r = (1..10).iter().try_for_each(|x|: Result<(), i32> {
+        seen = seen + 1
+        if x == 3 {
+            return Err(x)
+        }
+        Ok(())
+    })
+    println("{r:?} visited {seen}")
+
+    let ok = [1, 2].iter().try_for_each(|x|: Result<(), i32> {
+        if x > 5 {
+            return Err(x)
+        }
+        Ok(())
+    })
+    let err = [1, 5, 9].iter().try_for_each(|x|: Result<(), i32> {
+        if x > 4 {
+            return Err(x)
+        }
+        Ok(())
+    })
+    println("{ok:?} {err:?}")
+    println("{good.iter().try_fold(1, |acc, x| add_times(acc, x)):?}")
+}
+
+fn add_times(acc: i32, x: i32): Result<i32, i32> {
+    Ok(acc * x)
+}

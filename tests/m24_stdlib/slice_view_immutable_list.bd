@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `as_slice()` of an immutable list is a read-only view, so a mutating method is E0113.
+
+fn main() {
+    let xs = List<i32>.new()
+    xs.as_slice().reverse() //~ E0113
+}

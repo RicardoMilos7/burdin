@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A chain borrows each of its sources for as long as it is used, so neither can be written while it is live.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let mut ys = List<i32>.new()
+    ys.push(2)
+    let mut it = xs.iter().chain(ys.iter())
+    let first = it.next()
+    ys.push(3) //~ E0111
+    let second = it.next()
+}

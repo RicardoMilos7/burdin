@@ -1,0 +1,9 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: assertion failed
+
+// A debug build keeps the check: a false condition panics.
+
+fn main() {
+    debug_assert(1 == 2)
+}

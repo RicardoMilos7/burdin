@@ -145,9 +145,11 @@ impl<'a> Checker<'a> {
 
     /// Records a loan on the place `e`, if it is one. Its holders are attached by the enclosing `let`.
     fn add_loan(&mut self, e: &tir::Expr, mutable: bool) {
-        let place =
-            burdin_tir::place::tir_place(e).map(|(root, path, _)| (root, path)).or_else(|| self.reference_origin(e));
-        if let Some((root, path)) = place {
+        let places: Vec<(LocalId, Vec<usize>)> = match burdin_tir::place::tir_place(e) {
+            Some((root, path, _)) => vec![(root, path)],
+            None => self.reference_origin(e),
+        };
+        for (root, path) in places {
             self.loans.push(Loan { root, path, mutable, holders: Vec::new(), start: self.stmt });
         }
     }
@@ -155,19 +157,26 @@ impl<'a> Checker<'a> {
     /// The storage a borrowed expression views when it is not itself a plain place: a call's reference result
     /// derives from its origin argument (RF5). A user `Index` implementation lowers to exactly such a call, so a
     /// re-borrow of an element (`&mut v[i]`) is tracked against the container (`spec/operators.md`, OP10).
-    fn reference_origin(&self, e: &tir::Expr) -> Option<(LocalId, Vec<usize>)> {
+    fn reference_origin(&self, e: &tir::Expr) -> Vec<(LocalId, Vec<usize>)> {
         use tir::ExprKind as K;
         match &e.kind {
             K::DerefRef(base) | K::Field(base, _) => self.reference_origin(base),
             K::Call(f, args) => {
-                let sig = self.env.sigs.get(f.0)?;
+                let Some(sig) = self.env.sigs.get(f.0) else { return Vec::new() };
                 if !sig.ret.is_second_class() {
-                    return None;
+                    return Vec::new();
                 }
-                let arg = args.get(sig.ret_origin?)?;
-                burdin_tir::place::tir_place(arg)
-                    .map(|(root, path, _)| (root, path))
-                    .or_else(|| self.reference_origin(arg))
+                // A result that derives from several arguments (a struct holding views of two sources) borrows
+                // from the storage of each of them (RT3a).
+                let mut places = Vec::new();
+                for index in &sig.ret_origins {
+                    let Some(arg) = args.get(*index) else { continue };
+                    match burdin_tir::place::tir_place(arg) {
+                        Some((root, path, _)) => places.push((root, path)),
+                        None => places.extend(self.reference_origin(arg)),
+                    }
+                }
+                places
             }
             // The entry operations hand out the map's storage from a temporary entry value, so a loan taken on
             // the entry belongs to the map the entry borrows. Other chainable views take their loan where their
@@ -177,12 +186,13 @@ impl<'a> Checker<'a> {
                 tir::Method::MapEntry | tir::Method::MapEntryOrInsert | tir::Method::MapEntryOrInsertWith,
                 args,
             ) => {
-                let arg = args.first()?;
-                burdin_tir::place::tir_place(arg)
-                    .map(|(root, path, _)| (root, path))
-                    .or_else(|| self.reference_origin(arg))
+                let Some(arg) = args.first() else { return Vec::new() };
+                match burdin_tir::place::tir_place(arg) {
+                    Some((root, path, _)) => vec![(root, path)],
+                    None => self.reference_origin(arg),
+                }
             }
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
@@ -229,22 +239,27 @@ impl<'a> Checker<'a> {
     fn attach_holders(&mut self, pat: &Pat, init: &tir::Expr, start: usize) {
         let mut holders = Vec::new();
         view_bindings(pat, self.locals, &mut holders);
+        let mut used = Vec::new();
+        locals_used(init, &mut used);
+        self.hold(&holders, &used, start);
+    }
+
+    /// Makes `holders` hold the loans created since `start` and the loans held by any of the locals in `used`.
+    fn hold(&mut self, holders: &[LocalId], used: &[LocalId], start: usize) {
         if holders.is_empty() {
             return;
         }
-        let mut used = Vec::new();
-        locals_used(init, &mut used);
         for (i, loan) in self.loans.iter_mut().enumerate() {
             if i >= start {
                 // A loan created by this initializer belongs to the binding.
-                for id in &holders {
+                for id in holders {
                     if !loan.holders.contains(id) {
                         loan.holders.push(*id);
                     }
                 }
             } else if loan.holders.iter().any(|h| used.contains(h)) {
                 // `let q = r`: q carries a copy of the reference or a view derived from it.
-                for id in &holders {
+                for id in holders {
                     if !loan.holders.contains(id) {
                         loan.holders.push(*id);
                     }
@@ -330,6 +345,11 @@ impl<'a> Checker<'a> {
             K::Builtin(b, args) => match b {
                 tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
+                // `with_capacity_in(n, alloc)` stores the allocator value.
+                tir::Builtin::ListWithCapacityIn => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
+                }
                 tir::Builtin::HeapNewIn => {
                     self.expr(&args[0], Mode::Move);
                     self.expr(&args[1], Mode::Move);
@@ -341,6 +361,11 @@ impl<'a> Checker<'a> {
                 tir::Builtin::Replace => {
                     self.access_place(&args[0], Access::BorrowMut);
                     self.expr(&args[1], Mode::Move);
+                }
+                // The text views the bytes it was made from, so the result keeps that view borrowed.
+                tir::Builtin::ViewAsText => {
+                    self.expr(&args[0], Mode::Use);
+                    self.add_loan(&args[0], false);
                 }
                 _ => {
                     for arg in args {
@@ -380,9 +405,20 @@ impl<'a> Checker<'a> {
             K::Method(m, args) => {
                 if m.mutates_receiver() {
                     self.access_place(&args[0], Access::BorrowMut);
-                    // A mutable view of a map value keeps the map exclusively borrowed (`Iterator.next` also
-                    // mutates its receiver and returns a view, but the loan of its source is already held).
-                    if matches!(m, tir::Method::MapGetMut | tir::Method::MapGetOrInsert | tir::Method::MapEntry) {
+                    // A mutable view of a map value or of a list element, or a mutable iterator, keeps that
+                    // storage exclusively borrowed (`Iterator.next` also mutates its receiver and returns a view,
+                    // but the loan of its source is already held).
+                    if matches!(
+                        m,
+                        tir::Method::MapGetMut
+                            | tir::Method::MapGetOrInsert
+                            | tir::Method::MapGetOr
+                            | tir::Method::MapEntry
+                            | tir::Method::IterMut
+                            | tir::Method::ListGetMut
+                            | tir::Method::ListFirstMut
+                            | tir::Method::ListLastMut
+                    ) {
                         self.add_loan(&args[0], true);
                     }
                     for (i, arg) in args.iter().enumerate().skip(1) {
@@ -469,8 +505,16 @@ impl<'a> Checker<'a> {
                 self.block(body);
             }
             K::Match(scrutinee, arms) => {
+                let start = self.loans.len();
                 self.expr(scrutinee, Mode::Use);
+                let mut used = Vec::new();
+                locals_used(scrutinee, &mut used);
                 for arm in arms {
+                    // A view binding holds the loans of the scrutinee, so a view copied out of the arm keeps the
+                    // collection borrowed (`held = x`).
+                    let mut holders = Vec::new();
+                    view_bindings(&arm.pat, self.locals, &mut holders);
+                    self.hold(&holders, &used, start);
                     if let Some(guard) = &arm.guard {
                         self.expr(guard, Mode::Use);
                     }
@@ -488,14 +532,19 @@ impl<'a> Checker<'a> {
                 if let Some((root, path, _)) = burdin_tir::place::tir_place(place)
                     && path.is_empty()
                 {
+                    // `held = x` copies a view: the loans the value's locals hold are held by `held` too.
+                    let mut used = Vec::new();
+                    locals_used(value, &mut used);
+                    let copied: Vec<usize> =
+                        (0..start).filter(|&i| self.loans[i].holders.iter().any(|h| used.contains(h))).collect();
                     // The local no longer holds the old value: the loans it held may end here. A new
                     // reference or view stored in it is held by it (as in a `let`).
                     for loan in &mut self.loans {
                         loan.holders.retain(|h| *h != root);
                     }
                     if self.locals[root.0].ty.is_second_class() {
-                        for loan in &mut self.loans[start..] {
-                            if !loan.holders.contains(&root) {
+                        for (i, loan) in self.loans.iter_mut().enumerate() {
+                            if (i >= start || copied.contains(&i)) && !loan.holders.contains(&root) {
                                 loan.holders.push(root);
                             }
                         }
@@ -555,17 +604,18 @@ impl<'a> Checker<'a> {
         }
         // A second-class result derived from an argument keeps that argument borrowed until the last use of the
         // result (RF5).
-        if !self.skip_result_loan
-            && sig.ret.is_second_class()
-            && let Some(index) = sig.ret_origin
-            && let Some(param) = sig.params.get(index)
-            // A result that derives from an `own` parameter borrows from a value the callee drops, which the
-            // origin check already rejects (RT2).
-            && !param.own
-            && let Some(arg) = args.get(index)
-        {
-            let mutable = param.exclusive || matches!(sig.ret, Ty::Ref { mutable: true, .. });
-            self.add_loan(arg, mutable);
+        if !self.skip_result_loan && sig.ret.is_second_class() {
+            for &index in &sig.ret_origins {
+                let Some(param) = sig.params.get(index) else { continue };
+                // A result that derives from an `own` parameter borrows from a value the callee drops, which the
+                // origin check already rejects (RT2).
+                if param.own {
+                    continue;
+                }
+                let Some(arg) = args.get(index) else { continue };
+                let mutable = param.exclusive || matches!(sig.ret, Ty::Ref { mutable: true, .. });
+                self.add_loan(arg, mutable);
+            }
         }
     }
 }

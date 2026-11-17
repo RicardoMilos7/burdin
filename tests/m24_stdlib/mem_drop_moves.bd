@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A value passed to `mem.drop` is moved, so using it afterwards is an error.
+
+struct Noisy {
+    id: i32
+}
+
+fn main() {
+    let noisy = Noisy { id: 1 }
+    mem.drop(noisy)
+    let again = noisy //~ E0100
+}

@@ -1,0 +1,15 @@
+//@ run
+//> true false false true
+//> Less Greater Equal Less Greater
+
+// `eq` compares two iterators item by item and needs both to end together; `cmp` orders them lexicographically and
+// puts a prefix before the longer iterator.
+
+fn main() {
+    let a = [1, 2, 3]
+    let b = [1, 2, 3]
+    let c = [1, 2]
+    let d = [1, 2, 4]
+    println("{a.iter().eq(b.iter())} {a.iter().eq(c.iter())} {c.iter().eq(a.iter())} {c.iter().eq(c.iter())}")
+    println("{a.iter().cmp(d.iter()):?} {d.iter().cmp(a.iter()):?} {a.iter().cmp(b.iter()):?} {c.iter().cmp(a.iter()):?} {a.iter().cmp(c.iter()):?}")
+}

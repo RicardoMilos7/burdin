@@ -1,0 +1,37 @@
+//@ run
+//> Some("añ") None None None Some("") None
+//> Some("añ") None None None Some("") None
+//> Some("bar") None Some("foo") None
+
+// `get(from, to)` is the checked slice: it returns `None` when the range is reversed, past the end, or either end
+// splits a character, and a view otherwise. `s[a..b]` stays the unchecked byte slice.
+
+fn main() {
+    let s = "añb"
+    println(
+        "{:?} {:?} {:?} {:?} {:?} {:?}",
+        s.get(0, 3),
+        s.get(0, 2),
+        s.get(2, 3),
+        s.get(3, 1),
+        s.get(4, 4),
+        s.get(0, 5),
+    )
+    let owned = String.from("añb")
+    println(
+        "{:?} {:?} {:?} {:?} {:?} {:?}",
+        owned.get(0, 3),
+        owned.get(0, 2),
+        owned.get(2, 3),
+        owned.get(3, 1),
+        owned.get(4, 4),
+        owned.get(0, 5),
+    )
+    println(
+        "{:?} {:?} {:?} {:?}",
+        "foobar".strip_prefix("foo"),
+        "foobar".strip_prefix("bar"),
+        "foobar".strip_suffix("bar"),
+        "foobar".strip_suffix("foo"),
+    )
+}

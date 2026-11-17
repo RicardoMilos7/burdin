@@ -38,7 +38,7 @@ no claim at all.
 | Binary-safe standard output and file I/O | `tests/check_platform_support.py`, `tests/m09_stdlib/file_io_binary.bd` | yes | yes | yes |
 | Buffered output flushed on return, `process.exit`, and panics | `tests/m02_basics/panic_flushes_stdout.bd`, `tests/m09_stdlib/exit_code.bd` | yes | yes | yes |
 | Panic message and backtrace | `tests/m02_basics/panic_backtrace.bd` | yes; names in debug | yes; names in debug | yes; addresses only |
-| Stack-overflow guard | `tests/m02_basics/stack_overflow_aborts.bd` | yes (SIGSEGV) | yes (SIGSEGV) | yes (vectored handler) |
+| Stack-overflow guard | `tests/m02_basics/stack_overflow_aborts.bd` | yes (SIGSEGV) | yes (SIGSEGV) | yes (vectored handler, 64 KiB stack guarantee) |
 | `burdin test` runner | `tests/check_test_runner.py` | yes | yes | yes |
 | `-g` debug information | `tests/check_debug_info.py` | yes (DWARF; gdb when installed) | yes (DWARF in `.dSYM`; gdb when installed) | metadata only; no PDB |
 | `--strip` and the size budget | `tests/check_build_flags.py` | yes | yes | flags only; no size budget |
@@ -67,7 +67,7 @@ stops being a CI step, or when a milestone it names leaves the workflow's confor
   not set `BURDIN_CC=clang`, so neither path is tested there. `--pgo-use` compiles the profile through `opt` and
   `llc` and then links normally; it is not exercised on Windows either.
 - **The size budget is not enforced.** `--strip` maps to `/OPT:REF /OPT:ICF` and the program runs the same, but
-  `tests/check_build_flags.py` enforces its 128 KiB and 512 KiB budgets only on Linux and macOS.
+  `tests/check_build_flags.py` enforces its 144 KiB and 512 KiB budgets only on Linux and macOS.
 - **Exit statuses are truncated to 8 bits**, and an abort is only required to be abnormal. `burdin run` passes a
   Windows status through after truncation (a non-zero status stays non-zero); the `//@ run-abort` tests assert an
   abnormal end on every platform rather than a particular status, because POSIX's SIGABRT status has no Windows
@@ -110,7 +110,9 @@ Assumptions that only those implementations back:
   glibc and macOS libSystem provide them, and musl and other libcs are untested.
 - **The stack-overflow guard** uses `pthread_getattr_np` and `pthread_attr_getstack` on Linux and
   `pthread_get_stackaddr_np` on macOS, together with `sigaltstack`. These are glibc and libSystem calls; another
-  pthread implementation is untested. Windows uses `AddVectoredExceptionHandler` instead.
+  pthread implementation is untested. Windows uses `AddVectoredExceptionHandler` and `SetThreadStackGuarantee`
+  instead: the system's default guarantee leaves the filter only a few kilobytes once the exception dispatcher has
+  run, so the guard reserves 64 KiB for its own flush and write before it installs the filter.
 - **File paths go through `fopen` as bytes.** On Windows that is the CRT's ANSI path API, so a non-ASCII path
   depends on the active code page; UTF-8 paths are not guaranteed to work and are not tested.
 - **Output and arguments are bytes.** UTF-8 output is written with `write`/`_write`, and `env.args()` returns the

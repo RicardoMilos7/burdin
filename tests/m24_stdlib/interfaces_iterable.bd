@@ -1,0 +1,85 @@
+//@ run
+//> 3 list
+//> 6 array
+//> 3 slice
+//> 3 range
+//> 3 chars
+//> 30 map
+//> 3 set
+//> 3 deque
+//> 3 heap
+
+// Every `Iterable` row of the interface table (`spec/stdlib.md`, "Interface coverage"): `for` works over a list,
+// an array, a slice, a range, the characters of a text, a map's entries, a set's elements, a deque, and a heap.
+
+fn main() {
+    let mut list = List<i32>.new()
+    list.push(1)
+    list.push(2)
+    let mut n = 0
+    for value in list {
+        n = n + value
+    }
+    println("{} list", n)
+
+    let values = [1, 2, 3]
+    let mut n = 0
+    for value in values {
+        n = n + value
+    }
+    println("{} array", n)
+
+    let mut n = 0
+    for value in values[0..2] {
+        n = n + value
+    }
+    println("{} slice", n)
+
+    let mut n = 0
+    for value in 0..3 {
+        n = n + value
+    }
+    println("{} range", n)
+
+    let mut n = 0
+    for c in "abc".chars() {
+        n = n + 1
+    }
+    println("{} chars", n)
+
+    let mut entries = Map<i32, i32>.new()
+    entries.insert(1, 10)
+    entries.insert(2, 20)
+    let mut n = 0
+    for entry in entries {
+        n = n + entry.1
+    }
+    println("{} map", n)
+
+    let mut set = Set<i32>.new()
+    set.insert(1)
+    set.insert(2)
+    let mut n = 0
+    for value in set {
+        n = n + *value
+    }
+    println("{} set", n)
+
+    let mut deque = Deque<i32>.new()
+    deque.push_back(1)
+    deque.push_back(2)
+    let mut n = 0
+    for value in deque {
+        n = n + *value
+    }
+    println("{} deque", n)
+
+    let mut heap = PriorityHeap<i32>.new()
+    heap.push(1)
+    heap.push(2)
+    let mut n = 0
+    for value in heap {
+        n = n + *value
+    }
+    println("{} heap", n)
+}

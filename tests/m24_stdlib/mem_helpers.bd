@@ -1,0 +1,26 @@
+//@ run
+//> 5 0
+//> drop 1
+//> after drop
+
+// `mem.take` swaps in `T.default()` and returns the old value; `mem.drop` ends a value's life early, so its
+// destructor runs at the call instead of at the end of the scope.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("drop {}", self.id)
+    }
+}
+
+fn main() {
+    let mut x = 5
+    let old = mem.take(mut x)
+    println("{} {}", old, x)
+    let noisy = Noisy { id: 1 }
+    mem.drop(noisy)
+    println("after drop")
+}
