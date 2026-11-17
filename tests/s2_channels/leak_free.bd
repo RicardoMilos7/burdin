@@ -1,0 +1,55 @@
+//@ burdin-test passed=4 failed=0
+
+// `burdin test` runs with the checking allocator, so a channel that left a node, a waiter, a queued value, or its own
+// state behind would fail the test with a leak report (CH4, CH10).
+
+test "values left in a dropped channel are freed" {
+    let ch = Channel<String>.unbounded()
+    ch.send("one".to_string())
+    ch.send("two".to_string())
+    let other = ch.clone()
+    other.send("three".to_string())
+}
+
+test "a blocked receiver and its waiter are freed" {
+    let ch = Channel<String>.bounded(1)
+    let tx = ch.clone()
+    let h = task.spawn(|| {
+        tx.send("a".to_string())
+        tx.send("b".to_string())
+        tx.close()
+    })
+    let mut n: usize = 0
+    for s in ch {
+        n = n + s.len()
+    }
+    let _ = h.join()
+    assert_eq(n, 2)
+}
+
+test "a select that waited is freed" {
+    let a = Channel<String>.unbounded()
+    let b = Channel<String>.unbounded()
+    let tx = b.clone()
+    let h = task.spawn(|| {
+        task.yield()
+        tx.send("late".to_string())
+    })
+    let got = select {
+        v = a.recv() => v.unwrap()
+        w = b.recv() => w.unwrap()
+    }
+    let _ = h.join()
+    assert_eq(got, "late".to_string())
+}
+
+test "unchosen send values are freed" {
+    let a = Channel<String>.unbounded()
+    let b = Channel<String>.bounded(1)
+    b.send("full".to_string())
+    select {
+        a.send("to a".to_string()) => { }
+        b.send("to b".to_string()) => { }
+    }
+    assert_eq(a.len(), 1)
+}

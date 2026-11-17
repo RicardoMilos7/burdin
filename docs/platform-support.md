@@ -138,6 +138,10 @@ run is the CI jobs for those platforms, and `tests/s2_tasks` is the check. Const
 `mmap` flags, the layout of `stack_t`, the name of the processor-count query) are filled in per target by
 `taskrt.rs`.
 
+`std.channel` (stage 2.2, `spec/channels.md`) adds no runtime of its own: a channel is Burdin code that waits through the
+scheduler's lock, parking, and condition variable, so it runs wherever tasks do. `tests/s2_channels` is its check, and
+its stress tests run 20 times in every CI job's debug and release profiles.
+
 ### Not platform-specific
 
 Language-level gaps and correctness issues that apply everywhere are tracked under "Known problems and risks" in

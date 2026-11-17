@@ -1,0 +1,34 @@
+//@ run
+//> sent to out
+//> out is full, sent to spare
+//> both are full, nothing ready
+//> closed: the value 9 came back
+
+// A `send` arm can run when the channel has room or is closed. The arm may bind what `channel.send(value)` would have
+// returned: `None` when the value was queued, and `Some(value)` when the channel was closed (CH8).
+
+fn main() {
+    let out = Channel<i32>.bounded(1)
+    let spare = Channel<i32>.bounded(1)
+    select {
+        r = out.send(1) => println("sent to out")
+        r = spare.send(1) => println("sent to spare")
+    }
+    select {
+        out.send(2) => println("sent to out")
+        spare.send(2) => println("out is full, sent to spare")
+    }
+    select {
+        out.send(3) => println("sent to out")
+        spare.send(3) => println("sent to spare")
+        default => println("both are full, nothing ready")
+    }
+    out.close()
+    select {
+        r = out.send(9) => match r {
+            Some(v) => println("closed: the value {} came back", v),
+            None => println("queued"),
+        }
+        spare.send(8) => println("sent to spare")
+    }
+}

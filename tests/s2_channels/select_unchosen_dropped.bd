@@ -1,0 +1,26 @@
+//@ run
+//> chosen: Guard(1) was queued
+//> dropped Guard(2)
+//> dropped Guard(1)
+
+// A `select` moves the value of every `send` arm out of its place when it starts. The value of an arm that does not run
+// is dropped when the `select` ends, not kept (CH8).
+
+struct Guard {
+    id: i32
+}
+
+Guard: Drop {
+    fn drop(mut self) {
+        println("dropped Guard({})", self.id)
+    }
+}
+
+fn main() {
+    let first = Channel<Guard>.bounded(1)
+    let second = Channel<Guard>.bounded(1)
+    select {
+        first.send(Guard { id: 1 }) => println("chosen: Guard(1) was queued")
+        second.send(Guard { id: 2 }) => println("chosen: Guard(2) was queued")
+    }
+}

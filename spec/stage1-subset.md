@@ -347,6 +347,13 @@ size, `Send` timing, panic behavior, scoped borrows, threads) are `spec/tasks.md
 primitives (`crates/burdin_codegen/src/taskrt/`). It was written for Linux, macOS, and Windows on x86-64 and arm64 and
 has been run only on Linux x86-64 so far; the CI jobs for the other platforms are the first run of the rest.
 
+Milestone 2.2 is complete: `tests/s2_channels` passes in debug and release, and its stress tests run repeatedly in CI.
+`Channel<T>` is a cloneable handle to a bounded or unbounded multi-producer, multi-consumer queue with an explicit
+`close`; a sent value is moved, and a view type cannot be a channel's element (E0120). `select` is a contextual
+keyword that the parser rewrites into ordinary code over a few members of `Channel`: the first ready arm in source
+order runs, `default` makes it non-blocking, and an arm guard (`if cond`) switches an arm off. The decisions are
+`spec/channels.md` CH1-CH10. The `Send` marker is still 2.3.
+
 ### Stage 3: tooling and ecosystem
 
 | Area | Contents |

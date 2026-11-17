@@ -1,0 +1,32 @@
+//@ run
+//> capacity Some(2)
+//> Sent
+//> Sent
+//> full, got 3 back
+//> len 2
+//> received 1
+//> Sent
+//> len 2
+
+// A bounded channel holds at most `capacity` values. `try_send` reports a full channel and returns the value;
+// receiving makes room (CH2, CH5).
+
+fn show(r: TrySend<i32>) {
+    match r {
+        TrySend.Sent => println("Sent"),
+        TrySend.Full(v) => println("full, got {} back", v),
+        TrySend.Closed(v) => println("closed, got {} back", v),
+    }
+}
+
+fn main() {
+    let ch = Channel<i32>.bounded(2)
+    println("capacity {:?}", ch.capacity())
+    show(ch.try_send(1))
+    show(ch.try_send(2))
+    show(ch.try_send(3))
+    println("len {}", ch.len())
+    println("received {}", ch.recv().unwrap())
+    show(ch.try_send(3))
+    println("len {}", ch.len())
+}

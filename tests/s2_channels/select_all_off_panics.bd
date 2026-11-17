@@ -1,0 +1,15 @@
+//@ run-abort
+//> before
+//@ stderr: select: every arm is switched off by its guard and there is no `default`
+
+// A `select` that would have to wait, but whose every arm is switched off by its guard, could wait forever; it panics
+// instead (spec/channels.md, CH8).
+
+fn main() {
+    let ch = Channel<i32>.unbounded()
+    let open = false
+    println("before")
+    select {
+        v = ch.recv() if open => println("unreachable")
+    }
+}

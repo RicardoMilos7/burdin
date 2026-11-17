@@ -8,8 +8,11 @@ This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18, #
     LLVM_SYS_211_PREFIX and PATH at it; Windows loads the MSVC environment, installs the official LLVM 21
     archive, and puts its DLL directory on PATH;
   * macOS runs on macos-latest (Apple Silicon) and Windows on windows-latest; every job checks the host target;
-  * every job passes every milestone folder under tests/ to the conformance runner in both the debug and
-    release profiles; the release step uses --release, and the runner skips tests marked debug-only;
+  * every job passes every milestone folder under tests/ (m01..., and the stage 2 folders s2_...) to the conformance
+    runner in both the debug and release profiles; the release step uses --release, and the runner skips tests
+    marked debug-only;
+  * every job repeats the channel stress tests in both profiles (`--repeat`), because a lost wake-up or a race
+    shows up in one run in many (issue #209);
   * the Windows job also runs the suite with BURDIN_CC=cl;
   * the scripts CI runs exist, are executable, and use LF endings;
   * the Rust toolchain is pinned to an exact version with clippy and rustfmt, and CI installs and verifies
@@ -84,9 +87,12 @@ def require_command(job: str, block: str, command: str) -> None:
 
 
 def profile_conformance(block: str, profile: str) -> str:
-    # The BURDIN_CC step runs a subset, so it is never the full-suite step for either profile.
+    # The BURDIN_CC step runs a subset, so it is never the full-suite step for either profile, and neither is
+    # the repeated stress step, which runs a few tests many times.
     steps = [
-        line for line in block.split("\n") if "tests/run_tests.py" in line and "BURDIN_CC" not in line
+        line
+        for line in block.split("\n")
+        if "tests/run_tests.py" in line and "BURDIN_CC" not in line and "--repeat" not in line
     ]
     if profile == "release":
         matching = [line for line in steps if "--release" in line]
@@ -107,12 +113,24 @@ def check_conformance(job: str, block: str, profile: str) -> None:
         name = directory.name.split("_", 1)[0]
         if not re.search(rf"(^| ){re.escape(name)}( |$)", conformance):
             add_problem(f"ci.yml: {job} job: {label} conformance step omits {name} ({directory.name})")
+    for directory in sorted(harness.TESTS.glob("s[0-9]_*")):
+        if directory.is_dir() and not re.search(rf"(^| ){re.escape(directory.name)}( |$)", conformance):
+            add_problem(f"ci.yml: {job} job: {label} conformance step omits {directory.name}")
     for word in conformance.split():
         if re.match(r"m[0-9]*", word) and word.startswith("m"):
             if not any(harness.TESTS.glob(word + "_*")):
                 add_problem(
                     f"ci.yml: {job} job: {label} conformance step names missing milestone {word}"
                 )
+
+
+def check_stress_repeat(job: str, block: str) -> None:
+    """Every job repeats the channel stress tests in the debug and the release profile."""
+    repeated = [line for line in block.split("\n") if "tests/run_tests.py" in line and "--repeat" in line]
+    for label, wanted in (("debug-profile", False), ("release-profile", True)):
+        matching = [line for line in repeated if ("--release" in line) == wanted and "s2_channels/stress" in line]
+        if not matching:
+            add_problem(f"ci.yml: {job} job: no {label} repeated channel stress step (run_tests.py --repeat)")
 
 
 def cache_steps(block: str) -> str:
@@ -309,6 +327,7 @@ for job in ("linux", "macos", "windows"):
         require_command(job, block, command)
     check_conformance(job, block, "debug")
     check_conformance(job, block, "release")
+    check_stress_repeat(job, block)
     check_caches(job, block)
     check_bench_regression(job, block)
     check_deps_audit(job, block)

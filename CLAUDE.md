@@ -33,7 +33,7 @@ not updated and may disagree with the repository.
    `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
    default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
    is the behavior of `burdin test`, `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
-   threads, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   threads, `spec/channels.md` is `Channel<T>` and `select`, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
    modules, caching, and the minimal `bindgen`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the

@@ -1,0 +1,57 @@
+//@ run
+//> skipped 3
+//> kept 4
+//> kept 5
+//> stopped at 6
+//> found 12 in the helper
+
+// The arm bodies of a `select` are ordinary code of the enclosing function: `continue` and `break` act on the loop
+// around the `select`, and `return` and `?` leave the function (CH6).
+
+fn first_even(ch: Channel<i32>): Option<i32> {
+    loop {
+        select {
+            v = ch.recv() => match v {
+                Some(n) => {
+                    if n % 2 == 0 {
+                        return Some(n)
+                    }
+                }
+                None => return None,
+            }
+        }
+    }
+}
+
+fn main() {
+    let ch = Channel<i32>.unbounded()
+    let mut i = 3
+    while i <= 6 {
+        ch.send(i)
+        i = i + 1
+    }
+    loop {
+        select {
+            v = ch.recv() => {
+                let n = v.unwrap()
+                if n == 3 {
+                    println("skipped {}", n)
+                    continue
+                }
+                if n == 6 {
+                    println("stopped at {}", n)
+                    break
+                }
+                println("kept {}", n)
+            }
+        }
+    }
+    let other = Channel<i32>.unbounded()
+    other.send(7)
+    other.send(9)
+    other.send(12)
+    match first_even(other) {
+        Some(n) => println("found {} in the helper", n),
+        None => println("nothing"),
+    }
+}

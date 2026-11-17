@@ -37,7 +37,8 @@ immediately after a `.` in a member position, where it is a member name: that is
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct
-name), `from` (after an error variant's payload), `pub` (immediately before `use`), and `Fn`/`FnMut`/`FnOnce` (a
+name), `from` (after an error variant's payload), `pub` (immediately before `use`), `select` (an expression start,
+followed by `{` on the same line, `channels.md` CH6), `default` (the head of a `select` arm), and `Fn`/`FnMut`/`FnOnce` (a
 closure type when followed by `(`). The attribute names of a test item (`ignore`, `timeout`, `should_panic`,
 `should_fail`, `differential`) are contextual only inside the `[...]` after the test name; the checker rejects an
 unknown name with E0170 ([`test-runner.md`](test-runner.md)).
@@ -332,7 +333,7 @@ Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the
 
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
-              | ForExpr | "unsafe" Block | "return" [ Expr ] | "break" | "continue" ;
+              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" | "continue" ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
 ClosureExpr   = "|" [ ClosureParam { "," ClosureParam } [ "," ] ] "|" [ ":" Type ] Expr
@@ -349,6 +350,12 @@ IfExpr        = "if" Cond Block [ "else" ( IfExpr | Block ) ] ;
 Cond          = Expr | "let" Pattern "=" Expr ;
 MatchExpr     = "match" Expr "{" { Arm } "}" ;
 Arm           = ( "else" | Pattern [ "if" Expr ] ) "=>" ( Block | Expr ) [ Sep ] ;
+SelectExpr    = "select" "{" { SelectArm } "}" ;      (* `select` is contextual and the `{` is on the same line; the parser
+                                                         rewrites it to ordinary code, `channels.md` CH6-CH8 *)
+SelectArm     = [ SelectBind "=" ] Expr "." "recv" "(" ")" [ "if" Expr ] "=>" ( Block | Expr ) [ Sep ]
+              | [ SelectBind "=" ] Expr "." "send" "(" Expr ")" [ "if" Expr ] "=>" ( Block | Expr ) [ Sep ]
+              | "default" "=>" ( Block | Expr ) [ Sep ] ;
+SelectBind    = "_" | [ "mut" ] IDENT ;
 LoopExpr      = "loop" Block ;
 WhileExpr     = "while" Expr Block ;
 ForExpr       = "for" Pattern "in" [ "mut" ] Expr Block ;    (* `mut`: iterate `iter_mut()`, spec/iterators.md IT15 *)

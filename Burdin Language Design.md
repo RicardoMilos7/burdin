@@ -658,7 +658,8 @@ The design is settled at the level of ideas, and these details still need decisi
 - Access to a field by a compile-time name (`self.{field.name}` in the derive example).
 - The declaration form for derives (`derive Eq { ... }`) and how user-defined derives are registered.
 - Slice and array type syntax (`[T]`, `[T; N]`), tuples, the unit type, ranges, labeled loops, and type aliases.
-- Exact syntax for `select`, channel creation, and `extern` blocks (`CPtr`, `blocking`).
+- Exact syntax for `select`, channel creation, and `extern` blocks (`CPtr`, `blocking`). (Settled for `select` and
+  channels in stage 2.2: `spec/channels.md`.)
 
 **Semantics to write down precisely**
 

@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A channel carries one type: sending another type, or receiving into the wrong one, is a type error (spec/channels.md,
+// CH1).
+
+fn main() {
+    let numbers = Channel<i32>.unbounded()
+    let _ = numbers.send("seven") //~ E0003
+    let text: Option<String> = numbers.recv() //~ E0003
+}

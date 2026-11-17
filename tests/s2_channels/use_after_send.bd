@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// Sending moves the value: the sender cannot use it afterwards, and a handle moved into a task is gone from the code
+// that started the task (spec/channels.md, CH4).
+
+fn main() {
+    let ch = Channel<String>.unbounded()
+    let message = "hello".to_string()
+    let _ = ch.send(message)
+    println("{}", message) //~ E0100
+
+    let tx = ch.clone()
+    let t = task.spawn(|| tx.send("from the task".to_string()))
+    let _ = tx.send("again".to_string()) //~ E0100
+    let _ = t.join()
+}

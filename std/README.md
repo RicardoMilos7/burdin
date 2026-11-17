@@ -20,6 +20,9 @@ program, then copies its public names into every module (the prelude). A project
 | `slice.bd` | the slice methods the compiler does not implement itself: `first`, `last`, `is_empty`, `contains`, the split and search functions, the algorithms built on `swap`, `concat`, `join`, and the ASCII helpers (`spec/stdlib.md`, "Slices") |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
 | `hash.bd` | `Hasher`, `hash_of`, and `hash_seeded`: the stable FNV-1a hash of `x.hash()` and `Map`, one part at a time (`spec/stdlib.md`, "Hashing") |
+| `task.bd` | `spawn`, `scope`, `yield`, `set_workers`, `JoinHandle`, `Scope`, and the work-stealing scheduler (`spec/tasks.md`) |
+| `thread.bd` | `thread.spawn`, `Thread` (`spec/tasks.md`, TK9) |
+| `channel.bd` | `Channel<T>` (bounded and unbounded, `send`, `recv`, `try_send`, `try_recv`, `close`, `clone`), `TrySend`, `TryRecv`, and the members the `select` expression is rewritten to (`spec/channels.md`) |
 | `alloc.bd` | the `Allocator` interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`) |
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display`, `Error`, and `From<Source>`

@@ -1,0 +1,45 @@
+//@ run
+//> 100 values were received exactly once
+//> every consumer stopped at the close
+
+// The other direction: one producer, several consumer tasks sharing the channel. Each value goes to exactly one of them
+// (CH2).
+
+fn main() {
+    let ch = Channel<i32>.bounded(4)
+    let results = Channel<i32>.unbounded()
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut c = 0
+    while c < 4 {
+        let rx = ch.clone()
+        let out = results.clone()
+        handles.push(task.spawn(|| {
+            for v in rx {
+                out.send(v)
+            }
+        }))
+        c = c + 1
+    }
+    let mut i = 1
+    while i <= 100 {
+        ch.send(i)
+        i = i + 1
+    }
+    ch.close()
+    for h in handles.into_iter() {
+        h.join()
+    }
+    results.close()
+    let mut seen = 0
+    let mut sum = 0
+    for v in results {
+        seen = seen + 1
+        sum = sum + v
+    }
+    if seen == 100 && sum == 5050 {
+        println("100 values were received exactly once")
+    } else {
+        println("wrong: {} values, sum {}", seen, sum)
+    }
+    println("every consumer stopped at the close")
+}

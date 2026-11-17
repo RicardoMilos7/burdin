@@ -1,0 +1,25 @@
+//@ run
+//> empty
+//> value 7
+//> empty
+//> closed
+
+// `try_recv` never waits: a value, an open channel with nothing in it, or a closed and empty channel (CH5).
+
+fn show(r: TryRecv<i32>) {
+    match r {
+        TryRecv.Value(v) => println("value {}", v),
+        TryRecv.Empty => println("empty"),
+        TryRecv.Closed => println("closed"),
+    }
+}
+
+fn main() {
+    let ch = Channel<i32>.unbounded()
+    show(ch.try_recv())
+    ch.send(7)
+    show(ch.try_recv())
+    show(ch.try_recv())
+    ch.close()
+    show(ch.try_recv())
+}

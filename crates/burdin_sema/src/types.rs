@@ -235,6 +235,17 @@ impl Globals {
             env.push((info.params[i].clone(), ty));
         }
         self.check_adt_bounds(g, &resolved, span, diags);
+        // A channel holds the values sent through it until they are received, so they must own their storage. `T`
+        // appears in no field of `Channel<T>` (the queue is behind a raw pointer), so the field check cannot see it
+        // (spec/channels.md, CH4).
+        if self.std_modules.contains(&info.module)
+            && info.name == self.qualified(info.module, "Channel")
+            && let (Some(ty), Some(arg)) = (resolved.first(), args.first())
+            && ty.is_second_class()
+        {
+            check_storable(ty, arg.span, "a `Channel` value", diags);
+            return Ty::Error;
+        }
         self.adt_instance_ty(g, resolved)
     }
 

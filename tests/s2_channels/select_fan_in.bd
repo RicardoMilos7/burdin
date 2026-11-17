@@ -1,0 +1,51 @@
+//@ run
+//> 20 values, sum 1110
+//> both producers closed their channels
+
+// A consumer merges two producers with a `select` loop. The arm bodies are ordinary code in the enclosing function:
+// `break` leaves the consumer's own loop, not anything the `select` generates (CH6). When a producer closes its
+// channel, the guard of its arm switches the arm off (CH8).
+
+fn produce(out: Channel<i32>, base: i32) {
+    let mut i = 1
+    while i <= 10 {
+        out.send(base + i)
+        i = i + 1
+        if i % 3 == 0 {
+            task.yield()
+        }
+    }
+    out.close()
+}
+
+fn main() {
+    let a = Channel<i32>.bounded(2)
+    let b = Channel<i32>.bounded(2)
+    let a_tx = a.clone()
+    let b_tx = b.clone()
+    let pa = task.spawn(|| produce(a_tx, 0))
+    let pb = task.spawn(|| produce(b_tx, 100))
+    let mut count = 0
+    let mut sum = 0
+    let mut a_open = true
+    let mut b_open = true
+    loop {
+        if !a_open && !b_open {
+            break
+        }
+        select {
+            x = a.recv() if a_open => match x {
+                Some(v) => { count = count + 1; sum = sum + v }
+                None => a_open = false,
+            }
+            y = b.recv() if b_open => match y {
+                Some(v) => { count = count + 1; sum = sum + v }
+                None => b_open = false,
+            }
+        }
+    }
+    pa.join()
+    pb.join()
+    println("{} values, sum {}", count, sum)
+    println("both producers closed their channels")
+}

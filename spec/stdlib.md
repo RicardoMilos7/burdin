@@ -2195,6 +2195,31 @@ Thread<T> { fn join(own self): T; fn is_finished(self): bool }          // Drop 
 Tests: `s2_tasks/two_tasks`, `moved_value`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, and the rest of the
 folder (`tasks.md` lists them by rule).
 
+## Channels and `select` (issue #207)
+
+`std.channel` is specified in [`channels.md`](channels.md); this is the surface.
+
+```
+fn Channel<T>.bounded(capacity: usize): Channel<T>     // capacity >= 1
+fn Channel<T>.unbounded(): Channel<T>
+Channel<T> {
+    fn send(self, own value: T): Option<T>             // None: queued; Some(value): the channel is closed
+    fn recv(self): Option<T>                           // None: closed and empty
+    fn try_send(self, own value: T): TrySend<T>        // Sent | Full(T) | Closed(T)
+    fn try_recv(self): TryRecv<T>                      // Value(T) | Empty | Closed
+    fn close(self)
+    fn is_closed(self): bool
+    fn len(self): usize
+    fn capacity(self): Option<usize>
+    fn clone(self): Channel<T>                         // another handle to the same channel
+    fn iter(self): ChannelIter<T>                      // Iterable<T>: `for v in ch`
+}
+select { v = rx.recv() => ..., tx.send(x) => ..., default => ... }     // an expression; channels.md CH6-CH8
+```
+
+Tests: `s2_channels/producer_consumer`, `close_semantics`, `bounded_capacity`, `select_priority`, `select_default`,
+`stress_mpmc`, and the rest of the folder (`channels.md` lists them by rule).
+
 ## Tests
 
 | Area | Tests |
@@ -2208,6 +2233,7 @@ folder (`tasks.md` lists them by rule).
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
 | Tasks, scopes, and threads | `s2_tasks/two_tasks`, `moved_value`, `detach_runs`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, `workers_steal`, `stress_many_tasks` |
+| Channels and `select` | `s2_channels/producer_consumer`, `close_semantics`, `bounded_capacity`, `select_priority`, `select_default`, `select_send`, `stress_mpmc`, `select_stress` |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | Hashing | `m24_stdlib/hash_values`, `hash_hasher`, `hash_seeded`, `hash_generic`, `hash_map_consistent`, `hash_case_insensitive`, `hash_comptime`, `hash_float`, `hash_float_derive` |
 | `Heap` | `m05_ownership/heap_tree_eval` |

@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// What a `select` arm may wait for is `channel.recv()`, `channel.send(value)`, or `default`; a `select` has at least one
+// arm and at most one `default` (spec/channels.md, CH6, CH8).
+
+fn main() {
+    let a = Channel<i32>.unbounded()
+    select {
+        v = a.len() => { } //~ E0001
+    }
+    select { //~ E0001
+    }
+    select { //~ E0001
+        default => { }
+        default => { }
+    }
+    select {
+        a.send() => { } //~ E0001
+    }
+}

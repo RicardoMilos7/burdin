@@ -1,0 +1,50 @@
+//@ run
+//> value: Some(1)
+//> no binding
+//> wildcard
+//> mutated: Some(5)
+//> expression value 3
+//> nested: inner got 8
+
+// The binding of an arm is a name, `mut name`, or `_`, or it is left out. A `select` is an expression, so its arms give
+// it a value, and an arm body may hold another `select` (CH6).
+
+fn main() {
+    let a = Channel<i32>.unbounded()
+    let b = Channel<i32>.unbounded()
+    a.send(1)
+    select {
+        v = a.recv() => println("value: {:?}", v)
+    }
+    a.send(2)
+    select {
+        a.recv() => println("no binding")
+    }
+    a.send(3)
+    select {
+        _ = a.recv() => println("wildcard")
+    }
+    a.send(4)
+    select {
+        mut v = a.recv() => {
+            v = Some(5)
+            println("mutated: {:?}", v)
+        }
+    }
+    a.send(3)
+    let n = select {
+        v = a.recv() => v.unwrap()
+        w = b.recv() => w.unwrap()
+    }
+    println("expression value {}", n)
+    a.send(7)
+    b.send(8)
+    let text = select {
+        v = a.recv() => {
+            select {
+                w = b.recv() => format("nested: inner got {}", w.unwrap())
+            }
+        }
+    }
+    println("{}", text)
+}

@@ -1,0 +1,41 @@
+//@ run
+//> a 1
+//> a 2
+//> a 3
+//> b 10
+//> b 20
+//> b 30
+//> both closed
+
+// When several arms can run, the first one in source order runs (CH7). Here both channels always have a value until
+// they are empty, so every value of a comes out before any value of b. A closed, empty channel is ready too (its
+// receive finishes at once with None), so the arm of a channel that is done switches itself off with a guard; without
+// it the arm would run forever, ahead of the later arms (CH7, CH8).
+
+fn main() {
+    let a = Channel<i32>.unbounded()
+    let b = Channel<i32>.unbounded()
+    a.send(1)
+    a.send(2)
+    a.send(3)
+    b.send(10)
+    b.send(20)
+    b.send(30)
+    a.close()
+    b.close()
+    let mut a_done = false
+    let mut b_done = false
+    while !(a_done && b_done) {
+        select {
+            x = a.recv() if !a_done => match x {
+                Some(v) => println("a {}", v),
+                None => a_done = true,
+            }
+            y = b.recv() if !b_done => match y {
+                Some(v) => println("b {}", v),
+                None => b_done = true,
+            }
+        }
+    }
+    println("both closed")
+}
