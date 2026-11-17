@@ -2,9 +2,12 @@
 
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
-use burdin_tir::{self as tir, BinOp, Builtin, Method, Ty};
-use inkwell::IntPredicate;
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
+use burdin_tir::{self as tir, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
+use inkwell::intrinsics::Intrinsic;
+use inkwell::module::Linkage;
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, FunctionValue};
+use inkwell::{FloatPredicate, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn builtin(
@@ -60,6 +63,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .build_call(self.rt.f64_to_string, &[v.into(), prec.into(), single.into(), out.into()], "")
                     .map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?));
+            }
+            Builtin::FloatFromBits(ft) => {
+                let bits = self.expr_mode(&args[0], Mode::Use)?.expect("an integer has a value").into_int_value();
+                let target: BasicTypeEnum<'ctx> = match ft {
+                    FloatTy::F32 => self.cx.f32_type().into(),
+                    FloatTy::F64 => self.cx.f64_type().into(),
+                };
+                return Ok(Some(self.builder.build_bit_cast(bits, target, "float").map_err(llvm_err)?));
             }
             Builtin::StringNew => {
                 let out = self.alloca(self.string_ty.into(), "string")?;
@@ -1042,6 +1053,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        if let Method::Float(op) = m {
+            return self.float_method(op, args);
+        }
         if matches!(m, Method::Iter | Method::IntoIter) {
             return self.iter_value(args, m == Method::IntoIter);
         }
@@ -1301,6 +1315,140 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(Some(v))
     }
 
+    /// The floating-point methods the compiler provides (`spec/stdlib.md`, "Float functions"). An exactly
+    /// rounded operation lowers to an LLVM intrinsic; one with no intrinsic calls the C math library.
+    fn float_method(&mut self, op: FloatOp, args: &'a [tir::Expr]) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let ft = match &args[0].ty {
+            Ty::Float(f) => *f,
+            other => return Err(format!("a floating-point method on `{other}`")),
+        };
+        let mut values = Vec::with_capacity(args.len());
+        for a in args {
+            let v = self.expr_mode(a, Mode::Use)?;
+            values.push(self.need(v, &a.ty));
+        }
+        let t: BasicTypeEnum<'ctx> = match ft {
+            FloatTy::F32 => self.cx.f32_type().into(),
+            FloatTy::F64 => self.cx.f64_type().into(),
+        };
+        if op == FloatOp::ToBits {
+            let bits_ty: BasicTypeEnum<'ctx> = match ft {
+                FloatTy::F32 => self.cx.i32_type().into(),
+                FloatTy::F64 => self.cx.i64_type().into(),
+            };
+            let bits = self.builder.build_bit_cast(values[0].into_float_value(), bits_ty, "bits").map_err(llvm_err)?;
+            return Ok(Some(bits));
+        }
+        let call_args: Vec<BasicMetadataValueEnum<'ctx>> = values.iter().map(|v| (*v).into()).collect();
+        let math = |base: &str| c_math_name(ft, base);
+        let v = match op {
+            FloatOp::Abs => self.intrinsic_call("llvm.fabs", &[t], &call_args)?,
+            FloatOp::Sqrt => self.intrinsic_call("llvm.sqrt", &[t], &call_args)?,
+            FloatOp::Cbrt => {
+                let name = math("cbrt");
+                self.c_math_call(&name, &[t], t, &call_args)?
+            }
+            FloatOp::Powi => self.intrinsic_call("llvm.powi", &[t, self.cx.i32_type().into()], &call_args)?,
+            FloatOp::Powf => self.intrinsic_call("llvm.pow", &[t], &call_args)?,
+            FloatOp::Exp => self.intrinsic_call("llvm.exp", &[t], &call_args)?,
+            FloatOp::Exp2 => self.intrinsic_call("llvm.exp2", &[t], &call_args)?,
+            FloatOp::Ln => self.intrinsic_call("llvm.log", &[t], &call_args)?,
+            FloatOp::Log2 => self.intrinsic_call("llvm.log2", &[t], &call_args)?,
+            FloatOp::Log10 => self.intrinsic_call("llvm.log10", &[t], &call_args)?,
+            FloatOp::Floor => self.intrinsic_call("llvm.floor", &[t], &call_args)?,
+            FloatOp::Ceil => self.intrinsic_call("llvm.ceil", &[t], &call_args)?,
+            FloatOp::Round => self.intrinsic_call("llvm.round", &[t], &call_args)?,
+            FloatOp::RoundTiesEven => self.round_ties_even(values[0].into_float_value())?,
+            FloatOp::Trunc => self.intrinsic_call("llvm.trunc", &[t], &call_args)?,
+            FloatOp::Sin => self.intrinsic_call("llvm.sin", &[t], &call_args)?,
+            FloatOp::Cos => self.intrinsic_call("llvm.cos", &[t], &call_args)?,
+            FloatOp::Tan => self.intrinsic_call("llvm.tan", &[t], &call_args)?,
+            FloatOp::Asin => self.intrinsic_call("llvm.asin", &[t], &call_args)?,
+            FloatOp::Acos => self.intrinsic_call("llvm.acos", &[t], &call_args)?,
+            FloatOp::Atan => self.intrinsic_call("llvm.atan", &[t], &call_args)?,
+            FloatOp::Atan2 => self.intrinsic_call("llvm.atan2", &[t], &call_args)?,
+            FloatOp::Sinh => self.intrinsic_call("llvm.sinh", &[t], &call_args)?,
+            FloatOp::Cosh => self.intrinsic_call("llvm.cosh", &[t], &call_args)?,
+            FloatOp::Tanh => self.intrinsic_call("llvm.tanh", &[t], &call_args)?,
+            FloatOp::Hypot => {
+                let name = math("hypot");
+                self.c_math_call(&name, &[t, t], t, &call_args)?
+            }
+            FloatOp::MulAdd => self.intrinsic_call("llvm.fma", &[t], &call_args)?,
+            FloatOp::Copysign => self.intrinsic_call("llvm.copysign", &[t], &call_args)?,
+            FloatOp::ToBits => unreachable!("handled before the call"),
+        };
+        Ok(Some(v))
+    }
+
+    /// Calls an LLVM intrinsic, declaring it for the parameter types that choose an overloaded one.
+    fn intrinsic_call(
+        &mut self,
+        name: &str,
+        params: &[BasicTypeEnum<'ctx>],
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<BasicValueEnum<'ctx>> {
+        let intrinsic = Intrinsic::find(name).ok_or_else(|| format!("missing LLVM intrinsic `{name}`"))?;
+        let decl = intrinsic
+            .get_declaration(self.module, params)
+            .ok_or_else(|| format!("cannot declare the LLVM intrinsic `{name}`"))?;
+        self.call_value(decl, args)
+    }
+
+    /// `round_ties_even` without `llvm.roundeven`, whose lowering calls the C library's `roundeven`: the MSVC
+    /// CRT has no such symbol. Round halfway cases away from zero, then step a tie toward zero when that leaves
+    /// an odd integer. Every step is exact, and none depends on the current rounding mode. The `copysign` keeps
+    /// a result of zero negative when the input was (`(-0.5).round_ties_even()` is `-0.0`).
+    fn round_ties_even(&mut self, x: FloatValue<'ctx>) -> GenResult<BasicValueEnum<'ctx>> {
+        let float_ty = x.get_type();
+        let t: BasicTypeEnum<'ctx> = float_ty.into();
+        let rounded = self.intrinsic_call("llvm.round", &[t], &[x.into()])?.into_float_value();
+        let diff = self.builder.build_float_sub(x, rounded, "round.diff").map_err(llvm_err)?;
+        let abs_diff = self.intrinsic_call("llvm.fabs", &[t], &[diff.into()])?.into_float_value();
+        let half = float_ty.const_float(0.5);
+        let one = float_ty.const_float(1.0);
+        let is_tie =
+            self.builder.build_float_compare(FloatPredicate::OEQ, abs_diff, half, "round.tie").map_err(llvm_err)?;
+        let halved = self.builder.build_float_mul(rounded, half, "round.halved").map_err(llvm_err)?;
+        let truncated = self.intrinsic_call("llvm.trunc", &[t], &[halved.into()])?.into_float_value();
+        let is_even =
+            self.builder.build_float_compare(FloatPredicate::OEQ, halved, truncated, "round.even").map_err(llvm_err)?;
+        let is_odd = self.builder.build_not(is_even, "round.odd").map_err(llvm_err)?;
+        let fix = self.builder.build_and(is_tie, is_odd, "round.fix").map_err(llvm_err)?;
+        let signed_one = self.intrinsic_call("llvm.copysign", &[t], &[one.into(), x.into()])?.into_float_value();
+        let stepped = self.builder.build_float_sub(rounded, signed_one, "round.stepped").map_err(llvm_err)?;
+        let stepped = self.intrinsic_call("llvm.copysign", &[t], &[stepped.into(), x.into()])?;
+        let rounded_value: BasicValueEnum<'ctx> = rounded.into();
+        self.builder.build_select(fix, stepped, rounded_value, "round.even").map_err(llvm_err)
+    }
+
+    /// Calls the C math library function `name`, declaring it with the given signature.
+    fn c_math_call(
+        &mut self,
+        name: &str,
+        params: &[BasicTypeEnum<'ctx>],
+        ret: BasicTypeEnum<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<BasicValueEnum<'ctx>> {
+        let param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = params.iter().map(|t| (*t).into()).collect();
+        let fn_ty = ret.fn_type(&param_tys, false);
+        let decl = match self.module.get_function(name) {
+            Some(existing) if existing.get_type() == fn_ty => existing,
+            Some(_) => return Err(format!("the C math function `{name}` conflicts with another declaration")),
+            None => self.module.add_function(name, fn_ty, Some(Linkage::External)),
+        };
+        self.call_value(decl, args)
+    }
+
+    fn call_value(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<BasicValueEnum<'ctx>> {
+        let call = self.builder.build_call(f, args, "").map_err(llvm_err)?;
+        call.try_as_basic_value().basic().ok_or_else(|| format!("`{}` returns a value", f.get_name().to_string_lossy()))
+    }
+
     /// The pointer and length of a `str` expression's bytes.
     fn str_parts(&mut self, e: &'a tir::Expr) -> GenResult<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>)> {
         let s = self.expr_mode(e, Mode::Use)?;
@@ -1350,5 +1498,14 @@ pub(super) fn wrapping_op(m: Method) -> BinOp {
         Method::WrappingAdd | Method::CheckedAdd => BinOp::Add,
         Method::WrappingSub | Method::CheckedSub => BinOp::Sub,
         _ => BinOp::Mul,
+    }
+}
+
+/// The C math library symbol for `base` at the given precision: the single-precision functions take an `f`
+/// suffix (`sinf`, `atan2f`), as C99 defines them.
+fn c_math_name(ft: FloatTy, base: &str) -> String {
+    match ft {
+        FloatTy::F32 => format!("{base}f"),
+        FloatTy::F64 => base.to_string(),
     }
 }

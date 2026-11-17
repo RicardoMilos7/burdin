@@ -1110,6 +1110,11 @@ fn unix_link_args(object: &Path, output: &Path, libs: &[String], opts: &LinkOpti
             None => args.push(format!("-l{lib}").into()),
         }
     }
+    // The float functions (`spec/stdlib.md`, "Float functions") call the C math library. It is a separate
+    // library on Linux; macOS folds it into libSystem, where `-lm` still links.
+    if !libs.iter().any(|l| l == "m") {
+        args.push("-lm".into());
+    }
     args
 }
 
@@ -1339,6 +1344,14 @@ mod tests {
             &["m".to_string()],
             &LinkOptions::default(),
         ));
+        assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
+    }
+
+    #[test]
+    fn unix_link_args_link_the_math_library_once() {
+        // The float functions call libm, so every Unix program links it; naming it again with `--link-lib m`
+        // does not repeat the flag.
+        let args = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &[], &LinkOptions::default()));
         assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
     }
 
