@@ -19,8 +19,9 @@
 //! needs a PDB the driver does not produce).
 //!
 //! **Stack overflow.** The main thread gets an alternate signal stack and a `SIGSEGV` handler on Unix (an
-//! `AddVectoredExceptionHandler` filter for `EXCEPTION_STACK_OVERFLOW` on Windows), so a deep recursion ends with
-//! `panic: stack overflow` instead of a raw fault.
+//! `AddVectoredExceptionHandler` filter for `EXCEPTION_STACK_OVERFLOW` on Windows, with a 64 KiB stack guarantee so
+//! the filter always has room to flush and report), so a deep recursion ends with `panic: stack overflow` instead
+//! of a raw fault.
 //!
 //! The functions are internal to the module and keep the names they had as C functions (`burdin_rt_*`).
 
@@ -44,6 +45,10 @@ const IN_BUF: u32 = 4096;
 const BACKTRACE_FRAMES: u32 = 64;
 /// The size of the alternate signal stack, so a `SIGSEGV` handler still runs after the main stack is gone.
 const ALT_STACK: u32 = 64 * 1024;
+/// The stack guarantee the Windows guard reserves, so the vectored filter still has room after the main stack is
+/// gone. The system's default leaves only a few kilobytes once the exception dispatcher has run, which is marginal
+/// for the flush and the write; the handler could fault and end the process without its message.
+const STACK_GUARANTEE: u32 = 64 * 1024;
 /// The checking allocator's header: `{ next, size, site, site_len, magic }`.
 const HEADER: u64 = 40;
 /// The magic word that marks a live checking-allocator block.
@@ -1868,6 +1873,13 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
     fn install_stack_guard_windows(&mut self, handler: FunctionValue<'ctx>) -> GenResult<()> {
         let (i32_ty, ptr_ty) = (self.i32(), self.ptr_ty);
+        // The system's default guarantee is only a few kilobytes once the exception dispatcher has run, which leaves
+        // the filter too little stack to flush and write reliably. Ask for the same room the Unix handler gets, so
+        // the message is written every time instead of the process dying silently on some runs.
+        let guarantee = libc(self.module, "SetThreadStackGuarantee", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let request = self.b.build_alloca(i32_ty, "stack_guarantee").map_err(llvm_err)?;
+        self.b.build_store(request, i32_ty.const_int(u64::from(STACK_GUARANTEE), false)).map_err(llvm_err)?;
+        self.call(guarantee, &[request.into()])?;
         let add =
             libc(self.module, "AddVectoredExceptionHandler", ptr_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false));
         self.call(add, &[i32_ty.const_int(1, false).into(), handler.as_global_value().as_pointer_value().into()])?;
@@ -7147,5 +7159,28 @@ mod tests {
         assert!(names.iter().any(|name| name == "."), "the listing has `.`: {names:?}");
         assert!(names.iter().any(|name| name == ".."), "the listing has `..`: {names:?}");
         assert!(names.iter().any(|name| name == "probe-name.txt"), "the entry name is read: {names:?}");
+    }
+
+    /// The Windows filter runs on what is left of the main stack, after the exception dispatcher has used part of
+    /// it. The system's default guarantee leaves too little for the flush and the write, so the guard reserves a
+    /// large one before it registers the filter; without it the process can die without its message (which made
+    /// `m02_basics/stack_overflow_aborts` flaky on Windows).
+    #[test]
+    fn the_windows_stack_guard_reserves_room_for_its_handler() {
+        let cx = Context::create();
+        let module = cx.create_module("runtime");
+        let ptr_ty = cx.ptr_type(AddressSpace::default());
+        let usize_ty = cx.i64_type();
+        let string_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into()], false);
+        generate(&cx, &module, usize_ty, string_ty, true, false, false).expect("the runtime generates");
+        let ir = module.print_to_string().to_string();
+        let guarantee =
+            ir.find("call i32 @SetThreadStackGuarantee").expect("the Windows guard reserves a stack guarantee");
+        let filter = ir.find("call ptr @AddVectoredExceptionHandler").expect("the Windows guard installs its filter");
+        assert!(guarantee < filter, "the guarantee is reserved before the filter is installed:\n{ir}");
+        assert!(
+            ir.contains(&format!("store i32 {STACK_GUARANTEE}, ptr")),
+            "the guarantee is {STACK_GUARANTEE} bytes:\n{ir}"
+        );
     }
 }

@@ -757,6 +757,12 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   package with each job count and compares the diagnostics of a 12-module failing package between 1 and 8 workers.
   **Checking is still sequential**: the issue conditions parallel checking on a query-based library, which does not
   exist yet. Parsing is the phase that scales without one.
+- **Windows stack-overflow determinism.** The Windows vectored filter ran on the system's default stack guarantee,
+  which left only a few kilobytes once the exception dispatcher had run; the handler's flush and write could then
+  fault, so the process occasionally ended without `panic: stack overflow`
+  (`m02_basics/stack_overflow_aborts` was flaky on the `windows` CI job). `burdin_rt_install_stack_guard` now calls
+  `SetThreadStackGuarantee` for 64 KiB before it adds the filter, matching the Unix alternate signal stack; a
+  runtime unit test pins the call and the size.
 
 ## Decisions already made (do not reopen without a reason)
 

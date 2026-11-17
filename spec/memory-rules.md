@@ -358,7 +358,8 @@ anything to stderr, so the observable order is unchanged.
 **DR10a Stack overflow.** The main thread has a guard: exceeding its stack prints `panic: stack overflow` to stderr
 and ends the process with status 134. On Unix an alternate signal stack and a `SIGSEGV` handler distinguish a fault
 in the stack's guard region from another fault (which prints `panic: invalid memory access`); on Windows a vectored
-exception filter handles `EXCEPTION_STACK_OVERFLOW`. No drops run.
+exception filter handles `EXCEPTION_STACK_OVERFLOW`, with a 64 KiB stack guarantee reserved so the filter always has
+room to flush and write the message. No drops run.
 
 Tests: `m02_basics/*_aborts`, `panic_reports_location`, `panic_flushes_stdout`, `panic_runs_no_drops`,
 `panic_backtrace`, `panic_backtrace_names`, `stack_overflow_aborts`; `tests/check_debug_info.py`.

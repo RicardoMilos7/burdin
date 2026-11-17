@@ -6,6 +6,11 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- The Windows stack-overflow guard reserves a 64 KiB stack guarantee (`SetThreadStackGuarantee`) before it registers
+  its vectored filter. The system's default left the filter only a few kilobytes once the exception dispatcher had
+  run, so the handler could fault before printing `panic: stack overflow`, which made
+  `tests/m02_basics/stack_overflow_aborts.bd` flaky on the `windows` CI job; the guard now has the same room the
+  Unix alternate signal stack gives its handler.
 - Mutable iteration over `List`, arrays, `Map` values, and `Deque` (issue #709).
   - `for x in mut xs` and `xs.iter_mut()` yield `&mut T` (a map yields `(&K, &mut V)`): `*x = ...` rewrites each
     element in place. The collection is borrowed exclusively for the loop, so pushing, inserting, reading it, or
@@ -18,7 +23,6 @@ close-out checklist in `AGENTS.md`).
     copy, so a view copied out of a loop, or out of `get_mut`, keeps the collection borrowed (E0111).
   - A mutable view `&mut X` satisfies the interface bounds `X` does, like a shared one.
   - The rules are `spec/iterators.md` and `spec/memory-rules.md` IT15; the tests are `tests/m24_stdlib/iter_mut_*`.
-
 - Allocator follow-up (sub-issues #331-#333 of #182): the interface and metadata decision, the global libc allocator,
   and drop/clone glue through a stored allocator are verified end to end.
   - `List.contains`, `Map.get`, `Map.remove`, and `Map.contains_key` borrow their key, as `spec/stdlib.md` says,
