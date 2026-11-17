@@ -529,6 +529,8 @@ impl<'a> Analyzer<'a> {
                 match b {
                     // The old value comes out of the place, so a view result derives from it.
                     tir::Builtin::Replace => origins.into_iter().next().unwrap_or_default(),
+                    // The text views the bytes it was made from.
+                    tir::Builtin::ViewAsText => origins.into_iter().next().unwrap_or_default(),
                     // An empty container owns its (empty) buffer; storing it borrows nothing. The same holds for
                     // a container with a stored allocator and for a `Shared` cell.
                     tir::Builtin::ListNew
@@ -562,6 +564,7 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::MapEntryOrInsertWith
                         | tir::Method::SharedGet
                         | tir::Method::Chars
+                        | tir::Method::AsBytes
                         | tir::Method::Iter
                         | tir::Method::IterMut
                         | tir::Method::IterNext
@@ -592,6 +595,7 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::MapEntryOrInsertWith
                     | tir::Method::SharedGet
                     | tir::Method::Chars
+                    | tir::Method::AsBytes
                     // An iterator borrows the collection it walks; the items it yields point into it.
                     | tir::Method::Iter
                     | tir::Method::IterMut
