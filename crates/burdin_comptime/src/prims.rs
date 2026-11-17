@@ -615,11 +615,12 @@ impl<'p> Interp<'p, '_> {
             | Builtin::RawRealloc
             | Builtin::RawDealloc
             | Builtin::ListNewIn
+            | Builtin::ListWithCapacityIn
             | Builtin::MapNewIn
             | Builtin::HeapNewIn => {
                 return Err(impure("allocating memory with an explicit allocator", span));
             }
-            Builtin::ListNew => Value::List(Vec::new()),
+            Builtin::ListNew | Builtin::ListWithCapacity => Value::List(Vec::new()),
             Builtin::MapNew => Value::Map(Vec::new()),
             Builtin::IntParse(int_ty) => {
                 let parsed = self.peek(&args[0], |v| parse_int(v.bytes(), int_ty))?;
@@ -732,6 +733,127 @@ impl<'p> Interp<'p, '_> {
             Method::ListLast => {
                 let last = self.peek(recv, |v| v.elems().last().cloned())?;
                 Value::Opt(last.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+            }
+            Method::ListFirst => {
+                let first = self.peek(recv, |v| v.elems().first().cloned())?;
+                Value::Opt(first.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+            }
+            Method::ListGet => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let found = self.peek(recv, |v| usize::try_from(index).ok().and_then(|i| v.elems().get(i).cloned()))?;
+                Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+            }
+            Method::ListGetMut | Method::ListFirstMut | Method::ListLastMut => {
+                return Err(impure("a mutable view of a list element", span));
+            }
+            // The interpreter models a list by its elements: there is no capacity to change.
+            Method::ListCapacity => Value::Int(self.peek(recv, |v| v.elems().len())? as i128),
+            Method::ListIsEmpty => Value::Bool(self.peek(recv, |v| v.elems().is_empty())?),
+            Method::ListReserve | Method::ListReserveExact => {
+                let _ = self.eval(&args[1], Mode::Use)?.int();
+                Value::Unit
+            }
+            Method::ListShrinkToFit => Value::Unit,
+            Method::ListSwap => {
+                let a = self.eval(&args[1], Mode::Use)?.int();
+                let b = self.eval(&args[2], Mode::Use)?.int();
+                let place = self.eval_place(recv)?;
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let (i, j) = (usize::try_from(a).unwrap_or(usize::MAX), usize::try_from(b).unwrap_or(usize::MAX));
+                if i >= len || j >= len {
+                    return Err(bounds(a.max(b), len, span));
+                }
+                self.charge(1, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.swap(i, j);
+                Value::Unit
+            }
+            Method::ListSwapRemove => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let place = self.eval_place(recv)?;
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let i = usize::try_from(index).unwrap_or(usize::MAX);
+                if i >= len {
+                    return Err(bounds(index, len, span));
+                }
+                self.charge(1, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.swap_remove(i)
+            }
+            Method::ListTruncate => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let elem = match &recv.ty {
+                    Ty::List(t, _) => (**t).clone(),
+                    _ => Ty::Unit,
+                };
+                let place = self.eval_place(recv)?;
+                let removed = {
+                    let list = list_mut(self.place_mut(&place, span)?, span)?;
+                    let i = usize::try_from(index).unwrap_or(usize::MAX);
+                    if i >= list.len() { Vec::new() } else { list.split_off(i) }
+                };
+                for v in removed {
+                    self.charge(1, span)?;
+                    self.drop_value(v, &elem, span)?;
+                }
+                Value::Unit
+            }
+            Method::ListSplitOff => {
+                let index = self.eval(&args[1], Mode::Use)?.int();
+                let place = self.eval_place(recv)?;
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let i = usize::try_from(index).unwrap_or(usize::MAX);
+                if i > len {
+                    return Err(bounds(index, len, span));
+                }
+                self.charge((len - i) as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                Value::List(list.split_off(i))
+            }
+            Method::ListAppend => {
+                let place = self.eval_place(recv)?;
+                let other = self.eval(&args[1], Mode::Move)?.deref();
+                let items = match other {
+                    Value::List(items) => items,
+                    Value::Moved => Vec::new(),
+                    other => return Err(internal(format!("`append` of {other:?}"), span)),
+                };
+                self.charge(items.len() as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.extend(items);
+                Value::Unit
+            }
+            Method::ListDrain => {
+                let place = self.eval_place(recv)?;
+                let range = self.eval(&args[1], Mode::Use)?;
+                let (lo, hi) = range_bounds(&range);
+                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                let len = self.peek(recv, |v| v.elems().len())?;
+                let lo = usize::try_from(lo).unwrap_or(usize::MAX);
+                let hi = usize::try_from(hi).unwrap_or(usize::MAX);
+                let end = if inclusive {
+                    if hi >= len {
+                        return Err(bounds(hi as i128, len, span));
+                    }
+                    hi + 1
+                } else {
+                    hi
+                };
+                if end > len || lo > end {
+                    return Err(bounds(end as i128, len, span));
+                }
+                self.charge((end - lo) as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                let removed: Vec<Value> = list.splice(lo..end, std::iter::empty()).collect();
+                Value::Items(VecDeque::from(removed))
+            }
+            Method::ListExtendFromSlice => {
+                let place = self.eval_place(recv)?;
+                let items = self.peek(&args[1], |v| v.elems().to_vec())?;
+                self.charge(items.len() as u64, span)?;
+                let list = list_mut(self.place_mut(&place, span)?, span)?;
+                list.extend(items);
+                Value::Unit
             }
             Method::ListInsert => {
                 let place = self.eval_place(recv)?;

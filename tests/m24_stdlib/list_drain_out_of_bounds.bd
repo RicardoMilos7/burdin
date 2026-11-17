@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: drain: range out of bounds
+//> before
+
+// `drain` checks both ends of the range against the length and rejects a reversed range.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    println("before")
+    let _ = xs.drain(1..3)
+}

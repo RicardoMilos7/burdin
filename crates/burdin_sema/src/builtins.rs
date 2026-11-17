@@ -355,6 +355,49 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("last", Ty::List(t, _)) => {
             (Method::ListLast, vec![], Ty::Option(Box::new(Ty::Ref { mutable: false, inner: t.clone() })))
         }
+        ("first", Ty::List(t, _)) => {
+            (Method::ListFirst, vec![], Ty::Option(Box::new(Ty::Ref { mutable: false, inner: t.clone() })))
+        }
+        ("first_mut", Ty::List(t, _)) => {
+            (Method::ListFirstMut, vec![], Ty::Option(Box::new(Ty::Ref { mutable: true, inner: t.clone() })))
+        }
+        ("last_mut", Ty::List(t, _)) => {
+            (Method::ListLastMut, vec![], Ty::Option(Box::new(Ty::Ref { mutable: true, inner: t.clone() })))
+        }
+        ("get", Ty::List(t, _)) => {
+            let view = Ty::Ref { mutable: false, inner: t.clone() };
+            (Method::ListGet, vec![plain(Ty::Int(IntTy::Usize))], Ty::Option(Box::new(view)))
+        }
+        ("get_mut", Ty::List(t, _)) => {
+            let view = Ty::Ref { mutable: true, inner: t.clone() };
+            (Method::ListGetMut, vec![plain(Ty::Int(IntTy::Usize))], Ty::Option(Box::new(view)))
+        }
+        ("capacity", Ty::List(_, _)) => (Method::ListCapacity, vec![], Ty::Int(IntTy::Usize)),
+        ("is_empty", Ty::List(_, _)) => (Method::ListIsEmpty, vec![], Ty::Bool),
+        ("reserve", Ty::List(_, _)) => (Method::ListReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        ("reserve_exact", Ty::List(_, _)) => (Method::ListReserveExact, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        ("shrink_to_fit", Ty::List(_, _)) => (Method::ListShrinkToFit, vec![], Ty::Unit),
+        ("swap", Ty::List(_, _)) => {
+            (Method::ListSwap, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize))], Ty::Unit)
+        }
+        ("swap_remove", Ty::List(t, _)) => (Method::ListSwapRemove, vec![plain(Ty::Int(IntTy::Usize))], elem(t)),
+        ("truncate", Ty::List(_, _)) => (Method::ListTruncate, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        // The tail moves into a new list with the default allocator: a stored allocator value cannot be duplicated.
+        ("split_off", Ty::List(t, _)) => {
+            (Method::ListSplitOff, vec![plain(Ty::Int(IntTy::Usize))], Ty::List(t.clone(), burdin_tir::Alloc::Global))
+        }
+        ("append", Ty::List(t, alloc)) => {
+            (Method::ListAppend, vec![value_param(Ty::List(t.clone(), alloc.clone()))], Ty::Unit)
+        }
+        // `drain` is checked separately: it takes either range spelling (`call.rs`).
+        ("drain", Ty::List(t, _)) => (
+            Method::ListDrain,
+            vec![plain(Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false))],
+            Ty::ListIntoIter(t.clone(), burdin_tir::Alloc::Global),
+        ),
+        ("extend_from_slice", Ty::List(t, _)) => {
+            (Method::ListExtendFromSlice, vec![plain(Ty::Slice(t.clone()))], Ty::Unit)
+        }
         ("insert", Ty::List(t, _)) => {
             (Method::ListInsert, vec![plain(Ty::Int(IntTy::Usize)), value_param(elem(t))], Ty::Unit)
         }
@@ -790,6 +833,59 @@ mod tests {
             Ty::Int(IntTy::U32)
         );
         assert_eq!(builtin_sig(Builtin::FloatFromBits(FloatTy::F32), &Globals::default()).ret, Ty::Float(FloatTy::F32));
+    }
+
+    #[test]
+    fn list_capacity_and_access_methods_resolve() {
+        let int = Ty::Int(IntTy::I32);
+        let list = Ty::List(Box::new(int.clone()), burdin_tir::Alloc::Global);
+        let (found, params, ret) = method("capacity", &list).unwrap();
+        assert_eq!(found, Method::ListCapacity);
+        assert!(params.is_empty());
+        assert_eq!(ret, Ty::Int(IntTy::Usize));
+
+        let (found, params, ret) = method("reserve_exact", &list).unwrap();
+        assert_eq!(found, Method::ListReserveExact);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].ty, Ty::Int(IntTy::Usize));
+        assert_eq!(ret, Ty::Unit);
+
+        let (found, _, ret) = method("get_mut", &list).unwrap();
+        assert_eq!(found, Method::ListGetMut);
+        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: true, inner: Box::new(int.clone()) })));
+
+        let (found, _, ret) = method("first", &list).unwrap();
+        assert_eq!(found, Method::ListFirst);
+        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: false, inner: Box::new(int.clone()) })));
+
+        let (found, params, ret) = method("split_off", &list).unwrap();
+        assert_eq!(found, Method::ListSplitOff);
+        assert_eq!(params.len(), 1);
+        assert_eq!(ret, Ty::List(Box::new(int.clone()), burdin_tir::Alloc::Global));
+    }
+
+    #[test]
+    fn list_bulk_methods_resolve_for_every_allocator() {
+        let int = Ty::Int(IntTy::I32);
+        let arena = burdin_tir::Alloc::Value(Box::new(Ty::Int(IntTy::I64)));
+        let list = Ty::List(Box::new(int.clone()), arena.clone());
+        // `append` takes a list of the same type and owns it; `drain` yields an owning iterator with the default
+        // allocator; `extend_from_slice` takes an element view.
+        let (found, params, ret) = method("append", &list).unwrap();
+        assert_eq!(found, Method::ListAppend);
+        assert_eq!(params[0].ty, list);
+        assert!(params[0].own);
+        assert_eq!(ret, Ty::Unit);
+
+        let (found, params, ret) = method("drain", &list).unwrap();
+        assert_eq!(found, Method::ListDrain);
+        assert_eq!(params[0].ty, Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false));
+        assert_eq!(ret, Ty::ListIntoIter(Box::new(int.clone()), burdin_tir::Alloc::Global));
+
+        let (found, params, ret) = method("extend_from_slice", &list).unwrap();
+        assert_eq!(found, Method::ListExtendFromSlice);
+        assert_eq!(params[0].ty, Ty::Slice(Box::new(int.clone())));
+        assert_eq!(ret, Ty::Unit);
     }
 
     #[test]

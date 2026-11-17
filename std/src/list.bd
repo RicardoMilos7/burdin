@@ -36,11 +36,6 @@ priv fn __test<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
     f(&x)
 }
 
-/// Whether the list has no elements.
-fn List<T>.is_empty(self): bool {
-    self.len() == 0
-}
-
 /// Keeps the elements `f` accepts, in order, and drops the rest. `f` sees a view of each element.
 fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
     let mut f = f
@@ -143,27 +138,4 @@ fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone {
     while self.len() < new_len {
         self.push(value.clone())
     }
-}
-
-/// Drops the elements from index `len` on. A list that is already shorter is unchanged.
-fn List<T>.truncate(mut self, len: usize) {
-    while self.len() > len {
-        let _ = self.pop()
-    }
-}
-
-/// Exchanges the elements at `a` and `b`. Panics when either index is out of bounds.
-fn List<T>.swap(mut self, a: usize, b: usize) {
-    if a >= self.len() || b >= self.len() {
-        panic("swap: index out of bounds")
-    }
-    if a == b {
-        return
-    }
-    let low = if a < b { a } else { b }
-    let high = if a < b { b } else { a }
-    let second = self.remove(high)
-    let first = self.remove(low)
-    self.insert(low, second)
-    self.insert(high, first)
 }

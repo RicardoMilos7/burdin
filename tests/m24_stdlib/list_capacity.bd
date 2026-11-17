@@ -1,0 +1,39 @@
+//@ run
+//> 0 8
+//> 3 8
+//> 3 103
+//> 3 203
+//> 3 3
+//> 0 0
+//> 4 2 true
+//> 2 5
+
+// `with_capacity` makes room up front, `capacity` reports it, `reserve` and `reserve_exact` grow the buffer,
+// and `shrink_to_fit` releases the space past the length. The same operations work with a stored allocator:
+// `with_capacity_in` allocates through it, and every later growth does too.
+
+fn main() {
+    let mut xs = List<i32>.with_capacity(8)
+    println("{} {}", xs.len(), xs.capacity())
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    println("{} {}", xs.len(), xs.capacity())
+    xs.reserve(100)
+    println("{} {}", xs.len(), xs.capacity())
+    xs.reserve_exact(200)
+    println("{} {}", xs.len(), xs.capacity())
+    xs.shrink_to_fit()
+    println("{} {}", xs.len(), xs.capacity())
+
+    let empty = List<i32>.new()
+    println("{} {}", empty.len(), empty.capacity())
+
+    let mut ys = List<i32>.with_capacity_in(4, Arena.new())
+    ys.push(7)
+    ys.push(8)
+    println("{} {} {}", ys.capacity(), ys.len(), ys.capacity() >= 2)
+    ys.reserve_exact(3)
+    ys.reserve_exact(1)
+    println("{} {}", ys.len(), ys.capacity())
+}

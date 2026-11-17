@@ -28,6 +28,11 @@ pub enum Builtin {
     SharedNew,
     /// `List<T>.new_in(alloc)`: an empty list whose buffer uses the allocator value (`spec/allocators.md`, AL5).
     ListNewIn,
+    /// `List<T>.with_capacity(n)`: an empty list with room for `n` elements in the default allocator.
+    ListWithCapacity,
+    /// `List<T>.with_capacity_in(n, alloc)`: an empty list with room for `n` elements, allocated through the
+    /// allocator value, which the list then stores.
+    ListWithCapacityIn,
     /// `Map<K, V>.new_in(alloc)`.
     MapNewIn,
     /// `Heap.new_in(alloc, value)`: one heap allocation through the allocator value.
@@ -258,6 +263,41 @@ pub enum Method {
     ListPop,
     /// `List<T>.last(): Option<&T>`: a view of the last element.
     ListLast,
+    /// `List<T>.first(): Option<&T>`: a view of the first element.
+    ListFirst,
+    /// `List<T>.first_mut(): Option<&mut T>`: a mutable view of the first element.
+    ListFirstMut,
+    /// `List<T>.last_mut(): Option<&mut T>`: a mutable view of the last element.
+    ListLastMut,
+    /// `List<T>.get(index): Option<&T>`: a view of one element, or `None` when the index is out of bounds.
+    ListGet,
+    /// `List<T>.get_mut(index): Option<&mut T>`: a mutable view of one element, or `None`.
+    ListGetMut,
+    /// `List<T>.capacity(): usize`: how many elements fit without growing.
+    ListCapacity,
+    /// `List<T>.is_empty(): bool`: whether the list has no elements.
+    ListIsEmpty,
+    /// `List<T>.reserve(additional)`: makes room for `additional` more elements.
+    ListReserve,
+    /// `List<T>.reserve_exact(additional)`: makes room for exactly `additional` more elements.
+    ListReserveExact,
+    /// `List<T>.shrink_to_fit()`: releases the capacity past the length.
+    ListShrinkToFit,
+    /// `List<T>.swap(a, b)`: exchanges two elements.
+    ListSwap,
+    /// `List<T>.swap_remove(index): T`: removes one element by moving the last element into its place.
+    ListSwapRemove,
+    /// `List<T>.truncate(len)`: drops the elements from `len` on.
+    ListTruncate,
+    /// `List<T>.split_off(index): List<T>`: moves the tail into a new list with the default allocator.
+    ListSplitOff,
+    /// `List<T>.append(other)`: moves every element of `other` to the end, then frees `other`'s buffer.
+    ListAppend,
+    /// `List<T>.drain(range): ListIntoIter<T>`: removes a range and yields the removed elements as an owning
+    /// iterator over a new buffer with the default allocator.
+    ListDrain,
+    /// `List<T>.extend_from_slice(other)`: appends a clone of every element of a slice view.
+    ListExtendFromSlice,
     /// `List<T>.insert(index, value)`: inserts at `index`.
     ListInsert,
     /// `List<T>.remove(index): T`: removes and returns the element at `index`.
@@ -345,6 +385,7 @@ impl Method {
         match self {
             Method::Push => index == 1,
             Method::ListInsert => index == 2,
+            Method::ListAppend => index == 1,
             Method::MapInsert | Method::MapGetOrInsert => index == 1 || index == 2,
             // `entry` takes the key it will insert. The entry operations consume the entry and the value (or the
             // closure) they are given.
@@ -369,6 +410,19 @@ impl Method {
                 | Method::ListInsert
                 | Method::ListRemove
                 | Method::ListSort
+                | Method::ListReserve
+                | Method::ListReserveExact
+                | Method::ListShrinkToFit
+                | Method::ListSwap
+                | Method::ListSwapRemove
+                | Method::ListTruncate
+                | Method::ListSplitOff
+                | Method::ListAppend
+                | Method::ListDrain
+                | Method::ListExtendFromSlice
+                | Method::ListGetMut
+                | Method::ListFirstMut
+                | Method::ListLastMut
                 | Method::Clear
                 | Method::MapInsert
                 | Method::MapGetOrInsert
@@ -386,6 +440,11 @@ impl Method {
         matches!(
             self,
             Method::ListLast
+                | Method::ListFirst
+                | Method::ListFirstMut
+                | Method::ListLastMut
+                | Method::ListGet
+                | Method::ListGetMut
                 | Method::MapGet
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
@@ -424,6 +483,13 @@ mod tests {
         }
         assert!(Method::Unwrap.owns_argument(0));
         assert!(Method::Expect.owns_argument(0));
+        // `append` takes the other list by ownership; the capacity operations take only a count.
+        assert!(Method::ListAppend.owns_argument(1));
+        assert!(!Method::ListAppend.owns_argument(0));
+        for method in [Method::ListReserve, Method::ListReserveExact, Method::ListTruncate, Method::ListDrain] {
+            assert!(!method.owns_argument(0), "{method:?}");
+            assert!(!method.owns_argument(1), "{method:?}");
+        }
         assert!(!Method::Len.owns_argument(0));
         // The lookup methods borrow their key (`contains(self, value: T)`, `get(self, key: K)`).
         assert!(!Method::ListContains.owns_argument(1));
@@ -443,6 +509,19 @@ mod tests {
             Method::ListInsert,
             Method::ListRemove,
             Method::ListSort,
+            Method::ListReserve,
+            Method::ListReserveExact,
+            Method::ListShrinkToFit,
+            Method::ListSwap,
+            Method::ListSwapRemove,
+            Method::ListTruncate,
+            Method::ListSplitOff,
+            Method::ListAppend,
+            Method::ListDrain,
+            Method::ListExtendFromSlice,
+            Method::ListGetMut,
+            Method::ListFirstMut,
+            Method::ListLastMut,
             Method::Clear,
             Method::MapInsert,
             Method::MapGetOrInsert,
@@ -456,8 +535,23 @@ mod tests {
         for method in [Method::ToString, Method::Len, Method::Clone, Method::ListLast, Method::MapGet, Method::AsStr] {
             assert!(!method.mutates_receiver(), "{method:?}");
         }
+        // The capacity and length queries only read the list and hand out no view.
+        for method in [Method::ListCapacity, Method::ListIsEmpty, Method::ListFirst, Method::ListGet] {
+            assert!(!method.mutates_receiver(), "{method:?}");
+        }
+        for method in [Method::ListCapacity, Method::ListIsEmpty] {
+            assert!(!method.result_borrows_receiver(), "{method:?}");
+        }
+        for method in [Method::ListFirst, Method::ListGet] {
+            assert!(method.result_borrows_receiver(), "{method:?}");
+        }
         for method in [
             Method::ListLast,
+            Method::ListFirst,
+            Method::ListFirstMut,
+            Method::ListLastMut,
+            Method::ListGet,
+            Method::ListGetMut,
             Method::MapGet,
             Method::MapEntry,
             Method::MapEntryOrInsert,
@@ -469,6 +563,11 @@ mod tests {
         }
         for method in [Method::Push, Method::ListPop, Method::ListContains, Method::Len] {
             assert!(!method.result_borrows_receiver(), "{method:?}");
+        }
+        // `get_mut` and the `*_mut` accessors need a mutable receiver and hand out a view of it.
+        for method in [Method::ListGetMut, Method::ListFirstMut, Method::ListLastMut] {
+            assert!(method.mutates_receiver(), "{method:?}");
+            assert!(method.result_borrows_receiver(), "{method:?}");
         }
     }
 }

@@ -973,6 +973,15 @@ impl FnCx<'_> {
                     );
                 }
             }
+            (Method::ListExtendFromSlice, Ty::List(elem, _)) => {
+                if !self.globals.is_clone(elem) {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!("cannot copy a slice of `{elem}` into a list: `{elem}` does not support `Clone`"),
+                    );
+                }
+            }
             (
                 Method::MapGet
                 | Method::MapGetMut
@@ -993,11 +1002,54 @@ impl FnCx<'_> {
         }
         // A mutating method borrows the receiver exclusively (EX1).
         let receiver_place = Some((&recv, m.mutates_receiver()));
+        if m == Method::ListDrain {
+            let Some(mut checked) = self.drain_args(&recv, &params, args, span) else {
+                return error_expr(span);
+            };
+            checked.insert(0, recv);
+            return mk(tir::ExprKind::Method(m, checked), ret, span);
+        }
         let Some(mut checked) = self.args(&name.name, &params, args, receiver_place, span) else {
             return error_expr(span);
         };
         checked.insert(0, recv);
         mk(tir::ExprKind::Method(m, checked), ret, span)
+    }
+
+    /// The one argument of `List.drain`: a range of `usize` in either spelling. `1..=3` has a different type
+    /// from `1..3`, so the argument is checked here instead of against the method's fixed parameter type.
+    fn drain_args(
+        &mut self,
+        recv: &tir::Expr,
+        params: &[ParamSig],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<Vec<tir::Expr>> {
+        self.reject_named_args("drain", args);
+        if args.len() != 1 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(Code::ARG_COUNT, span, format!("`drain` takes 1 argument, but {} were given", args.len()));
+            return None;
+        }
+        let hint = Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false);
+        let arg = self.expr(&args[0].expr, Some(&hint));
+        match &arg.ty {
+            Ty::Range(t, _) if **t == Ty::Int(IntTy::Usize) => {}
+            Ty::Error => return None,
+            other => {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    arg.span,
+                    format!("`drain` takes a range of `usize`, found `{other}`"),
+                );
+                return None;
+            }
+        }
+        let checked = vec![arg];
+        self.exclusivity(Some((recv, true)), params, &checked, span);
+        Some(checked)
     }
 
     /// `x.name(args)` through an extension method visible in this module (`spec/extensions.md`, EX3). The
@@ -1239,6 +1291,71 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(Builtin::ListNewIn, vec![value]), ty, span)
     }
 
+    /// `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for `n`
+    /// elements. The allocator-free form exists only for the default layout, like `new` (`spec/allocators.md`,
+    /// AL4).
+    fn list_with_capacity(
+        &mut self,
+        elem: &Ty,
+        written: &burdin_tir::Alloc,
+        with_alloc: bool,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        let name = if with_alloc { "List.with_capacity_in" } else { "List.with_capacity" };
+        self.reject_named_args(name, args);
+        let wanted = if with_alloc { 2 } else { 1 };
+        if args.len() != wanted {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{name}` takes {wanted} argument(s), but {} were given", args.len()),
+            );
+            return error_expr(span);
+        }
+        let size = self.expr(&args[0].expr, Some(&Ty::Int(IntTy::Usize)));
+        let size = self.expect_ty(size, &Ty::Int(IntTy::Usize));
+        if !with_alloc {
+            if !written.is_global() {
+                self.diags.error(
+                    Code::MISSING_ALLOCATOR,
+                    span,
+                    format!(
+                        "a `{}` stores an allocator, so it is made with `List.with_capacity_in(n, alloc)`",
+                        Ty::List(Box::new(elem.clone()), written.clone())
+                    ),
+                );
+                return error_expr(span);
+            }
+            let ty = Ty::List(Box::new(elem.clone()), burdin_tir::Alloc::Global);
+            return mk(tir::ExprKind::Builtin(Builtin::ListWithCapacity, vec![size]), ty, span);
+        }
+        let value = self.expr(&args[1].expr, None);
+        if value.ty == Ty::Error {
+            return error_expr(span);
+        }
+        if !self.allocator_value_ok(&value.ty, value.span) {
+            return error_expr(span);
+        }
+        let alloc = self.globals.alloc_of(value.ty.clone());
+        if let burdin_tir::Alloc::Value(want) = written
+            && let burdin_tir::Alloc::Value(got) = &alloc
+            && want != got
+        {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                value.span,
+                format!("this list stores a `{want}` allocator, but the argument is `{got}`"),
+            );
+            return error_expr(span);
+        }
+        let ty = Ty::List(Box::new(elem.clone()), alloc);
+        mk(tir::ExprKind::Builtin(Builtin::ListWithCapacityIn, vec![size, value]), ty, span)
+    }
+
     /// `Map<K, V>.new_in(alloc)`.
     pub(super) fn map_new_in(
         &mut self,
@@ -1381,6 +1498,12 @@ impl FnCx<'_> {
                 let elem = (**elem).clone();
                 let written = written_alloc.clone();
                 return self.list_new_in(&elem, &written, args, span);
+            }
+            if name.name == "with_capacity" || name.name == "with_capacity_in" {
+                let elem = (**elem).clone();
+                let written = written_alloc.clone();
+                let with_alloc = name.name == "with_capacity_in";
+                return self.list_with_capacity(&elem, &written, with_alloc, args, span);
             }
         }
         if let Ty::Map(key, value, written_alloc) = ty {

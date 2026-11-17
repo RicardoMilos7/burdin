@@ -345,6 +345,11 @@ impl<'a> Checker<'a> {
             K::Builtin(b, args) => match b {
                 tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
+                // `with_capacity_in(n, alloc)` stores the allocator value.
+                tir::Builtin::ListWithCapacityIn => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
+                }
                 tir::Builtin::HeapNewIn => {
                     self.expr(&args[0], Mode::Move);
                     self.expr(&args[1], Mode::Move);
@@ -395,14 +400,18 @@ impl<'a> Checker<'a> {
             K::Method(m, args) => {
                 if m.mutates_receiver() {
                     self.access_place(&args[0], Access::BorrowMut);
-                    // A mutable view of a map value, or a mutable iterator, keeps its collection exclusively borrowed (`Iterator.next` also
-                    // mutates its receiver and returns a view, but the loan of its source is already held).
+                    // A mutable view of a map value or of a list element, or a mutable iterator, keeps that
+                    // storage exclusively borrowed (`Iterator.next` also mutates its receiver and returns a view,
+                    // but the loan of its source is already held).
                     if matches!(
                         m,
                         tir::Method::MapGetMut
                             | tir::Method::MapGetOrInsert
                             | tir::Method::MapEntry
                             | tir::Method::IterMut
+                            | tir::Method::ListGetMut
+                            | tir::Method::ListFirstMut
+                            | tir::Method::ListLastMut
                     ) {
                         self.add_loan(&args[0], true);
                     }

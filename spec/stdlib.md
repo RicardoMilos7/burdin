@@ -614,12 +614,31 @@ usable. `Shared<T>` is shared by `clone()`, read by `get(): &T`, counted by `str
 struct List<T, A = Global> {
     fn new(): List<T, A>              // only when A is `Global`: the allocator-free constructor
     fn new_in(alloc: A): List<T, A>   // takes the allocator value to store (`allocators.md`, AL4)
+    fn with_capacity(n: usize): List<T, A>            // only when A is `Global`
+    fn with_capacity_in(n: usize, alloc: A): List<T, A>
     fn push(mut self, value: T)       // takes ownership of the value
     fn pop(mut self): Option<T>
     fn len(self): usize
+    fn capacity(self): usize
+    fn is_empty(self): bool
     fn last(self): Option<&T>
+    fn first(self): Option<&T>
+    fn first_mut(mut self): Option<&mut T>
+    fn last_mut(mut self): Option<&mut T>
+    fn get(self, index: usize): Option<&T>
+    fn get_mut(mut self, index: usize): Option<&mut T>
+    fn reserve(mut self, additional: usize)
+    fn reserve_exact(mut self, additional: usize)
+    fn shrink_to_fit(mut self)
     fn insert(mut self, index: usize, value: T)
     fn remove(mut self, index: usize): T
+    fn swap(mut self, a: usize, b: usize)
+    fn swap_remove(mut self, index: usize): T
+    fn truncate(mut self, len: usize)
+    fn split_off(mut self, index: usize): List<T>
+    fn append(mut self, own other: List<T, A>)
+    fn drain(mut self, range: Range<usize>): ListIntoIter<T>   // also `lo..=hi`
+    fn extend_from_slice(mut self, other: [T])   // needs Clone on T
     fn clear(mut self)
     fn contains(self, value: T): bool // needs == on T
     fn sort(mut self)                 // ascending; needs < on T
@@ -636,11 +655,48 @@ struct List<T, A = Global> {
 
 Indexing `xs[i]` is a place: it reads or writes one element, takes a `usize`, and panics when out of bounds.
 `for x in xs` borrows the list for the loop and yields read-only element places (`memory-rules.md`, IT). `T` must be
-storable, so `List<str>` and `List<&T>` are rejected (E0120). The last six methods are the eager iteration helpers:
-they borrow the list, hand the closure a view of each element, and return owned results (`iterators.md`, IT10);
-`.any` is resolved to the `std` function named `__list_any` and spelled with the reserved word. Every method
-except `new` exists for every allocator argument; `List<T, A>.new()` where `A` is not `Global` is E0272 because
-the constructor has no allocator value to store (`allocators.md`, AL4).
+storable, so `List<str>` and `List<&T>` are rejected (E0120). The eager iteration helpers `map`, `filter`, `fold`,
+`any`, `all`, and `find` borrow the list, hand the closure a view of each element, and return owned results
+(`iterators.md`, IT10); `.any` is resolved to the `std` function named `__list_any` and spelled with the reserved
+word. Every method except `new` and `with_capacity` exists for every allocator argument.
+
+The capacity methods (`spec/allocators.md`, AL1-AL4): `with_capacity(n)` and `with_capacity_in(n, alloc)` make an
+empty list with room for `n` elements, allocating the buffer up front through the default allocator or through the
+allocator value the list then stores. `capacity()` reports that room. `reserve(additional)` makes room for at least
+`len + additional` elements and may over-allocate; `reserve_exact(additional)` asks for exactly that many and a
+smaller capacity is left alone; `shrink_to_fit()` releases the room past the length. A reservation whose length
+would overflow `usize` panics (`reserve: capacity overflow`). Every allocation and reallocation goes through the
+list's allocator, so an arena-backed list never touches the C heap. `new` and `with_capacity` exist only for
+`Global`: `List<T, A>.new()` or `List<T, A>.with_capacity(n)` where `A` is not `Global` is E0272, because the
+constructor has no allocator value to store (`allocators.md`, AL4).
+
+The accessors that answer instead of panicking: `get(i)` and `get_mut(i)` are `Some` only when `i < len`, and
+`first`, `first_mut`, `last`, `last_mut`, and `is_empty` describe the ends and the emptiness. The `get_mut`,
+`first_mut`, and `last_mut` receivers are `mut self`: they hand out a mutable view of an element and keep the list
+exclusively borrowed until the view's last use (E0111), so nothing that may move the buffer is allowed while it is
+live.
+
+The bulk edits: `swap(a, b)` exchanges two elements and panics when either index is out of bounds
+(`swap: index out of bounds`); `swap_remove(i)` returns element `i`, fills its slot with the last element, and
+panics past the end (`swap_remove: index out of bounds`); `truncate(n)` drops the elements from `n` on and does
+nothing when the list is already shorter; `split_off(i)` moves the elements from `i` on into a new list, and an
+index equal to the length yields an empty list (`i > len` panics with `split_off: index out of bounds`);
+`append(other)` moves every element of `other` to the end and frees `other`'s buffer; `extend_from_slice(other)`
+appends a clone of every element of a `[T]` view and needs `Clone` on `T` (E0141); `drain(range)` removes `lo..hi`
+(or `lo..=hi`) and returns an owning `ListIntoIter<T>` that yields the removed elements, so a `for` loop over it or
+a `next()` call moves them out. A reversed or out-of-range drain range panics (`drain: range out of bounds`).
+Elements are moved, never duplicated: each one is dropped exactly once, by the list that ends up owning it or by
+the iterator the drain returned.
+
+`split_off` and `drain` move their elements into a buffer with the default allocator, so their result is
+`List<T>`/`ListIntoIter<T>` whatever `A` is. A stored allocator value cannot be duplicated, because `Allocator` does
+not require `Clone`; the source keeps its own allocator and the moved elements are freed through `Global`.
+
+Tests: `m24_stdlib/list_capacity`, `list_access`, `list_bulk_edits`, `list_drop_order`, `list_allocator_methods`,
+`list_leaks`, `list_comptime`, `list_get_mut_immutable` (E0113), `list_extend_from_slice_needs_clone` (E0141),
+`list_capacity_stored_allocator` (E0272), `list_with_capacity_in_not_allocator` (E0270), `list_drain_not_range`
+(E0003), `list_append_wrong_allocator` (E0003), `list_get_mut_borrow` (E0111), `list_swap_remove_out_of_bounds`,
+`list_split_off_out_of_bounds`, `list_drain_out_of_bounds`, and `list_reserve_overflow`.
 
 ## `Map<K, V>`
 
@@ -1341,11 +1397,10 @@ Tests: `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinato
 
 `std.list` declares these as extension methods on `List<T>` (a list with the default allocator; `extensions.md`), so
 the prelude makes them visible everywhere and the compiler's own methods (`push`, `pop`, `sort`, `contains`, `map`,
-`filter`, `find`, ...) win. They move elements with `pop`/`push`, so nothing is cloned unless the name says so, and
-every element is dropped exactly once.
+`filter`, `find`, `get`, `first`, `drain`, `truncate`, `swap`, ...) win. They move elements with `pop`/`push`, so
+nothing is cloned unless the name says so, and every element is dropped exactly once.
 
 ```
-fn List<T>.is_empty(self): bool
 fn List<T>.retain<F: FnMut(&T): bool>(mut self, f: F)      // keeps the accepted elements, in order
 fn List<T>.position<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.rposition<F: FnMut(&T): bool>(self, f: F): Option<usize>
@@ -1355,13 +1410,12 @@ fn List<T>.extend(mut self, own other: List<T>)             // moves the element
 fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, iter: I) where A: Allocator   // issue #708
 fn List<T>.extend_from(mut self, other: List<T>) where T: Clone
 fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone
-fn List<T>.truncate(mut self, len: usize)
-fn List<T>.swap(mut self, a: usize, b: usize)              // panics when an index is out of bounds
 ```
 
-`find` is the eager helper of `iterators.md` IT10 (it clones the element). `dedup_by_key`, `drain`, and `first` are
-not provided: a key function would need its result type fixed by a bound the checker cannot yet match against a type
-parameter, and views returned from an extension would dangle.
+`is_empty` is a method the compiler provides, so it exists for a list with any allocator argument, and so are
+`truncate` and `swap`; the extension list above leaves them out. `find` is the eager helper of `iterators.md` IT10
+(it clones the element). `dedup_by_key` is not provided: a key function would need its result type fixed by a bound
+the checker cannot yet match against a type parameter.
 
 Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops`,
 `list_swap_out_of_bounds`.
@@ -1718,6 +1772,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Operators and `Index` | `m19_operators/*` (`operators.md`) |
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
+| `List` capacity, access, and bulk edits | `m24_stdlib/list_capacity`, `list_access`, `list_bulk_edits`, `list_drop_order`, `list_allocator_methods`, `list_leaks`, `list_comptime`, `list_get_mut_immutable`, `list_extend_from_slice_needs_clone`, `list_capacity_stored_allocator`, `list_with_capacity_in_not_allocator`, `list_drain_not_range`, `list_append_wrong_allocator`, `list_get_mut_borrow`, `list_swap_remove_out_of_bounds`, `list_split_off_out_of_bounds`, `list_drain_out_of_bounds`, `list_reserve_overflow` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |

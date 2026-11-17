@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: split_off: index out of bounds
+//> before
+
+// The split index may equal the length (an empty tail), but not pass it.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    println("before")
+    let _ = xs.split_off(2)
+}

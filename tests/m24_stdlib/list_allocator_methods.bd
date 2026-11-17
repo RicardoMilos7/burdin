@@ -1,0 +1,81 @@
+//@ run
+//> 4 0 true
+//> 12 4
+//> appended 6
+//> tail 1
+//> 6
+//> 1 4 5
+//> removed 2
+//> removed 3
+//> swap removed 1
+//> end 0 2
+//> 9
+
+// Every capacity and bulk method works with a stored allocator: `with_capacity_in` allocates through it, and
+// `reserve`, `shrink_to_fit`, and `extend_from_slice` keep using it. `split_off` and `drain` move elements into
+// a buffer with the default allocator, so their results are ordinary `List<T>` and `ListIntoIter<T>` values.
+
+struct Token {
+    id: i32
+}
+
+// The element prints its id; the drop order is checked by `list_drop_order.bd`.
+fn show(xs: List<Token>) {
+    for t in xs {
+        println("{}", t.id)
+    }
+}
+
+fn show_arena(xs: List<Token, Arena>) {
+    let mut out = String.new()
+    let mut first = true
+    for t in xs {
+        if !first {
+            out.push_str(" ")
+        }
+        out.push_str(t.id.to_string())
+        first = false
+    }
+    println(out)
+}
+
+fn main() {
+    let mut xs = List<Token>.with_capacity_in(4, Arena.new())
+    println("{} {} {}", xs.capacity(), xs.len(), xs.is_empty())
+    xs.push(Token { id: 1 })
+    xs.push(Token { id: 2 })
+    xs.push(Token { id: 3 })
+    xs.push(Token { id: 4 })
+    xs.reserve(8)
+    println("{} {}", xs.capacity(), xs.len())
+
+    let mut ys = List<Token>.new_in(Arena.new())
+    ys.push(Token { id: 5 })
+    ys.push(Token { id: 6 })
+    xs.append(ys)
+    println("appended {xs.len()}")
+
+    let tail = xs.split_off(5)
+    println("tail {tail.len()}")
+    show(tail)
+
+    let removed = xs.drain(1..=2)
+    show_arena(xs)
+    for t in removed {
+        println("removed {t.id}")
+    }
+
+    println("swap removed {xs.swap_remove(0).id}")
+    xs.shrink_to_fit()
+    xs.truncate(0)
+    println("end {} {}", xs.len(), xs.capacity())
+
+    let mut more = List<Token>.new_in(Arena.new())
+    let mut i = 0
+    while i < 9 {
+        more.push(Token { id: i })
+        i = i + 1
+    }
+    more.reserve_exact(0)
+    println("{more.len()}")
+}
