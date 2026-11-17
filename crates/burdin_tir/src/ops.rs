@@ -201,6 +201,8 @@ pub enum Method {
     IntoIter,
     /// `it.next()`: advances an iterator and returns its next item (IT6).
     IterNext,
+    /// `it.next_back()`: takes the last item of a double-ended built-in iterator (IT14).
+    IterNextBack,
     /// `x.clone()`: a deep copy derived by the compiler.
     Clone,
     /// `x.hash(): u64` of a type that derives `Hash`.
@@ -248,6 +250,7 @@ impl Method {
                 | Method::MapGetMut
                 | Method::MapRemove
                 | Method::IterNext
+                | Method::IterNextBack
         )
     }
 
@@ -265,6 +268,7 @@ impl Method {
                 | Method::Chars
                 | Method::Iter
                 | Method::IterNext
+                | Method::IterNextBack
                 | Method::SharedGet
         )
     }

@@ -1,0 +1,71 @@
+//@ run
+//> 32121010 32121010
+//> 12125 12125
+//> 91186 91186
+
+// The new adapters run at compile time with the same results as in the compiled program: `rev` and `next_back` on a
+// slice, a range, and `Chars`, and `zip`, `chain`, `flat_map`, `flatten`, `cloned`, and `cycle`.
+
+fn reversed(): i32 {
+    let xs = [1, 2, 3]
+    let mut n = 0
+    for x in xs.iter().rev() {
+        n = n * 10 + x
+    }
+    for i in (0..=2).iter().rev() {
+        n = n * 10 + i
+    }
+    for i in (0..2).iter().rev() {
+        n = n * 10 + i
+    }
+    n
+}
+
+fn reversed_text(): i32 {
+    let mut n = 0
+    for c in "añb".chars().rev() {
+        if c == 'ñ' {
+            n = n * 10 + 2
+        } else {
+            n = n * 10 + 1
+        }
+    }
+    let mut it = "xyz".chars()
+    match it.next_back() {
+        Some(c) => n = n * 100 + (c as i32 - 'a' as i32),
+        None => {}
+    }
+    n
+}
+
+fn combined(): i32 {
+    let xs = [1, 2, 3]
+    let ys = [10, 20]
+    let mut n = 0
+    for (a, b) in xs.iter().zip(ys.iter()) {
+        n = n + a * b
+    }
+    for x in xs.iter().chain(ys.iter()) {
+        n = n + x
+    }
+    for x in (0..3).iter().flat_map(|k| (0..k).iter()) {
+        n = n + x * 100
+    }
+    for x in (0..3).iter().map(|k| (0..k).iter()).flatten() {
+        n = n + x * 1000
+    }
+    for x in xs.iter().cycle().take(5) {
+        n = n + x * 10000
+    }
+    n
+}
+
+const REVERSED: i32 = reversed()
+const TEXT: i32 = reversed_text()
+const COMBINED: i32 = combined()
+
+fn main() {
+    println("{REVERSED} {reversed()}")
+    println("{TEXT} {reversed_text()}")
+    println("{COMBINED} {combined()}")
+}

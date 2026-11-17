@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// RT3 still holds for a result that is itself a view: an `Option` of a reference is not an aggregate of several
+// views, so it derives from exactly one parameter.
+struct Counter {
+    n: i32
+}
+
+fn pick(a: Counter, b: Counter, first: bool): Option<&i32> { //~ E0121
+    if first { Some(&a.n) } else { Some(&b.n) }
+}
+
+fn main() {}

@@ -214,6 +214,8 @@ pub(crate) struct Globals {
     /// The `std.Iterator<T>` and `std.Iterable<T>` interfaces, when the standard library declares them.
     pub(crate) iterator_iface: Option<usize>,
     pub(crate) iterable_iface: Option<usize>,
+    /// The `std.DoubleEndedIterator<T>` interface: an iterator that can also take items from its back (IT14).
+    pub(crate) double_ended_iface: Option<usize>,
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,
@@ -434,6 +436,15 @@ impl Globals {
             Global::Generic(g) => Some(g),
             _ => None,
         })
+    }
+
+    /// The generic function behind an iterator adapter that needs a particular kind of source (`it.flatten()`,
+    /// `it.cloned()`, `it.copied()`, `it.cycle()`), looked up in the standard library (spec/iterators.md, IT13).
+    pub(crate) fn iterator_adapter_fn(&self, name: &str) -> Option<usize> {
+        if !matches!(name, "flatten" | "cloned" | "copied" | "cycle" | "rev") {
+            return None;
+        }
+        self.std_generic(&format!("__iter_{name}"))
     }
 
     /// The generic function behind an eager `List` method (`xs.map(f)`), looked up in the standard library.

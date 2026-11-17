@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// The viewed items must be `Clone`.
+struct Token {
+    id: i32
+}
+
+fn main() {
+    let mut tokens = List<Token>.new()
+    tokens.push(Token { id: 1 })
+    for t in tokens.iter().cloned() { //~ E0141
+        println(t.id.to_string())
+    }
+}
