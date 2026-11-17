@@ -188,6 +188,9 @@ pub enum Ty {
     List(Box<Ty>, Alloc),
     /// `Map<K, V>`: an owned collection of key/value pairs.
     Map(Box<Ty>, Box<Ty>, Alloc),
+    /// `Map<K, V>.entry(key)`: a pending lookup that owns the key and borrows the map exclusively
+    /// (`spec/stdlib.md`, "Map entry operations"). It is second-class: it views the map, so it cannot be stored.
+    MapEntry(Box<Ty>, Box<Ty>, Alloc),
     /// The iterator `str.chars()` returns, only usable in a `for` loop.
     Chars,
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
@@ -255,6 +258,8 @@ impl Ty {
             Ty::Array(t, _) | Ty::Option(t) | Ty::List(t, _) => t.is_second_class(),
             // An owning iterator holds its elements; a borrowing one points at its source.
             Ty::MapIter(..) => true,
+            // An entry points at its map, so it is a view of that map's storage (SC2).
+            Ty::MapEntry(..) => true,
             Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _) | Ty::RangeIter(t, _) => t.is_second_class(),
             Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
             Ty::Map(k, v, _) | Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
@@ -301,6 +306,8 @@ impl fmt::Display for Ty {
             Ty::List(t, a) => write!(f, "List<{t}, {a}>"),
             Ty::Map(k, v, Alloc::Global) => write!(f, "Map<{k}, {v}>"),
             Ty::Map(k, v, a) => write!(f, "Map<{k}, {v}, {a}>"),
+            Ty::MapEntry(k, v, Alloc::Global) => write!(f, "MapEntry<{k}, {v}>"),
+            Ty::MapEntry(k, v, a) => write!(f, "MapEntry<{k}, {v}, {a}>"),
             Ty::Chars => f.write_str("Chars"),
             Ty::Heap(t, Alloc::Global) => write!(f, "Heap<{t}>"),
             Ty::Heap(t, a) => write!(f, "Heap<{t}, {a}>"),
@@ -376,6 +383,7 @@ mod tests {
         assert!(Ty::Array(Box::new(Ty::Str), 2).is_second_class());
         assert!(Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Str)).is_second_class());
         assert!(Ty::Map(Box::new(Ty::Str), Box::new(Ty::Bool), Alloc::Global).is_second_class());
+        assert!(Ty::MapEntry(Box::new(i32_.clone()), Box::new(i32_.clone()), Alloc::Global).is_second_class());
         // Owned types are not views.
         assert!(!Ty::String.is_second_class());
         assert!(!Ty::Heap(Box::new(i32_.clone()), Alloc::Global).is_second_class());
@@ -431,6 +439,7 @@ mod tests {
             (Ty::Result(Box::new(i32_.clone()), Box::new(Ty::Str)), "Result<i32, str>"),
             (Ty::List(Box::new(i32_.clone()), Alloc::Global), "List<i32>"),
             (Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Global), "Map<str, i32>"),
+            (Ty::MapEntry(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Global), "MapEntry<str, i32>"),
             (Ty::Chars, "Chars"),
             (Ty::Heap(Box::new(i32_.clone()), Alloc::Global), "Heap<i32>"),
             (Ty::List(Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))), "List<i32, Arena>"),

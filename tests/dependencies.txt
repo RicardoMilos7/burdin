@@ -14,10 +14,11 @@
 # ...) and identifiers the script does not know fail the check. Because every identifier must be
 # allowed, an expression such as `MIT OR GPL-2.0-only` is rejected rather than accepted through MIT.
 #
-# The compiler has one direct external dependency, inkwell, and everything else comes through it:
-# inkwell -> llvm-sys -> (build) anyhow, cc, lazy_static, regex-lite, semver; cc -> find-msvc-tools,
-# shlex; inkwell_internals -> proc-macro2, quote, syn; thiserror -> thiserror-impl; and the macro
-# plumbing -> unicode-ident.
+# The compiler has two direct external dependencies: inkwell, which wraps LLVM 21, and libc, whose
+# `struct stat` and `struct dirent` layouts the generated runtime reads for the directory and metadata
+# operations (issue #411). Everything else comes through inkwell: inkwell -> llvm-sys -> (build) anyhow,
+# cc, lazy_static, regex-lite, semver; cc -> find-msvc-tools, shlex; inkwell_internals -> proc-macro2,
+# quote, syn; thiserror -> thiserror-impl; and the macro plumbing -> unicode-ident.
 #
 # LLVM itself is not a Rust crate and is not in Cargo.lock: the build links the system LLVM 21 shared
 # library. LLVM is licensed Apache-2.0 WITH LLVM-exception, and the driver reports the linked version
@@ -32,10 +33,10 @@ anyhow	1.0.104	MIT OR Apache-2.0	llvm-sys build script: error types
 bitflags	2.13.2	MIT OR Apache-2.0	inkwell: attribute flags
 cc	1.11.2	MIT OR Apache-2.0	llvm-sys build script: locates the C toolchain
 find-msvc-tools	0.1.15	MIT OR Apache-2.0	cc: MSVC tool discovery on Windows
-inkwell	0.11.0	Apache-2.0	the LLVM backend bindings (the one direct external dependency)
+inkwell	0.11.0	Apache-2.0	the LLVM backend bindings (a direct external dependency)
 inkwell_internals	0.16.0	Apache-2.0	inkwell's derive macros
 lazy_static	1.5.1	MIT OR Apache-2.0	llvm-sys: process-wide configuration
-libc	0.2.191	MIT OR Apache-2.0	inkwell and llvm-sys: C types
+libc	0.2.191	MIT OR Apache-2.0	inkwell and llvm-sys: C types; burdin_codegen: the host's `stat`/`dirent` layouts
 llvm-sys	211.1.1	MIT	raw LLVM 21 C API bindings under inkwell
 proc-macro2	1.0.107	MIT OR Apache-2.0	inkwell_internals and thiserror-impl: macro plumbing
 quote	1.0.47	MIT OR Apache-2.0	inkwell_internals and thiserror-impl: macro plumbing

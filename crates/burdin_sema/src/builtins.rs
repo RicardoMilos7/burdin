@@ -1,7 +1,8 @@
 //! The built-in functions, types, and methods.
 
 use crate::globals::Globals;
-use burdin_tir::{Builtin, FloatTy, IntTy, Method, ParamSig, Signature, Ty};
+use burdin_tir::{Builtin, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, Signature, Ty};
+use std::rc::Rc;
 
 pub(crate) fn builtin(name: &str) -> Option<Builtin> {
     Some(match name {
@@ -12,6 +13,21 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "panic" => Builtin::Panic,
         "__read_to_string" => Builtin::ReadToString,
         "__write_file" => Builtin::WriteFile,
+        "__stdout_write" => Builtin::StdoutWrite,
+        "__stdout_write_line" => Builtin::StdoutWriteLine,
+        "__stdout_flush" => Builtin::StdoutFlush,
+        "__stderr_write" => Builtin::StderrWrite,
+        "__stderr_write_line" => Builtin::StderrWriteLine,
+        "__is_terminal" => Builtin::IsTerminal,
+        "__stdin_read_line" => Builtin::StdinReadLine,
+        "__stdin_read_to_string" => Builtin::StdinReadToString,
+        "__read_dir" => Builtin::ReadDir,
+        "__create_dir" => Builtin::CreateDir,
+        "__remove_dir" => Builtin::RemoveDir,
+        "__remove_file" => Builtin::RemoveFile,
+        "__rename" => Builtin::RenamePath,
+        "__metadata" => Builtin::Metadata,
+        "__canonicalize" => Builtin::Canonicalize,
         "__args" => Builtin::EnvArgs,
         "__env_get" => Builtin::EnvGet,
         "__env_set" => Builtin::EnvSet,
@@ -43,6 +59,28 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(io_error())),
+        Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
+        Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
+        Builtin::IsTerminal => Ty::Bool,
+        Builtin::ReadDir => {
+            Ty::Result(Box::new(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)), Box::new(io_error()))
+        }
+        Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
+            Ty::Result(Box::new(Ty::Unit), Box::new(io_error()))
+        }
+        // `(size: u64, mode: u64, modified: i64, accessed: i64, flags: u64)`: the raw `stat` fields, which
+        // `std` turns into `Metadata`.
+        Builtin::Metadata => Ty::Result(
+            Box::new(Ty::Tuple(vec![
+                Ty::Int(IntTy::U64),
+                Ty::Int(IntTy::U64),
+                Ty::Int(IntTy::I64),
+                Ty::Int(IntTy::I64),
+                Ty::Int(IntTy::U64),
+            ])),
+            Box::new(io_error()),
+        ),
+        Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::EnvGet | Builtin::CurrentDir => {
             Ty::Option(Box::new(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global)))
@@ -62,7 +100,14 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::Unreachable
         | Builtin::TargetOs
         | Builtin::TargetArch
-        | Builtin::CurrentDir => Vec::new(),
+        | Builtin::CurrentDir
+        | Builtin::StdoutFlush
+        | Builtin::StdinReadLine
+        | Builtin::StdinReadToString => Vec::new(),
+        Builtin::IsTerminal => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            vec![ParamSig::plain(Ty::Str)]
+        }
         // The environment primitives take the raw text; the `std` wrappers add the UTF-8 checks and the error
         // values (`spec/stdlib.md`, "Environment variables and the working directory").
         Builtin::EnvGet | Builtin::EnvRemove | Builtin::SetCurrentDir => vec![ParamSig::plain(Ty::Str)],
@@ -74,6 +119,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
+        Builtin::RenamePath => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
         Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
@@ -198,6 +244,23 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             let view = Ty::Ref { mutable: true, inner: v.clone() };
             (Method::MapGetMut, vec![plain(elem(k))], Ty::Option(Box::new(view)))
         }
+        // The entry-style API (`spec/stdlib.md`, "Map entry operations"): one probe, then insert or not.
+        ("entry", Ty::Map(k, v, alloc)) => {
+            (Method::MapEntry, vec![value_param(elem(k))], Ty::MapEntry(k.clone(), v.clone(), alloc.clone()))
+        }
+        ("or_insert", Ty::MapEntry(_, v, _)) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            (Method::MapEntryOrInsert, vec![value_param(elem(v))], view)
+        }
+        ("or_insert_with", Ty::MapEntry(_, v, _)) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            let make = Ty::Fn {
+                sig: Rc::new(FnSig { params: Vec::new(), ret: v.clone() }),
+                kind: FnKind::FnOnce,
+                borrowed: false,
+            };
+            (Method::MapEntryOrInsertWith, vec![value_param(make)], view)
+        }
         ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(elem(k))], Ty::Option(v.clone())),
         ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(elem(k))], Ty::Bool),
         ("unwrap", Ty::Option(t)) => (Method::Unwrap, vec![], elem(t)),
@@ -306,6 +369,34 @@ mod tests {
         let remove = builtin_sig(Builtin::EnvRemove, &Globals::default());
         assert_eq!(remove.params.len(), 1);
         assert_eq!(remove.params[0].ty, Ty::Str);
+    }
+
+    #[test]
+    fn stream_builtin_signatures() {
+        let error = Ty::Int(IntTy::I64);
+        let globals = Globals { io_error_ty: Some(error.clone()), ..Globals::default() };
+        assert_eq!(builtin("__stdin_read_line"), Some(Builtin::StdinReadLine));
+        assert_eq!(builtin("__stdin_read_to_string"), Some(Builtin::StdinReadToString));
+        assert_eq!(builtin("__stderr_write_line"), Some(Builtin::StderrWriteLine));
+        assert_eq!(builtin("__stdout_flush"), Some(Builtin::StdoutFlush));
+        assert_eq!(builtin("__is_terminal"), Some(Builtin::IsTerminal));
+
+        let line = builtin_sig(Builtin::StdinReadLine, &globals);
+        assert!(line.params.is_empty());
+        assert_eq!(line.ret, Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(error.clone())));
+        let all = builtin_sig(Builtin::StdinReadToString, &globals);
+        assert!(all.params.is_empty());
+        assert_eq!(all.ret, Ty::Result(Box::new(Ty::String), Box::new(error)));
+
+        let write = builtin_sig(Builtin::StdoutWrite, &globals);
+        assert_eq!(write.params.len(), 1);
+        assert_eq!(write.params[0].ty, Ty::Str);
+        assert_eq!(write.ret, Ty::Unit);
+        assert!(builtin_sig(Builtin::StdoutFlush, &globals).params.is_empty());
+
+        let tty = builtin_sig(Builtin::IsTerminal, &globals);
+        assert_eq!(tty.params[0].ty, Ty::Int(IntTy::I32));
+        assert_eq!(tty.ret, Ty::Bool);
     }
 
     #[test]

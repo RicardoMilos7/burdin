@@ -6,9 +6,11 @@ and [`tests/check_deps.py`](../tests/check_deps.py) enforces it in every CI job 
 
 ## Policy
 
-- **One direct external dependency.** The workspace's only external crate is `inkwell`, which wraps
-  LLVM 21. Every other external crate is a transitive dependency of it, and adding a direct
-  dependency is a deliberate change reviewed like any other.
+- **Two direct external dependencies, both reviewed.** `inkwell` wraps LLVM 21, and `libc` supplies
+  the host's C type layouts: `burdin_codegen` reads `struct stat` and `struct dirent` through it for
+  the directory and metadata operations (issue #411). Every other external crate is a transitive
+  dependency of one of them, and adding a direct dependency is a deliberate change reviewed like any
+  other.
 - **Exact pins in the manifests, one locked version per crate.** An external requirement is written
   `=x.y.z`, never a range. `Cargo.lock` is committed and records the resolved version, the crates.io
   source, and the checksum of every crate, so a build is reproducible and a changed crate cannot pass
@@ -35,7 +37,7 @@ The crate families, from [`tests/dependencies.txt`](../tests/dependencies.txt):
 | `inkwell`, `inkwell_internals` | Apache-2.0 | The LLVM backend bindings and their derive macros. `burdin_codegen` is the only crate that uses them, and they are the reason the compiler needs LLVM. |
 | `llvm-sys` | MIT | The raw LLVM C API under `inkwell`; its build script finds `llvm-config` and probes the toolchain. |
 | `anyhow`, `cc`, `find-msvc-tools`, `lazy_static`, `regex-lite`, `semver`, `shlex` | MIT OR Apache-2.0 | Build-time support for `llvm-sys`: error types, the C toolchain probe, process-wide configuration, `llvm-config` parsing, version comparison, and flag quoting. None of it is linked into the compiler. |
-| `bitflags`, `libc`, `thiserror`, `thiserror-impl` | MIT OR Apache-2.0 | Runtime support inside `inkwell` and `llvm-sys`: attribute flags, C types, and error types. |
+| `bitflags`, `libc`, `thiserror`, `thiserror-impl` | MIT OR Apache-2.0 | Runtime support inside `inkwell` and `llvm-sys`: attribute flags, C types, and error types. `libc` is also a direct dependency of `burdin_codegen`, which reads the host's `struct stat` and `struct dirent` layouts from it so metadata and directory listings use the exact C offsets. |
 | `proc-macro2`, `quote`, `syn`, `unicode-ident` | (MIT OR Apache-2.0), the identifier tables also Unicode-3.0 | Macro plumbing of the two derive crates. Compile-time only. |
 
 LLVM itself, which is not a Rust crate and is not in `Cargo.lock`, is distributed under

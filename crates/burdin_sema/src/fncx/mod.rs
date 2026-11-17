@@ -423,10 +423,21 @@ impl<'a> FnCx<'a> {
 
     /// Reports E0003 unless `e` has type `want` (or a type that converts to nothing at run time, like `!`).
     fn expect_ty(&mut self, e: tir::Expr, want: &Ty) -> tir::Expr {
-        if !compatible(&e.ty, want) {
+        if !compatible(&e.ty, want) && !self.param_meets_fn(&e.ty, want) {
             self.report_mismatch(e.span, want, &e.ty);
         }
         e
+    }
+
+    /// Whether `found` is a type parameter whose closure bound provides `want`: `F: FnOnce(): V` passed where a
+    /// built-in method takes the closure type `FnOnce(): V` (`MapEntry::or_insert_with`). Each concrete instance
+    /// checks its body again with `F` substituted, so a closure the bound does not allow is still rejected there.
+    fn param_meets_fn(&self, found: &Ty, want: &Ty) -> bool {
+        let Ty::Param(_) = found else { return false };
+        let Ty::Fn { sig: want_sig, kind: want_kind, borrowed: false } = want else { return false };
+        self.globals
+            .fn_call_sig(found, &self.bounds)
+            .is_some_and(|(sig, kind)| sig == **want_sig && kind.at_least(*want_kind))
     }
 
     /// The type-mismatch diagnostic for `found` where `expected` is required. A closure mismatch gets the code

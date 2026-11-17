@@ -1,0 +1,50 @@
+//@ run
+//> all ["a.txt", "empty", "sub", "sub/b.txt", "sub/deep", "sub/deep/c.txt"]
+//> txt ["a.txt", "sub/b.txt", "sub/deep/c.txt"]
+//> top ["a.txt"]
+//> one ["sub/b.txt", "sub/deep"]
+//> deep ["sub/deep/c.txt"]
+//> question ["a.txt"]
+//> anywhere ["a.txt"]
+//> under ["sub/b.txt", "sub/deep", "sub/deep/c.txt"]
+//> none []
+//> stable true
+//> path walk true
+
+// `walk` lists every entry under a root, relative to it and sorted; `walk_glob` keeps the entries whose relative
+// path matches a pattern, where `*` and `?` stay inside a segment and `**` crosses segments (spec/stdlib.md). The
+// test normalizes the system's separator so its output is the same on Unix and Windows.
+
+fn norm(path: str): String {
+    path.replace("\\", "/")
+}
+
+fn show(list: List<String>): String {
+    let mut out = List<String>.new()
+    for item in list {
+        out.push(norm(item.as_str()))
+    }
+    format("{out:?}")
+}
+
+fn main() {
+    create_dir_all("root/sub/deep").unwrap()
+    create_dir_all("root/empty").unwrap()
+    write_file("root/a.txt", "a").unwrap()
+    write_file("root/sub/b.txt", "b").unwrap()
+    write_file("root/sub/deep/c.txt", "c").unwrap()
+    let all = walk("root").unwrap()
+    println("all {show(all)}")
+    println("txt {show(walk_glob("root", "**/*.txt").unwrap())}")
+    println("top {show(walk_glob("root", "*.txt").unwrap())}")
+    println("one {show(walk_glob("root", "sub/*").unwrap())}")
+    println("deep {show(walk_glob("root", "sub/**/c.txt").unwrap())}")
+    println("question {show(walk_glob("root", "?.txt").unwrap())}")
+    println("anywhere {show(walk_glob("root", "**/a.txt").unwrap())}")
+    println("under {show(walk_glob("root", "sub/**").unwrap())}")
+    println("none {show(walk_glob("root", "*.bd").unwrap())}")
+    let again = walk("root").unwrap()
+    println("stable {}", format("{again:?}") == format("{all:?}"))
+    let root = Path.new("root")
+    println("path walk {}", root.walk().unwrap().len() == all.len() && root.walk_glob("*.txt").unwrap().len() == 1)
+}

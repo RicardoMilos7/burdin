@@ -27,6 +27,7 @@ fn shape(globals: &Globals, ty: &Ty) -> Option<(String, Vec<Ty>)> {
         Ty::Range(t, inclusive) => (format!("range{inclusive}"), vec![(**t).clone()]),
         Ty::Result(t, e) => ("result".into(), vec![(**t).clone(), (**e).clone()]),
         Ty::Map(k, v, _) => ("map".into(), vec![(**k).clone(), (**v).clone()]),
+        Ty::MapEntry(k, v, _) => ("map_entry".into(), vec![(**k).clone(), (**v).clone()]),
         Ty::Tuple(ts) => (format!("tuple{}", ts.len()), ts.clone()),
         Ty::Array(t, n) if *n < SYM_LEN => (format!("array{n}"), vec![(**t).clone()]),
         Ty::Array(t, _) => ("array".into(), vec![(**t).clone()]),

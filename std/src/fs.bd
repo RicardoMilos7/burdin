@@ -1,0 +1,331 @@
+// Directories, metadata, and walking (issue #411; spec/stdlib.md, "Directories, metadata, and walking").
+//
+// The compiler's primitives (`__read_dir`, `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`,
+// `__metadata`, and `__canonicalize`) reach the operating system; the signatures, the error values, the recursive
+// helpers, and the glob matcher are Burdin. Every function is impure: a comptime evaluation that reaches one fails
+// with E0224.
+
+use fmt.{Debug, Formatter}
+use path.Path
+use sort.sort_by
+use std.IoError
+use text.to_char_list
+
+/// The kind of entry a path names.
+enum FileKind derives (Copy, Clone, Eq, Debug) {
+    File
+    Dir
+    Symlink
+    Other
+}
+
+/// What the system reports about one path: the entry itself, without following a symbolic link.
+struct Metadata derives (Clone, Copy, Eq, Debug) {
+    /// The size in bytes.
+    size: u64
+    /// The system's mode bits: the file kind and the permission bits, as `stat` reports them.
+    mode: u32
+    /// The modification time, in seconds since the Unix epoch.
+    modified: i64
+    /// The access time, in seconds since the Unix epoch.
+    accessed: i64
+    kind: FileKind
+}
+
+Metadata {
+    /// Whether the entry is a regular file.
+    fn is_file(self): bool {
+        self.kind == FileKind.File
+    }
+
+    /// Whether the entry is a directory.
+    fn is_dir(self): bool {
+        self.kind == FileKind.Dir
+    }
+
+    /// Whether the entry is a symbolic link.
+    fn is_symlink(self): bool {
+        self.kind == FileKind.Symlink
+    }
+}
+
+/// The names of the entries in the directory `path`, in the order the system returns them, without `.` and `..`.
+/// Sort the list for a deterministic order. The names are not paths; join them with `Path.join`.
+fn read_dir(path: str): Result<List<String>, IoError> {
+    match __read_dir(path) {
+        Ok(names) => Ok(names),
+        Err(_) => Err(IoError.Read { path: path.to_string() }),
+    }
+}
+
+/// Creates one directory. The parent must exist, and an existing directory is an error (`create_dir_all` treats
+/// an existing directory as success).
+fn create_dir(path: str): Result<(), IoError> {
+    match __create_dir(path) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(IoError.Write { path: path.to_string() }),
+    }
+}
+
+/// Creates `path` and every missing parent. An existing directory is success; a path that exists as a file is an
+/// error.
+fn create_dir_all(path: str): Result<(), IoError> {
+    match create_dir(path) {
+        Ok(()) => Ok(()),
+        Err(failure) => {
+            match metadata(path) {
+                Ok(info) if info.is_dir() => return Ok(()),
+                _ => {}
+            }
+            match Path.new(path).parent() {
+                Some(parent) if parent.as_str().len() > 0 => {
+                    create_dir_all(parent.as_str())?;
+                    create_dir(path)
+                }
+                _ => Err(failure),
+            }
+        }
+    }
+}
+
+/// Removes an empty directory. A non-empty directory is an error; `remove_dir_all` removes it with its contents.
+fn remove_dir(path: str): Result<(), IoError> {
+    match __remove_dir(path) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(IoError.Write { path: path.to_string() }),
+    }
+}
+
+/// Removes a file or a symbolic link. A directory is an error; `remove_dir_all` removes a directory.
+fn remove_file(path: str): Result<(), IoError> {
+    match __remove_file(path) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(IoError.Write { path: path.to_string() }),
+    }
+}
+
+/// Removes a directory and everything under it. A symbolic link is removed as a link, never followed.
+fn remove_dir_all(path: str): Result<(), IoError> {
+    let info = match metadata(path) {
+        Ok(info) => info,
+        Err(failure) => return Err(failure),
+    }
+    if !info.is_dir() {
+        return Err(IoError.Write { path: path.to_string() })
+    }
+    __remove_entry(path)
+}
+
+/// Removes one entry: a file, a link, an empty directory, or a non-empty directory with its contents. Trying the
+/// two removals first keeps a link a link: `remove_dir` then `remove_file` succeed for it before any listing, so
+/// its target is never walked.
+priv fn __remove_entry(path: str): Result<(), IoError> {
+    if remove_dir(path).is_ok() {
+        return Ok(())
+    }
+    if remove_file(path).is_ok() {
+        return Ok(())
+    }
+    // Both removals failed. A link that could not be removed is an error rather than a directory to walk.
+    let info = match metadata(path) {
+        Ok(info) => info,
+        Err(failure) => return Err(failure),
+    }
+    if info.is_symlink() {
+        return Err(IoError.Write { path: path.to_string() })
+    }
+    let names = match read_dir(path) {
+        Ok(names) => names,
+        Err(failure) => return Err(failure),
+    }
+    for name in names {
+        let child = Path.new(path).join(name.as_str())
+        __remove_entry(child.as_str())?
+    }
+    remove_dir(path)
+}
+
+/// Renames a file or a directory, replacing an existing `to`. The error names `to`.
+fn rename(from: str, to: str): Result<(), IoError> {
+    match __rename(from, to) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(IoError.Write { path: to.to_string() }),
+    }
+}
+
+/// What the system reports about `path`. The entry itself is read (`lstat` on Unix), so a symbolic link reports
+/// its own kind; on Windows the CRT's `_stat64` follows a link, so its size and times may describe the target.
+fn metadata(path: str): Result<Metadata, IoError> {
+    match __metadata(path) {
+        Ok((size, mode, modified, accessed, flags)) => Ok(Metadata {
+            size,
+            mode: mode as u32,
+            modified,
+            accessed,
+            kind: __file_kind(flags),
+        }),
+        Err(_) => Err(IoError.Read { path: path.to_string() }),
+    }
+}
+
+priv fn __file_kind(flags: u64): FileKind {
+    if flags & 4 != 0 {
+        FileKind.Symlink
+    } else if flags & 2 != 0 {
+        FileKind.Dir
+    } else if flags & 1 != 0 {
+        FileKind.File
+    } else {
+        FileKind.Other
+    }
+}
+
+/// The absolute path that names `path`, with `.` and `..` resolved and the system's separators. The path must
+/// exist. On Unix this is `realpath`, which also resolves symbolic links; on Windows it is `_fullpath`, which
+/// only normalizes the text and keeps a link's name.
+fn canonicalize(path: str): Result<String, IoError> {
+    match __canonicalize(path) {
+        Ok(text) => Ok(text),
+        Err(_) => Err(IoError.Read { path: path.to_string() }),
+    }
+}
+
+/// Every file and directory under `root`, recursively, as a path relative to `root` with the system's separator.
+/// `root` itself is not included, a symbolic link is listed but not followed, and the result is sorted. A
+/// directory that cannot be read makes the whole walk fail.
+fn walk(root: str): Result<List<String>, IoError> {
+    let mut out = List<String>.new()
+    match __walk(root, "", mut out) {
+        Ok(()) => {}
+        Err(failure) => return Err(failure),
+    }
+    out.sort_by(|a, b| a.cmp(*b))
+    Ok(out)
+}
+
+/// The entries under `root` whose relative path matches `pattern`, recursively, sorted as `walk` sorts them.
+/// `*` matches any run of characters inside one path segment, `?` matches one character inside a segment, and
+/// `**` matches across segments; a `**` followed by a separator also matches no segment at all, so `**/*.bd`
+/// finds a file at the top level too. Both `/` and `\` are separators in a pattern.
+fn walk_glob(root: str, pattern: str): Result<List<String>, IoError> {
+    let all = walk(root)?
+    let pat = pattern.to_char_list()
+    let mut out = List<String>.new()
+    for rel in all {
+        if __glob_match(pat, 0, rel.to_char_list(), 0) {
+            out.push(rel.clone())
+        }
+    }
+    Ok(out)
+}
+
+priv fn __walk(root: str, prefix: str, mut out: List<String>): Result<(), IoError> {
+    let dir = if prefix.len() == 0 {
+        root.to_string()
+    } else {
+        Path.new(root).join(prefix).as_str().to_string()
+    }
+    let names = match read_dir(dir.as_str()) {
+        Ok(names) => names,
+        Err(failure) => return Err(failure),
+    }
+    for name in names {
+        let rel = if prefix.len() == 0 {
+            name.clone()
+        } else {
+            let mut rel = String.from(prefix)
+            rel.push(Path.new(root).separator())
+            rel.push_str(name.as_str())
+            rel
+        }
+        let full = Path.new(root).join(rel.as_str())
+        let info = match metadata(full.as_str()) {
+            Ok(info) => info,
+            Err(failure) => return Err(failure),
+        }
+        out.push(rel.clone())
+        if info.is_dir() && !info.is_symlink() {
+            __walk(root, rel.as_str(), mut out)?
+        }
+    }
+    Ok(())
+}
+
+priv fn __glob_sep(c: char): bool {
+    c == '/' || c == '\\'
+}
+
+/// Whether `text[ti..]` matches `pattern[pi..]`, with `*`, `?`, and `**` as `walk_glob` describes.
+priv fn __glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize): bool {
+    if pi == pattern.len() {
+        return ti == text.len()
+    }
+    let pc = pattern[pi]
+    if pc == '*' {
+        if pi + 1 < pattern.len() && pattern[pi + 1] == '*' {
+            // `**/` matches zero path segments: try the rest of the pattern at the same position.
+            if pi + 2 < pattern.len() && __glob_sep(pattern[pi + 2]) {
+                if __glob_match(pattern, pi + 3, text, ti) {
+                    return true
+                }
+            }
+            let mut k = ti
+            loop {
+                if __glob_match(pattern, pi + 2, text, k) {
+                    return true
+                }
+                if k == text.len() {
+                    return false
+                }
+                k = k + 1
+            }
+        }
+        let mut k = ti
+        loop {
+            if __glob_match(pattern, pi + 1, text, k) {
+                return true
+            }
+            if k == text.len() || __glob_sep(text[k]) {
+                return false
+            }
+            k = k + 1
+        }
+    }
+    if ti == text.len() {
+        return false
+    }
+    if pc == '?' {
+        return !__glob_sep(text[ti]) && __glob_match(pattern, pi + 1, text, ti + 1)
+    }
+    if __glob_sep(pc) {
+        return __glob_sep(text[ti]) && __glob_match(pattern, pi + 1, text, ti + 1)
+    }
+    pc == text[ti] && __glob_match(pattern, pi + 1, text, ti + 1)
+}
+
+Path {
+    /// The names in this directory (`read_dir`).
+    fn read_dir(self): Result<List<String>, IoError> {
+        read_dir(self.as_str())
+    }
+
+    /// This path's metadata (`metadata`).
+    fn metadata(self): Result<Metadata, IoError> {
+        metadata(self.as_str())
+    }
+
+    /// This path's absolute, normalized form (`canonicalize`).
+    fn canonicalize(self): Result<String, IoError> {
+        canonicalize(self.as_str())
+    }
+
+    /// Every entry under this path (`walk`).
+    fn walk(self): Result<List<String>, IoError> {
+        walk(self.as_str())
+    }
+
+    /// The entries under this path that match `pattern` (`walk_glob`).
+    fn walk_glob(self, pattern: str): Result<List<String>, IoError> {
+        walk_glob(self.as_str(), pattern)
+    }
+}

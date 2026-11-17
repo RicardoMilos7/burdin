@@ -18,3 +18,6 @@ burdin_codegen = { path = "crates/burdin_codegen" }
 # LLVM 21 is the pinned version. `llvm-sys` finds it through `llvm-config` (or LLVM_SYS_211_PREFIX) and
 # `burdin_codegen/build.rs` links the shared library, because the static LLVM libraries do not work on Windows/MSVC.
 inkwell = { version = "=0.11.0", default-features = false, features = ["llvm21-1-no-llvm-linking", "target-x86", "target-aarch64"] }
+# The C layouts the runtime reads from libc (`struct stat`, `struct dirent`), so metadata and directory
+# listings use the host's exact field offsets (issue #411).
+libc = "=0.2.191"

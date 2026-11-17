@@ -355,7 +355,9 @@ fn same_receiver_shape(globals: &Globals, a: &Ty, b: &Ty) -> bool {
         (Ty::Array(i, m), Ty::Array(j, n)) => m == n && pair(i, j),
         (Ty::Range(i, m), Ty::Range(j, n)) => m == n && pair(i, j),
         (Ty::Result(io, ie), Ty::Result(jo, je)) => pair(io, jo) && pair(ie, je),
-        (Ty::Map(ik, iv, _), Ty::Map(jk, jv, _)) => pair(ik, jk) && pair(iv, jv),
+        (Ty::Map(ik, iv, _), Ty::Map(jk, jv, _)) | (Ty::MapEntry(ik, iv, _), Ty::MapEntry(jk, jv, _)) => {
+            pair(ik, jk) && pair(iv, jv)
+        }
         (Ty::Tuple(i), Ty::Tuple(j)) => i.len() == j.len() && i.iter().zip(j).all(|(x, y)| pair(x, y)),
         (Ty::Struct(_), Ty::Struct(_)) | (Ty::Enum(_), Ty::Enum(_)) => {
             match (globals.origin_of(a), globals.origin_of(b)) {

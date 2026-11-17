@@ -225,6 +225,8 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
         Ty::ListIntoIter(_, a) | Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
         Ty::MapIter(..) => (32, 8),
+        // A pending map lookup: the map's address, the key, the key's hash, the probe slot, and the found flag.
+        Ty::MapEntry(key, _, _) => product(&[(8, 8), member(p, key), (8, 8), (8, 8), (1, 1)]),
         Ty::ArrayIntoIter(inner, n) => product(&[member(p, &Ty::Array(inner.clone(), *n)), (8, 8)]),
         Ty::Enum(a) => {
             let mut size = 0;
@@ -403,8 +405,24 @@ impl<'p> Interp<'p, '_> {
         Ok(match b {
             Builtin::Print | Builtin::Println => return Err(impure("printing", span)),
             Builtin::Eprint | Builtin::Eprintln => return Err(impure("printing to standard error", span)),
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine => return Err(impure("writing to standard output", span)),
+            Builtin::StdoutFlush => return Err(impure("flushing standard output", span)),
+            Builtin::StderrWrite | Builtin::StderrWriteLine => {
+                return Err(impure("writing to standard error", span));
+            }
+            Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
+            Builtin::StdinReadLine | Builtin::StdinReadToString => {
+                return Err(impure("reading standard input", span));
+            }
             Builtin::ReadToString => return Err(impure("reading a file", span)),
             Builtin::WriteFile => return Err(impure("writing a file", span)),
+            Builtin::ReadDir => return Err(impure("reading a directory", span)),
+            Builtin::CreateDir => return Err(impure("creating a directory", span)),
+            Builtin::RemoveDir => return Err(impure("removing a directory", span)),
+            Builtin::RemoveFile => return Err(impure("removing a file", span)),
+            Builtin::RenamePath => return Err(impure("renaming a path", span)),
+            Builtin::Metadata => return Err(impure("reading file metadata", span)),
+            Builtin::Canonicalize => return Err(impure("resolving a path", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
             Builtin::EnvGet => return Err(impure("reading an environment variable", span)),
             Builtin::EnvSet | Builtin::EnvSetBytes => {
@@ -670,6 +688,9 @@ impl<'p> Interp<'p, '_> {
                 Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
             }
             Method::MapGetMut | Method::MapGetOrInsert => return Err(impure("a mutable view of a map value", span)),
+            Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
+                return Err(impure("an entry into a map value", span));
+            }
             Method::MapContainsKey => {
                 let k = self.eval(&args[1], Mode::Use)?;
                 Value::Bool(self.peek(recv, |v| match v {

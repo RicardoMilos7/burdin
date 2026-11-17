@@ -49,6 +49,7 @@ impl Globals {
             | Ty::Slice(_)
             | Ty::List(_, _)
             | Ty::Map(..)
+            | Ty::MapEntry(..)
             | Ty::Chars
             | Ty::Heap(_, _)
             | Ty::Shared(_)

@@ -25,9 +25,59 @@ and `format` returns the `String`. A call with one argument takes no format stri
 still writes any `str` value, and a `String` argument is converted by IC1.
 Standard output is buffered and standard error is not; the buffer is flushed when it fills, after a line when
 stdout is a terminal, and before the process ends through a normal return, `process.exit`, a panic, or the
-stack-overflow guard. A program never sees the difference except through the timing of the bytes (there is no
-explicit output handle in stage 0); the flush points are what keep the order of stdout and stderr correct before
-an abnormal end.
+stack-overflow guard. The `stdout` handle below writes into the same buffer, and its `flush` is the same flush; a
+program that does not use the handles sees no difference. The flush points are what keep the order of stdout and
+stderr correct before an abnormal end.
+
+## Streams (issue #410)
+
+The three standard streams also have explicit handles. A handle is a zero-sized value, so passing or copying one
+costs nothing, and every handle to a stream shares the same runtime buffer.
+
+```
+fn stdout(): Stdout
+fn stderr(): Stderr
+fn stdin(): Stdin
+
+Stdout {
+    fn write(self, text: str)
+    fn write_line(self, text: str)
+    fn flush(self)
+    fn is_terminal(self): bool
+}
+
+Stderr {
+    fn write(self, text: str)
+    fn write_line(self, text: str)
+    fn flush(self)                  // does nothing: standard error is unbuffered
+    fn is_terminal(self): bool
+}
+
+Stdin {
+    fn read_line(self): Result<Option<String>, IoError>
+    fn read_to_string(self): Result<String, IoError>
+    fn is_terminal(self): bool
+}
+```
+
+- `Stdout.write` appends to the buffer `print` and `println` use, so the bytes of the handle and of `print` stay in
+  the order the program wrote them. `write_line` appends one `\n`; on a terminal the buffer is flushed after that
+  newline. `flush` writes the buffered bytes now, including what `print` wrote. The other flush points are the ones
+  in "Output" above.
+- `Stderr.write` and `Stderr.write_line` are unbuffered: the bytes reach the operating system during the call, so
+  they are already out when a later panic message is written. `Stderr.flush` exists so the two output handles are
+  used alike and does nothing.
+- `Stdin.read_line` returns one line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair.
+  `Ok(None)` is the end of the input, and the last line may have no terminator. `read_to_string` returns
+  everything left, as the empty `String` at the end. The runtime reads standard input a block at a time and keeps
+  the unread bytes for the next call. As with files, the bytes are not checked for UTF-8.
+- A read error is `IoError.Read` with the path `<stdin>` (`errors.md`, ERR10). A write error is ignored, exactly
+  as `print` ignores one.
+- `is_terminal` asks the operating system whether that stream is a terminal. It is false under the conformance
+  runner, for a pipe, and for a file.
+- `burdin test` gives each test process a closed standard input (`test-runner.md`, Isolation), so a read sees the
+  end of the input and never waits for a person.
+- None of these runs at compile time: reaching one in a comptime evaluation is E0224 (`comptime.md`, CT9).
 
 ## Numbers and parsing
 
@@ -444,27 +494,45 @@ probe cluster back instead of leaving tombstones. Keys are hashed structurally â
 ```
 fn get_mut(mut self, key: K): Option<&mut V>        // built in: a mutable view of the value, or None
 fn get_or_insert(mut self, key: K, value: V): &mut V    // built in
+fn entry(mut self, own key: K): MapEntry<K, V, A>       // built in
+fn MapEntry<K, V, A>.or_insert(own self, own value: V): &mut V                  // built in
+fn MapEntry<K, V, A>.or_insert_with<F: FnOnce(): V>(own self, own make: F): &mut V   // built in
 fn get_or_insert_with<F: FnOnce(): V>(mut self, key: K, make: F): &mut V
 fn update<F: FnOnce(&mut V)>(mut self, key: K, change: F): bool
 fn upsert<F: FnOnce(&mut V)>(mut self, key: K, value: V, change: F)
 ```
 
-`get_or_insert` returns the value stored under `key`; when the key is absent it first stores `value`. A value that is
-already there is kept, and the incoming key and value are dropped on the spot. It looks the key up once. The
-`&mut V` keeps the map exclusively borrowed until its last use (a `m.insert(...)` while it is live is E0111), because
-inserting may move the table. `get_or_insert_with` calls `make` only for an absent key. `update` runs `change` on the
-value for `key` and returns whether the key was there. `upsert` stores `value` for an absent key and otherwise runs
-`change` on the value already there, dropping `value`. All of them need a key with `==`, like every map operation (E0141),
-and `get_mut` and `get_or_insert` cannot run at compile time (`comptime.md`, CT9).
+`entry(key)` borrows the map exclusively, takes ownership of the key, and probes the map once. It returns a
+`MapEntry<K, V, A>` that holds the key and the slot the probe found. The entry is second-class (`memory-rules.md`,
+SC2): it views the map, so it cannot be stored in a field or a container, is neither `Copy` nor `Clone`, may not
+outlive the map (E0123), and dropping it without filling it drops the key. `or_insert(value)` stores the key and the
+value when the key is absent and returns a mutable view of the value; when the key is present it keeps the stored
+value and drops the incoming value and the entry's key. `or_insert_with(make)` does the same, but calls `make` for
+the value only when the key is absent; the closure is consumed either way, and a closure that is not called is
+dropped with what it captured. Neither operation looks the key up again: they fill the slot the entry probed for,
+and probe again only when the insert has to grow the map. A stored allocator (`allocators.md`, AL3) carries through
+`MapEntry`, so a fill that grows allocates through the map's own allocator.
 
-There is no `Entry` value, so `map.entry(key).or_insert(value)` is written `map.get_or_insert(key, value)`. An entry
-would have to hold a reference to the map in a struct field, and a struct cannot have a reference field
-(`memory-rules.md`, SC2). The counting idiom is `map.upsert(word, 1, |n| { *n = *n + 1 })` or
+The `&mut V` keeps the map exclusively borrowed until its last use (a `m.insert(...)` while it is live is E0111),
+because inserting may move the table; an entry that has not been filled holds the map the same way. The key needs
+`==`, like every map operation (E0141), and neither the entry nor its operations run at compile time
+(`comptime.md`, CT9).
+
+`get_or_insert` returns the value stored under `key`; when the key is absent it first stores `value`. A value that is
+already there is kept, and the incoming key and value are dropped on the spot. It looks the key up once.
+`get_or_insert_with` is `self.entry(key).or_insert_with(make)`, so it probes once as well. `update` runs `change` on
+the value for `key` and returns whether the key was there. `upsert` stores `value` for an absent key and otherwise
+runs `change` on the value already there, dropping `value`.
+
+The counting idiom is
 
 ```
-let count = map.get_or_insert(word, 0)
+let count = map.entry(word).or_insert(0)
 *count = *count + 1
 ```
+
+Tests: `m24_stdlib/map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`
+(E0111), `map_entry_needs_eq` (E0141), `map_entry_second_class` (E0120, E0123), and `map_entry_comptime` (E0224).
 
 ## `Set<T>` (issue #190)
 
@@ -638,9 +706,72 @@ resolves symbolic links.
   root, and writes the rules' separator; an empty result is `.`. It is lexical, so it can change what a path with
   symbolic links names.
 - `exists` is true when the system can see the path (the C library's `access`, or `_access` on Windows, with no mode bits). It is impure, so a
-  comptime evaluation that reaches it fails with E0224. Directory listing and metadata are #411.
+  comptime evaluation that reaches it fails with E0224. Directory listing, metadata, and walking are the next section.
 
 Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists`.
+
+## Directories, metadata, and walking (issue #411)
+
+```
+enum FileKind derives (Copy, Clone, Eq, Debug) { File  Dir  Symlink  Other }
+
+struct Metadata derives (Clone, Copy, Eq, Debug) {
+    size: u64                 // bytes
+    mode: u32                 // the system's mode bits
+    modified: i64             // seconds since the Unix epoch
+    accessed: i64             // seconds since the Unix epoch
+    kind: FileKind
+}
+Metadata { fn is_file(self): bool    fn is_dir(self): bool    fn is_symlink(self): bool }
+
+fn read_dir(path: str): Result<List<String>, IoError>
+fn create_dir(path: str): Result<(), IoError>          fn create_dir_all(path: str): Result<(), IoError>
+fn remove_dir(path: str): Result<(), IoError>          fn remove_dir_all(path: str): Result<(), IoError>
+fn remove_file(path: str): Result<(), IoError>
+fn rename(from: str, to: str): Result<(), IoError>
+fn metadata(path: str): Result<Metadata, IoError>
+fn canonicalize(path: str): Result<String, IoError>
+fn walk(root: str): Result<List<String>, IoError>
+fn walk_glob(root: str, pattern: str): Result<List<String>, IoError>
+
+Path {   // extension methods, the same operations with the receiver as the path
+    fn read_dir(self): Result<List<String>, IoError>        fn metadata(self): Result<Metadata, IoError>
+    fn canonicalize(self): Result<String, IoError>          fn walk(self): Result<List<String>, IoError>
+    fn walk_glob(self, pattern: str): Result<List<String>, IoError>
+}
+```
+
+Every function is impure: a comptime evaluation that reaches one fails with E0224. A read that only inspects the
+file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
+(`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`) reports `IoError.Write`.
+`rename` names its destination `to` in the error.
+
+- `read_dir` returns the entry names, not paths, without `.` and `..`, in the order the system returns them; sort the
+  list for a deterministic order. A missing path or a file is an error. The names join with `Path.join`.
+- `create_dir` creates one directory and requires the parent to exist; an existing directory is an error.
+  `create_dir_all` creates every missing parent, treats an existing directory as success, and reports a path that
+  exists as a file.
+- `remove_dir` removes an empty directory only. `remove_dir_all` removes a directory and everything under it; a
+  symbolic link is removed as a link and never followed, and a path that is not a directory is an error.
+- `remove_file` removes a file or a symbolic link; a directory is an error.
+- `rename` renames a file or a directory and replaces an existing `to`, on Unix and Windows alike.
+- `metadata` reads the entry itself and does not follow a symbolic link (`lstat` on Unix), so `kind` is the entry's
+  kind. `mode` is the system's mode bits: the `S_IFMT` file-kind bits agree between Unix and Windows for `File`,
+  `Dir`, and `Symlink`, and the permission bits are the system's. `modified` and `accessed` are seconds since the
+  Unix epoch. On Windows the CRT's `_stat64` follows a link, so a link's size and times may describe its target,
+  while `kind` is still `Symlink` when the entry is a reparse point.
+- `canonicalize` returns an absolute path with `.` and `..` resolved, using the system's separators. The path must
+  exist. On Unix it is `realpath`, which also resolves symbolic links; on Windows it is `_fullpath`, which only
+  normalizes the text and keeps a link's name.
+- `walk` returns every file and directory under `root`, recursively, as a path relative to `root` with the system's
+  separator, sorted, without `root` itself. A symbolic link is listed but not followed. A directory that cannot be
+  read makes the whole walk fail.
+- `walk_glob` is `walk` filtered by `pattern`, matched against the whole relative path. `*` matches any run of
+  characters inside one path segment, `?` matches one character inside a segment, and `**` matches across segments;
+  a `**` followed by a separator also matches no segment, so `**/*.bd` finds a top-level file too. Both `/` and `\`
+  are separators in a pattern.
+
+Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
 
 ## `Heap<T>`
 
@@ -1041,13 +1172,14 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
-| Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
+| Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
 | Byte buffers | `m24_stdlib/bytes_mut`, `bytes_share`, `bytes_slice_out_of_bounds`, `bytes_index_out_of_bounds`, `shared_get_view`, `shared_get_view_outlives` |
 | `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
+| Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |

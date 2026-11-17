@@ -474,7 +474,7 @@ impl Globals {
             | Ty::Range(inner, _)
             | Ty::List(inner, _) => self.private_adt(inner),
             Ty::Result(t, e) => self.private_adt(t).or_else(|| self.private_adt(e)),
-            Ty::Map(k, v, _) => self.private_adt(k).or_else(|| self.private_adt(v)),
+            Ty::Map(k, v, _) | Ty::MapEntry(k, v, _) => self.private_adt(k).or_else(|| self.private_adt(v)),
             Ty::Fn { sig, .. } => {
                 sig.params.iter().find_map(|t| self.private_adt(t)).or_else(|| self.private_adt(&sig.ret))
             }

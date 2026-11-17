@@ -74,6 +74,8 @@ Every test process starts with:
 
 - a fresh, empty temporary directory as its working directory, removed when the test finishes, whether it passed or
   failed. Two tests never share a working directory, so a file one test writes is not visible to another.
+- a closed standard input, so `Stdin.read_line` and `Stdin.read_to_string` see the end of the input and a test
+  never waits for a person.
 - an empty environment, except for these variables:
   - `PATH`, copied from the runner, so `process.run` can find commands;
   - `TMPDIR`, `TMP`, and `TEMP`, set to the test's working directory, so a program that writes temporary files

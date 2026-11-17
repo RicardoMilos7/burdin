@@ -336,7 +336,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
             }
-            Ty::ArrayIntoIter(..) => self.debug_unspecified(&Self::debug_name(ty)),
+            Ty::ArrayIntoIter(..) | Ty::MapEntry(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Option(inner) => {
                 let members = vec![("is_some".to_string(), Ty::Bool), ("value".to_string(), (**inner).clone())];
                 let name = Self::debug_name(ty);
@@ -497,6 +497,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Result(ok, err) => format!("Result<{}, {}>", Self::debug_name(ok), Self::debug_name(err)),
             Ty::List(inner, _) => format!("List<{}>", Self::debug_name(inner)),
             Ty::Map(k, v, _) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
+            Ty::MapEntry(k, v, _) => {
+                format!("MapEntry<{}, {}>", Self::debug_name(k), Self::debug_name(v))
+            }
             Ty::Heap(inner, _) => format!("Heap<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
             Ty::Fn { .. } | Ty::Any(_) => ty.to_string(),

@@ -1,21 +1,17 @@
-// The entry operations of `Map<K, V>` (issue #482; spec/stdlib.md, "Map entry operations"): looking at a key and
-// filling it in with one lookup instead of a `contains_key`, an `insert`, and a `get`.
+// The entry operations of `Map<K, V>` (issue #482; spec/stdlib.md, "Map entry operations"): `entry(key)` probes
+// once for a key and returns an entry that `or_insert` or `or_insert_with` fills in.
 //
-//     let count = counts.get_or_insert(word, 0)
+//     let count = counts.entry(word).or_insert(0)
 //     *count = *count + 1
 //
-// The compiler provides `get_mut(key): Option<&mut V>` and `get_or_insert(key, value): &mut V`; the rest is written
-// here on top of them. There is no `Entry` value to hold between `entry(key)` and `or_insert(value)`: such a value
-// would have to store a reference to the map, and a struct cannot have a reference field (SC2 in
-// spec/memory-rules.md). Each operation takes the key and does the whole job instead.
+// The compiler provides `get_mut`, `get_or_insert`, `entry`, and the entry's `or_insert` and `or_insert_with`;
+// the rest is written here on top of them.
 
-/// The value for `key`, storing the result of `make` first when there is none. `make` runs only when the key is
-/// absent, so it may be expensive. The returned reference keeps the map exclusively borrowed until its last use.
+/// The value for `key`, storing the result of `make` first when there is none. The entry probes the key once and
+/// `make` runs only when the key is absent, so it may be expensive. The returned reference keeps the map
+/// exclusively borrowed until its last use.
 fn Map<K, V>.get_or_insert_with<F: FnOnce(): V>(mut self, own key: K, own make: F): &mut V where K: Eq {
-    if self.contains_key(key) {
-        return self.get_mut(key).unwrap()
-    }
-    self.get_or_insert(key, make())
+    self.entry(key).or_insert_with(make)
 }
 
 /// Runs `change` on the value for `key` and returns `true`, or returns `false` without calling it when the key is

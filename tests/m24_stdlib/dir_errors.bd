@@ -1,0 +1,34 @@
+//@ run
+//> read missing true
+//> read file true
+//> metadata missing true
+//> rename missing true
+//> canonicalize missing true
+//> remove file missing true
+//> remove dir missing true
+//> create over file true
+//> create all over file true
+//> walk missing true
+//> walk file true
+//> remove dir all missing true
+//> read still there true
+
+// Every file-system function reports a failure as an `IoError` instead of panicking: a missing path, a file where
+// a directory is required, and a directory where a file is required (spec/stdlib.md).
+
+fn main() {
+    println("read missing {}", read_dir("nope").is_err())
+    write_file("plain", "x").unwrap()
+    println("read file {}", read_dir("plain").is_err())
+    println("metadata missing {}", metadata("nope").is_err())
+    println("rename missing {}", rename("nope", "other").is_err())
+    println("canonicalize missing {}", canonicalize("nope").is_err())
+    println("remove file missing {}", remove_file("nope").is_err())
+    println("remove dir missing {}", remove_dir("nope").is_err())
+    println("create over file {}", create_dir("plain").is_err())
+    println("create all over file {}", create_dir_all("plain").is_err())
+    println("walk missing {}", walk("nope").is_err())
+    println("walk file {}", walk("plain").is_err())
+    println("remove dir all missing {}", remove_dir_all("nope").is_err())
+    println("read still there {}", read_to_string("plain").unwrap().as_str() == "x")
+}
