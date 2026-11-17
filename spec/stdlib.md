@@ -32,47 +32,42 @@ stderr correct before an abnormal end.
 ## Streams (issue #410)
 
 The three standard streams also have explicit handles. A handle is a zero-sized value, so passing or copying one
-costs nothing, and every handle to a stream shares the same runtime buffer.
+costs nothing, and every handle to a stream shares the same runtime buffer. The handles implement the reader and
+writer interfaces of "Readers and writers" below, so any code written against `Read`, `Write`, or `BufRead` accepts a
+stream, and `BufReader`, `BufWriter`, and `copy` work on them.
 
 ```
 fn stdout(): Stdout
 fn stderr(): Stderr
 fn stdin(): Stdin
 
-Stdout {
-    fn write(self, text: str)
-    fn write_line(self, text: str)
-    fn flush(self)
-    fn is_terminal(self): bool
-}
+Stdout: Write { }                    // write(mut self, data: [u8]), flush(mut self), and the Write defaults
+Stderr: Write { }
+Stdin: Read, BufRead { }             // read(mut self, ...), read_until(mut self, ...), read_line, read_to_string
 
-Stderr {
-    fn write(self, text: str)
-    fn write_line(self, text: str)
-    fn flush(self)                  // does nothing: standard error is unbuffered
-    fn is_terminal(self): bool
-}
-
-Stdin {
-    fn read_line(self): Result<Option<String>, IoError>
-    fn read_to_string(self): Result<String, IoError>
-    fn is_terminal(self): bool
-}
+Stdout { fn is_terminal(self): bool }
+Stderr { fn is_terminal(self): bool }
+Stdin  { fn is_terminal(self): bool }
 ```
 
-- `Stdout.write` appends to the buffer `print` and `println` use, so the bytes of the handle and of `print` stay in
-  the order the program wrote them. `write_line` appends one `\n`; on a terminal the buffer is flushed after that
-  newline. `flush` writes the buffered bytes now, including what `print` wrote. The other flush points are the ones
-  in "Output" above.
-- `Stderr.write` and `Stderr.write_line` are unbuffered: the bytes reach the operating system during the call, so
-  they are already out when a later panic message is written. `Stderr.flush` exists so the two output handles are
-  used alike and does nothing.
-- `Stdin.read_line` returns one line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair.
-  `Ok(None)` is the end of the input, and the last line may have no terminator. `read_to_string` returns
-  everything left, as the empty `String` at the end. The runtime reads standard input a block at a time and keeps
-  the unread bytes for the next call. As with files, the bytes are not checked for UTF-8.
-- A read error is `IoError.Read` with the path `<stdin>` (`errors.md`, ERR10). A write error is ignored, exactly
-  as `print` ignores one.
+- `Stdout.write` appends all of `data` to the buffer `print` and `println` use, so the bytes of the handle and of
+  `print` stay in the order the program wrote them. `write_text` and `write_line` come from `Write`; on a terminal the
+  buffer is flushed after a line, as for `println`. `flush` writes the buffered bytes now, including what `print`
+  wrote. The other flush points are the ones in "Output" above.
+- `Stderr.write` is unbuffered: the bytes reach the operating system during the call, so they are already out when a
+  later panic message is written. `Stderr.flush` does nothing and returns `Ok(())`.
+- A write error is ignored, exactly as `print` ignores one, so a stream's `write` always takes all of `data` and
+  returns `Ok(data.len())`.
+- `Stdin.read` appends up to `max` bytes the runtime has buffered, reading one block from the operating system only
+  when the buffer is empty, so it returns as soon as some input is available and never waits for `max` bytes;
+  `Ok(0)` is the end of the input. `read_exact`, `read_to_end`, and `read_until` keep reading. `read_line` returns one
+  line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair. `Ok(None)` is the end of the input,
+  and the last line may have no terminator. `read_to_string` returns everything left, as the empty `String` at the
+  end. All of them take bytes from the same buffer, so they can be mixed. Unlike the `Read` and `BufRead` defaults,
+  `Stdin.read_line` and `Stdin.read_to_string` do not check the bytes for UTF-8, as with files.
+- A read error is `IoError.Read` with the path `<stdin>` (`errors.md`, ERR10).
+- Because the handles implement interfaces whose methods take `mut self`, a handle is bound with `mut`
+  (`let mut out = stdout()`); a temporary such as `stdout().write_line("x")` needs no binding.
 - `is_terminal` asks the operating system whether that stream is a terminal. It is false under the conformance
   runner, for a pipe, and for a file.
 - `burdin test` gives each test process a closed standard input (`test-runner.md`, Isolation), so a read sees the
@@ -153,7 +148,7 @@ struct BufWriter<W: Write> {                         // Write, and Seek when W i
   UTF-8 bytes of a string and `write_line` adds one `\n`. `flush` pushes what the writer holds to what it wraps; a
   writer that holds nothing returns `Ok(())`.
 - **`BufRead`.** `read_until` appends up to and including the first `delim` byte, or up to the end of the input, and
-  returns how many bytes it appended (`0` at the end). `read_line` is the `Stdin.read_line` of "Streams" for any
+  returns how many bytes it appended (`0` at the end). `read_line` is the one `Stdin` provides, for any
   buffered reader: it drops the `\n` and the `\r` of a `\r\n`, returns `Ok(None)` at the end, accepts a last line with
   no terminator, and reports bytes that are not valid UTF-8 as `IoError.InvalidData`. `lines` yields each line as a
   `Result`, and stops after the first error.
@@ -173,15 +168,15 @@ struct BufWriter<W: Write> {                         // Write, and Seek when W i
   take in the buffer. **Dropping a `BufWriter` flushes the buffer and ignores a failure**; call `flush` or
   `into_inner` to see one. `into_inner` flushes, returns the writer, and leaves nothing for the drop to write twice.
   A seek flushes first.
-- **`BytesMut`** implements `Write`: writing appends to the buffer. Nothing else in `std` implements these
-  interfaces yet: the standard-stream handles keep their own `write`, `write_line`, and `read_line` (a stream's text
-  `write` has a different signature from `Write.write`), and file handles are issue #702, which will implement
-  `Read`, `Write`, and `Seek`.
+- **`BytesMut`** implements `Write`: writing appends to the buffer. The standard-stream handles implement the
+  interfaces too (see "Streams"). File handles are issue #702, which will implement `Read`, `Write`, and `Seek`.
 
 The tests are `m24_stdlib/rw_cursor_read`, `rw_cursor_write_seek`, `rw_read_exact_eof`, `rw_read_chunks`, `rw_write_all`,
 `rw_bufreader_lines`, `rw_bufreader_buffering`, `rw_bufwriter`, `rw_bufwriter_drop`, `rw_seek_buffered`, `rw_copy`,
 `rw_bytesmut_write`, `rw_error_propagation`, `rw_reader_needs_read`, `rw_bufreader_capacity_zero`, and
-`rw_bufwriter_capacity_zero`.
+`rw_bufwriter_capacity_zero`; the stream handles are covered by `io_stdout_handle`, `io_stdout_write_bytes`,
+`io_stderr_write_bytes`, `io_stdin_read_line`, `io_stdin_read_to_string`, `io_stdin_read_bytes`, and
+`io_stdin_buffered_lines`.
 
 ## Numbers and parsing
 

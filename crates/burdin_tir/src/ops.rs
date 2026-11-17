@@ -61,6 +61,10 @@ pub enum Builtin {
     StdoutWriteLine,
     /// `__stdout_flush()`: writes the standard-output buffer now.
     StdoutFlush,
+    /// `__stdout_write_bytes(data)`: appends the bytes of a `[u8]` to the standard-output buffer.
+    StdoutWriteBytes,
+    /// `__stderr_write_bytes(data)`: writes the bytes of a `[u8]` to standard error, unbuffered.
+    StderrWriteBytes,
     /// `__stderr_write(text)`: writes `text` to standard error, unbuffered.
     StderrWrite,
     /// `__stderr_write_line(text)`: writes `text` and a newline to standard error, unbuffered.
@@ -71,6 +75,11 @@ pub enum Builtin {
     StdinReadLine,
     /// `__stdin_read_to_string()`: the rest of standard input as a `String`.
     StdinReadToString,
+    /// `__stdin_avail()`: how many bytes of standard input are buffered, reading a block first when none are; 0 is
+    /// the end of the input and -1 a read error.
+    StdinAvail,
+    /// `__stdin_next_byte()`: takes the next buffered byte of standard input (only after `__stdin_avail` was positive).
+    StdinNextByte,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
     /// `process.exit(code)`: ends the process.

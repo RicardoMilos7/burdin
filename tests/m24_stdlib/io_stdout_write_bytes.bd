@@ -1,0 +1,34 @@
+//@ run
+//> hi!
+//> wrote 3
+//> hi!hi!
+//> through a buffered writer
+//> hello world
+//> copied 11 bytes
+
+// `Stdout` writes raw bytes through `Write.write` into the same buffer `print` uses, so any writer-generic code can
+// target it: `write_all`, `BufWriter`, and `copy`.
+
+fn main() {
+    let mut out = stdout()
+    let mut bytes = List<u8>.new()
+    bytes.push(104)
+    bytes.push(105)
+    bytes.push(33)
+    let n = out.write(bytes[0..bytes.len()]).unwrap()
+    out.write_line("").unwrap()
+    println("wrote {}", n)
+    out.write_all(bytes[0..3]).unwrap()
+    print("hi!")
+    println("")
+
+    {
+        let mut buffered = BufWriter.new(stdout())
+        buffered.write_line("through a buffered writer").unwrap()
+    }
+
+    let mut src = Cursor.from_text("hello world")
+    let copied = copy(mut src, mut out).unwrap()
+    out.write_line("").unwrap()
+    println("copied {} bytes", copied)
+}

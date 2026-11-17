@@ -15,11 +15,15 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__stdout_write" => Builtin::StdoutWrite,
         "__stdout_write_line" => Builtin::StdoutWriteLine,
         "__stdout_flush" => Builtin::StdoutFlush,
+        "__stdout_write_bytes" => Builtin::StdoutWriteBytes,
+        "__stderr_write_bytes" => Builtin::StderrWriteBytes,
         "__stderr_write" => Builtin::StderrWrite,
         "__stderr_write_line" => Builtin::StderrWriteLine,
         "__is_terminal" => Builtin::IsTerminal,
         "__stdin_read_line" => Builtin::StdinReadLine,
         "__stdin_read_to_string" => Builtin::StdinReadToString,
+        "__stdin_avail" => Builtin::StdinAvail,
+        "__stdin_next_byte" => Builtin::StdinNextByte,
         "__args" => Builtin::EnvArgs,
         "__float_str" => Builtin::FloatStr,
         "__exit" => Builtin::ProcessExit,
@@ -47,6 +51,8 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
         Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::IsTerminal => Ty::Bool,
+        Builtin::StdinAvail => Ty::Int(IntTy::Isize),
+        Builtin::StdinNextByte => Ty::Int(IntTy::U8),
         Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
@@ -60,10 +66,15 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::TargetArch
         | Builtin::StdoutFlush
         | Builtin::StdinReadLine
-        | Builtin::StdinReadToString => Vec::new(),
+        | Builtin::StdinReadToString
+        | Builtin::StdinAvail
+        | Builtin::StdinNextByte => Vec::new(),
         Builtin::IsTerminal => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
             vec![ParamSig::plain(Ty::Str)]
+        }
+        Builtin::StdoutWriteBytes | Builtin::StderrWriteBytes => {
+            vec![ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))]
         }
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
@@ -292,6 +303,22 @@ mod tests {
         assert_eq!(write.params[0].ty, Ty::Str);
         assert_eq!(write.ret, Ty::Unit);
         assert!(builtin_sig(Builtin::StdoutFlush, &globals).params.is_empty());
+
+        assert_eq!(builtin("__stdout_write_bytes"), Some(Builtin::StdoutWriteBytes));
+        assert_eq!(builtin("__stderr_write_bytes"), Some(Builtin::StderrWriteBytes));
+        let bytes = builtin_sig(Builtin::StderrWriteBytes, &globals);
+        assert_eq!(bytes.params.len(), 1);
+        assert_eq!(bytes.params[0].ty, Ty::Slice(Box::new(Ty::Int(IntTy::U8))));
+        assert_eq!(bytes.ret, Ty::Unit);
+
+        assert_eq!(builtin("__stdin_avail"), Some(Builtin::StdinAvail));
+        assert_eq!(builtin("__stdin_next_byte"), Some(Builtin::StdinNextByte));
+        let avail = builtin_sig(Builtin::StdinAvail, &globals);
+        assert!(avail.params.is_empty());
+        assert_eq!(avail.ret, Ty::Int(IntTy::Isize));
+        let next = builtin_sig(Builtin::StdinNextByte, &globals);
+        assert!(next.params.is_empty());
+        assert_eq!(next.ret, Ty::Int(IntTy::U8));
 
         let tty = builtin_sig(Builtin::IsTerminal, &globals);
         assert_eq!(tty.params[0].ty, Ty::Int(IntTy::I32));
