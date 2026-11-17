@@ -125,7 +125,7 @@ impl FnCx<'_> {
             locals,
             body: tir::Block { stmts: Vec::new(), tail: Some(Box::new(body)) },
             moved: Vec::new(),
-            ret_origin: None,
+            ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
         };

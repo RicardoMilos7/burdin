@@ -771,6 +771,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::Iter | Method::IntoIter => self.iter_value(recv, m == Method::IntoIter, span)?,
             Method::IterNext => self.iter_next(recv, ty, span)?,
+            Method::IterNextBack => self.iter_next_back(recv, ty, span)?,
             Method::SharedGet => {
                 let inner = self.peek(recv, |v| match v {
                     Value::Heap(b) => (**b).clone(),
@@ -855,6 +856,62 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             other => return Err(internal(format!("`next` on {other:?}"), span)),
+        };
+        Ok(Value::Opt(next.map(Box::new)))
+    }
+
+    /// `it.next_back()` on a slice, a range iterator, or `Chars` (spec/iterators.md, IT14).
+    fn iter_next_back(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
+        let item_is_view = matches!(ty, Ty::Option(t) if matches!(**t, Ty::Ref { .. }));
+        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
+        let place = self.eval_place(recv)?;
+        let it = self.place_mut(&place, span)?;
+        let it = match it {
+            Value::Borrow(_) => return Err(internal("`next_back` on a shared iterator", span)),
+            other => other,
+        };
+        let next = match it {
+            Value::Slice(xs, lo, hi) => {
+                if *lo >= *hi {
+                    None
+                } else {
+                    *hi -= 1;
+                    let v = xs[*hi].clone();
+                    Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
+                }
+            }
+            Value::Chars(bytes, at) => {
+                let mut start = bytes.len();
+                if start <= *at {
+                    None
+                } else {
+                    start -= 1;
+                    while start > *at && (bytes[start] & 0xc0) == 0x80 {
+                        start -= 1;
+                    }
+                    let c = decode(bytes, start).map(|(c, _)| c);
+                    let kept: Rc<[u8]> = Rc::from(&bytes[..start]);
+                    *bytes = kept;
+                    c.map(Value::Char)
+                }
+            }
+            Value::RangeIter(lo, hi, done) => {
+                if *done || (inclusive && *lo > *hi) || (!inclusive && *lo >= *hi) {
+                    None
+                } else if inclusive {
+                    let v = *hi;
+                    if *lo == *hi {
+                        *done = true;
+                    } else {
+                        *hi -= 1;
+                    }
+                    Some(Value::Int(v))
+                } else {
+                    *hi -= 1;
+                    Some(Value::Int(*hi))
+                }
+            }
+            other => return Err(internal(format!("`next_back` on {other:?}"), span)),
         };
         Ok(Value::Opt(next.map(Box::new)))
     }

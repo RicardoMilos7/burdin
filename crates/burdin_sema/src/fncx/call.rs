@@ -709,7 +709,11 @@ impl FnCx<'_> {
         if let Some((receiver, exclusive)) = receiver {
             let mut places = Vec::new();
             place_mentions(receiver, &mut places);
-            entries.push((exclusive, receiver.span, places));
+            // A chain that is computed here (`xs.iter()`) is a temporary view of the places it mentions, not a
+            // place the call borrows exclusively: its loans are the borrow checker's business (RF5), so `xs.iter()`
+            // as the receiver of `zip` may sit beside another argument that reads `xs`.
+            let temporary_view = receiver.ty.is_second_class() && !is_place_expr(receiver);
+            entries.push((exclusive && !temporary_view, receiver.span, places));
         }
         for (p, a) in params.iter().zip(args) {
             let mut places = Vec::new();

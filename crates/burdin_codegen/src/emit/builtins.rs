@@ -776,6 +776,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if m == Method::IterNext {
             return self.iter_next(args, ty);
         }
+        if m == Method::IterNextBack {
+            return self.iter_next_back(args, ty);
+        }
         if m == Method::AsPtr {
             // A `CString` receiver that is not a place is a temporary of the statement: keep it in a slot so its
             // buffer is freed at the end of the statement, like `view_parts` does for a temporary `String`.

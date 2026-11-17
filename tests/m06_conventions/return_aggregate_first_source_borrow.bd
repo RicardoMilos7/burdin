@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// Either source of a two-source result stays borrowed, not only the last one.
+struct Counter {
+    n: i32
+}
+
+fn both(a: Counter, b: Counter): (&i32, &i32) {
+    (&a.n, &b.n)
+}
+
+fn main() {
+    let mut x = Counter { n: 1 }
+    let y = Counter { n: 2 }
+    let p = both(x, y)
+    x.n = 5 //~ E0111
+    println("{*p.1}")
+}

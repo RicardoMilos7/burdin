@@ -159,7 +159,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::Swap | Builtin::Replace => Vec::new(),
         _ => vec![ParamSig::plain(Ty::Str)],
     };
-    Signature { params, ret, has_self: false, ret_origin: None }
+    Signature { params, ret, has_self: false, ret_origins: Vec::new() }
 }
 
 pub(crate) fn int_ty(name: &str) -> Option<IntTy> {

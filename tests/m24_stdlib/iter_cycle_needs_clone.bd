@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `cycle` clones its source at the end of every pass; a closure cannot be cloned, so a chain with one cannot be cycled.
+fn main() {
+    let xs = [1, 2, 3]
+    for x in xs.iter().map(|n| n * 2).cycle().take(5) { //~ E0141
+        println(x.to_string())
+    }
+}

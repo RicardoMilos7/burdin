@@ -1,0 +1,74 @@
+//@ run
+//> zip
+//> pair 1 10
+//> drop 10
+//> drop 1
+//> pair 2 11
+//> drop 11
+//> drop 2
+//> drop 3
+//> chain
+//> item 20
+//> drop 20
+//> item 30
+//> drop 30
+//> item 31
+//> drop 31
+//> partial
+//> took 40
+//> drop 40
+//> flat_map
+//> took 60
+//> drop 60
+//> end
+//> drop 61
+//> drop 41
+//> drop 50
+//> drop 51
+
+// The adapters move their items through, so every item is dropped exactly once: the items that are yielded, the
+// items a `zip` discards when the other side ends first, and the items an adapter still holds when it is dropped.
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn tokens(from: i32, count: i32): List<Token> {
+    let mut out = List<Token>.new()
+    let mut i = from
+    while i < from + count {
+        out.push(Token { id: i })
+        i = i + 1
+    }
+    out
+}
+
+fn main() {
+    println("zip")
+    for (a, b) in tokens(1, 3).into_iter().zip(tokens(10, 2).into_iter()) {
+        println("pair {a.id} {b.id}")
+    }
+    println("chain")
+    for t in tokens(20, 1).into_iter().chain(tokens(30, 2).into_iter()) {
+        println("item {t.id}")
+    }
+    println("partial")
+    let mut c = tokens(40, 2).into_iter().chain(tokens(50, 2).into_iter())
+    match c.next() {
+        Some(t) => println("took {t.id}"),
+        None => {}
+    }
+    println("flat_map")
+    let mut f = (0..2).iter().flat_map(|n| tokens(60 + n * 10, 2).into_iter())
+    match f.next() {
+        Some(t) => println("took {t.id}"),
+        None => {}
+    }
+    println("end")
+}
