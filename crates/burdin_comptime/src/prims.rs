@@ -424,6 +424,15 @@ impl<'p> Interp<'p, '_> {
             Builtin::Metadata => return Err(impure("reading file metadata", span)),
             Builtin::Canonicalize => return Err(impure("resolving a path", span)),
             Builtin::EnvArgs => return Err(impure("reading the process arguments", span)),
+            Builtin::EnvGet => return Err(impure("reading an environment variable", span)),
+            Builtin::EnvSet | Builtin::EnvSetBytes => {
+                return Err(impure("setting an environment variable", span));
+            }
+            Builtin::EnvRemove => return Err(impure("removing an environment variable", span)),
+            Builtin::CurrentDir => return Err(impure("reading the working directory", span)),
+            Builtin::SetCurrentDir | Builtin::SetCurrentDirBytes => {
+                return Err(impure("changing the working directory", span));
+            }
             Builtin::ProcessExit => return Err(impure("ending the process", span)),
             Builtin::RunCommand => return Err(impure("running a command", span)),
             Builtin::CPtrNull => return Err(impure("making a C pointer", span)),

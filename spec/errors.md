@@ -184,6 +184,14 @@ error enum IoError {
 error enum ParseIntError {
     Invalid  "invalid integer"
 }
+
+error enum EnvError {
+    Name { name: String }        "invalid environment variable name {name}"
+    Value { name: String }       "invalid value for environment variable {name}"
+    Access { name: String }      "cannot access environment variable {name}"
+    WorkingDirectory             "cannot read the working directory"
+    SetWorkingDirectory          "cannot set the working directory"
+}
 ```
 
 `read_to_string` returns `Result<String, IoError>` with `IoError.Read`; `write_file` returns
@@ -192,7 +200,10 @@ The `Stdin` handle's `read_line` and `read_to_string` return `IoError.Read` with
 Streams). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
 directory operations (`read_dir`, `metadata`, `canonicalize`, `walk`, and `walk_glob`) use `IoError.Read`, and the
 ones that change the file system (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, and
-`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking").
+`rename`) use `IoError.Write` (`stdlib.md`, "Directories, metadata, and walking"). The environment functions of
+`std.env` return `EnvError`: `Name` for an invalid name, `Value` for an invalid value, `Access` when the system
+refuses a change, `WorkingDirectory` when the directory cannot be read as text, and `SetWorkingDirectory` when it
+cannot be changed (`stdlib.md`, "Environment variables and the working directory").
 
 The compiler primitives behind them (`__read_to_string`, `__write_file`, `__run`, and the integer parsers) are
 typed with the same error types but produce a placeholder error value; the `std` wrappers replace it with the

@@ -29,6 +29,13 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__metadata" => Builtin::Metadata,
         "__canonicalize" => Builtin::Canonicalize,
         "__args" => Builtin::EnvArgs,
+        "__env_get" => Builtin::EnvGet,
+        "__env_set" => Builtin::EnvSet,
+        "__env_set_bytes" => Builtin::EnvSetBytes,
+        "__env_remove" => Builtin::EnvRemove,
+        "__current_dir" => Builtin::CurrentDir,
+        "__set_current_dir" => Builtin::SetCurrentDir,
+        "__set_current_dir_bytes" => Builtin::SetCurrentDirBytes,
         "__float_str" => Builtin::FloatStr,
         "__exit" => Builtin::ProcessExit,
         "__run" => Builtin::RunCommand,
@@ -75,6 +82,14 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         ),
         Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
+        Builtin::EnvGet | Builtin::CurrentDir => {
+            Ty::Option(Box::new(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global)))
+        }
+        Builtin::EnvSet
+        | Builtin::EnvSetBytes
+        | Builtin::EnvRemove
+        | Builtin::SetCurrentDir
+        | Builtin::SetCurrentDirBytes => Ty::Int(IntTy::I32),
         Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
         _ => Ty::Unit,
@@ -85,6 +100,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::Unreachable
         | Builtin::TargetOs
         | Builtin::TargetArch
+        | Builtin::CurrentDir
         | Builtin::StdoutFlush
         | Builtin::StdinReadLine
         | Builtin::StdinReadToString => Vec::new(),
@@ -92,6 +108,14 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
             vec![ParamSig::plain(Ty::Str)]
         }
+        // The environment primitives take the raw text; the `std` wrappers add the UTF-8 checks and the error
+        // values (`spec/stdlib.md`, "Environment variables and the working directory").
+        Builtin::EnvGet | Builtin::EnvRemove | Builtin::SetCurrentDir => vec![ParamSig::plain(Ty::Str)],
+        Builtin::EnvSet => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
+        Builtin::EnvSetBytes => {
+            vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))]
+        }
+        Builtin::SetCurrentDirBytes => vec![ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))],
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
@@ -313,6 +337,38 @@ mod tests {
             builtin_sig(Builtin::ReadToString, &Globals::default()).ret,
             Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit))
         );
+    }
+
+    #[test]
+    fn environment_primitives_have_their_declared_signatures() {
+        let bytes = Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global);
+        let slice = Ty::Slice(Box::new(Ty::Int(IntTy::U8)));
+        assert_eq!(builtin("__env_get"), Some(Builtin::EnvGet));
+        assert_eq!(builtin("__env_set"), Some(Builtin::EnvSet));
+        assert_eq!(builtin("__env_set_bytes"), Some(Builtin::EnvSetBytes));
+        assert_eq!(builtin("__env_remove"), Some(Builtin::EnvRemove));
+        assert_eq!(builtin("__current_dir"), Some(Builtin::CurrentDir));
+        assert_eq!(builtin("__set_current_dir"), Some(Builtin::SetCurrentDir));
+        assert_eq!(builtin("__set_current_dir_bytes"), Some(Builtin::SetCurrentDirBytes));
+
+        let get = builtin_sig(Builtin::EnvGet, &Globals::default());
+        assert_eq!(get.ret, Ty::Option(Box::new(bytes.clone())));
+        assert_eq!(get.params.len(), 1);
+        assert_eq!(get.params[0].ty, Ty::Str);
+        let cwd = builtin_sig(Builtin::CurrentDir, &Globals::default());
+        assert_eq!(cwd.ret, Ty::Option(Box::new(bytes)));
+        assert!(cwd.params.is_empty());
+        let set = builtin_sig(Builtin::EnvSetBytes, &Globals::default());
+        assert_eq!(set.params.len(), 2);
+        assert_eq!(set.params[0].ty, Ty::Str);
+        assert_eq!(set.params[1].ty, slice.clone());
+        assert_eq!(set.ret, Ty::Int(IntTy::I32));
+        let cwd_bytes = builtin_sig(Builtin::SetCurrentDirBytes, &Globals::default());
+        assert_eq!(cwd_bytes.params.len(), 1);
+        assert_eq!(cwd_bytes.params[0].ty, slice);
+        let remove = builtin_sig(Builtin::EnvRemove, &Globals::default());
+        assert_eq!(remove.params.len(), 1);
+        assert_eq!(remove.params[0].ty, Ty::Str);
     }
 
     #[test]
