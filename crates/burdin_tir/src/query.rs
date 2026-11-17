@@ -65,10 +65,12 @@ impl TypeDefs<'_> {
             Ty::Range(inner, _) => self.holds(inner, prop, seen),
             // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
             Ty::CPtr(_) => true,
-            // An iterator advances through its state, so it is never copied or cloned.
+            // An iterator advances through its state, so it is never copied or cloned. A map entry owns its key
+            // and views its map, so it is moved into the operation that consumes it.
             Ty::ListIntoIter(..)
             | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
+            | Ty::MapEntry(..)
             | Ty::MapIntoIter(..)
             | Ty::RangeIter(..) => false,
             // A closure owns its capture record, so it is never copied or cloned (CL10).
@@ -136,6 +138,8 @@ impl TypeDefs<'_> {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::Const(_) | Ty::CPtr(_) | Ty::Chars => false,
             Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) => false,
+            // An entry owns the key it would insert; dropping it without inserting drops that key.
+            Ty::MapEntry(key, _, _) => self.needs_drop_seen(key, seen),
             // A closure's capture record is heap-allocated and may own its captures.
             Ty::Fn { .. } => true,
             // A box owns its heap allocation and the value inside it (AN1/AN7).
@@ -251,6 +255,19 @@ mod tests {
         assert!(!defs.is_clone(&closure));
         assert!(defs.needs_drop(&closure));
         assert!(!defs.has_drop_impl(&closure));
+    }
+
+    #[test]
+    fn a_map_entry_owns_its_key_and_stays_second_class() {
+        let defs = TypeDefs { structs: &[], enums: &[] };
+        let entry = Ty::MapEntry(Box::new(Ty::String), Box::new(int()), Alloc::Global);
+        assert!(!defs.is_copy(&entry));
+        assert!(!defs.is_clone(&entry));
+        assert!(defs.needs_drop(&entry), "the entry owns its `String` key");
+        assert!(entry.is_second_class(), "an entry views its map");
+        let copy_key = Ty::MapEntry(Box::new(int()), Box::new(Ty::String), Alloc::Global);
+        assert!(!defs.needs_drop(&copy_key), "a `Copy` key needs no drop");
+        assert!(copy_key.is_second_class());
     }
 
     #[test]

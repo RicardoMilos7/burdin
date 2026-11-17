@@ -169,6 +169,19 @@ impl<'a> Checker<'a> {
                     .map(|(root, path, _)| (root, path))
                     .or_else(|| self.reference_origin(arg))
             }
+            // The entry operations hand out the map's storage from a temporary entry value, so a loan taken on
+            // the entry belongs to the map the entry borrows. Other chainable views take their loan where their
+            // receiver is a place, so they need no origin here (and `mut self` on a view must not borrow the
+            // view's source exclusively).
+            K::Method(
+                tir::Method::MapEntry | tir::Method::MapEntryOrInsert | tir::Method::MapEntryOrInsertWith,
+                args,
+            ) => {
+                let arg = args.first()?;
+                burdin_tir::place::tir_place(arg)
+                    .map(|(root, path, _)| (root, path))
+                    .or_else(|| self.reference_origin(arg))
+            }
             _ => None,
         }
     }
@@ -369,15 +382,25 @@ impl<'a> Checker<'a> {
                     self.access_place(&args[0], Access::BorrowMut);
                     // A mutable view of a map value keeps the map exclusively borrowed (`Iterator.next` also
                     // mutates its receiver and returns a view, but the loan of its source is already held).
-                    if matches!(m, tir::Method::MapGetMut | tir::Method::MapGetOrInsert) {
+                    if matches!(m, tir::Method::MapGetMut | tir::Method::MapGetOrInsert | tir::Method::MapEntry) {
                         self.add_loan(&args[0], true);
                     }
                     for (i, arg) in args.iter().enumerate().skip(1) {
                         self.expr(arg, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
                     }
                 } else if m.result_borrows_receiver() || *m == tir::Method::AsStr {
-                    self.access_place(&args[0], Access::Read);
-                    self.add_loan(&args[0], false);
+                    // The entry operations consume the entry, value, or closure they are given; their result is a
+                    // view of the storage the entry borrows, so that loan stays live for the result's holders.
+                    if m.owns_argument(0) {
+                        self.expr(&args[0], Mode::Move);
+                    } else {
+                        self.access_place(&args[0], Access::Read);
+                    }
+                    let mutable = matches!(e.ty, Ty::Ref { mutable: true, .. });
+                    self.add_loan(&args[0], mutable);
+                    for (i, arg) in args.iter().enumerate().skip(1) {
+                        self.expr(arg, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
+                    }
                 } else if *m == tir::Method::Clone {
                     self.expr(&args[0], Mode::Use);
                 } else {

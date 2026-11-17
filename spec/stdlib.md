@@ -494,27 +494,45 @@ probe cluster back instead of leaving tombstones. Keys are hashed structurally â
 ```
 fn get_mut(mut self, key: K): Option<&mut V>        // built in: a mutable view of the value, or None
 fn get_or_insert(mut self, key: K, value: V): &mut V    // built in
+fn entry(mut self, own key: K): MapEntry<K, V, A>       // built in
+fn MapEntry<K, V, A>.or_insert(own self, own value: V): &mut V                  // built in
+fn MapEntry<K, V, A>.or_insert_with<F: FnOnce(): V>(own self, own make: F): &mut V   // built in
 fn get_or_insert_with<F: FnOnce(): V>(mut self, key: K, make: F): &mut V
 fn update<F: FnOnce(&mut V)>(mut self, key: K, change: F): bool
 fn upsert<F: FnOnce(&mut V)>(mut self, key: K, value: V, change: F)
 ```
 
-`get_or_insert` returns the value stored under `key`; when the key is absent it first stores `value`. A value that is
-already there is kept, and the incoming key and value are dropped on the spot. It looks the key up once. The
-`&mut V` keeps the map exclusively borrowed until its last use (a `m.insert(...)` while it is live is E0111), because
-inserting may move the table. `get_or_insert_with` calls `make` only for an absent key. `update` runs `change` on the
-value for `key` and returns whether the key was there. `upsert` stores `value` for an absent key and otherwise runs
-`change` on the value already there, dropping `value`. All of them need a key with `==`, like every map operation (E0141),
-and `get_mut` and `get_or_insert` cannot run at compile time (`comptime.md`, CT9).
+`entry(key)` borrows the map exclusively, takes ownership of the key, and probes the map once. It returns a
+`MapEntry<K, V, A>` that holds the key and the slot the probe found. The entry is second-class (`memory-rules.md`,
+SC2): it views the map, so it cannot be stored in a field or a container, is neither `Copy` nor `Clone`, may not
+outlive the map (E0123), and dropping it without filling it drops the key. `or_insert(value)` stores the key and the
+value when the key is absent and returns a mutable view of the value; when the key is present it keeps the stored
+value and drops the incoming value and the entry's key. `or_insert_with(make)` does the same, but calls `make` for
+the value only when the key is absent; the closure is consumed either way, and a closure that is not called is
+dropped with what it captured. Neither operation looks the key up again: they fill the slot the entry probed for,
+and probe again only when the insert has to grow the map. A stored allocator (`allocators.md`, AL3) carries through
+`MapEntry`, so a fill that grows allocates through the map's own allocator.
 
-There is no `Entry` value, so `map.entry(key).or_insert(value)` is written `map.get_or_insert(key, value)`. An entry
-would have to hold a reference to the map in a struct field, and a struct cannot have a reference field
-(`memory-rules.md`, SC2). The counting idiom is `map.upsert(word, 1, |n| { *n = *n + 1 })` or
+The `&mut V` keeps the map exclusively borrowed until its last use (a `m.insert(...)` while it is live is E0111),
+because inserting may move the table; an entry that has not been filled holds the map the same way. The key needs
+`==`, like every map operation (E0141), and neither the entry nor its operations run at compile time
+(`comptime.md`, CT9).
+
+`get_or_insert` returns the value stored under `key`; when the key is absent it first stores `value`. A value that is
+already there is kept, and the incoming key and value are dropped on the spot. It looks the key up once.
+`get_or_insert_with` is `self.entry(key).or_insert_with(make)`, so it probes once as well. `update` runs `change` on
+the value for `key` and returns whether the key was there. `upsert` stores `value` for an absent key and otherwise
+runs `change` on the value already there, dropping `value`.
+
+The counting idiom is
 
 ```
-let count = map.get_or_insert(word, 0)
+let count = map.entry(word).or_insert(0)
 *count = *count + 1
 ```
+
+Tests: `m24_stdlib/map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`
+(E0111), `map_entry_needs_eq` (E0141), `map_entry_second_class` (E0120, E0123), and `map_entry_comptime` (E0224).
 
 ## `Set<T>` (issue #190)
 
@@ -1117,7 +1135,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
-| Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq` |
+| Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
 | Byte buffers | `m24_stdlib/bytes_mut`, `bytes_share`, `bytes_slice_out_of_bounds`, `bytes_index_out_of_bounds`, `shared_get_view`, `shared_get_view_outlives` |
 | `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |

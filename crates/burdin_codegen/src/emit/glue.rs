@@ -100,6 +100,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::MapIntoIter(k, v, _) => {
                 format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
+            Ty::MapEntry(k, v, _) => {
+                format!("MapEntry<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
+            }
             Ty::Ref { mutable, inner } => {
                 format!("&{}{}", if *mutable { "mut " } else { "" }, self.structural_key_in(inner, seen))
             }
@@ -278,6 +281,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
                 self.builder.position_at_end(exit);
                 Ok(())
+            }
+            // A map entry owns the key it would insert; an entry dropped without inserting drops that key.
+            Ty::MapEntry(key, _, _) => {
+                let key = (**key).clone();
+                if !self.needs_drop(&key) || self.llvm_ty(&key).is_none() {
+                    return Ok(());
+                }
+                let entry_ty = self.map_entry_value_ty(&key);
+                let key_field = self.builder.build_struct_gep(entry_ty, addr, 1, "entry.key").map_err(llvm_err)?;
+                self.drop_value(key_field, &key)
             }
             // A closure owns its capture record; its destructor drops the moved-in captures and frees it.
             Ty::Fn { .. } => {

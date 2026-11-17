@@ -9,7 +9,7 @@ use burdin_tir::{self as tir, CaptureMode, FnKind, LocalKind, Ty};
 use inkwell::AddressSpace;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, StructValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The capture record's LLVM type: a pointer for each borrowed capture, the value itself for each moved one.
@@ -252,9 +252,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let mode = if kind == FnKind::FnOnce { Mode::Move } else { Mode::Use };
         let callee_v = self.expr_mode(callee, mode)?;
         let callee_v = self.need(callee_v, &callee.ty).into_struct_value();
-        let code = self.builder.build_extract_value(callee_v, 0, "closure.code").map_err(llvm_err)?;
-        let env = self.builder.build_extract_value(callee_v, 1, "closure.env").map_err(llvm_err)?;
-        let Ty::Fn { sig, .. } = &callee.ty else {
+        self.call_closure_value(callee_v, &callee.ty, kind, args)
+    }
+
+    /// Calls a closure value that has already been evaluated. A built-in operation that owns the closure calls it
+    /// at most once, so the call consumes the value and the body frees the capture record.
+    pub(super) fn call_closure_value(
+        &mut self,
+        value: StructValue<'ctx>,
+        closure_ty: &Ty,
+        kind: FnKind,
+        args: &'a [tir::Expr],
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let code = self.builder.build_extract_value(value, 0, "closure.code").map_err(llvm_err)?;
+        let env = self.builder.build_extract_value(value, 1, "closure.env").map_err(llvm_err)?;
+        let Ty::Fn { sig, .. } = closure_ty else {
             return Err("internal error: a closure call on a non-closure type".into());
         };
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
