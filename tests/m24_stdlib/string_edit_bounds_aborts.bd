@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: replace_range: the range is out of bounds
+
+// `replace_range` panics when its range is reversed or past the end.
+
+fn main() {
+    let mut s = String.from("abc")
+    s.replace_range(2, 1, "x")
+    println("{s}")
+}

@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: insert_str: the index is not a character boundary
+
+// `insert_str` panics when its byte index splits a character.
+
+fn main() {
+    let mut s = String.from("é")
+    s.insert_str(1, "x")
+    println("{s}")
+}

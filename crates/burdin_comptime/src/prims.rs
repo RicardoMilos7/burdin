@@ -15,6 +15,12 @@ use std::rc::Rc;
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
+/// Whether `at` is a character boundary of the UTF-8 text: the start, the end, or a byte that does not continue a
+/// character.
+fn char_boundary(text: &[u8], at: usize) -> bool {
+    at == 0 || at == text.len() || (text[at] & 0xC0) != 0x80
+}
+
 fn panic(msg: impl Into<String>, span: Span) -> crate::interp::Unwind {
     Fault::Panic(msg.into(), span).into()
 }
@@ -655,6 +661,11 @@ impl<'p> Interp<'p, '_> {
                 let _ = self.eval(&args[0], Mode::Use)?;
                 Value::Map(Vec::new())
             }
+            // The capacity argument is evaluated; the interpreter's `String` has no separate capacity.
+            Builtin::StringWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::String(Vec::new())
+            }
             Builtin::IntParse(int_ty) => {
                 let parsed = self.peek(&args[0], |v| parse_int(v.bytes(), int_ty))?;
                 match parsed {
@@ -757,6 +768,60 @@ impl<'p> Interp<'p, '_> {
                 let v = self.eval(&args[1], Mode::Move)?;
                 self.charge(1, span)?;
                 list_mut(self.place_mut(&place, span)?, span)?.push(v);
+                Value::Unit
+            }
+            // The buffer's capacity is not modeled: the interpreter's `String` is a byte vector, so `capacity`
+            // reports its length and reserving or shrinking changes nothing observable.
+            Method::StringCapacity => {
+                let len = self.peek(recv, |v| v.bytes().len())?;
+                Value::Int(len as i128)
+            }
+            Method::StringReserve => {
+                let _ = self.eval(&args[1], Mode::Use)?;
+                Value::Unit
+            }
+            Method::StringShrinkToFit => Value::Unit,
+            Method::StringInsertStr => {
+                let place = self.eval_place(recv)?;
+                let at = self.eval(&args[1], Mode::Use)?.int();
+                let bytes = self.peek(&args[2], |v| v.bytes().to_vec())?;
+                self.charge(bytes.len() as u64, span)?;
+                let text = match self.place_mut(&place, span)? {
+                    Value::String(s) => s,
+                    other => return Err(internal(format!("`insert_str` on {other:?}"), span)),
+                };
+                let at = usize::try_from(at).unwrap_or(usize::MAX);
+                if at > text.len() {
+                    return Err(panic("insert_str: the index is out of bounds", span));
+                }
+                if !char_boundary(text, at) {
+                    return Err(panic("insert_str: the index is not a character boundary", span));
+                }
+                text.splice(at..at, bytes);
+                Value::Unit
+            }
+            Method::StringReplaceRange => {
+                let place = self.eval_place(recv)?;
+                let from = self.eval(&args[1], Mode::Use)?.int();
+                let to = self.eval(&args[2], Mode::Use)?.int();
+                let bytes = self.peek(&args[3], |v| v.bytes().to_vec())?;
+                self.charge(bytes.len() as u64, span)?;
+                let text = match self.place_mut(&place, span)? {
+                    Value::String(s) => s,
+                    other => return Err(internal(format!("`replace_range` on {other:?}"), span)),
+                };
+                let from = usize::try_from(from).unwrap_or(usize::MAX);
+                let to = usize::try_from(to).unwrap_or(usize::MAX);
+                if from > to || to > text.len() {
+                    return Err(panic("replace_range: the range is out of bounds", span));
+                }
+                if !char_boundary(text, from) {
+                    return Err(panic("replace_range: the start is not a character boundary", span));
+                }
+                if !char_boundary(text, to) {
+                    return Err(panic("replace_range: the end is not a character boundary", span));
+                }
+                text.splice(from..to, bytes);
                 Value::Unit
             }
             Method::ListPop => {

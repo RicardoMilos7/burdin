@@ -6,6 +6,7 @@
 // characters. The pieces a function returns are `String`s, because a `List` cannot hold views.
 
 use iter.Iterator
+use mem
 use unicode.{is_whitespace, len_utf8}
 
 /// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
@@ -455,6 +456,86 @@ fn String.slice_chars(self, start: usize, end: usize): String {
 }
 
 // ---- join ----
+
+// ---- Capacity and editing (issue #714) ----
+//
+// `capacity`, `reserve`, `shrink_to_fit`, `insert_str`, `replace_range`, and `String.with_capacity` are provided by
+// the compiler; the other operations are written here on top of them. Every byte index is a character boundary, and
+// an index that is out of range or splits a character panics with the message of the operation.
+
+/// Makes the string empty and keeps its buffer.
+fn String.clear(mut self) {
+    self.truncate(0)
+}
+
+/// Shortens the string to `len` bytes, which must be a character boundary. A longer length panics.
+fn String.truncate(mut self, len: usize) {
+    let end = self.len()
+    self.replace_range(len, end, "")
+}
+
+/// Removes and returns the last character, or `None` when the string is empty.
+fn String.pop(mut self): Option<char> {
+    let pairs = self.char_indices()
+    if pairs.len() == 0 {
+        return None
+    }
+    let last = pairs[pairs.len() - 1]
+    self.truncate(last.0)
+    Some(last.1)
+}
+
+/// Inserts the character `c` at byte index `at`, which must be a character boundary. A later byte moves right by
+/// the character's UTF-8 length.
+fn String.insert(mut self, at: usize, c: char) {
+    self.insert_str(at, __one(c).as_str())
+}
+
+/// Removes and returns the character that starts at byte index `at`.
+fn String.remove(mut self, at: usize): char {
+    for pair in self.char_indices() {
+        let (offset, c) = pair
+        if offset == at {
+            self.replace_range(at, at + c.len_utf8(), "")
+            return c
+        }
+    }
+    panic("remove: the index is out of bounds or not a character boundary")
+}
+
+/// Keeps the characters `f` accepts, in order, and drops the others.
+fn String.retain<F: FnMut(char): bool>(mut self, own f: F) {
+    let mut f = f
+    let mut kept = String.new()
+    for c in self.chars() {
+        if f(c) {
+            kept.push(c)
+        }
+    }
+    mem.swap(mut self, mut kept)
+}
+
+/// Removes the bytes `from..to` and returns them as a new string. Both ends must be character boundaries; the
+/// string keeps its buffer and the text after `to` moves left.
+fn String.drain(mut self, from: usize, to: usize): String {
+    if from > to || to > self.len() || !self.is_char_boundary(from) || !self.is_char_boundary(to) {
+        panic("drain: the range is out of bounds or not on character boundaries")
+    }
+    let removed = String.from(self[from..to])
+    self.replace_range(from, to, "")
+    removed
+}
+
+/// Splits the string at byte index `at`, which must be a character boundary: the string keeps the text before it
+/// and the returned string holds the rest.
+fn String.split_off(mut self, at: usize): String {
+    if at > self.len() || !self.is_char_boundary(at) {
+        panic("split_off: the index is out of bounds or not a character boundary")
+    }
+    let out = String.from(self[at..self.len()])
+    self.truncate(at)
+    out
+}
 
 /// The strings of the list with `sep` between them: `["a", "b"].join(", ")` is `"a, b"`.
 fn List<String>.join(self, sep: str): String {

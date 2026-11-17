@@ -237,6 +237,8 @@ pub enum Builtin {
     /// `__view_as_text(view)`: reinterprets a `[u8]` view as a `str` without checking it. `std` uses it after
     /// validating the bytes (`str.from_utf8`); it requires `unsafe` (E0161).
     ViewAsText,
+    /// `String.with_capacity(n)`: an empty string whose buffer holds `n` bytes without growing.
+    StringWithCapacity,
 }
 
 /// A floating-point function the compiler provides on `f64` and `f32` (`spec/stdlib.md`, "Float functions").
@@ -401,6 +403,17 @@ pub enum Method {
     AsStr,
     /// `str.as_bytes()` and `String.as_bytes()`: the UTF-8 bytes as a `[u8]` view.
     AsBytes,
+    /// `String.capacity(): usize`: the buffer's capacity in bytes.
+    StringCapacity,
+    /// `String.reserve(additional)`: grows the buffer to hold `additional` more bytes (`spec/stdlib.md`, "String
+    /// capacity and editing").
+    StringReserve,
+    /// `String.shrink_to_fit()`: shrinks the buffer to the current length.
+    StringShrinkToFit,
+    /// `String.insert_str(byte_idx, text)`: inserts text at a character boundary, shifting the tail.
+    StringInsertStr,
+    /// `String.replace_range(from, to, text)`: replaces the bytes `from..to`, both character boundaries, with text.
+    StringReplaceRange,
     /// `x.len()` on `str`, `[T]`, `String`, and arrays.
     Len,
     /// `s.starts_with(prefix)` on `str` (and `String`).
@@ -488,6 +501,10 @@ impl Method {
             self,
             Method::PushStr
                 | Method::PushChar
+                | Method::StringReserve
+                | Method::StringShrinkToFit
+                | Method::StringInsertStr
+                | Method::StringReplaceRange
                 | Method::Push
                 | Method::ListPop
                 | Method::ListInsert
@@ -630,6 +647,10 @@ mod tests {
         for method in [
             Method::PushStr,
             Method::PushChar,
+            Method::StringReserve,
+            Method::StringShrinkToFit,
+            Method::StringInsertStr,
+            Method::StringReplaceRange,
             Method::Push,
             Method::ListPop,
             Method::ListInsert,
