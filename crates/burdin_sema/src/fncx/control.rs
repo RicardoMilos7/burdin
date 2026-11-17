@@ -55,9 +55,13 @@ impl FnCx<'_> {
         &mut self,
         pattern: &ast::Pattern,
         iter: &ast::Expr,
+        mutable: bool,
         body: &ast::Block,
         span: Span,
     ) -> tir::Expr {
+        if mutable {
+            return self.for_mut(pattern, iter, body, span);
+        }
         if let ast::ExprKind::Range { lo, hi, inclusive } = &iter.kind {
             let (lo, hi) = self.operands(lo, hi, None);
             let ty = if lo.ty == Ty::Never { hi.ty.clone() } else { lo.ty.clone() };

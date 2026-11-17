@@ -239,22 +239,27 @@ impl<'a> Checker<'a> {
     fn attach_holders(&mut self, pat: &Pat, init: &tir::Expr, start: usize) {
         let mut holders = Vec::new();
         view_bindings(pat, self.locals, &mut holders);
+        let mut used = Vec::new();
+        locals_used(init, &mut used);
+        self.hold(&holders, &used, start);
+    }
+
+    /// Makes `holders` hold the loans created since `start` and the loans held by any of the locals in `used`.
+    fn hold(&mut self, holders: &[LocalId], used: &[LocalId], start: usize) {
         if holders.is_empty() {
             return;
         }
-        let mut used = Vec::new();
-        locals_used(init, &mut used);
         for (i, loan) in self.loans.iter_mut().enumerate() {
             if i >= start {
                 // A loan created by this initializer belongs to the binding.
-                for id in &holders {
+                for id in holders {
                     if !loan.holders.contains(id) {
                         loan.holders.push(*id);
                     }
                 }
             } else if loan.holders.iter().any(|h| used.contains(h)) {
                 // `let q = r`: q carries a copy of the reference or a view derived from it.
-                for id in &holders {
+                for id in holders {
                     if !loan.holders.contains(id) {
                         loan.holders.push(*id);
                     }
@@ -390,9 +395,15 @@ impl<'a> Checker<'a> {
             K::Method(m, args) => {
                 if m.mutates_receiver() {
                     self.access_place(&args[0], Access::BorrowMut);
-                    // A mutable view of a map value keeps the map exclusively borrowed (`Iterator.next` also
+                    // A mutable view of a map value, or a mutable iterator, keeps its collection exclusively borrowed (`Iterator.next` also
                     // mutates its receiver and returns a view, but the loan of its source is already held).
-                    if matches!(m, tir::Method::MapGetMut | tir::Method::MapGetOrInsert | tir::Method::MapEntry) {
+                    if matches!(
+                        m,
+                        tir::Method::MapGetMut
+                            | tir::Method::MapGetOrInsert
+                            | tir::Method::MapEntry
+                            | tir::Method::IterMut
+                    ) {
                         self.add_loan(&args[0], true);
                     }
                     for (i, arg) in args.iter().enumerate().skip(1) {
@@ -479,8 +490,16 @@ impl<'a> Checker<'a> {
                 self.block(body);
             }
             K::Match(scrutinee, arms) => {
+                let start = self.loans.len();
                 self.expr(scrutinee, Mode::Use);
+                let mut used = Vec::new();
+                locals_used(scrutinee, &mut used);
                 for arm in arms {
+                    // A view binding holds the loans of the scrutinee, so a view copied out of the arm keeps the
+                    // collection borrowed (`held = x`).
+                    let mut holders = Vec::new();
+                    view_bindings(&arm.pat, self.locals, &mut holders);
+                    self.hold(&holders, &used, start);
                     if let Some(guard) = &arm.guard {
                         self.expr(guard, Mode::Use);
                     }
@@ -498,14 +517,19 @@ impl<'a> Checker<'a> {
                 if let Some((root, path, _)) = burdin_tir::place::tir_place(place)
                     && path.is_empty()
                 {
+                    // `held = x` copies a view: the loans the value's locals hold are held by `held` too.
+                    let mut used = Vec::new();
+                    locals_used(value, &mut used);
+                    let copied: Vec<usize> =
+                        (0..start).filter(|&i| self.loans[i].holders.iter().any(|h| used.contains(h))).collect();
                     // The local no longer holds the old value: the loans it held may end here. A new
                     // reference or view stored in it is held by it (as in a `let`).
                     for loan in &mut self.loans {
                         loan.holders.retain(|h| *h != root);
                     }
                     if self.locals[root.0].ty.is_second_class() {
-                        for loan in &mut self.loans[start..] {
-                            if !loan.holders.contains(&root) {
+                        for (i, loan) in self.loans.iter_mut().enumerate() {
+                            if (i >= start || copied.contains(&i)) && !loan.holders.contains(&root) {
                                 loan.holders.push(root);
                             }
                         }

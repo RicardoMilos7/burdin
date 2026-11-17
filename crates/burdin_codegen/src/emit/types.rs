@@ -54,7 +54,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
             // An iterator over a list or a map keeps the collection's three words and the next index.
             Ty::ListIntoIter(_, alloc) | Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
-            Ty::MapIter(..) => self.iter_seq_ty().into(),
+            Ty::MapIter(..) | Ty::MapIterMut(..) => self.iter_seq_ty().into(),
+            // A mutable list or array iterator is the next element's address and the number left, like a slice.
+            Ty::IterMut(_) => self.str_ty.into(),
             // The array owns its elements inline; the index says which one comes next.
             Ty::ArrayIntoIter(inner, n) => self.iter_array_ty(inner, *n).into(),
             // The range iterator keeps both endpoints and whether the range is exhausted.

@@ -320,6 +320,9 @@ pub enum Method {
     IsNull,
     /// `xs.iter()`: the borrowing iterator of a collection, a range, or `Chars` (IT4).
     Iter,
+    /// `xs.iter_mut()`: the mutable iterator of a `List`, an array, or a `Map` (IT15). It yields `&mut T` and borrows
+    /// the collection exclusively.
+    IterMut,
     /// `xs.into_iter()`: the owning iterator of a `List`, a `Map`, an array, a range, or `Chars` (IT5).
     IntoIter,
     /// `it.next()`: advances an iterator and returns its next item (IT6).
@@ -372,6 +375,7 @@ impl Method {
                 | Method::MapEntry
                 | Method::MapGetMut
                 | Method::MapRemove
+                | Method::IterMut
                 | Method::IterNext
                 | Method::IterNextBack
         )
@@ -390,6 +394,7 @@ impl Method {
                 | Method::MapEntryOrInsertWith
                 | Method::Chars
                 | Method::Iter
+                | Method::IterMut
                 | Method::IterNext
                 | Method::IterNextBack
                 | Method::SharedGet
@@ -444,6 +449,7 @@ mod tests {
             Method::MapEntry,
             Method::MapGetMut,
             Method::MapRemove,
+            Method::IterMut,
         ] {
             assert!(method.mutates_receiver(), "{method:?}");
         }
@@ -457,6 +463,7 @@ mod tests {
             Method::MapEntryOrInsert,
             Method::MapEntryOrInsertWith,
             Method::Chars,
+            Method::IterMut,
         ] {
             assert!(method.result_borrows_receiver(), "{method:?}");
         }

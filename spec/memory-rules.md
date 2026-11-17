@@ -256,6 +256,15 @@ evaluates `r` once and does not borrow it.
 Tests: `m09_stdlib/for_borrows_list`, `for_borrow_forms`, `range_forms`; errors: `for_mutate_array`, `for_mutate_map`
 (E0111), `for_binding_readonly` (E0005).
 
+**IT15 Mutable iteration.** `for pattern in mut C { ... }` calls `C.iter_mut()` (`mut` receiver, so `C` must be a
+mutable place, E0113) and walks the iterator, whose items are `&mut T` (`iterators.md`, IT15). The call borrows `C`
+exclusively from the start of the loop until the last use of the iterator or of a view derived from it: any other
+access to `C` or a place overlapping it inside the body, a `push`, a read, or another loop over `C`, is E0111 (RF3). A
+view of an element copied into a local that outlives the loop (`held = x`) holds the loan until its last use. Keys
+of a `Map` are `&K`: writing through one is E0005. A `for` without `mut` is unchanged (IT1, IT2).
+Tests: `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`; errors: `iter_mut_mutates_collection`,
+`iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable` (E0113), `iter_mut_map_key_readonly` (E0005).
+
 **IT4-IT12 The protocol.** Stage 1 adds `Iterator<T>` and `Iterable<T>` in `std`, compiler-known `iter`, `into_iter`,
 and `next` for arrays, slices, `List`, `Map`, `Chars`, and ranges, user-defined `for` loops, the lazy adapters, and
 the eager `List` methods. The rules are in [`iterators.md`](iterators.md). The protocol preserves IT1-IT3: `for`

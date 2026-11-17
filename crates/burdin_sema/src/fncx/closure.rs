@@ -817,7 +817,7 @@ impl FreeNames {
                 self.expr(cond);
                 self.block(body);
             }
-            K::For { pattern, iter, body } => {
+            K::For { pattern, iter, body, .. } => {
                 self.expr(iter);
                 self.scopes.push(Vec::new());
                 self.bind(pattern);

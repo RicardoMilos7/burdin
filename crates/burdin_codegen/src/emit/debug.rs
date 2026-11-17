@@ -332,7 +332,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_product(&name, &members)
             }
-            Ty::ListIntoIter(..) | Ty::MapIter(..) | Ty::MapIntoIter(..) => {
+            Ty::IterMut(..) => {
+                let name = Self::debug_name(ty);
+                self.debug_words(&name, &[("ptr", 8), ("len", 8)])
+            }
+            Ty::ListIntoIter(..) | Ty::MapIter(..) | Ty::MapIterMut(..) | Ty::MapIntoIter(..) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
             }

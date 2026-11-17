@@ -1325,7 +1325,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if let Method::Float(op) = m {
             return self.float_method(op, args);
         }
-        if matches!(m, Method::Iter | Method::IntoIter) {
+        // `iter_mut` builds the same value as `iter`: the mutable iterators share the borrowing ones' layout.
+        if matches!(m, Method::Iter | Method::IterMut | Method::IntoIter) {
             return self.iter_value(args, m == Method::IntoIter);
         }
         if m == Method::IterNext {

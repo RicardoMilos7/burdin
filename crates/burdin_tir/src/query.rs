@@ -67,9 +67,13 @@ impl TypeDefs<'_> {
             Ty::CPtr(_) => true,
             // An iterator advances through its state, so it is never copied or cloned. A map entry owns its key
             // and views its map, so it is moved into the operation that consumes it.
-            Ty::ListIntoIter(..) | Ty::ArrayIntoIter(..) | Ty::MapIter(..) | Ty::MapEntry(..) | Ty::MapIntoIter(..) => {
-                false
-            }
+            Ty::ListIntoIter(..)
+            | Ty::ArrayIntoIter(..)
+            | Ty::MapIter(..)
+            | Ty::IterMut(_)
+            | Ty::MapIterMut(..)
+            | Ty::MapEntry(..)
+            | Ty::MapIntoIter(..) => false,
             // A range iterator is two endpoints and a flag, so it can be cloned (`cycle` clones its source), but it
             // is not `Copy`: a copy would advance on its own and surprise the program.
             Ty::RangeIter(inner, _) => prop == Property::Clone && self.holds(inner, prop, seen),
@@ -137,7 +141,7 @@ impl TypeDefs<'_> {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::Const(_) | Ty::CPtr(_) | Ty::Chars => false,
-            Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) => false,
+            Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) => false,
             // An entry owns the key it would insert; dropping it without inserting drops that key.
             Ty::MapEntry(key, _, _) => self.needs_drop_seen(key, seen),
             // A closure's capture record is heap-allocated and may own its captures.

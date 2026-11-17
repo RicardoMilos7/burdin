@@ -557,6 +557,7 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::SharedGet
                         | tir::Method::Chars
                         | tir::Method::Iter
+                        | tir::Method::IterMut
                         | tir::Method::IterNext
                         | tir::Method::IterNextBack
                         | tir::Method::Unwrap
@@ -581,6 +582,7 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::Chars
                     // An iterator borrows the collection it walks; the items it yields point into it.
                     | tir::Method::Iter
+                    | tir::Method::IterMut
                     | tir::Method::IterNext
                     | tir::Method::IterNextBack
                     // Unwrapping an `Option<&T>` hands out the view inside it.

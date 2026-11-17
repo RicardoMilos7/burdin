@@ -6,6 +6,19 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Infrastructure
 
+- Mutable iteration over `List`, arrays, `Map` values, and `Deque` (issue #709).
+  - `for x in mut xs` and `xs.iter_mut()` yield `&mut T` (a map yields `(&K, &mut V)`): `*x = ...` rewrites each
+    element in place. The collection is borrowed exclusively for the loop, so pushing, inserting, reading it, or
+    starting a second mutable loop inside the body is E0111; the collection must be a mutable place (E0113).
+    `Deque` declares `iter_mut` in `std`; a user type joins by declaring `iter_mut(mut self)`.
+  - The mutable iterators are ordinary iterators, so `enumerate`, `take`, `skip`, and the other adapters apply.
+    `zip` and `chain` work over them; `rev` does not (the mutable iterators are not double-ended), and slices
+    have no mutable form.
+  - The borrow checker now records the match binding and the target of `held = x` as holders of the loans they
+    copy, so a view copied out of a loop, or out of `get_mut`, keeps the collection borrowed (E0111).
+  - A mutable view `&mut X` satisfies the interface bounds `X` does, like a shared one.
+  - The rules are `spec/iterators.md` and `spec/memory-rules.md` IT15; the tests are `tests/m24_stdlib/iter_mut_*`.
+
 - Allocator follow-up (sub-issues #331-#333 of #182): the interface and metadata decision, the global libc allocator,
   and drop/clone glue through a stored allocator are verified end to end.
   - `List.contains`, `Map.get`, `Map.remove`, and `Map.contains_key` borrow their key, as `spec/stdlib.md` says,

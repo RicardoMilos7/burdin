@@ -777,6 +777,7 @@ struct Deque<T> {
     fn extend(mut self, own items: List<T>)        // at the back, in order
     fn into_list(own self): List<T>                 // front to back
     fn iter(self): DequeIter<&Deque<T>, T>          // yields &T from the front to the back
+    fn iter_mut(mut self): DequeIterMut<&mut Deque<T>, T>   // yields &mut T from the front to the back (IT15)
     fn clone(self): Deque<T>                        // T: Clone
 }
 ```
@@ -784,9 +785,11 @@ struct Deque<T> {
 `Deque<T>` implements `Index<T>` and `IndexMut<T>` (`d[i]` counts from the front and panics with `Deque index out of
 bounds` past the end), `PartialEq` (same length and equal elements), `Debug` (`[1, 2, 3]`), and `Iterable<&T>`.
 `DequeIter<D, T>` is generic over the view of the deque it walks and needs `D: Index<T> + DequeLen`; for that, a
-shared view `&X` satisfies an interface bound that `X` satisfies.
+shared view `&X` satisfies an interface bound that `X` satisfies. `DequeIterMut<D, T>` needs `D: IndexMut<T> + DequeLen`,
+and a mutable view `&mut X` satisfies the bounds `X` does as well.
 
-Tests: `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds`.
+Tests: `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds`,
+`iter_mut_deque`.
 
 ## `PriorityHeap<T>` (issue #192)
 
@@ -1199,6 +1202,20 @@ iterators, which need a bound on the item type; `std` declares the adapter
 types `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter`. A program implements the interfaces to make its own type
 work with `for` and the adapters. The rules, the item types, and the second-class restrictions are in
 [`iterators.md`](iterators.md).
+
+### Mutable iteration (issue #709)
+
+```
+fn List<T>.iter_mut(mut self): IterMut<T>               // built in; yields &mut T
+fn [T; N].iter_mut(mut self): IterMut<T>                // built in; the array must be a mutable place
+fn Map<K, V>.iter_mut(mut self): MapIterMut<K, V>       // built in; yields (&K, &mut V)
+fn Deque<T>.iter_mut(mut self): DequeIterMut<&mut Deque<T>, T>   // in std; yields &mut T
+for x in mut xs { ... }                                  // the same as `for x in xs.iter_mut() { ... }`
+```
+
+The iterator borrows the collection exclusively, its items are `&mut T` (`*x = ...`), a map's keys stay `&K`, and the
+adapters of `Iterator<T>` apply to it. A slice, a `Set`, and a `PriorityHeap` have no `iter_mut`. The rules, the
+decisions, and the reasons are `iterators.md` IT15 and `memory-rules.md` IT15.
 
 ## `Ordering`, `cmp`, and `Reverse<T>` (issue #705)
 
@@ -1679,6 +1696,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
+| Mutable iteration | `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`, `iter_mut_adapters`, `iter_mut_drops`, `iter_mut_mutates_collection`, `iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable`, `iter_mut_map_key_readonly`, `iter_mut_no_iter_mut`, `iter_mut_comptime` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
 | `Set` | `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
