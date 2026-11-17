@@ -4,19 +4,19 @@
 //> end s
 //> after print
 
-// `Stdout.write` shares its buffer with `print`, so the bytes keep the order the program wrote them; `write_line`
-// adds one newline; `flush` writes the buffer out; a `String` argument converts to `str` (IC1).
+// `Stdout` is a `Write`. Its writes share the buffer `print` uses, so the bytes keep the order the program wrote them;
+// `write_line` adds one newline; `flush` writes the buffer out; a `String` argument converts to `str` (IC1).
 
 fn main() {
-    let out = stdout()
-    out.write("a ")
+    let mut out = stdout()
+    out.write_text("a ").unwrap()
     print("b")
-    out.write_line("")
-    out.write_line("c")
-    out.write("end ")
+    out.write_line("").unwrap()
+    out.write_line("c").unwrap()
+    out.write_text("end ").unwrap()
     let text = String.from("s")
-    out.write(text)
-    out.write("\n")
-    out.flush()
+    out.write_text(text).unwrap()
+    out.write_text("\n").unwrap()
+    out.flush().unwrap()
     println("after print")
 }

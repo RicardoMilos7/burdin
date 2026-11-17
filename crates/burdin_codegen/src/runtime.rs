@@ -97,6 +97,11 @@ pub(crate) struct Runtime<'ctx> {
     pub in_read_line: FunctionValue<'ctx>,
     /// `(out: *String) -> i32`: reads the rest of standard input; 0 is success and -1 an error.
     pub in_read_to_string: FunctionValue<'ctx>,
+    /// `() -> isize`: how many standard-input bytes are buffered, reading a block when none are; 0 is the end of
+    /// the input and -1 a read error.
+    pub in_avail: FunctionValue<'ctx>,
+    /// `() -> i8`: takes the next buffered standard-input byte.
+    pub in_next: FunctionValue<'ctx>,
     /// `(msg, msg_len: usize, file, file_len: usize, line: i32, col: i32)`, never returns.
     pub panic: FunctionValue<'ctx>,
     /// `(index: i64, len: i64, file, file_len: usize, line: i32, col: i32)`, never returns.
@@ -515,6 +520,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             is_terminal: self.is_terminal()?,
             in_read_line: self.in_read_line(string_push_str, in_fill)?,
             in_read_to_string: self.in_read_to_string(string_push_str, in_fill)?,
+            in_avail: self.in_avail(in_fill)?,
+            in_next: self.in_next()?,
             panic: self.panic(&h)?,
             panic_bounds: self.panic_bounds(&h)?,
             string_free: self.string_free()?,
@@ -986,6 +993,48 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
         self.b.position_at_end(failed);
         self.b.build_return(Some(&i32_ty.const_int(0xFFFF_FFFF, false))).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `in_avail() -> isize`: the number of buffered bytes, after reading a block when the buffer is empty. 0 is the
+    /// end of the input and -1 a read error.
+    fn in_avail(&mut self, fill: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (_, pos, len) = self.in_globals();
+        let (i32_ty, usize_ty) = (self.i32(), self.usize_ty);
+        let f = self.function("burdin_rt_in_avail", usize_ty.fn_type(&[], false));
+        let ok = self.block(f, "ok");
+        let end = self.block(f, "end");
+        let error = self.block(f, "error");
+        let check = self.block(f, "check");
+        let r = self.call(fill, &[])?.expect("fill returns a status").into_int_value();
+        let failed = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "failed").map_err(llvm_err)?;
+        self.b.build_conditional_branch(failed, error, check).map_err(llvm_err)?;
+        self.b.position_at_end(check);
+        let ended = self.b.build_int_compare(IntPredicate::EQ, r, i32_ty.const_zero(), "ended").map_err(llvm_err)?;
+        self.b.build_conditional_branch(ended, end, ok).map_err(llvm_err)?;
+        self.b.position_at_end(ok);
+        let pos_v = self.b.build_load(usize_ty, pos, "pos").map_err(llvm_err)?.into_int_value();
+        let len_v = self.b.build_load(usize_ty, len, "len").map_err(llvm_err)?.into_int_value();
+        let count = self.b.build_int_sub(len_v, pos_v, "count").map_err(llvm_err)?;
+        self.b.build_return(Some(&count)).map_err(llvm_err)?;
+        self.b.position_at_end(end);
+        self.b.build_return(Some(&usize_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(error);
+        self.b.build_return(Some(&usize_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `in_next() -> i8`: takes the next byte of the standard-input block. The caller has checked `in_avail`.
+    fn in_next(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (buf, pos, _) = self.in_globals();
+        let (usize_ty, i8_ty) = (self.usize_ty, self.i8());
+        let f = self.function("burdin_rt_in_next", i8_ty.fn_type(&[], false));
+        let pos_v = self.b.build_load(usize_ty, pos, "pos").map_err(llvm_err)?.into_int_value();
+        let at = self.offset(buf, pos_v)?;
+        let byte = self.b.build_load(i8_ty, at, "byte").map_err(llvm_err)?;
+        let next = self.b.build_int_add(pos_v, usize_ty.const_int(1, false), "next").map_err(llvm_err)?;
+        self.b.build_store(pos, next).map_err(llvm_err)?;
+        self.b.build_return(Some(&byte)).map_err(llvm_err)?;
         Ok(f)
     }
 

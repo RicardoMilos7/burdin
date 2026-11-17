@@ -602,15 +602,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
                 return Ok(Some(value.into()));
             }
-            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            Builtin::StdoutWrite
+            | Builtin::StdoutWriteLine
+            | Builtin::StderrWrite
+            | Builtin::StderrWriteLine
+            | Builtin::StdoutWriteBytes
+            | Builtin::StderrWriteBytes => {
+                // A `str` and a `[u8]` are the same `{ ptr, len }` pair, so one path writes both.
                 let text = self.expr_mode(&args[0], Mode::Use)?;
-                let text = self.need(text, &Ty::Str).into_struct_value();
+                let text = self.need(text, &args[0].ty).into_struct_value();
                 let ptr = self.builder.build_extract_value(text, 0, "ptr").map_err(llvm_err)?;
                 let len = self.builder.build_extract_value(text, 1, "len").map_err(llvm_err)?;
                 let (fd, newline) = match b {
-                    Builtin::StdoutWrite => (1, 0),
+                    Builtin::StdoutWrite | Builtin::StdoutWriteBytes => (1, 0),
                     Builtin::StdoutWriteLine => (1, 1),
-                    Builtin::StderrWrite => (2, 0),
+                    Builtin::StderrWrite | Builtin::StderrWriteBytes => (2, 0),
                     Builtin::StderrWriteLine => (2, 1),
                     _ => unreachable!("only the four write builtins match"),
                 };
@@ -623,6 +629,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 ];
                 self.builder.build_call(self.rt.print, &args, "").map_err(llvm_err)?;
                 return Ok(None);
+            }
+            Builtin::StdinAvail => {
+                let avail = self
+                    .builder
+                    .build_call(self.rt.in_avail, &[], "avail")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("in_avail returns a count");
+                return Ok(Some(avail));
+            }
+            Builtin::StdinNextByte => {
+                let byte = self
+                    .builder
+                    .build_call(self.rt.in_next, &[], "byte")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("in_next returns a byte");
+                return Ok(Some(byte));
             }
             Builtin::StdoutFlush => {
                 self.builder.build_call(self.rt.flush, &[], "").map_err(llvm_err)?;
