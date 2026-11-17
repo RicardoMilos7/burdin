@@ -1,0 +1,38 @@
+//@ run
+//> 2 01
+//> 2
+//> 23
+//> 7 789
+//> 3
+//> w: 0 abc
+//> w: seek 1, wrote XY
+//> w: aXYdef
+
+// Seeking a `BufReader` accounts for the bytes it has buffered ahead of the wrapped reader, and discards them.
+// Seeking a `BufWriter` flushes first, so the bytes land where they were written.
+
+fn take(mut r: BufReader<Cursor>, count: usize): String {
+    let mut buf = List<u8>.new()
+    r.read_exact(mut buf, count).unwrap()
+    from_utf8(buf[0..buf.len()]).unwrap()
+}
+
+fn main() {
+    let mut r = BufReader.with_capacity(6, Cursor.from_text("0123456789"))
+    let first = take(mut r, 2)
+    println("{} {}", r.position().unwrap(), first)
+    println("{}", r.position().unwrap())
+    println("{}", take(mut r, 2))
+    r.seek(SeekFrom.Start(7)).unwrap()
+    println("{} {}", r.position().unwrap(), take(mut r, 3))
+    println("{}", r.seek(SeekFrom.End(-7)).unwrap())
+
+    let mut w = BufWriter.new(Cursor.from_text("abcdef"))
+    w.write_text("abc").unwrap()
+    println("w: {} abc", w.position().unwrap() - 3)
+    w.seek(SeekFrom.Start(1)).unwrap()
+    w.write_text("XY").unwrap()
+    println("w: seek 1, wrote XY")
+    let cursor = w.into_inner().unwrap()
+    println("w: {}", from_utf8(cursor.get_ref()[0..cursor.get_ref().len()]).unwrap())
+}

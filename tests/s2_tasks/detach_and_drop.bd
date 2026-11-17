@@ -14,8 +14,13 @@ test "joined result is dropped by the caller" {
     assert(c.n == 4)
 }
 
-test "thread handle can be dropped" {
+test "thread handle can be dropped after the thread finished" {
     let h = thread.spawn(|| "text".to_string())
+    // Dropping a handle before the thread is done would leave its result to a thread that may still be running when
+    // the test ends, which the leak check cannot tell from a leak; wait first. The dropped handle frees the result.
+    while !h.is_finished() {
+        thread.yield_now()
+    }
     let kept = thread.spawn(|| "other".to_string())
     assert(kept.join().len() == 5)
 }

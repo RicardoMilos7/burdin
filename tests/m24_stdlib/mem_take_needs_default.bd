@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// `mem.take` needs a type that implements `Default`.
+
+struct Plain {
+    a: i32
+}
+
+fn main() {
+    let mut value = Plain { a: 1 }
+    let _ = mem.take(mut value) //~ E0141
+}

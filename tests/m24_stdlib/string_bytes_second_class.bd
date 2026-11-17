@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `as_bytes` is a view of the string's storage, so it cannot be stored in a struct field.
+
+struct Holder {
+    bytes: [u8], //~ E0120
+}
+
+fn main() {
+}

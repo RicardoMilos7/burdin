@@ -5,11 +5,11 @@
 // a `push` on one list; popping from an end whose list is empty first moves the other list over. `List` is unchanged.
 
 use fmt.{Debug, Formatter}
-use iter.{Iterable, Iterator}
+use iter.{DoubleEndedIterator, FromIterator, Iterable, Iterator}
 use ops.{Index, IndexMut, PartialEq}
 
-/// A double-ended queue.
-struct Deque<T> {
+/// A double-ended queue. Its default is the empty deque.
+struct Deque<T> derives (Default) {
     front: List<T>
     back: List<T>
 }
@@ -17,6 +17,14 @@ struct Deque<T> {
 /// The iterator of `deque.iter()`: it yields a view of each element from the front to the back. `D` is the view of
 /// the deque it walks, so the iterator is second-class like every iterator over borrowed storage.
 struct DequeIter<D, T> {
+    source: D
+    next_index: usize
+    end_index: usize
+}
+
+/// The iterator of `deque.iter_mut()`: it yields a writable view of each element from the front to the back. `D` is
+/// the exclusive view of the deque it walks (spec/iterators.md, IT15).
+struct DequeIterMut<D, T> {
     source: D
     next_index: usize
 }
@@ -42,6 +50,13 @@ Deque<T> {
     fn from_list(own items: List<T>): Deque<T> {
         let mut out = Deque<T>.new()
         out.extend(items)
+        out
+    }
+
+    /// A deque holding the elements of an array, in order: `Deque.from([1, 2, 3])`.
+    fn from<const N: usize>(own items: [T; N]): Deque<T> {
+        let mut out = Deque<T>.new()
+        out.extend_iter(items.into_iter())
         out
     }
 
@@ -129,6 +144,17 @@ Deque<T> {
         }
     }
 
+    /// Adds every item `iter` yields at the back, in order.
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I) {
+        let mut iter = iter
+        loop {
+            match iter.next() {
+                Some(x) => self.back.push(x),
+                None => break,
+            }
+        }
+    }
+
     /// The elements as a list, from the front to the back. The deque is consumed.
     fn into_list(own self): List<T> {
         let mut out = List<T>.new()
@@ -170,21 +196,59 @@ Deque<T>: IndexMut<T> {
     }
 }
 
-Deque<T>: Iterable<&T> {
-    /// An iterator over views of the elements, from the front to the back.
-    fn iter(self): DequeIter<&Deque<T>, T> {
-        DequeIter { source: &self, next_index: 0 }
+Deque<T>: FromIterator<T> {
+    fn from_iter<I: Iterator<T>>(own iter: I): Deque<T> {
+        let mut out = Deque<T>.new()
+        out.extend_iter(iter)
+        out
     }
 }
 
-DequeIter<D, T>: Iterator<&T> where D: Index<T> + DequeLen {
-    fn next(mut self): Option<&T> {
+Deque<T>: Iterable<&T> {
+    /// An iterator over views of the elements, from the front to the back.
+    fn iter(self): DequeIter<&Deque<T>, T> {
+        DequeIter { source: &self, next_index: 0, end_index: self.len() }
+    }
+}
+
+Deque<T> {
+    /// An iterator over writable views of the elements, from the front to the back. The deque is borrowed
+    /// exclusively until the iterator's last use, so `for x in mut deque` can write every element but cannot push,
+    /// pop, or read the deque inside the loop.
+    fn iter_mut(mut self): DequeIterMut<&mut Deque<T>, T> {
+        DequeIterMut { source: &mut self, next_index: 0 }
+    }
+}
+
+DequeIterMut<D, T>: Iterator<&mut T> where D: IndexMut<T> + DequeLen {
+    fn next(mut self): Option<&mut T> {
         if self.next_index >= self.source.deque_len() {
             return None
         }
         let k = self.next_index
         self.next_index = self.next_index + 1
+        Some(&mut self.source[k])
+    }
+}
+
+DequeIter<D, T>: Iterator<&T> where D: Index<T> + DequeLen {
+    fn next(mut self): Option<&T> {
+        if self.next_index >= self.end_index {
+            return None
+        }
+        let k = self.next_index
+        self.next_index = self.next_index + 1
         Some(&self.source[k])
+    }
+}
+
+DequeIter<D, T>: DoubleEndedIterator<&T> where D: Index<T> + DequeLen {
+    fn next_back(mut self): Option<&T> {
+        if self.next_index >= self.end_index {
+            return None
+        }
+        self.end_index = self.end_index - 1
+        Some(&self.source[self.end_index])
     }
 }
 

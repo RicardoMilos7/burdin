@@ -1,0 +1,10 @@
+//@ run-abort
+//@ stderr: replace_range: the range is out of bounds
+
+// `truncate` panics when the new length is past the end (`truncate` is `replace_range` to the end).
+
+fn main() {
+    let mut s = String.from("abc")
+    s.truncate(9)
+    println("{s}")
+}

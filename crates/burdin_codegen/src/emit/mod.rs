@@ -22,6 +22,7 @@ mod place;
 mod reach;
 mod results;
 mod scope;
+mod slices;
 mod strings;
 mod structural;
 mod tasks;
@@ -150,6 +151,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     triple: String,
     /// The task runtime (`taskrt.rs`) has been linked into the module.
     tasks_linked: bool,
+    /// The operating system whose I/O error codes the program reports (`spec/errors.md`, ERR11).
+    platform: tir::ioerror::Platform,
     /// The span of the expression being generated, for the allocation site a leak report names.
     current_span: Option<Span>,
     /// `-g`: the module's debug metadata, or `None`.
@@ -187,6 +190,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let triple = machine.get_triple().as_str().to_string_lossy().to_string();
         let windows = triple.contains("windows");
         let darwin = triple.contains("darwin") || triple.contains("apple");
+        let platform = tir::ioerror::platform(windows, darwin);
         let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, program.main.is_none())?;
         Ok(Codegen {
             cx,
@@ -223,6 +227,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             windows,
             triple,
             tasks_linked: false,
+            platform,
             current_span: None,
             debug,
             debug_entry: None,

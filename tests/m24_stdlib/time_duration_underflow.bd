@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: Duration: the difference is negative
+//> before
+
+// A `Duration` is never negative: the `-` operator panics when the right side is longer, in a release build too (spec/stdlib.md, "Time").
+// `checked_sub` and `saturating_sub` are the ways to ask for a result anyway.
+
+fn main() {
+    println("before")
+    let d = Duration.from_secs(1) - Duration.from_secs(2)
+    println("{d}")
+}

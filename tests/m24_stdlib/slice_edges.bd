@@ -1,0 +1,50 @@
+//@ run
+//> 3 4 1 2
+//> 0 true None None
+//> 0 0
+//> 2 4 1 3
+
+// Edge cases of the slice methods (spec/stdlib.md, "Slices"): the halves of `split_at_mut` are mutable views
+// of the same storage, the methods accept an empty slice, a rotation of zero is a no-op, and the sorts are
+// stable (elements that compare equal keep their order).
+
+struct Item {
+    key: i32
+    tag: i32
+}
+
+fn main() {
+    // Both halves of one mutable view can be reordered.
+    let mut arr = [4, 3, 2, 1]
+    let mut xs = arr[0..4]
+    let (mut head, mut tail) = xs.split_at_mut(2)
+    head.sort()
+    tail.reverse()
+    println("{} {} {} {}", arr[0], arr[1], arr[2], arr[3])
+
+    // Every mutating method accepts an empty slice; none of them panics on one.
+    let empty_arr = [9]
+    let empty = empty_arr[0..0]
+    println("{} {} {:?} {:?}", empty.len(), empty.is_empty(), empty.first(), empty.last())
+    let mut e = empty_arr[0..0]
+    e.reverse()
+    e.sort()
+    e.fill(5)
+    e.rotate_left(0)
+    e.rotate_right(0)
+    let source = empty_arr[0..0]
+    e.copy_from_slice(source)
+    let (a, b) = e.split_at(0)
+    println("{} {}", a.len(), b.len())
+
+    // `sort_by_key` is stable: equal keys keep their original order.
+    let mut items = [
+        Item { key: 2, tag: 1 },
+        Item { key: 1, tag: 2 },
+        Item { key: 2, tag: 3 },
+        Item { key: 1, tag: 4 },
+    ]
+    let mut view = items[0..4]
+    view.sort_by_key(|x: &Item| x.key)
+    println("{} {} {} {}", items[0].tag, items[1].tag, items[2].tag, items[3].tag)
+}

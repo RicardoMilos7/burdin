@@ -27,6 +27,8 @@ impl Sema<'_> {
         };
         self.globals.iterator_iface = find_iface(&self.globals, "Iterator");
         self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
+        self.globals.from_iterator_iface = find_iface(&self.globals, "FromIterator");
+        self.globals.double_ended_iface = find_iface(&self.globals, "DoubleEndedIterator");
         self.globals.display_iface = find_iface(&self.globals, "Display");
         self.globals.debug_iface = find_iface(&self.globals, "Debug");
         // Allocators (`spec/allocators.md`): the interface a container's allocator must implement, and the
@@ -64,19 +66,29 @@ impl Sema<'_> {
                 Some(Global::Func(f)) => Some(f),
                 _ => None,
             };
+            let generic = |globals: &crate::globals::Globals, name: &str| match globals.exported_value(std_module, name)
+            {
+                Some(Global::Generic(g)) => Some(g),
+                _ => None,
+            };
             self.globals.error_plain = func(&self.globals, "__error_plain");
             self.globals.error_at = func(&self.globals, "__error_at");
             self.globals.error_frame = func(&self.globals, "__error_frame");
             self.globals.error_context = func(&self.globals, "__error_context");
+            // The assertion declarations the compiler lowers to `Builtin::Assertion` (`spec/stdlib.md`).
+            self.globals.assert_fn = func(&self.globals, "assert");
+            self.globals.assert_eq_gen = generic(&self.globals, "assert_eq");
+            self.globals.assert_ne_gen = generic(&self.globals, "assert_ne");
+            self.globals.debug_assert_fn = func(&self.globals, "debug_assert");
+            self.globals.debug_assert_eq_gen = generic(&self.globals, "debug_assert_eq");
+            self.globals.debug_assert_ne_gen = generic(&self.globals, "debug_assert_ne");
             if self.test_mode {
                 self.globals.test_assert = func(&self.globals, "__test_assert");
-                self.globals.test_assert_eq = match self.globals.exported_value(std_module, "__test_assert_eq") {
-                    Some(Global::Generic(g)) => Some(g),
-                    _ => None,
-                };
+                self.globals.test_assert_eq = generic(&self.globals, "__test_assert_eq");
+                self.globals.test_assert_ne = generic(&self.globals, "__test_assert_ne");
             }
         }
-        self.globals.io_error_ty = self.globals.std_adt_ty("IoError");
+        self.globals.io_error_kind_ty = self.globals.std_adt_ty("IoErrorKind");
         self.globals.parse_int_error_ty = self.globals.std_adt_ty("ParseIntError");
         // The one-segment standard modules are usable as modules: `env.args()`, `mem.swap(...)`.
         let aliases: Vec<(String, usize)> = std_modules
@@ -165,7 +177,9 @@ impl Sema<'_> {
         let Some(&std_module) = std_modules.iter().find(|&&m| self.globals.modules[m].path == ["std"]) else {
             return;
         };
-        for (public, hidden) in [("assert", "__test_assert"), ("assert_eq", "__test_assert_eq")] {
+        for (public, hidden) in
+            [("assert", "__test_assert"), ("assert_eq", "__test_assert_eq"), ("assert_ne", "__test_assert_ne")]
+        {
             let Some(test_global) = self.globals.exported_value(std_module, hidden) else { continue };
             let panicking = self.globals.exported_value(std_module, public);
             for module in 0..self.globals.modules.len() {

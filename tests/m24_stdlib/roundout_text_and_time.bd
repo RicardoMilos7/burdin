@@ -1,0 +1,47 @@
+//@ run
+//> école strasse λόγος
+//> 3 true false
+//> report.TXT -> report.txt -> report
+//> data/2026/report.csv
+//> 2026-11-17T09:41:07Z 1.5s
+//> true 5
+
+// The text, path, time, and random helpers in one small program: normalize the words of a line with Unicode case
+// mapping, name an output file from an input path, stamp it with a manual clock, and shuffle with a seed.
+
+fn main() {
+    let line = "École  STRASSE λόγος école"
+    let mut seen = Set<String>.new()
+    let mut words = List<String>.new()
+    for word in line.split_whitespace() {
+        let lower = word.to_lowercase()
+        if seen.insert(lower.clone()) {
+            words.push(lower)
+        }
+    }
+    println("{words[0]} {words[1]} {words[2]}")
+    println("{words.len()} {words[0].starts_with("é")} {words[0].is_ascii()}")
+
+    let input = Path.unix("in/report.TXT")
+    let name = input.file_name().unwrap()
+    let lower_ext = input.with_extension(input.extension().unwrap().to_lowercase())
+    println("{name} -> {lower_ext.file_name().unwrap()} -> {lower_ext.file_stem().unwrap()}")
+    let out = Path.unix("data").join("2026").join("report").with_extension("csv")
+    println("{out}")
+
+    let mut clock = ManualClock.new(DateTime.new(2026, 11, 17, 9, 41, 7, 0).unwrap().to_system_time())
+    let start = clock.now()
+    let stamp = clock.system_time().to_utc()
+    clock.advance(Duration.from_millis(1500))
+    println("{stamp} {clock.now().duration_since(start)}")
+
+    let mut random = Random.seeded(7)
+    let mut deck: List<i32> = [1, 2, 3, 4, 5].into_iter().collect()
+    random.shuffle(mut deck)
+    let mut total = 0
+    for card in deck.iter() {
+        total = total + card
+    }
+    deck.sort()
+    println("{deck[0] == 1 && deck[4] == 5} {total - 10}")
+}

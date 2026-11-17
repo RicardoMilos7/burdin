@@ -1,0 +1,27 @@
+//@ run
+//> 6
+//> abc
+//> 2
+
+// `collect` works in a `comptime` block: it is ordinary `std` code, so the evaluator runs it like any other (IT17).
+
+const SUM: i32 = comptime {
+    let squares: List<i32> = [1, 2, 3].into_iter().map(|x| x * x).collect()
+    squares[0] + squares[1] + 1
+}
+
+const WORD: String = comptime {
+    let word: String = "abc".chars().collect()
+    word
+}
+
+const DISTINCT: usize = comptime {
+    let set: Set<i32> = [1, 2, 1].into_iter().collect()
+    set.len()
+}
+
+fn main() {
+    println("{SUM}")
+    println("{WORD}")
+    println("{DISTINCT}")
+}

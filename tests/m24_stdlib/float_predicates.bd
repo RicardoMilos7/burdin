@@ -1,0 +1,59 @@
+//@ run
+//> nan true false
+//> inf true true false
+//> finite true false false
+//> sign true
+//> sign false
+//> sign true
+//> sign false
+//> sign true
+//> sign false
+//> sign_nan true
+//> signum -1 1 -1
+//> signum_nan true
+//> signum_f32 -1 -1
+//> fract 0.75 -0.75
+//> fract_integral 0 true
+//> log true
+//> log_natural true
+//> degrees 180
+//> radians 3.141592653589793
+//> radians_pi true
+//> degrees_f32 180
+//> radians_f32 true
+
+// The float predicates and the helpers `std` writes in Burdin (issue #703; spec/stdlib.md, "Float functions"):
+// `is_nan`, `is_infinite`, `is_finite`, `is_sign_negative`, `signum`, `fract`, `log`, `to_degrees`, and
+// `to_radians`.
+
+fn main() {
+    println("nan {} {}", f64.NAN.is_nan(), (1.0).is_nan())
+    println("inf {} {} {}", f64.INFINITY.is_infinite(), f64.NEG_INFINITY.is_infinite(), (1.0).is_infinite())
+    println("finite {} {} {}", (1.0).is_finite(), f64.INFINITY.is_finite(), f64.NAN.is_finite())
+    println("sign {}", (-1.0).is_sign_negative())
+    println("sign {}", (1.0).is_sign_negative())
+    println("sign {}", (-0.0).is_sign_negative())
+    println("sign {}", (0.0).is_sign_negative())
+    println("sign {}", f64.NEG_INFINITY.is_sign_negative())
+    println("sign {}", f64.INFINITY.is_sign_negative())
+    println("sign_nan {}", f64.from_bits(0xfff8000000000000).is_sign_negative())
+
+    println("signum {} {} {}", (-2.0).signum(), (2.0).signum(), (-0.0).signum())
+    println("signum_nan {}", f64.NAN.signum().is_nan())
+    let f32_neg: f32 = -2.0
+    let f32_zero: f32 = -0.0
+    println("signum_f32 {} {}", f32_neg.signum(), f32_zero.signum())
+
+    println("fract {} {}", (1.75).fract(), (-1.75).fract())
+    println("fract_integral {} {}", (2.0).fract(), (f64.INFINITY).fract().is_nan())
+
+    println("log {}", (8.0).log(2.0) > 2.99 && (8.0).log(2.0) < 3.01)
+    println("log_natural {}", (f64.E).log(f64.E) == 1.0)
+
+    println("degrees {}", f64.PI.to_degrees())
+    println("radians {}", (180.0).to_radians())
+    println("radians_pi {}", (180.0).to_radians() == f64.PI)
+    println("degrees_f32 {}", f32.PI.to_degrees())
+    let degrees: f32 = 180.0
+    println("radians_f32 {}", degrees.to_radians() == f32.PI)
+}

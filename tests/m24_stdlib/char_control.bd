@@ -1,0 +1,19 @@
+//@ run
+//> true true true false false false
+//> true true true true false false
+//> true true false
+//> false true false
+
+// `is_ascii_alphanumeric` is a letter or digit of ASCII only. `is_ascii_control` is 0 to 31 and 127, while the
+// Unicode `is_control` also takes 128 to 159, so U+0085 (next line) differs between the two.
+
+fn at(code: u32): char {
+    code.to_char().unwrap()
+}
+
+fn main() {
+    println("{'a'.is_ascii_alphanumeric()} {'Z'.is_ascii_alphanumeric()} {'7'.is_ascii_alphanumeric()} {'_'.is_ascii_alphanumeric()} {'é'.is_ascii_alphanumeric()} {' '.is_ascii_alphanumeric()}")
+    println("{'\n'.is_ascii_control()} {'\t'.is_ascii_control()} {at(0).is_ascii_control()} {at(127).is_ascii_control()} {' '.is_ascii_control()} {'a'.is_ascii_control()}")
+    println("{'\n'.is_control()} {at(31).is_control()} {' '.is_control()}")
+    println("{at(133).is_ascii_control()} {at(133).is_control()} {at(160).is_control()}")
+}

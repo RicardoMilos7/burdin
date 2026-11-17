@@ -1,0 +1,126 @@
+//@ run
+//> visit 0 1 2 5 3 4
+//> dist 0 7 9 20 20 11
+//> order 0 1 2 5 3 4
+//> reached 6
+//> unreachable 2 [6, 7]
+
+// The three containers working together: a `Deque` drives a breadth-first search, a `Set` remembers what was
+// visited, and a `PriorityHeap` of `Reverse` entries is the frontier of a shortest-path search.
+
+struct Edge {
+    to: usize
+    cost: u32
+}
+
+struct Entry derives (Eq, Ord) {
+    cost: u32
+    node: usize
+}
+
+fn add_edge(mut graph: List<List<Edge>>, a: usize, b: usize, cost: u32) {
+    graph[a].push(Edge { to: b, cost: cost })
+    graph[b].push(Edge { to: a, cost: cost })
+}
+
+fn build(nodes: usize): List<List<Edge>> {
+    let mut graph = List<List<Edge>>.new()
+    let mut i: usize = 0
+    while i < nodes {
+        graph.push(List<Edge>.new())
+        i = i + 1
+    }
+    graph
+}
+
+fn breadth_first(graph: List<List<Edge>>, start: usize): List<usize> {
+    let mut seen = Set<usize>.new()
+    let mut queue = Deque<usize>.new()
+    let mut order = List<usize>.new()
+    seen.insert(start)
+    queue.push_back(start)
+    loop {
+        match queue.pop_front() {
+            Some(node) => {
+                order.push(node)
+                for edge in graph[node].iter() {
+                    if seen.insert(edge.to) {
+                        queue.push_back(edge.to)
+                    }
+                }
+            },
+            None => break,
+        }
+    }
+    order
+}
+
+fn shortest(graph: List<List<Edge>>, start: usize): Map<usize, u32> {
+    let mut dist = Map<usize, u32>.new()
+    let mut frontier = PriorityHeap<Reverse<Entry>>.new()
+    frontier.push(Reverse { value: Entry { cost: 0, node: start } })
+    loop {
+        match frontier.pop() {
+            Some(top) => {
+                let entry = top.value
+                if dist.contains_key(entry.node) {
+                    continue
+                }
+                dist.insert(entry.node, entry.cost)
+                for edge in graph[entry.node].iter() {
+                    if !dist.contains_key(edge.to) {
+                        frontier.push(Reverse { value: Entry { cost: entry.cost + edge.cost, node: edge.to } })
+                    }
+                }
+            },
+            None => break,
+        }
+    }
+    dist
+}
+
+fn at(dist: Map<usize, u32>, node: usize): u32 {
+    match dist.get(node) {
+        Some(d) => *d,
+        None => 0,
+    }
+}
+
+fn join(items: List<usize>): String {
+    let mut out = String.new()
+    for item in items.iter() {
+        out.push(' ')
+        out.push_str(item.to_string())
+    }
+    out
+}
+
+fn main() {
+    let mut graph = build(8)
+    add_edge(mut graph, 0, 1, 7)
+    add_edge(mut graph, 0, 2, 9)
+    add_edge(mut graph, 0, 5, 14)
+    add_edge(mut graph, 1, 2, 10)
+    add_edge(mut graph, 1, 3, 15)
+    add_edge(mut graph, 2, 3, 11)
+    add_edge(mut graph, 2, 5, 2)
+    add_edge(mut graph, 3, 4, 6)
+    add_edge(mut graph, 4, 5, 9)
+    add_edge(mut graph, 6, 7, 1)
+
+    println("visit{join(breadth_first(graph, 0))}")
+    let dist = shortest(graph, 0)
+    println("dist {at(dist, 0)} {at(dist, 1)} {at(dist, 2)} {at(dist, 3)} {at(dist, 4)} {at(dist, 5)}")
+    let order = breadth_first(graph, 0)
+    println("order{join(order)}")
+    println("reached {dist.len()}")
+    let mut missing = List<usize>.new()
+    let mut n: usize = 0
+    while n < 8 {
+        if !dist.contains_key(n) {
+            missing.push(n)
+        }
+        n = n + 1
+    }
+    println("unreachable {missing.len()} {missing:?}")
+}

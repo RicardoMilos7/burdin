@@ -1,0 +1,39 @@
+//@ run
+//> Ok(3) Err(3) Ok(0) Ok(5) Err(0) Err(6)
+//> Ok(4)
+//> Ok(2) Ok(1)
+//> 2
+//> Err(2)
+//> Ok(0)
+
+// `binary_search`, `binary_search_by`, and `binary_search_by_key` (`spec/stdlib.md`, "Slices"). `Ok` is the
+// index of a matching element; `Err` is the index where the value would be inserted. A search of a slice that
+// is not sorted gives an unspecified result.
+
+fn main() {
+    let arr = [1, 2, 3, 5, 8, 9]
+    let xs = arr[0..6]
+    println(
+        "{:?} {:?} {:?} {:?} {:?} {:?}",
+        xs.binary_search(5),
+        xs.binary_search(4),
+        xs.binary_search(1),
+        xs.binary_search(9),
+        xs.binary_search(0),
+        xs.binary_search(10),
+    )
+    println("{:?}", xs.binary_search_by(|x: &i32| x.cmp(8)))
+    let two = [1, 2, 4, 4]
+    println("{:?} {:?}", two[0..4].binary_search_by_key(4, |x: &i32| *x), two[0..4].binary_search(2))
+
+    // Duplicates: any matching index is `Ok`, and a missing value reports its insertion point.
+    let duplicates = [0, 0, 2, 2, 2, 3]
+    match duplicates[0..6].binary_search(2) {
+        Ok(at) => println("{}", duplicates[at]),
+        Err(_) => println("missing"),
+    }
+    println("{:?}", duplicates[0..6].binary_search(1))
+
+    // A single element and an empty slice.
+    println("{:?}", arr[2..3].binary_search(3))
+}

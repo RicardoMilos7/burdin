@@ -170,6 +170,14 @@ owner; and a `burdin test` build allocates through a checking allocator whose li
 source site the compiler recorded, failing an otherwise passing test. The new diagnostics are E0270, E0271, and
 E0272; there is no e9000 site for allocators.
 
+Milestone 24 is in progress. `Set`, `Deque`, `PriorityHeap`, the Unicode character and text helpers, `Path` (Unix and
+Windows rules), directories and metadata, time (`Duration`, `Instant`, `SystemTime`, `DateTime`, `Clock`), and `Random`
+are implemented and listed in `spec/stdlib.md`. Issue #196 audits their tests: every public function of those types is
+called by a conformance test, the gaps found (construction and `extend`, `into_list`, `clear`, `Set` with an allocator,
+`Path` formatting, `Instant` arithmetic, the control-character predicates) are filled, and three tests use the types
+together (`containers_graph_search`, `containers_comptime`, `roundout_text_and_time`). The milestone closes when issue
+#189's remaining sub-issues are done.
+
 ## Fixes that ship with stage 1
 
 Issue #48 closed most of the stage 0 gaps in stage 0: the view lifetime rule (RT5/E0123), ranges as values,
@@ -346,7 +354,7 @@ has been run only on Linux x86-64 so far; the CI jobs for the other platforms ar
 | Tooling | `burdin new`, `fmt` (opinionated, no options), `lint` (the design's warnings), `doc`, `add`, bindgen for C headers, Rust interop through generated C-ABI shims |
 | Compiler | A query-based compiler library shared by the CLI and a language server; a lockfile; multiple-package workspaces; cached object files; a possibly faster debug backend |
 | Ecosystem | The serialization framework (`Serialize`/`Deserialize` derives and format packages), JSON/TOML/CSV, HTTP client and server, TLS, WebSockets, regex, compression, images, math, database drivers |
-| Standard library | `Set`, `Deque`, priority heap, Unicode, paths, time, random, math — some may arrive earlier with `m24` |
+| Standard library | What `m24` did not ship: the serialization framework's foundation and anything the author's projects still need. `Set`, `Deque`, `PriorityHeap`, the Unicode helpers, `Path`, time, and `Random` are in `std` already |
 
 ### When wanted
 

@@ -1,0 +1,58 @@
+//@ run
+//> truncate
+//> drop 2
+//> drop 3
+//> left 1
+//> tail 2
+//> see 4
+//> drop 4
+//> swap removed 7
+//> end
+//> drop 7
+//> drop 8
+//> drop 5
+//> drop 6
+//> drop 1
+
+// Every element is dropped exactly once, in index order, by the bulk edits: `truncate` drops the cut tail,
+// `split_off` moves elements into the new list, `drain` hands them to the iterator (which drops what it is not
+// asked for), and `swap_remove` returns the removed element to the caller.
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut xs = List<Token>.new()
+    xs.push(Token { id: 1 })
+    xs.push(Token { id: 2 })
+    xs.push(Token { id: 3 })
+    println("truncate")
+    xs.truncate(1)
+    println("left {xs.len()}")
+
+    let mut ys = List<Token>.new()
+    ys.push(Token { id: 4 })
+    ys.push(Token { id: 5 })
+    ys.push(Token { id: 6 })
+    let tail = ys.split_off(1)
+    println("tail {tail.len()}")
+
+    let removed = ys.drain(0..1)
+    for t in removed {
+        println("see {t.id}")
+    }
+
+    let mut zs = List<Token>.new()
+    zs.push(Token { id: 7 })
+    zs.push(Token { id: 8 })
+    let removed = zs.swap_remove(0)
+    println("swap removed {removed.id}")
+    println("end")
+}

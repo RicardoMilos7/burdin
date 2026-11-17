@@ -1,5 +1,5 @@
 //@ run
-//> loading settings: parsing config: cannot read cfg.toml
+//> loading settings: parsing config: cannot read cfg.toml: not found
 //> true
 //> false
 
@@ -7,7 +7,7 @@
 // (spec/errors.md, ERR6).
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string() })
+    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
 }
 
 fn load(): Result<i32> {

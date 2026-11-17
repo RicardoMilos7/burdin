@@ -7,7 +7,7 @@ use crate::types::check_storable;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{Place, is_place_expr, place_mentions, place_root, places_overlap};
-use burdin_tir::{self as tir, Builtin, FuncId, IntTy, Method, ParamSig, Pat, Ty};
+use burdin_tir::{self as tir, AssertKind, Builtin, FloatTy, FuncId, IntTy, Method, ParamSig, Pat, Ty};
 
 impl FnCx<'_> {
     pub(super) fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
@@ -58,6 +58,14 @@ impl FnCx<'_> {
                         if self.globals.test_assert == Some(f) {
                             return self.test_assert_call(f, args, span);
                         }
+                        // The message form of `assert` and `debug_assert` are compiler-side
+                        // (`spec/stdlib.md`, "Memory helpers and assertions").
+                        if self.globals.debug_assert_fn == Some(f) {
+                            return self.debug_assert_call(args, span);
+                        }
+                        if self.globals.assert_fn == Some(f) && args.len() > 1 {
+                            return self.assert_msg_call(args, span);
+                        }
                         self.check_unsafe_call(f, &id.name, id.span);
                         let sig = &self.globals.sigs[f.0];
                         (sig.params.clone(), sig.ret.clone(), Callee::User(f))
@@ -65,6 +73,21 @@ impl FnCx<'_> {
                     Some(Global::Generic(g)) => {
                         if self.globals.test_assert_eq == Some(g) {
                             return self.test_assert_eq_call(g, id, args, span, expect);
+                        }
+                        if self.globals.test_assert_ne == Some(g) {
+                            return self.test_assert_ne_call(g, id, args, span, expect);
+                        }
+                        if self.globals.debug_assert_eq_gen == Some(g) {
+                            return self.debug_compare_call(args, span, AssertKind::DebugAssertEq);
+                        }
+                        if self.globals.debug_assert_ne_gen == Some(g) {
+                            return self.debug_compare_call(args, span, AssertKind::DebugAssertNe);
+                        }
+                        if args.len() > 2 && self.globals.assert_eq_gen == Some(g) {
+                            return self.assert_compare_msg_call(args, span, AssertKind::Eq);
+                        }
+                        if args.len() > 2 && self.globals.assert_ne_gen == Some(g) {
+                            return self.assert_compare_msg_call(args, span, AssertKind::Ne);
                         }
                         return self.generic_call(g, id, args, span, expect);
                     }
@@ -87,13 +110,26 @@ impl FnCx<'_> {
                         return self.format_call(args, span);
                     }
                     None => match builtin(&id.name) {
-                        Some(Builtin::AssertEq) => return self.assert_eq(args, span),
                         Some(b @ (Builtin::Print | Builtin::Println | Builtin::Eprint | Builtin::Eprintln))
                             if args.len() > 1 =>
                         {
                             let text = self.format_call(args, span);
                             let text = self.coerce_arg(text, &Ty::Str);
                             return mk(tir::ExprKind::Builtin(b, vec![text]), Ty::Unit, span);
+                        }
+                        // The unchecked bytes-to-text cast upholds the `str` invariant only when the bytes are
+                        // valid UTF-8, which is what `unsafe` promises here (`spec/stdlib.md`).
+                        Some(b @ Builtin::ViewAsText) => {
+                            if self.unsafe_depth == 0 {
+                                self.diags.error(
+                                    Code::UNSAFE_REQUIRED,
+                                    id.span,
+                                    "`__view_as_text` treats bytes as text without checking them; it requires an \
+                                     `unsafe` block",
+                                );
+                            }
+                            let sig = builtin_sig(b, self.globals);
+                            (sig.params, sig.ret, Callee::Builtin(b))
                         }
                         Some(b) => {
                             let sig = builtin_sig(b, self.globals);
@@ -255,32 +291,31 @@ impl FnCx<'_> {
         mk(kind, result_ty, span)
     }
 
-    /// The test-build `assert`: the argument is the condition, and the compiler appends its source text and the
-    /// call's location, which the `AssertError` message reports (`spec/errors.md`, ERR9).
+    /// The test-build `assert`: the argument is the condition and an optional formatted message, and the
+    /// compiler appends the call's source text and location, which the `AssertError` message reports
+    /// (`spec/errors.md`, ERR9).
     fn test_assert_call(&mut self, f: FuncId, args: &[ast::Arg], span: Span) -> tir::Expr {
         self.reject_named_args("assert", args);
         let sig = self.globals.sigs[f.0].clone();
-        if args.len() != 1 {
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`assert` takes 1 argument, but {} were given", args.len()),
-            );
+        if args.is_empty() {
+            self.diags.error(Code::ARG_COUNT, span, "`assert` takes a condition");
             return self.args_then_error(args, span);
         }
         let cond = self.expr(&args[0].expr, Some(&Ty::Bool));
         let cond = self.expect_ty(cond, &Ty::Bool);
+        let message = self.test_message(args, 1, span);
         let (condition, location) = self.assertion_texts(span);
-        let augmented = vec![checked_arg(&args[0], span), string_arg(condition, span), string_arg(location, span)];
-        let Some(checked) = self.args_pre("assert", &sig.params, &augmented, None, span, Some(vec![cond])) else {
+        let message_ast = if args.len() > 1 { checked_arg(&args[1], span) } else { checked_arg(&args[0], span) };
+        let augmented =
+            vec![checked_arg(&args[0], span), message_ast, string_arg(condition, span), string_arg(location, span)];
+        let Some(checked) = self.args_pre("assert", &sig.params, &augmented, None, span, Some(vec![cond, message]))
+        else {
             return error_expr(span);
         };
         mk(tir::ExprKind::Call(f, checked), sig.ret, span)
     }
 
-    /// The test-build `assert_eq`: the two values are checked here so that `T` is inferred from them, and the
-    /// call's source text and location are appended (`spec/errors.md`, ERR9). The generic call then infers `T`,
-    /// checks its `Eq + Debug` bounds, and instantiates the standard library's function.
+    /// The test-build `assert_eq` (`spec/errors.md`, ERR9).
     fn test_assert_eq_call(
         &mut self,
         g: usize,
@@ -289,32 +324,68 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
-        self.reject_named_args("assert_eq", args);
-        if args.len() != 2 {
+        self.test_compare_call(g, id, args, span, expect, "assert_eq")
+    }
+
+    /// The test-build `assert_ne` (`spec/errors.md`, ERR9).
+    fn test_assert_ne_call(
+        &mut self,
+        g: usize,
+        id: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
+        self.test_compare_call(g, id, args, span, expect, "assert_ne")
+    }
+
+    /// The test-build comparison assertions: the two values are checked here so that `T` is inferred from
+    /// them, and the message (empty when none was written), the call's source text, and its location are
+    /// appended (`spec/errors.md`, ERR9). The generic call then infers `T`, checks its `Eq + Debug` bounds,
+    /// and instantiates the standard library's function.
+    fn test_compare_call(
+        &mut self,
+        g: usize,
+        id: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+        name: &str,
+    ) -> tir::Expr {
+        self.reject_named_args(name, args);
+        if args.len() < 2 {
             self.diags.error(
                 Code::ARG_COUNT,
                 span,
-                format!("`assert_eq` takes 2 arguments, but {} were given", args.len()),
+                format!("`{name}` takes two values, but {} were given", args.len()),
             );
             return self.args_then_error(args, span);
         }
-        // Check the left value first; the right one takes its type, so a literal right side fits a typed left
-        // side, exactly as the ordinary `assert_eq` call does.
-        let a = self.expr(&args[0].expr, None);
-        let a = self.auto_deref(a);
-        let b = self.expr(&args[1].expr, Some(&a.ty));
-        let b = self.coerce_arg(b, &a.ty);
+        let (a, b) = self.comparison_args(args, name, span);
+        let message = self.test_message(args, 2, span);
         let (condition, location) = self.assertion_texts(span);
         let condition_value = mk(tir::ExprKind::Str(condition.clone()), Ty::Str, span);
         let location_value = mk(tir::ExprKind::Str(location.clone()), Ty::Str, span);
+        let message_ast = if args.len() > 2 { checked_arg(&args[2], span) } else { checked_arg(&args[0], span) };
         let augmented = vec![
             checked_arg(&args[0], span),
             checked_arg(&args[1], span),
+            message_ast,
             string_arg(condition, span),
             string_arg(location, span),
         ];
-        let checked = vec![a, b, condition_value, location_value];
+        let checked = vec![a, b, message, condition_value, location_value];
         self.generic_call_checked(g, id, &augmented, checked, span, expect)
+    }
+
+    /// The message value of a typed assertion: the arguments from `first` on formatted, or an empty `str` when
+    /// the call wrote none.
+    fn test_message(&mut self, args: &[ast::Arg], first: usize, span: Span) -> tir::Expr {
+        if args.len() > first {
+            self.assertion_message(&args[first..], span)
+        } else {
+            mk(tir::ExprKind::Str(String::new()), Ty::Str, span)
+        }
     }
 
     /// The source text of the whole call at `span` and its `path:line:col`, for a typed assertion (`ERR9`).
@@ -387,17 +458,68 @@ impl FnCx<'_> {
         self.wrap_scrutinee(matched, owned_temp, span)
     }
 
-    /// `assert_eq(a, b)`: both values must have the same `Eq` type.
-    fn assert_eq(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
-        self.reject_named_args("assert_eq", args);
-        if args.len() != 2 {
+    /// The message form of `assert`: `assert(cond, "message {x}")` checks the condition and formats the
+    /// message, which the panic reports (`spec/stdlib.md`, "Memory helpers and assertions").
+    fn assert_msg_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("assert", args);
+        let cond = self.expr(&args[0].expr, Some(&Ty::Bool));
+        let cond = self.expect_ty(cond, &Ty::Bool);
+        let message = self.assertion_message(&args[1..], span);
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(AssertKind::Assert), vec![cond, message]), Ty::Unit, span)
+    }
+
+    /// The message forms of `assert_eq` and `assert_ne`: the two values must have the same `Eq` type, and the
+    /// message (from the third argument on) is formatted and reported by the panic.
+    fn assert_compare_msg_call(&mut self, args: &[ast::Arg], span: Span, kind: AssertKind) -> tir::Expr {
+        let name = if kind == AssertKind::Ne { "assert_ne" } else { "assert_eq" };
+        self.reject_named_args(name, args);
+        let (l, r) = self.comparison_args(args, name, span);
+        let message = self.assertion_message(&args[2..], span);
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(kind), vec![l, r, message]), Ty::Unit, span)
+    }
+
+    /// `debug_assert(cond[, message])`: the compiler keeps the check in a debug build and drops it from a
+    /// release build without evaluating either argument (`spec/stdlib.md`).
+    fn debug_assert_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("debug_assert", args);
+        if args.is_empty() {
+            self.diags.error(Code::ARG_COUNT, span, "`debug_assert` takes a condition");
+            return self.args_then_error(args, span);
+        }
+        let cond = self.expr(&args[0].expr, Some(&Ty::Bool));
+        let cond = self.expect_ty(cond, &Ty::Bool);
+        let mut values = vec![cond];
+        if args.len() > 1 {
+            values.push(self.assertion_message(&args[1..], span));
+        }
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(AssertKind::DebugAssert), values), Ty::Unit, span)
+    }
+
+    /// `debug_assert_eq(a, b[, message])` and `debug_assert_ne`: the comparison forms of `debug_assert`.
+    fn debug_compare_call(&mut self, args: &[ast::Arg], span: Span, kind: AssertKind) -> tir::Expr {
+        let name = if kind == AssertKind::DebugAssertNe { "debug_assert_ne" } else { "debug_assert_eq" };
+        self.reject_named_args(name, args);
+        if args.len() < 2 {
             self.diags.error(
                 Code::ARG_COUNT,
                 span,
-                format!("`assert_eq` takes 2 arguments, but {} were given", args.len()),
+                format!("`{name}` takes two values, but {} were given", args.len()),
             );
             return self.args_then_error(args, span);
         }
+        let (l, r) = self.comparison_args(args, name, span);
+        let mut values = vec![l, r];
+        if args.len() > 2 {
+            values.push(self.assertion_message(&args[2..], span));
+        }
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(kind), values), Ty::Unit, span)
+    }
+
+    /// The two values of a comparison assertion (`assert_eq`, `assert_ne`, and their `debug_` forms): the left
+    /// value fixes the type, the right one takes it, and both must support `==` (`spec/stdlib.md`).
+    fn comparison_args(&mut self, args: &[ast::Arg], name: &str, span: Span) -> (tir::Expr, tir::Expr) {
+        // Check the left value first; the right one takes its type, so a literal right side fits a typed left
+        // side, exactly as the ordinary `assert_eq` call does.
         let l = self.expr(&args[0].expr, None);
         let l = self.auto_deref(l);
         let r = self.expr(&args[1].expr, Some(&l.ty));
@@ -406,10 +528,17 @@ impl FnCx<'_> {
             self.diags.error(
                 Code::BOUND_NOT_SATISFIED,
                 span,
-                format!("`assert_eq` needs `Eq` values, but `{}` does not support `==`", l.ty),
+                format!("`{name}` needs `Eq` values, but `{}` does not support `==`", l.ty),
             );
         }
-        mk(tir::ExprKind::Builtin(Builtin::AssertEq, vec![l, r]), Ty::Unit, span)
+        (l, r)
+    }
+
+    /// The formatted message of an assertion's message form. It is a `str` view of the formatted `String`,
+    /// which the panic reports when the assertion fails (`spec/stdlib.md`).
+    fn assertion_message(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        let text = self.format_call(args, span);
+        self.coerce_arg(text, &Ty::Str)
     }
 
     /// `swap(mut a, mut b)`: two places of one type, both mutable and non-overlapping.
@@ -739,7 +868,11 @@ impl FnCx<'_> {
         if let Some((receiver, exclusive)) = receiver {
             let mut places = Vec::new();
             place_mentions(receiver, &mut places);
-            entries.push((exclusive, receiver.span, places));
+            // A chain that is computed here (`xs.iter()`) is a temporary view of the places it mentions, not a
+            // place the call borrows exclusively: its loans are the borrow checker's business (RF5), so `xs.iter()`
+            // as the receiver of `zip` may sit beside another argument that reads `xs`.
+            let temporary_view = receiver.ty.is_second_class() && !is_place_expr(receiver);
+            entries.push((exclusive && !temporary_view, receiver.span, places));
         }
         for (p, a) in params.iter().zip(args) {
             let mut places = Vec::new();
@@ -821,6 +954,9 @@ impl FnCx<'_> {
             if id.name == "Shared" && name.name == "new" {
                 return self.shared_new(args, span);
             }
+            if (id.name == "List" || id.name == "Map") && name.name == "from" {
+                return self.untyped_collection_from(&id.name, name, args, expect, span);
+            }
         }
         // `CPtr.null()`, typed by the expected type.
         if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
@@ -834,20 +970,72 @@ impl FnCx<'_> {
         }
         if let Some(path) = self.type_path(recv) {
             return match path {
-                PathTy::Ty(ty) => self.assoc_call(&ty, name, args, span),
+                PathTy::Ty(ty) => self.assoc_call(&ty, name, args, span, expect),
                 PathTy::Template(g) => self.assoc_call_template(g, name, args, expect, span),
             };
         }
         // A module-qualified type: `sh.Square.new()`.
         if let Some(ty) = self.qualified_type(recv) {
-            return self.assoc_call(&ty, name, args, span);
+            return self.assoc_call(&ty, name, args, span, expect);
         }
         // A module-qualified function: `math.add(...)`, `sh.area(...)`.
         if let Some((target, item)) = self.module_member(recv, name) {
             return self.module_call(target, &item, args, span, expect);
         }
         let recv = self.expr(recv, None);
-        self.method_call_on(recv, name, args, span)
+        self.method_call_on(recv, name, args, span, expect)
+    }
+
+    /// The type of `e` when it is a range argument to `get`: a range expression, or a local whose value is a
+    /// range. `None` for any other expression, which `get` treats as an index.
+    fn range_argument(&self, e: &ast::Expr) -> Option<Ty> {
+        match &e.kind {
+            ast::ExprKind::Range { inclusive, .. } => Some(Ty::Range(Box::new(Ty::Int(IntTy::Usize)), *inclusive)),
+            ast::ExprKind::Name { name, args } if args.is_empty() => {
+                let local = self.lookup(&name.name)?;
+                let ty = self.locals[local.0].ty.clone();
+                // A stored range is a slice range only when its endpoints are `usize`; there is no implicit
+                // conversion, so `Range<i32>` is an ordinary type error at the index form.
+                let Ty::Range(end, _) = &ty else { return None };
+                (**end == Ty::Int(IntTy::Usize)).then_some(ty)
+            }
+            _ => None,
+        }
+    }
+
+    /// `array[0..N]`: the implicit slice view an array takes for a slice method or extension (`spec/stdlib.md`,
+    /// "Slices"). Slicing is what takes the loan on the array, so the borrow checker sees the view like any other.
+    fn array_slice_view(&self, base: tir::Expr, elem: &Ty, n: u64, span: Span) -> tir::Expr {
+        let usize_ty = Ty::Int(IntTy::Usize);
+        let lo = mk(tir::ExprKind::Int(0), usize_ty.clone(), span);
+        let hi = mk(tir::ExprKind::Int(n as i128), usize_ty, span);
+        let kind = tir::ExprKind::Slice { base: Box::new(base), lo: Box::new(lo), hi: Box::new(hi), inclusive: false };
+        mk(kind, Ty::Slice(Box::new(elem.clone())), span)
+    }
+
+    /// The expression whose mutability a mutating slice method needs: the base of a slice view, or the list a
+    /// `List.as_slice()` call views. `None` when the receiver is neither, so the ordinary rule applies.
+    fn slice_view_source<'e>(&self, e: &'e tir::Expr) -> Option<&'e tir::Expr> {
+        match &e.kind {
+            tir::ExprKind::Slice { base, .. } => Some(base),
+            tir::ExprKind::Method(tir::Method::AsSlice, args) => args.first(),
+            _ => None,
+        }
+    }
+
+    /// The name of the place a `mut self` extension over a slice view cannot write through, when the view is over
+    /// an immutable place. `None` when the receiver is fine, including a receiver that is not a view at all (the
+    /// ordinary rules for those are checked separately).
+    pub(super) fn slice_receiver_problem(&self, e: &tir::Expr) -> Option<String> {
+        let base = self.slice_view_source(e)?;
+        if is_place_expr(base) && self.place_mutable(base) {
+            return None;
+        }
+        Some(
+            place_root(base)
+                .map(|root| self.locals[root.0].name.clone())
+                .unwrap_or_else(|| "this receiver".to_string()),
+        )
     }
 
     /// `recv.name(args)` for a receiver that is already checked.
@@ -857,6 +1045,7 @@ impl FnCx<'_> {
         name: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
+        expect: Option<&Ty>,
     ) -> tir::Expr {
         if recv.ty == Ty::Error {
             return self.args_then_error(args, span);
@@ -869,6 +1058,20 @@ impl FnCx<'_> {
         }
         // Field access and method calls see through references (RF1).
         let recv = self.auto_deref(recv);
+        // `xs.get(range): Option<[T]>`: the checked form of slicing. A range expression or a range-valued
+        // local picks it; any other argument is the index form the method table provides (`spec/stdlib.md`,
+        // "Slices").
+        if name.name == "get"
+            && args.len() == 1
+            && matches!(recv.ty, Ty::Slice(_))
+            && let Some(range_ty) = self.range_argument(&args[0].expr)
+        {
+            self.reject_named_args("get", args);
+            let arg = self.expr(&args[0].expr, Some(&range_ty));
+            let arg = self.expect_ty(arg, &range_ty);
+            let ret = Ty::Option(Box::new(recv.ty.clone()));
+            return mk(tir::ExprKind::Method(Method::SliceGetRange, vec![recv, arg]), ret, span);
+        }
         // `x.to_string()` on a value whose type implements `Display` (spec/format.md).
         if name.name == "to_string"
             && args.is_empty()
@@ -881,7 +1084,7 @@ impl FnCx<'_> {
             return self.any_method_call(recv, &any, name, args, span);
         }
         if let Ty::Param(_) = recv.ty {
-            return self.param_method_call(recv, name, args, span);
+            return self.param_method_call(recv, name, args, span, expect);
         }
         if let Some(key) = adt_key(&recv.ty)
             && let Some(&f) = self.globals.methods.get(&(key, name.name.clone()))
@@ -890,7 +1093,7 @@ impl FnCx<'_> {
             self.check_unsafe_call(f, &name.name, name.span);
             // A method with its own type parameters is instantiated for the arguments this call infers.
             if let Some(info) = self.globals.method_templates.get(&f).cloned() {
-                return self.generic_method_call(info, recv, &name.name, args, span);
+                return self.generic_method_call(info, recv, &name.name, args, span, expect);
             }
             let sig = &self.globals.sigs[f.0];
             if !sig.has_self {
@@ -923,6 +1126,9 @@ impl FnCx<'_> {
         if name.name == "hash" && args.is_empty() && self.globals.has_hash_in(&recv.ty, &self.bounds) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
         }
+        if name.name == "hash_from" && self.globals.has_hash_in(&recv.ty, &self.bounds) {
+            return self.hash_from_call(recv, args, span);
+        }
         // `a.cmp(b)` on every type that supports `<` through `Ord` (`spec/stdlib.md`, `Ordering`).
         if name.name == "cmp"
             && args.len() == 1
@@ -942,7 +1148,7 @@ impl FnCx<'_> {
             return e;
         }
         // The iteration protocol: `next`, `sum`, the eager `List` helpers, and the `Iterator` default methods.
-        if let Some(e) = self.iterator_method(recv.clone(), name, args, span) {
+        if let Some(e) = self.iterator_method(recv.clone(), name, args, span, expect) {
             return e;
         }
         // `res.context(message)` is compiler-known on `Result` (`spec/errors.md`, ERR6).
@@ -951,6 +1157,18 @@ impl FnCx<'_> {
         }
         let recv_ty = recv.ty.clone();
         let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
+            // An array has the slice methods through an implicit view of its elements (`spec/stdlib.md`,
+            // "Slices"). The view is taken only when a slice method or a slice extension of that name exists, so
+            // an unrelated call still reports the array's own type.
+            if let Ty::Array(elem, n) = recv.ty.clone() {
+                let view = self.array_slice_view(recv.clone(), &elem, n, span);
+                if method(&name.name, &view.ty).is_some() {
+                    return self.method_call_on(view, name, args, span, expect);
+                }
+                if let Some(e) = self.extension_call(view, name, args, span) {
+                    return e;
+                }
+            }
             // No method the type declares and none the compiler provides: a visible extension method may apply
             // (`spec/extensions.md`, EX3). It is tried last, so a method always wins.
             if let Some(e) = self.extension_call(recv, name, args, span) {
@@ -960,14 +1178,18 @@ impl FnCx<'_> {
             return self.args_then_error(args, span);
         };
         if m.mutates_receiver() && !matches!(recv.ty, Ty::Error) {
-            if !is_place_expr(&recv) {
+            // A mutating method writes through its receiver. The receiver is a mutable place, or a slice view
+            // over one: `xs[0..2].sort()` and `xs.as_slice().swap(0, 1)` need a mutable `xs`
+            // (`spec/stdlib.md`, "Slices").
+            let checked = self.slice_view_source(&recv).unwrap_or(&recv);
+            if !is_place_expr(checked) {
                 self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
                     recv.span,
                     format!("`{}` changes its receiver, so the receiver must be a mutable place", name.name),
                 );
-            } else if !self.place_mutable(&recv) {
-                let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+            } else if !self.place_mutable(checked) {
+                let local = place_root(checked).map(|root| self.locals[root.0].name.clone());
                 let whose = local.unwrap_or_else(|| "this receiver".to_string());
                 self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
@@ -986,6 +1208,26 @@ impl FnCx<'_> {
                     );
                 }
             }
+            // The slice operations that clone their elements need `Clone`, and `copy_from_slice` needs `Copy`
+            // (`spec/stdlib.md`, "Slices").
+            (Method::SliceFill | Method::SliceCloneFromSlice | Method::SliceToList, Ty::Slice(elem))
+                if !self.globals.satisfies(elem, &crate::generics::Bound::Clone, &self.bounds) =>
+            {
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("this slice operation needs `Clone`, but `{elem}` does not implement it"),
+                );
+            }
+            (Method::SliceCopyFromSlice, Ty::Slice(elem))
+                if !self.globals.satisfies(elem, &crate::generics::Bound::Copy, &self.bounds) =>
+            {
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("`copy_from_slice` needs `Copy`, but `{elem}` does not implement it"),
+                );
+            }
             (Method::ListContains, Ty::List(elem, _)) => {
                 if !self.globals.has_eq_in(elem, &self.bounds) {
                     self.diags.error(
@@ -995,12 +1237,23 @@ impl FnCx<'_> {
                     );
                 }
             }
+            (Method::ListExtendFromSlice, Ty::List(elem, _)) => {
+                if !self.globals.is_clone(elem) {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        span,
+                        format!("cannot copy a slice of `{elem}` into a list: `{elem}` does not support `Clone`"),
+                    );
+                }
+            }
             (
                 Method::MapGet
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
+                | Method::MapGetOr
                 | Method::MapEntry
                 | Method::MapRemove
+                | Method::MapRemoveEntry
                 | Method::MapContainsKey
                 | Method::MapInsert,
                 Ty::Map(k, _, _),
@@ -1015,11 +1268,63 @@ impl FnCx<'_> {
         }
         // A mutating method borrows the receiver exclusively (EX1).
         let receiver_place = Some((&recv, m.mutates_receiver()));
+        if m == Method::ListDrain {
+            let Some(mut checked) = self.drain_args(&recv, &params, args, span) else {
+                return error_expr(span);
+            };
+            checked.insert(0, recv);
+            return mk(tir::ExprKind::Method(m, checked), ret, span);
+        }
         let Some(mut checked) = self.args(&name.name, &params, args, receiver_place, span) else {
             return error_expr(span);
         };
         checked.insert(0, recv);
         mk(tir::ExprKind::Method(m, checked), ret, span)
+    }
+
+    /// `x.hash_from(state)` on a `Hash` receiver: the value folded into a running hash (`spec/stdlib.md`, HS3).
+    pub(super) fn hash_from_call(&mut self, recv: tir::Expr, args: &[ast::Arg], span: Span) -> tir::Expr {
+        let u64_ty = Ty::Int(IntTy::U64);
+        let params = [ParamSig::plain(u64_ty.clone())];
+        let Some(mut checked) = self.args("hash_from", &params, args, None, span) else { return error_expr(span) };
+        checked.insert(0, recv);
+        mk(tir::ExprKind::Method(Method::HashFrom, checked), u64_ty, span)
+    }
+
+    /// The one argument of `List.drain`: a range of `usize` in either spelling. `1..=3` has a different type
+    /// from `1..3`, so the argument is checked here instead of against the method's fixed parameter type.
+    fn drain_args(
+        &mut self,
+        recv: &tir::Expr,
+        params: &[ParamSig],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<Vec<tir::Expr>> {
+        self.reject_named_args("drain", args);
+        if args.len() != 1 {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(Code::ARG_COUNT, span, format!("`drain` takes 1 argument, but {} were given", args.len()));
+            return None;
+        }
+        let hint = Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false);
+        let arg = self.expr(&args[0].expr, Some(&hint));
+        match &arg.ty {
+            Ty::Range(t, _) if **t == Ty::Int(IntTy::Usize) => {}
+            Ty::Error => return None,
+            other => {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    arg.span,
+                    format!("`drain` takes a range of `usize`, found `{other}`"),
+                );
+                return None;
+            }
+        }
+        let checked = vec![arg];
+        self.exclusivity(Some((recv, true)), params, &checked, span);
+        Some(checked)
     }
 
     /// `x.name(args)` through an extension method visible in this module (`spec/extensions.md`, EX3). The
@@ -1065,6 +1370,16 @@ impl FnCx<'_> {
         if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
             let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
             let whose = local.unwrap_or_else(|| "this receiver".to_string());
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
+            );
+        }
+        if receiver.by_ref
+            && receiver.exclusive
+            && let Some(whose) = self.slice_receiver_problem(&recv)
+        {
             self.diags.error(
                 Code::MUT_OF_IMMUTABLE,
                 recv.span,
@@ -1261,6 +1576,71 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(Builtin::ListNewIn, vec![value]), ty, span)
     }
 
+    /// `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for `n`
+    /// elements. The allocator-free form exists only for the default layout, like `new` (`spec/allocators.md`,
+    /// AL4).
+    fn list_with_capacity(
+        &mut self,
+        elem: &Ty,
+        written: &burdin_tir::Alloc,
+        with_alloc: bool,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        let name = if with_alloc { "List.with_capacity_in" } else { "List.with_capacity" };
+        self.reject_named_args(name, args);
+        let wanted = if with_alloc { 2 } else { 1 };
+        if args.len() != wanted {
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{name}` takes {wanted} argument(s), but {} were given", args.len()),
+            );
+            return error_expr(span);
+        }
+        let size = self.expr(&args[0].expr, Some(&Ty::Int(IntTy::Usize)));
+        let size = self.expect_ty(size, &Ty::Int(IntTy::Usize));
+        if !with_alloc {
+            if !written.is_global() {
+                self.diags.error(
+                    Code::MISSING_ALLOCATOR,
+                    span,
+                    format!(
+                        "a `{}` stores an allocator, so it is made with `List.with_capacity_in(n, alloc)`",
+                        Ty::List(Box::new(elem.clone()), written.clone())
+                    ),
+                );
+                return error_expr(span);
+            }
+            let ty = Ty::List(Box::new(elem.clone()), burdin_tir::Alloc::Global);
+            return mk(tir::ExprKind::Builtin(Builtin::ListWithCapacity, vec![size]), ty, span);
+        }
+        let value = self.expr(&args[1].expr, None);
+        if value.ty == Ty::Error {
+            return error_expr(span);
+        }
+        if !self.allocator_value_ok(&value.ty, value.span) {
+            return error_expr(span);
+        }
+        let alloc = self.globals.alloc_of(value.ty.clone());
+        if let burdin_tir::Alloc::Value(want) = written
+            && let burdin_tir::Alloc::Value(got) = &alloc
+            && want != got
+        {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                value.span,
+                format!("this list stores a `{want}` allocator, but the argument is `{got}`"),
+            );
+            return error_expr(span);
+        }
+        let ty = Ty::List(Box::new(elem.clone()), alloc);
+        mk(tir::ExprKind::Builtin(Builtin::ListWithCapacityIn, vec![size, value]), ty, span)
+    }
+
     /// `Map<K, V>.new_in(alloc)`.
     pub(super) fn map_new_in(
         &mut self,
@@ -1335,7 +1715,14 @@ impl FnCx<'_> {
     }
 
     /// `Type.function(...)`, `Enum.Variant(...)`, and the built-in types' associated functions.
-    pub(super) fn assoc_call(&mut self, ty: &Ty, name: &ast::Ident, args: &[ast::Arg], span: Span) -> tir::Expr {
+    pub(super) fn assoc_call(
+        &mut self,
+        ty: &Ty,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
         // The type already failed to resolve; do not report a second error for its associated items.
         if *ty == Ty::Error {
             for a in args {
@@ -1344,7 +1731,11 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         if let Ty::Param(_) = ty {
-            return self.param_assoc_call(ty, name, args, span);
+            return self.param_assoc_call(ty, name, args, span, expect);
+        }
+        // `from_iter` of the built-in collections and `from` of a `List` or `Map` (`spec/iterators.md`, IT18).
+        if let Some(call) = self.builtin_collection_call(ty, name, args, span) {
+            return call;
         }
         // `Type.size()` and `Type.align()`: the C layout of a type, for `repr(C)` size assertions (issue #490).
         if matches!(name.name.as_str(), "size" | "align") && args.is_empty() {
@@ -1393,6 +1784,12 @@ impl FnCx<'_> {
                 let written = written_alloc.clone();
                 return self.list_new_in(&elem, &written, args, span);
             }
+            if name.name == "with_capacity" || name.name == "with_capacity_in" {
+                let elem = (**elem).clone();
+                let written = written_alloc.clone();
+                let with_alloc = name.name == "with_capacity_in";
+                return self.list_with_capacity(&elem, &written, with_alloc, args, span);
+            }
         }
         if let Ty::Map(key, value, written_alloc) = ty {
             if name.name == "new" {
@@ -1414,6 +1811,21 @@ impl FnCx<'_> {
                 let (key, value, written) = ((**key).clone(), (**value).clone(), written_alloc.clone());
                 return self.map_new_in(&key, &value, &written, args, span);
             }
+            if name.name == "with_capacity" {
+                if !written_alloc.is_global() {
+                    self.diags.error(
+                        Code::MISSING_ALLOCATOR,
+                        span,
+                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `reserve`"),
+                    );
+                    return error_expr(span);
+                }
+                let params = [ParamSig::plain(Ty::Int(IntTy::Usize))];
+                let Some(checked) = self.args(&name.name, &params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::MapWithCapacity, checked), ty.clone(), span);
+            }
         }
         // `i32.parse(s)`: the number in the text, or an error.
         if let Ty::Int(i) = ty {
@@ -1428,7 +1840,7 @@ impl FnCx<'_> {
                 };
                 return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
             }
-            if name.name != "parse" {
+            if name.name != "parse" && name.name != "default" {
                 self.diags.error(
                     Code::UNKNOWN_NAME,
                     name.span,
@@ -1436,26 +1848,62 @@ impl FnCx<'_> {
                 );
                 return self.args_then_error(args, span);
             }
-            let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
-                return error_expr(span);
-            };
-            let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
-            let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
-            return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
+            // `default` falls through to the `Type.default()` lookup below, like the other built-in types.
+            if name.name == "parse" {
+                let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
+                    return error_expr(span);
+                };
+                let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
+                let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
+                return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
+            }
         }
         // `f64.parse(s)` and the other associated functions of a float type are `std` functions named
-        // `__<type>_<name>` (spec/stdlib.md, "Floats").
-        if let Ty::Float(_) = ty
-            && let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", ty, name.name))
-        {
-            let sig = self.globals.sigs[f.0].clone();
-            let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
-                return error_expr(span);
-            };
-            return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+        // `__<type>_<name>` (spec/stdlib.md, "Floats"), except `from_bits`, which is the compiler's bit cast.
+        if let Ty::Float(ft) = ty {
+            if name.name == "from_bits" {
+                let bits = match ft {
+                    FloatTy::F32 => Ty::Int(IntTy::U32),
+                    FloatTy::F64 => Ty::Int(IntTy::U64),
+                };
+                let Some(checked) = self.args(&name.name, &[ParamSig::plain(bits)], args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::FloatFromBits(*ft), checked), ty.clone(), span);
+            }
+            if let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", ty, name.name)) {
+                let sig = self.globals.sigs[f.0].clone();
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+            }
         }
         // The associated functions of `String` (the only built-in owning type with any so far).
         if *ty == Ty::String && name.name != "default" {
+            // `String.from_utf8` and `String.from_utf8_lossy` are `std` functions; the compiler only maps the
+            // names (`spec/stdlib.md`, "String bytes and UTF-8 validation").
+            let utf8 = match name.name.as_str() {
+                "from_utf8" => Some("__string_from_utf8"),
+                "from_utf8_lossy" => Some("__string_from_utf8_lossy"),
+                _ => None,
+            };
+            if let Some(hidden) = utf8
+                && let Some(Global::Func(f)) = self.globals.std_value(hidden)
+            {
+                let sig = self.globals.sigs[f.0].clone();
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+            }
+            if name.name == "with_capacity" {
+                let sig = builtin_sig(Builtin::StringWithCapacity, self.globals);
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::StringWithCapacity, checked), sig.ret, span);
+            }
             let b = match name.name.as_str() {
                 "new" => Builtin::StringNew,
                 "from" => Builtin::StringFrom,
@@ -1473,6 +1921,20 @@ impl FnCx<'_> {
                 return error_expr(span);
             };
             return mk(tir::ExprKind::Builtin(b, checked), sig.ret, span);
+        }
+        // `str.from_utf8`: the `std` function that validates the bytes and returns a `str` view of them.
+        if *ty == Ty::Str && name.name != "default" {
+            if name.name == "from_utf8"
+                && let Some(Global::Func(f)) = self.globals.std_value("__str_from_utf8")
+            {
+                let sig = self.globals.sigs[f.0].clone();
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+            }
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`str` has no function `{}`", name.name));
+            return self.args_then_error(args, span);
         }
         // The C string bridge.
         if *ty == Ty::CString {
@@ -1519,6 +1981,12 @@ impl FnCx<'_> {
             self.check_member_access(ty, key, name);
         }
         self.check_unsafe_call(f, &name.name, name.span);
+        // An associated function with type parameters of its own is instantiated for the arguments of this call.
+        if let Some(info) = self.globals.method_templates.get(&f).cloned()
+            && !self.globals.sigs[f.0].has_self
+        {
+            return self.generic_assoc_method_call(info, &name.name, args, None, span, expect);
+        }
         let sig = &self.globals.sigs[f.0];
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
         let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };

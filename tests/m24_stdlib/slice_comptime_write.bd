@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// Writing through a slice is not allowed at compile time (E0224).
+
+fn filled(): i32 {
+    let mut arr = [1, 2, 3]
+    let mut xs = arr[0..3]
+    xs.fill(5)
+    xs[0]
+}
+
+const VALUE: i32 = comptime filled() //~ E0224
+
+fn main() {
+    println("{}", VALUE)
+}

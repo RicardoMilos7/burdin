@@ -6,7 +6,7 @@
 // A panic flushes buffered standard output first, and standard error is already out because it is unbuffered.
 
 fn main() {
-    stdout().write_line("buffered")
-    stderr().write_line("unbuffered")
+    stdout().write_line("buffered").unwrap()
+    stderr().write_line("unbuffered").unwrap()
     panic("boom")
 }

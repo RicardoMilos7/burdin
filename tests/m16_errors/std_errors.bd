@@ -1,7 +1,7 @@
 //@ run
 //> invalid integer
 //> true
-//> cannot read missing.txt
+//> cannot read missing.txt: not found
 //> true
 
 // The standard-library errors are real error types with messages (spec/errors.md, ERR10).

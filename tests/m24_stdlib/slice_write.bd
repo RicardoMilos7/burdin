@@ -1,0 +1,82 @@
+//@ run
+//> 3 2 8 1 9 5
+//> 5 9 1 8 2 3
+//> 1 2 3 5 8 9
+//> 9 8 5 3 2 1
+//> 8 9 5 1 2 3
+//> 5 1 2 3 8 9
+//> 3 8 9 5 1 2
+//> 7 7 7 7 7 7
+//> 1 2 3 4 5 6
+//> 9 8 7 6 5 4
+//> 1 2 3
+//> 7 8 9 4 5 6
+//> 2 4
+//> false
+//> true
+//> true
+
+// The methods that write through a slice: `swap`, `reverse`, `rotate_left`, `rotate_right`, `fill`,
+// `copy_from_slice`, `clone_from_slice`, `sort`, `sort_by`, `sort_by_key`, and `split_at_mut`
+// (spec/stdlib.md, "Slices").
+
+fn show(xs: [i32]) {
+    let mut out = String.new()
+    let mut first = true
+    let mut i: usize = 0
+    while i < xs.len() {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(xs[i].to_string())
+        first = false
+        i = i + 1
+    }
+    println(out)
+}
+
+fn main() {
+    let mut arr = [5, 2, 8, 1, 9, 3]
+    let mut xs = arr[0..6]
+    xs.swap(0, 5)
+    show(xs)
+    xs.reverse()
+    show(xs)
+    xs.sort()
+    show(xs)
+    xs.sort_by(|a: &i32, b: &i32| b.cmp(*a))
+    show(xs)
+    xs.sort_by_key(|a: &i32| *a % 4)
+    show(xs)
+    xs.rotate_left(2)
+    show(xs)
+    xs.rotate_right(3)
+    show(xs)
+    xs.fill(7)
+    show(xs)
+    let source = [1, 2, 3, 4, 5, 6]
+    xs.copy_from_slice(source[0..6])
+    show(xs)
+    let other = [9, 8, 7, 6, 5, 4]
+    xs.clone_from_slice(other[0..6])
+    show(xs)
+
+    // An array takes the methods through its implicit slice view.
+    let mut plain = [3, 1, 2]
+    plain.sort()
+    show(plain[0..3])
+
+    // Two halves of one slice can each be sorted.
+    let mut left = xs[0..3]
+    let mut right = xs[3..6]
+    left.sort()
+    right.sort()
+    show(xs)
+    let (head, tail) = xs.split_at_mut(2)
+    println("{} {}", head.len(), tail.len())
+    println("{}", xs.is_sorted_by(|a: &i32, b: &i32| a.cmp(*b)))
+    xs.sort()
+    println("{}", xs.is_sorted_by(|a: &i32, b: &i32| a.cmp(*b)))
+    xs.reverse()
+    println("{}", xs.is_sorted_by(|a: &i32, b: &i32| b.cmp(*a)))
+}

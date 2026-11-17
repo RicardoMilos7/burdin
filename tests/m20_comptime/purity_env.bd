@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// The environment and the working directory are not available at compile time (spec/comptime.md, CT9).
+
+fn read_env(): Option<String> {
+    env.get("BURDIN_TEST_ENV_412")
+}
+
+fn write_env(): bool {
+    env.set("BURDIN_TEST_ENV_412", "x").is_ok()
+}
+
+fn read_dir(): String {
+    env.current_dir().unwrap()
+}
+
+fn main() {
+    let a = comptime read_env() //~ E0224
+    let b = comptime write_env() //~ E0224
+    let c = comptime read_dir() //~ E0224
+}

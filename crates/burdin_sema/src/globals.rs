@@ -214,6 +214,10 @@ pub(crate) struct Globals {
     /// The `std.Iterator<T>` and `std.Iterable<T>` interfaces, when the standard library declares them.
     pub(crate) iterator_iface: Option<usize>,
     pub(crate) iterable_iface: Option<usize>,
+    /// The `std.FromIterator<T>` interface: what `Iterator.collect` builds its target through (`spec/iterators.md`, IT16).
+    pub(crate) from_iterator_iface: Option<usize>,
+    /// The `std.DoubleEndedIterator<T>` interface: an iterator that can also take items from its back (IT14).
+    pub(crate) double_ended_iface: Option<usize>,
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,
@@ -234,11 +238,21 @@ pub(crate) struct Globals {
     pub(crate) error_at: Option<FuncId>,
     pub(crate) error_frame: Option<FuncId>,
     pub(crate) error_context: Option<FuncId>,
-    /// The typed `assert` and `assert_eq` of a `burdin test` build (`spec/errors.md`, ERR9).
+    /// The standard library's assertion declarations (`spec/stdlib.md`, "Memory helpers and assertions"). A call
+    /// that resolves to one of these is lowered to `Builtin::Assertion`, which is where the message form and the
+    /// release removal of `debug_assert*` live. `None` when the standard library does not declare the name.
+    pub(crate) assert_fn: Option<FuncId>,
+    pub(crate) assert_eq_gen: Option<usize>,
+    pub(crate) assert_ne_gen: Option<usize>,
+    pub(crate) debug_assert_fn: Option<FuncId>,
+    pub(crate) debug_assert_eq_gen: Option<usize>,
+    pub(crate) debug_assert_ne_gen: Option<usize>,
+    /// The typed `assert`, `assert_eq`, and `assert_ne` of a `burdin test` build (`spec/errors.md`, ERR9).
     pub(crate) test_assert: Option<FuncId>,
     pub(crate) test_assert_eq: Option<usize>,
-    /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10).
-    pub(crate) io_error_ty: Option<Ty>,
+    pub(crate) test_assert_ne: Option<usize>,
+    /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10-ERR11).
+    pub(crate) io_error_kind_ty: Option<Ty>,
     pub(crate) parse_int_error_ty: Option<Ty>,
     /// The generic method template each registered generic method stands for.
     pub(crate) method_templates: HashMap<FuncId, crate::generics::GenericMethod>,
@@ -436,12 +450,34 @@ impl Globals {
         })
     }
 
+    /// The generic function behind an iterator adapter that needs a particular kind of source (`it.flatten()`,
+    /// `it.cloned()`, `it.copied()`, `it.cycle()`), looked up in the standard library (spec/iterators.md, IT13).
+    pub(crate) fn iterator_adapter_fn(&self, name: &str) -> Option<usize> {
+        if !matches!(name, "flatten" | "cloned" | "copied" | "cycle" | "rev") {
+            return None;
+        }
+        self.std_generic(&format!("__iter_{name}"))
+    }
+
     /// The generic function behind an eager `List` method (`xs.map(f)`), looked up in the standard library.
     pub(crate) fn eager_list_fn(&self, name: &str) -> Option<usize> {
         if !matches!(name, "map" | "filter" | "fold" | "any" | "all" | "find") {
             return None;
         }
         let name = format!("__list_{name}");
+        self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
+            Global::Generic(g) => Some(g),
+            _ => None,
+        })
+    }
+
+    /// The generic function in `std` behind an iterator consumer that needs a bound on the item type (`min`, `max`,
+    /// `eq`, `cmp`), which an interface default method cannot state.
+    pub(crate) fn iterator_item_fn(&self, name: &str) -> Option<usize> {
+        if !matches!(name, "min" | "max" | "eq" | "cmp") {
+            return None;
+        }
+        let name = format!("__iter_{name}");
         self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
             Global::Generic(g) => Some(g),
             _ => None,

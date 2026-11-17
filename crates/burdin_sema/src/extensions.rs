@@ -27,22 +27,13 @@ impl<'t> Sema<'t> {
         let module = self.extension_srcs[id].module;
         let f = &decl.func;
         let name = f.name.name.clone();
-        let Some(segments) = receiver_segments(&decl.recv) else {
-            diags.error(
-                Code::INVALID_EXTENSION,
-                decl.recv.span,
-                format!("the receiver of an extension method must be a type name, as in `fn String.{name}(self)`"),
-            );
-            return;
+        let recv_src = match receiver_params(&self.globals, module, &decl.recv) {
+            Ok(params) => params,
+            Err(message) => {
+                diags.error(Code::INVALID_EXTENSION, decl.recv.span, message);
+                return;
+            }
         };
-        if segments[..segments.len() - 1].iter().any(|s| !s.args.is_empty()) {
-            diags.error(
-                Code::INVALID_EXTENSION,
-                decl.recv.span,
-                "type arguments belong on the type name at the end of an extension method's receiver path",
-            );
-            return;
-        }
         if !matches!(f.params.first().map(|p| &p.kind), Some(ast::ParamKind::SelfParam)) {
             diags.error(
                 Code::INVALID_EXTENSION,
@@ -53,13 +44,11 @@ impl<'t> Sema<'t> {
         }
         // The receiver's type arguments that are names declare the extension's type parameters; the method's
         // own `<...>` list follows them. Bounds come from the method's inline bounds and its `where` clause.
-        let last = segments.last().expect("a receiver path has a segment");
         let mut params: Vec<String> = Vec::new();
         let mut recv_params: Vec<String> = Vec::new();
-        for arg in &last.args {
-            let Some(param) = receiver_param(&self.globals, module, arg) else { continue };
+        for (param, span) in recv_src {
             if params.contains(&param) {
-                diags.error(Code::DUPLICATE_NAME, arg.span, format!("type parameter `{param}` is declared twice"));
+                diags.error(Code::DUPLICATE_NAME, span, format!("type parameter `{param}` is declared twice"));
                 continue;
             }
             params.push(param.clone());
@@ -193,7 +182,7 @@ impl<'t> Sema<'t> {
         }
         match name {
             "clone" => self.globals.is_clone(recv),
-            "hash" => self.globals.has_hash_in(recv, &[]),
+            "hash" | "hash_from" => self.globals.has_hash_in(recv, &[]),
             "cmp" => self.globals.has_ord_in(recv, &[]),
             "to_string" => self.to_string_is_provided(recv),
             _ => self.iterator_name(recv, name),
@@ -216,7 +205,15 @@ impl<'t> Sema<'t> {
     fn iterator_name(&self, recv: &Ty, name: &str) -> bool {
         let spelled = if name == "any" { "any_item" } else { name };
         let iterator = self.globals.iterator_item(recv, &[]).is_some();
-        if iterator && (spelled == "next" || spelled == "sum") {
+        if iterator
+            && (spelled == "next"
+                || spelled == "sum"
+                || spelled == "product"
+                || self.globals.iterator_item_fn(spelled).is_some())
+        {
+            return true;
+        }
+        if iterator && self.globals.iterator_adapter_fn(spelled).is_some() {
             return true;
         }
         if iterator
@@ -252,10 +249,76 @@ pub(crate) fn extension_applies(globals: &Globals, ext: &ExtensionInfo, recv_ty:
     ext.recv_params.iter().all(|p| bindings.iter().any(|(n, t)| n == p && *t != Ty::Error))
 }
 
-fn receiver_segments(ty: &ast::Type) -> Option<&[ast::PathSegment]> {
+/// The type parameters an extension receiver declares, with the span of each. A receiver is a type path
+/// (`String`, `List<T>`, `sh.Square`) or a slice (`[T]`, `[[T]]`, `[List<T>]`). The type arguments written on it
+/// that are ordinary names not bound to a type are its parameters. The error message explains a receiver shape
+/// the grammar accepts but an extension cannot use.
+fn receiver_params(
+    globals: &Globals,
+    module: usize,
+    ty: &ast::Type,
+) -> Result<Vec<(String, burdin_diag::Span)>, &'static str> {
+    let mut out = Vec::new();
     match &ty.kind {
-        ast::TypeKind::Path(segments) if !segments.is_empty() => Some(segments),
-        _ => None,
+        ast::TypeKind::Path(segments) if !segments.is_empty() => {
+            if segments[..segments.len() - 1].iter().any(|s| !s.args.is_empty()) {
+                return Err("type arguments belong on the type name at the end of an extension method's receiver path");
+            }
+            let last = segments.last().expect("a receiver path has a segment");
+            for arg in &last.args {
+                collect_receiver_params(globals, module, arg, &mut out);
+            }
+        }
+        ast::TypeKind::Slice(_) => collect_receiver_params(globals, module, ty, &mut out),
+        _ => {
+            return Err(
+                "the receiver of an extension method must be a type name or a slice, as in `fn String.shout(self)` \
+                 or `fn [T].first(self)`",
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// Collects the type parameters inside a receiver type: every ordinary name that no type in scope binds.
+fn collect_receiver_params(
+    globals: &Globals,
+    module: usize,
+    ty: &ast::Type,
+    out: &mut Vec<(String, burdin_diag::Span)>,
+) {
+    match &ty.kind {
+        ast::TypeKind::Path(segments) if !segments.is_empty() => {
+            let last = segments.last().expect("a path has a segment");
+            if segments.len() == 1 && last.args.is_empty() {
+                if receiver_param(globals, module, ty).is_some() {
+                    out.push((last.name.name.clone(), last.name.span));
+                }
+                return;
+            }
+            for arg in &last.args {
+                collect_receiver_params(globals, module, arg, out);
+            }
+        }
+        ast::TypeKind::Slice(inner)
+        | ast::TypeKind::Any(inner)
+        | ast::TypeKind::Impl(inner)
+        | ast::TypeKind::Ref { ty: inner, .. } => collect_receiver_params(globals, module, inner, out),
+        ast::TypeKind::Array(elem, _) => collect_receiver_params(globals, module, elem, out),
+        ast::TypeKind::Tuple(elems) => {
+            for elem in elems {
+                collect_receiver_params(globals, module, elem, out);
+            }
+        }
+        ast::TypeKind::Fn { params, ret, .. } => {
+            for param in params {
+                collect_receiver_params(globals, module, param, out);
+            }
+            if let Some(ret) = ret {
+                collect_receiver_params(globals, module, ret, out);
+            }
+        }
+        _ => {}
     }
 }
 

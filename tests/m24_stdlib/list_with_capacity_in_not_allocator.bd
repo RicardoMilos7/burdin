@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// The value `with_capacity_in` stores must implement `Allocator` (E0270).
+
+fn main() {
+    let xs = List<i32>.with_capacity_in(4, 7) //~ E0270
+}

@@ -1,0 +1,693 @@
+// Time (issue #195; spec/stdlib.md, "Time").
+//
+// A `Duration` is a length of time, an `Instant` a reading of the monotonic clock, a `SystemTime` a reading of the
+// real-time clock, and a `DateTime` that reading broken into a calendar date and a time of day in UTC. The compiler's
+// primitives (`__clock`, `__sleep`) reach the operating system; everything else is Burdin and pure, so a `Duration`,
+// a `DateTime`, and the calendar arithmetic work at compile time. Reading a clock and sleeping are impure: a comptime
+// evaluation that reaches one fails with E0224.
+//
+// Determinism for tests: the `Clock` interface is what code that needs the time takes as a parameter. `SystemClock`
+// reads the real clocks and `ManualClock` moves only when the test says so.
+
+use fmt.{Debug, Display, Formatter}
+use int.{abs_diff, div_euclid, rem_euclid}
+use ops.{Add, Sub}
+
+priv const __NANOS_PER_SECOND: u64 = 1_000_000_000
+priv const __SECONDS_PER_DAY: i64 = 86_400
+/// The longest single sleep the runtime is asked for, so one call never overflows a system's sleep argument.
+priv const __SLEEP_CHUNK_NANOS: u64 = 3_600_000_000_000
+
+/// `n * factor`, panicking when the product does not fit in a `u64` in every build profile (a plain `*` wraps in a
+/// release build).
+priv fn __scale(n: u64, factor: u64): u64 {
+    match n.checked_mul(factor) {
+        Some(product) => product,
+        None => panic("Duration: the value does not fit"),
+    }
+}
+
+/// A length of time with nanosecond precision, from zero up to about 584 years. It is never negative: subtracting a
+/// longer duration from a shorter one panics, and `checked_sub` and `saturating_sub` are the other choices.
+struct Duration derives (Copy, Clone, Eq, Ord, Hash, Default) {
+    priv nanos: u64
+}
+
+Duration {
+    /// No time at all.
+    fn zero(): Duration {
+        Duration { nanos: 0 }
+    }
+
+    /// A duration of `n` nanoseconds.
+    fn from_nanos(n: u64): Duration {
+        Duration { nanos: n }
+    }
+
+    /// A duration of `n` microseconds. It panics when the result does not fit.
+    fn from_micros(n: u64): Duration {
+        Duration { nanos: __scale(n, 1_000) }
+    }
+
+    /// A duration of `n` milliseconds. It panics when the result does not fit.
+    fn from_millis(n: u64): Duration {
+        Duration { nanos: __scale(n, 1_000_000) }
+    }
+
+    /// A duration of `n` seconds. It panics when the result does not fit.
+    fn from_secs(n: u64): Duration {
+        Duration { nanos: __scale(n, __NANOS_PER_SECOND) }
+    }
+
+    /// A duration of `secs` seconds, truncated to whole nanoseconds. It panics for a negative or NaN value and for
+    /// one that does not fit.
+    fn from_secs_f64(secs: f64): Duration {
+        if !(secs >= 0.0) {
+            panic("Duration.from_secs_f64: the value is negative or NaN")
+        }
+        let nanos = secs * 1e9
+        if nanos >= 18446744073709551615.0 {
+            panic("Duration.from_secs_f64: the value does not fit")
+        }
+        Duration { nanos: nanos as u64 }
+    }
+
+    /// The whole number of nanoseconds.
+    fn as_nanos(self): u64 {
+        self.nanos
+    }
+
+    /// The whole number of microseconds, rounded down.
+    fn as_micros(self): u64 {
+        self.nanos / 1_000
+    }
+
+    /// The whole number of milliseconds, rounded down.
+    fn as_millis(self): u64 {
+        self.nanos / 1_000_000
+    }
+
+    /// The whole number of seconds, rounded down.
+    fn as_secs(self): u64 {
+        self.nanos / __NANOS_PER_SECOND
+    }
+
+    /// The length in seconds, with the fraction.
+    fn as_secs_f64(self): f64 {
+        (self.nanos as f64) / 1e9
+    }
+
+    /// The nanoseconds after the last whole second, from 0 to 999,999,999.
+    fn subsec_nanos(self): u32 {
+        (self.nanos % __NANOS_PER_SECOND) as u32
+    }
+
+    /// The microseconds after the last whole second.
+    fn subsec_micros(self): u32 {
+        self.subsec_nanos() / 1_000
+    }
+
+    /// The milliseconds after the last whole second.
+    fn subsec_millis(self): u32 {
+        self.subsec_nanos() / 1_000_000
+    }
+
+    /// Whether the duration is zero.
+    fn is_zero(self): bool {
+        self.nanos == 0
+    }
+
+    /// `self + other`, or `None` when the sum does not fit.
+    fn checked_add(self, other: Duration): Option<Duration> {
+        match self.nanos.checked_add(other.nanos) {
+            Some(n) => Some(Duration { nanos: n }),
+            None => None,
+        }
+    }
+
+    /// `self - other`, or `None` when `other` is longer.
+    fn checked_sub(self, other: Duration): Option<Duration> {
+        match self.nanos.checked_sub(other.nanos) {
+            Some(n) => Some(Duration { nanos: n }),
+            None => None,
+        }
+    }
+
+    /// `self - other`, or zero when `other` is longer.
+    fn saturating_sub(self, other: Duration): Duration {
+        match self.checked_sub(other) {
+            Some(d) => d,
+            None => Duration.zero(),
+        }
+    }
+
+    /// The distance between the two durations, whichever is longer.
+    fn abs_diff(self, other: Duration): Duration {
+        if self.nanos >= other.nanos {
+            Duration { nanos: self.nanos - other.nanos }
+        } else {
+            Duration { nanos: other.nanos - self.nanos }
+        }
+    }
+
+    /// The duration repeated `n` times. It panics when the result does not fit.
+    fn times(self, n: u64): Duration {
+        Duration { nanos: __scale(self.nanos, n) }
+    }
+
+    /// The duration divided by `n`, truncated to whole nanoseconds. It panics when `n` is zero.
+    fn divide(self, n: u64): Duration {
+        Duration { nanos: self.nanos / n }
+    }
+}
+
+Duration: Add {
+    /// The sum. It panics when the sum does not fit.
+    fn add(self, other: Duration): Duration {
+        match self.checked_add(other) {
+            Some(d) => d,
+            None => panic("Duration: the sum overflows"),
+        }
+    }
+}
+
+Duration: Sub {
+    /// The difference. It panics when `other` is longer.
+    fn sub(self, other: Duration): Duration {
+        match self.checked_sub(other) {
+            Some(d) => d,
+            None => panic("Duration: the difference is negative"),
+        }
+    }
+}
+
+/// `value` in units of `unit` nanoseconds, with a fraction when there is one and no trailing zeros: `1.5`, `250`.
+/// `digits` is the number of decimal digits of the fraction in `unit` (9 for seconds).
+priv fn __scaled(value: u64, unit: u64, digits: u32, suffix: str): String {
+    let mut out = (value / unit).to_string()
+    let mut fraction = value % unit
+    let mut width = digits as usize
+    if fraction != 0 {
+        while fraction % 10 == 0 {
+            fraction = fraction / 10
+            width = width - 1
+        }
+        out.push('.')
+        let text = fraction.to_string()
+        let mut zeros = width - text.len()
+        while zeros > 0 {
+            out.push('0')
+            zeros = zeros - 1
+        }
+        out.push_str(text.as_str())
+    }
+    out.push_str(suffix)
+    out
+}
+
+Duration: Display {
+    /// Writes the duration in its largest whole unit: `1.5s`, `250ms`, `42µs`, `7ns`. Width, fill, and alignment
+    /// apply; the precision does not.
+    fn fmt(self, mut f: Formatter) {
+        let n = self.nanos
+        if n >= 1_000_000_000 {
+            f.pad_plain(__scaled(n, 1_000_000_000, 9, "s").as_str())
+        } else if n >= 1_000_000 {
+            f.pad_plain(__scaled(n, 1_000_000, 6, "ms").as_str())
+        } else if n >= 1_000 {
+            f.pad_plain(__scaled(n, 1_000, 3, "µs").as_str())
+        } else {
+            f.pad_plain(__scaled(n, 1, 0, "ns").as_str())
+        }
+    }
+}
+
+Duration: Debug {
+    fn debug(self, mut f: Formatter) {
+        self.fmt(mut f)
+    }
+}
+
+/// A reading of the monotonic clock: it never goes backward and has no calendar meaning, so it measures how long
+/// something took. Only the difference between two instants of the same clock means anything.
+struct Instant derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+    priv nanos: u64
+}
+
+Instant {
+    /// The monotonic clock now.
+    fn now(): Instant {
+        Instant { nanos: __clock(1) as u64 }
+    }
+
+    /// The instant `since_start` after the start of the clock, which is unspecified for the system clock. A
+    /// `ManualClock` starts at `Instant.from_start(Duration.zero())`.
+    fn from_start(since_start: Duration): Instant {
+        Instant { nanos: since_start.nanos }
+    }
+
+    /// The time from the start of the clock to this instant.
+    fn since_start(self): Duration {
+        Duration { nanos: self.nanos }
+    }
+
+    /// The time from `earlier` to this instant, or zero when `earlier` is not earlier.
+    fn duration_since(self, earlier: Instant): Duration {
+        Duration { nanos: self.nanos }.saturating_sub(Duration { nanos: earlier.nanos })
+    }
+
+    /// The time since this instant, by the system clock.
+    fn elapsed(self): Duration {
+        Instant.now().duration_since(self)
+    }
+
+    /// The instant `d` later, or `None` when it does not fit.
+    fn checked_add(self, d: Duration): Option<Instant> {
+        match self.nanos.checked_add(d.nanos) {
+            Some(n) => Some(Instant { nanos: n }),
+            None => None,
+        }
+    }
+
+    /// The instant `d` earlier, or `None` when it would be before the start of the clock.
+    fn checked_sub(self, d: Duration): Option<Instant> {
+        match self.nanos.checked_sub(d.nanos) {
+            Some(n) => Some(Instant { nanos: n }),
+            None => None,
+        }
+    }
+}
+
+/// A reading of the real-time clock, in nanoseconds since 1970-01-01 00:00:00 UTC (negative before it). The clock
+/// can be set, so it can jump; use `Instant` to measure a length of time. An `i64` of nanoseconds covers the years
+/// 1678 to 2262.
+struct SystemTime derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+    priv nanos: i64
+}
+
+SystemTime {
+    /// The real-time clock now.
+    fn now(): SystemTime {
+        SystemTime { nanos: __clock(0) }
+    }
+
+    /// 1970-01-01 00:00:00 UTC.
+    fn unix_epoch(): SystemTime {
+        SystemTime { nanos: 0 }
+    }
+
+    /// The time `secs` seconds after the Unix epoch (before it when negative). It panics when it does not fit.
+    fn from_unix_secs(secs: i64): SystemTime {
+        match secs.checked_mul(1_000_000_000) {
+            Some(nanos) => SystemTime { nanos: nanos },
+            None => panic("SystemTime: the time does not fit"),
+        }
+    }
+
+    /// The time `nanos` nanoseconds after the Unix epoch (before it when negative).
+    fn from_unix_nanos(nanos: i64): SystemTime {
+        SystemTime { nanos: nanos }
+    }
+
+    /// The whole seconds since the Unix epoch, rounded toward the past.
+    fn unix_secs(self): i64 {
+        self.nanos.div_euclid(1_000_000_000)
+    }
+
+    /// The nanoseconds since the Unix epoch.
+    fn unix_nanos(self): i64 {
+        self.nanos
+    }
+
+    /// The nanoseconds after the last whole second, from 0 to 999,999,999.
+    fn subsec_nanos(self): u32 {
+        self.nanos.rem_euclid(1_000_000_000) as u32
+    }
+
+    /// The time from `earlier` to this time, or `None` when `earlier` is later. The real-time clock can go
+    /// backward, so a caller that measures with it has to handle `None`.
+    fn duration_since(self, earlier: SystemTime): Option<Duration> {
+        if self.nanos < earlier.nanos {
+            return None
+        }
+        Some(Duration { nanos: self.nanos.abs_diff(earlier.nanos) })
+    }
+
+    /// The time `d` later, or `None` when it does not fit.
+    fn checked_add(self, d: Duration): Option<SystemTime> {
+        if d.nanos > 9223372036854775807 {
+            return None
+        }
+        match self.nanos.checked_add(d.nanos as i64) {
+            Some(n) => Some(SystemTime { nanos: n }),
+            None => None,
+        }
+    }
+
+    /// The time `d` earlier, or `None` when it does not fit.
+    fn checked_sub(self, d: Duration): Option<SystemTime> {
+        if d.nanos > 9223372036854775807 {
+            return None
+        }
+        match self.nanos.checked_sub(d.nanos as i64) {
+            Some(n) => Some(SystemTime { nanos: n }),
+            None => None,
+        }
+    }
+
+    /// The calendar date and time of day in UTC.
+    fn to_utc(self): DateTime {
+        let secs = self.nanos.div_euclid(1_000_000_000)
+        let mut dt = DateTime.from_unix_secs(secs)
+        dt.nanosecond = self.nanos.rem_euclid(1_000_000_000) as u32
+        dt
+    }
+}
+
+/// A day of the week.
+enum Weekday derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+    Monday
+    Tuesday
+    Wednesday
+    Thursday
+    Friday
+    Saturday
+    Sunday
+}
+
+Weekday: Display {
+    fn fmt(self, mut f: Formatter) {
+        let name = match self {
+            Weekday.Monday => "Monday",
+            Weekday.Tuesday => "Tuesday",
+            Weekday.Wednesday => "Wednesday",
+            Weekday.Thursday => "Thursday",
+            Weekday.Friday => "Friday",
+            Weekday.Saturday => "Saturday",
+            Weekday.Sunday => "Sunday",
+        }
+        f.pad(name)
+    }
+}
+
+/// A calendar date and a time of day in UTC (the proleptic Gregorian calendar, no leap seconds). The fields are
+/// public so a value can be read and compared; use `DateTime.new` to build one that is checked. Derived ordering
+/// is chronological because the fields run from the largest unit to the smallest.
+struct DateTime derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+    year: i32
+    /// 1 to 12.
+    month: u32
+    /// 1 to the length of the month.
+    day: u32
+    /// 0 to 23.
+    hour: u32
+    /// 0 to 59.
+    minute: u32
+    /// 0 to 59.
+    second: u32
+    /// 0 to 999,999,999.
+    nanosecond: u32
+}
+
+/// Whether `year` is a leap year.
+priv fn __is_leap(year: i64): bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+/// The number of days in `month` (1 to 12) of `year`.
+priv fn __days_in_month(year: i64, month: u32): u32 {
+    match month {
+        2 => if __is_leap(year) { 29 } else { 28 },
+        4 => 30,
+        6 => 30,
+        9 => 30,
+        11 => 30,
+        _ => 31,
+    }
+}
+
+/// The number of days from 1970-01-01 to the given date (negative before it).
+priv fn __days_from_civil(year: i64, month: i64, day: i64): i64 {
+    let y = if month <= 2 { year - 1 } else { year }
+    let era = y.div_euclid(400)
+    let year_of_era = y - era * 400
+    let shifted = if month > 2 { month - 3 } else { month + 9 }
+    let day_of_year = (153 * shifted + 2) / 5 + day - 1
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year
+    era * 146097 + day_of_era - 719468
+}
+
+/// The `(year, month, day)` of the day that is `days` days after 1970-01-01.
+priv fn __civil_from_days(days: i64): (i64, i64, i64) {
+    let z = days + 719468
+    let era = z.div_euclid(146097)
+    let day_of_era = z - era * 146097
+    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365
+    let y = year_of_era + era * 400
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100)
+    let mp = (5 * day_of_year + 2) / 153
+    let day = day_of_year - (153 * mp + 2) / 5 + 1
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }
+    let year = if month <= 2 { y + 1 } else { y }
+    (year, month, day)
+}
+
+/// `n` in decimal, with a minus sign when negative, padded with zeros to at least `width` digits.
+priv fn __zero_padded(n: i64, width: usize): String {
+    let mut out = String.new()
+    if n < 0 {
+        out.push('-')
+    }
+    let digits = n.abs_diff(0).to_string()
+    let mut zeros = if digits.len() < width { width - digits.len() } else { 0 }
+    while zeros > 0 {
+        out.push('0')
+        zeros = zeros - 1
+    }
+    out.push_str(digits.as_str())
+    out
+}
+
+/// The fraction of a second as `.` and its digits without trailing zeros, or the empty text for zero.
+priv fn __fraction(nanosecond: u32): String {
+    let mut out = String.new()
+    if nanosecond == 0 {
+        return out
+    }
+    let mut fraction = nanosecond
+    let mut width: usize = 9
+    while fraction % 10 == 0 {
+        fraction = fraction / 10
+        width = width - 1
+    }
+    out.push('.')
+    let text = fraction.to_string()
+    let mut zeros = width - text.len()
+    while zeros > 0 {
+        out.push('0')
+        zeros = zeros - 1
+    }
+    out.push_str(text.as_str())
+    out
+}
+
+DateTime {
+    /// The date and time, or `None` when a field is out of range (a day the month does not have, an hour of 24, a
+    /// leap second).
+    fn new(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32, nanosecond: u32): Option<DateTime> {
+        if month < 1 || month > 12 {
+            return None
+        }
+        if day < 1 || day > __days_in_month(year as i64, month) {
+            return None
+        }
+        if hour > 23 || minute > 59 || second > 59 || nanosecond > 999_999_999 {
+            return None
+        }
+        Some(DateTime {
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second,
+            nanosecond: nanosecond,
+        })
+    }
+
+    /// The date and time `secs` seconds after the Unix epoch (before it when negative), with no fraction. It panics
+    /// when the year does not fit in an `i32`.
+    fn from_unix_secs(secs: i64): DateTime {
+        let days = secs.div_euclid(__SECONDS_PER_DAY)
+        let of_day = secs.rem_euclid(__SECONDS_PER_DAY)
+        let (year, month, day) = __civil_from_days(days)
+        if year > 2147483647 || year < -2147483648 {
+            panic("DateTime.from_unix_secs: the year does not fit")
+        }
+        DateTime {
+            year: year as i32,
+            month: month as u32,
+            day: day as u32,
+            hour: (of_day / 3600) as u32,
+            minute: (of_day % 3600 / 60) as u32,
+            second: (of_day % 60) as u32,
+            nanosecond: 0,
+        }
+    }
+
+    /// The whole seconds from the Unix epoch to this date and time, ignoring the fraction.
+    fn to_unix_secs(self): i64 {
+        let days = __days_from_civil(self.year as i64, self.month as i64, self.day as i64)
+        days * __SECONDS_PER_DAY + (self.hour as i64) * 3600 + (self.minute as i64) * 60 + (self.second as i64)
+    }
+
+    /// The same moment as a `SystemTime`. It panics outside the years 1678 to 2262.
+    fn to_system_time(self): SystemTime {
+        SystemTime.from_unix_secs(self.to_unix_secs()).checked_add(Duration.from_nanos(self.nanosecond as u64)).unwrap()
+    }
+
+    /// Whether the year is a leap year.
+    fn is_leap_year(self): bool {
+        __is_leap(self.year as i64)
+    }
+
+    /// The day of the year, 1 for January 1st.
+    fn ordinal(self): u32 {
+        let first = __days_from_civil(self.year as i64, 1, 1)
+        let today = __days_from_civil(self.year as i64, self.month as i64, self.day as i64)
+        (today - first + 1) as u32
+    }
+
+    /// The day of the week.
+    fn weekday(self): Weekday {
+        let days = __days_from_civil(self.year as i64, self.month as i64, self.day as i64)
+        // 1970-01-01 was a Thursday.
+        match (days + 3).rem_euclid(7) {
+            0 => Weekday.Monday,
+            1 => Weekday.Tuesday,
+            2 => Weekday.Wednesday,
+            3 => Weekday.Thursday,
+            4 => Weekday.Friday,
+            5 => Weekday.Saturday,
+            _ => Weekday.Sunday,
+        }
+    }
+
+    /// The text for a pattern. `%Y` is the year (at least four digits), `%m` the month, `%d` the day, `%H` the hour,
+    /// `%M` the minute, `%S` the second, `%f` the nanoseconds (nine digits), `%j` the day of the year (three digits),
+    /// and `%%` a percent sign; the two-digit fields are zero padded. Any other text, including an unknown `%` code,
+    /// is copied as it is.
+    fn format(self, pattern: str): String {
+        let mut out = String.new()
+        let mut after_percent = false
+        for c in pattern.chars() {
+            if !after_percent {
+                if c == '%' {
+                    after_percent = true
+                } else {
+                    out.push(c)
+                }
+                continue
+            }
+            after_percent = false
+            match c {
+                'Y' => out.push_str(__zero_padded(self.year as i64, 4).as_str()),
+                'm' => out.push_str(__zero_padded(self.month as i64, 2).as_str()),
+                'd' => out.push_str(__zero_padded(self.day as i64, 2).as_str()),
+                'H' => out.push_str(__zero_padded(self.hour as i64, 2).as_str()),
+                'M' => out.push_str(__zero_padded(self.minute as i64, 2).as_str()),
+                'S' => out.push_str(__zero_padded(self.second as i64, 2).as_str()),
+                'f' => out.push_str(__zero_padded(self.nanosecond as i64, 9).as_str()),
+                'j' => out.push_str(__zero_padded(self.ordinal() as i64, 3).as_str()),
+                '%' => out.push('%'),
+                _ => {
+                    out.push('%')
+                    out.push(c)
+                }
+            }
+        }
+        if after_percent {
+            out.push('%')
+        }
+        out
+    }
+}
+
+DateTime: Display {
+    /// Writes the date and time as ISO 8601 in UTC: `2026-11-17T09:41:07Z`, with the fraction of a second
+    /// (without trailing zeros) before the `Z` when it is not zero.
+    fn fmt(self, mut f: Formatter) {
+        let mut text = self.format("%Y-%m-%dT%H:%M:%S")
+        text.push_str(__fraction(self.nanosecond).as_str())
+        text.push('Z')
+        f.pad_plain(text.as_str())
+    }
+}
+
+/// A source of time. Code that needs the time takes a `Clock` instead of calling `Instant.now()` or
+/// `SystemTime.now()`, so a test can hand it a `ManualClock` and decide what time it is.
+interface Clock {
+    /// A reading of the monotonic clock.
+    fn now(self): Instant
+    /// A reading of the real-time clock.
+    fn system_time(self): SystemTime
+}
+
+/// The clock of the operating system. It is zero-sized.
+struct SystemClock { }
+
+SystemClock: Clock {
+    fn now(self): Instant {
+        Instant.now()
+    }
+
+    fn system_time(self): SystemTime {
+        SystemTime.now()
+    }
+}
+
+/// A clock that only moves when it is told to. Its monotonic clock starts at `Instant.from_start(Duration.zero())`
+/// and its real-time clock at the time given to `new`.
+struct ManualClock {
+    priv instant: Instant
+    priv system: SystemTime
+}
+
+ManualClock {
+    /// A clock whose real-time reading is `start`.
+    fn new(start: SystemTime): ManualClock {
+        ManualClock { instant: Instant.from_start(Duration.zero()), system: start }
+    }
+
+    /// Moves both clocks forward by `d`. It panics when a reading does not fit.
+    fn advance(mut self, d: Duration) {
+        self.instant = self.instant.checked_add(d).unwrap()
+        self.system = self.system.checked_add(d).unwrap()
+    }
+
+    /// Sets the real-time clock, as an administrator or a time service would. The monotonic clock does not move.
+    fn set_system_time(mut self, time: SystemTime) {
+        self.system = time
+    }
+}
+
+ManualClock: Clock {
+    fn now(self): Instant {
+        self.instant
+    }
+
+    fn system_time(self): SystemTime {
+        self.system
+    }
+}
+
+/// Suspends the current thread for about `d`: the system may round it up to its timer resolution, and a signal can
+/// end a Unix sleep early. A comptime evaluation that reaches it fails with E0224.
+fn sleep(d: Duration) {
+    let mut remaining = d.nanos
+    while remaining > 0 {
+        let chunk = remaining.min(__SLEEP_CHUNK_NANOS)
+        __sleep(chunk)
+        remaining = remaining - chunk
+    }
+}

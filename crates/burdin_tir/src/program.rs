@@ -176,14 +176,15 @@ pub struct Signature {
     pub ret: Ty,
     /// The first parameter is `self`.
     pub has_self: bool,
-    /// Which parameter a second-class return value derives from (memory-rules.md, RT1). `None` when the result
-    /// is static. Inferred from the body by the return-origin check.
-    pub ret_origin: Option<usize>,
+    /// The parameters a second-class return value derives from (memory-rules.md, RT1, RT3): empty when the result
+    /// is static, one parameter for a view, and possibly several for a struct, enum, or tuple that holds views of
+    /// more than one (RT3a). Inferred from the body by the return-origin check.
+    pub ret_origins: Vec<usize>,
 }
 
 impl Signature {
     /// What a signature is before its types are resolved.
     pub fn placeholder() -> Signature {
-        Signature { params: Vec::new(), ret: Ty::Error, has_self: false, ret_origin: None }
+        Signature { params: Vec::new(), ret: Ty::Error, has_self: false, ret_origins: Vec::new() }
     }
 }

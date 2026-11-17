@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: swap: index out of bounds
+//> before
+
+// `swap` panics when either index is past the end.
+
+fn main() {
+    let mut arr = [1, 2, 3]
+    let mut xs = arr[0..3]
+    println("before")
+    xs.swap(0, 3)
+}

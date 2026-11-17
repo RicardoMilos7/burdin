@@ -5,9 +5,10 @@
 
 fn main() {
     comptime { //~ E0224
-        stdout().write("x")
+        stdout().write_text("x")
     }
     comptime { //~ E0224
-        let line = stdin().read_line()
+        let mut input = stdin()
+        let line = input.read_line()
     }
 }

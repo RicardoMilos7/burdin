@@ -189,6 +189,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The body of a function nothing reaches: `unreachable`, so the declaration stays defined and the IR of an
     /// unused standard-library function costs two lines.
     fn dead_function(&mut self, value: FunctionValue<'ctx>) -> GenResult<()> {
+        // A function nothing reaches never runs, so nothing can see its name in a backtrace. Internal linkage
+        // keeps the name in `-g` builds but leaves it out of the dynamic symbol table that `-rdynamic` exports
+        // for backtraces on Linux, so the embedded standard library does not inflate every executable.
+        value.set_linkage(Linkage::Internal);
         let block = self.cx.append_basic_block(value, "dead");
         self.builder.position_at_end(block);
         self.builder.build_unreachable().map_err(llvm_err)?;

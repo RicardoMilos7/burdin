@@ -1,0 +1,32 @@
+//@ run
+//> 0 true
+//> 3 true
+//> 3
+//> true
+//> 0
+//> true
+//> 0
+
+// `with_capacity` makes an empty string with a buffer large enough for its argument, `reserve` grows the buffer to
+// hold the requested number of bytes, `shrink_to_fit` shrinks it to the length, and `clear` empties the string
+// without giving the buffer back. The exact capacity is an implementation detail, so the test compares it.
+
+fn main() {
+    let empty = String.with_capacity(16)
+    println("{} {}", empty.len(), empty.capacity() >= 16)
+
+    let mut s = String.with_capacity(4)
+    s.push_str("abc")
+    s.reserve(100)
+    println("{} {}", s.len(), s.capacity() >= 103)
+
+    s.shrink_to_fit()
+    println("{}", s.len())
+    println("{}", s.capacity() == s.len())
+
+    s.clear()
+    println("{}", s.len())
+    println("{}", s.capacity() > 0)
+
+    println("{}", String.with_capacity(0).capacity())
+}

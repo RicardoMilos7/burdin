@@ -1,0 +1,22 @@
+//@ run
+//> seeds differ true
+//> generators differ true
+//> seed is not a constant true
+
+// `random_seed()` draws from the operating system, so two calls differ (the chance of a repeat is 2^-64) and
+// `Random.from_entropy()` starts a different sequence each time (spec/stdlib.md, "Random numbers").
+
+fn main() {
+    println("seeds differ {random_seed() != random_seed()}")
+    let mut a = Random.from_entropy()
+    let mut b = Random.from_entropy()
+    println("generators differ {a.next_u64() != b.next_u64()}")
+    let mut distinct = false
+    let first = random_seed()
+    for i in 0..8 {
+        if random_seed() != first {
+            distinct = true
+        }
+    }
+    println("seed is not a constant {distinct}")
+}

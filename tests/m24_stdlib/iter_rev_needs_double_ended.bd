@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `rev` needs an iterator that can take items from its back; an owning list iterator cannot.
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    for x in xs.into_iter().rev() { //~ E0141
+        println(x.to_string())
+    }
+}

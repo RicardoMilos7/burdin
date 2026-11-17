@@ -1,0 +1,8 @@
+//@ run-abort
+//@ stderr: assertion failed: the two values are equal
+
+// Without a message, `assert_ne` reports the fixed message.
+
+fn main() {
+    assert_ne(3, 3)
+}

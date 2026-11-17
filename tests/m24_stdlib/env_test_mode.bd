@@ -1,0 +1,18 @@
+//@ burdin-test passed=1 failed=0
+
+// In a `burdin test` build the checking allocator watches every allocation the environment functions make: the
+// byte buffers `get_bytes` and `current_dir_bytes` return must be freed by their values, and a test that leaks one
+// fails.
+
+test "environment and working directory" {
+    let name = "BURDIN_TEST_ENV_412_T"
+    env.remove(name)?
+    assert(env.get(name).is_none())?
+    env.set(name, "x")?
+    assert(env.get(name).unwrap().as_str() == "x")?
+    let bytes = env.get_bytes(name).unwrap()
+    assert(bytes.len() == 1)?
+    env.remove(name)?
+    assert(env.get_bytes(name).is_none())?
+    assert(env.current_dir().unwrap().len() > 0)?
+}

@@ -55,7 +55,7 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
             locals: c.locals.clone(),
             body: Block { stmts: Vec::new(), tail: Some(Box::new(c.value.clone())) },
             moved: Vec::new(),
-            ret_origin: None,
+            ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
         };

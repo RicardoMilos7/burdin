@@ -1,0 +1,42 @@
+//@ run
+//> 3 true
+//> true true false
+//> 2 true
+
+// A set stores its allocator as its last type argument, like `List` and `Map`: growing it allocates through
+// `new_in`'s allocator, and the operations that need only the elements work unchanged (`spec/stdlib.md`, "`Set<T>`").
+
+struct Counter {
+    count: CPtr<i32>
+}
+
+Counter: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { *self.count = *self.count + 1 }
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe { __dealloc(ptr, size, align) }
+    }
+}
+
+fn main() {
+    let mut count = 0
+    let mut s = unsafe { Set<i32, Counter>.new_in(Counter { count: &mut count as CPtr<i32> }) }
+    s.insert(1)
+    s.insert(2)
+    s.insert(2)
+    s.insert(3)
+    println("{s.len()} {count > 0}")
+    println("{s.contains(1)} {s.remove(2)} {s.contains(2)}")
+
+    let mut arena = Set<i32, Arena>.new_in(Arena.new())
+    arena.insert(10)
+    arena.insert(20)
+    println("{arena.len()} {arena.contains(20)}")
+}

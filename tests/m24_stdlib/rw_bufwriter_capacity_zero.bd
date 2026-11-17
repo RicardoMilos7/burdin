@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: BufWriter capacity is 0
+//> before
+
+fn main() {
+    println("before")
+    let w = BufWriter.with_capacity(0, Cursor.empty())
+    println("not reached")
+}

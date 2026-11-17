@@ -5,6 +5,8 @@
 // match of a valid separator in valid text always starts and ends on a character boundary, and `trim` walks whole
 // characters. The pieces a function returns are `String`s, because a `List` cannot hold views.
 
+use iter.Iterator
+use mem
 use unicode.{is_whitespace, len_utf8}
 
 /// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
@@ -210,18 +212,19 @@ fn str.replace(self, from: str, to: str): String {
     out
 }
 
-/// The text after `prefix`, or `None` when it does not start with `prefix`.
-fn str.strip_prefix(self, prefix: str): Option<String> {
+/// The text after `prefix`, or `None` when it does not start with `prefix`. The result is a view of the text
+/// (`spec/stdlib.md`, "String bytes and UTF-8 validation").
+fn str.strip_prefix(self, prefix: str): Option<str> {
     if self.starts_with(prefix) {
-        return Some(__copy(self, prefix.len(), self.len()))
+        return Some(self[prefix.len()..self.len()])
     }
     None
 }
 
-/// The text before `suffix`, or `None` when it does not end with `suffix`.
-fn str.strip_suffix(self, suffix: str): Option<String> {
+/// The text before `suffix`, or `None` when it does not end with `suffix`; a view of the text.
+fn str.strip_suffix(self, suffix: str): Option<str> {
     if self.ends_with(suffix) {
-        return Some(__copy(self, 0, self.len() - suffix.len()))
+        return Some(self[0..self.len() - suffix.len()])
     }
     None
 }
@@ -304,13 +307,13 @@ fn String.replace(self, from: str, to: str): String {
     self.as_str().replace(from, to)
 }
 
-/// The string after `prefix`, or `None`.
-fn String.strip_prefix(self, prefix: str): Option<String> {
+/// The string after `prefix`, or `None`; a view of the string.
+fn String.strip_prefix(self, prefix: str): Option<str> {
     self.as_str().strip_prefix(prefix)
 }
 
-/// The string before `suffix`, or `None`.
-fn String.strip_suffix(self, suffix: str): Option<String> {
+/// The string before `suffix`, or `None`; a view of the string.
+fn String.strip_suffix(self, suffix: str): Option<str> {
     self.as_str().strip_suffix(suffix)
 }
 
@@ -454,6 +457,86 @@ fn String.slice_chars(self, start: usize, end: usize): String {
 
 // ---- join ----
 
+// ---- Capacity and editing (issue #714) ----
+//
+// `capacity`, `reserve`, `shrink_to_fit`, `insert_str`, `replace_range`, and `String.with_capacity` are provided by
+// the compiler; the other operations are written here on top of them. Every byte index is a character boundary, and
+// an index that is out of range or splits a character panics with the message of the operation.
+
+/// Makes the string empty and keeps its buffer.
+fn String.clear(mut self) {
+    self.truncate(0)
+}
+
+/// Shortens the string to `len` bytes, which must be a character boundary. A longer length panics.
+fn String.truncate(mut self, len: usize) {
+    let end = self.len()
+    self.replace_range(len, end, "")
+}
+
+/// Removes and returns the last character, or `None` when the string is empty.
+fn String.pop(mut self): Option<char> {
+    let pairs = self.char_indices()
+    if pairs.len() == 0 {
+        return None
+    }
+    let last = pairs[pairs.len() - 1]
+    self.truncate(last.0)
+    Some(last.1)
+}
+
+/// Inserts the character `c` at byte index `at`, which must be a character boundary. A later byte moves right by
+/// the character's UTF-8 length.
+fn String.insert(mut self, at: usize, c: char) {
+    self.insert_str(at, __one(c).as_str())
+}
+
+/// Removes and returns the character that starts at byte index `at`.
+fn String.remove(mut self, at: usize): char {
+    for pair in self.char_indices() {
+        let (offset, c) = pair
+        if offset == at {
+            self.replace_range(at, at + c.len_utf8(), "")
+            return c
+        }
+    }
+    panic("remove: the index is out of bounds or not a character boundary")
+}
+
+/// Keeps the characters `f` accepts, in order, and drops the others.
+fn String.retain<F: FnMut(char): bool>(mut self, own f: F) {
+    let mut f = f
+    let mut kept = String.new()
+    for c in self.chars() {
+        if f(c) {
+            kept.push(c)
+        }
+    }
+    mem.swap(mut self, mut kept)
+}
+
+/// Removes the bytes `from..to` and returns them as a new string. Both ends must be character boundaries; the
+/// string keeps its buffer and the text after `to` moves left.
+fn String.drain(mut self, from: usize, to: usize): String {
+    if from > to || to > self.len() || !self.is_char_boundary(from) || !self.is_char_boundary(to) {
+        panic("drain: the range is out of bounds or not on character boundaries")
+    }
+    let removed = String.from(self[from..to])
+    self.replace_range(from, to, "")
+    removed
+}
+
+/// Splits the string at byte index `at`, which must be a character boundary: the string keeps the text before it
+/// and the returned string holds the rest.
+fn String.split_off(mut self, at: usize): String {
+    if at > self.len() || !self.is_char_boundary(at) {
+        panic("split_off: the index is out of bounds or not a character boundary")
+    }
+    let out = String.from(self[at..self.len()])
+    self.truncate(at)
+    out
+}
+
 /// The strings of the list with `sep` between them: `["a", "b"].join(", ")` is `"a, b"`.
 fn List<String>.join(self, sep: str): String {
     let mut out = String.new()
@@ -466,4 +549,141 @@ fn List<String>.join(self, sep: str): String {
         first = false
     }
     out
+}
+
+// ---- Bytes, searching, and checked slicing (issue #713) ----
+
+/// The UTF-8 bytes of the text; each byte is a `u8`. `bytes` is the iterator spelling of `as_bytes`.
+fn str.bytes(self): [u8] {
+    self.as_bytes()
+}
+
+/// The UTF-8 bytes of the string.
+fn String.bytes(self): [u8] {
+    self.as_bytes()
+}
+
+/// The bytes as an owned list; the string is consumed.
+fn String.into_bytes(own self): List<u8> {
+    let mut out = List<u8>.new()
+    for byte in self.as_bytes() {
+        out.push(byte)
+    }
+    out
+}
+
+/// Whether `needle` occurs in the text: the same as `contains`, under the name that says the needle is text.
+fn str.contains_str(self, needle: str): bool {
+    self.contains(needle)
+}
+
+/// Whether `needle` occurs in the string.
+fn String.contains_str(self, needle: str): bool {
+    self.contains(needle)
+}
+
+/// The byte offset of the last occurrence of `c`, or `None`.
+fn str.rfind(self, c: char): Option<usize> {
+    let mut at: usize = 0
+    let mut found: Option<usize> = None
+    for current in self.chars() {
+        if current == c {
+            found = Some(at)
+        }
+        at = at + current.len_utf8()
+    }
+    found
+}
+
+/// The byte offset of the last occurrence of `c` in the string, or `None`.
+fn String.rfind(self, c: char): Option<usize> {
+    self.as_str().rfind(c)
+}
+
+/// The byte offset of the last occurrence of `needle`, or `None`. The empty needle matches at the end.
+fn str.rfind_str(self, needle: str): Option<usize> {
+    let n = needle.len()
+    if n == 0 {
+        return Some(self.len())
+    }
+    if n > self.len() {
+        return None
+    }
+    let mut i = self.len() - n
+    loop {
+        if self[i..i + n] == needle {
+            return Some(i)
+        }
+        if i == 0 {
+            return None
+        }
+        i = i - 1
+    }
+}
+
+/// The byte offset of the last occurrence of `needle` in the string, or `None`.
+fn String.rfind_str(self, needle: str): Option<usize> {
+    self.as_str().rfind_str(needle)
+}
+
+/// Every non-overlapping occurrence of `needle`, in order: its byte offset and the matched text. An empty needle
+/// panics (as `split` and `replace` do), because every position would match.
+fn str.match_indices(self, needle: str): List<(usize, String)> {
+    if needle.len() == 0 {
+        panic("match_indices: the pattern is empty")
+    }
+    let mut out = List<(usize, String)>.new()
+    let mut start: usize = 0
+    loop {
+        let at = __index_of(self, needle, start)
+        if at >= self.len() {
+            break
+        }
+        out.push((at, String.from(self[at..at + needle.len()])))
+        start = at + needle.len()
+    }
+    out
+}
+
+/// Every non-overlapping occurrence of `needle` in the string.
+fn String.match_indices(self, needle: str): List<(usize, String)> {
+    self.as_str().match_indices(needle)
+}
+
+/// The same as `match_indices`: every occurrence, with its byte offset.
+fn str.find_all(self, needle: str): List<(usize, String)> {
+    self.match_indices(needle)
+}
+
+/// Every occurrence of `needle` in the string.
+fn String.find_all(self, needle: str): List<(usize, String)> {
+    self.as_str().find_all(needle)
+}
+
+/// The bytes `from..to` as a view, or `None` when the range is reversed, past the end, or either end splits a
+/// character. `s[a..b]` stays the unchecked byte slice (`spec/stdlib.md`).
+fn str.get(self, from: usize, to: usize): Option<str> {
+    if from > to || to > self.len() {
+        return None
+    }
+    if !self.is_char_boundary(from) || !self.is_char_boundary(to) {
+        return None
+    }
+    Some(self[from..to])
+}
+
+/// The bytes `from..to` of the string as a view, or `None` when the range is invalid or splits a character.
+fn String.get(self, from: usize, to: usize): Option<str> {
+    self.as_str().get(from, to)
+}
+
+/// Appends every `char` `iter` yields: `text.extend_iter(other.chars())`.
+fn String.extend_iter<I: Iterator<char>>(mut self, own iter: I) {
+    let mut iter = iter
+    loop {
+        match iter.next() {
+            Some(c) => self.push(c),
+            None => break,
+        }
+    }
 }

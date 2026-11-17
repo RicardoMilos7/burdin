@@ -1,0 +1,20 @@
+//@ run
+//> a/b/c.txt
+//> Path("a/b/c.txt")
+//> a\b\c.txt
+//> Path("a\\b\\c.txt")
+//> true false true
+
+// `Display` writes the path text as it is and `Debug` quotes it as `Path("...")`. A path is a value: it can be
+// cloned and compared, and two paths are equal when their text is.
+
+fn main() {
+    let unix = Path.unix("a/b").join("c.txt")
+    println("{unix}")
+    println("{unix:?}")
+    let windows = Path.windows("a\\b").join("c.txt")
+    println("{windows}")
+    println("{windows:?}")
+    let copy = unix.clone()
+    println("{copy == unix} {copy == Path.unix("a/b")} {copy == Path.unix("a/b/c.txt")}")
+}

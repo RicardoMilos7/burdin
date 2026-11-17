@@ -478,6 +478,8 @@ pub enum ExprKind {
     For {
         pattern: Pattern,
         iter: Box<Expr>,
+        /// `for x in mut xs`: iterates `xs.iter_mut()`, yielding writable element views (IT15).
+        mutable: bool,
         body: Block,
     },
     Return(Option<Box<Expr>>),

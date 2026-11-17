@@ -500,7 +500,8 @@ impl Parser<'_> {
 
     /// Whether the `fn` (or `unsafe fn`) at the current position is an extension method: an identifier, then
     /// either a `.` or a generic argument list followed by a `.`, as in `fn String.shout(...)` or
-    /// `fn List<T>.sum(...)`. The scan does not consume anything.
+    /// `fn List<T>.sum(...)`, or a slice type followed by a `.`, as in `fn [T].first(...)`. The scan does not
+    /// consume anything.
     fn extension_ahead(&self) -> bool {
         let kind_at = |i: usize| self.toks.get(i).map(|t| &t.kind);
         let mut i = self.pos;
@@ -511,6 +512,9 @@ impl Parser<'_> {
             return false;
         }
         i += 1;
+        if matches!(kind_at(i), Some(TokenKind::LBracket)) {
+            return self.bracket_list_end(i).is_some_and(|end| matches!(kind_at(end), Some(TokenKind::Dot)));
+        }
         if !matches!(kind_at(i), Some(TokenKind::Ident(_))) {
             return false;
         }
@@ -522,6 +526,31 @@ impl Parser<'_> {
             }
             _ => false,
         }
+    }
+
+    /// The token index just past the `]` that closes the bracket opening at `start`. `None` when it does not
+    /// close cleanly.
+    fn bracket_list_end(&self, start: usize) -> Option<usize> {
+        let mut depth = 0i32;
+        let mut i = start;
+        while let Some(t) = self.toks.get(i) {
+            match &t.kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                TokenKind::Eof => return None,
+                _ => {}
+            }
+            i += 1;
+        }
+        None
     }
 
     /// The token index just past the `>` that closes the generic list opening at `start` (a `<`). `>>` closes two
@@ -568,11 +597,21 @@ impl Parser<'_> {
 
     /// `fn Type.name(self, ...) { ... }`: the receiver type, then the method name and an ordinary function
     /// signature. The receiver declares the type parameters it needs (`fn List<T>.sum(self)`); a `<...>` after
-    /// the method name is the method's own generic parameter list.
+    /// the method name is the method's own generic parameter list. A slice receiver is written as a type:
+    /// `fn [T].first(self)`.
     pub(super) fn extension_decl(&mut self, is_priv: bool, start: Span) -> PResult<ExtensionDecl> {
         let is_unsafe = self.eat(&TokenKind::Unsafe);
         self.expect(&TokenKind::Fn)?;
         let recv_start = self.span();
+        // A slice receiver: `fn [T].name(...)`.
+        if self.at(&TokenKind::LBracket) {
+            let recv = self.ty()?;
+            self.expect(&TokenKind::Dot)?;
+            let name = self.ident("a method name")?;
+            let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+            let (func, _) = self.fn_rest(is_priv, is_unsafe, start, name, generics, false)?;
+            return Ok(ExtensionDecl { recv, func });
+        }
         let mut segments: Vec<PathSegment> = Vec::new();
         let (name, generics) = loop {
             let name = self.ident("a type name")?;

@@ -1,0 +1,22 @@
+//@ run
+//> 3
+//> lazy
+
+// The message form of the assertions formats its arguments like `println` does, and the message is evaluated
+// only when the assertion fails.
+
+fn main() {
+    let x = 3
+    let text = "ok"
+    assert(x > 0, "x must be positive, not {x}")
+    assert(x == 3)
+    assert_eq(x, 3, "x should be 3, got {x}")
+    assert_eq(text, "ok")
+    assert_ne(x, 4, "x should not be 4")
+    assert_ne(text, "no")
+    println("{}", x)
+    // The index is out of bounds, but the assertion passes, so the message is never formatted.
+    let values = [1, 2, 3]
+    assert(values.len() == 3, "missing {values[10]}")
+    println("lazy")
+}

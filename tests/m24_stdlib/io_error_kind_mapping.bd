@@ -1,0 +1,42 @@
+//@ run
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+
+// `__io_kind` maps an operating system code to the portable kind with the target's table (`spec/errors.md`,
+// ERR11). The codes are the platform's own, so each case names the code that has the meaning on this host; a
+// code no table lists is `Other`. The function is pure, so it also evaluates at compile time.
+
+fn kind(code: i32): IoErrorKind {
+    __io_kind(code)
+}
+
+fn main() {
+    println("{}", kind(2) == IoErrorKind.NotFound) // ENOENT / ERROR_FILE_NOT_FOUND
+    comptime if target.os() == target.Os.Windows {
+        println("{}", kind(5) == IoErrorKind.PermissionDenied) // ERROR_ACCESS_DENIED
+        println("{}", kind(183) == IoErrorKind.AlreadyExists) // ERROR_ALREADY_EXISTS
+        println("{}", kind(267) == IoErrorKind.NotADirectory) // ERROR_DIRECTORY
+        println("{}", kind(145) == IoErrorKind.DirectoryNotEmpty) // ERROR_DIR_NOT_EMPTY
+        println("{}", kind(13) == IoErrorKind.InvalidData) // ERROR_INVALID_DATA
+        println("{}", comptime (__io_kind(38) == IoErrorKind.UnexpectedEof)) // ERROR_HANDLE_EOF
+    } else {
+        println("{}", kind(13) == IoErrorKind.PermissionDenied) // EACCES
+        println("{}", kind(17) == IoErrorKind.AlreadyExists) // EEXIST
+        println("{}", kind(20) == IoErrorKind.NotADirectory) // ENOTDIR
+        comptime if target.os() == target.Os.MacOs {
+            println("{}", kind(66) == IoErrorKind.DirectoryNotEmpty) // ENOTEMPTY
+            println("{}", kind(92) == IoErrorKind.InvalidData) // EILSEQ
+        } else {
+            println("{}", kind(39) == IoErrorKind.DirectoryNotEmpty) // ENOTEMPTY
+            println("{}", kind(84) == IoErrorKind.InvalidData) // EILSEQ
+        }
+        println("{}", comptime (__io_kind(4) == IoErrorKind.Interrupted)) // EINTR
+    }
+    println("{}", kind(987654) == IoErrorKind.Other)
+}

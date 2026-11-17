@@ -334,23 +334,23 @@ impl Rewriter<'_> {
             locals: t.locals.clone(),
             body: t.body.clone(),
             moved: t.moved.clone(),
-            ret_origin: None,
+            ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
         };
         let mut new_sig =
-            Signature { params: Vec::new(), ret: sig.ret.clone(), has_self: sig.has_self, ret_origin: None };
+            Signature { params: Vec::new(), ret: sig.ret.clone(), has_self: sig.has_self, ret_origins: Vec::new() };
         let mut env = Vec::new();
         let mut prefix = Vec::new();
         let mut values = values.into_iter();
         let mut kept = 0;
         for (i, (param, ps)) in t.params.iter().zip(&sig.params).enumerate() {
             if !ps.comptime {
-                if t.ret_origin == Some(i) {
-                    func.ret_origin = Some(kept);
+                if t.ret_origins.contains(&i) {
+                    func.ret_origins.push(kept);
                 }
-                if sig.ret_origin == Some(i) {
-                    new_sig.ret_origin = Some(kept);
+                if sig.ret_origins.contains(&i) {
+                    new_sig.ret_origins.push(kept);
                 }
                 func.params.push(*param);
                 new_sig.params.push(ps.clone());

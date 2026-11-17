@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `+` on strings is not provided: the operator interfaces take two operands of the same type, and an `Add` that
+// takes a `str` and returns a `String` would need a second, mixed-type rule. `push_str`, `format`, and the
+// standard library's helpers are the ways to join text (`spec/stdlib.md`, "String capacity and editing").
+
+fn main() {
+    let joined = "a" + "b" //~ E0003
+    println("{joined}")
+}

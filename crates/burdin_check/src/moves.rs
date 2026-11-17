@@ -458,6 +458,11 @@ impl<'a> Checker<'a> {
             K::Builtin(b, args) => match b {
                 tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
+                // `with_capacity_in(n, alloc)` stores the allocator value.
+                tir::Builtin::ListWithCapacityIn => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
+                }
                 tir::Builtin::HeapNewIn => {
                     self.expr(&args[0], Mode::Move);
                     self.expr(&args[1], Mode::Move);

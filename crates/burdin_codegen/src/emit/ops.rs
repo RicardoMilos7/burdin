@@ -35,6 +35,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     | Ty::Option(_)
                     | Ty::Result(..)
                     | Ty::Range(..)
+                    | Ty::Map(..)
             )
         {
             let lp = self.spill(lv, operand_ty)?;
@@ -64,6 +65,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     | Ty::Array(..)
                     | Ty::Struct(_)
                     | Ty::Enum(_)
+                    | Ty::Option(_)
+                    | Ty::Result(..)
                     | Ty::Str
                     | Ty::String
                     | Ty::Range(..)

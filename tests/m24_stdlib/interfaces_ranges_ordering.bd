@@ -1,0 +1,21 @@
+//@ run
+//> true true true
+//> Less true true
+// Ranges derive Copy, Clone, Eq, Ord, and Hash; `Ordering` derives them too plus Debug
+// (`spec/stdlib.md`, "Interface coverage").
+
+struct RangeHolder derives (Copy, Clone, Eq, Ord, Hash) {
+    span: Range<i32>
+}
+
+struct OrderingHolder derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+    order: Ordering
+}
+
+fn main() {
+    let a = RangeHolder { span: 1..3 }
+    let b = RangeHolder { span: 2..0 }
+    println("{} {} {}", a == a.clone(), a < b, a.hash() == RangeHolder { span: 1..3 }.hash())
+    let less = OrderingHolder { order: Ordering.Less }
+    println("{:?} {} {}", Ordering.Less, less.order < Ordering.Greater, less.hash() == Ordering.Less.hash())
+}
