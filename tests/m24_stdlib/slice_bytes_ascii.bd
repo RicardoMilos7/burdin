@@ -1,0 +1,46 @@
+//@ run
+//> true
+//> false
+//> 104 105 200
+//> 72 73 200
+//> true
+//> false
+//> false
+
+// `[u8]` has the ASCII helpers (`spec/stdlib.md`, "Slices"): `is_ascii`, `to_ascii_lowercase`,
+// `to_ascii_uppercase`, and `eq_ignore_ascii_case`. Bytes at or above 128 are not ASCII and are copied
+// unchanged by the case conversions.
+
+fn show(xs: [u8]) {
+    let mut out = String.new()
+    let mut first = true
+    let mut i: usize = 0
+    while i < xs.len() {
+        if !first {
+            out.push(' ')
+        }
+        out.push_str(xs[i].to_string())
+        first = false
+        i = i + 1
+    }
+    println(out)
+}
+
+fn main() {
+    let bytes: [u8; 4] = [104, 105, 32, 33]
+    println("{}", bytes.is_ascii())
+    let high: [u8; 2] = [65, 200]
+    println("{}", high.is_ascii())
+
+    let upper: [u8; 3] = [72, 105, 200]
+    show(upper[0..3].to_ascii_lowercase().as_slice())
+    let lower: [u8; 3] = [104, 73, 200]
+    show(lower[0..3].to_ascii_uppercase().as_slice())
+
+    let all_caps: [u8; 3] = [65, 66, 67]
+    let all_lower: [u8; 3] = [97, 98, 99]
+    println("{}", all_caps[0..3].eq_ignore_ascii_case(all_lower[0..3]))
+    let other: [u8; 3] = [97, 98, 100]
+    println("{}", all_caps[0..3].eq_ignore_ascii_case(other[0..3]))
+    println("{}", all_caps[0..3].eq_ignore_ascii_case(all_caps[0..2]))
+}

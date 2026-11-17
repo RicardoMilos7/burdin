@@ -20,6 +20,8 @@ impl Globals {
             Ty::Slice(elem) => Self::element_item(elem, env, self),
             Ty::Chars => Ty::Char,
             Ty::ListIntoIter(elem, _) | Ty::ArrayIntoIter(elem, _) | Ty::RangeIter(elem, _) => (**elem).clone(),
+            // `chunks`, `chunks_exact`, and `windows` yield views of the slice they were made from.
+            Ty::SliceChunks(elem, _) | Ty::SliceWindows(elem) => Ty::Slice(elem.clone()),
             Ty::MapIter(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
             Ty::MapIntoIter(key, value, _) => Ty::Tuple(vec![(**key).clone(), (**value).clone()]),
             _ => return None,
@@ -169,6 +171,18 @@ mod tests {
         assert_eq!(g.builtin_iterator_item(&Ty::Chars, &[]), Some(Ty::Char));
         let map = Ty::MapIter(Box::new(Ty::Str), Box::new(i32_()));
         assert!(g.builtin_iterator_item(&map, &[]).is_some());
+    }
+
+    #[test]
+    fn slice_window_iterators_yield_slices() {
+        let g = Globals::default();
+        let i = Ty::Int(IntTy::I32);
+        let item = Ty::Slice(Box::new(i.clone()));
+        assert_eq!(g.builtin_iterator_item(&Ty::SliceChunks(Box::new(i.clone()), false), &[]), Some(item.clone()));
+        assert_eq!(g.builtin_iterator_item(&Ty::SliceChunks(Box::new(i.clone()), true), &[]), Some(item.clone()));
+        assert_eq!(g.builtin_iterator_item(&Ty::SliceWindows(Box::new(i.clone())), &[]), Some(item));
+        // They are iterators only: a `for` loop enters them through the protocol, and `iter()` is not theirs.
+        assert_eq!(g.builtin_iterable_item(&Ty::SliceChunks(Box::new(Ty::Int(IntTy::I32)), false), &[]), None);
     }
 
     #[test]

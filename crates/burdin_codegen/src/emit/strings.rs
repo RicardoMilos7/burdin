@@ -89,8 +89,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let hi_v = self.usize_value(hi)?;
         let hi_v = self.slice_end(lo_v, hi_v, len.into_int_value(), inclusive, span)?;
         self.bounds_guard_ule(lo_v, hi_v, span)?;
+        // The element type of a slice or a `List` decides the stride; `str` and `String` are bytes. Slicing a
+        // slice of `i32` by three elements must move three elements, not three bytes.
+        let elem_ty = match &base.ty {
+            Ty::Slice(elem) | Ty::List(elem, _) => self.llvm_ty(elem),
+            _ => None,
+        };
+        let elem_ty = elem_ty.unwrap_or_else(|| self.cx.i8_type().into());
         // SAFETY (LLVM): lo <= hi <= the base length.
-        let p = unsafe { self.builder.build_in_bounds_gep(self.cx.i8_type(), ptr.into_pointer_value(), &[lo_v], "") }
+        let p = unsafe { self.builder.build_in_bounds_gep(elem_ty, ptr.into_pointer_value(), &[lo_v], "") }
             .map_err(llvm_err)?;
         let len = self.builder.build_int_sub(hi_v, lo_v, "").map_err(llvm_err)?;
         self.make_str(p.into(), len.into())

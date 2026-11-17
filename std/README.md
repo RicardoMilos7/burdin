@@ -14,6 +14,7 @@ program, then copies its public names into every module (the prelude). A project
 | `process.bd` | `exit`, `run` |
 | `mem.bd` | `swap`, `replace` |
 | `iter.bd` | `Iterator<T>` and `Iterable<T>`, the lazy adapters and their types, and the eager `List` helpers |
+| `slice.bd` | the slice methods the compiler does not implement itself: `first`, `last`, `is_empty`, `contains`, the split and search functions, the algorithms built on `swap`, `concat`, `join`, and the ASCII helpers (`spec/stdlib.md`, "Slices") |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
 | `alloc.bd` | the `Allocator` interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`) |
 

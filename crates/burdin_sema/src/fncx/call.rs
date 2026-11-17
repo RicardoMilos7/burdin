@@ -820,6 +820,58 @@ impl FnCx<'_> {
         self.method_call_on(recv, name, args, span)
     }
 
+    /// The type of `e` when it is a range argument to `get`: a range expression, or a local whose value is a
+    /// range. `None` for any other expression, which `get` treats as an index.
+    fn range_argument(&self, e: &ast::Expr) -> Option<Ty> {
+        match &e.kind {
+            ast::ExprKind::Range { inclusive, .. } => Some(Ty::Range(Box::new(Ty::Int(IntTy::Usize)), *inclusive)),
+            ast::ExprKind::Name { name, args } if args.is_empty() => {
+                let local = self.lookup(&name.name)?;
+                let ty = self.locals[local.0].ty.clone();
+                // A stored range is a slice range only when its endpoints are `usize`; there is no implicit
+                // conversion, so `Range<i32>` is an ordinary type error at the index form.
+                let Ty::Range(end, _) = &ty else { return None };
+                (**end == Ty::Int(IntTy::Usize)).then_some(ty)
+            }
+            _ => None,
+        }
+    }
+
+    /// `array[0..N]`: the implicit slice view an array takes for a slice method or extension (`spec/stdlib.md`,
+    /// "Slices"). Slicing is what takes the loan on the array, so the borrow checker sees the view like any other.
+    fn array_slice_view(&self, base: tir::Expr, elem: &Ty, n: u64, span: Span) -> tir::Expr {
+        let usize_ty = Ty::Int(IntTy::Usize);
+        let lo = mk(tir::ExprKind::Int(0), usize_ty.clone(), span);
+        let hi = mk(tir::ExprKind::Int(n as i128), usize_ty, span);
+        let kind = tir::ExprKind::Slice { base: Box::new(base), lo: Box::new(lo), hi: Box::new(hi), inclusive: false };
+        mk(kind, Ty::Slice(Box::new(elem.clone())), span)
+    }
+
+    /// The expression whose mutability a mutating slice method needs: the base of a slice view, or the list a
+    /// `List.as_slice()` call views. `None` when the receiver is neither, so the ordinary rule applies.
+    fn slice_view_source<'e>(&self, e: &'e tir::Expr) -> Option<&'e tir::Expr> {
+        match &e.kind {
+            tir::ExprKind::Slice { base, .. } => Some(base),
+            tir::ExprKind::Method(tir::Method::AsSlice, args) => args.first(),
+            _ => None,
+        }
+    }
+
+    /// The name of the place a `mut self` extension over a slice view cannot write through, when the view is over
+    /// an immutable place. `None` when the receiver is fine, including a receiver that is not a view at all (the
+    /// ordinary rules for those are checked separately).
+    pub(super) fn slice_receiver_problem(&self, e: &tir::Expr) -> Option<String> {
+        let base = self.slice_view_source(e)?;
+        if is_place_expr(base) && self.place_mutable(base) {
+            return None;
+        }
+        Some(
+            place_root(base)
+                .map(|root| self.locals[root.0].name.clone())
+                .unwrap_or_else(|| "this receiver".to_string()),
+        )
+    }
+
     /// `recv.name(args)` for a receiver that is already checked.
     pub(super) fn method_call_on(
         &mut self,
@@ -839,6 +891,20 @@ impl FnCx<'_> {
         }
         // Field access and method calls see through references (RF1).
         let recv = self.auto_deref(recv);
+        // `xs.get(range): Option<[T]>`: the checked form of slicing. A range expression or a range-valued
+        // local picks it; any other argument is the index form the method table provides (`spec/stdlib.md`,
+        // "Slices").
+        if name.name == "get"
+            && args.len() == 1
+            && matches!(recv.ty, Ty::Slice(_))
+            && let Some(range_ty) = self.range_argument(&args[0].expr)
+        {
+            self.reject_named_args("get", args);
+            let arg = self.expr(&args[0].expr, Some(&range_ty));
+            let arg = self.expect_ty(arg, &range_ty);
+            let ret = Ty::Option(Box::new(recv.ty.clone()));
+            return mk(tir::ExprKind::Method(Method::SliceGetRange, vec![recv, arg]), ret, span);
+        }
         // `x.to_string()` on a value whose type implements `Display` (spec/format.md).
         if name.name == "to_string"
             && args.is_empty()
@@ -921,6 +987,18 @@ impl FnCx<'_> {
         }
         let recv_ty = recv.ty.clone();
         let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
+            // An array has the slice methods through an implicit view of its elements (`spec/stdlib.md`,
+            // "Slices"). The view is taken only when a slice method or a slice extension of that name exists, so
+            // an unrelated call still reports the array's own type.
+            if let Ty::Array(elem, n) = recv.ty.clone() {
+                let view = self.array_slice_view(recv.clone(), &elem, n, span);
+                if method(&name.name, &view.ty).is_some() {
+                    return self.method_call_on(view, name, args, span);
+                }
+                if let Some(e) = self.extension_call(view, name, args, span) {
+                    return e;
+                }
+            }
             // No method the type declares and none the compiler provides: a visible extension method may apply
             // (`spec/extensions.md`, EX3). It is tried last, so a method always wins.
             if let Some(e) = self.extension_call(recv, name, args, span) {
@@ -930,14 +1008,18 @@ impl FnCx<'_> {
             return self.args_then_error(args, span);
         };
         if m.mutates_receiver() && !matches!(recv.ty, Ty::Error) {
-            if !is_place_expr(&recv) {
+            // A mutating method writes through its receiver. The receiver is a mutable place, or a slice view
+            // over one: `xs[0..2].sort()` and `xs.as_slice().swap(0, 1)` need a mutable `xs`
+            // (`spec/stdlib.md`, "Slices").
+            let checked = self.slice_view_source(&recv).unwrap_or(&recv);
+            if !is_place_expr(checked) {
                 self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
                     recv.span,
                     format!("`{}` changes its receiver, so the receiver must be a mutable place", name.name),
                 );
-            } else if !self.place_mutable(&recv) {
-                let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
+            } else if !self.place_mutable(checked) {
+                let local = place_root(checked).map(|root| self.locals[root.0].name.clone());
                 let whose = local.unwrap_or_else(|| "this receiver".to_string());
                 self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
@@ -955,6 +1037,26 @@ impl FnCx<'_> {
                         format!("cannot sort a `List<{elem}>`: `{elem}` does not support `Ord`"),
                     );
                 }
+            }
+            // The slice operations that clone their elements need `Clone`, and `copy_from_slice` needs `Copy`
+            // (`spec/stdlib.md`, "Slices").
+            (Method::SliceFill | Method::SliceCloneFromSlice | Method::SliceToList, Ty::Slice(elem))
+                if !self.globals.satisfies(elem, &crate::generics::Bound::Clone, &self.bounds) =>
+            {
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("this slice operation needs `Clone`, but `{elem}` does not implement it"),
+                );
+            }
+            (Method::SliceCopyFromSlice, Ty::Slice(elem))
+                if !self.globals.satisfies(elem, &crate::generics::Bound::Copy, &self.bounds) =>
+            {
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("`copy_from_slice` needs `Copy`, but `{elem}` does not implement it"),
+                );
             }
             (Method::ListContains, Ty::List(elem, _)) => {
                 if !self.globals.has_eq_in(elem, &self.bounds) {
@@ -1035,6 +1137,16 @@ impl FnCx<'_> {
         if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
             let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
             let whose = local.unwrap_or_else(|| "this receiver".to_string());
+            self.diags.error(
+                Code::MUT_OF_IMMUTABLE,
+                recv.span,
+                format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
+            );
+        }
+        if receiver.by_ref
+            && receiver.exclusive
+            && let Some(whose) = self.slice_receiver_problem(&recv)
+        {
             self.diags.error(
                 Code::MUT_OF_IMMUTABLE,
                 recv.span,

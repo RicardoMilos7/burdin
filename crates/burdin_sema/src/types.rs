@@ -421,6 +421,8 @@ impl Globals {
             | Ty::MapIter(..)
             | Ty::MapIntoIter(..)
             | Ty::RangeIter(..)
+            | Ty::SliceChunks(..)
+            | Ty::SliceWindows(..)
             | Ty::Any(_) => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,
         }

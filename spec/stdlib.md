@@ -465,6 +465,99 @@ they borrow the list, hand the closure a view of each element, and return owned 
 except `new` exists for every allocator argument; `List<T, A>.new()` where `A` is not `Global` is E0272 because
 the constructor has no allocator value to store (`allocators.md`, AL4).
 
+## Slices (issue #710)
+
+A slice `[T]` is a borrowed view of contiguous elements: its reads are methods the compiler implements or
+extension methods in `std/src/slice.bd`, and the methods that write go through the compiler's element operations.
+An array `[T; N]` has the same methods through an implicit view: a method call whose receiver is an array first
+looks for a method of the array, then for a slice method or a slice extension, and takes `arr[0..N]` for that call.
+The view is a slice like any other, so it borrows the array and a mutating method needs the array binding to be
+mutable. A `List<T>` is viewed explicitly with `as_slice()` or by slicing it (`xs[a..b]`); there is no implicit
+`List`-to-slice view, so `xs.first()` is E0002 and `xs.as_slice().first()` is the spelling. That was the decision
+the issue asked for: an explicit method for lists, an implicit view for arrays.
+
+```
+fn [T].is_empty(self): bool
+fn [T].first(self): Option<&T>
+fn [T].last(self): Option<&T>
+fn [T].get(self, i: usize): Option<&T>             // checked indexing; `None` when out of bounds
+fn [T].get(self, range): Option<[T]>               // checked slicing; `None` when out of bounds or reversed
+fn [T].contains(self, value: T): bool              // needs `Eq`
+fn [T].starts_with(self, prefix: [T]): bool        // needs `Eq`
+fn [T].ends_with(self, suffix: [T]): bool          // needs `Eq`
+fn [T].split_at(self, mid: usize): ([T], [T])      // panics when `mid > len`
+fn [T].split_at_mut(mut self, mid: usize): ([T], [T])
+fn [T].split_first(self): Option<(&T, [T])>
+fn [T].split_last(self): Option<(&T, [T])>
+fn [T].binary_search(self, value: T): Result<usize, usize>                  // needs `Ord`
+fn [T].binary_search_by<F: FnMut(&T): Ordering>(self, f: F): Result<usize, usize>
+fn [T].binary_search_by_key<K: Ord, F: FnMut(&T): K>(self, key: K, f: F): Result<usize, usize>
+fn [T].to_list(self): List<T>                      // needs `Clone`
+fn [T].chunks(self, n: usize): chunks iterator     // panics when `n == 0`
+fn [T].chunks_exact(self, n: usize): chunks iterator
+fn [T].windows(self, n: usize): windows iterator   // panics when `n == 0`
+fn [T].swap(mut self, a: usize, b: usize)          // panics when an index is out of bounds
+fn [T].reverse(mut self)
+fn [T].fill(mut self, value: T)                    // needs `Clone`; drops each old element
+fn [T].copy_from_slice(mut self, other: [T])       // needs `Copy`; panics on a length mismatch
+fn [T].clone_from_slice(mut self, other: [T])      // needs `Clone`; panics on a length mismatch
+fn [T].sort(mut self)                              // needs `Ord`; stable
+fn [T].sort_by<F: FnMut(&T, &T): Ordering>(mut self, f: F)                     // stable
+fn [T].sort_by_key<K: Ord, F: FnMut(&T): K>(mut self, key: F)                  // stable
+fn [T].is_sorted_by<F: FnMut(&T, &T): Ordering>(self, f: F): bool
+fn [T].rotate_left(mut self, mid: usize)           // panics when `mid > len`; a no-op at 0 and `len`
+fn [T].rotate_right(mut self, mid: usize)
+fn [[T]].concat(self): List<T>                     // needs `Clone`
+fn [String].join(self, sep: str): String
+fn [str].join(self, sep: str): String
+fn [u8].is_ascii(self): bool
+fn [u8].to_ascii_lowercase(self): List<u8>         // copies non-letters unchanged
+fn [u8].to_ascii_uppercase(self): List<u8>
+fn [u8].eq_ignore_ascii_case(self, other: [u8]): bool
+fn List<T>.as_slice(self): [T]
+```
+
+`len`, `iter`, `get`, `last`, `to_list`, `swap`, `fill`, `copy_from_slice`, `clone_from_slice`, `chunks`,
+`chunks_exact`, and `windows` are compiler-implemented: they need element addresses or a checked view. The rest
+are extension methods in `std/src/slice.bd` (`spec/extensions.md`), visible through the prelude like the other
+standard-library extensions. `[T]`'s own `last` and `to_list` win over the `Iterator` defaults of the same name:
+the slice's `last` is the view `Option<&T>`, and its `to_list` makes an owned `List<T>` of clones (the iterator
+defaults are reachable on an adapter chain, where the receiver is not a slice).
+
+A method that writes takes `mut self`, so the slice must be a mutable place: `let mut view = xs[0..3]`, then
+`view.sort()`. A slice expression is accepted as the receiver when the place it views is mutable
+(`xs[0..2].sort()` and `xs.as_slice().swap(0, 1)` need a mutable `xs`, E0113 otherwise). The swap-based
+algorithms move elements byte for byte, so a non-`Copy` element is never cloned and is dropped exactly once;
+`fill` and `clone_from_slice` drop each old element before storing a clone, and `copy_from_slice` copies `Copy`
+bytes. The sort is insertion sort: stable, and a comparator that is not a total order cannot lose, duplicate, or
+corrupt an element.
+
+`get` takes either an index or a range: `xs.get(3)` is `Option<&T>` and `xs.get(1..4)` / `xs.get(1..=3)` is
+`Option<[T]>`. A stored range works when its endpoints are `usize`; a `Range<i32>` at `get` is E0003, because
+there is no implicit integer conversion. The checked forms never panic: a reversed or out-of-range range is
+`None`. The other panics carry their own messages: `swap: index out of bounds`, `split_at: index out of bounds`,
+`rotate_left`/`rotate_right: index out of bounds`, `chunks: chunk size must be non-zero`,
+`windows: window size must be non-zero`, and `copy_from_slice`/`clone_from_slice: source and destination lengths
+differ`.
+
+Slicing a slice or a `List` of elements wider than one byte moves by elements: `xs[2..5]` of an `[i32]` starts at
+the third element. (`String` and `str` slicing stays byte-based.)
+
+The view borrows its source, so growing a `List` (or writing an array element) while a slice view, a `chunks`
+iterator, or a `split_at_mut` half is live is E0111. A `chunks`, `chunks_exact`, or `windows` iterator is
+second-class (it holds the slice view), and `for chunk in xs.chunks(n)` binds each chunk as a slice view. At
+compile time the read methods work (a slice is a copy of the values it views in the interpreter); the writing
+methods are E0224, because a compile-time view is not the storage it views.
+
+Tests: `m24_stdlib/slice_read`, `slice_write`, `slice_chunks`, `slice_arrays`, `list_as_slice`,
+`slice_bytes_ascii`, `slice_join_concat`, `slice_binary_search`, `slice_strings`, `slice_edges`, `slice_drops`,
+`slice_chunks_zero`, `slice_windows_zero`, `slice_split_at_bounds`, `slice_rotate_bounds`, `slice_swap_bounds`,
+`slice_copy_length`, `slice_clone_length`, `slice_chunks_borrow` (E0111), `slice_split_at_mut_borrow` (E0111),
+`slice_as_slice_borrow` (E0111), `slice_array_view_borrow` (E0111), `slice_fill_needs_clone` (E0141),
+`slice_to_list_needs_clone` (E0141), `slice_copy_needs_copy` (E0141), `slice_sort_needs_ord` (E0141),
+`slice_reverse_immutable` (E0113), `slice_view_immutable_list` (E0113), `slice_write_exclusivity` (E0110),
+`slice_comptime_write` (E0224), and `slice_comptime_read` (the reads at compile time).
+
 ## `Map<K, V>`
 
 ```
@@ -1125,6 +1218,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Operators and `Index` | `m19_operators/*` (`operators.md`) |
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
+| Slices and arrays | `m24_stdlib/slice_read`, `slice_write`, `slice_chunks`, `slice_arrays`, `list_as_slice`, `slice_bytes_ascii`, `slice_join_concat`, `slice_binary_search`, `slice_strings`, `slice_edges`, `slice_drops`, `slice_chunks_borrow`, `slice_split_at_mut_borrow`, `slice_as_slice_borrow`, `slice_array_view_borrow`, `slice_fill_needs_clone`, `slice_to_list_needs_clone`, `slice_copy_needs_copy`, `slice_sort_needs_ord`, `slice_reverse_immutable`, `slice_view_immutable_list`, `slice_write_exclusivity`, `slice_comptime_write`, `slice_comptime_read`, `slice_chunks_zero`, `slice_windows_zero`, `slice_split_at_bounds`, `slice_rotate_bounds`, `slice_swap_bounds`, `slice_copy_length`, `slice_clone_length` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`) |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |

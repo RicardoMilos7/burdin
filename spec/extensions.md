@@ -18,12 +18,14 @@ normative; `tests/m18_extension/` is their executable form.
 ## EX1: Declaration
 
 ```
-[ "priv" ] [ "unsafe" ] "fn" TypePath "." IDENT [ GenericParams ] "(" ParamList ")" [ ":" Type ] [ WhereClause ] Block
+[ "priv" ] [ "unsafe" ] "fn" ( TypePath | SliceType ) "." IDENT [ GenericParams ] "(" ParamList ")" [ ":" Type ] [ WhereClause ] Block
 ```
 
 An extension is declared at module scope. The text before the last `.` is the receiver type, a type path resolved in
 the declaring module: a local struct or enum, an imported type, or a built-in type (`String`, `str`, an integer,
-`List<T>`, `Option<T>`, ...). The text after the last `.` is the method name.
+`List<T>`, `Option<T>`, ...). A slice receiver is written as the slice type: `fn [T].first(self)` declares an
+extension on every slice, and `fn [[T]].concat(self)` one on slices of slices. The text after the last `.` is the
+method name.
 
 - `self` must be the first parameter. `self`, `mut self`, and `own self` mean what they mean on a method: a read-only
   receiver is borrowed, `mut self` borrows the caller's place exclusively, and `own self` takes the value. A

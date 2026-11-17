@@ -788,6 +788,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         if matches!(
             m,
+            Method::AsSlice
+                | Method::SliceGet
+                | Method::SliceLast
+                | Method::SliceToList
+                | Method::SliceSortBy
+                | Method::SliceGetRange
+                | Method::SliceSwap
+                | Method::SliceFill
+                | Method::SliceCopyFromSlice
+                | Method::SliceCloneFromSlice
+                | Method::SliceChunks
+                | Method::SliceWindows
+        ) {
+            return self.slice_method(m, args, ty, span);
+        }
+        if matches!(
+            m,
             Method::Push
                 | Method::ListPop
                 | Method::ListLast

@@ -209,6 +209,32 @@ pub enum Method {
     SharedGet,
     /// `shared.strong_count(): usize`: how many owners the `Shared<T>` has.
     SharedStrongCount,
+    /// `List<T>.as_slice(): [T]`: a view of the list's elements (`spec/stdlib.md`, "Slices").
+    AsSlice,
+    /// `[T].get(i): Option<&T>`: a view of the element at `i`, or `None` when it is out of bounds.
+    SliceGet,
+    /// `[T].last(): Option<&T>`: a view of the last element.
+    SliceLast,
+    /// `[T].to_list(): List<T>`: an owned list holding a clone of each element.
+    SliceToList,
+    /// `[T].get(range): Option<[T]>`: a view of the sub-slice, or `None` when the range is out of bounds or
+    /// reversed. The argument is a `Range<usize>` or `RangeInclusive<usize>`.
+    SliceGetRange,
+    /// `[T].swap(a, b)`: exchanges two elements in place.
+    SliceSwap,
+    /// `[T].fill(value)`: overwrites every element with a clone of `value`.
+    SliceFill,
+    /// `[T].copy_from_slice(other)`: copies every element of `other` into the receiver.
+    SliceCopyFromSlice,
+    /// `[T].clone_from_slice(other)`: clones every element of `other` into the receiver.
+    SliceCloneFromSlice,
+    /// `[T].chunks(n)` and `[T].chunks_exact(n)`: the iterator over fixed-size windows of the slice.
+    SliceChunks,
+    /// `[T].windows(n)`: the iterator over the overlapping windows of the slice.
+    SliceWindows,
+    /// `[T].__sort_by(less)`: sorts the slice in place with a comparator that says whether its first argument is
+    /// strictly less. Insertion sort, so the sort is stable. `std`'s `sort_by`/`sort`/`sort_by_key` call it.
+    SliceSortBy,
 }
 
 impl Method {
@@ -222,6 +248,8 @@ impl Method {
             // closure) they are given.
             Method::MapEntry => index == 1,
             Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => index == 0 || index == 1,
+            // The slice sort consumes its comparator.
+            Method::SliceSortBy => index == 1,
             // Unwrapping consumes the `Option` or `Result`.
             Method::Unwrap | Method::Expect => index == 0,
             // `into_iter` takes the collection, the array, the map, or the range by value.
@@ -248,6 +276,11 @@ impl Method {
                 | Method::MapGetMut
                 | Method::MapRemove
                 | Method::IterNext
+                | Method::SliceSwap
+                | Method::SliceFill
+                | Method::SliceCopyFromSlice
+                | Method::SliceCloneFromSlice
+                | Method::SliceSortBy
         )
     }
 
@@ -266,6 +299,12 @@ impl Method {
                 | Method::Iter
                 | Method::IterNext
                 | Method::SharedGet
+                | Method::AsSlice
+                | Method::SliceGet
+                | Method::SliceLast
+                | Method::SliceGetRange
+                | Method::SliceChunks
+                | Method::SliceWindows
         )
     }
 }

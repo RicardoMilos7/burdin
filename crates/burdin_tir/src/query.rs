@@ -72,7 +72,9 @@ impl TypeDefs<'_> {
             | Ty::MapIter(..)
             | Ty::MapEntry(..)
             | Ty::MapIntoIter(..)
-            | Ty::RangeIter(..) => false,
+            | Ty::RangeIter(..)
+            | Ty::SliceChunks(..)
+            | Ty::SliceWindows(..) => false,
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
             Ty::String | Ty::CString => prop == Property::Clone,
@@ -137,7 +139,7 @@ impl TypeDefs<'_> {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
             Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::Const(_) | Ty::CPtr(_) | Ty::Chars => false,
-            Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) => false,
+            Ty::Range(..) | Ty::MapIter(..) | Ty::RangeIter(..) | Ty::SliceChunks(..) | Ty::SliceWindows(..) => false,
             // An entry owns the key it would insert; dropping it without inserting drops that key.
             Ty::MapEntry(key, _, _) => self.needs_drop_seen(key, seen),
             // A closure's capture record is heap-allocated and may own its captures.

@@ -188,6 +188,52 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
+    /// `[T].to_list(): List<T>`: a new list holding a clone of every element of the slice.
+    pub(super) fn slice_to_list(
+        &mut self,
+        args: &'a [tir::Expr],
+        ty: &Ty,
+        span: Span,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Ty::List(elem, alloc) = ty else { return Err("`to_list` returns a `List`".into()) };
+        let (elem, alloc) = ((**elem).clone(), alloc.clone());
+        let (ptr, len) = self.view_parts(&args[0])?;
+        let (ptr, len) = (ptr.into_pointer_value(), len.into_int_value());
+        let seq_ty = self.seq_ty(&alloc);
+        let slot = self.alloca(seq_ty.into(), "to_list")?;
+        self.builder.build_store(slot, seq_ty.const_zero()).map_err(llvm_err)?;
+        let elem_ty = self.llvm_ty(&elem);
+        let index = self.alloca(self.usize_ty.into(), "to_list.i")?;
+        self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+        let header = self.new_block("to_list.cond");
+        let body = self.new_block("to_list.body");
+        let end = self.new_block("to_list.end");
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(header);
+        let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(go, body, end).map_err(llvm_err)?;
+        self.builder.position_at_end(body);
+        // The list is reloaded each iteration: growing replaces the buffer along one path only, and the loop
+        // header must not see a value from that path.
+        let mut seq = self.seq_load_at(slot, &alloc)?;
+        self.seq_grow(&mut seq, &elem, span)?;
+        if let Some(elem_t) = elem_ty {
+            // SAFETY (LLVM): `i < len`.
+            let src =
+                unsafe { self.builder.build_in_bounds_gep(elem_t, ptr, &[i], "to_list.src") }.map_err(llvm_err)?;
+            let dst = self.elem_ptr(&seq, &elem, seq.len).ok_or("`to_list` lost its element pointer")?;
+            self.clone_value(dst, src, &elem)?;
+        }
+        seq.len = self.builder.build_int_add(seq.len, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.seq_store(&seq)?;
+        let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(index, next).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        Ok(Some(self.builder.build_load(seq_ty, slot, "to_list.value").map_err(llvm_err)?))
+    }
+
     /// The methods of `List<T>` and `Map<K, V>`.
     pub(super) fn collection_method(
         &mut self,

@@ -100,6 +100,14 @@ Tests: `m06_conventions/mutate_readonly_param`, `m06_conventions/own_param_immut
 **MU3** `&mut P` requires `P` mutable; otherwise E0113.
 Test: `m06_conventions/mut_ref_of_immutable`.
 
+**MU4 Slices.** Indexing a slice is read-only: an element of a `[T]` is not a mutable place, because a slice view
+carries no mutability of its own. The compiler's slice methods that write (`swap`, `fill`, `copy_from_slice`,
+`clone_from_slice`, and the sort) take `mut self`, so the slice must be a mutable place (MU1) and the call borrows
+it exclusively. A slice expression or a `List.as_slice()` call may be the receiver when the place it views is
+mutable: `xs[0..2].sort()` needs a mutable `xs` (E0113 otherwise). A `mut` slice parameter may call the writing
+methods, but `xs[0] = v` is still E0005, so the mutation surface is exactly the methods that take `mut self`.
+Tests: `m24_stdlib/slice_write`, `slice_reverse_immutable` (E0113), `slice_view_immutable_list` (E0113).
+
 ## 3. Parameter conventions (CV)
 
 **CV1 Read-only (default).** The callee may read the argument and pass it on to other read-only parameters. It may not mutate
@@ -430,7 +438,7 @@ Tests: `tests/m12_closures/`.
 
 ## Summary of error codes used here
 
-E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2 · E0100 MV2, MV5, MV8, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
-E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7 · E0113 CV2, MU3, CL6 · E0114 CV2 · E0115 CV2 ·
+E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2, MU4 · E0100 MV2, MV5, MV8, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
+E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7 · E0113 CV2, MU3, MU4, CL6 · E0114 CV2 · E0115 CV2 ·
 E0120 SC2, CL3 · E0121 RT3 · E0122 RT2 · E0123 RT5, CL3 · E0130 DR8, CP, CL10 · E0141 CL5, CL6 · E0161 US, CL11 ·
 E0171 CL3, CL9, CL11.

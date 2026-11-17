@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `as_slice` borrows the list, so growing it while the view is used is E0111.
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    let view = xs.as_slice()
+    xs.push(2) //~ E0111
+    println("{}", view.len())
+}
