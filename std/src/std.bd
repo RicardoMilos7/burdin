@@ -147,7 +147,7 @@ IoErrorKind: Display {
 /// few failures (such as removing a path that is not a directory) and stores `None` there. The reader and writer
 /// interfaces report the failures that no system call observed (`spec/stdlib.md`, "Readers and writers"); they
 /// carry no path and no code, and `kind()` classifies them too.
-error enum IoError {
+error enum IoError derives (Eq, Debug) {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot write {path}: {kind}"
     Run { command: String, kind: IoErrorKind, os_code: Option<i32> } "cannot run {command}: {kind}"
@@ -190,7 +190,7 @@ IoError {
 }
 
 /// The error type of `i32.parse` and the other integer parsers.
-error enum ParseIntError {
+error enum ParseIntError derives (Eq, Debug) {
     Invalid "invalid integer"
 }
 

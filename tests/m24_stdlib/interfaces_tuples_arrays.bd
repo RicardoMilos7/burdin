@@ -1,0 +1,23 @@
+//@ run
+//> true true true true
+//> true true true
+
+// Tuples derive Copy, Clone, Eq, Ord, Hash, Default, and Debug (of size 2 to 4). Arrays derive Copy, Clone, Eq,
+// Ord, and Hash; they have no derived `Debug` and no `Default` (`spec/stdlib.md`, "Interface coverage").
+
+struct TupleHolder derives (Copy, Clone, Eq, Ord, Hash, Default, Debug) {
+    pair: (i32, bool)
+}
+
+struct ArrayHolder derives (Copy, Clone, Eq, Ord, Hash) {
+    items: [i32; 3]
+}
+
+fn main() {
+    let pair = TupleHolder.default()
+    let same = TupleHolder { pair: (0, false) }
+    println("{} {} {} {}", pair.pair.0 == 0, !pair.pair.1, pair == same, pair.hash() == same.hash())
+    let small = ArrayHolder { items: [1, 2, 3] }
+    let big = ArrayHolder { items: [1, 2, 4] }
+    println("{} {} {}", small == small.clone(), small < big, small.hash() == ArrayHolder { items: [1, 2, 3] }.hash())
+}

@@ -1208,6 +1208,33 @@ mod tests {
     }
 
     #[test]
+    fn interface_queries_cover_std_types() {
+        let g = Globals::default();
+        let list = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global);
+        let map = Ty::Map(Box::new(Ty::String), Box::new(i32_()), burdin_tir::Alloc::Global);
+        let floats = Ty::List(Box::new(Ty::Float(burdin_tir::FloatTy::F64)), burdin_tir::Alloc::Global);
+
+        // `Hash` covers text, lists, and maps, and requires the element types (issue #716).
+        assert!(g.has_hash(&Ty::String));
+        assert!(g.has_hash(&Ty::Str));
+        assert!(g.has_hash(&list));
+        assert!(g.has_hash(&map));
+        assert!(!g.has_hash(&Ty::Float(burdin_tir::FloatTy::F64)), "a float has no Hash");
+        assert!(!g.has_hash(&floats), "a list of floats has no Hash");
+
+        // `Default` is the empty container, and only for the default allocator.
+        assert!(g.has_default(&list));
+        assert!(g.has_default(&map));
+        let stored = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Value(Box::new(Ty::String)));
+        assert!(!g.has_default(&stored), "a stored allocator has no default");
+
+        // `Ord` covers `Option` and `Result` (issue #716).
+        assert!(g.has_ord(&opt(i32_())));
+        assert!(g.has_ord(&Ty::Result(Box::new(i32_()), Box::new(i32_()))));
+        assert!(!g.has_ord(&list), "a list has no Ord");
+    }
+
+    #[test]
     fn satisfies_reads_the_bounds_of_a_type_parameter() {
         let g = Globals::default();
         let env: &[(String, Vec<Bound>)] = &[("T".to_string(), vec![Bound::Ord])];

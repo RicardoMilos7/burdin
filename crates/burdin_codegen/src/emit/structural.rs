@@ -506,8 +506,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let more = self.builder.build_int_compare(IntPredicate::ULT, i, seq.len, "").map_err(llvm_err)?;
                 self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
                 self.builder.position_at_end(body);
-                let element =
-                    self.elem_ptr_at(seq.data, elem, i).ok_or_else(|| "a list element has no runtime type".to_string())?;
+                let element = self
+                    .elem_ptr_at(seq.data, elem, i)
+                    .ok_or_else(|| "a list element has no runtime type".to_string())?;
                 let current =
                     self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value();
                 let mixed = self.hash_at(element, elem, current)?;
