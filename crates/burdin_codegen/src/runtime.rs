@@ -1984,6 +1984,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_store(sa_flags, i32_ty.const_int(onstack | reset | siginfo, false)).map_err(llvm_err)?;
         const SIGSEGV: u64 = 11;
         self.call(sigaction, &[i32_ty.const_int(SIGSEGV, false).into(), act.into(), ptr_ty.const_null().into()])?;
+        if self.darwin {
+            // macOS reports an access to a mapped but inaccessible page, such as the guard below a task stack, as
+            // `SIGBUS` rather than `SIGSEGV`.
+            const SIGBUS_DARWIN: u64 = 10;
+            self.call(
+                sigaction,
+                &[i32_ty.const_int(SIGBUS_DARWIN, false).into(), act.into(), ptr_ty.const_null().into()],
+            )?;
+        }
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(())
     }

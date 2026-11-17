@@ -53,7 +53,7 @@ fn spawn<T, F: FnOnce(): T>(own f: F): Thread<T> {
         }
         __thread_start(|| {
             unsafe {
-                let value = f()
+                let value: T = __call_once(f)
                 __mutex_lock((*st).lock)
                 if (*st).detached == 0 {
                     *slot = Some(value)
@@ -71,6 +71,13 @@ fn spawn<T, F: FnOnce(): T>(own f: F): Thread<T> {
         })
         Thread { state: st as CPtr<u8>, joined: false }
     }
+}
+
+/// Runs `f` and drops it before returning. The thread's closure keeps what it captured until it ends, which is after
+/// the thread has told its handle it is done; consuming `f` in a call of its own means everything `f` owns is released
+/// before the handle can observe the result (a test's leak check runs as soon as `join` returns).
+priv fn __call_once<T, F: FnOnce(): T>(own f: F): T {
+    f()
 }
 
 /// Releases the lock and the condition variable of a record whose last owner is done with it, then the record.
