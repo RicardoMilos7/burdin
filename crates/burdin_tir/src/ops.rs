@@ -54,6 +54,8 @@ pub enum Builtin {
     ListNew,
     /// `Map<K, V>.new()`: an empty map.
     MapNew,
+    /// `Map<K, V>.with_capacity(n)`: an empty map whose slot table holds `n` entries without growing.
+    MapWithCapacity,
     /// `i32.parse(str)` (and every integer type): the number, or an error.
     IntParse(IntTy),
     /// `read_to_string(path)`: the file's bytes as a `String`.
@@ -317,6 +319,17 @@ pub enum Method {
     /// `Map<K, V>.get_or_insert(key, value): &mut V`: the value stored under `key`, inserting `value` first when
     /// the key is absent. An existing value is kept and the incoming key and value are dropped.
     MapGetOrInsert,
+    /// `Map<K, V>.get_or(key, default): &V`: the read-only form of `get_or_insert`; an existing value is kept and
+    /// the incoming key and default are dropped.
+    MapGetOr,
+    /// `Map<K, V>.remove_entry(key): Option<(K, V)>`: the stored key and value, moved out.
+    MapRemoveEntry,
+    /// `Map<K, V>.retain(f)`: keeps the entries `f` accepts and drops the rest.
+    MapRetain,
+    /// `Map<K, V>.reserve(additional)`: grows the slot table so it can hold `additional` more entries.
+    MapReserve,
+    /// `Map<K, V>.shrink_to_fit()`: shrinks the slot table to the smallest one that holds the entries.
+    MapShrinkToFit,
     /// `Map<K, V>.entry(key): MapEntry<K, V>`: a pending lookup that owns `key` and borrows the map exclusively.
     /// The probe happens once, here; the entry operations insert into the slot it found.
     MapEntry,
@@ -386,7 +399,9 @@ impl Method {
             Method::Push => index == 1,
             Method::ListInsert => index == 2,
             Method::ListAppend => index == 1,
-            Method::MapInsert | Method::MapGetOrInsert => index == 1 || index == 2,
+            Method::MapInsert | Method::MapGetOrInsert | Method::MapGetOr => index == 1 || index == 2,
+            // `retain` consumes the closure it is given.
+            Method::MapRetain => index == 1,
             // `entry` takes the key it will insert. The entry operations consume the entry and the value (or the
             // closure) they are given.
             Method::MapEntry => index == 1,
@@ -426,9 +441,14 @@ impl Method {
                 | Method::Clear
                 | Method::MapInsert
                 | Method::MapGetOrInsert
+                | Method::MapGetOr
                 | Method::MapEntry
                 | Method::MapGetMut
                 | Method::MapRemove
+                | Method::MapRemoveEntry
+                | Method::MapRetain
+                | Method::MapReserve
+                | Method::MapShrinkToFit
                 | Method::IterMut
                 | Method::IterNext
                 | Method::IterNextBack
@@ -448,6 +468,7 @@ impl Method {
                 | Method::MapGet
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
+                | Method::MapGetOr
                 | Method::MapEntry
                 | Method::MapEntryOrInsert
                 | Method::MapEntryOrInsertWith
@@ -474,6 +495,10 @@ mod tests {
         assert!(Method::MapInsert.owns_argument(2));
         assert!(Method::MapGetOrInsert.owns_argument(1));
         assert!(Method::MapGetOrInsert.owns_argument(2));
+        assert!(Method::MapGetOr.owns_argument(1));
+        assert!(Method::MapGetOr.owns_argument(2));
+        assert!(Method::MapRetain.owns_argument(1));
+        assert!(!Method::MapRemoveEntry.owns_argument(1));
         // `entry` moves its key into the entry; the entry operations consume the entry and their value.
         assert!(Method::MapEntry.owns_argument(1));
         assert!(!Method::MapEntry.owns_argument(0));
@@ -525,9 +550,14 @@ mod tests {
             Method::Clear,
             Method::MapInsert,
             Method::MapGetOrInsert,
+            Method::MapGetOr,
             Method::MapEntry,
             Method::MapGetMut,
             Method::MapRemove,
+            Method::MapRemoveEntry,
+            Method::MapRetain,
+            Method::MapReserve,
+            Method::MapShrinkToFit,
             Method::IterMut,
         ] {
             assert!(method.mutates_receiver(), "{method:?}");

@@ -767,6 +767,72 @@ let count = map.entry(word).or_insert(0)
 Tests: `m24_stdlib/map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`
 (E0111), `map_entry_needs_eq` (E0141), `map_entry_second_class` (E0120, E0123), and `map_entry_comptime` (E0224).
 
+### Map views, updates, and construction (issue #712)
+
+```
+fn is_empty(self): bool
+
+// views: the borrowing iterators are second-class like every iterator over borrowed storage
+fn keys(self): MapKeys<...>                    // yields &K, in iteration order
+fn values(self): MapValues<...>                // yields &V
+fn into_keys(own self): MapIntoKeys<...>       // consumes the map; yields K
+fn into_values(own self): MapIntoValues<...>   // consumes the map; yields V
+
+// in-place updates
+fn get_mut(mut self, key: K): Option<&mut V>                         // built in
+fn get_or(mut self, key: K, default: V): &V                          // built in
+fn remove_entry(mut self, key: K): Option<(K, V)>                    // built in
+fn retain<F: FnMut(&K, &V): bool>(mut self, f: F)                    // built in
+fn drain(mut self): MapIntoEntries<K, V>                             // default allocator only
+fn extend<I: Iterator<(K, V)>>(mut self, items: I) where K: Eq
+
+// capacity: the table keeps a power-of-two slot count and the 3/4 load factor
+fn with_capacity(capacity: usize): Map<K, V>       // associated function; default allocator only
+fn reserve(mut self, additional: usize)            // built in
+fn shrink_to_fit(mut self)                         // built in
+```
+
+`keys` and `values` borrow the map for the iterator's whole life and yield views, so the map cannot be changed
+until the iterator's last use; `into_keys` and `into_values` consume the map and yield owned values. `MapKeys`
+and `MapValues` are the nameable iterator types, second-class because they view the map; `MapIntoKeys` and
+`MapIntoValues` own the entries they have not handed out.
+
+`get_or(key, default)` is the read-only form of `get_or_insert`: it returns the value stored under `key`, storing
+`default` first when the key is absent. A read-only view of a caller's default that is not stored would need the
+result to derive from two parameters, which the return-origin rule does not allow (E0121), so the default is
+always stored. `get_or` keeps the map borrowed (shared) until the view's last use.
+
+`remove_entry` moves the stored key and value out; `remove` drops the stored key and returns only the value.
+`retain` calls its predicate on a view of each entry and drops the ones it rejects, shifting the rest of the probe
+cluster back as `remove` does. `drain` empties the map and yields its entries as an owning iterator, leaving the
+map empty and usable with its allocator; only a default-allocator map has it (a stored allocator cannot be copied
+into the iterator). `extend` inserts every item, replacing the value of a key that is already present, as `insert`
+does.
+
+`with_capacity(n)` makes an empty map whose table holds `n` entries without growing; a map with a stored allocator
+is made with `new_in` and then `reserve` (E0272 for `with_capacity`). `reserve(additional)` grows the table so it
+holds the entries plus `additional` more without passing the load factor, and `shrink_to_fit` rehashes into the
+smallest table that holds the entries (and frees the buffer of an empty map). A request that would need more than
+2^62 slots panics with `Map capacity overflow`.
+
+`Map<K, V>` implements `PartialEq` (the same entries with equal values, whatever the insertion order),
+`Clone` (when `K` and `V` are `Clone`), `Debug` (when `K` and `V` are `Debug`, as `{k: v, ...}` in iteration
+order), and `Default` (an empty map; only for the default allocator). A struct that holds a `Map` derives each of
+these when its key and value types allow it.
+
+### Borrowed-key lookup (issue #712)
+
+A `Map<String, V>` takes a `str` for its read-only lookups: `get`, `get_mut`, `contains_key`, `remove`, and
+`remove_entry`. The key is hashed and compared by bytes, so `map.get("x")` allocates nothing; the stored key
+stays a `String`. A `String` argument still works, because `String` converts to `str` through the one implicit
+conversion (IC1), and the argument is borrowed for the call. Every other key type is taken exactly as written.
+`insert`, `get_or_insert`, `get_or`, and `entry` take the key by ownership, because they store it; they need the
+key's own type.
+
+Tests: `m24_stdlib/map_views`, `map_in_place`, `map_capacity_interfaces`, `map_views_allocator`,
+`map_borrowed_key`, and the compile-fail cases `map_borrowed_key_type` (E0003), `map_get_or_needs_eq` (E0141), and
+`map_with_capacity_allocator` (E0272).
+
 ## `Set<T>` (issue #190)
 
 `std.set` is a thin layer over `Map<T, bool, A>`, so it follows the map's rules: an element needs only `==` (`Eq`),
@@ -1784,6 +1850,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
+| Map views, updates, and construction | `m24_stdlib/map_views`, `map_in_place`, `map_capacity_interfaces`, `map_views_allocator`, `map_borrowed_key`, `map_borrowed_key_type`, `map_get_or_needs_eq`, `map_with_capacity_allocator` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
 | Readers and writers | `m24_stdlib/rw_cursor_read`, `rw_cursor_write_seek`, `rw_read_exact_eof`, `rw_read_chunks`, `rw_write_all`, `rw_bufreader_lines`, `rw_bufreader_buffering`, `rw_bufwriter`, `rw_bufwriter_drop`, `rw_seek_buffered`, `rw_copy`, `rw_bytesmut_write`, `rw_error_propagation`, `rw_reader_needs_read`, `rw_bufreader_capacity_zero`, `rw_bufwriter_capacity_zero` |
 | Byte buffers | `m24_stdlib/bytes_mut`, `bytes_share`, `bytes_slice_out_of_bounds`, `bytes_index_out_of_bounds`, `shared_get_view`, `shared_get_view_outlives` |

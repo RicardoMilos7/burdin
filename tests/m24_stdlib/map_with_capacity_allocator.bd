@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `with_capacity` is an associated function, so it has no allocator value to store in the map; a map with a
+// stored allocator is made with `new_in` and then `reserve` (`spec/allocators.md`, AL4).
+
+fn main() {
+    let _ = Map<i32, i32, Arena>.with_capacity(4) //~ E0272
+}

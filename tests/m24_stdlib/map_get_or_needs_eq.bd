@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Every map operation that compares keys needs `Eq` on the key type; `get_or` looks the key up before it stores
+// the default.
+
+struct Key { x: i32 }
+
+fn main() {
+    let mut m = Map<Key, i32>.new()
+    let _ = m.get_or(Key { x: 1 }, 2) //~ E0141
+}
