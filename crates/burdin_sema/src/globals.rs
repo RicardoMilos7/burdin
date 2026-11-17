@@ -238,9 +238,19 @@ pub(crate) struct Globals {
     pub(crate) error_at: Option<FuncId>,
     pub(crate) error_frame: Option<FuncId>,
     pub(crate) error_context: Option<FuncId>,
-    /// The typed `assert` and `assert_eq` of a `burdin test` build (`spec/errors.md`, ERR9).
+    /// The standard library's assertion declarations (`spec/stdlib.md`, "Memory helpers and assertions"). A call
+    /// that resolves to one of these is lowered to `Builtin::Assertion`, which is where the message form and the
+    /// release removal of `debug_assert*` live. `None` when the standard library does not declare the name.
+    pub(crate) assert_fn: Option<FuncId>,
+    pub(crate) assert_eq_gen: Option<usize>,
+    pub(crate) assert_ne_gen: Option<usize>,
+    pub(crate) debug_assert_fn: Option<FuncId>,
+    pub(crate) debug_assert_eq_gen: Option<usize>,
+    pub(crate) debug_assert_ne_gen: Option<usize>,
+    /// The typed `assert`, `assert_eq`, and `assert_ne` of a `burdin test` build (`spec/errors.md`, ERR9).
     pub(crate) test_assert: Option<FuncId>,
     pub(crate) test_assert_eq: Option<usize>,
+    pub(crate) test_assert_ne: Option<usize>,
     /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10-ERR11).
     pub(crate) io_error_kind_ty: Option<Ty>,
     pub(crate) parse_int_error_ty: Option<Ty>,

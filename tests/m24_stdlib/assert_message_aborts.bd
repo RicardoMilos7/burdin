@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: x is only 3
+
+// A failing `assert` with a message panics with the formatted message.
+
+fn main() {
+    let x = 3
+    assert(x > 10, "x is only {x}")
+}

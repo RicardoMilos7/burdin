@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A condition assertion needs a `bool` condition, and a message must start with a format string.
+
+fn main() {
+    assert(1, "one") //~ E0003
+    assert(true, 1) //~ E0194
+}

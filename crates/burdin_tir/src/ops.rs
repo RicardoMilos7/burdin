@@ -11,6 +11,42 @@ pub struct LocalId(pub usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConstId(pub usize);
 
+/// The assertion a `Builtin::Assertion` performs (`spec/stdlib.md`, "Memory helpers and assertions"). The
+/// arguments are the condition (or the two compared values) followed, in the message form, by the formatted
+/// message as a `str`. The `Debug*` kinds are dropped from a release build without evaluating their arguments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssertKind {
+    /// `assert(cond, message)`: panics unless the condition holds.
+    Assert,
+    /// `assert_eq(a, b, message)`: panics when the two values differ.
+    Eq,
+    /// `assert_ne(a, b, message)`: panics when the two values are equal.
+    Ne,
+    /// `debug_assert(cond[, message])`: `Assert`, removed in a release build.
+    DebugAssert,
+    /// `debug_assert_eq(a, b[, message])`: `Eq`, removed in a release build.
+    DebugAssertEq,
+    /// `debug_assert_ne(a, b[, message])`: `Ne`, removed in a release build.
+    DebugAssertNe,
+}
+
+impl AssertKind {
+    /// Whether this assertion is dropped from a release build (`debug_assert*`).
+    pub fn is_debug(self) -> bool {
+        matches!(self, AssertKind::DebugAssert | AssertKind::DebugAssertEq | AssertKind::DebugAssertNe)
+    }
+
+    /// Whether the assertion compares two values (`a, b`) instead of taking one condition.
+    pub fn compares_values(self) -> bool {
+        matches!(self, AssertKind::Eq | AssertKind::Ne | AssertKind::DebugAssertEq | AssertKind::DebugAssertNe)
+    }
+
+    /// Whether a failed comparison means the values were equal (`assert_ne`) rather than different.
+    pub fn expects_difference(self) -> bool {
+        matches!(self, AssertKind::Ne | AssertKind::DebugAssertNe)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Builtin {
     Print,
@@ -152,10 +188,9 @@ pub enum Builtin {
     SetCurrentDirBytes,
     /// `process.exit(code)`: ends the process.
     ProcessExit,
-    /// `assert(condition)`: panics when it is false.
-    Assert,
-    /// `assert_eq(a, b)`: panics when the two values differ.
-    AssertEq,
+    /// `assert`, `assert_eq`, `assert_ne`, and their message and `debug_` forms: panics when the assertion
+    /// fails (`spec/stdlib.md`, "Memory helpers and assertions").
+    Assertion(AssertKind),
     /// `unreachable()`: panics.
     Unreachable,
     /// `process.run(command)`: runs a command through the system shell.
@@ -491,6 +526,27 @@ impl Method {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assertion_kinds_describe_their_shape() {
+        for kind in [AssertKind::DebugAssert, AssertKind::DebugAssertEq, AssertKind::DebugAssertNe] {
+            assert!(kind.is_debug(), "{kind:?}");
+        }
+        for kind in [AssertKind::Assert, AssertKind::Eq, AssertKind::Ne] {
+            assert!(!kind.is_debug(), "{kind:?}");
+        }
+        assert!(!AssertKind::Assert.compares_values());
+        assert!(!AssertKind::DebugAssert.compares_values());
+        for kind in [AssertKind::Eq, AssertKind::Ne, AssertKind::DebugAssertEq, AssertKind::DebugAssertNe] {
+            assert!(kind.compares_values(), "{kind:?}");
+        }
+        for kind in [AssertKind::Ne, AssertKind::DebugAssertNe] {
+            assert!(kind.expects_difference(), "{kind:?}");
+        }
+        for kind in [AssertKind::Assert, AssertKind::Eq, AssertKind::DebugAssert, AssertKind::DebugAssertEq] {
+            assert!(!kind.expects_difference(), "{kind:?}");
+        }
+    }
 
     #[test]
     fn only_value_parameters_are_owned() {

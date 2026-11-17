@@ -521,6 +521,8 @@ def main(argv) -> int:
             case.skip = f"skip-platform: {platform}"
         elif options["release"] and has_directive(case.directives, b"debug-only"):
             case.skip = "debug-only"
+        elif not options["release"] and has_directive(case.directives, b"release-only"):
+            case.skip = "release-only"
 
     runnable = [(index, case) for index, case in enumerate(cases) if case.skip is None and case.kind != "unknown"]
     results = [None] * len(cases)

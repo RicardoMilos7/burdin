@@ -2,7 +2,7 @@
 
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
-use burdin_tir::{self as tir, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
+use burdin_tir::{self as tir, AssertKind, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
 use inkwell::intrinsics::Intrinsic;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
@@ -1306,22 +1306,35 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.continue_dead();
                 return Ok(None);
             }
-            Builtin::Assert => {
-                let cond = self.expr_mode(&args[0], Mode::Use)?;
-                let cond = self.need_int(cond, &Ty::Bool);
-                self.check(cond, "assertion failed", span)?;
-                return Ok(None);
-            }
-            Builtin::AssertEq => {
-                let ty = args[0].ty.clone();
-                let l = self.expr_mode(&args[0], Mode::Use)?;
-                let r = self.expr_mode(&args[1], Mode::Use)?;
-                let lp = self.spill(l, &ty)?;
-                let rp = self.spill(r, &ty)?;
-                if let (Some(lp), Some(rp)) = (lp, rp) {
-                    let eq = self.eq_at(lp, rp, &ty)?;
-                    self.check(eq, "assertion failed: the two values differ", span)?;
+            Builtin::Assertion(kind) => {
+                // `debug_assert*` is removed from a release build; neither its condition nor its message is
+                // evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
+                if kind.is_debug() && self.release {
+                    return Ok(None);
                 }
+                let compares = kind.compares_values();
+                let has_message = args.len() > if compares { 2 } else { 1 };
+                let message = has_message.then(|| &args[args.len() - 1]);
+                let ok = if compares {
+                    let ty = args[0].ty.clone();
+                    let l = self.expr_mode(&args[0], Mode::Use)?;
+                    let r = self.expr_mode(&args[1], Mode::Use)?;
+                    let lp = self.spill(l, &ty)?;
+                    let rp = self.spill(r, &ty)?;
+                    let (Some(lp), Some(rp)) = (lp, rp) else { return Ok(None) };
+                    let eq = self.eq_at(lp, rp, &ty)?;
+                    // `assert_ne` fails when the values are equal, so its success is the negated comparison.
+                    if kind.expects_difference() { self.builder.build_not(eq, "ne").map_err(llvm_err)? } else { eq }
+                } else {
+                    let cond = self.expr_mode(&args[0], Mode::Use)?;
+                    self.need_int(cond, &Ty::Bool)
+                };
+                let fallback = match kind {
+                    AssertKind::Ne | AssertKind::DebugAssertNe => "assertion failed: the two values are equal",
+                    AssertKind::Eq | AssertKind::DebugAssertEq => "assertion failed: the two values differ",
+                    _ => "assertion failed",
+                };
+                self.check_message(ok, message, fallback, span)?;
                 return Ok(None);
             }
             Builtin::Unreachable => {

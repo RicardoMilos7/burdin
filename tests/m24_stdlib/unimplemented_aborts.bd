@@ -1,0 +1,12 @@
+//@ run-abort
+//@ stderr: not implemented
+
+// `unimplemented()` marks a declared but unsupported path.
+
+fn encode(): i32 {
+    unimplemented()
+}
+
+fn main() {
+    println("{}", encode())
+}
