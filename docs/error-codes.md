@@ -1672,7 +1672,9 @@ an interface's arguments, and an alias is expanded where it is used.
 
 A container stores its allocator value when its allocator type is not `Global` (`List<i32, Arena>`,
 `Heap<i32, Arena>`). The `new` constructor has no allocator value to store, so it exists only for the default
-allocator; calling it for such a container is this error. `spec/allocators.md` AL4.
+allocator; calling it for such a container is this error, and so is `from_iter` or `from`, which build a `List` or a
+`Map` with the default allocator (`List<i32, Arena>.from_iter(it)`). `spec/allocators.md` AL4,
+`spec/iterators.md` IT19.
 
 <!-- error-example: E0272 -->
 ```burdin
@@ -1684,4 +1686,5 @@ fn main() {
 
 **How to fix:** construct the container with the `new_in` form and pass the allocator:
 `List.new_in(arena)`, `Map.new_in(arena)`, or `Heap.new_in(arena, value)`. `new()` remains the constructor for
-`List<T>`, `Map<K, V>`, and `Heap.new(value)`, which use `Global`.
+`List<T>`, `Map<K, V>`, and `Heap.new(value)`, which use `Global`. To fill such a container from an iterator, make it with
+`new_in` and call `extend_iter`.

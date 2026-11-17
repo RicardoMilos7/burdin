@@ -214,6 +214,8 @@ pub(crate) struct Globals {
     /// The `std.Iterator<T>` and `std.Iterable<T>` interfaces, when the standard library declares them.
     pub(crate) iterator_iface: Option<usize>,
     pub(crate) iterable_iface: Option<usize>,
+    /// The `std.FromIterator<T>` interface: what `Iterator.collect` builds its target through (`spec/iterators.md`, IT13).
+    pub(crate) from_iterator_iface: Option<usize>,
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,

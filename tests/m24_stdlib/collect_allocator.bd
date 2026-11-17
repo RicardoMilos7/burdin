@@ -1,0 +1,41 @@
+//@ run
+//> 4 true
+//> 3 true
+//> 2
+
+// `collect` and `from_iter` build a collection with the default allocator, so a container that stores another
+// allocator is filled with `extend_iter` instead: it works for every allocator (IT17, IT19).
+
+struct Counter {
+    count: CPtr<i32>
+}
+
+Counter: Allocator {
+    fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
+        unsafe { *self.count = *self.count + 1 }
+        unsafe { __alloc(size, align) }
+    }
+
+    fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
+        unsafe { __realloc(ptr, old_size, new_size, align) }
+    }
+
+    fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
+        unsafe { __dealloc(ptr, size, align) }
+    }
+}
+
+fn main() {
+    let mut count = 0
+    let mut list = unsafe { List<i32, Counter>.new_in(Counter { count: &mut count as CPtr<i32> }) }
+    list.extend_iter([1, 2, 3, 4].into_iter())
+    println("{list.len()} {count > 0}")
+
+    let mut map_count = 0
+    let mut map = unsafe { Map<i32, i32, Counter>.new_in(Counter { count: &mut map_count as CPtr<i32> }) }
+    map.extend_iter([1, 2, 3].into_iter().map(|x| (x, x)))
+    println("{map.len()} {map_count > 0}")
+
+    let plain: List<i32> = [1, 2].into_iter().collect()
+    println("{plain.len()}")
+}

@@ -13,7 +13,7 @@ program, then copies its public names into every module (the prelude). A project
 | `env.bd` | `args` |
 | `process.bd` | `exit`, `run` |
 | `mem.bd` | `swap`, `replace` |
-| `iter.bd` | `Iterator<T>` and `Iterable<T>`, the lazy adapters and their types, and the eager `List` helpers |
+| `iter.bd` | `Iterator<T>`, `Iterable<T>`, and `FromIterator<T>` with `collect`, the lazy adapters and their types, the eager `List` helpers, and the `from_iter` functions of the built-in collections |
 | `fmt.bd` | `Display` and `Debug`, the `Formatter`, and the formatting helpers |
 | `alloc.bd` | the `Allocator` interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`) |
 

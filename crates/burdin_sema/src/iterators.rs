@@ -65,6 +65,40 @@ impl Globals {
         None
     }
 
+    /// Whether a built-in type implements `FromIterator<item>` without an impl block, or `None` for a struct or an
+    /// enum, which implements it with a block (`spec/iterators.md`, IT13). A `List` and a `Map` are built with the
+    /// default allocator only, so one that stores another allocator never implements it.
+    pub(crate) fn builtin_from_iterator(&self, ty: &Ty, args: &[Ty], env: &crate::generics::Env) -> Option<bool> {
+        let [item] = args else { return None };
+        let iface = self.from_iterator_iface?;
+        let from_items =
+            |target: &Ty, items: Ty| self.satisfies_with(target, &Bound::User(iface, vec![items]), env, &[]);
+        Some(match ty {
+            Ty::List(elem, alloc) => alloc.is_global() && **elem == *item && !elem.is_second_class(),
+            Ty::Map(key, value, alloc) => {
+                alloc.is_global()
+                    && *item == Ty::Tuple(vec![(**key).clone(), (**value).clone()])
+                    && !key.is_second_class()
+                    && !value.is_second_class()
+                    && self.has_eq_in(key, env)
+            }
+            Ty::String => match item {
+                Ty::Char | Ty::Str | Ty::String => true,
+                Ty::Ref { inner, .. } => matches!(**inner, Ty::String | Ty::Str),
+                _ => false,
+            },
+            Ty::Option(target) => match item {
+                Ty::Option(inner) => from_items(target, (**inner).clone()),
+                _ => false,
+            },
+            Ty::Result(target, error) => match item {
+                Ty::Result(inner, item_error) => **error == **item_error && from_items(target, (**inner).clone()),
+                _ => false,
+            },
+            _ => return None,
+        })
+    }
+
     /// The item type recorded by a user `Type: Iterator<T>` or `Type: Iterable<T>` block, for a concrete
     /// instance or a type parameter with the bound in scope.
     fn declared_item(&self, ty: &Ty, iface: Option<usize>, env: &crate::generics::Env) -> Option<Ty> {
@@ -169,6 +203,60 @@ mod tests {
         assert_eq!(g.builtin_iterator_item(&Ty::Chars, &[]), Some(Ty::Char));
         let map = Ty::MapIter(Box::new(Ty::Str), Box::new(i32_()));
         assert!(g.builtin_iterator_item(&map, &[]).is_some());
+    }
+
+    fn globals_with_from_iterator() -> Globals {
+        let mut g = Globals { from_iterator_iface: Some(0), ..Default::default() };
+        g.interfaces.push(crate::generics::InterfaceInfo {
+            name: "std.FromIterator".into(),
+            module: 0,
+            params: vec!["T".into()],
+            bounds: vec![Vec::new()],
+            requires: Vec::new(),
+            methods: Vec::new(),
+        });
+        g
+    }
+
+    #[test]
+    fn builtin_collections_are_built_from_their_items() {
+        let g = globals_with_from_iterator();
+        let global = burdin_tir::Alloc::Global;
+        let list = Ty::List(Box::new(i32_()), global.clone());
+        assert_eq!(g.builtin_from_iterator(&list, &[i32_()], &[]), Some(true));
+        assert_eq!(g.builtin_from_iterator(&list, &[Ty::Bool], &[]), Some(false), "the items must be the elements");
+        let views = Ty::List(Box::new(Ty::Ref { mutable: false, inner: Box::new(Ty::String) }), global.clone());
+        let item = Ty::Ref { mutable: false, inner: Box::new(Ty::String) };
+        assert_eq!(g.builtin_from_iterator(&views, &[item], &[]), Some(false), "a list cannot hold views");
+        let pair = Ty::Tuple(vec![Ty::String, i32_()]);
+        let map = Ty::Map(Box::new(Ty::String), Box::new(i32_()), global);
+        assert_eq!(g.builtin_from_iterator(&map, &[pair], &[]), Some(true));
+        assert_eq!(g.builtin_from_iterator(&map, &[Ty::String], &[]), Some(false), "a map is built from pairs");
+    }
+
+    #[test]
+    fn a_string_is_built_from_text_items_only() {
+        let g = globals_with_from_iterator();
+        for item in [Ty::Char, Ty::Str, Ty::String, Ty::Ref { mutable: false, inner: Box::new(Ty::String) }] {
+            assert_eq!(g.builtin_from_iterator(&Ty::String, &[item], &[]), Some(true));
+        }
+        assert_eq!(g.builtin_from_iterator(&Ty::String, &[i32_()], &[]), Some(false));
+    }
+
+    #[test]
+    fn option_and_result_collect_through_their_payload() {
+        let g = globals_with_from_iterator();
+        let list = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global);
+        let option = Ty::Option(Box::new(list.clone()));
+        assert_eq!(g.builtin_from_iterator(&option, &[Ty::Option(Box::new(i32_()))], &[]), Some(true));
+        assert_eq!(g.builtin_from_iterator(&option, &[i32_()], &[]), Some(false));
+        let result = Ty::Result(Box::new(list), Box::new(Ty::String));
+        let ok_item = Ty::Result(Box::new(i32_()), Box::new(Ty::String));
+        assert_eq!(g.builtin_from_iterator(&result, &[ok_item], &[]), Some(true));
+        let other_error = Ty::Result(Box::new(i32_()), Box::new(Ty::Bool));
+        assert_eq!(g.builtin_from_iterator(&result, &[other_error], &[]), Some(false), "the errors must agree");
+        // A struct or an enum answers through its impl blocks, so the built-in check has no opinion.
+        assert_eq!(g.builtin_from_iterator(&i32_(), &[i32_()], &[]), None);
     }
 
     #[test]

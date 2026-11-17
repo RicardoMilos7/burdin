@@ -243,7 +243,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0262 | Invalid generated modules: a generated path is not a module name, a generated module repeats a source module's name, or the output directory cannot be read |
 | E0270 | An allocator-aware container whose allocator type does not implement `Allocator` |
 | E0271 | Invalid default type parameter: a parameter without a default after one with a default, a const parameter's default, or a default on a declaration that takes none (a function, an interface, or a type alias) |
-| E0272 | A container with a stored allocator created with `new`, which has no allocator value to store; it is made with `new_in` |
+| E0272 | A container with a stored allocator created with `new`, `from_iter`, or `from`, which have no allocator value to store; it is made with `new_in` |
 
 ### Codes without a compile-fail test
 

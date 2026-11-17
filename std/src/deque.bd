@@ -5,7 +5,7 @@
 // a `push` on one list; popping from an end whose list is empty first moves the other list over. `List` is unchanged.
 
 use fmt.{Debug, Formatter}
-use iter.{Iterable, Iterator}
+use iter.{FromIterator, Iterable, Iterator}
 use ops.{Index, IndexMut, PartialEq}
 
 /// A double-ended queue.
@@ -42,6 +42,13 @@ Deque<T> {
     fn from_list(own items: List<T>): Deque<T> {
         let mut out = Deque<T>.new()
         out.extend(items)
+        out
+    }
+
+    /// A deque holding the elements of an array, in order: `Deque.from([1, 2, 3])`.
+    fn from<const N: usize>(own items: [T; N]): Deque<T> {
+        let mut out = Deque<T>.new()
+        out.extend_iter(items.into_iter())
         out
     }
 
@@ -129,6 +136,17 @@ Deque<T> {
         }
     }
 
+    /// Adds every item `iter` yields at the back, in order.
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I) {
+        let mut iter = iter
+        loop {
+            match iter.next() {
+                Some(x) => self.back.push(x),
+                None => break,
+            }
+        }
+    }
+
     /// The elements as a list, from the front to the back. The deque is consumed.
     fn into_list(own self): List<T> {
         let mut out = List<T>.new()
@@ -167,6 +185,14 @@ Deque<T>: IndexMut<T> {
             return &mut self.front[f - 1 - i]
         }
         &mut self.back[i - f]
+    }
+}
+
+Deque<T>: FromIterator<T> {
+    fn from_iter<I: Iterator<T>>(own iter: I): Deque<T> {
+        let mut out = Deque<T>.new()
+        out.extend_iter(iter)
+        out
     }
 }
 

@@ -791,6 +791,9 @@ impl FnCx<'_> {
             if id.name == "Shared" && name.name == "new" {
                 return self.shared_new(args, span);
             }
+            if (id.name == "List" || id.name == "Map") && name.name == "from" {
+                return self.untyped_collection_from(&id.name, name, args, expect, span);
+            }
         }
         // `CPtr.null()`, typed by the expected type.
         if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
@@ -804,20 +807,20 @@ impl FnCx<'_> {
         }
         if let Some(path) = self.type_path(recv) {
             return match path {
-                PathTy::Ty(ty) => self.assoc_call(&ty, name, args, span),
+                PathTy::Ty(ty) => self.assoc_call(&ty, name, args, span, expect),
                 PathTy::Template(g) => self.assoc_call_template(g, name, args, expect, span),
             };
         }
         // A module-qualified type: `sh.Square.new()`.
         if let Some(ty) = self.qualified_type(recv) {
-            return self.assoc_call(&ty, name, args, span);
+            return self.assoc_call(&ty, name, args, span, expect);
         }
         // A module-qualified function: `math.add(...)`, `sh.area(...)`.
         if let Some((target, item)) = self.module_member(recv, name) {
             return self.module_call(target, &item, args, span, expect);
         }
         let recv = self.expr(recv, None);
-        self.method_call_on(recv, name, args, span)
+        self.method_call_on(recv, name, args, span, expect)
     }
 
     /// `recv.name(args)` for a receiver that is already checked.
@@ -827,6 +830,7 @@ impl FnCx<'_> {
         name: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
+        expect: Option<&Ty>,
     ) -> tir::Expr {
         if recv.ty == Ty::Error {
             return self.args_then_error(args, span);
@@ -851,7 +855,7 @@ impl FnCx<'_> {
             return self.any_method_call(recv, &any, name, args, span);
         }
         if let Ty::Param(_) = recv.ty {
-            return self.param_method_call(recv, name, args, span);
+            return self.param_method_call(recv, name, args, span, expect);
         }
         if let Some(key) = adt_key(&recv.ty)
             && let Some(&f) = self.globals.methods.get(&(key, name.name.clone()))
@@ -860,7 +864,7 @@ impl FnCx<'_> {
             self.check_unsafe_call(f, &name.name, name.span);
             // A method with its own type parameters is instantiated for the arguments this call infers.
             if let Some(info) = self.globals.method_templates.get(&f).cloned() {
-                return self.generic_method_call(info, recv, &name.name, args, span);
+                return self.generic_method_call(info, recv, &name.name, args, span, expect);
             }
             let sig = &self.globals.sigs[f.0];
             if !sig.has_self {
@@ -912,7 +916,7 @@ impl FnCx<'_> {
             return e;
         }
         // The iteration protocol: `next`, `sum`, the eager `List` helpers, and the `Iterator` default methods.
-        if let Some(e) = self.iterator_method(recv.clone(), name, args, span) {
+        if let Some(e) = self.iterator_method(recv.clone(), name, args, span, expect) {
             return e;
         }
         // `res.context(message)` is compiler-known on `Result` (`spec/errors.md`, ERR6).
@@ -1305,7 +1309,14 @@ impl FnCx<'_> {
     }
 
     /// `Type.function(...)`, `Enum.Variant(...)`, and the built-in types' associated functions.
-    pub(super) fn assoc_call(&mut self, ty: &Ty, name: &ast::Ident, args: &[ast::Arg], span: Span) -> tir::Expr {
+    pub(super) fn assoc_call(
+        &mut self,
+        ty: &Ty,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
         // The type already failed to resolve; do not report a second error for its associated items.
         if *ty == Ty::Error {
             for a in args {
@@ -1314,7 +1325,11 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         if let Ty::Param(_) = ty {
-            return self.param_assoc_call(ty, name, args, span);
+            return self.param_assoc_call(ty, name, args, span, expect);
+        }
+        // `from_iter` of the built-in collections and `from` of a `List` or `Map` (`spec/iterators.md`, IT13).
+        if let Some(call) = self.builtin_collection_call(ty, name, args, span) {
+            return call;
         }
         // `Type.size()` and `Type.align()`: the C layout of a type, for `repr(C)` size assertions (issue #490).
         if matches!(name.name.as_str(), "size" | "align") && args.is_empty() {
@@ -1489,6 +1504,12 @@ impl FnCx<'_> {
             self.check_member_access(ty, key, name);
         }
         self.check_unsafe_call(f, &name.name, name.span);
+        // An associated function with type parameters of its own is instantiated for the arguments of this call.
+        if let Some(info) = self.globals.method_templates.get(&f).cloned()
+            && !self.globals.sigs[f.0].has_self
+        {
+            return self.generic_assoc_method_call(info, &name.name, args, None, span, expect);
+        }
         let sig = &self.globals.sigs[f.0];
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
         let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };

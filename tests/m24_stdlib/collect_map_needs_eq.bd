@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A map key needs `==`, so a map of a type without it is not a `FromIterator` target and `Map.from` rejects such
+// keys (IT15, IT18).
+
+struct Plain {
+    id: i32
+}
+
+fn main() {
+    let a = Map.from([(Plain { id: 1 }, 1)]) //~ E0141
+    let b: Map<Plain, i32> = [1].into_iter().map(|n| (Plain { id: n }, n)).collect() //~ E0141
+    println("{a.len()} {b.len()}")
+}

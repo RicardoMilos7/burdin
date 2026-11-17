@@ -445,7 +445,7 @@ impl FnCx<'_> {
             _ => {
                 let method = if debug { "debug" } else { "fmt" };
                 let mut_arg = mut_name_arg(f_name, span);
-                self.method_call_on(e, &ident(method, span), &[mut_arg], span)
+                self.method_call_on(e, &ident(method, span), &[mut_arg], span, None)
             }
         }
     }

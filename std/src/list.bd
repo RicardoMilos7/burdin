@@ -5,6 +5,8 @@
 // `find`, ...) win. Each one moves elements with `pop`/`push`, so an element is never cloned and a `List` of
 // non-`Copy` values works.
 
+use alloc.Allocator
+use iter.Iterator
 use mem
 
 /// A list holding `list`'s elements in the opposite order.
@@ -109,6 +111,17 @@ fn List<T>.extend(mut self, own other: List<T>) {
     let mut items = __reversed(other)
     loop {
         match items.pop() {
+            Some(x) => self.push(x),
+            None => break,
+        }
+    }
+}
+
+/// Appends every item `iter` yields to the end of the list, in order: `list.extend_iter(set.into_iter())`.
+fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, own iter: I) where A: Allocator {
+    let mut iter = iter
+    loop {
+        match iter.next() {
             Some(x) => self.push(x),
             None => break,
         }

@@ -364,6 +364,13 @@ interface Iterator<T> {
         }
     }
 
+    /// Collects the remaining items into the collection the context asks for: `let names: Set<String> =
+    /// it.collect()`. The target type comes from the expected type (the annotation, the parameter, or the return
+    /// type), and any type that implements `FromIterator<T>` can be a target (spec/iterators.md, IT13).
+    fn collect<C: FromIterator<T>>(own self): C {
+        C.from_iter(self)
+    }
+
     /// Collects the remaining items into a list. A chain over borrowed items produces a second-class list of
     /// views, which cannot be stored; clone the items first to get an owned list.
     fn to_list(mut self): List<T> {
@@ -395,6 +402,13 @@ priv fn __accepts<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
 
 /// A collection that `for` can iterate through `iter(self)`.
 interface Iterable<T> {
+}
+
+/// A type that can be built from the items of an iterator. `Iterator.collect` calls `from_iter`; the built-in
+/// `List`, `Map`, `String`, `Option`, and `Result` implement it in the compiler (spec/iterators.md, IT13).
+interface FromIterator<T> {
+    /// Builds the collection from every item `iter` yields, in order.
+    fn from_iter<I: Iterator<T>>(own iter: I): Self
 }
 
 /// The lazy `map` chain: `inner` and the closure.
@@ -725,4 +739,163 @@ priv fn __list_find<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Opti
         }
     }
     None
+}
+
+// The `FromIterator` implementations of the built-in collections (spec/iterators.md, IT13). The compiler resolves
+// `List<T>.from_iter(it)`, `Map<K, V>.from_iter(it)`, `String.from_iter(it)`, `Option<C>.from_iter(it)`, and
+// `Result<C, E>.from_iter(it)` to these functions, and `List<T>.from(array)` and `Map<K, V>.from(array)` to the
+// `__list_from` and `__map_from` pair at the end.
+
+/// `List<T>.from_iter(it)`: every item, in order.
+priv fn __list_from_iter<T, I: Iterator<T>>(own iter: I): List<T> {
+    let mut it = iter
+    let mut out = List<T>.new()
+    loop {
+        match it.next() {
+            Some(x) => {
+                out.push(x)
+            }
+            None => {
+                return out
+            }
+        }
+    }
+}
+
+/// `Map<K, V>.from_iter(it)`: a pair whose key is already there replaces the earlier value, like `insert`.
+priv fn __map_from_iter<K: Eq, V, I: Iterator<(K, V)>>(own iter: I): Map<K, V> {
+    let mut it = iter
+    let mut out = Map<K, V>.new()
+    loop {
+        match it.next() {
+            Some((k, v)) => {
+                out.insert(k, v)
+            }
+            None => {
+                return out
+            }
+        }
+    }
+}
+
+/// `String.from_iter(it)` over `char` items.
+priv fn __string_from_chars<I: Iterator<char>>(own iter: I): String {
+    let mut it = iter
+    let mut out = String.new()
+    loop {
+        match it.next() {
+            Some(c) => {
+                out.push(c)
+            }
+            None => {
+                return out
+            }
+        }
+    }
+}
+
+/// `String.from_iter(it)` over `str` items.
+priv fn __string_from_strs<I: Iterator<str>>(own iter: I): String {
+    let mut it = iter
+    let mut out = String.new()
+    loop {
+        match it.next() {
+            Some(s) => {
+                out.push_str(s)
+            }
+            None => {
+                return out
+            }
+        }
+    }
+}
+
+/// `String.from_iter(it)` over `String` items, which are consumed.
+priv fn __string_from_strings<I: Iterator<String>>(own iter: I): String {
+    let mut it = iter
+    let mut out = String.new()
+    loop {
+        match it.next() {
+            Some(s) => {
+                out.push_str(s)
+            }
+            None => {
+                return out
+            }
+        }
+    }
+}
+
+/// `String.from_iter(it)` over views of `String` items.
+priv fn __string_from_string_views<I: Iterator<&String>>(own iter: I): String {
+    let mut it = iter
+    let mut out = String.new()
+    loop {
+        match it.next() {
+            Some(s) => {
+                out.push_str(*s)
+            }
+            None => {
+                return out
+            }
+        }
+    }
+}
+
+/// `Option<C>.from_iter(it)`: `Some` of the collected items, or `None` at the first `None` item, which stops the
+/// iterator there. The items are gathered in a list first, so the target is built only when every item is `Some`.
+priv fn __option_from_iter<T, C: FromIterator<T>, I: Iterator<Option<T>>>(own iter: I): Option<C> {
+    let mut it = iter
+    let mut items = List<T>.new()
+    loop {
+        match it.next() {
+            Some(item) => {
+                match item {
+                    Some(x) => {
+                        items.push(x)
+                    }
+                    None => {
+                        return None
+                    }
+                }
+            }
+            None => {
+                return Some(C.from_iter(items.into_iter()))
+            }
+        }
+    }
+}
+
+/// `Result<C, E>.from_iter(it)`: `Ok` of the collected items, or the first `Err` item, which stops the iterator
+/// there. The items are gathered in a list first, so the target is built only when every item is `Ok`.
+priv fn __result_from_iter<T, E, C: FromIterator<T>, I: Iterator<Result<T, E>>>(own iter: I): Result<C, E> {
+    let mut it = iter
+    let mut items = List<T>.new()
+    loop {
+        match it.next() {
+            Some(item) => {
+                match item {
+                    Ok(x) => {
+                        items.push(x)
+                    }
+                    Err(e) => {
+                        return Err(e)
+                    }
+                }
+            }
+            None => {
+                return Ok(C.from_iter(items.into_iter()))
+            }
+        }
+    }
+}
+
+/// `List<T>.from([a, b, c])`: the elements of an array.
+priv fn __list_from<T, const N: usize>(own items: [T; N]): List<T> {
+    __list_from_iter(items.into_iter())
+}
+
+/// `Map<K, V>.from([(k, v), ...])`: the pairs of an array, a later pair replacing an earlier one with the same key.
+priv fn __map_from<K: Eq, V, const N: usize>(own items: [(K, V); N]): Map<K, V> {
+    __map_from_iter(items.into_iter())
 }

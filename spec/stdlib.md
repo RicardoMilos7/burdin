@@ -545,6 +545,7 @@ struct Set<T: Eq, A: Allocator = Global> {
     fn new(): Set<T>                               // only when A is `Global`
     fn new_in(own alloc: A): Set<T, A>
     fn from_list(own items: List<T>): Set<T>       // a repeated element is stored once
+    fn from<const N: usize>(own items: [T; N]): Set<T>   // from an array (issue #708)
     fn len(self): usize
     fn is_empty(self): bool
     fn contains(self, value: T): bool
@@ -552,6 +553,7 @@ struct Set<T: Eq, A: Allocator = Global> {
     fn remove(mut self, value: T): bool
     fn clear(mut self)
     fn extend(mut self, own items: List<T>)
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I)   // issue #708
     fn into_list(own self): List<T>                // consumes the set, in no particular order
     fn iter(self): SetIter<MapEntries<T, bool>, T> // yields &T; `for x in set` borrows the set
 }
@@ -569,8 +571,8 @@ fn is_superset(self, other: Set<T>): bool
 fn is_disjoint(self, other: Set<T>): bool
 ```
 
-`Set<T>` implements `PartialEq` (same elements, regardless of order), `Debug` (`{1, 2, 3}`, in iteration order), and
-`Iterable<&T>`. `MapEntries<K, V>` is the nameable type of the iterator `map.iter()` returns, added so a library type
+`Set<T>` implements `PartialEq` (same elements, regardless of order), `Debug` (`{1, 2, 3}`, in iteration order),
+`Iterable<&T>`, and, for the default allocator, `FromIterator<T>` (issue #708). `MapEntries<K, V>` is the nameable type of the iterator `map.iter()` returns, added so a library type
 can wrap it. Operations that copy elements need `Clone`; they return a set that uses the default allocator.
 
 Tests: `m24_stdlib/set_basic`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_needs_eq`.
@@ -587,6 +589,7 @@ allocator.
 struct Deque<T> {
     fn new(): Deque<T>
     fn from_list(own items: List<T>): Deque<T>
+    fn from<const N: usize>(own items: [T; N]): Deque<T>      // from an array (issue #708)
     fn len(self): usize
     fn is_empty(self): bool
     fn push_front(mut self, own value: T)
@@ -598,6 +601,7 @@ struct Deque<T> {
     fn get(self, i: usize): Option<&T>
     fn clear(mut self)
     fn extend(mut self, own items: List<T>)        // at the back, in order
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I)   // at the back, in order (issue #708)
     fn into_list(own self): List<T>                 // front to back
     fn iter(self): DequeIter<&Deque<T>, T>          // yields &T from the front to the back
     fn clone(self): Deque<T>                        // T: Clone
@@ -624,10 +628,12 @@ pushed. The element type only needs an `Ord` bound, which a type with a `Partial
 struct PriorityHeap<T: Ord> {
     fn new(): PriorityHeap<T>
     fn from_list(own items: List<T>): PriorityHeap<T>
+    fn from<const N: usize>(own items: [T; N]): PriorityHeap<T>   // from an array (issue #708)
     fn len(self): usize
     fn is_empty(self): bool
     fn push(mut self, own value: T)
     fn extend(mut self, own items: List<T>)
+    fn extend_iter<I: Iterator<T>>(mut self, own iter: I)   // issue #708
     fn pop(mut self): Option<T>                       // the greatest element
     fn peek(self): Option<&T>
     fn clear(mut self)
@@ -803,7 +809,7 @@ stops after the upper endpoint without computing `upper + 1`, so it does not ove
 ## Iteration
 
 `std` declares `Iterator<T>` (`next`, plus the default methods `map`, `filter`, `take`, `skip`, `fold`, `count`,
-`any_item`, `all`, `find`, and `to_list`; and, from issue #706, `enumerate`, `take_while`, `skip_while`, `map_while`,
+`any_item`, `all`, `find`, `to_list`, and, from issue #708, `collect`; and, from issue #706, `enumerate`, `take_while`, `skip_while`, `map_while`,
 `step_by`, `inspect`, and `peekable`; and, from issue #707, `last`, `nth`, `position`, `for_each`, `reduce`,
 `partition`, `min_by`, `max_by`, `min_by_key`, and `max_by_key`) and the marker `Iterable<T>`. The compiler implements both for arrays,
 slices, `List`, `Map`, `Chars`, and ranges, and adds `sum` for iterators of integers; `std` declares the adapter
@@ -940,6 +946,7 @@ fn List<T>.rposition<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.reverse(mut self)
 fn List<T>.dedup(mut self) where T: Eq                      // removes consecutive duplicates
 fn List<T>.extend(mut self, own other: List<T>)             // moves the elements of `other`
+fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, iter: I) where A: Allocator   // issue #708
 fn List<T>.extend_from(mut self, other: List<T>) where T: Clone
 fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone
 fn List<T>.truncate(mut self, len: usize)
@@ -952,6 +959,47 @@ parameter, and views returned from an extension would dangle.
 
 Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops`,
 `list_swap_out_of_bounds`.
+
+## Collecting and extending (issue #708)
+
+`std.iter` declares `FromIterator<T>` and `Iterator<T>.collect`; every collection takes the items of an iterator with
+`extend_iter` and an array with `from`. The rules, with IDs, are `iterators.md` IT13-IT20, and the decisions are:
+
+- **Naming the target.** The language has no explicit type arguments on a member call, so `it.collect()` takes its
+  target from the **expected type**: `let s: Set<i32> = it.collect()`, a parameter, a return type, a field. With no
+  expected type it is E0003 ("cannot tell what `C` stands for"); a target that is not `FromIterator` for the items is
+  E0141. A type can also be named on the call itself, `Set<i32>.from_iter(it)`.
+- **The protocol.** `FromIterator<T>` has one method, `from_iter<I: Iterator<T>>(own iter: I): Self`. A user type
+  implements it (IT13); `Set`, `Deque`, and `PriorityHeap` do in `std`; `List`, `Map`, `String`, `Option`, and
+  `Result` do in the compiler (IT15, IT16).
+- **Allocators.** `collect` and `from_iter` build with the default allocator; for another allocator make the container
+  with `new_in` and call `extend_iter` (IT19). There is no `collect_in`.
+- **Extending.** `extend_iter` takes any `Iterator<T>`; the older `extend(own List<T>)` is unchanged (IT17).
+
+```
+interface FromIterator<T> { fn from_iter<I: Iterator<T>>(own iter: I): Self }
+fn Iterator<T>.collect<C: FromIterator<T>>(own self): C
+
+List<T>.from_iter(it)       Map<K, V>.from_iter(it)       String.from_iter(it)
+Option<C>.from_iter(it)     Result<C, E>.from_iter(it)    Set<T>.from_iter(it)
+Deque<T>.from_iter(it)      PriorityHeap<T>.from_iter(it)
+
+List<T>.from(array)         Map<K, V>.from(array of pairs)      // also `List.from(...)` and `Map.from(...)`
+Set<T>.from(array)          Deque<T>.from(array)                PriorityHeap<T>.from(array)
+
+fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, iter: I)
+fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, iter: I) where K: Eq
+fn String.extend_iter<I: Iterator<char>>(mut self, iter: I)
+Set<T, A>.extend_iter    Deque<T>.extend_iter    PriorityHeap<T>.extend_iter     // iter: I where I: Iterator<T>
+```
+
+`String.from_iter` accepts items of `char`, `str`, `String`, and `&String`; `String.extend_iter` takes `char` items, because
+an extension cannot pick its body by item type. A `Map` built from pairs keeps the last value of a repeated key.
+
+Tests: `m24_stdlib/collect_basic`, `collect_adapters`, `collect_result_option`, `collect_drops`, `collect_user_type`,
+`collect_allocator`, `collect_comptime`, `collect_views`, `extend_iter`, `from_array`, and the compile-fail cases
+`collect_needs_target` (E0003), `collect_not_from_iterator` (E0141), `collect_allocator_target` (E0272, E0141),
+`collect_map_needs_eq` (E0141), `collect_view_target` (E0141), and `from_array_view_key` (E0120).
 
 ## Errors
 
