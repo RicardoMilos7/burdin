@@ -219,6 +219,9 @@ impl<'t> Sema<'t> {
         if iterator && (spelled == "next" || spelled == "sum") {
             return true;
         }
+        if iterator && self.globals.iterator_adapter_fn(spelled).is_some() {
+            return true;
+        }
         if iterator
             && let Some(iface) = self.globals.iterator_iface
             && self.globals.interfaces[iface].methods.iter().any(|m| m.name == spelled)

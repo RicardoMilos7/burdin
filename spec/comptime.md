@@ -152,7 +152,10 @@ note at the operation:
   `Write` default built on it) and `flush`;
 - input: the `Stdin` handle's `read`, `read_until`, `read_line`, and `read_to_string` (and so every `Read` and
   `BufRead` default built on them), and `is_terminal` on any stream handle;
-- files, the environment, and processes: `read_to_string`, `write_file`, `env.args`, `process.exit`, `process.run`;
+- files, the environment, and processes: `read_to_string`, `write_file`, `env.args`, `env.get`/`env.get_bytes`,
+  `env.current_dir`/`env.current_dir_bytes`, `env.set`/`env.set_bytes`/`env.remove`, `env.set_current_dir` and its
+  byte form, `process.exit`, `process.run`, and `Command.spawn`/`Command.status`/`Command.output`, a `Child`'s
+  `stdin`/`stdout`/`stderr`, `Child.wait`, and `Child.wait_with_output` (`stdlib.md`, "Child processes");
 - C: calling an `extern` function, `CPtr` values and dereferences, `CString`, and `CStr.to_string`.
 
 The check is dynamic: a function that prints can be called at compile time as long as the path taken does not print.

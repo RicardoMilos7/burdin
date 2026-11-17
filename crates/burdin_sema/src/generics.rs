@@ -930,7 +930,7 @@ impl Globals {
                         let params = sig.params.iter().map(|p| self.subst_param(p, &subst)).collect();
                         let ret = self.subst_ty(&sig.ret, &subst);
                         return Some((
-                            Signature { params, ret, has_self: sig.has_self, ret_origin: None },
+                            Signature { params, ret, has_self: sig.has_self, ret_origins: Vec::new() },
                             sig.has_self,
                             m.is_unsafe,
                         ));

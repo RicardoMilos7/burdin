@@ -390,7 +390,7 @@ pub(crate) fn fn_signature(
         }
     }
     let ret = f.ret.as_ref().map(|t| globals.resolve_type_in(t, self_ty, subst, module, diags)).unwrap_or(Ty::Unit);
-    Signature { params, ret, has_self, ret_origin: None }
+    Signature { params, ret, has_self, ret_origins: Vec::new() }
 }
 
 /// The signature of an `extern "C"` function: every parameter is passed by value, and only C-compatible types may
@@ -441,7 +441,7 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
     if ret != Ty::Unit && ret != Ty::Error && !is_c_abi_value(&ret) {
         diags.error(Code::C_ABI, f.name.span, c_abi_rejection(&ret, "returned by a C function"));
     }
-    Signature { params, ret, has_self: false, ret_origin: None }
+    Signature { params, ret, has_self: false, ret_origins: Vec::new() }
 }
 
 /// Whether a type has the same representation in Burdin and in C: integers, floats, and raw pointers. A Burdin

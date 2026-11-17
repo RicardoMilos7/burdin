@@ -251,6 +251,28 @@ pub(crate) struct Runtime<'ctx> {
     pub canonicalize: FunctionValue<'ctx>,
     /// `(out: *List<String>)`: the process arguments, program name first.
     pub args: FunctionValue<'ctx>,
+    /// `(out: *List<String>)`: every environment entry as `NAME=VALUE`, in the order the system reports them.
+    pub env_list: FunctionValue<'ctx>,
+    /// `(program, program_len, args, args_len, env, env_len, cwd, cwd_len, command_line, command_line_len,
+    /// stdin, stdout, stderr, out: *[i64; 5]) -> i32`: starts a child without a shell. The tuple is
+    /// `(pid, process, stdin, stdout, stderr)`; `process` is the Windows process handle and 0 on Unix, and each
+    /// pipe handle is 0 when the stream is not piped.
+    pub process_spawn: FunctionValue<'ctx>,
+    /// `(pid: i32, process: usize) -> i64`: the exit code, `-1` for a failure to wait, or `-(signal + 1)`.
+    pub process_wait: FunctionValue<'ctx>,
+    /// `(process: usize)`: releases the Windows process handle; a no-op on Unix.
+    pub process_close: FunctionValue<'ctx>,
+    /// `(handle: usize, out: *String) -> i32`: every byte left in the pipe; 0 on success and -1 on failure.
+    pub pipe_read_to_string: FunctionValue<'ctx>,
+    /// `(handle: usize, out: *String) -> i32`: one line without its terminator; 0 for a line, 1 for the end with
+    /// nothing read, and -1 for a failure.
+    pub pipe_read_line: FunctionValue<'ctx>,
+    /// `(first: usize, second: usize, out: *[String; 2]) -> i32`: both pipes read to the end in one pass.
+    pub pipe_read_both: FunctionValue<'ctx>,
+    /// `(handle: usize, ptr, len: usize) -> i32`: writes every byte; 0 on success and -1 on failure.
+    pub pipe_write: FunctionValue<'ctx>,
+    /// `(handle: usize)`: closes a pipe end; a no-op for handle 0.
+    pub pipe_close: FunctionValue<'ctx>,
     /// `(name, name_len, out: *List<u8>) -> i32`: the raw bytes of an environment variable; 1 when found.
     pub env_get: FunctionValue<'ctx>,
     /// `(name, name_len, value, value_len) -> i32`: 0 on success, 1 for an invalid name, 2 for an invalid value,
@@ -616,6 +638,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             metadata: self.metadata()?,
             canonicalize: self.canonicalize(&h)?,
             args: self.args(argc.as_pointer_value(), argv.as_pointer_value(), alloc_string)?,
+            env_list: self.env_list(alloc_string)?,
+            process_spawn: self.process_spawn()?,
+            process_wait: self.process_wait()?,
+            process_close: self.process_close()?,
+            pipe_read_to_string: self.pipe_read_to_string(string_push_str)?,
+            pipe_read_line: self.pipe_read_line(string_push_str)?,
+            pipe_read_both: self.pipe_read_both(string_push_str)?,
+            pipe_write: self.pipe_write()?,
+            pipe_close: self.pipe_close()?,
             env_get: self.env_get()?,
             env_set: self.env_set()?,
             env_remove: self.env_remove()?,
@@ -3770,7 +3801,2062 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    // ----- environment and working directory -------------------------------------------
+    // ----- child processes and pipes ---------------------------------------------------
+
+    /// `env_list(out: *List<String>)`: every environment entry as `NAME=VALUE`.
+    fn env_list(&mut self, alloc_string: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_env_list", void.fn_type(&[ptr_ty.into()], false));
+        let out = Self::ptr_param(f, 0);
+        let word = u64::from(self.usize_ty.get_bit_width() / 8);
+        let elem_size = 3 * word;
+        if self.windows {
+            let get = libc(self.module, "GetEnvironmentStringsW", ptr_ty.fn_type(&[], false));
+            let release = libc(self.module, "FreeEnvironmentStringsW", i32_ty.fn_type(&[ptr_ty.into()], false));
+            let wcslen = libc(self.module, "wcslen", usize_ty.fn_type(&[ptr_ty.into()], false));
+            let free = libc(self.module, "free", void.fn_type(&[ptr_ty.into()], false));
+            let block = self.call(get, &[])?.expect("GetEnvironmentStringsW returns a block").into_pointer_value();
+            let cursor = self.b.build_alloca(ptr_ty, "env.cursor").map_err(llvm_err)?;
+            self.b.build_store(cursor, block).map_err(llvm_err)?;
+            let count = self.b.build_alloca(usize_ty, "env.count").map_err(llvm_err)?;
+            self.b.build_store(count, usize_ty.const_zero()).map_err(llvm_err)?;
+            let head = self.block(f, "env.count.head");
+            let body = self.block(f, "env.count.body");
+            let counted = self.block(f, "env.count.done");
+            self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+            self.b.position_at_end(head);
+            let c = self.b.build_load(ptr_ty, cursor, "").map_err(llvm_err)?.into_pointer_value();
+            let first = self.b.build_load(self.cx.i16_type(), c, "first").map_err(llvm_err)?.into_int_value();
+            let end = self
+                .b
+                .build_int_compare(IntPredicate::EQ, first, self.cx.i16_type().const_zero(), "")
+                .map_err(llvm_err)?;
+            self.b.build_conditional_branch(end, counted, body).map_err(llvm_err)?;
+            self.b.position_at_end(body);
+            let units = self.call(wcslen, &[c.into()])?.expect("wcslen returns a length").into_int_value();
+            let next_units = self.b.build_int_add(units, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+            let step = self.b.build_int_mul(next_units, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+            let next = self.offset(c, step)?;
+            self.b.build_store(cursor, next).map_err(llvm_err)?;
+            let n = self.b.build_load(usize_ty, count, "").map_err(llvm_err)?.into_int_value();
+            let n2 = self.b.build_int_add(n, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+            self.b.build_store(count, n2).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+
+            self.b.position_at_end(counted);
+            let capacity = self.b.build_load(usize_ty, count, "").map_err(llvm_err)?.into_int_value();
+            let elems = self.max_usize(capacity, usize_ty.const_int(1, false))?;
+            let bytes = self.b.build_int_mul(elems, usize_ty.const_int(elem_size, false), "").map_err(llvm_err)?;
+            let base = self.call_rt_alloc(bytes)?;
+            self.b.build_store(cursor, block).map_err(llvm_err)?;
+            let placed = self.b.build_alloca(usize_ty, "env.placed").map_err(llvm_err)?;
+            self.b.build_store(placed, usize_ty.const_zero()).map_err(llvm_err)?;
+            let fill = self.block(f, "env.fill.head");
+            let fill_body = self.block(f, "env.fill.body");
+            let copy = self.block(f, "env.fill.copy");
+            let skip = self.block(f, "env.fill.skip");
+            let filled = self.block(f, "env.fill.done");
+            self.b.build_unconditional_branch(fill).map_err(llvm_err)?;
+            self.b.position_at_end(fill);
+            let c = self.b.build_load(ptr_ty, cursor, "").map_err(llvm_err)?.into_pointer_value();
+            let first = self.b.build_load(self.cx.i16_type(), c, "first").map_err(llvm_err)?.into_int_value();
+            let end = self
+                .b
+                .build_int_compare(IntPredicate::EQ, first, self.cx.i16_type().const_zero(), "")
+                .map_err(llvm_err)?;
+            self.b.build_conditional_branch(end, filled, fill_body).map_err(llvm_err)?;
+            self.b.position_at_end(fill_body);
+            let units = self.call(wcslen, &[c.into()])?.expect("wcslen returns a length").into_int_value();
+            let byte_len = self.b.build_alloca(usize_ty, "env.bytes").map_err(llvm_err)?;
+            let data = self.wide_to_utf8(c, units, byte_len)?;
+            let null = self.b.build_is_null(data, "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(null, skip, copy).map_err(llvm_err)?;
+            self.b.position_at_end(copy);
+            let i = self.b.build_load(usize_ty, placed, "").map_err(llvm_err)?.into_int_value();
+            let elem =
+                unsafe { self.b.build_in_bounds_gep(self.string_ty, base, &[i], "env.elem") }.map_err(llvm_err)?;
+            let len = self.b.build_load(usize_ty, byte_len, "").map_err(llvm_err)?.into_int_value();
+            self.call(alloc_string, &[elem.into(), data.into(), len.into()])?;
+            self.call(free, &[data.into()])?;
+            let i2 = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+            self.b.build_store(placed, i2).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(skip).map_err(llvm_err)?;
+            self.b.position_at_end(skip);
+            let c = self.b.build_load(ptr_ty, cursor, "").map_err(llvm_err)?.into_pointer_value();
+            let units = self.call(wcslen, &[c.into()])?.expect("wcslen returns a length").into_int_value();
+            let next_units = self.b.build_int_add(units, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+            let step = self.b.build_int_mul(next_units, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+            let next = self.offset(c, step)?;
+            self.b.build_store(cursor, next).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(fill).map_err(llvm_err)?;
+            self.b.position_at_end(filled);
+            self.call(release, &[block.into()])?;
+            let len = self.b.build_load(usize_ty, placed, "").map_err(llvm_err)?.into_int_value();
+            self.store_string_list(out, base, len, elems)?;
+            self.b.build_return(None).map_err(llvm_err)?;
+            return Ok(f);
+        }
+
+        let environ = self.environ_global();
+        let entries = self.b.build_load(ptr_ty, environ, "environ").map_err(llvm_err)?.into_pointer_value();
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let index = self.b.build_alloca(usize_ty, "env.i").map_err(llvm_err)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let count = self.b.build_alloca(usize_ty, "env.count").map_err(llvm_err)?;
+        self.b.build_store(count, usize_ty.const_zero()).map_err(llvm_err)?;
+        let head = self.block(f, "env.count.head");
+        let body = self.block(f, "env.count.body");
+        let counted = self.block(f, "env.count.done");
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+        self.b.position_at_end(head);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, entries, &[i], "env.slot") }.map_err(llvm_err)?;
+        let entry = self.b.build_load(ptr_ty, slot, "").map_err(llvm_err)?.into_pointer_value();
+        let end = self.b.build_is_null(entry, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(end, counted, body).map_err(llvm_err)?;
+        self.b.position_at_end(body);
+        let i2 = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, i2).map_err(llvm_err)?;
+        let n = self.b.build_load(usize_ty, count, "").map_err(llvm_err)?.into_int_value();
+        let n2 = self.b.build_int_add(n, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(count, n2).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+
+        self.b.position_at_end(counted);
+        let capacity = self.b.build_load(usize_ty, count, "").map_err(llvm_err)?.into_int_value();
+        let elems = self.max_usize(capacity, usize_ty.const_int(1, false))?;
+        let bytes = self.b.build_int_mul(elems, usize_ty.const_int(elem_size, false), "").map_err(llvm_err)?;
+        let base = self.call_rt_alloc(bytes)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let fill = self.block(f, "env.fill.head");
+        let fill_body = self.block(f, "env.fill.body");
+        let filled = self.block(f, "env.fill.done");
+        self.b.build_unconditional_branch(fill).map_err(llvm_err)?;
+        self.b.position_at_end(fill);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let in_range = self.b.build_int_compare(IntPredicate::ULT, i, capacity, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(in_range, fill_body, filled).map_err(llvm_err)?;
+        self.b.position_at_end(fill_body);
+        let slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, entries, &[i], "env.slot") }.map_err(llvm_err)?;
+        let entry = self.b.build_load(ptr_ty, slot, "").map_err(llvm_err)?.into_pointer_value();
+        let len = self.call(strlen, &[entry.into()])?.expect("strlen returns a length").into_int_value();
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, base, &[i], "env.elem") }.map_err(llvm_err)?;
+        self.call(alloc_string, &[elem.into(), entry.into(), len.into()])?;
+        let i2 = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, i2).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(fill).map_err(llvm_err)?;
+        self.b.position_at_end(filled);
+        self.store_string_list(out, base, capacity, elems)?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// The `environ` global: the process environment as a null-terminated array of C strings.
+    fn environ_global(&mut self) -> PointerValue<'ctx> {
+        self.module
+            .get_global("environ")
+            .unwrap_or_else(|| {
+                let g = self.module.add_global(self.ptr_ty, None, "environ");
+                g.set_linkage(Linkage::External);
+                g
+            })
+            .as_pointer_value()
+    }
+
+    /// Stores a `{ ptr, len, cap }` list header at `out`.
+    fn store_string_list(
+        &mut self,
+        out: PointerValue<'ctx>,
+        ptr: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+        cap: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let f0 = self.b.build_struct_gep(self.string_ty, out, 0, "").map_err(llvm_err)?;
+        let f1 = self.b.build_struct_gep(self.string_ty, out, 1, "").map_err(llvm_err)?;
+        let f2 = self.b.build_struct_gep(self.string_ty, out, 2, "").map_err(llvm_err)?;
+        self.b.build_store(f0, ptr).map_err(llvm_err)?;
+        self.b.build_store(f1, len).map_err(llvm_err)?;
+        self.b.build_store(f2, cap).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn max_usize(&self, a: IntValue<'ctx>, b: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let bigger = self.b.build_int_compare(IntPredicate::UGT, a, b, "").map_err(llvm_err)?;
+        self.b.build_select(bigger, a, b, "").map_err(llvm_err).map(|v| v.into_int_value())
+    }
+
+    /// Loads a condition from an `i8` slot. The runtime's own flags are bytes, not the compiler's `i1` drop
+    /// flags.
+    fn load_flag(&self, slot: PointerValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let byte = self.b.build_load(self.i8(), slot, "").map_err(llvm_err)?.into_int_value();
+        self.b.build_int_compare(IntPredicate::NE, byte, self.i8().const_zero(), "").map_err(llvm_err)
+    }
+
+    /// A Win32 `BOOL` (an `i32` that is zero or not) as a branch condition.
+    fn truthy(&self, value: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let zero = value.get_type().const_zero();
+        self.b.build_int_compare(IntPredicate::NE, value, zero, "").map_err(llvm_err)
+    }
+
+    /// Whether any argument or environment entry in `list` contains a NUL byte.
+    fn any_nul(
+        &mut self,
+        list: PointerValue<'ctx>,
+        count: IntValue<'ctx>,
+        initial: IntValue<'ctx>,
+    ) -> GenResult<IntValue<'ctx>> {
+        let usize_ty = self.usize_ty;
+        let f = self.b.get_insert_block().and_then(|b| b.get_parent()).expect("positioned in a function");
+        let index = self.b.build_alloca(usize_ty, "nul.i").map_err(llvm_err)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let acc = self.b.build_alloca(self.i8(), "nul.acc").map_err(llvm_err)?;
+        let initial = self.b.build_int_z_extend(initial, self.i8(), "").map_err(llvm_err)?;
+        self.b.build_store(acc, initial).map_err(llvm_err)?;
+        let head = self.block(f, "nul.head");
+        let body = self.block(f, "nul.body");
+        let done = self.block(f, "nul.done");
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+        self.b.position_at_end(head);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let in_range = self.b.build_int_compare(IntPredicate::ULT, i, count, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(in_range, body, done).map_err(llvm_err)?;
+        self.b.position_at_end(body);
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, list, &[i], "nul.elem") }.map_err(llvm_err)?;
+        let ptr_field = self.b.build_struct_gep(self.string_ty, elem, 0, "").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, elem, 1, "").map_err(llvm_err)?;
+        let ptr = self.b.build_load(self.ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let found = self.has_byte(ptr, len, 0)?;
+        let prev = self.b.build_load(self.i8(), acc, "").map_err(llvm_err)?.into_int_value();
+        let found = self.b.build_int_z_extend(found, self.i8(), "").map_err(llvm_err)?;
+        let next = self.b.build_or(prev, found, "").map_err(llvm_err)?;
+        self.b.build_store(acc, next).map_err(llvm_err)?;
+        let i2 = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, i2).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        let result = self.b.build_load(self.i8(), acc, "nul.result").map_err(llvm_err)?.into_int_value();
+        self.b.build_int_compare(IntPredicate::NE, result, self.i8().const_zero(), "").map_err(llvm_err)
+    }
+
+    /// Frees a `malloc`ed array of C strings.
+    fn free_cstring_array(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        array: PointerValue<'ctx>,
+        count: IntValue<'ctx>,
+        free: FunctionValue<'ctx>,
+    ) -> GenResult<()> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let index = self.b.build_alloca(usize_ty, "free.i").map_err(llvm_err)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let head = self.block(f, "free.head");
+        let body = self.block(f, "free.body");
+        let done = self.block(f, "free.done");
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+        self.b.position_at_end(head);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let in_range = self.b.build_int_compare(IntPredicate::ULT, i, count, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(in_range, body, done).map_err(llvm_err)?;
+        self.b.position_at_end(body);
+        let slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, array, &[i], "free.slot") }.map_err(llvm_err)?;
+        let entry = self.b.build_load(ptr_ty, slot, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[entry.into()])?;
+        let i2 = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, i2).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        Ok(())
+    }
+
+    /// Frees `array` and its entries when the array was allocated (`slot` holds null otherwise).
+    fn free_cstring_array_if_present(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        slot: PointerValue<'ctx>,
+        count: IntValue<'ctx>,
+        free: FunctionValue<'ctx>,
+    ) -> GenResult<()> {
+        let array = self.b.build_load(self.ptr_ty, slot, "").map_err(llvm_err)?.into_pointer_value();
+        let null = self.b.build_is_null(array, "").map_err(llvm_err)?;
+        let go = self.block(f, "free.present");
+        let done = self.block(f, "free.present.done");
+        self.b.build_conditional_branch(null, done, go).map_err(llvm_err)?;
+        self.b.position_at_end(go);
+        self.free_cstring_array(f, array, count, free)?;
+        self.call(free, &[array.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        Ok(())
+    }
+
+    /// `process_spawn`: starts a child without a shell.
+    fn process_spawn(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let f = self.function(
+            "burdin_rt_process_spawn",
+            i32_ty.fn_type(
+                &[
+                    ptr_ty.into(),
+                    usize_ty.into(),
+                    ptr_ty.into(),
+                    usize_ty.into(),
+                    ptr_ty.into(),
+                    usize_ty.into(),
+                    ptr_ty.into(),
+                    usize_ty.into(),
+                    ptr_ty.into(),
+                    usize_ty.into(),
+                    i32_ty.into(),
+                    i32_ty.into(),
+                    i32_ty.into(),
+                    ptr_ty.into(),
+                ],
+                false,
+            ),
+        );
+        let program = Self::ptr_param(f, 0);
+        let program_len = Self::int_param(f, 1);
+        let args = Self::ptr_param(f, 2);
+        let args_len = Self::int_param(f, 3);
+        let env = Self::ptr_param(f, 4);
+        let env_len = Self::int_param(f, 5);
+        let cwd = Self::ptr_param(f, 6);
+        let cwd_len = Self::int_param(f, 7);
+        let cmdline = Self::ptr_param(f, 8);
+        let cmdline_len = Self::int_param(f, 9);
+        let stdin_mode = Self::int_param(f, 10);
+        let stdout_mode = Self::int_param(f, 11);
+        let stderr_mode = Self::int_param(f, 12);
+        let out = Self::ptr_param(f, 13);
+        // Output already written must reach the stream before the child writes to it.
+        if let Some(flush) = self.module.get_function("burdin_rt_flush") {
+            self.call(flush, &[])?;
+        }
+        let mut bad = self.has_byte(program, program_len, 0)?;
+        let other = self.has_byte(cwd, cwd_len, 0)?;
+        bad = self.b.build_or(bad, other, "").map_err(llvm_err)?;
+        let other = self.has_byte(cmdline, cmdline_len, 0)?;
+        bad = self.b.build_or(bad, other, "").map_err(llvm_err)?;
+        bad = self.any_nul(args, args_len, bad)?;
+        bad = self.any_nul(env, env_len, bad)?;
+        let reject = self.block(f, "spawn.reject");
+        let start = self.block(f, "spawn.start");
+        self.b.build_conditional_branch(bad, reject, start).map_err(llvm_err)?;
+        self.b.position_at_end(reject);
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        self.b.position_at_end(start);
+        if self.windows {
+            self.process_spawn_windows(
+                f,
+                program,
+                program_len,
+                args,
+                args_len,
+                env,
+                env_len,
+                cwd,
+                cwd_len,
+                cmdline,
+                cmdline_len,
+                stdin_mode,
+                stdout_mode,
+                stderr_mode,
+                out,
+            )?;
+        } else {
+            self.process_spawn_unix(
+                f,
+                program,
+                program_len,
+                args,
+                args_len,
+                env,
+                env_len,
+                cwd,
+                cwd_len,
+                stdin_mode,
+                stdout_mode,
+                stderr_mode,
+                out,
+            )?;
+        }
+        Ok(f)
+    }
+
+    /// `process_spawn` on Unix: pipes, `fork`, and `execvp`, with the child's environment replacing `environ`.
+    #[allow(clippy::too_many_arguments)]
+    fn process_spawn_unix(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        program: PointerValue<'ctx>,
+        program_len: IntValue<'ctx>,
+        args: PointerValue<'ctx>,
+        args_len: IntValue<'ctx>,
+        env: PointerValue<'ctx>,
+        env_len: IntValue<'ctx>,
+        cwd: PointerValue<'ctx>,
+        cwd_len: IntValue<'ctx>,
+        stdin_mode: IntValue<'ctx>,
+        stdout_mode: IntValue<'ctx>,
+        stderr_mode: IntValue<'ctx>,
+        out: PointerValue<'ctx>,
+    ) -> GenResult<()> {
+        let (usize_ty, ptr_ty, i32_ty, i64_ty, i8_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i64(), self.i8());
+        let void = self.cx.void_type();
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", void.fn_type(&[ptr_ty.into()], false));
+        let pipe = libc(self.module, "pipe", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let fork = libc(self.module, "fork", i32_ty.fn_type(&[], false));
+        let dup2 = libc(self.module, "dup2", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], false));
+        let close = libc(self.module, "close", i32_ty.fn_type(&[i32_ty.into()], false));
+        let open = libc(self.module, "open", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), i32_ty.into()], false));
+        let fcntl = libc(self.module, "fcntl", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into(), i32_ty.into()], false));
+        let chdir = libc(self.module, "chdir", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let execvp = libc(self.module, "execvp", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+        let quit = libc(self.module, "_exit", void.fn_type(&[i32_ty.into()], false));
+        self.mark_noreturn(quit);
+        let read = libc(self.module, "read", usize_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let waitpid =
+            libc(self.module, "waitpid", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), i32_ty.into()], false));
+
+        let fail = self.block(f, "spawn.fail");
+        let argv_slot = self.b.build_alloca(ptr_ty, "argv.slot").map_err(llvm_err)?;
+        self.b.build_store(argv_slot, ptr_ty.const_null()).map_err(llvm_err)?;
+        let envp_slot = self.b.build_alloca(ptr_ty, "envp.slot").map_err(llvm_err)?;
+        self.b.build_store(envp_slot, ptr_ty.const_null()).map_err(llvm_err)?;
+        let cwd_slot = self.b.build_alloca(ptr_ty, "cwd.slot").map_err(llvm_err)?;
+        self.b.build_store(cwd_slot, ptr_ty.const_null()).map_err(llvm_err)?;
+        let fds = self.b.build_alloca(i32_ty.array_type(2), "pipe.fds").map_err(llvm_err)?;
+        let err_pipe = self.b.build_alloca(i32_ty.array_type(2), "err.fds").map_err(llvm_err)?;
+        let minus_one = i32_ty.const_all_ones();
+        let slot_i32 = |cg: &mut Self, n: &str| -> GenResult<PointerValue<'ctx>> {
+            let p = cg.b.build_alloca(i32_ty, n).map_err(llvm_err)?;
+            cg.b.build_store(p, minus_one).map_err(llvm_err)?;
+            Ok(p)
+        };
+        let in_read = slot_i32(self, "in.read")?;
+        let in_write = slot_i32(self, "in.write")?;
+        let out_read = slot_i32(self, "out.read")?;
+        let out_write = slot_i32(self, "out.write")?;
+        let err_read = slot_i32(self, "err.read")?;
+        let err_write = slot_i32(self, "err.write")?;
+        let devnull = slot_i32(self, "devnull")?;
+        let report_read = slot_i32(self, "report.read")?;
+        let report_write = slot_i32(self, "report.write")?;
+        let load_i32 = |cg: &mut Self, slot: PointerValue<'ctx>| -> GenResult<IntValue<'ctx>> {
+            Ok(cg.b.build_load(i32_ty, slot, "").map_err(llvm_err)?.into_int_value())
+        };
+        let store_i32 = |cg: &mut Self, slot: PointerValue<'ctx>, value: IntValue<'ctx>| -> GenResult<()> {
+            cg.b.build_store(slot, value).map_err(llvm_err)?;
+            Ok(())
+        };
+
+        // argv: the program, the arguments, and a null terminator.
+        let argc = self.b.build_int_add(args_len, usize_ty.const_int(1, false), "argc").map_err(llvm_err)?;
+        let argv_words = self.b.build_int_add(argc, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let argv_bytes = self.b.build_int_mul(argv_words, usize_ty.const_int(8, false), "").map_err(llvm_err)?;
+        let argv = self.call(malloc, &[argv_bytes.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        self.b.build_store(argv_slot, argv).map_err(llvm_err)?;
+        let program_c = self.cstring_of(program, program_len, malloc)?;
+        let first_slot =
+            unsafe { self.b.build_in_bounds_gep(ptr_ty, argv, &[usize_ty.const_zero()], "") }.map_err(llvm_err)?;
+        self.b.build_store(first_slot, program_c).map_err(llvm_err)?;
+        let index = self.b.build_alloca(usize_ty, "argv.i").map_err(llvm_err)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let args_head = self.block(f, "argv.head");
+        let args_body = self.block(f, "argv.body");
+        let args_done = self.block(f, "argv.done");
+        self.b.build_unconditional_branch(args_head).map_err(llvm_err)?;
+        self.b.position_at_end(args_head);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let in_range = self.b.build_int_compare(IntPredicate::ULT, i, args_len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(in_range, args_body, args_done).map_err(llvm_err)?;
+        self.b.position_at_end(args_body);
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, args, &[i], "arg.elem") }.map_err(llvm_err)?;
+        let arg_ptr_field = self.b.build_struct_gep(self.string_ty, elem, 0, "").map_err(llvm_err)?;
+        let arg_len_field = self.b.build_struct_gep(self.string_ty, elem, 1, "").map_err(llvm_err)?;
+        let arg_ptr = self.b.build_load(ptr_ty, arg_ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let arg_len = self.b.build_load(usize_ty, arg_len_field, "").map_err(llvm_err)?.into_int_value();
+        let arg_c = self.cstring_of(arg_ptr, arg_len, malloc)?;
+        let next_index = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, argv, &[next_index], "") }.map_err(llvm_err)?;
+        self.b.build_store(slot, arg_c).map_err(llvm_err)?;
+        self.b.build_store(index, next_index).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(args_head).map_err(llvm_err)?;
+        self.b.position_at_end(args_done);
+        let end_slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, argv, &[argc], "") }.map_err(llvm_err)?;
+        self.b.build_store(end_slot, ptr_ty.const_null()).map_err(llvm_err)?;
+
+        // envp: the final environment and a null terminator.
+        let envp_words = self.b.build_int_add(env_len, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let envp_bytes = self.b.build_int_mul(envp_words, usize_ty.const_int(8, false), "").map_err(llvm_err)?;
+        let envp = self.call(malloc, &[envp_bytes.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        self.b.build_store(envp_slot, envp).map_err(llvm_err)?;
+        let env_index = self.b.build_alloca(usize_ty, "envp.i").map_err(llvm_err)?;
+        self.b.build_store(env_index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let env_head = self.block(f, "envp.head");
+        let env_body = self.block(f, "envp.body");
+        let env_done = self.block(f, "envp.done");
+        self.b.build_unconditional_branch(env_head).map_err(llvm_err)?;
+        self.b.position_at_end(env_head);
+        let i = self.b.build_load(usize_ty, env_index, "").map_err(llvm_err)?.into_int_value();
+        let in_range = self.b.build_int_compare(IntPredicate::ULT, i, env_len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(in_range, env_body, env_done).map_err(llvm_err)?;
+        self.b.position_at_end(env_body);
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, env, &[i], "env.elem") }.map_err(llvm_err)?;
+        let env_ptr_field = self.b.build_struct_gep(self.string_ty, elem, 0, "").map_err(llvm_err)?;
+        let env_len_field = self.b.build_struct_gep(self.string_ty, elem, 1, "").map_err(llvm_err)?;
+        let env_ptr = self.b.build_load(ptr_ty, env_ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let entry_len = self.b.build_load(usize_ty, env_len_field, "").map_err(llvm_err)?.into_int_value();
+        let entry_c = self.cstring_of(env_ptr, entry_len, malloc)?;
+        let slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, envp, &[i], "") }.map_err(llvm_err)?;
+        self.b.build_store(slot, entry_c).map_err(llvm_err)?;
+        let next_index = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(env_index, next_index).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(env_head).map_err(llvm_err)?;
+        self.b.position_at_end(env_done);
+        let end_slot = unsafe { self.b.build_in_bounds_gep(ptr_ty, envp, &[env_len], "") }.map_err(llvm_err)?;
+        self.b.build_store(end_slot, ptr_ty.const_null()).map_err(llvm_err)?;
+        let cwd_c = self.cstring_of(cwd, cwd_len, malloc)?;
+        self.b.build_store(cwd_slot, cwd_c).map_err(llvm_err)?;
+
+        // The error pipe reports a failed `exec`; it closes itself on a successful one.
+        let r = self.call(pipe, &[err_pipe.into()])?.expect("pipe returns a status").into_int_value();
+        let failed_pipe = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let have_report = self.block(f, "report.have");
+        self.b.build_conditional_branch(failed_pipe, fail, have_report).map_err(llvm_err)?;
+        self.b.position_at_end(have_report);
+        let fds_ptr = |cg: &mut Self, at: u64| -> GenResult<PointerValue<'ctx>> {
+            unsafe { cg.b.build_in_bounds_gep(i32_ty, err_pipe, &[usize_ty.const_int(at, false)], "") }
+                .map_err(llvm_err)
+        };
+        let p0 = fds_ptr(self, 0)?;
+        let p1 = fds_ptr(self, 1)?;
+        let rfd = self.b.build_load(i32_ty, p0, "").map_err(llvm_err)?.into_int_value();
+        let wfd = self.b.build_load(i32_ty, p1, "").map_err(llvm_err)?.into_int_value();
+        store_i32(self, report_read, rfd)?;
+        store_i32(self, report_write, wfd)?;
+        self.call(fcntl, &[wfd.into(), i32_ty.const_int(2, false).into(), i32_ty.const_int(1, false).into()])?;
+
+        // The standard streams.
+        let pipe_slot = |cg: &mut Self, at: u64| -> GenResult<PointerValue<'ctx>> {
+            unsafe { cg.b.build_in_bounds_gep(i32_ty, fds, &[usize_ty.const_int(at, false)], "") }.map_err(llvm_err)
+        };
+        // stdin
+        let in_pipe = self.block(f, "stdin.pipe");
+        let after_in = self.block(f, "stdin.after");
+        let want =
+            self.b.build_int_compare(IntPredicate::EQ, stdin_mode, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(want, in_pipe, after_in).map_err(llvm_err)?;
+        self.b.position_at_end(in_pipe);
+        let r = self.call(pipe, &[fds.into()])?.expect("pipe returns a status").into_int_value();
+        let bad_pipe = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let in_ok = self.block(f, "stdin.ok");
+        self.b.build_conditional_branch(bad_pipe, fail, in_ok).map_err(llvm_err)?;
+        self.b.position_at_end(in_ok);
+        let p0 = pipe_slot(self, 0)?;
+        let p1 = pipe_slot(self, 1)?;
+        store_i32(self, in_read, self.b.build_load(i32_ty, p0, "").map_err(llvm_err)?.into_int_value())?;
+        store_i32(self, in_write, self.b.build_load(i32_ty, p1, "").map_err(llvm_err)?.into_int_value())?;
+        self.b.build_unconditional_branch(after_in).map_err(llvm_err)?;
+        self.b.position_at_end(after_in);
+        // stdout
+        let out_pipe = self.block(f, "stdout.pipe");
+        let after_out = self.block(f, "stdout.after");
+        let want = self
+            .b
+            .build_int_compare(IntPredicate::EQ, stdout_mode, i32_ty.const_int(1, false), "")
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(want, out_pipe, after_out).map_err(llvm_err)?;
+        self.b.position_at_end(out_pipe);
+        let r = self.call(pipe, &[fds.into()])?.expect("pipe returns a status").into_int_value();
+        let bad_pipe = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let out_ok = self.block(f, "stdout.ok");
+        self.b.build_conditional_branch(bad_pipe, fail, out_ok).map_err(llvm_err)?;
+        self.b.position_at_end(out_ok);
+        let p0 = pipe_slot(self, 0)?;
+        let p1 = pipe_slot(self, 1)?;
+        store_i32(self, out_read, self.b.build_load(i32_ty, p0, "").map_err(llvm_err)?.into_int_value())?;
+        store_i32(self, out_write, self.b.build_load(i32_ty, p1, "").map_err(llvm_err)?.into_int_value())?;
+        self.b.build_unconditional_branch(after_out).map_err(llvm_err)?;
+        self.b.position_at_end(after_out);
+        // stderr
+        let err_pipe_bb = self.block(f, "stderr.pipe");
+        let after_err = self.block(f, "stderr.after");
+        let want = self
+            .b
+            .build_int_compare(IntPredicate::EQ, stderr_mode, i32_ty.const_int(1, false), "")
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(want, err_pipe_bb, after_err).map_err(llvm_err)?;
+        self.b.position_at_end(err_pipe_bb);
+        let r = self.call(pipe, &[fds.into()])?.expect("pipe returns a status").into_int_value();
+        let bad_pipe = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let err_ok = self.block(f, "stderr.ok");
+        self.b.build_conditional_branch(bad_pipe, fail, err_ok).map_err(llvm_err)?;
+        self.b.position_at_end(err_ok);
+        let p0 = pipe_slot(self, 0)?;
+        let p1 = pipe_slot(self, 1)?;
+        store_i32(self, err_read, self.b.build_load(i32_ty, p0, "").map_err(llvm_err)?.into_int_value())?;
+        store_i32(self, err_write, self.b.build_load(i32_ty, p1, "").map_err(llvm_err)?.into_int_value())?;
+        self.b.build_unconditional_branch(after_err).map_err(llvm_err)?;
+        self.b.position_at_end(after_err);
+        // /dev/null for a null stream.
+        let null_bb = self.block(f, "null.open");
+        let after_null = self.block(f, "null.after");
+        let wants_null = self
+            .b
+            .build_or(
+                self.b
+                    .build_or(
+                        self.b
+                            .build_int_compare(IntPredicate::EQ, stdin_mode, i32_ty.const_int(2, false), "")
+                            .map_err(llvm_err)?,
+                        self.b
+                            .build_int_compare(IntPredicate::EQ, stdout_mode, i32_ty.const_int(2, false), "")
+                            .map_err(llvm_err)?,
+                        "",
+                    )
+                    .map_err(llvm_err)?,
+                self.b
+                    .build_int_compare(IntPredicate::EQ, stderr_mode, i32_ty.const_int(2, false), "")
+                    .map_err(llvm_err)?,
+                "",
+            )
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(wants_null, null_bb, after_null).map_err(llvm_err)?;
+        self.b.position_at_end(null_bb);
+        let devnull_path = self.bytes(b"/dev/null\0");
+        let r = self
+            .call(open, &[devnull_path.into(), i32_ty.const_int(2, false).into(), i32_ty.const_zero().into()])?
+            .expect("open returns a descriptor")
+            .into_int_value();
+        let bad_open = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let opened = self.block(f, "null.opened");
+        self.b.build_conditional_branch(bad_open, fail, opened).map_err(llvm_err)?;
+        self.b.position_at_end(opened);
+        store_i32(self, devnull, r)?;
+        self.b.build_unconditional_branch(after_null).map_err(llvm_err)?;
+        self.b.position_at_end(after_null);
+
+        // Fork, and let the child become the program.
+        let child = self.block(f, "fork.child");
+        let parent = self.block(f, "fork.parent");
+        let pid = self.call(fork, &[])?.expect("fork returns a pid").into_int_value();
+        let negative = self.b.build_int_compare(IntPredicate::SLT, pid, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let zero = self.b.build_int_compare(IntPredicate::EQ, pid, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let forked = self.block(f, "fork.ok");
+        self.b.build_conditional_branch(negative, fail, forked).map_err(llvm_err)?;
+        self.b.position_at_end(forked);
+        self.b.build_conditional_branch(zero, child, parent).map_err(llvm_err)?;
+
+        // Child.
+        self.b.position_at_end(child);
+        let rfd = load_i32(self, report_read)?;
+        self.call(close, &[rfd.into()])?;
+        let dup_stream = |cg: &mut Self,
+                          mode: IntValue<'ctx>,
+                          child_end: PointerValue<'ctx>,
+                          target: u64,
+                          devnull: PointerValue<'ctx>|
+         -> GenResult<()> {
+            let pipe_bb = cg.block(f, "child.pipe");
+            let null_bb = cg.block(f, "child.null");
+            let done = cg.block(f, "child.done");
+            let is_pipe =
+                cg.b.build_int_compare(IntPredicate::EQ, mode, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+            cg.b.build_conditional_branch(is_pipe, pipe_bb, null_bb).map_err(llvm_err)?;
+            cg.b.position_at_end(pipe_bb);
+            let fd = load_i32(cg, child_end)?;
+            cg.call(dup2, &[fd.into(), i32_ty.const_int(target, false).into()])?;
+            cg.b.build_unconditional_branch(done).map_err(llvm_err)?;
+            cg.b.position_at_end(null_bb);
+            let is_null =
+                cg.b.build_int_compare(IntPredicate::EQ, mode, i32_ty.const_int(2, false), "").map_err(llvm_err)?;
+            let open_null = cg.block(f, "child.open.null");
+            cg.b.build_conditional_branch(is_null, open_null, done).map_err(llvm_err)?;
+            cg.b.position_at_end(open_null);
+            let fd = load_i32(cg, devnull)?;
+            cg.call(dup2, &[fd.into(), i32_ty.const_int(target, false).into()])?;
+            cg.b.build_unconditional_branch(done).map_err(llvm_err)?;
+            cg.b.position_at_end(done);
+            Ok(())
+        };
+        dup_stream(self, stdin_mode, in_read, 0, devnull)?;
+        dup_stream(self, stdout_mode, out_write, 1, devnull)?;
+        dup_stream(self, stderr_mode, err_write, 2, devnull)?;
+        let child_fd = |cg: &mut Self, slot: PointerValue<'ctx>| -> GenResult<()> {
+            let fd = load_i32(cg, slot)?;
+            cg.call(close, &[fd.into()])?;
+            Ok(())
+        };
+        child_fd(self, in_read)?;
+        child_fd(self, in_write)?;
+        child_fd(self, out_read)?;
+        child_fd(self, out_write)?;
+        child_fd(self, err_read)?;
+        child_fd(self, err_write)?;
+        child_fd(self, devnull)?;
+        let has_cwd =
+            self.b.build_int_compare(IntPredicate::NE, cwd_len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let chdir_bb = self.block(f, "child.chdir");
+        let after_chdir = self.block(f, "child.chdir.after");
+        self.b.build_conditional_branch(has_cwd, chdir_bb, after_chdir).map_err(llvm_err)?;
+        self.b.position_at_end(chdir_bb);
+        let cwd_c = self.b.build_load(ptr_ty, cwd_slot, "").map_err(llvm_err)?.into_pointer_value();
+        let r = self.call(chdir, &[cwd_c.into()])?.expect("chdir returns a status").into_int_value();
+        let bad_chdir = self.b.build_int_compare(IntPredicate::NE, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let report = self.block(f, "child.report");
+        self.b.build_conditional_branch(bad_chdir, report, after_chdir).map_err(llvm_err)?;
+        self.b.position_at_end(after_chdir);
+        // `execvp` reads `environ`, so the child's environment becomes the one the command searches and runs in.
+        let environ = self.environ_global();
+        let envp = self.b.build_load(ptr_ty, envp_slot, "").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_store(environ, envp).map_err(llvm_err)?;
+        let argv = self.b.build_load(ptr_ty, argv_slot, "").map_err(llvm_err)?.into_pointer_value();
+        let program_c = self.b.build_load(ptr_ty, argv, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(execvp, &[program_c.into(), argv.into()])?;
+        self.b.build_unconditional_branch(report).map_err(llvm_err)?;
+        self.b.position_at_end(report);
+        let one = self.b.build_alloca(i8_ty, "one").map_err(llvm_err)?;
+        self.b.build_store(one, i8_ty.const_int(1, false)).map_err(llvm_err)?;
+        let wfd = load_i32(self, report_write)?;
+        let write =
+            libc(self.module, "write", usize_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        self.call(write, &[wfd.into(), one.into(), usize_ty.const_int(1, false).into()])?;
+        self.call(quit, &[i32_ty.const_int(127, false).into()])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+
+        // Parent.
+        self.b.position_at_end(parent);
+        let wfd = load_i32(self, report_write)?;
+        self.call(close, &[wfd.into()])?;
+        for slot in [in_read, out_write, err_write, devnull] {
+            let fd = load_i32(self, slot)?;
+            self.call(close, &[fd.into()])?;
+        }
+        let byte = self.b.build_alloca(i8_ty, "report.byte").map_err(llvm_err)?;
+        let rfd = load_i32(self, report_read)?;
+        let n = self
+            .call(read, &[rfd.into(), byte.into(), usize_ty.const_int(1, false).into()])?
+            .expect("read returns a count")
+            .into_int_value();
+        let positive = self.b.build_int_compare(IntPredicate::SGT, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let exec_failed = self.block(f, "exec.failed");
+        let exec_ok = self.block(f, "exec.ok");
+        self.b.build_conditional_branch(positive, exec_failed, exec_ok).map_err(llvm_err)?;
+        self.b.position_at_end(exec_failed);
+        let rfd = load_i32(self, report_read)?;
+        self.call(close, &[rfd.into()])?;
+        for slot in [in_write, out_read, err_read] {
+            let fd = load_i32(self, slot)?;
+            self.call(close, &[fd.into()])?;
+        }
+        let status = self.b.build_alloca(i32_ty, "reap.status").map_err(llvm_err)?;
+        self.call(waitpid, &[pid.into(), status.into(), i32_ty.const_zero().into()])?;
+        self.free_cstring_array_if_present(f, argv_slot, argc, free)?;
+        self.free_cstring_array_if_present(f, envp_slot, env_len, free)?;
+        let cwd_c = self.b.build_load(ptr_ty, cwd_slot, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[cwd_c.into()])?;
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+
+        self.b.position_at_end(exec_ok);
+        let rfd = load_i32(self, report_read)?;
+        self.call(close, &[rfd.into()])?;
+        self.free_cstring_array_if_present(f, argv_slot, argc, free)?;
+        self.free_cstring_array_if_present(f, envp_slot, env_len, free)?;
+        let cwd_c = self.b.build_load(ptr_ty, cwd_slot, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[cwd_c.into()])?;
+        let set_out = |cg: &mut Self, at: u64, value: IntValue<'ctx>| -> GenResult<()> {
+            let slot = unsafe { cg.b.build_in_bounds_gep(i64_ty, out, &[usize_ty.const_int(at, false)], "spawn.out") }
+                .map_err(llvm_err)?;
+            let value = cg.b.build_int_z_extend(value, i64_ty, "").map_err(llvm_err)?;
+            cg.b.build_store(slot, value).map_err(llvm_err)?;
+            Ok(())
+        };
+        set_out(self, 0, pid)?;
+        let zero64 = i64_ty.const_zero();
+        let slot = unsafe { self.b.build_in_bounds_gep(i64_ty, out, &[usize_ty.const_int(1, false)], "") }
+            .map_err(llvm_err)?;
+        self.b.build_store(slot, zero64).map_err(llvm_err)?;
+        for (at, mode, fd_slot) in
+            [(2u64, stdin_mode, in_write), (3, stdout_mode, out_read), (4, stderr_mode, err_read)]
+        {
+            let piped =
+                self.b.build_int_compare(IntPredicate::EQ, mode, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+            let fd = load_i32(self, fd_slot)?;
+            let fd64 = self.b.build_int_z_extend(fd, i64_ty, "").map_err(llvm_err)?;
+            let value = self.b.build_select(piped, fd64, i64_ty.const_zero(), "").map_err(llvm_err)?.into_int_value();
+            let slot = unsafe { self.b.build_in_bounds_gep(i64_ty, out, &[usize_ty.const_int(at, false)], "") }
+                .map_err(llvm_err)?;
+            self.b.build_store(slot, value).map_err(llvm_err)?;
+        }
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+
+        // Failure before the child exists: close whatever was opened and release what was allocated.
+        self.b.position_at_end(fail);
+        for slot in [in_read, in_write, out_read, out_write, err_read, err_write, devnull, report_read, report_write] {
+            let fd = load_i32(self, slot)?;
+            self.call(close, &[fd.into()])?;
+        }
+        self.free_cstring_array_if_present(f, argv_slot, argc, free)?;
+        self.free_cstring_array_if_present(f, envp_slot, env_len, free)?;
+        let cwd_c = self.b.build_load(ptr_ty, cwd_slot, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[cwd_c.into()])?;
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// A private NUL-terminated UTF-16 constant.
+    fn wide_literal(&mut self, text: &str) -> PointerValue<'ctx> {
+        let values: Vec<inkwell::values::IntValue<'ctx>> = text
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .map(|u| self.cx.i16_type().const_int(u64::from(u), false))
+            .collect();
+        let data = self.cx.i16_type().const_array(&values);
+        let global = self.module.add_global(data.get_type(), None, &format!("rt.wide.{}", self.globals));
+        self.globals += 1;
+        global.set_initializer(&data);
+        global.set_constant(true);
+        global.set_linkage(Linkage::Private);
+        global.set_unnamed_addr(true);
+        global.as_pointer_value()
+    }
+
+    /// One inheritable pipe: returns `(child handle, parent CRT descriptor)`. The descriptor is -1 and the handle 0
+    /// when the pipe could not be created.
+    fn windows_pipe(&mut self, sa: PointerValue<'ctx>, stdin: bool) -> GenResult<(IntValue<'ctx>, IntValue<'ctx>)> {
+        let (i32_ty, i64_ty, ptr_ty) = (self.i32(), self.i64(), self.ptr_ty);
+        let create_pipe = libc(
+            self.module,
+            "CreatePipe",
+            i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false),
+        );
+        let set_handle = libc(
+            self.module,
+            "SetHandleInformation",
+            i32_ty.fn_type(&[i64_ty.into(), i32_ty.into(), i32_ty.into()], false),
+        );
+        let open_os = libc(self.module, "_open_osfhandle", i32_ty.fn_type(&[i64_ty.into(), i32_ty.into()], false));
+        let close_handle = libc(self.module, "CloseHandle", i32_ty.fn_type(&[i64_ty.into()], false));
+        let f = self.b.get_insert_block().and_then(|b| b.get_parent()).expect("positioned");
+        let read = self.b.build_alloca(i64_ty, "pipe.read").map_err(llvm_err)?;
+        let write = self.b.build_alloca(i64_ty, "pipe.write").map_err(llvm_err)?;
+        self.b.build_store(read, i64_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_store(write, i64_ty.const_zero()).map_err(llvm_err)?;
+        let child = self.b.build_alloca(i64_ty, "pipe.child").map_err(llvm_err)?;
+        self.b.build_store(child, i64_ty.const_zero()).map_err(llvm_err)?;
+        let fd = self.b.build_alloca(i32_ty, "pipe.fd").map_err(llvm_err)?;
+        self.b.build_store(fd, i32_ty.const_all_ones()).map_err(llvm_err)?;
+        let ok = self
+            .call(create_pipe, &[read.into(), write.into(), sa.into(), i32_ty.const_zero().into()])?
+            .expect("CreatePipe returns a flag")
+            .into_int_value();
+        let ok = self.truthy(ok)?;
+        let good = self.block(f, "pipe.good");
+        let done = self.block(f, "pipe.done");
+        self.b.build_conditional_branch(ok, good, done).map_err(llvm_err)?;
+        self.b.position_at_end(good);
+        let read_h = self.b.build_load(i64_ty, read, "").map_err(llvm_err)?.into_int_value();
+        let write_h = self.b.build_load(i64_ty, write, "").map_err(llvm_err)?.into_int_value();
+        let (child_h, parent_h) = if stdin { (read_h, write_h) } else { (write_h, read_h) };
+        self.b.build_store(child, child_h).map_err(llvm_err)?;
+        // The parent's end must not leak into the child.
+        let set = self
+            .call(set_handle, &[parent_h.into(), i32_ty.const_int(1, false).into(), i32_ty.const_zero().into()])?
+            .expect("SetHandleInformation returns a flag")
+            .into_int_value();
+        let set = self.truthy(set)?;
+        let opened = self.block(f, "pipe.opened");
+        let cleanup = self.block(f, "pipe.cleanup");
+        self.b.build_conditional_branch(set, opened, cleanup).map_err(llvm_err)?;
+        self.b.position_at_end(opened);
+        let handle_fd = self
+            .call(open_os, &[parent_h.into(), i32_ty.const_int(0x8000, false).into()])?
+            .expect("_open_osfhandle returns a descriptor")
+            .into_int_value();
+        let invalid =
+            self.b.build_int_compare(IntPredicate::EQ, handle_fd, i32_ty.const_all_ones(), "").map_err(llvm_err)?;
+        let keep = self.block(f, "pipe.keep");
+        let drop_handle = self.block(f, "pipe.drop");
+        self.b.build_conditional_branch(invalid, drop_handle, keep).map_err(llvm_err)?;
+        self.b.position_at_end(keep);
+        self.b.build_store(fd, handle_fd).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(drop_handle);
+        self.call(close_handle, &[parent_h.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(cleanup);
+        self.call(close_handle, &[parent_h.into()])?;
+        self.call(close_handle, &[child_h.into()])?;
+        self.b.build_store(child, i64_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        let child = self.b.build_load(i64_ty, child, "child").map_err(llvm_err)?.into_int_value();
+        let fd = self.b.build_load(i32_ty, fd, "fd").map_err(llvm_err)?.into_int_value();
+        Ok((child, fd))
+    }
+
+    /// Opens `NUL` as an inheritable handle, or returns 0.
+    fn windows_nul_handle(&mut self, sa: PointerValue<'ctx>, path: PointerValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let (i32_ty, i64_ty) = (self.i32(), self.i64());
+        let create_file = libc(
+            self.module,
+            "CreateFileW",
+            i64_ty.fn_type(
+                &[
+                    self.ptr_ty.into(),
+                    i32_ty.into(),
+                    i32_ty.into(),
+                    self.ptr_ty.into(),
+                    i32_ty.into(),
+                    i32_ty.into(),
+                    i64_ty.into(),
+                ],
+                false,
+            ),
+        );
+        let handle = self
+            .call(
+                create_file,
+                &[
+                    path.into(),
+                    i32_ty.const_int(0xC000_0000, false).into(),
+                    i32_ty.const_int(3, false).into(),
+                    sa.into(),
+                    i32_ty.const_int(3, false).into(),
+                    i32_ty.const_zero().into(),
+                    i64_ty.const_zero().into(),
+                ],
+            )?
+            .expect("CreateFileW returns a handle")
+            .into_int_value();
+        let invalid =
+            self.b.build_int_compare(IntPredicate::EQ, handle, i64_ty.const_all_ones(), "").map_err(llvm_err)?;
+        Ok(self.b.build_select(invalid, i64_ty.const_zero(), handle, "").map_err(llvm_err)?.into_int_value())
+    }
+
+    /// A duplicate of one of the parent's standard handles, made inheritable; 0 when it cannot be duplicated.
+    fn windows_dup_std(&mut self, which: i32) -> GenResult<IntValue<'ctx>> {
+        let (i32_ty, i64_ty) = (self.i32(), self.i64());
+        let get = libc(self.module, "GetStdHandle", i64_ty.fn_type(&[i32_ty.into()], false));
+        let dup = libc(
+            self.module,
+            "DuplicateHandle",
+            i32_ty.fn_type(
+                &[
+                    i64_ty.into(),
+                    i64_ty.into(),
+                    i64_ty.into(),
+                    self.ptr_ty.into(),
+                    i32_ty.into(),
+                    i32_ty.into(),
+                    i32_ty.into(),
+                ],
+                false,
+            ),
+        );
+        let handle = self
+            .call(get, &[i32_ty.const_int(u64::from(which as u32), false).into()])?
+            .expect("GetStdHandle returns a handle")
+            .into_int_value();
+        let target = self.b.build_alloca(i64_ty, "dup.handle").map_err(llvm_err)?;
+        self.b.build_store(target, i64_ty.const_zero()).map_err(llvm_err)?;
+        let current = i64_ty.const_all_ones();
+        let ok = self
+            .call(
+                dup,
+                &[
+                    current.into(),
+                    handle.into(),
+                    current.into(),
+                    target.into(),
+                    i32_ty.const_zero().into(),
+                    i32_ty.const_int(1, false).into(),
+                    i32_ty.const_int(2, false).into(),
+                ],
+            )?
+            .expect("DuplicateHandle returns a flag")
+            .into_int_value();
+        let ok = self.truthy(ok)?;
+        let got = self.b.build_load(i64_ty, target, "").map_err(llvm_err)?.into_int_value();
+        Ok(self.b.build_select(ok, got, i64_ty.const_zero(), "").map_err(llvm_err)?.into_int_value())
+    }
+
+    /// Connects one standard stream for `CreateProcessW`: a pipe, `NUL`, or a duplicate of the parent's handle.
+    #[allow(clippy::too_many_arguments)]
+    fn windows_pick_stream(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        mode: IntValue<'ctx>,
+        stdin: bool,
+        std_index: i32,
+        sa: PointerValue<'ctx>,
+        nul: PointerValue<'ctx>,
+        fd_slot: PointerValue<'ctx>,
+        child_slot: PointerValue<'ctx>,
+        fail: BasicBlock<'ctx>,
+    ) -> GenResult<()> {
+        let (i32_ty, i64_ty) = (self.i32(), self.i64());
+        let pipe_bb = self.block(f, "stream.pipe");
+        let nul_bb = self.block(f, "stream.nul");
+        let inherit_bb = self.block(f, "stream.inherit");
+        let done = self.block(f, "stream.done");
+        let is_pipe =
+            self.b.build_int_compare(IntPredicate::EQ, mode, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let is_nul =
+            self.b.build_int_compare(IntPredicate::EQ, mode, i32_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let not_pipe = self.block(f, "stream.not.pipe");
+        self.b.build_conditional_branch(is_pipe, pipe_bb, not_pipe).map_err(llvm_err)?;
+        self.b.position_at_end(not_pipe);
+        self.b.build_conditional_branch(is_nul, nul_bb, inherit_bb).map_err(llvm_err)?;
+
+        self.b.position_at_end(pipe_bb);
+        let (child, fd) = self.windows_pipe(sa, stdin)?;
+        let good = self
+            .b
+            .build_and(
+                self.b.build_int_compare(IntPredicate::NE, child, i64_ty.const_zero(), "").map_err(llvm_err)?,
+                self.b.build_int_compare(IntPredicate::NE, fd, i32_ty.const_all_ones(), "").map_err(llvm_err)?,
+                "",
+            )
+            .map_err(llvm_err)?;
+        let store = self.block(f, "stream.pipe.store");
+        self.b.build_conditional_branch(good, store, fail).map_err(llvm_err)?;
+        self.b.position_at_end(store);
+        self.b.build_store(fd_slot, fd).map_err(llvm_err)?;
+        self.b.build_store(child_slot, child).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(nul_bb);
+        let child = self.windows_nul_handle(sa, nul)?;
+        let good = self.b.build_int_compare(IntPredicate::NE, child, i64_ty.const_zero(), "").map_err(llvm_err)?;
+        let store = self.block(f, "stream.nul.store");
+        self.b.build_conditional_branch(good, store, fail).map_err(llvm_err)?;
+        self.b.position_at_end(store);
+        self.b.build_store(child_slot, child).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(inherit_bb);
+        let child = self.windows_dup_std(std_index)?;
+        let good = self.b.build_int_compare(IntPredicate::NE, child, i64_ty.const_zero(), "").map_err(llvm_err)?;
+        let store = self.block(f, "stream.inherit.store");
+        self.b.build_conditional_branch(good, store, fail).map_err(llvm_err)?;
+        self.b.position_at_end(store);
+        self.b.build_store(child_slot, child).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        Ok(())
+    }
+
+    /// `process_spawn` on Windows: `CreateProcessW` with a final environment block and inheritable pipes.
+    #[allow(clippy::too_many_arguments)]
+    fn process_spawn_windows(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        _program: PointerValue<'ctx>,
+        _program_len: IntValue<'ctx>,
+        _args: PointerValue<'ctx>,
+        _args_len: IntValue<'ctx>,
+        env: PointerValue<'ctx>,
+        env_len: IntValue<'ctx>,
+        cwd: PointerValue<'ctx>,
+        cwd_len: IntValue<'ctx>,
+        cmdline: PointerValue<'ctx>,
+        cmdline_len: IntValue<'ctx>,
+        stdin_mode: IntValue<'ctx>,
+        stdout_mode: IntValue<'ctx>,
+        stderr_mode: IntValue<'ctx>,
+        out: PointerValue<'ctx>,
+    ) -> GenResult<()> {
+        let (usize_ty, ptr_ty, i32_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i64());
+        let void = self.cx.void_type();
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", void.fn_type(&[ptr_ty.into()], false));
+        let memset =
+            libc(self.module, "memset", ptr_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), usize_ty.into()], false));
+        let create = libc(
+            self.module,
+            "CreateProcessW",
+            i32_ty.fn_type(
+                &[
+                    ptr_ty.into(),
+                    ptr_ty.into(),
+                    ptr_ty.into(),
+                    ptr_ty.into(),
+                    i32_ty.into(),
+                    i32_ty.into(),
+                    ptr_ty.into(),
+                    ptr_ty.into(),
+                    ptr_ty.into(),
+                    ptr_ty.into(),
+                ],
+                false,
+            ),
+        );
+        let close_handle = libc(self.module, "CloseHandle", i32_ty.fn_type(&[i64_ty.into()], false));
+        let close_fd = libc(self.module, "_close", i32_ty.fn_type(&[i32_ty.into()], false));
+
+        let fail = self.block(f, "spawn.fail");
+        let fail_free = self.block(f, "spawn.fail.free");
+        let env_block = self.b.build_alloca(ptr_ty, "env.block").map_err(llvm_err)?;
+        self.b.build_store(env_block, ptr_ty.const_null()).map_err(llvm_err)?;
+        let cmdline_wide = self.b.build_alloca(ptr_ty, "cmdline.wide").map_err(llvm_err)?;
+        self.b.build_store(cmdline_wide, ptr_ty.const_null()).map_err(llvm_err)?;
+        let cwd_wide = self.b.build_alloca(ptr_ty, "cwd.wide").map_err(llvm_err)?;
+        self.b.build_store(cwd_wide, ptr_ty.const_null()).map_err(llvm_err)?;
+        // The Windows structures and the stream bookkeeping live in the entry block, so every failure path can
+        // release them.
+        let sa = self.b.build_alloca(i64_ty.array_type(3), "sa").map_err(llvm_err)?;
+        self.call(memset, &[sa.into(), i32_ty.const_zero().into(), usize_ty.const_int(24, false).into()])?;
+        let at = self.offset(sa, usize_ty.const_zero())?;
+        self.b.build_store(at, i32_ty.const_int(24, false)).map_err(llvm_err)?;
+        let at = self.offset(sa, usize_ty.const_int(16, false))?;
+        self.b.build_store(at, i32_ty.const_int(1, false)).map_err(llvm_err)?;
+        let si = self.b.build_alloca(i64_ty.array_type(13), "startup").map_err(llvm_err)?;
+        self.call(memset, &[si.into(), i32_ty.const_zero().into(), usize_ty.const_int(104, false).into()])?;
+        let at = self.offset(si, usize_ty.const_zero())?;
+        self.b.build_store(at, i32_ty.const_int(104, false)).map_err(llvm_err)?;
+        let pi = self.b.build_alloca(i64_ty.array_type(3), "process.info").map_err(llvm_err)?;
+        self.call(memset, &[pi.into(), i32_ty.const_zero().into(), usize_ty.const_int(24, false).into()])?;
+        let fds = self.b.build_alloca(i32_ty.array_type(3), "std.fds").map_err(llvm_err)?;
+        let child_handles = self.b.build_alloca(i64_ty.array_type(3), "std.handles").map_err(llvm_err)?;
+        for i in 0..3u64 {
+            let slot = unsafe { self.b.build_in_bounds_gep(i32_ty, fds, &[usize_ty.const_int(i, false)], "") }
+                .map_err(llvm_err)?;
+            self.b.build_store(slot, i32_ty.const_all_ones()).map_err(llvm_err)?;
+            let slot =
+                unsafe { self.b.build_in_bounds_gep(i64_ty, child_handles, &[usize_ty.const_int(i, false)], "") }
+                    .map_err(llvm_err)?;
+            self.b.build_store(slot, i64_ty.const_zero()).map_err(llvm_err)?;
+        }
+
+        // The environment block: `NAME=VALUE` strings, each followed by a NUL, and a final NUL.
+        let total = self.b.build_alloca(usize_ty, "env.total").map_err(llvm_err)?;
+        self.b.build_store(total, usize_ty.const_zero()).map_err(llvm_err)?;
+        let index = self.b.build_alloca(usize_ty, "env.i").map_err(llvm_err)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let units = self.b.build_alloca(usize_ty, "env.units").map_err(llvm_err)?;
+        let pass1 = self.block(f, "env.pass1");
+        let pass1_body = self.block(f, "env.pass1.body");
+        let measured = self.block(f, "env.measured");
+        self.b.build_unconditional_branch(pass1).map_err(llvm_err)?;
+        self.b.position_at_end(pass1);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let in_range = self.b.build_int_compare(IntPredicate::ULT, i, env_len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(in_range, pass1_body, measured).map_err(llvm_err)?;
+        self.b.position_at_end(pass1_body);
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, env, &[i], "env.elem") }.map_err(llvm_err)?;
+        let ptr_field = self.b.build_struct_gep(self.string_ty, elem, 0, "").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, elem, 1, "").map_err(llvm_err)?;
+        let text = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let text_len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let wide = self.utf8_to_wide(text, text_len, units)?;
+        let null = self.b.build_is_null(wide, "").map_err(llvm_err)?;
+        let measured_ok = self.block(f, "env.pass1.add");
+        self.b.build_conditional_branch(null, fail, measured_ok).map_err(llvm_err)?;
+        self.b.position_at_end(measured_ok);
+        let count = self.b.build_load(usize_ty, units, "").map_err(llvm_err)?.into_int_value();
+        let count = self.b.build_int_add(count, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let sum = self.b.build_load(usize_ty, total, "").map_err(llvm_err)?.into_int_value();
+        let sum = self.b.build_int_add(sum, count, "").map_err(llvm_err)?;
+        self.b.build_store(total, sum).map_err(llvm_err)?;
+        self.call(free, &[wide.into()])?;
+        let next = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, next).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(pass1).map_err(llvm_err)?;
+
+        self.b.position_at_end(measured);
+        let sum = self.b.build_load(usize_ty, total, "").map_err(llvm_err)?.into_int_value();
+        let with_end = self.b.build_int_add(sum, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let block_units = self.max_usize(with_end, usize_ty.const_int(2, false))?;
+        let block_bytes = self.b.build_int_mul(block_units, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let block = self.call(malloc, &[block_bytes.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        self.b.build_store(env_block, block).map_err(llvm_err)?;
+        self.call(memset, &[block.into(), i32_ty.const_zero().into(), block_bytes.into()])?;
+        let cursor = self.b.build_alloca(ptr_ty, "env.cursor").map_err(llvm_err)?;
+        self.b.build_store(cursor, block).map_err(llvm_err)?;
+        self.b.build_store(index, usize_ty.const_zero()).map_err(llvm_err)?;
+        let pass2 = self.block(f, "env.pass2");
+        let pass2_body = self.block(f, "env.pass2.body");
+        let built = self.block(f, "env.built");
+        self.b.build_unconditional_branch(pass2).map_err(llvm_err)?;
+        self.b.position_at_end(pass2);
+        let i = self.b.build_load(usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let in_range = self.b.build_int_compare(IntPredicate::ULT, i, env_len, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(in_range, pass2_body, built).map_err(llvm_err)?;
+        self.b.position_at_end(pass2_body);
+        let elem = unsafe { self.b.build_in_bounds_gep(self.string_ty, env, &[i], "env.elem") }.map_err(llvm_err)?;
+        let ptr_field = self.b.build_struct_gep(self.string_ty, elem, 0, "").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, elem, 1, "").map_err(llvm_err)?;
+        let text = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let text_len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let wide = self.utf8_to_wide(text, text_len, units)?;
+        let null = self.b.build_is_null(wide, "").map_err(llvm_err)?;
+        let copied = self.block(f, "env.pass2.copy");
+        self.b.build_conditional_branch(null, fail, copied).map_err(llvm_err)?;
+        self.b.position_at_end(copied);
+        let count = self.b.build_load(usize_ty, units, "").map_err(llvm_err)?.into_int_value();
+        let width = self.b.build_int_mul(count, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let at = self.b.build_load(ptr_ty, cursor, "").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_memcpy(at, 1, wide, 1, width).map_err(llvm_err)?;
+        self.call(free, &[wide.into()])?;
+        let count = self.b.build_int_add(count, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let step = self.b.build_int_mul(count, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let next = self.offset(at, step)?;
+        self.b.build_store(cursor, next).map_err(llvm_err)?;
+        let next = self.b.build_int_add(i, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, next).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(pass2).map_err(llvm_err)?;
+
+        self.b.position_at_end(built);
+        // The command line and the working directory, in UTF-16.
+        let line_units = self.b.build_alloca(usize_ty, "cmdline.units").map_err(llvm_err)?;
+        let line = self.utf8_to_wide(cmdline, cmdline_len, line_units)?;
+        let null = self.b.build_is_null(line, "").map_err(llvm_err)?;
+        let line_ok = self.block(f, "cmdline.ok");
+        self.b.build_conditional_branch(null, fail, line_ok).map_err(llvm_err)?;
+        self.b.position_at_end(line_ok);
+        self.b.build_store(cmdline_wide, line).map_err(llvm_err)?;
+        let has_cwd =
+            self.b.build_int_compare(IntPredicate::NE, cwd_len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let cwd_bb = self.block(f, "cwd.convert");
+        let cwd_done = self.block(f, "cwd.converted");
+        self.b.build_conditional_branch(has_cwd, cwd_bb, cwd_done).map_err(llvm_err)?;
+        self.b.position_at_end(cwd_bb);
+        let cwd_units = self.b.build_alloca(usize_ty, "cwd.units").map_err(llvm_err)?;
+        let wide = self.utf8_to_wide(cwd, cwd_len, cwd_units)?;
+        let null = self.b.build_is_null(wide, "").map_err(llvm_err)?;
+        let cwd_ok = self.block(f, "cwd.ok");
+        self.b.build_conditional_branch(null, fail, cwd_ok).map_err(llvm_err)?;
+        self.b.position_at_end(cwd_ok);
+        self.b.build_store(cwd_wide, wide).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(cwd_done).map_err(llvm_err)?;
+
+        self.b.position_at_end(cwd_done);
+        let redirect = self
+            .b
+            .build_or(
+                self.b
+                    .build_or(
+                        self.b
+                            .build_int_compare(IntPredicate::NE, stdin_mode, i32_ty.const_zero(), "")
+                            .map_err(llvm_err)?,
+                        self.b
+                            .build_int_compare(IntPredicate::NE, stdout_mode, i32_ty.const_zero(), "")
+                            .map_err(llvm_err)?,
+                        "",
+                    )
+                    .map_err(llvm_err)?,
+                self.b.build_int_compare(IntPredicate::NE, stderr_mode, i32_ty.const_zero(), "").map_err(llvm_err)?,
+                "",
+            )
+            .map_err(llvm_err)?;
+        let plain = self.block(f, "spawn.plain");
+        let redirected = self.block(f, "spawn.redirected");
+        let launch = self.block(f, "spawn.launch");
+        self.b.build_conditional_branch(redirect, redirected, plain).map_err(llvm_err)?;
+
+        self.b.position_at_end(redirected);
+        let at = self.offset(si, usize_ty.const_int(60, false))?;
+        self.b.build_store(at, i32_ty.const_int(0x100, false)).map_err(llvm_err)?;
+        let nul = self.wide_literal("NUL");
+        let fd_slot = |cg: &mut Self, i: u64| -> GenResult<PointerValue<'ctx>> {
+            unsafe { cg.b.build_in_bounds_gep(i32_ty, fds, &[usize_ty.const_int(i, false)], "") }.map_err(llvm_err)
+        };
+        let handle_slot = |cg: &mut Self, i: u64| -> GenResult<PointerValue<'ctx>> {
+            unsafe { cg.b.build_in_bounds_gep(i64_ty, child_handles, &[usize_ty.const_int(i, false)], "") }
+                .map_err(llvm_err)
+        };
+        let fd0 = fd_slot(self, 0)?;
+        let fd1 = fd_slot(self, 1)?;
+        let fd2 = fd_slot(self, 2)?;
+        let h0 = handle_slot(self, 0)?;
+        let h1 = handle_slot(self, 1)?;
+        let h2 = handle_slot(self, 2)?;
+        self.windows_pick_stream(f, stdin_mode, true, -10, sa, nul, fd0, h0, fail)?;
+        self.windows_pick_stream(f, stdout_mode, false, -11, sa, nul, fd1, h1, fail)?;
+        self.windows_pick_stream(f, stderr_mode, false, -12, sa, nul, fd2, h2, fail)?;
+        for i in 0..3u64 {
+            let slot = handle_slot(self, i)?;
+            let handle = self.b.build_load(i64_ty, slot, "").map_err(llvm_err)?.into_int_value();
+            let at = self.offset(si, usize_ty.const_int(80 + 8 * i, false))?;
+            self.b.build_store(at, handle).map_err(llvm_err)?;
+        }
+        self.b.build_unconditional_branch(launch).map_err(llvm_err)?;
+
+        self.b.position_at_end(plain);
+        self.b.build_unconditional_branch(launch).map_err(llvm_err)?;
+
+        self.b.position_at_end(launch);
+        let inherit = self.b.build_int_z_extend(redirect, i32_ty, "").map_err(llvm_err)?;
+        let block = self.b.build_load(ptr_ty, env_block, "").map_err(llvm_err)?.into_pointer_value();
+        let line = self.b.build_load(ptr_ty, cmdline_wide, "").map_err(llvm_err)?.into_pointer_value();
+        let dir = self.b.build_load(ptr_ty, cwd_wide, "").map_err(llvm_err)?.into_pointer_value();
+        let created = self
+            .call(
+                create,
+                &[
+                    ptr_ty.const_null().into(),
+                    line.into(),
+                    ptr_ty.const_null().into(),
+                    ptr_ty.const_null().into(),
+                    inherit.into(),
+                    i32_ty.const_int(0x400, false).into(),
+                    block.into(),
+                    dir.into(),
+                    si.into(),
+                    pi.into(),
+                ],
+            )?
+            .expect("CreateProcessW returns a flag")
+            .into_int_value();
+        let created = self.truthy(created)?;
+        let launched = self.block(f, "spawn.launched");
+        self.b.build_conditional_branch(created, launched, fail).map_err(llvm_err)?;
+
+        self.b.position_at_end(launched);
+        let process = self.b.build_load(i64_ty, pi, "process").map_err(llvm_err)?.into_int_value();
+        let thread_at = self.offset(pi, usize_ty.const_int(8, false))?;
+        let thread = self.b.build_load(i64_ty, thread_at, "thread").map_err(llvm_err)?.into_int_value();
+        self.call(close_handle, &[thread.into()])?;
+        for i in 0..3u64 {
+            let slot = handle_slot(self, i)?;
+            let handle = self.b.build_load(i64_ty, slot, "").map_err(llvm_err)?.into_int_value();
+            self.call(close_handle, &[handle.into()])?;
+        }
+        let pid_at = self.offset(pi, usize_ty.const_int(16, false))?;
+        let pid = self.b.build_load(i32_ty, pid_at, "pid").map_err(llvm_err)?.into_int_value();
+        let out_slot = |cg: &mut Self, at: u64| -> GenResult<PointerValue<'ctx>> {
+            unsafe { cg.b.build_in_bounds_gep(i64_ty, out, &[usize_ty.const_int(at, false)], "") }.map_err(llvm_err)
+        };
+        let pid = self.b.build_int_z_extend(pid, i64_ty, "").map_err(llvm_err)?;
+        let slot = out_slot(self, 0)?;
+        self.b.build_store(slot, pid).map_err(llvm_err)?;
+        let slot = out_slot(self, 1)?;
+        self.b.build_store(slot, process).map_err(llvm_err)?;
+        for i in 0..3u64 {
+            let fd_slot = fd_slot(self, i)?;
+            let fd = self.b.build_load(i32_ty, fd_slot, "").map_err(llvm_err)?.into_int_value();
+            let piped =
+                self.b.build_int_compare(IntPredicate::NE, fd, i32_ty.const_all_ones(), "").map_err(llvm_err)?;
+            let fd = self.b.build_int_z_extend(fd, i64_ty, "").map_err(llvm_err)?;
+            let value = self.b.build_select(piped, fd, i64_ty.const_zero(), "").map_err(llvm_err)?.into_int_value();
+            let slot = out_slot(self, 2 + i)?;
+            self.b.build_store(slot, value).map_err(llvm_err)?;
+        }
+        let block = self.b.build_load(ptr_ty, env_block, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[block.into()])?;
+        let line = self.b.build_load(ptr_ty, cmdline_wide, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[line.into()])?;
+        let dir = self.b.build_load(ptr_ty, cwd_wide, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[dir.into()])?;
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+
+        self.b.position_at_end(fail);
+        for i in 0..3u64 {
+            let slot = handle_slot(self, i)?;
+            let handle = self.b.build_load(i64_ty, slot, "").map_err(llvm_err)?.into_int_value();
+            self.call(close_handle, &[handle.into()])?;
+            let slot = fd_slot(self, i)?;
+            let fd = self.b.build_load(i32_ty, slot, "").map_err(llvm_err)?.into_int_value();
+            // `_close(-1)` would reach the CRT's invalid-parameter handler, so only a descriptor that was opened
+            // is closed.
+            let open = self.b.build_int_compare(IntPredicate::NE, fd, i32_ty.const_all_ones(), "").map_err(llvm_err)?;
+            let close = self.block(f, "spawn.fail.close");
+            let next = self.block(f, "spawn.fail.next");
+            self.b.build_conditional_branch(open, close, next).map_err(llvm_err)?;
+            self.b.position_at_end(close);
+            self.call(close_fd, &[fd.into()])?;
+            self.b.build_unconditional_branch(next).map_err(llvm_err)?;
+            self.b.position_at_end(next);
+        }
+        self.b.build_unconditional_branch(fail_free).map_err(llvm_err)?;
+        self.b.position_at_end(fail_free);
+        let block = self.b.build_load(ptr_ty, env_block, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[block.into()])?;
+        let line = self.b.build_load(ptr_ty, cmdline_wide, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[line.into()])?;
+        let dir = self.b.build_load(ptr_ty, cwd_wide, "").map_err(llvm_err)?.into_pointer_value();
+        self.call(free, &[dir.into()])?;
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// `process_wait(pid: i32, process: usize) -> i64`.
+    fn process_wait(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i32_ty, i64_ty, usize_ty) = (self.i32(), self.i64(), self.usize_ty);
+        let f = self.function("burdin_rt_process_wait", i64_ty.fn_type(&[i32_ty.into(), usize_ty.into()], false));
+        let pid = Self::int_param(f, 0);
+        let process = Self::int_param(f, 1);
+        if self.windows {
+            let wait = libc(self.module, "WaitForSingleObject", i32_ty.fn_type(&[i64_ty.into(), i32_ty.into()], false));
+            let get =
+                libc(self.module, "GetExitCodeProcess", i32_ty.fn_type(&[i64_ty.into(), self.ptr_ty.into()], false));
+            let bad = self.block(f, "wait.bad");
+            let waited = self.block(f, "wait.done");
+            let zero =
+                self.b.build_int_compare(IntPredicate::EQ, process, usize_ty.const_zero(), "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(zero, bad, waited).map_err(llvm_err)?;
+            self.b.position_at_end(waited);
+            let process = self.b.build_int_truncate(process, i64_ty, "process").map_err(llvm_err)?;
+            let result = self
+                .call(wait, &[process.into(), i32_ty.const_int(0xFFFF_FFFF, false).into()])?
+                .expect("WaitForSingleObject returns a status")
+                .into_int_value();
+            let failed = self
+                .b
+                .build_int_compare(IntPredicate::EQ, result, i32_ty.const_int(0xFFFF_FFFF, false), "")
+                .map_err(llvm_err)?;
+            let code = self.b.build_alloca(i32_ty, "exit.code").map_err(llvm_err)?;
+            self.b.build_store(code, i32_ty.const_zero()).map_err(llvm_err)?;
+            let checked = self.block(f, "wait.checked");
+            self.b.build_conditional_branch(failed, bad, checked).map_err(llvm_err)?;
+            self.b.position_at_end(checked);
+            let got = self
+                .call(get, &[process.into(), code.into()])?
+                .expect("GetExitCodeProcess returns a flag")
+                .into_int_value();
+            let no = self.b.build_int_compare(IntPredicate::EQ, got, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let good = self.block(f, "wait.good");
+            self.b.build_conditional_branch(no, bad, good).map_err(llvm_err)?;
+            self.b.position_at_end(good);
+            let code = self.b.build_load(i32_ty, code, "code").map_err(llvm_err)?.into_int_value();
+            let code = self.b.build_int_z_extend(code, i64_ty, "code64").map_err(llvm_err)?;
+            self.b.build_return(Some(&code)).map_err(llvm_err)?;
+            self.b.position_at_end(bad);
+            self.b.build_return(Some(&i64_ty.const_all_ones())).map_err(llvm_err)?;
+            return Ok(f);
+        }
+
+        let waitpid =
+            libc(self.module, "waitpid", i32_ty.fn_type(&[i32_ty.into(), self.ptr_ty.into(), i32_ty.into()], false));
+        let status = self.b.build_alloca(i32_ty, "wait.status").map_err(llvm_err)?;
+        self.b.build_store(status, i32_ty.const_zero()).map_err(llvm_err)?;
+        let r = self
+            .call(waitpid, &[pid.into(), status.into(), i32_ty.const_zero().into()])?
+            .expect("waitpid returns a pid")
+            .into_int_value();
+        let bad = self.block(f, "wait.bad");
+        let got = self.block(f, "wait.got");
+        let failed = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(failed, bad, got).map_err(llvm_err)?;
+        self.b.position_at_end(got);
+        let s = self.b.build_load(i32_ty, status, "status").map_err(llvm_err)?.into_int_value();
+        let low = self.b.build_and(s, i32_ty.const_int(0x7f, false), "").map_err(llvm_err)?;
+        let exited = self.b.build_int_compare(IntPredicate::EQ, low, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        let stopped =
+            self.b.build_int_compare(IntPredicate::EQ, low, i32_ty.const_int(0x7f, false), "").map_err(llvm_err)?;
+        let code_bb = self.block(f, "wait.exited");
+        let signal_bb = self.block(f, "wait.signaled");
+        let stop_bb = self.block(f, "wait.stopped");
+        self.b.build_conditional_branch(exited, code_bb, signal_bb).map_err(llvm_err)?;
+        self.b.position_at_end(code_bb);
+        let shifted = self.b.build_right_shift(s, i32_ty.const_int(8, false), false, "").map_err(llvm_err)?;
+        let code = self.b.build_and(shifted, i32_ty.const_int(0xff, false), "").map_err(llvm_err)?;
+        let code = self.b.build_int_z_extend(code, i64_ty, "code64").map_err(llvm_err)?;
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
+        self.b.position_at_end(signal_bb);
+        let stopped_branch = self.block(f, "wait.check.stopped");
+        self.b.build_conditional_branch(stopped, stop_bb, stopped_branch).map_err(llvm_err)?;
+        self.b.position_at_end(stopped_branch);
+        let signal = self.b.build_int_z_extend(low, i64_ty, "signal").map_err(llvm_err)?;
+        let encoded = self.b.build_int_add(signal, i64_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let encoded = self.b.build_int_sub(i64_ty.const_zero(), encoded, "").map_err(llvm_err)?;
+        self.b.build_return(Some(&encoded)).map_err(llvm_err)?;
+        self.b.position_at_end(stop_bb);
+        self.b.build_return(Some(&i64_ty.const_all_ones())).map_err(llvm_err)?;
+        self.b.position_at_end(bad);
+        self.b.build_return(Some(&i64_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `process_close(process: usize)`: closes the Windows process handle.
+    fn process_close(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, i64_ty, i32_ty) = (self.usize_ty, self.i64(), self.i32());
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_process_close", void.fn_type(&[usize_ty.into()], false));
+        let process = Self::int_param(f, 0);
+        let done = self.block(f, "close.done");
+        let zero = self.b.build_int_compare(IntPredicate::EQ, process, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        if self.windows {
+            let close = libc(self.module, "CloseHandle", i32_ty.fn_type(&[i64_ty.into()], false));
+            let close_bb = self.block(f, "close.handle");
+            self.b.build_conditional_branch(zero, done, close_bb).map_err(llvm_err)?;
+            self.b.position_at_end(close_bb);
+            let process = self.b.build_int_truncate(process, i64_ty, "").map_err(llvm_err)?;
+            self.call(close, &[process.into()])?;
+        } else {
+            let _ = zero;
+        }
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `pipe_close(handle: usize)`: closes a pipe end; handle 0 is a no-op.
+    fn pipe_close(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, i32_ty) = (self.usize_ty, self.i32());
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_pipe_close", void.fn_type(&[usize_ty.into()], false));
+        let handle = Self::int_param(f, 0);
+        let close = if self.windows {
+            libc(self.module, "_close", i32_ty.fn_type(&[i32_ty.into()], false))
+        } else {
+            libc(self.module, "close", i32_ty.fn_type(&[i32_ty.into()], false))
+        };
+        let done = self.block(f, "pipe.close.done");
+        let close_bb = self.block(f, "pipe.close.fd");
+        let zero = self.b.build_int_compare(IntPredicate::EQ, handle, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(zero, done, close_bb).map_err(llvm_err)?;
+        self.b.position_at_end(close_bb);
+        let fd = self.b.build_int_truncate(handle, i32_ty, "fd").map_err(llvm_err)?;
+        self.call(close, &[fd.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `pipe_write(handle: usize, ptr, len: usize) -> i32`: writes every byte; 0 on success and -1 on failure.
+    fn pipe_write(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let f = self.function(
+            "burdin_rt_pipe_write",
+            i32_ty.fn_type(&[usize_ty.into(), ptr_ty.into(), usize_ty.into()], false),
+        );
+        let fd = self.b.build_int_truncate(Self::int_param(f, 0), i32_ty, "fd").map_err(llvm_err)?;
+        let ptr0 = Self::ptr_param(f, 1);
+        let len0 = Self::int_param(f, 2);
+        let write = if self.windows {
+            libc(self.module, "_write", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), i32_ty.into()], false))
+        } else {
+            libc(self.module, "write", usize_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into()], false))
+        };
+        let entry = self.b.get_insert_block().expect("positioned");
+        let lp = self.block(f, "write.loop");
+        let body = self.block(f, "write.body");
+        let next = self.block(f, "write.next");
+        let done = self.block(f, "write.done");
+        let failed = self.block(f, "write.failed");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        self.b.position_at_end(lp);
+        let ptr = self.b.build_phi(ptr_ty, "ptr").map_err(llvm_err)?;
+        let len = self.b.build_phi(usize_ty, "len").map_err(llvm_err)?;
+        let len_v = len.as_basic_value().into_int_value();
+        let ptr_v = ptr.as_basic_value().into_pointer_value();
+        let empty = self.b.build_int_compare(IntPredicate::EQ, len_v, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(empty, done, body).map_err(llvm_err)?;
+        self.b.position_at_end(body);
+        let max = usize_ty.const_int(0x4000_0000, false);
+        let big = self.b.build_int_compare(IntPredicate::UGT, len_v, max, "").map_err(llvm_err)?;
+        let chunk = self.b.build_select(big, max, len_v, "chunk").map_err(llvm_err)?.into_int_value();
+        let written = if self.windows {
+            let c = self.b.build_int_truncate(chunk, i32_ty, "").map_err(llvm_err)?;
+            let r = self.call(write, &[fd.into(), ptr_v.into(), c.into()])?.expect("_write returns an int");
+            self.b.build_int_s_extend(r.into_int_value(), usize_ty, "").map_err(llvm_err)?
+        } else {
+            self.call(write, &[fd.into(), ptr_v.into(), chunk.into()])?.expect("write returns a count").into_int_value()
+        };
+        let bad = self.b.build_int_compare(IntPredicate::SLE, written, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(bad, failed, next).map_err(llvm_err)?;
+        self.b.position_at_end(next);
+        let ptr2 = self.offset(ptr_v, written)?;
+        let len2 = self.b.build_int_sub(len_v, written, "").map_err(llvm_err)?;
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        ptr.add_incoming(&[(&ptr0, entry), (&ptr2, next)]);
+        len.add_incoming(&[(&len0, entry), (&len2, next)]);
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(failed);
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// The CRT read for a pipe: `(fd, buffer, count)`, returning the signed byte count.
+    fn pipe_read_fn(&mut self) -> FunctionValue<'ctx> {
+        if self.windows {
+            libc(
+                self.module,
+                "_read",
+                self.i32().fn_type(&[self.i32().into(), self.ptr_ty.into(), self.i32().into()], false),
+            )
+        } else {
+            libc(
+                self.module,
+                "read",
+                self.usize_ty.fn_type(&[self.i32().into(), self.ptr_ty.into(), self.usize_ty.into()], false),
+            )
+        }
+    }
+
+    /// `(fd, buffer, count)`, returning the count as a signed `usize` (Windows `_read` yields an int).
+    fn pipe_read_call(
+        &mut self,
+        read: FunctionValue<'ctx>,
+        fd: IntValue<'ctx>,
+        buf: PointerValue<'ctx>,
+        count: u64,
+    ) -> GenResult<IntValue<'ctx>> {
+        let (i32_ty, usize_ty) = (self.i32(), self.usize_ty);
+        if self.windows {
+            let n = self
+                .call(read, &[fd.into(), buf.into(), i32_ty.const_int(count, false).into()])?
+                .expect("_read returns an int");
+            self.b.build_int_s_extend(n.into_int_value(), usize_ty, "").map_err(llvm_err)
+        } else {
+            Ok(self
+                .call(read, &[fd.into(), buf.into(), usize_ty.const_int(count, false).into()])?
+                .expect("read returns a count")
+                .into_int_value())
+        }
+    }
+
+    /// `pipe_read_to_string(handle: usize, out: *String) -> i32`: reads every byte left in the pipe.
+    fn pipe_read_to_string(&mut self, push: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty) = (self.usize_ty, self.ptr_ty, self.i32());
+        let f =
+            self.function("burdin_rt_pipe_read_to_string", i32_ty.fn_type(&[usize_ty.into(), ptr_ty.into()], false));
+        let out = Self::ptr_param(f, 1);
+        let fd = self.b.build_int_truncate(Self::int_param(f, 0), i32_ty, "fd").map_err(llvm_err)?;
+        let read = self.pipe_read_fn();
+        let buf = self.buffer(4096)?;
+        let lp = self.block(f, "read.loop");
+        let got = self.block(f, "read.got");
+        let done = self.block(f, "read.done");
+        let failed = self.block(f, "read.failed");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        self.b.position_at_end(lp);
+        let n = self.pipe_read_call(read, fd, buf, 4096)?;
+        let positive = self.b.build_int_compare(IntPredicate::SGT, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let zero = self.b.build_int_compare(IntPredicate::EQ, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(positive, got, done).map_err(llvm_err)?;
+        self.b.position_at_end(got);
+        self.call(push, &[out.into(), buf.into(), n.into()])?;
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        let ended = self.block(f, "read.check.end");
+        self.b.build_conditional_branch(zero, ended, failed).map_err(llvm_err)?;
+        self.b.position_at_end(ended);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(failed);
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `pipe_read_line(handle: usize, out: *String) -> i32`: one line without its terminator.
+    fn pipe_read_line(&mut self, push: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, i8_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i8());
+        let f = self.function("burdin_rt_pipe_read_line", i32_ty.fn_type(&[usize_ty.into(), ptr_ty.into()], false));
+        let out = Self::ptr_param(f, 1);
+        let fd = self.b.build_int_truncate(Self::int_param(f, 0), i32_ty, "fd").map_err(llvm_err)?;
+        let read = self.pipe_read_fn();
+        let byte = self.b.build_alloca(i8_ty, "line.byte").map_err(llvm_err)?;
+        let lp = self.block(f, "line.loop");
+        let got = self.block(f, "line.got");
+        let newline = self.block(f, "line.newline");
+        let strip = self.block(f, "line.strip");
+        let stripped = self.block(f, "line.stripped");
+        let line_done = self.block(f, "line.done");
+        let eof = self.block(f, "line.eof");
+        let eof_empty = self.block(f, "line.eof.empty");
+        let eof_line = self.block(f, "line.eof.line");
+        let failed = self.block(f, "line.failed");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        self.b.position_at_end(lp);
+        let n = self.pipe_read_call(read, fd, byte, 1)?;
+        let negative = self.b.build_int_compare(IntPredicate::SLT, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let empty = self.b.build_int_compare(IntPredicate::EQ, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(negative, failed, got).map_err(llvm_err)?;
+        self.b.position_at_end(got);
+        self.b.build_conditional_branch(empty, eof, newline).map_err(llvm_err)?;
+        self.b.position_at_end(newline);
+        let c = self.b.build_load(i8_ty, byte, "byte").map_err(llvm_err)?.into_int_value();
+        let nl = self.b.build_int_compare(IntPredicate::EQ, c, i8_ty.const_int(10, false), "").map_err(llvm_err)?;
+        let push_bb = self.block(f, "line.push");
+        self.b.build_conditional_branch(nl, strip, push_bb).map_err(llvm_err)?;
+        self.b.position_at_end(push_bb);
+        self.call(push, &[out.into(), byte.into(), usize_ty.const_int(1, false).into()])?;
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        // Drop the `\r` of a `\r\n` terminator.
+        self.b.position_at_end(strip);
+        let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "line.len").map_err(llvm_err)?;
+        let len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let has = self.b.build_int_compare(IntPredicate::UGT, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(has, stripped, line_done).map_err(llvm_err)?;
+        self.b.position_at_end(stripped);
+        let ptr_field = self.b.build_struct_gep(self.string_ty, out, 0, "line.ptr").map_err(llvm_err)?;
+        let data = self.b.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        let last = self.b.build_int_sub(len, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let at = self.offset(data, last)?;
+        let last_byte = self.b.build_load(i8_ty, at, "").map_err(llvm_err)?.into_int_value();
+        let cr =
+            self.b.build_int_compare(IntPredicate::EQ, last_byte, i8_ty.const_int(13, false), "").map_err(llvm_err)?;
+        let trimmed = self.block(f, "line.trimmed");
+        self.b.build_conditional_branch(cr, trimmed, line_done).map_err(llvm_err)?;
+        self.b.position_at_end(trimmed);
+        self.b.build_store(len_field, last).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(line_done).map_err(llvm_err)?;
+        self.b.position_at_end(line_done);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(eof);
+        let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "line.len").map_err(llvm_err)?;
+        let len = self.b.build_load(usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+        let has = self.b.build_int_compare(IntPredicate::UGT, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(has, eof_line, eof_empty).map_err(llvm_err)?;
+        self.b.position_at_end(eof_line);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(eof_empty);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(failed);
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `pipe_read_both(first: usize, second: usize, out: *[String; 2]) -> i32`: reads two pipes together, so a
+    /// child writing a lot to one of them cannot block the other.
+    fn pipe_read_both(&mut self, push: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, i16_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.cx.i16_type());
+        let f = self.function(
+            "burdin_rt_pipe_read_both",
+            i32_ty.fn_type(&[usize_ty.into(), usize_ty.into(), ptr_ty.into()], false),
+        );
+        let first_handle = Self::int_param(f, 0);
+        let second_handle = Self::int_param(f, 1);
+        let out = Self::ptr_param(f, 2);
+        let out0 = unsafe { self.b.build_in_bounds_gep(self.string_ty, out, &[usize_ty.const_zero()], "out0") }
+            .map_err(llvm_err)?;
+        let out1 = unsafe { self.b.build_in_bounds_gep(self.string_ty, out, &[usize_ty.const_int(1, false)], "out1") }
+            .map_err(llvm_err)?;
+        let buf = self.buffer(4096)?;
+        let open0 = self.b.build_alloca(self.i8(), "open0").map_err(llvm_err)?;
+        let open1 = self.b.build_alloca(self.i8(), "open1").map_err(llvm_err)?;
+        let progress = self.b.build_alloca(self.i8(), "progress").map_err(llvm_err)?;
+        self.b.build_store(open0, self.i8().const_int(1, false)).map_err(llvm_err)?;
+        self.b.build_store(open1, self.i8().const_int(1, false)).map_err(llvm_err)?;
+        let lp = self.block(f, "both.loop");
+        let done = self.block(f, "both.done");
+        let failed = self.block(f, "both.failed");
+        let first_check = self.block(f, "both.first.check");
+        let first_eof = self.block(f, "both.first.eof");
+        let first_push = self.block(f, "both.first.push");
+        let second_check = self.block(f, "both.second.check");
+        let second_eof = self.block(f, "both.second.eof");
+        let second_push = self.block(f, "both.second.push");
+
+        if self.windows {
+            let i64_ty = self.i64();
+            let get = libc(self.module, "_get_osfhandle", i64_ty.fn_type(&[i32_ty.into()], false));
+            let peek = libc(
+                self.module,
+                "PeekNamedPipe",
+                i32_ty.fn_type(
+                    &[i64_ty.into(), ptr_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()],
+                    false,
+                ),
+            );
+            let sleep = libc(self.module, "Sleep", self.cx.void_type().fn_type(&[i32_ty.into()], false));
+            let fd0 = self.b.build_int_truncate(first_handle, i32_ty, "fd0").map_err(llvm_err)?;
+            let fd1 = self.b.build_int_truncate(second_handle, i32_ty, "fd1").map_err(llvm_err)?;
+            let h0 = self.call(get, &[fd0.into()])?.expect("_get_osfhandle returns a handle").into_int_value();
+            let h1 = self.call(get, &[fd1.into()])?.expect("_get_osfhandle returns a handle").into_int_value();
+            let read = self.pipe_read_fn();
+            let avail = self.b.build_alloca(i32_ty, "avail").map_err(llvm_err)?;
+            let first_take = self.block(f, "both.first.take");
+            let second_take = self.block(f, "both.second.take");
+            let after = self.block(f, "both.after");
+            let slept = self.block(f, "both.sleep");
+
+            self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+            self.b.position_at_end(lp);
+            let a = self.load_flag(open0)?;
+            let b = self.load_flag(open1)?;
+            let any = self.b.build_or(a, b, "any.open").map_err(llvm_err)?;
+            let step = self.block(f, "both.step");
+            self.b.build_conditional_branch(any, step, done).map_err(llvm_err)?;
+
+            self.b.position_at_end(step);
+            self.b.build_store(progress, self.i8().const_zero()).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(first_check).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_check);
+            let live = self.load_flag(open0)?;
+            let first_peek = self.block(f, "both.first.peek");
+            self.b.build_conditional_branch(live, first_peek, second_check).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_peek);
+            self.b.build_store(avail, i32_ty.const_zero()).map_err(llvm_err)?;
+            let ok = self
+                .call(
+                    peek,
+                    &[
+                        h0.into(),
+                        ptr_ty.const_null().into(),
+                        i32_ty.const_zero().into(),
+                        ptr_ty.const_null().into(),
+                        avail.into(),
+                        ptr_ty.const_null().into(),
+                    ],
+                )?
+                .expect("PeekNamedPipe returns a flag")
+                .into_int_value();
+            let have = self.b.build_int_compare(IntPredicate::NE, ok, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let first_have = self.block(f, "both.first.have");
+            self.b.build_conditional_branch(have, first_have, first_eof).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_have);
+            let n = self.b.build_load(i32_ty, avail, "").map_err(llvm_err)?.into_int_value();
+            let has = self.b.build_int_compare(IntPredicate::SGT, n, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(has, first_take, second_check).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_take);
+            let cap = self
+                .b
+                .build_select(
+                    self.b
+                        .build_int_compare(IntPredicate::UGT, n, i32_ty.const_int(4096, false), "")
+                        .map_err(llvm_err)?,
+                    i32_ty.const_int(4096, false),
+                    n,
+                    "take",
+                )
+                .map_err(llvm_err)?
+                .into_int_value();
+            let got = self
+                .call(read, &[fd0.into(), buf.into(), cap.into()])?
+                .expect("_read returns a count")
+                .into_int_value();
+            let positive =
+                self.b.build_int_compare(IntPredicate::SGT, got, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let zero = self.b.build_int_compare(IntPredicate::EQ, got, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let read_ok = self.block(f, "both.first.read");
+            let read_zero = self.block(f, "both.first.zero");
+            self.b.build_conditional_branch(positive, read_ok, read_zero).map_err(llvm_err)?;
+            self.b.position_at_end(read_zero);
+            self.b.build_conditional_branch(zero, first_eof, failed).map_err(llvm_err)?;
+            self.b.position_at_end(read_ok);
+            let count = self.b.build_int_z_extend(got, usize_ty, "count").map_err(llvm_err)?;
+            self.call(push, &[out0.into(), buf.into(), count.into()])?;
+            self.b.build_store(progress, self.i8().const_int(1, false)).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(first_push).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_push);
+            self.b.build_unconditional_branch(second_check).map_err(llvm_err)?;
+            self.b.position_at_end(first_eof);
+            self.b.build_store(open0, self.i8().const_zero()).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(second_check).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_check);
+            let live = self.load_flag(open1)?;
+            let second_peek = self.block(f, "both.second.peek");
+            self.b.build_conditional_branch(live, second_peek, after).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_peek);
+            self.b.build_store(avail, i32_ty.const_zero()).map_err(llvm_err)?;
+            let ok = self
+                .call(
+                    peek,
+                    &[
+                        h1.into(),
+                        ptr_ty.const_null().into(),
+                        i32_ty.const_zero().into(),
+                        ptr_ty.const_null().into(),
+                        avail.into(),
+                        ptr_ty.const_null().into(),
+                    ],
+                )?
+                .expect("PeekNamedPipe returns a flag")
+                .into_int_value();
+            let have = self.b.build_int_compare(IntPredicate::NE, ok, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let second_have = self.block(f, "both.second.have");
+            self.b.build_conditional_branch(have, second_have, second_eof).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_have);
+            let n = self.b.build_load(i32_ty, avail, "").map_err(llvm_err)?.into_int_value();
+            let has = self.b.build_int_compare(IntPredicate::SGT, n, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(has, second_take, after).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_take);
+            let cap = self
+                .b
+                .build_select(
+                    self.b
+                        .build_int_compare(IntPredicate::UGT, n, i32_ty.const_int(4096, false), "")
+                        .map_err(llvm_err)?,
+                    i32_ty.const_int(4096, false),
+                    n,
+                    "take",
+                )
+                .map_err(llvm_err)?
+                .into_int_value();
+            let got = self
+                .call(read, &[fd1.into(), buf.into(), cap.into()])?
+                .expect("_read returns a count")
+                .into_int_value();
+            let positive =
+                self.b.build_int_compare(IntPredicate::SGT, got, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let zero = self.b.build_int_compare(IntPredicate::EQ, got, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let read_ok = self.block(f, "both.second.read");
+            let read_zero = self.block(f, "both.second.zero");
+            self.b.build_conditional_branch(positive, read_ok, read_zero).map_err(llvm_err)?;
+            self.b.position_at_end(read_zero);
+            self.b.build_conditional_branch(zero, second_eof, failed).map_err(llvm_err)?;
+            self.b.position_at_end(read_ok);
+            let count = self.b.build_int_z_extend(got, usize_ty, "count").map_err(llvm_err)?;
+            self.call(push, &[out1.into(), buf.into(), count.into()])?;
+            self.b.build_store(progress, self.i8().const_int(1, false)).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(second_push).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_push);
+            self.b.build_unconditional_branch(after).map_err(llvm_err)?;
+            self.b.position_at_end(second_eof);
+            self.b.build_store(open1, self.i8().const_zero()).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(after).map_err(llvm_err)?;
+
+            self.b.position_at_end(after);
+            let moved = self.load_flag(progress)?;
+            let idle = self.b.build_not(moved, "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(idle, slept, lp).map_err(llvm_err)?;
+            self.b.position_at_end(slept);
+            self.call(sleep, &[i32_ty.const_int(1, false).into()])?;
+            self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        } else {
+            let pollfd_ty = self.cx.struct_type(&[i32_ty.into(), i16_ty.into(), i16_ty.into()], false);
+            let array_ty = pollfd_ty.array_type(2);
+            let pollfds = self.b.build_alloca(array_ty, "pollfds").map_err(llvm_err)?;
+            let entry = |cg: &mut Self, i: u64| -> GenResult<PointerValue<'ctx>> {
+                unsafe {
+                    cg.b.build_in_bounds_gep(
+                        array_ty,
+                        pollfds,
+                        &[usize_ty.const_zero(), usize_ty.const_int(i, false)],
+                        "",
+                    )
+                }
+                .map_err(llvm_err)
+            };
+            for (i, handle) in [first_handle, second_handle].into_iter().enumerate() {
+                let p = entry(self, i as u64)?;
+                let fd_field = self.b.build_struct_gep(pollfd_ty, p, 0, "").map_err(llvm_err)?;
+                let events = self.b.build_struct_gep(pollfd_ty, p, 1, "").map_err(llvm_err)?;
+                let revents = self.b.build_struct_gep(pollfd_ty, p, 2, "").map_err(llvm_err)?;
+                let fd = self.b.build_int_truncate(handle, i32_ty, "fd").map_err(llvm_err)?;
+                self.b.build_store(fd_field, fd).map_err(llvm_err)?;
+                self.b.build_store(events, i16_ty.const_int(1, false)).map_err(llvm_err)?;
+                self.b.build_store(revents, i16_ty.const_zero()).map_err(llvm_err)?;
+            }
+            let poll =
+                libc(self.module, "poll", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), i32_ty.into()], false));
+            let read = self.pipe_read_fn();
+            let fd0 = self.b.build_int_truncate(first_handle, i32_ty, "fd0").map_err(llvm_err)?;
+            let fd1 = self.b.build_int_truncate(second_handle, i32_ty, "fd1").map_err(llvm_err)?;
+            let ready0 = self.b.build_alloca(i32_ty, "ready0").map_err(llvm_err)?;
+            let ready1 = self.b.build_alloca(i32_ty, "ready1").map_err(llvm_err)?;
+            let first_read = self.block(f, "both.first.read");
+            let second_read = self.block(f, "both.second.read");
+
+            self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+            self.b.position_at_end(lp);
+            let a = self.load_flag(open0)?;
+            let b = self.load_flag(open1)?;
+            let any = self.b.build_or(a, b, "any.open").map_err(llvm_err)?;
+            let step = self.block(f, "both.step");
+            self.b.build_conditional_branch(any, step, done).map_err(llvm_err)?;
+
+            self.b.position_at_end(step);
+            let r = self
+                .call(poll, &[pollfds.into(), usize_ty.const_int(2, false).into(), i32_ty.const_all_ones().into()])?
+                .expect("poll returns a count")
+                .into_int_value();
+            let bad = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let polled = self.block(f, "both.polled");
+            self.b.build_conditional_branch(bad, failed, polled).map_err(llvm_err)?;
+
+            self.b.position_at_end(polled);
+            let first = entry(self, 0)?;
+            let first_revents = self.b.build_struct_gep(pollfd_ty, first, 2, "").map_err(llvm_err)?;
+            let revents = self.b.build_load(i16_ty, first_revents, "").map_err(llvm_err)?.into_int_value();
+            let revents = self.b.build_int_z_extend(revents, i32_ty, "").map_err(llvm_err)?;
+            self.b.build_store(ready0, revents).map_err(llvm_err)?;
+            let second = entry(self, 1)?;
+            let second_revents = self.b.build_struct_gep(pollfd_ty, second, 2, "").map_err(llvm_err)?;
+            let revents = self.b.build_load(i16_ty, second_revents, "").map_err(llvm_err)?.into_int_value();
+            let revents = self.b.build_int_z_extend(revents, i32_ty, "").map_err(llvm_err)?;
+            self.b.build_store(ready1, revents).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(first_check).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_check);
+            let live = self.load_flag(open0)?;
+            let revents = self.b.build_load(i32_ty, ready0, "").map_err(llvm_err)?.into_int_value();
+            let ready =
+                self.b.build_int_compare(IntPredicate::NE, revents, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let go = self.b.build_and(live, ready, "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(go, first_read, second_check).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_read);
+            let got = self.pipe_read_call(read, fd0, buf, 4096)?;
+            let positive =
+                self.b.build_int_compare(IntPredicate::SGT, got, usize_ty.const_zero(), "").map_err(llvm_err)?;
+            let zero = self.b.build_int_compare(IntPredicate::EQ, got, usize_ty.const_zero(), "").map_err(llvm_err)?;
+            let read_ok = self.block(f, "both.first.got");
+            let read_zero = self.block(f, "both.first.zero");
+            self.b.build_conditional_branch(positive, read_ok, read_zero).map_err(llvm_err)?;
+            self.b.position_at_end(read_zero);
+            self.b.build_conditional_branch(zero, first_eof, failed).map_err(llvm_err)?;
+            self.b.position_at_end(read_ok);
+            self.call(push, &[out0.into(), buf.into(), got.into()])?;
+            self.b.build_unconditional_branch(first_push).map_err(llvm_err)?;
+
+            self.b.position_at_end(first_push);
+            self.b.build_unconditional_branch(second_check).map_err(llvm_err)?;
+            self.b.position_at_end(first_eof);
+            self.b.build_store(open0, self.i8().const_zero()).map_err(llvm_err)?;
+            let first = entry(self, 0)?;
+            let fd_field = self.b.build_struct_gep(pollfd_ty, first, 0, "").map_err(llvm_err)?;
+            self.b.build_store(fd_field, i32_ty.const_all_ones()).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(second_check).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_check);
+            let live = self.load_flag(open1)?;
+            let revents = self.b.build_load(i32_ty, ready1, "").map_err(llvm_err)?.into_int_value();
+            let ready =
+                self.b.build_int_compare(IntPredicate::NE, revents, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let go = self.b.build_and(live, ready, "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(go, second_read, lp).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_read);
+            let got = self.pipe_read_call(read, fd1, buf, 4096)?;
+            let positive =
+                self.b.build_int_compare(IntPredicate::SGT, got, usize_ty.const_zero(), "").map_err(llvm_err)?;
+            let zero = self.b.build_int_compare(IntPredicate::EQ, got, usize_ty.const_zero(), "").map_err(llvm_err)?;
+            let read_ok = self.block(f, "both.second.got");
+            let read_zero = self.block(f, "both.second.zero");
+            self.b.build_conditional_branch(positive, read_ok, read_zero).map_err(llvm_err)?;
+            self.b.position_at_end(read_zero);
+            self.b.build_conditional_branch(zero, second_eof, failed).map_err(llvm_err)?;
+            self.b.position_at_end(read_ok);
+            self.call(push, &[out1.into(), buf.into(), got.into()])?;
+            self.b.build_unconditional_branch(second_push).map_err(llvm_err)?;
+
+            self.b.position_at_end(second_push);
+            self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+            self.b.position_at_end(second_eof);
+            self.b.build_store(open1, self.i8().const_zero()).map_err(llvm_err)?;
+            let second = entry(self, 1)?;
+            let fd_field = self.b.build_struct_gep(pollfd_ty, second, 0, "").map_err(llvm_err)?;
+            self.b.build_store(fd_field, i32_ty.const_all_ones()).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        }
+
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(failed);
+        self.b.build_return(Some(&i32_ty.const_all_ones())).map_err(llvm_err)?;
+        Ok(f)
+    }
 
     /// Whether `ptr[0..len]` contains `byte` (libc `memchr`).
     fn has_byte(&mut self, ptr: PointerValue<'ctx>, len: IntValue<'ctx>, byte: u8) -> GenResult<IntValue<'ctx>> {
@@ -4529,6 +6615,64 @@ mod tests {
         );
         assert_eq!(open_create_mode(false), 0o666, "Unix honors the umask over these bits");
         assert_eq!(open_create_mode(true), 0o600, "the CRT takes only _S_IREAD and _S_IWRITE");
+    }
+
+    /// The Windows structures the runtime fills by byte offset, mirrored so a wrong offset fails on any host.
+    #[repr(C)]
+    struct WindowsSecurityAttributes {
+        length: u32,
+        descriptor: *mut std::ffi::c_void,
+        inherit: i32,
+    }
+
+    #[repr(C)]
+    struct WindowsStartupInfoW {
+        cb: u32,
+        reserved: *mut std::ffi::c_void,
+        desktop: *mut std::ffi::c_void,
+        title: *mut std::ffi::c_void,
+        x: u32,
+        y: u32,
+        x_size: u32,
+        y_size: u32,
+        x_chars: u32,
+        y_chars: u32,
+        fill: u32,
+        flags: u32,
+        show: u16,
+        reserved2: u16,
+        reserved2_ptr: *mut u8,
+        std_input: *mut std::ffi::c_void,
+        std_output: *mut std::ffi::c_void,
+        std_error: *mut std::ffi::c_void,
+    }
+
+    #[repr(C)]
+    struct WindowsProcessInformation {
+        process: *mut std::ffi::c_void,
+        thread: *mut std::ffi::c_void,
+        pid: u32,
+        thread_id: u32,
+    }
+
+    /// `CreateProcessW` receives `SECURITY_ATTRIBUTES`, `STARTUPINFOW`, and `PROCESS_INFORMATION` through
+    /// raw buffers whose fields the runtime writes at fixed offsets, so the sizes and offsets are checked on the
+    /// host even though only Windows executes the spawn path.
+    #[test]
+    fn windows_spawn_structures_match_the_runtime_offsets() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(size_of::<WindowsSecurityAttributes>(), 24);
+        assert_eq!(offset_of!(WindowsSecurityAttributes, descriptor), 8);
+        assert_eq!(offset_of!(WindowsSecurityAttributes, inherit), 16);
+        assert_eq!(size_of::<WindowsStartupInfoW>(), 104);
+        assert_eq!(offset_of!(WindowsStartupInfoW, flags), 60);
+        assert_eq!(offset_of!(WindowsStartupInfoW, std_input), 80);
+        assert_eq!(offset_of!(WindowsStartupInfoW, std_output), 88);
+        assert_eq!(offset_of!(WindowsStartupInfoW, std_error), 96);
+        assert_eq!(size_of::<WindowsProcessInformation>(), 24);
+        assert_eq!(offset_of!(WindowsProcessInformation, process), 0);
+        assert_eq!(offset_of!(WindowsProcessInformation, thread), 8);
+        assert_eq!(offset_of!(WindowsProcessInformation, pid), 16);
     }
 
     /// The runtime must verify on both platform paths. The environment and working-directory functions are the

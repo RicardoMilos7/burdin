@@ -963,9 +963,11 @@ stops after the upper endpoint without computing `upper + 1`, so it does not ove
 ## Iteration
 
 `std` declares `Iterator<T>` (`next`, plus the default methods `map`, `filter`, `take`, `skip`, `fold`, `count`,
-`any_item`, `all`, `find`, and `to_list`; and, from issue #706, `enumerate`, `take_while`, `skip_while`, `map_while`,
-`step_by`, `inspect`, and `peekable`; and, from issue #707, `last`, `nth`, `position`, `for_each`, `reduce`,
-`partition`, `min_by`, `max_by`, `min_by_key`, and `max_by_key`) and the marker `Iterable<T>`. The compiler implements both for arrays,
+`any_item`, `all`, `find`, and `to_list`; and, from issue #706, `enumerate`, `zip`, `chain`, `flat_map`, `take_while`,
+`skip_while`, `map_while`, `step_by`, `inspect`, and `peekable`; and, from issue #707, `last`, `nth`, `position`,
+`for_each`, `reduce`, `partition`, `min_by`, `max_by`, `min_by_key`, and `max_by_key`), the marker `Iterable<T>`, and
+`DoubleEndedIterator<T>` (`next_back`). The adapters that need a particular kind of source are compiler-resolved
+functions on any iterator: `flatten`, `cloned`, `copied`, `cycle`, and `rev` (`iterators.md`, IT13, IT14). The compiler implements both for arrays,
 slices, `List`, `Map`, `Chars`, and ranges, and adds `sum` for iterators of integers; `std` declares the adapter
 types `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter`. A program implements the interfaces to make its own type
 work with `for` and the adapters. The rules, the item types, and the second-class restrictions are in
@@ -1228,6 +1230,86 @@ None of these runs at compile time: a comptime evaluation that reaches one fails
 Tests: `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`,
 `env_test_mode`.
 
+### Child processes (issue #419)
+
+`Command` starts a program directly: the program and each argument reach the operating system as separate words,
+with no shell in between, so nothing in an argument is interpreted.
+
+```
+enum Stdio { Inherit  Piped  Null }
+
+Command {
+    fn new(program: str): Command
+    fn arg(mut self, value: str)
+    fn args(mut self, own values: List<String>)
+    fn env(mut self, key: str, value: str)
+    fn env_remove(mut self, key: str)
+    fn env_clear(mut self)
+    fn cwd(mut self, directory: str)
+    fn stdin(mut self, mode: Stdio)
+    fn stdout(mut self, mode: Stdio)
+    fn stderr(mut self, mode: Stdio)
+    fn spawn(own self): Result<Child, IoError>
+    fn status(own self): Result<ExitStatus, IoError>
+    fn output(own self): Result<Output, IoError>
+}
+
+Child {
+    fn id(self): i32
+    fn stdin(mut self): Option<ChildStdin>
+    fn stdout(mut self): Option<ChildStdout>
+    fn stderr(mut self): Option<ChildStderr>
+    fn wait(mut self): Result<ExitStatus, IoError>
+    fn wait_with_output(mut self): Result<Output, IoError>
+}
+
+ChildStdin  { fn write(self, text: str): Result<(), IoError> }
+ChildStdout {
+    fn read_to_string(self): Result<String, IoError>
+    fn read_line(self): Result<Option<String>, IoError>
+}
+ChildStderr { ... the same two readers ... }
+
+struct ExitStatus { fn code(self): Option<i32>   fn signal(self): Option<i32>   fn success(self): bool }
+struct Output { status: ExitStatus   stdout: String   stderr: String }
+```
+
+- **Starting.** `Command.new` names the program; `arg` and `args` add arguments, in order. `spawn` starts the child
+  and returns its handle, `status` starts it, waits, and returns the exit status, and `output` pipes standard output
+  and standard error, gives the child a null standard input, reads both streams to the end, waits, and returns them
+  with the status. Nothing runs until one of those three is called. On Unix the program is executed with `execvp`;
+  on Windows `CreateProcessW` receives the quoted command line the C runtime parses. An argument keeps any spaces,
+  quotes, or shell metacharacters.
+- **Streams.** Each standard stream is `Stdio.Inherit` (the default), `Stdio.Piped` (the parent gets a
+  `ChildStdin`/`ChildStdout`/`ChildStderr`), or `Stdio.Null` (the system's null device). `output` pipes standard
+  output and standard error and gives the child a null standard input. `stdin`, `stdout`, and `stderr` on
+  a `Child` hand out the piped handle once and return `None` afterwards.
+- **Environment.** The child inherits the parent's environment unless `env_clear` empties it. `env` sets an entry,
+  replacing an earlier value for the name, and `env_remove` removes one. Windows compares names without regard to
+  case; Unix compares them exactly. The entry is written `key=value`, and an embedded NUL in the program, an
+  argument, an environment key or value, or the working directory makes the spawn fail.
+- **Working directory.** `cwd` selects it; otherwise the child uses the parent's.
+- **Waits.** `wait` closes the child's standard input first, so a program reading it sees the end of the input
+  instead of waiting, and then waits for the child. A child that exited normally has `code()` (an `i32`; Windows
+  reports a code for every child) and `success()` is `code() == Some(0)`; a child ended by a signal has
+  `signal()` (Unix only) and no code. Waiting for the same child twice is an error. `wait_with_output` closes the
+  child's standard input, reads the piped output streams together, so a child writing a lot to one of them cannot
+  block the other, and then waits; a stream that was not piped is empty in the result.
+- **Pipes.** A write to `ChildStdin` is unbuffered and writes every byte. `read_to_string` reads to the end of the
+  stream; `read_line` returns one line without its terminator (`\n`, or the `\r` of a `\r\n`), `Ok(None)` at the
+  end, and the last line may have no terminator. A handle closes when it is dropped; dropping the `ChildStdin`
+  without writing is how the parent signals the end of the input. A `Child` closes its process handle when it is
+  dropped, but it does not wait for the child.
+- **Errors.** A spawn failure — a program that does not exist, an argument or environment entry the system cannot
+  take, or a pipe or process that cannot be created — is `IoError.Run` with the program name. A pipe read failure is
+  `IoError.Read` with `<stdout>`, `<stderr>`, or `<child>`, and a write failure is `IoError.Write` with `<stdin>`.
+  A program name without a separator is looked up on `PATH`: on Unix the search uses the child's environment, while
+  on Windows `CreateProcessW` searches the calling process's `PATH`.
+- None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+
+Tests: `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`,
+and `m20_comptime/purity_process`.
+
 ## The compilation target
 
 ```
@@ -1333,13 +1415,13 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
-| Iteration | `m13_iterators/*` (`iterators.md`) |
+| Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
 | Characters of a text | `m24_stdlib/text_characters` |
 | Iterator consumers | `m24_stdlib/iter_last_nth_position`, `iter_for_each_reduce`, `iter_partition`, `iter_min_max` |
-| Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable` |
+| Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable`, `iter_zip`, `iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`, `iter_adapters_no_leaks`, `iter_adapters_comptime`; errors `iter_zip_from_temporary`, `iter_zip_in_struct_field`, `iter_chain_in_collection`, `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`, `iter_rev_needs_double_ended`, `iter_rev_through_adapter`, `iter_cloned_needs_clone`, `iter_cloned_needs_views`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch`, `iter_flatten_needs_iterators`, `iter_zip_needs_iterator` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
@@ -1361,6 +1443,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors` |
 | Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode` |
+| Child processes | `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`, `m20_comptime/purity_process` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |
 | Dynamic errors, `main`, assertions | `m16_errors/dynamic_error_downcast`, `error_context_chain`, `error_context_non_error`, `traces_debug`, `main_result_ok`, `main_result_err`, `main_result_typed`, `main_result_alias`, `assert_typed`, `std_errors` |
