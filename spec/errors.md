@@ -159,20 +159,31 @@ function.
 error enum AssertError {
     Failed { condition: String, location: String }
         "assertion failed: {condition} at {location}"
+    FailedMsg { condition: String, message: String, location: String }
+        "assertion failed: {condition} at {location}: {message}"
     FailedEq { condition: String, left: String, right: String, location: String }
         "assertion failed: {condition} at {location}: {left} != {right}"
+    FailedEqMsg { condition: String, left: String, right: String, message: String, location: String }
+        "assertion failed: {condition} at {location}: {left} != {right}: {message}"
+    FailedNe { condition: String, left: String, right: String, location: String }
+        "assertion failed: {condition} at {location}: {left} == {right}"
+    FailedNeMsg { condition: String, left: String, right: String, message: String, location: String }
+        "assertion failed: {condition} at {location}: {left} == {right}: {message}"
 }
 ```
 
-In a `burdin test` build, `assert(cond)` and `assert_eq(a, b)` return `Result<(), AssertError>` and build one of
-these values at the call site: `condition` is the source text of the whole call (`assert_eq(add(1, 1), 3)`),
-`location` is the call's `path:line:col`, and `assert_eq` stores both values formatted with `Debug` (a type
-without `Debug` is E0141 at the call, because the test-mode function's signature requires it). A `test` block is
-compiled as a function returning `Result<()>`, so `assert(...)?` converts the `AssertError` into the dynamic error,
-and any other error type (`read_to_string(...)?` and so on) converts there too. A test that returns `Err` prints
-the error's message to standard error before
-it reports the failure, so `burdin test` shows it with the captured output. A normal build keeps the panicking
-`assert`/`assert_eq` unchanged.
+In a `burdin test` build, `assert(cond)`, `assert_eq(a, b)`, and `assert_ne(a, b)` (with or without a message)
+return `Result<(), AssertError>` and build one of these values at the call site: `condition` is the source text of
+the whole call (`assert_eq(add(1, 1), 3)`), `location` is the call's `path:line:col`, `message` is the formatted
+message of the message form (the variant without `Msg` is used when the call wrote no message), and `assert_eq`/
+`assert_ne` store both values formatted with `Debug` (a type without `Debug` is E0141 at the call, because the
+test-mode function's signature requires it). A `test` block is compiled as a function returning `Result<()>`, so
+`assert(...)?` converts the `AssertError` into the dynamic error, and any other error type
+(`read_to_string(...)?` and so on) converts there too. A test that returns `Err` prints the error's message to
+standard error before it reports the failure, so `burdin test` shows it with the captured output. A normal build
+keeps the panicking `assert`/`assert_eq`/`assert_ne` unchanged. The `debug_assert*` assertions keep their
+debug-or-release behavior in a test build: they are not replaced, a release build drops them, and a debug-build
+failure is a panic, which the runner reports as a failed test (`stdlib.md`, "Memory helpers and assertions").
 
 ## ERR10. The standard-library errors
 

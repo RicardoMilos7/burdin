@@ -7,7 +7,7 @@ use crate::types::check_storable;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{Place, is_place_expr, place_mentions, place_root, places_overlap};
-use burdin_tir::{self as tir, Builtin, FloatTy, FuncId, IntTy, Method, ParamSig, Pat, Ty};
+use burdin_tir::{self as tir, AssertKind, Builtin, FloatTy, FuncId, IntTy, Method, ParamSig, Pat, Ty};
 
 impl FnCx<'_> {
     pub(super) fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
@@ -58,6 +58,14 @@ impl FnCx<'_> {
                         if self.globals.test_assert == Some(f) {
                             return self.test_assert_call(f, args, span);
                         }
+                        // The message form of `assert` and `debug_assert` are compiler-side
+                        // (`spec/stdlib.md`, "Memory helpers and assertions").
+                        if self.globals.debug_assert_fn == Some(f) {
+                            return self.debug_assert_call(args, span);
+                        }
+                        if self.globals.assert_fn == Some(f) && args.len() > 1 {
+                            return self.assert_msg_call(args, span);
+                        }
                         self.check_unsafe_call(f, &id.name, id.span);
                         let sig = &self.globals.sigs[f.0];
                         (sig.params.clone(), sig.ret.clone(), Callee::User(f))
@@ -65,6 +73,21 @@ impl FnCx<'_> {
                     Some(Global::Generic(g)) => {
                         if self.globals.test_assert_eq == Some(g) {
                             return self.test_assert_eq_call(g, id, args, span, expect);
+                        }
+                        if self.globals.test_assert_ne == Some(g) {
+                            return self.test_assert_ne_call(g, id, args, span, expect);
+                        }
+                        if self.globals.debug_assert_eq_gen == Some(g) {
+                            return self.debug_compare_call(args, span, AssertKind::DebugAssertEq);
+                        }
+                        if self.globals.debug_assert_ne_gen == Some(g) {
+                            return self.debug_compare_call(args, span, AssertKind::DebugAssertNe);
+                        }
+                        if args.len() > 2 && self.globals.assert_eq_gen == Some(g) {
+                            return self.assert_compare_msg_call(args, span, AssertKind::Eq);
+                        }
+                        if args.len() > 2 && self.globals.assert_ne_gen == Some(g) {
+                            return self.assert_compare_msg_call(args, span, AssertKind::Ne);
                         }
                         return self.generic_call(g, id, args, span, expect);
                     }
@@ -86,7 +109,6 @@ impl FnCx<'_> {
                         return self.format_call(args, span);
                     }
                     None => match builtin(&id.name) {
-                        Some(Builtin::AssertEq) => return self.assert_eq(args, span),
                         Some(b @ (Builtin::Print | Builtin::Println | Builtin::Eprint | Builtin::Eprintln))
                             if args.len() > 1 =>
                         {
@@ -254,32 +276,31 @@ impl FnCx<'_> {
         mk(kind, result_ty, span)
     }
 
-    /// The test-build `assert`: the argument is the condition, and the compiler appends its source text and the
-    /// call's location, which the `AssertError` message reports (`spec/errors.md`, ERR9).
+    /// The test-build `assert`: the argument is the condition and an optional formatted message, and the
+    /// compiler appends the call's source text and location, which the `AssertError` message reports
+    /// (`spec/errors.md`, ERR9).
     fn test_assert_call(&mut self, f: FuncId, args: &[ast::Arg], span: Span) -> tir::Expr {
         self.reject_named_args("assert", args);
         let sig = self.globals.sigs[f.0].clone();
-        if args.len() != 1 {
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`assert` takes 1 argument, but {} were given", args.len()),
-            );
+        if args.is_empty() {
+            self.diags.error(Code::ARG_COUNT, span, "`assert` takes a condition");
             return self.args_then_error(args, span);
         }
         let cond = self.expr(&args[0].expr, Some(&Ty::Bool));
         let cond = self.expect_ty(cond, &Ty::Bool);
+        let message = self.test_message(args, 1, span);
         let (condition, location) = self.assertion_texts(span);
-        let augmented = vec![checked_arg(&args[0], span), string_arg(condition, span), string_arg(location, span)];
-        let Some(checked) = self.args_pre("assert", &sig.params, &augmented, None, span, Some(vec![cond])) else {
+        let message_ast = if args.len() > 1 { checked_arg(&args[1], span) } else { checked_arg(&args[0], span) };
+        let augmented =
+            vec![checked_arg(&args[0], span), message_ast, string_arg(condition, span), string_arg(location, span)];
+        let Some(checked) = self.args_pre("assert", &sig.params, &augmented, None, span, Some(vec![cond, message]))
+        else {
             return error_expr(span);
         };
         mk(tir::ExprKind::Call(f, checked), sig.ret, span)
     }
 
-    /// The test-build `assert_eq`: the two values are checked here so that `T` is inferred from them, and the
-    /// call's source text and location are appended (`spec/errors.md`, ERR9). The generic call then infers `T`,
-    /// checks its `Eq + Debug` bounds, and instantiates the standard library's function.
+    /// The test-build `assert_eq` (`spec/errors.md`, ERR9).
     fn test_assert_eq_call(
         &mut self,
         g: usize,
@@ -288,32 +309,68 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
-        self.reject_named_args("assert_eq", args);
-        if args.len() != 2 {
+        self.test_compare_call(g, id, args, span, expect, "assert_eq")
+    }
+
+    /// The test-build `assert_ne` (`spec/errors.md`, ERR9).
+    fn test_assert_ne_call(
+        &mut self,
+        g: usize,
+        id: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
+        self.test_compare_call(g, id, args, span, expect, "assert_ne")
+    }
+
+    /// The test-build comparison assertions: the two values are checked here so that `T` is inferred from
+    /// them, and the message (empty when none was written), the call's source text, and its location are
+    /// appended (`spec/errors.md`, ERR9). The generic call then infers `T`, checks its `Eq + Debug` bounds,
+    /// and instantiates the standard library's function.
+    fn test_compare_call(
+        &mut self,
+        g: usize,
+        id: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+        name: &str,
+    ) -> tir::Expr {
+        self.reject_named_args(name, args);
+        if args.len() < 2 {
             self.diags.error(
                 Code::ARG_COUNT,
                 span,
-                format!("`assert_eq` takes 2 arguments, but {} were given", args.len()),
+                format!("`{name}` takes two values, but {} were given", args.len()),
             );
             return self.args_then_error(args, span);
         }
-        // Check the left value first; the right one takes its type, so a literal right side fits a typed left
-        // side, exactly as the ordinary `assert_eq` call does.
-        let a = self.expr(&args[0].expr, None);
-        let a = self.auto_deref(a);
-        let b = self.expr(&args[1].expr, Some(&a.ty));
-        let b = self.coerce_arg(b, &a.ty);
+        let (a, b) = self.comparison_args(args, name, span);
+        let message = self.test_message(args, 2, span);
         let (condition, location) = self.assertion_texts(span);
         let condition_value = mk(tir::ExprKind::Str(condition.clone()), Ty::Str, span);
         let location_value = mk(tir::ExprKind::Str(location.clone()), Ty::Str, span);
+        let message_ast = if args.len() > 2 { checked_arg(&args[2], span) } else { checked_arg(&args[0], span) };
         let augmented = vec![
             checked_arg(&args[0], span),
             checked_arg(&args[1], span),
+            message_ast,
             string_arg(condition, span),
             string_arg(location, span),
         ];
-        let checked = vec![a, b, condition_value, location_value];
+        let checked = vec![a, b, message, condition_value, location_value];
         self.generic_call_checked(g, id, &augmented, checked, span, expect)
+    }
+
+    /// The message value of a typed assertion: the arguments from `first` on formatted, or an empty `str` when
+    /// the call wrote none.
+    fn test_message(&mut self, args: &[ast::Arg], first: usize, span: Span) -> tir::Expr {
+        if args.len() > first {
+            self.assertion_message(&args[first..], span)
+        } else {
+            mk(tir::ExprKind::Str(String::new()), Ty::Str, span)
+        }
     }
 
     /// The source text of the whole call at `span` and its `path:line:col`, for a typed assertion (`ERR9`).
@@ -386,17 +443,68 @@ impl FnCx<'_> {
         self.wrap_scrutinee(matched, owned_temp, span)
     }
 
-    /// `assert_eq(a, b)`: both values must have the same `Eq` type.
-    fn assert_eq(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
-        self.reject_named_args("assert_eq", args);
-        if args.len() != 2 {
+    /// The message form of `assert`: `assert(cond, "message {x}")` checks the condition and formats the
+    /// message, which the panic reports (`spec/stdlib.md`, "Memory helpers and assertions").
+    fn assert_msg_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("assert", args);
+        let cond = self.expr(&args[0].expr, Some(&Ty::Bool));
+        let cond = self.expect_ty(cond, &Ty::Bool);
+        let message = self.assertion_message(&args[1..], span);
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(AssertKind::Assert), vec![cond, message]), Ty::Unit, span)
+    }
+
+    /// The message forms of `assert_eq` and `assert_ne`: the two values must have the same `Eq` type, and the
+    /// message (from the third argument on) is formatted and reported by the panic.
+    fn assert_compare_msg_call(&mut self, args: &[ast::Arg], span: Span, kind: AssertKind) -> tir::Expr {
+        let name = if kind == AssertKind::Ne { "assert_ne" } else { "assert_eq" };
+        self.reject_named_args(name, args);
+        let (l, r) = self.comparison_args(args, name, span);
+        let message = self.assertion_message(&args[2..], span);
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(kind), vec![l, r, message]), Ty::Unit, span)
+    }
+
+    /// `debug_assert(cond[, message])`: the compiler keeps the check in a debug build and drops it from a
+    /// release build without evaluating either argument (`spec/stdlib.md`).
+    fn debug_assert_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("debug_assert", args);
+        if args.is_empty() {
+            self.diags.error(Code::ARG_COUNT, span, "`debug_assert` takes a condition");
+            return self.args_then_error(args, span);
+        }
+        let cond = self.expr(&args[0].expr, Some(&Ty::Bool));
+        let cond = self.expect_ty(cond, &Ty::Bool);
+        let mut values = vec![cond];
+        if args.len() > 1 {
+            values.push(self.assertion_message(&args[1..], span));
+        }
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(AssertKind::DebugAssert), values), Ty::Unit, span)
+    }
+
+    /// `debug_assert_eq(a, b[, message])` and `debug_assert_ne`: the comparison forms of `debug_assert`.
+    fn debug_compare_call(&mut self, args: &[ast::Arg], span: Span, kind: AssertKind) -> tir::Expr {
+        let name = if kind == AssertKind::DebugAssertNe { "debug_assert_ne" } else { "debug_assert_eq" };
+        self.reject_named_args(name, args);
+        if args.len() < 2 {
             self.diags.error(
                 Code::ARG_COUNT,
                 span,
-                format!("`assert_eq` takes 2 arguments, but {} were given", args.len()),
+                format!("`{name}` takes two values, but {} were given", args.len()),
             );
             return self.args_then_error(args, span);
         }
+        let (l, r) = self.comparison_args(args, name, span);
+        let mut values = vec![l, r];
+        if args.len() > 2 {
+            values.push(self.assertion_message(&args[2..], span));
+        }
+        mk(tir::ExprKind::Builtin(Builtin::Assertion(kind), values), Ty::Unit, span)
+    }
+
+    /// The two values of a comparison assertion (`assert_eq`, `assert_ne`, and their `debug_` forms): the left
+    /// value fixes the type, the right one takes it, and both must support `==` (`spec/stdlib.md`).
+    fn comparison_args(&mut self, args: &[ast::Arg], name: &str, span: Span) -> (tir::Expr, tir::Expr) {
+        // Check the left value first; the right one takes its type, so a literal right side fits a typed left
+        // side, exactly as the ordinary `assert_eq` call does.
         let l = self.expr(&args[0].expr, None);
         let l = self.auto_deref(l);
         let r = self.expr(&args[1].expr, Some(&l.ty));
@@ -405,10 +513,17 @@ impl FnCx<'_> {
             self.diags.error(
                 Code::BOUND_NOT_SATISFIED,
                 span,
-                format!("`assert_eq` needs `Eq` values, but `{}` does not support `==`", l.ty),
+                format!("`{name}` needs `Eq` values, but `{}` does not support `==`", l.ty),
             );
         }
-        mk(tir::ExprKind::Builtin(Builtin::AssertEq, vec![l, r]), Ty::Unit, span)
+        (l, r)
+    }
+
+    /// The formatted message of an assertion's message form. It is a `str` view of the formatted `String`,
+    /// which the panic reports when the assertion fails (`spec/stdlib.md`).
+    fn assertion_message(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        let text = self.format_call(args, span);
+        self.coerce_arg(text, &Ty::Str)
     }
 
     /// `swap(mut a, mut b)`: two places of one type, both mutable and non-overlapping.
@@ -1540,7 +1655,7 @@ impl FnCx<'_> {
                 };
                 return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
             }
-            if name.name != "parse" {
+            if name.name != "parse" && name.name != "default" {
                 self.diags.error(
                     Code::UNKNOWN_NAME,
                     name.span,
@@ -1548,12 +1663,15 @@ impl FnCx<'_> {
                 );
                 return self.args_then_error(args, span);
             }
-            let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
-                return error_expr(span);
-            };
-            let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
-            let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
-            return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
+            // `default` falls through to the `Type.default()` lookup below, like the other built-in types.
+            if name.name == "parse" {
+                let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
+                    return error_expr(span);
+                };
+                let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
+                let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
+                return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
+            }
         }
         // `f64.parse(s)` and the other associated functions of a float type are `std` functions named
         // `__<type>_<name>` (spec/stdlib.md, "Floats"), except `from_bits`, which is the compiler's bit cast.

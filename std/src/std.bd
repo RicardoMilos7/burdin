@@ -194,16 +194,22 @@ error enum ParseIntError {
     Invalid "invalid integer"
 }
 
-/// The error type of `assert` and `assert_eq` in a `burdin test` build.
+/// The error type of `assert`, `assert_eq`, and `assert_ne` in a `burdin test` build.
 error enum AssertError {
     Failed { condition: String, location: String } "assertion failed: {condition} at {location}"
+    FailedMsg { condition: String, message: String, location: String }
+        "assertion failed: {condition} at {location}: {message}"
     FailedEq { condition: String, left: String, right: String, location: String } "assertion failed: {condition} at {location}: {left} != {right}"
+    FailedEqMsg { condition: String, left: String, right: String, message: String, location: String } "assertion failed: {condition} at {location}: {left} != {right}: {message}"
+    FailedNe { condition: String, left: String, right: String, location: String } "assertion failed: {condition} at {location}: {left} == {right}"
+    FailedNeMsg { condition: String, left: String, right: String, message: String, location: String } "assertion failed: {condition} at {location}: {left} == {right}: {message}"
 }
 
 /// A borrowed C string: a pointer to NUL-terminated bytes. `CStr.to_string(ptr)` copies them into a `String`.
 type CStr = CPtr<CChar>
 
-/// Panics with `assertion failed` when `cond` is false.
+/// Panics with `assertion failed` when `cond` is false. With a message, `assert(cond, "text {x}")` formats it
+/// and panics with that instead.
 fn assert(cond: bool) {
     if !cond {
         panic("assertion failed")
@@ -217,22 +223,60 @@ fn assert_eq<T: Eq>(a: T, b: T) {
     }
 }
 
-/// The test-mode `assert`: a false condition is an error instead of a panic, so `burdin test` reports the test
-/// as failed and keeps running the others. `burdin test` binds this as `assert`; normal builds use the panicking
-/// version above. The compiler appends the condition's source text and the call's location at the call site
-/// (`spec/errors.md`, ERR9).
-priv fn __test_assert(cond: bool, condition: str, location: str): Result<(), AssertError> {
-    if cond {
-        Ok(())
-    } else {
-        Err(AssertError.Failed { condition: condition.to_string(), location: location.to_string() })
+/// Panics when the two values are equal. With a message, `assert_ne(a, b, "text {x}")` formats it and panics
+/// with that instead.
+fn assert_ne<T: Eq>(a: T, b: T) {
+    if a == b {
+        panic("assertion failed: the two values are equal")
     }
 }
 
-/// The test-mode `assert_eq`. The compiler appends the call's source text and location, as for `assert`.
+/// `assert` for a condition that is checked only in a debug build: a release build drops the check without
+/// evaluating the condition or formatting the message.
+fn debug_assert(cond: bool) {
+    if !cond {
+        panic("assertion failed")
+    }
+}
+
+/// `assert_eq` for a debug build; a release build drops the check without evaluating the values.
+fn debug_assert_eq<T: Eq>(a: T, b: T) {
+    if a != b {
+        panic("assertion failed: the two values differ")
+    }
+}
+
+/// `assert_ne` for a debug build; a release build drops the check without evaluating the values.
+fn debug_assert_ne<T: Eq>(a: T, b: T) {
+    if a == b {
+        panic("assertion failed: the two values are equal")
+    }
+}
+
+/// The test-mode `assert`: a false condition is an error instead of a panic, so `burdin test` reports the test
+/// as failed and keeps running the others. `burdin test` binds this as `assert`; normal builds use the panicking
+/// version above. The compiler appends the message (empty when none was written), the call's source text, and
+/// the call's location at the call site (`spec/errors.md`, ERR9).
+priv fn __test_assert(cond: bool, message: str, condition: str, location: str): Result<(), AssertError> {
+    if cond {
+        Ok(())
+    } else if message.len() == 0 {
+        Err(AssertError.Failed { condition: condition.to_string(), location: location.to_string() })
+    } else {
+        Err(AssertError.FailedMsg {
+            condition: condition.to_string(),
+            message: message.to_string(),
+            location: location.to_string(),
+        })
+    }
+}
+
+/// The test-mode `assert_eq`. The compiler appends the message, the call's source text, and its location, as
+/// for `assert`.
 priv fn __test_assert_eq<T: Eq + Debug>(
     a: T,
     b: T,
+    message: str,
     condition: str,
     location: str,
 ): Result<(), AssertError> {
@@ -241,16 +285,69 @@ priv fn __test_assert_eq<T: Eq + Debug>(
     } else {
         let left = format("{a:?}")
         let right = format("{b:?}")
-        Err(AssertError.FailedEq {
-            condition: condition.to_string(),
-            left,
-            right,
-            location: location.to_string(),
-        })
+        if message.len() == 0 {
+            Err(AssertError.FailedEq {
+                condition: condition.to_string(),
+                left,
+                right,
+                location: location.to_string(),
+            })
+        } else {
+            Err(AssertError.FailedEqMsg {
+                condition: condition.to_string(),
+                left,
+                right,
+                message: message.to_string(),
+                location: location.to_string(),
+            })
+        }
+    }
+}
+
+/// The test-mode `assert_ne`. The compiler appends the message, the call's source text, and its location, as
+/// for `assert`.
+priv fn __test_assert_ne<T: Eq + Debug>(
+    a: T,
+    b: T,
+    message: str,
+    condition: str,
+    location: str,
+): Result<(), AssertError> {
+    if a != b {
+        Ok(())
+    } else {
+        let left = format("{a:?}")
+        let right = format("{b:?}")
+        if message.len() == 0 {
+            Err(AssertError.FailedNe {
+                condition: condition.to_string(),
+                left,
+                right,
+                location: location.to_string(),
+            })
+        } else {
+            Err(AssertError.FailedNeMsg {
+                condition: condition.to_string(),
+                left,
+                right,
+                message: message.to_string(),
+                location: location.to_string(),
+            })
+        }
     }
 }
 
 /// Panics. `unreachable()` marks a branch the program promises never runs.
 fn unreachable(): ! {
     panic("unreachable")
+}
+
+/// Panics with `not yet implemented`, for a function whose body is still to be written.
+fn todo(): ! {
+    panic("not yet implemented")
+}
+
+/// Panics with `not implemented`, for a function that is declared but not supported.
+fn unimplemented(): ! {
+    panic("not implemented")
 }

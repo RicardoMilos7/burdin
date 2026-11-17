@@ -1686,20 +1686,44 @@ branch (`comptime.md`, CT5). `tests/m20_comptime/comptime_if_platform.bd`, `comp
 ```
 fn mem.swap(mut a: T, mut b: T)
 fn mem.replace(mut place: T, own value: T): T   // moves the value in; returns the old one
+fn mem.take<T: Default>(mut place: T): T        // stores T.default() in the place and returns the old value
+fn mem.drop<T>(own value: T)                    // ends the value's life at the call
+fn Type.size(): usize                           // the C layout of a type (also `Type.align()`)
 fn panic(msg: str): !
 fn assert(cond: bool)
 fn assert_eq<T: Eq>(a: T, b: T)
+fn assert_ne<T: Eq>(a: T, b: T)
 fn unreachable(): !
+fn todo(): !
+fn unimplemented(): !
 ```
 
-`swap` and `replace` take places and are checked for exclusivity like any other call. `panic` prints its message and
-location and aborts (`memory-rules.md`, DR10); `unreachable()` panics with `unreachable`; `assert` panics with
-`assertion failed`; `assert_eq` panics when the values differ. In a `burdin test` build the prelude replaces
-`assert`/`assert_eq` with `__test_assert`/`__test_assert_eq`, which return `Result<(), AssertError>` instead of
-panicking: a failure is `AssertError.Failed { condition, location }` or
-`AssertError.FailedEq { condition, left, right, location }`, where `condition` is the call's source text, `left`
-and `right` are its values formatted with `Debug`, and `location` is its `path:line:col` (`errors.md`, ERR9). A
-normal build keeps the panicking assertions.
+`swap`, `replace`, and `take` take places and are checked for exclusivity like any other call. `take` needs
+`T: Default` and evaluates to the value that was in the place. `drop` hands the value to a function that drops it at
+once, which is the explicit spelling of an early drop; using the value afterwards is E0100. `size` and `align` are
+the layout queries, so `mem` adds no `size_of`/`align_of` aliases (issue #715).
+
+`panic` prints its message and location and aborts (`memory-rules.md`, DR10); `unreachable()` panics with
+`unreachable`; `todo()` and `unimplemented()` panic with `not yet implemented` and `not implemented`; `assert` panics
+with `assertion failed`; `assert_eq` panics with `assertion failed: the two values differ` when the values differ, and
+`assert_ne` with `assertion failed: the two values are equal` when they are equal.
+
+**Every assertion has a message form** (`assert(cond, "text {x}")`, `assert_eq(a, b, "text {x}")`,
+`assert_ne(a, b, "text {x}")`): the arguments after the condition (or the two values) are formatted exactly as
+`println`'s are (`format.md`, FM1-FM5), and a failing assertion panics with that text instead of the fixed one. The
+message is evaluated only when the assertion fails. A message whose format string is not a literal is E0194.
+
+**`debug_assert`, `debug_assert_eq`, and `debug_assert_ne`** behave like the assertions above in a debug build
+(`burdin build`/`run`/`test` without `--release`). A release build drops the call entirely: neither the condition nor
+the values nor the message are evaluated, so side effects in them never run. They are the only assertions with this
+behavior, and they keep it in a `burdin test` build (a failure is a panic, which the runner reports as a failed test).
+
+In a `burdin test` build the prelude replaces `assert`, `assert_eq`, and `assert_ne` with `__test_assert`,
+`__test_assert_eq`, and `__test_assert_ne`, which return `Result<(), AssertError>` instead of panicking: a failure is
+one of `AssertError.Failed`, `FailedMsg`, `FailedEq`, `FailedEqMsg`, `FailedNe`, or `FailedNeMsg`, where `condition`
+is the call's source text, `left` and `right` are its values formatted with `Debug`, `message` is the formatted
+message (only present when the call wrote one), and `location` is its `path:line:col` (`errors.md`, ERR9). A normal
+build keeps the panicking assertions.
 
 ## C bridge
 
@@ -1807,7 +1831,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors`, `m24_stdlib/io_error_kinds`, `io_error_kind_display`, `io_error_kind_mapping` |
 | Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode` |
 | Child processes | `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`, `m20_comptime/purity_process` |
-| Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m10_test_runner/*`, `m16_errors/assert_typed` |
+| Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m24_stdlib/mem_helpers`, `mem_drop_moves`, `mem_take_needs_default`, `assert_messages`, `assert_ne_passes`, `assert_needs_eq`, `assert_message_bad_args`, `assert_ne_aborts`, `assert_message_aborts`, `assert_eq_message_aborts`, `debug_assert_release`, `debug_assert_aborts`, `debug_assert_eq_aborts`, `todo_aborts`, `unimplemented_aborts`, `m10_test_runner/assert_messages_typed`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |
 | Dynamic errors, `main`, assertions | `m16_errors/dynamic_error_downcast`, `error_context_chain`, `error_context_non_error`, `traces_debug`, `main_result_ok`, `main_result_err`, `main_result_typed`, `main_result_alias`, `assert_typed`, `std_errors` |
 | C bridge | `m08_modules/extern_libc`, `cstr_roundtrip`, `cptr_operations`, `cptr_null_arguments`, `c_out_parameter`, `c_abi_structs`, `cstring_clone`, `cstr_is_an_alias`, `export_c_abi`, `m11_llvm/llvm_return_42` |

@@ -1,0 +1,18 @@
+//@ run
+//@ release-only
+//> ok
+
+// A release build drops `debug_assert*` without evaluating the condition, the values, or the message.
+
+fn evaluates(): bool {
+    println("evaluated")
+    false
+}
+
+fn main() {
+    debug_assert(evaluates())
+    debug_assert_eq(1, 2)
+    debug_assert_ne(1, 1)
+    debug_assert(false, "not shown")
+    println("ok")
+}

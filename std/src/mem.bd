@@ -9,3 +9,13 @@ fn swap<T>(mut a: T, mut b: T) {
 fn replace<T>(mut place: T, own value: T): T {
     __replace(mut place, value)
 }
+
+/// Replaces the value in `place` with `T.default()` and returns the old value.
+fn take<T: Default>(mut place: T): T {
+    replace(mut place, T.default())
+}
+
+/// Drops `value` now instead of at the end of its scope.
+fn drop<T>(own value: T) {
+    let _ = value
+}

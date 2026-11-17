@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: the answer should be 42, not 41
+
+// A failing `assert_eq`/`assert_ne` with a message panics with the formatted message.
+
+fn main() {
+    let answer = 41
+    assert_eq(answer, 42, "the answer should be 42, not {answer}")
+}

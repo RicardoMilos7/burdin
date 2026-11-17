@@ -245,7 +245,6 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::RenamePath => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
         Builtin::IoErrorKind => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
-        Builtin::Assert => vec![ParamSig::plain(Ty::Bool)],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::RawAlloc => vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Int(IntTy::Usize))],
         Builtin::RawRealloc => vec![
@@ -266,8 +265,6 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         ],
         Builtin::FloatFromBits(FloatTy::F32) => vec![ParamSig::plain(Ty::Int(IntTy::U32))],
         Builtin::FloatFromBits(FloatTy::F64) => vec![ParamSig::plain(Ty::Int(IntTy::U64))],
-        // `assert_eq` checks its two arguments specially: their type is inferred, not fixed.
-        Builtin::AssertEq => Vec::new(),
         // `Heap.new` is checked separately: its result type depends on the value.
         Builtin::HeapNew => vec![ParamSig::plain(Ty::Error)],
         // `swap` and `replace` check their arguments separately.

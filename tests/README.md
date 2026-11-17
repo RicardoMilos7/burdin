@@ -66,6 +66,7 @@ Directives are line comments at any position in the root file.
 | `//@ stdin: text` | One line of standard input for a `run`/`run-abort` test, followed by `\n`. May repeat; the lines are joined in file order. `\n`, `\r`, and `\\` are escapes. |
 | `//@ stdin-eof: text` | Text appended after the `stdin` lines with no terminator. May repeat. A test with neither directive reads an empty standard input. |
 | `//@ debug-only` | Skip in release profile (overflow checks). |
+| `//@ release-only` | Skip in debug profile (`debug_assert` is dropped in release). |
 | `//@ skip-platform: os` | Skip on that host: `linux`, `macos`, or `windows`; several may be listed. |
 | `//@ link-lib: NAME` | Extra library to link. |
 | `//@ undecided: text` | Skipped; documents an open design question. |
@@ -105,7 +106,8 @@ python3 tests/check_build_scripts.py      # check build-script caching, declared
 ```
 
 CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and
-release. The release run skips tests marked `//@ debug-only`. The `burdin test` features themselves (attributes,
+release. The release run skips tests marked `//@ debug-only`, and a debug run skips tests marked `//@ release-only`.
+The `burdin test` features themselves (attributes,
 `-j`, output capture, isolation, `-p`/`--workspace`) are checked black-box by `tests/check_test_runner.py`, with
 fixtures under `tests/runner/` that carry no `//@` directives and are therefore not conformance tests.
 
@@ -649,9 +651,11 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   `Result<T>`'s dynamic error without a block (`m16_errors/error_from_conversion.bd`, `error_missing_conversion.bd`).
   The stage 0 hand-written example remains in `m09_stdlib/question_and_from.bd`.
 - **`assert` has two modes.** In a normal build it panics; in a `burdin test` build the prelude binds
-  `__test_assert`/`__test_assert_eq`, which build a typed `AssertError` carrying the call text, the values, and the
-  location, so a failed test is reported with its message instead of aborting. The design describes the test form
-  only. Decision 9, `spec/errors.md` ERR9, `m10_test_runner/*`, `m16_errors/assert_typed.bd`.
+  `__test_assert`/`__test_assert_eq`/`__test_assert_ne`, which build a typed `AssertError` carrying the call text,
+  the values, the formatted message, and the location, so a failed test is reported with its message instead of
+  aborting. `assert_ne` and the message forms (`assert(cond, "text {x}")`) are compiler-lowered builtins; the
+  `debug_assert*` forms are dropped from a release build without evaluating their arguments. The design describes
+  the test form only. Decision 9, `spec/errors.md` ERR9, `m10_test_runner/*`, `m16_errors/assert_typed.bd`.
 - **No leak-detecting allocator (deviation).** The design runs every test under one; allocators are stage 1, so no
   test asserts that a leaked allocation fails. `spec/stage0-subset.md`.
 - **Panic wording is chosen by the runtime.** The design requires a message, the file, and the line; it does not fix

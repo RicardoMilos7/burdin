@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A comparison assertion needs values that support `==`.
+
+struct Plain {
+    a: i32
+}
+
+fn main() {
+    assert_eq(Plain { a: 1 }, Plain { a: 1 }) //~ E0141
+    assert_ne(Plain { a: 1 }, Plain { a: 1 }) //~ E0141
+    assert_eq(Plain { a: 1 }, Plain { a: 1 }, "plain") //~ E0141
+    assert_ne(Plain { a: 1 }, Plain { a: 1 }, "plain") //~ E0141
+}

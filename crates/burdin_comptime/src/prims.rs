@@ -545,17 +545,37 @@ impl<'p> Interp<'p, '_> {
                 return Err(panic(msg, span));
             }
             Builtin::Unreachable => return Err(panic("unreachable", span)),
-            Builtin::Assert => {
-                if !self.eval(&args[0], Mode::Use)?.bool() {
-                    return Err(panic("assertion failed", span));
+            Builtin::Assertion(kind) => {
+                // `debug_assert*` is removed from a release build; neither its condition nor its message is
+                // evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
+                if kind.is_debug() && self.release {
+                    return Ok(Value::Unit);
                 }
-                Value::Unit
-            }
-            Builtin::AssertEq => {
-                let a = self.eval(&args[0], Mode::Use)?;
-                let b = self.eval(&args[1], Mode::Use)?;
-                if !value_eq(&a, &b) {
-                    return Err(panic("assertion failed: the two values differ", span));
+                let compares = kind.compares_values();
+                let has_message = args.len() > if compares { 2 } else { 1 };
+                let failed = if compares {
+                    let a = self.eval(&args[0], Mode::Use)?;
+                    let b = self.eval(&args[1], Mode::Use)?;
+                    let equal = value_eq(&a, &b);
+                    // `assert_ne` fails when the values are equal, so its success is the negated comparison.
+                    if kind.expects_difference() { equal } else { !equal }
+                } else {
+                    !self.eval(&args[0], Mode::Use)?.bool()
+                };
+                if failed {
+                    let msg = match (has_message, args.last()) {
+                        (true, Some(m)) => self.peek(m, |v| String::from_utf8_lossy(v.bytes()).into_owned())?,
+                        _ => match kind {
+                            tir::AssertKind::Ne | tir::AssertKind::DebugAssertNe => {
+                                "assertion failed: the two values are equal".to_string()
+                            }
+                            tir::AssertKind::Eq | tir::AssertKind::DebugAssertEq => {
+                                "assertion failed: the two values differ".to_string()
+                            }
+                            _ => "assertion failed".to_string(),
+                        },
+                    };
+                    return Err(panic(msg, span));
                 }
                 Value::Unit
             }
