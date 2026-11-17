@@ -1,6 +1,6 @@
 //! Ids, built-in functions and methods, and operators.
 
-use crate::ty::IntTy;
+use crate::ty::{FloatTy, IntTy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FuncId(pub usize);
@@ -55,6 +55,23 @@ pub enum Builtin {
     ReadToString,
     /// `write_file(path, text)`: writes the bytes.
     WriteFile,
+    /// `__file_open(path, read, write, append, truncate, create, create_new)`: opens a file and returns its
+    /// descriptor (`spec/stdlib.md`, "Files and file handles").
+    FileOpen,
+    /// `__file_read(fd, buf, max)`: appends up to `max` bytes of the file to `buf` and returns how many.
+    FileRead,
+    /// `__file_write(fd, data)`: writes a prefix of `data` and returns how many bytes it took.
+    FileWrite,
+    /// `__file_seek(fd, offset, whence)`: moves the position and returns it (`whence` is 0, 1, or 2).
+    FileSeek,
+    /// `__file_sync(fd)`: makes the file's contents durable.
+    FileSync,
+    /// `__file_set_len(fd, size)`: truncates the file, or extends it with zeros.
+    FileSetLen,
+    /// `__file_close(fd)`: closes the descriptor.
+    FileClose,
+    /// `__file_error()`: the OS code of the last failed file operation (`spec/errors.md`, ERR11).
+    FileError,
     /// `__stdout_write(text)`: appends to the standard-output buffer.
     StdoutWrite,
     /// `__stdout_write_line(text)`: appends `text` and a newline to the standard-output buffer.
@@ -99,6 +116,13 @@ pub enum Builtin {
     /// `__io_kind(code)`: the portable `IoErrorKind` of an operating system error code (`spec/errors.md`,
     /// ERR11). The compiler knows the target's table (`ioerror`).
     IoErrorKind,
+    /// `__clock(kind)`: nanoseconds from the real-time clock (kind 0, since the Unix epoch) or the monotonic clock
+    /// (any other kind, from an unspecified start) (`spec/stdlib.md`, issue #195).
+    Clock,
+    /// `__entropy()`: 64 random bits from the operating system.
+    Entropy,
+    /// `__sleep(nanos)`: suspends the thread for about that long.
+    Sleep,
     /// `env.args()`: the process arguments, program name first.
     EnvArgs,
     /// `__env_get(name)`: the raw bytes of an environment variable, or `None` when it is unset (or, on
@@ -165,6 +189,47 @@ pub enum Builtin {
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.
     TargetArch,
+    /// `f64.from_bits(bits)` and `f32.from_bits(bits)`: the value with those bits (`spec/stdlib.md`, "Float
+    /// functions").
+    FloatFromBits(FloatTy),
+}
+
+/// A floating-point function the compiler provides on `f64` and `f32` (`spec/stdlib.md`, "Float functions").
+/// The receiver's type picks the precision: an exactly rounded operation lowers to an LLVM intrinsic, and one
+/// without an intrinsic calls the C math library. The functions `std` can write in Burdin are extension methods
+/// there instead (`min`, `max`, `clamp`, `signum`, and the predicates).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloatOp {
+    Abs,
+    Sqrt,
+    Cbrt,
+    Powi,
+    Powf,
+    Exp,
+    Exp2,
+    Ln,
+    Log2,
+    Log10,
+    Floor,
+    Ceil,
+    Round,
+    RoundTiesEven,
+    Trunc,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    Sinh,
+    Cosh,
+    Tanh,
+    Hypot,
+    MulAdd,
+    Copysign,
+    /// `to_bits(self)`: the bit pattern as an unsigned integer of the same width.
+    ToBits,
 }
 
 /// Built-in methods of the primitive types.
@@ -180,6 +245,9 @@ pub enum Method {
     Min,
     Max,
     Abs,
+    /// An `f64` or `f32` function (`spec/stdlib.md`, "Float functions"); the receiver's type picks the
+    /// precision.
+    Float(FloatOp),
     /// `String.push_str(str)`: appends bytes, growing the buffer.
     PushStr,
     /// `String.push(char)`: appends one UTF-8 character.

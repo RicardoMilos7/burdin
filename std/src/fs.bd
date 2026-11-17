@@ -1,12 +1,14 @@
-// Directories, metadata, and walking (issue #411; spec/stdlib.md, "Directories, metadata, and walking").
+// Directories, metadata, and walking (issue #411), and files and file handles (issue #702); `spec/stdlib.md`,
+// "Directories, metadata, and walking" and "Files and file handles".
 //
 // The compiler's primitives (`__read_dir`, `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`,
-// `__metadata`, and `__canonicalize`) reach the operating system; the signatures, the error values, the recursive
-// helpers, and the glob matcher are Burdin. Every function is impure: a comptime evaluation that reaches one fails
-// with E0224.
+// `__metadata`, `__canonicalize`, and the `__file_*` handle operations) reach the operating system; the signatures,
+// the error values, the recursive helpers, the glob matcher, and the file handle are Burdin. Every function is
+// impure: a comptime evaluation that reaches one fails with E0224.
 
 use fmt.{Debug, Formatter}
 use path.Path
+use rw.{Read, Seek, SeekFrom, Write}
 use sort.sort_by
 use std.{IoError, IoErrorKind}
 use text.to_char_list
@@ -357,4 +359,290 @@ Path {
     fn walk_glob(self, pattern: str): Result<List<String>, IoError> {
         walk_glob(self.as_str(), pattern)
     }
+}
+
+// ---- files and file handles (issue #702; spec/stdlib.md, "Files and file handles") ----
+
+/// The kind of a file failure. The primitives report 0 when no system call gave a code, which is `Other`
+/// (`spec/errors.md`, ERR10-ERR11).
+priv fn __io_error_kind(code: i32): IoErrorKind {
+    if code > 0 { __io_kind(code) } else { IoErrorKind.Other }
+}
+
+/// The OS code of a file failure, when the primitive reported one.
+priv fn __io_error_code(code: i32): Option<i32> {
+    if code > 0 { Some(code) } else { None }
+}
+
+/// The options that open a file. Every option starts off; `open` rejects a set with no access and the combinations
+/// the systems disagree on (`IoError.InvalidInput`).
+struct OpenOptions {
+    priv read: bool
+    priv write: bool
+    priv append: bool
+    priv truncate: bool
+    priv create: bool
+    priv create_new: bool
+}
+
+OpenOptions {
+    /// No options: `open` reports `IoError.InvalidInput` until an access mode is set.
+    fn new(): OpenOptions {
+        OpenOptions { read: false, write: false, append: false, truncate: false, create: false, create_new: false }
+    }
+
+    /// Allows reading.
+    fn read(mut self, on: bool) {
+        self.read = on
+    }
+
+    /// Allows writing.
+    fn write(mut self, on: bool) {
+        self.write = on
+    }
+
+    /// Every write goes to the end of the file. A file opened only for appending is opened for writing.
+    fn append(mut self, on: bool) {
+        self.append = on
+    }
+
+    /// Empties an existing file when it is opened. Needs write or append access, and cannot be combined with
+    /// append.
+    fn truncate(mut self, on: bool) {
+        self.truncate = on
+    }
+
+    /// Creates the file when it is missing.
+    fn create(mut self, on: bool) {
+        self.create = on
+    }
+
+    /// Creates the file when it is missing and fails when it exists. It implies `create`, so `create` need not be
+    /// set too.
+    fn create_new(mut self, on: bool) {
+        self.create_new = on
+    }
+
+    /// Opens `path` with these options. A set with no access mode, `truncate` without write or append access, and
+    /// `append` with `truncate` are `IoError.InvalidInput`. A failure of the system call is `IoError.Read` when the
+    /// options only read, and `IoError.Write` otherwise.
+    fn open(self, path: str): Result<File, IoError> {
+        if !self.read && !self.write && !self.append {
+            return Err(IoError.InvalidInput)
+        }
+        if self.truncate && !self.write && !self.append {
+            return Err(IoError.InvalidInput)
+        }
+        if self.truncate && self.append {
+            return Err(IoError.InvalidInput)
+        }
+        match __file_open(path, self.read, self.write, self.append, self.truncate, self.create, self.create_new) {
+            Ok(fd) => Ok(File { fd: fd, path: path.to_string() }),
+            Err(_) => {
+                let code = __file_error()
+                let changes = self.write || self.append || self.truncate || self.create || self.create_new
+                if changes {
+                    Err(IoError.Write {
+                        path: path.to_string(),
+                        kind: __io_error_kind(code),
+                        os_code: __io_error_code(code),
+                    })
+                } else {
+                    Err(IoError.Read {
+                        path: path.to_string(),
+                        kind: __io_error_kind(code),
+                        os_code: __io_error_code(code),
+                    })
+                }
+            }
+        }
+    }
+}
+
+/// An open file. It reads and writes through the unbuffered system descriptor, so wrap it in a `BufReader` or a
+/// `BufWriter` for many small operations. Dropping it closes it (`Drop`); `close` reports the error the drop would
+/// discard. The bytes are never translated: on every system the file is binary.
+struct File {
+    priv fd: i32
+    /// The path the handle was opened with, named by every error the handle reports.
+    priv path: String
+}
+
+File {
+    /// Opens `path` for reading.
+    fn open(path: str): Result<File, IoError> {
+        let mut options = OpenOptions.new()
+        options.read(true)
+        options.open(path)
+    }
+
+    /// Opens `path` for writing, creating it when it is missing and emptying it when it exists.
+    fn create(path: str): Result<File, IoError> {
+        let mut options = OpenOptions.new()
+        options.write(true)
+        options.create(true)
+        options.truncate(true)
+        options.open(path)
+    }
+
+    /// Makes the file's contents durable: `fsync` on Unix, `_commit` on Windows.
+    fn sync_all(self): Result<(), IoError> {
+        match __file_sync(self.fd) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
+        }
+    }
+
+    /// Sets the file's length. The bytes past `size` are removed, and a shorter file is extended with zero bytes.
+    fn set_len(mut self, size: u64): Result<(), IoError> {
+        match __file_set_len(self.fd, size) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
+        }
+    }
+
+    /// Closes the file and reports a failure that `Drop` would discard. The handle is moved, so it cannot be used
+    /// again. The rebinding marks the descriptor closed, so the drop that follows does not close it a second time
+    /// (a second close is an invalid descriptor, which the Windows CRT treats as a fatal parameter error).
+    fn close(own self): Result<(), IoError> {
+        let mut me = self
+        let fd = me.fd
+        me.fd = -1
+        match __file_close(fd) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: me.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
+        }
+    }
+}
+
+File: Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        match __file_read(self.fd, mut buf, max) {
+            Ok(n) => Ok(n),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Read {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
+        }
+    }
+}
+
+File: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        match __file_write(self.fd, data) {
+            Ok(n) => Ok(n),
+            Err(_) => {
+                let code = __file_error()
+                Err(IoError.Write {
+                    path: self.path.clone(),
+                    kind: __io_error_kind(code),
+                    os_code: __io_error_code(code),
+                })
+            }
+        }
+    }
+
+    /// Does nothing: a file handle writes through to the system, so there is no buffer to push out.
+    fn flush(mut self): Result<(), IoError> {
+        Ok(())
+    }
+}
+
+File: Seek {
+    fn seek(mut self, from: SeekFrom): Result<u64, IoError> {
+        let (offset, whence) = match from {
+            SeekFrom.Start(n) => (n as i64, 0),
+            SeekFrom.End(d) => (d, 2),
+            SeekFrom.Current(d) => (d, 1),
+        }
+        match __file_seek(self.fd, offset, whence) {
+            Ok(position) => Ok(position as u64),
+            Err(_) => Err(IoError.Seek),
+        }
+    }
+}
+
+File: Drop {
+    fn drop(mut self) {
+        if self.fd >= 0 {
+            let closed = __file_close(self.fd)
+            match closed {
+                Ok(()) => {}
+                Err(_) => {}
+            }
+        }
+    }
+}
+
+/// Reads the whole file at `path` as bytes.
+fn read(path: str): Result<List<u8>, IoError> {
+    let mut file = File.open(path)?
+    let mut bytes = List<u8>.new()
+    file.read_to_end(mut bytes)?
+    Ok(bytes)
+}
+
+/// Writes `data` to `path`, creating the file when it is missing and replacing its contents when it exists.
+fn write(path: str, data: [u8]): Result<(), IoError> {
+    let mut file = File.create(path)?
+    file.write_all(data)
+}
+
+/// Appends `data` to `path`. The file is created when it is missing.
+fn append(path: str, data: [u8]): Result<(), IoError> {
+    let mut options = OpenOptions.new()
+    options.write(true)
+    options.append(true)
+    options.create(true)
+    let mut file = options.open(path)?
+    file.write_all(data)
+}
+
+/// Copies every byte of `from` to `to`, creating or replacing `to`, and returns how many bytes it copied. The
+/// destination's permissions are not copied; only the bytes are. It is `copy_file` rather than `copy` because the
+/// reader/writer `copy` in `std.rw` already owns the unqualified name in the prelude.
+fn copy_file(from: str, to: str): Result<u64, IoError> {
+    let mut source = File.open(from)?
+    let mut destination = File.create(to)?
+    let mut chunk = List<u8>.new()
+    let mut total: u64 = 0
+    loop {
+        chunk.clear()
+        let n = source.read(mut chunk, 65536)?
+        if n == 0 {
+            return Ok(total)
+        }
+        destination.write_all(chunk[0..chunk.len()])?
+        total = total + (n as u64)
+    }
+}
+
+/// Whether something exists at `path` (`Path.exists`).
+fn exists(path: str): bool {
+    Path.new(path).exists()
 }

@@ -255,7 +255,7 @@ an error, not `1`.
 `N` is the size of the type in bytes (1, 2, 4, or 8). The target is little-endian everywhere Burdin runs, so `ne` is
 `le`. The `from_*_bytes` functions are the one case of an associated function that is not `parse`: `T.name(...)` on an
 integer type looks `name` up as the std function `__T_name`, and `T.NAME` as the std constant `__T_NAME`. A name that
-does not exist is the usual `E0002`. The floating-point functions are a separate issue (#703).
+does not exist is the usual `E0002`. The floating-point functions are below.
 
 ### Floats (issue #417)
 
@@ -273,6 +273,83 @@ prefix, and an exponent without digits, is `Invalid`. A number past the range of
 zero, as in C. The value is the correctly rounded one (it is computed by the C library's `strtod`/`strtof` after the
 grammar check), so a float written with `to_string`, which is the shortest text that reads back as the same number
 (`format.md`, FM7), parses back to the same float: `f64.parse(x.to_string()) == x` for every finite `x`.
+
+### Float functions (issue #703)
+
+`f64` and `f32` have the functions below. `T` stands for either type. The compiler provides the ones that lower to
+an LLVM intrinsic or to a C math library call, as it does for the integer methods; the rest are extension methods in
+`std/src/float.bd` (`extensions.md`), so the prelude makes them visible everywhere.
+
+```
+// Exactly rounded: the result is the IEEE 754 result. Compiled code and the comptime interpreter agree bit for bit.
+fn T.abs(self): T                    fn T.sqrt(self): T                 fn T.floor(self): T
+fn T.ceil(self): T                   fn T.round(self): T                fn T.round_ties_even(self): T
+fn T.trunc(self): T                  fn T.mul_add(self, a: T, b: T): T   fn T.copysign(self, sign: T): T
+fn T.to_bits(self): u64              // u32 for `f32`
+fn f64.from_bits(bits: u64): f64     fn f32.from_bits(bits: u32): f32    // associated functions, not methods
+
+// The C math library's results, through an LLVM intrinsic where one exists.
+fn T.powi(self, exp: i32): T         fn T.powf(self, exp: T): T          fn T.cbrt(self): T
+fn T.exp(self): T                    fn T.exp2(self): T                 fn T.ln(self): T
+fn T.log2(self): T                   fn T.log10(self): T                fn T.sin(self): T
+fn T.cos(self): T                    fn T.tan(self): T                  fn T.asin(self): T
+fn T.acos(self): T                   fn T.atan(self): T                 fn T.atan2(self, other: T): T
+fn T.sinh(self): T                   fn T.cosh(self): T                 fn T.tanh(self): T
+fn T.hypot(self, other: T): T
+
+// Written in `std`.
+fn T.is_nan(self): bool              fn T.is_infinite(self): bool       fn T.is_finite(self): bool
+fn T.is_sign_negative(self): bool    fn T.signum(self): T               fn T.fract(self): T
+fn T.log(self, base: T): T           fn T.min(self, other: T): T        fn T.max(self, other: T): T
+fn T.clamp(self, min: T, max: T): T  fn T.to_degrees(self): T           fn T.to_radians(self): T
+fn T.total_cmp(self, other: T): Ordering     // the float order; floats have no `cmp`
+
+// The associated constants, each in its type's precision.
+f64.PI  f64.E  f64.TAU  f64.SQRT_2  f64.LN_2  f64.LN_10  f64.INFINITY  f64.NEG_INFINITY  f64.NAN
+f64.EPSILON  f64.MIN  f64.MAX  f64.MIN_POSITIVE
+f32.PI  f32.E  f32.TAU  f32.SQRT_2  f32.LN_2  f32.LN_10  f32.INFINITY  f32.NEG_INFINITY  f32.NAN
+f32.EPSILON  f32.MIN  f32.MAX  f32.MIN_POSITIVE
+```
+
+The exact semantics:
+
+- `abs` clears the sign bit: `abs(-0.0)` is `0.0`, and a NaN keeps its payload but loses its sign. A NaN payload is
+  otherwise unspecified, including the one `NAN` has.
+- `round` rounds a half away from zero (`2.5` is `3.0`, `-2.5` is `-3.0`); `round_ties_even` rounds a half to the
+  even neighbour (`2.5` is `2.0`, `3.5` is `4.0`); `trunc` rounds toward zero; `floor` and `ceil` round down and
+  up. `fract` is `self - self.trunc()`, so it is NaN for an infinite or NaN value.
+- `signum` is `1.0`, `-1.0`, or NaN: it follows the sign bit, so `(-0.0).signum()` is `-1.0` and a NaN gives NaN.
+  `is_sign_negative` likewise reads the sign bit, so it is true for `-0.0` and for a NaN written with that bit.
+- `min` and `max` return the other value when one of them is NaN, and the receiver when the two compare equal. The
+  rule for equal values makes the signed zeros deterministic: `0.0.min(-0.0)` is `0.0` and `-0.0.min(0.0)` is
+  `-0.0`, and the same for `max`. Both values are bit-identical in compiled code and at compile time.
+- `clamp` panics with `clamp: min is NaN, max is NaN, or min is greater than max` when a bound is NaN or `min` is
+  greater than `max`; it is the value limited to `min..=max`, and a NaN receiver gives NaN.
+- `is_nan` is `self != self`, `is_infinite` is equality with either infinity, and `is_finite` is `abs(self) <
+  INFINITY`.
+- `log(base)` is `self.ln() / base.ln()`; `to_degrees` is `self * (180.0 / PI)` and `to_radians` is `self * (PI /
+  180.0)`, with the constant in the receiver's precision.
+- `total_cmp` is the IEEE 754 totalOrder as an `Ordering`: `-NaN < -inf < ... < -0.0 < 0.0 < ... < inf < NaN`, and
+  NaNs are ordered by their bit patterns. It is the comparator `sort_by` and `PriorityHeap` use for floats; floats
+  have no `cmp` (`E0002`). `Ordering` is described below.
+- `to_bits` and `from_bits` are a bit cast: every bit of the value is kept, including a NaN payload and the sign of
+  `-0.0`. The integer is `u64` for `f64` and `u32` for `f32`.
+- The constants are each type's value, so `f32.PI` is `3.1415927`. `MIN` and `MAX` are the finite extremes,
+  `MIN_POSITIVE` is the smallest positive normal value, and `EPSILON` is the gap between `1.0` and the next value.
+  `INFINITY`, `NEG_INFINITY`, and `NAN` are written as divisions (`1.0 / 0.0`, `-1.0 / 0.0`, `0.0 / 0.0`) because a
+  float literal must be finite; `NAN`'s payload and sign are unspecified.
+- Compiled code and the comptime interpreter agree bit for bit on the exactly rounded operations, and the
+  differential tests assert the bits (`test-runner.md`, "Differential tests"). The transcendental functions are the
+  C library's, through an LLVM intrinsic where LLVM has one (`tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
+  `cosh`, and `tanh` do in LLVM 21; `cbrt` and `hypot` are direct library calls), so their last bit is the
+  library's and is not promised across platforms.
+
+`f64.NAME` is the std constant `__f64_NAME` and `f32.NAME` is `__f32_NAME`, as for the integer constants. An unknown
+method is `E0002`, an unknown constant `E0002`, a wrong argument count `E0004`, and a wrong argument type `E0003`;
+`f64.pow` and `f64.cmp` are `E0002`, and the integer functions do not apply to floats.
+
+Tests: `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`,
+`float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names`.
 
 ## Characters (issue #416)
 
@@ -875,6 +952,212 @@ in the error. `remove_dir_all` on a path that is not a directory has kind `NotAD
 
 Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
 
+## Files and file handles (issue #702)
+
+The file operations live in `std.fs`, beside the directory operations; the prelude makes every name below visible
+unqualified. A file is opened through `OpenOptions` or the two shortcuts `File.open` and `File.create`, and the
+handle owns the system descriptor. Bytes are never translated: on every system a file is binary, so `0x00` and text
+that is not valid UTF-8 come back exactly as they were written.
+
+```
+struct OpenOptions {
+    fn new(): OpenOptions
+    fn read(mut self, on: bool)                fn write(mut self, on: bool)
+    fn append(mut self, on: bool)              fn truncate(mut self, on: bool)
+    fn create(mut self, on: bool)              fn create_new(mut self, on: bool)
+    fn open(self, path: str): Result<File, IoError>
+}
+
+struct File {
+    fn open(path: str): Result<File, IoError>          // `read` only
+    fn create(path: str): Result<File, IoError>        // write, create, and truncate
+    fn sync_all(self): Result<(), IoError>
+    fn set_len(mut self, size: u64): Result<(), IoError>
+    fn close(own self): Result<(), IoError>            // reports the error a drop would discard
+}
+File: Read     // read(mut buf: List<u8>, max: usize): Result<usize, IoError>
+File: Write    // write(data: [u8]): Result<usize, IoError>; flush(): Result<(), IoError> (there is no buffer)
+File: Seek     // seek(from: SeekFrom): Result<u64, IoError>; position() and rewind() come from `Seek`
+File: Drop     // closes the descriptor
+
+fn read(path: str): Result<List<u8>, IoError>
+fn write(path: str, data: [u8]): Result<(), IoError>
+fn append(path: str, data: [u8]): Result<(), IoError>
+fn copy_file(from: str, to: str): Result<u64, IoError>
+fn exists(path: str): bool
+```
+
+- `File.open` opens for reading, and `File.create` opens for writing, creating the file when it is missing and
+  emptying it when it exists. `OpenOptions.new()` starts with every option off; each setter changes one option.
+- `OpenOptions.open` rejects a set with no read, write, or append access, `truncate` without write or append access,
+  and `append` together with `truncate`, with `IoError.InvalidInput`, before it reaches the system. `create_new`
+  implies `create` and fails when the file exists. A handle opened only for appending is opened for writing, and
+  every write through it goes to the end whatever the position.
+- A system failure is `IoError.Read` when the options only read and `IoError.Write` otherwise, and names the path
+  the handle was opened with; a seek before the start is `IoError.Seek`.
+- `read` appends up to `max` bytes to the caller's list, growing it, and returns how many bytes it appended; `0` is
+  the end of the file. The `Read` defaults (`read_exact`, `read_to_end`, `read_to_string`) and the `Write` defaults
+  (`write_all`, `write_text`, `write_line`) are built on it, and `BufReader` and `BufWriter` wrap a `File` like any
+  other reader or writer.
+- `flush` succeeds without doing anything, because a file handle has no buffer; `sync_all` is the durability call
+  (`fsync` on Unix, `_commit` on Windows). `set_len` cuts the file or extends it with zero bytes.
+- Dropping the handle closes the descriptor. `close` closes it too and returns the failure a drop would discard;
+  it marks the handle closed, so the drop that follows does not close the descriptor again. Closing a descriptor
+  twice is an invalid descriptor, which the Windows CRT treats as a fatal parameter error.
+- `read`, `write`, and `append` are the byte-level counterparts of `read_to_string` and `write_file`; `write`
+  creates or replaces, and `append` creates a missing file. `copy_file` copies the bytes only, not permissions, and
+  returns how many it copied. It is not named `copy` because `std.rw` already exports the reader/writer `copy` under
+  that name, and the prelude has only the unqualified name for one of them; write `fs.copy_file(...)` for a file.
+  `exists` is `Path.exists`.
+- Every operation is impure: a comptime evaluation that reaches one fails with E0224.
+
+Tests: `m24_stdlib/file_handles`, `file_errors`, `file_comptime`.
+
+## Time (issue #195)
+
+```
+struct Duration derives (Copy, Clone, Eq, Ord, Hash, Default)   // a non-negative length of time
+struct Instant derives (Copy, Clone, Eq, Ord, Hash, Debug)      // a reading of the monotonic clock
+struct SystemTime derives (Copy, Clone, Eq, Ord, Hash, Debug)   // a reading of the real-time clock
+struct DateTime derives (Copy, Clone, Eq, Ord, Hash, Debug)     // a calendar date and time of day, in UTC
+enum Weekday derives (Copy, Clone, Eq, Ord, Hash, Debug)        // Monday ... Sunday
+interface Clock { fn now(self): Instant   fn system_time(self): SystemTime }
+struct SystemClock { }                                          // zero-sized; the operating system's clocks
+struct ManualClock                                              // moves only when told to
+fn sleep(d: Duration)
+
+Duration {
+    fn zero(): Duration                                  fn from_nanos(n: u64): Duration
+    fn from_micros(n: u64): Duration                     fn from_millis(n: u64): Duration
+    fn from_secs(n: u64): Duration                       fn from_secs_f64(secs: f64): Duration
+    fn as_nanos(self): u64      fn as_micros(self): u64  fn as_millis(self): u64     fn as_secs(self): u64
+    fn as_secs_f64(self): f64
+    fn subsec_nanos(self): u32  fn subsec_micros(self): u32                          fn subsec_millis(self): u32
+    fn is_zero(self): bool
+    fn checked_add(self, other: Duration): Option<Duration>
+    fn checked_sub(self, other: Duration): Option<Duration>
+    fn saturating_sub(self, other: Duration): Duration   fn abs_diff(self, other: Duration): Duration
+    fn times(self, n: u64): Duration                     fn divide(self, n: u64): Duration
+}                                                        // and `+`, `-` through Add and Sub; Display and Debug
+
+Instant {
+    fn now(): Instant                                    fn from_start(since_start: Duration): Instant
+    fn since_start(self): Duration                       fn elapsed(self): Duration
+    fn duration_since(self, earlier: Instant): Duration
+    fn checked_add(self, d: Duration): Option<Instant>   fn checked_sub(self, d: Duration): Option<Instant>
+}
+
+SystemTime {
+    fn now(): SystemTime                                 fn unix_epoch(): SystemTime
+    fn from_unix_secs(secs: i64): SystemTime             fn from_unix_nanos(nanos: i64): SystemTime
+    fn unix_secs(self): i64     fn unix_nanos(self): i64 fn subsec_nanos(self): u32
+    fn duration_since(self, earlier: SystemTime): Option<Duration>
+    fn checked_add(self, d: Duration): Option<SystemTime>
+    fn checked_sub(self, d: Duration): Option<SystemTime>
+    fn to_utc(self): DateTime
+}
+
+DateTime {   // the fields year: i32, month, day, hour, minute, second, nanosecond: u32 are public
+    fn new(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32, nanosecond: u32): Option<DateTime>
+    fn from_unix_secs(secs: i64): DateTime               fn to_unix_secs(self): i64
+    fn to_system_time(self): SystemTime
+    fn is_leap_year(self): bool   fn ordinal(self): u32  fn weekday(self): Weekday
+    fn format(self, pattern: str): String
+}                                                        // and Display (ISO 8601)
+
+ManualClock {
+    fn new(start: SystemTime): ManualClock
+    fn advance(mut self, d: Duration)                    fn set_system_time(mut self, time: SystemTime)
+}
+```
+
+- **Durations.** A `Duration` is one `u64` of nanoseconds, so it is never negative and tops out at about 584 years.
+  Every operation that could leave that range panics in every build profile, not only in debug: `from_micros`,
+  `from_millis`, `from_secs`, and `times` when the product does not fit, `+` when the sum does not fit, `-` when
+  the right side is longer, `from_secs_f64` for a negative, NaN, or too large value, and `divide(0)`. The `checked_`
+  forms return `None` instead, and `saturating_sub` stops at zero. `from_secs_f64` truncates to a whole nanosecond.
+  The `as_` functions round down, and `subsec_*` give the part after the last whole second.
+- **Writing a duration.** `Display` (and `Debug`, which is the same) writes the largest unit that gives a whole part,
+  with the fraction after it and no trailing zeros: `1.5s`, `250ms`, `42µs`, `7ns`, `0ns`. Width, fill, and
+  alignment apply; the precision does not.
+- **Two clocks.** `Instant` is the monotonic clock: it never goes backward, its zero is unspecified, and only the
+  difference between two readings means anything, so it is what measures how long something took.
+  `duration_since` is zero when `earlier` is not earlier, and `elapsed` is `Instant.now().duration_since(self)`.
+  `SystemTime` is the real-time clock: nanoseconds since 1970-01-01 00:00:00 UTC in an `i64` (the years 1678 to 2262,
+  negative before 1970). It can be set, so it can jump backward, which is why `SystemTime.duration_since` returns an
+  `Option`. `unix_secs` rounds toward the past, so a time before the epoch still has a `subsec_nanos` from 0 to
+  999,999,999. The monotonic clock is `clock_gettime(CLOCK_MONOTONIC)` and `QueryPerformanceCounter`; the real-time
+  clock is `clock_gettime(CLOCK_REALTIME)` and `GetSystemTimePreciseAsFileTime`.
+- **Calendar.** `DateTime` is the proleptic Gregorian calendar in UTC with no leap seconds and no time zones. The
+  conversions with Unix seconds are exact, before 1970 too; `from_unix_secs` panics when the year does not fit the
+  `i32` field. `DateTime.new` returns
+  `None` for a month outside 1 to 12, a day the month does not have (February 29 only in a leap year: divisible by 4,
+  except centuries that are not divisible by 400), an hour above 23, a minute or second above 59, or a nanosecond
+  above 999,999,999. The fields are public, so a value built by hand can be invalid; the derived ordering is
+  chronological because the fields run from the year down to the nanosecond. `to_system_time` panics outside the
+  range of `SystemTime`. `weekday` returns a `Weekday` and `ordinal` is 1 for January 1.
+- **Formatting a date.** `Display` writes ISO 8601 in UTC: `2026-11-17T09:41:07Z`, with the fraction of a second
+  after the seconds when it is not zero (`2023-11-14T22:13:20.12345Z`, no trailing zeros). `format(pattern)` expands
+  `%Y` (the year, at least four digits, with a minus sign when negative), `%m`, `%d`, `%H`, `%M`, `%S` (two digits
+  each), `%f` (nine digits of nanoseconds), `%j` (the day of the year, three digits), and `%%`. Any other text is
+  copied, including an unknown code such as `%q` and a `%` at the end.
+- **Determinism for tests.** Code that needs the time takes a `C: Clock` instead of calling `Instant.now()` or
+  `SystemTime.now()`. `SystemClock` forwards to the operating system. `ManualClock` starts its monotonic clock at
+  `Instant.from_start(Duration.zero())` and its real-time clock at the time given to `new`; `advance` moves both
+  forward (and panics if a reading would not fit), and `set_system_time` moves only the real-time clock, to model the
+  system clock being set. Everything else here (`Duration`, `DateTime`, the calendar functions, `ManualClock`) is
+  pure.
+- **Sleeping.** `sleep(d)` suspends the thread for about `d`. The system may round it up to its timer resolution
+  (whole milliseconds on Windows), and on Unix a signal can end it early. A long sleep is made of sleeps of at most
+  one hour.
+- **Compile time.** `Instant.now`, `SystemTime.now`, `SystemClock`'s methods, and `sleep` reach the operating
+  system, so a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9). The rest is pure and
+  works in a `const` or a `comptime` expression.
+
+Tests: `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`,
+`time_clock`, `time_comptime`, `time_comptime_impure`.
+
+## Random numbers (issue #195)
+
+```
+fn random_seed(): u64                                   // 64 random bits from the operating system
+struct Random derives (Clone, Eq)
+
+Random {
+    fn seeded(seed: u64): Random                        fn from_entropy(): Random
+    fn next_u64(mut self): u64                          fn next_u32(mut self): u32
+    fn next_bool(mut self): bool                        fn next_f64(mut self): f64
+    fn below(mut self, bound: u64): u64
+    fn range(mut self, low: i64, high: i64): i64        fn range_f64(mut self, low: f64, high: f64): f64
+    fn index(mut self, len: usize): Option<usize>
+    fn shuffle<T>(mut self, mut items: List<T>)
+}
+```
+
+- **The generator.** `Random` is xoshiro256** with its 256 bits of state filled from the seed by SplitMix64. It is
+  written in Burdin and uses only wrapping integer arithmetic, so a seed gives the same numbers on every platform,
+  in every build profile, and at compile time. Every seed works, including 0, because SplitMix64 never leaves the
+  state all zero for the four draws it makes. `clone` copies the state, so a clone replays the same numbers. It is a
+  statistical generator, not a cryptographic one: its output must not be used for keys or tokens.
+- **The seed source.** `random_seed()` is the one impure function: 64 bits from `getentropy` on Unix and `rand_s` on
+  Windows. If the system refuses, the bits come from the real-time clock, so a seed is never a constant. A test that
+  needs determinism seeds with a constant (`Random.seeded(42)`); a program that wants a different sequence each run
+  uses `Random.from_entropy()`, which is `Random.seeded(random_seed())`.
+- **Draws.** `next_u64` is the generator's output and `next_u32` is its high 32 bits. `next_bool` is the high bit.
+  `next_f64` is from 0.0 up to but not including 1.0, in steps of 2^-53. `below(bound)` is uniform over `0..bound`
+  with no modulo bias (a draw that would favor the low values is discarded and drawn again) and panics when `bound`
+  is zero. `range(low, high)` is uniform over `low..high` for any two `i64` values, including the whole `i64` range,
+  and panics unless `low < high`. `range_f64` is `low + next_f64() * (high - low)` and panics unless `low < high`
+  and the width is finite. `index(len)` is `Some` of a uniform index below `len`, or `None` for an empty collection.
+- **Shuffling.** `shuffle` is Fisher-Yates over `0..len` using `below`, so every order is equally likely and the
+  result is a function of the generator's state alone. An empty list and a one-element list are unchanged and
+  consume no numbers.
+- **Compile time.** `random_seed` and `from_entropy` fail with E0224 at compile time; `seeded` and every draw are
+  pure and work there (`comptime.md`, CT9).
+
+Tests: `m24_stdlib/random_seeded` (known answers from an independent implementation), `random_properties`,
+`random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure`.
+
 ## `Heap<T>`
 
 ```
@@ -1102,6 +1385,7 @@ error enum IoError {
     WriteZero                "the writer accepted no bytes"
     InvalidData              "the bytes are not valid text"
     Seek                     "seek to a position before the start"
+    InvalidInput             "invalid open options"
 }
 IoError {
     fn kind(self): IoErrorKind
@@ -1118,8 +1402,9 @@ error enum ParseIntError {
 platform's own (`errno`, or the Win32 error code); the message ends with the kind's text, so a missing file prints
 `cannot read missing.txt: not found`. The readers and writers return `UnexpectedEof` (`read_exact` on a source that
 ended), `WriteZero` (`write_all` on a sink that takes nothing), `InvalidData` (text that is not UTF-8), and `Seek`
-(a position before the start). Those four are failures `std` observed itself, so they carry no OS code; `kind()`
-still classifies them (`errors.md`, ERR11).
+(a position before the start); `OpenOptions.open` returns `InvalidInput` for an option set it rejects ("Files and
+file handles"). Those five are failures `std` observed itself, so they carry no OS code; `kind()` still classifies
+them (`errors.md`, ERR11).
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
@@ -1140,7 +1425,8 @@ fn process.run(command: str): Result<i32, IoError>
 normalization, so a string written and read back is byte-identical (`len` is the byte count). `process.run` runs the
 command through the system shell and returns its status: the POSIX wait status is shifted, the Windows status is
 returned as is. On failure each returns the matching `IoError` variant with its kind and OS code, and an integer
-`parse` returns `ParseIntError.Invalid` (`errors.md`, ERR10-ERR11).
+`parse` returns `ParseIntError.Invalid` (`errors.md`, ERR10-ERR11). The byte-level helpers (`read`, `write`,
+`append`, `copy_file`, `exists`) and the owning `File` handle are in "Files and file handles".
 
 None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
 
@@ -1384,7 +1670,11 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
+| Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_comptime` |
+| Time | `m24_stdlib/time_duration`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_comptime`, `time_comptime_impure` |
+| Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
+| Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |

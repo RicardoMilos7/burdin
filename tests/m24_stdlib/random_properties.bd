@@ -1,0 +1,153 @@
+//@ run
+//> same seed true
+//> other seed true
+//> clone replays true
+//> below in range true
+//> below 1 is always 0 true
+//> range in bounds true
+//> range extremes true
+//> floats in [0, 1) true
+//> float range true
+//> bool both true
+//> every residue seen true
+//> shuffle permutes true
+//> shuffle deterministic true
+//> shuffle moves things true
+//> shuffle small true
+//> index Some(0) None true
+
+// Properties that hold for every seed: determinism, the bounds of each draw, that every value of a small range
+// shows up, and that `shuffle` is a permutation (spec/stdlib.md, "Random numbers").
+
+fn main() {
+    let mut a = Random.seeded(1234)
+    let mut b = Random.seeded(1234)
+    let mut same = true
+    for i in 0..100 {
+        if a.next_u64() != b.next_u64() {
+            same = false
+        }
+    }
+    println("same seed {same}")
+    println("other seed {Random.seeded(1).next_u64() != Random.seeded(2).next_u64()}")
+
+    let mut original = Random.seeded(77)
+    original.next_u64()
+    let mut copy = original.clone()
+    let mut replay = true
+    for i in 0..50 {
+        if original.next_u64() != copy.next_u64() {
+            replay = false
+        }
+    }
+    println("clone replays {replay}")
+
+    let mut r = Random.seeded(99)
+    let mut ok = true
+    let mut ones = true
+    let mut extremes = true
+    for i in 0..1000 {
+        if r.below(7) >= 7 {
+            ok = false
+        }
+        if r.below(1) != 0 {
+            ones = false
+        }
+        let v = r.range(-3, 4)
+        if v < -3 || v >= 4 {
+            extremes = false
+        }
+        let w = r.range(i64.MIN, i64.MAX)
+        if w == i64.MAX {
+            extremes = false
+        }
+    }
+    println("below in range {ok}")
+    println("below 1 is always 0 {ones}")
+    println("range in bounds {extremes}")
+    let mut wide = Random.seeded(3)
+    let mut reached = false
+    for i in 0..200 {
+        let v = wide.range(0, 4_000_000_000_000_000_000)
+        if v >= 2_000_000_000_000_000_000 {
+            reached = true
+        }
+    }
+    println("range extremes {reached}")
+
+    let mut f = Random.seeded(8)
+    let mut inside = true
+    let mut float_ok = true
+    let mut heads = 0
+    for i in 0..1000 {
+        let x = f.next_f64()
+        if x < 0.0 || x >= 1.0 {
+            inside = false
+        }
+        let y = f.range_f64(-2.5, 7.5)
+        if y < -2.5 || y >= 7.5 {
+            float_ok = false
+        }
+        if f.next_bool() {
+            heads = heads + 1
+        }
+    }
+    println("floats in [0, 1) {inside}")
+    println("float range {float_ok}")
+    println("bool both {heads > 300 && heads < 700}")
+
+    let mut seen = [false; 10]
+    let mut s = Random.seeded(21)
+    for i in 0..500 {
+        seen[s.below(10) as usize] = true
+    }
+    let mut all = true
+    for hit in seen {
+        if !hit {
+            all = false
+        }
+    }
+    println("every residue seen {all}")
+
+    let n: usize = 10
+    let mut shuffler = Random.seeded(7)
+    let mut items = List<i32>.new()
+    for i in 0..n {
+        items.push(i as i32)
+    }
+    shuffler.shuffle(mut items)
+    let shuffled = items.clone()
+    items.sort()
+    let mut sorted_back = true
+    for i in 0..n {
+        if items[i] != i as i32 {
+            sorted_back = false
+        }
+    }
+    println("shuffle permutes {sorted_back}")
+    let mut again = List<i32>.new()
+    for i in 0..n {
+        again.push(i as i32)
+    }
+    Random.seeded(7).shuffle(mut again)
+    let mut deterministic = true
+    let mut identity = true
+    for i in 0..n {
+        if again[i] != shuffled[i] {
+            deterministic = false
+        }
+        if shuffled[i] != i as i32 {
+            identity = false
+        }
+    }
+    println("shuffle deterministic {deterministic}")
+    println("shuffle moves things {!identity}")
+    let mut one = List<i32>.new()
+    one.push(5)
+    let mut none = List<i32>.new()
+    Random.seeded(1).shuffle(mut one)
+    Random.seeded(1).shuffle(mut none)
+    println("shuffle small {one[0] == 5 && none.len() == 0}")
+    let mut idx = Random.seeded(1)
+    println("index {Random.seeded(1).index(1):?} {idx.index(0):?} {idx.index(5).unwrap() < 5}")
+}

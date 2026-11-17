@@ -19,6 +19,8 @@
 //> other none
 //> seek to a position before the start
 //> invalid input none
+//> invalid open options
+//> invalid input none
 
 // Every I/O failure carries the portable kind and, when a system call reported it, the raw OS code
 // (spec/errors.md, ERR10-ERR11). The exact code is the platform's own: `errno` on Linux and macOS, the Win32
@@ -98,9 +100,11 @@ fn main() {
     // variant is built directly (spec/errors.md, ERR10).
     report(IoError.Run { command: "no-such-command".to_string(), kind: IoErrorKind.Other, os_code: None })
 
-    // The reader and writer failures of #409 carry no path and no OS code; `kind()` still classifies every one.
+    // The reader and writer failures of #409 and the option rejection of #702 carry no path and no OS code;
+    // `kind()` still classifies every one.
     report(IoError.UnexpectedEof)
     report(IoError.InvalidData)
     report(IoError.WriteZero)
     report(IoError.Seek)
+    report(IoError.InvalidInput)
 }

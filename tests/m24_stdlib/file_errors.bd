@@ -1,0 +1,74 @@
+//@ run
+//> missing read true true true
+//> create_new existing true
+//> create_new fresh true
+//> invalid none true
+//> invalid truncate true
+//> invalid append truncate true
+//> write-only read true
+//> read-only write true
+//> read-only set_len true
+//> unchanged true
+
+// The ways opening a file can fail (spec/stdlib.md, "Files and file handles"): a missing file, `create_new` on a
+// file that exists, an option set with no access mode or with two that disagree, and an operation the handle's
+// access mode does not allow. Every one is an `IoError`, never a panic.
+
+fn main() {
+    // A read-only open of a missing path names the path and is `IoError.Read`, with the system's kind and code.
+    match File.open("absent.txt") {
+        Err(IoError.Read { path, kind, os_code }) => println(
+            "missing read {} {} {}",
+            path.as_str() == "absent.txt",
+            kind == IoErrorKind.NotFound,
+            os_code.is_some(),
+        ),
+        _ => println("missing read false"),
+    }
+
+    let x = "x".to_utf8()
+    write("exists.txt", x[0..x.len()]).unwrap()
+    let mut options = OpenOptions.new()
+    options.write(true)
+    options.create_new(true)
+    println("create_new existing {}", options.open("exists.txt").is_err())
+    {
+        let fresh = options.open("fresh.txt")
+        println("create_new fresh {}", fresh.is_ok())
+    }
+
+    // An option set the systems disagree on is rejected before the system call.
+    let none = OpenOptions.new()
+    match none.open("never.txt") {
+        Err(IoError.InvalidInput) => println("invalid none true"),
+        _ => println("invalid none false"),
+    }
+    let mut truncating = OpenOptions.new()
+    truncating.read(true)
+    truncating.truncate(true)
+    match truncating.open("exists.txt") {
+        Err(IoError.InvalidInput) => println("invalid truncate true"),
+        _ => println("invalid truncate false"),
+    }
+    let mut conflicting = OpenOptions.new()
+    conflicting.write(true)
+    conflicting.append(true)
+    conflicting.truncate(true)
+    match conflicting.open("exists.txt") {
+        Err(IoError.InvalidInput) => println("invalid append truncate true"),
+        _ => println("invalid append truncate false"),
+    }
+
+    // Reading through a write-only handle and writing through a read-only one fail; the file is unchanged.
+    let mut writing = OpenOptions.new()
+    writing.write(true)
+    writing.create(true)
+    let mut write_only = writing.open("access.txt").unwrap()
+    let mut buf = List<u8>.new()
+    println("write-only read {}", write_only.read(mut buf, 1).is_err())
+    let mut read_only = File.open("access.txt").unwrap()
+    let y = "y".to_utf8()
+    println("read-only write {}", read_only.write(y[0..y.len()]).is_err())
+    println("read-only set_len {}", read_only.set_len(1).is_err())
+    println("unchanged {}", read("access.txt").unwrap().len() == 0)
+}

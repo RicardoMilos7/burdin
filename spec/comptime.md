@@ -156,6 +156,9 @@ note at the operation:
   `env.current_dir`/`env.current_dir_bytes`, `env.set`/`env.set_bytes`/`env.remove`, `env.set_current_dir` and its
   byte form, `process.exit`, `process.run`, and `Command.spawn`/`Command.status`/`Command.output`, a `Child`'s
   `stdin`/`stdout`/`stderr`, `Child.wait`, and `Child.wait_with_output` (`stdlib.md`, "Child processes");
+- the system's clocks, entropy, and sleeping: `Instant.now`, `SystemTime.now` (so `SystemClock`'s methods), `sleep`,
+  and `random_seed` (so `Random.from_entropy`); a `Duration`, a `DateTime`, a `ManualClock`, and a seeded `Random`
+  are pure and work at compile time;
 - C: calling an `extern` function, `CPtr` values and dereferences, `CString`, and `CStr.to_string`.
 
 The check is dynamic: a function that prints can be called at compile time as long as the path taken does not print.
