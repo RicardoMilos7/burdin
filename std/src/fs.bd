@@ -502,7 +502,11 @@ File: Seek {
 
 File: Drop {
     fn drop(mut self) {
-        let _ = __file_close(self.fd)
+        let closed = __file_close(self.fd)
+        match closed {
+            Ok(()) => {}
+            Err(_) => {}
+        }
     }
 }
 
