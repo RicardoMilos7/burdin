@@ -1,0 +1,43 @@
+//@ run
+//> 200 rounds ok
+
+// Repeats a mix of everything the scheduler does, so that races show up as wrong sums or hangs rather than as one lucky
+// pass: nested tasks, scopes, yields, and handles dropped without a join.
+
+fn round(r: i64): i64 {
+    let mut a: i64 = 0
+    let mut b: i64 = 0
+    scope(|s| {
+        s.spawn(|| {
+            let h = task.spawn(|| r * 2)
+            task.yield()
+            a = h.join()
+        })
+        s.spawn(|| {
+            task.yield()
+            b = r + 1
+        })
+    })
+    let dropped = task.spawn(|| r)
+    a + b
+}
+
+fn main() {
+    task.set_workers(4)
+    let mut handles = List<task.JoinHandle<i64>>.new()
+    let mut r: i64 = 0
+    while r < 200 {
+        let n = r
+        handles.push(task.spawn(|| round(n)))
+        r = r + 1
+    }
+    let mut ok = 0
+    let mut i: i64 = 0
+    for h in handles.into_iter() {
+        if h.join() == i * 3 + 1 {
+            ok = ok + 1
+        }
+        i = i + 1
+    }
+    println("{} rounds ok", ok)
+}

@@ -1,0 +1,12 @@
+//@ run-abort
+//> started
+//@ stderr: set_workers: the scheduler is already running
+
+// The number of workers is fixed when the first task starts; asking for another number later is a panic.
+
+fn main() {
+    let h = task.spawn(|| 1)
+    println("started")
+    h.join()
+    task.set_workers(2)
+}

@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// The scope body cannot touch a place a running task borrows, even after the `spawn` call returned.
+
+fn main() {
+    let mut a = 1
+    scope(|s| {
+        s.spawn(|| { a = a + 10 })
+        println("{}", a) //~ E0111
+    })
+}

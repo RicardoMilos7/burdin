@@ -1,0 +1,45 @@
+//@ run
+//> task got hello, 3 items
+//> main still has 2
+//> dropped Guard(1)
+//> dropped Guard(2)
+
+// A value moved into a task belongs to the task: the closure of `spawn` takes its captures by move, so the task can
+// run after the code that started it has moved on, and the value is dropped exactly once, where the task ends
+// (spec/tasks.md, TK1 and TK4).
+
+struct Guard {
+    id: i32
+}
+
+Guard: Drop {
+    fn drop(mut self) {
+        println("dropped Guard({})", self.id)
+    }
+}
+
+fn main() {
+    let name = "hello".to_string()
+    let mut items = List<i32>.new()
+    items.push(1)
+    items.push(2)
+    items.push(3)
+    let kept = [10, 20]
+    let handle = task.spawn(|| {
+        format("task got {}, {} items", name, items.len())
+    })
+    println("{}", handle.join())
+    println("main still has {}", kept.len())
+
+    let first = task.spawn(|| {
+        let g = Guard { id: 1 }
+        g.id
+    })
+    let _ = first.join()
+    let guard = Guard { id: 2 }
+    let second = task.spawn(|| {
+        let moved = guard
+        moved.id
+    })
+    let _ = second.join()
+}

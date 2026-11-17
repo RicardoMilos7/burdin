@@ -33,7 +33,7 @@ use inkwell::context::Context;
 use inkwell::module::{Linkage, Module};
 use inkwell::types::{BasicMetadataTypeEnum, FunctionType, IntType, PointerType, StructType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue};
-use inkwell::{AddressSpace, IntPredicate};
+use inkwell::{AddressSpace, AtomicOrdering, IntPredicate};
 
 /// The standard-output buffer size. A terminal is line buffered, so the size only matters for pipes and files,
 /// where larger writes are what make printing a lot of output cheap.
@@ -53,6 +53,9 @@ const STACK_GUARANTEE: u32 = 64 * 1024;
 const HEADER: u64 = 40;
 /// The magic word that marks a live checking-allocator block.
 const MAGIC: u64 = 0x4255_5244_4e41_4c4c;
+/// The magic word of a block that was taken off the live list on purpose (`untrack`): it is still freed normally, but
+/// a leak report does not mention it.
+const UNTRACKED_MAGIC: u64 = MAGIC + 1;
 
 /// The offset of `d_name` in a `struct dirent`, read from the host's own C layout.
 #[cfg(unix)]
@@ -193,6 +196,9 @@ pub(crate) struct Runtime<'ctx> {
     /// `() -> i32`: reports the allocations still live in a test build, and returns 1 when there are any. It is
     /// only present when the checking allocator is in use (`spec/allocators.md`, AL9).
     pub leak_check: Option<FunctionValue<'ctx>>,
+    /// `(ptr)`: takes a live block off the checking allocator's list, for state that lasts as long as the process
+    /// (the environment of a scheduler worker thread). Only present with the checking allocator.
+    pub untrack: Option<FunctionValue<'ctx>>,
     /// `(ptr, len: usize, out: *String)`
     pub str_to_string: FunctionValue<'ctx>,
     /// `(v: i64, out: *String)`
@@ -482,7 +488,7 @@ fn prepare_main<'ctx>(
         b.build_store(global.as_pointer_value(), line_buffered).map_err(llvm_err)?;
     }
     // `atexit` flushes the standard-output buffer on a normal return or `process.exit`.
-    if let Some(flush) = module.get_function("burdin_rt_flush") {
+    if let Some(flush) = module.get_function("burdin_rt_flush_locked") {
         let atexit = libc(module, "atexit", i32_ty.fn_type(&[ptr_ty.into()], false));
         b.build_call(atexit, &[flush.as_global_value().as_pointer_value().into()], "").map_err(llvm_err)?;
     }
@@ -514,6 +520,9 @@ struct Gen<'ctx, 'a> {
     fn_alloc: Option<FunctionValue<'ctx>>,
     fn_free: Option<FunctionValue<'ctx>>,
     fn_realloc: Option<FunctionValue<'ctx>>,
+    /// `(acquire, release)` for the spin locks that keep the shared runtime state consistent when tasks run on
+    /// several threads: the output buffer and, in a test build, the live-allocation list.
+    spin: Option<(FunctionValue<'ctx>, FunctionValue<'ctx>)>,
 }
 
 /// Helpers used while generating the other functions.
@@ -579,6 +588,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             fn_alloc: None,
             fn_free: None,
             fn_realloc: None,
+            spin: None,
         }
     }
 
@@ -587,7 +597,14 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let live = self.module.add_global(self.ptr_ty, None, "burdin_rt_live");
             live.set_initializer(&self.ptr_ty.const_null());
             live.set_linkage(Linkage::Internal);
+            let lock = self.module.add_global(self.i32(), None, "burdin_rt_live_lock");
+            lock.set_initializer(&self.i32().const_zero());
+            lock.set_linkage(Linkage::Internal);
         }
+        let out_lock = self.module.add_global(self.i32(), None, "burdin_rt_out_lock");
+        out_lock.set_initializer(&self.i32().const_zero());
+        out_lock.set_linkage(Linkage::Internal);
+        self.spin = Some(self.spin_functions()?);
         let h0 = self.base_helpers()?;
         let alloc = self.heap_alloc(&h0)?;
         let free = self.heap_free(&h0)?;
@@ -596,6 +613,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.fn_free = Some(free);
         self.fn_realloc = Some(realloc);
         let leak_check = if self.checking { Some(self.leak_check(&h0)?) } else { None };
+        let untrack = if self.checking { Some(self.heap_untrack()?) } else { None };
         let alloc_string = self.alloc_string(&h0)?;
         let h = h0.with_alloc_string(alloc_string);
         let string_push_str = self.string_push_str(&h)?;
@@ -623,7 +641,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let clock = self.clock()?;
         Ok(Runtime {
             print: self.print(&h)?,
-            flush: h.flush,
+            flush: self.module.get_function("burdin_rt_flush_locked").expect("the locked flush exists"),
             is_terminal: self.is_terminal()?,
             in_read_line: self.in_read_line(string_push_str, in_fill)?,
             in_read_to_string: self.in_read_to_string(string_push_str, in_fill)?,
@@ -639,6 +657,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             alloc,
             free,
             leak_check,
+            untrack,
             str_to_string: self.str_to_string(&h)?,
             i64_to_string: self.int_to_string(&h, true)?,
             f64_to_string: self.f64_to_string(&h)?,
@@ -697,10 +716,77 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         })
     }
 
+    /// `spin_acquire(lock: *i32)` and `spin_release(lock: *i32)`: a test-and-set lock. The critical sections it
+    /// guards are a few instructions long, so waiting gives up the thread's time slice instead of sleeping.
+    fn spin_functions(&mut self) -> GenResult<(FunctionValue<'ctx>, FunctionValue<'ctx>)> {
+        let (i32_ty, ptr_ty) = (self.i32(), self.ptr_ty);
+        let void = self.cx.void_type();
+        let yield_now = if self.windows {
+            libc(self.module, "SwitchToThread", i32_ty.fn_type(&[], false))
+        } else {
+            libc(self.module, "sched_yield", i32_ty.fn_type(&[], false))
+        };
+        let acquire = self.function("burdin_rt_spin_acquire", void.fn_type(&[ptr_ty.into()], false));
+        let lock = Self::ptr_param(acquire, 0);
+        let attempt = self.block(acquire, "attempt");
+        let wait = self.block(acquire, "wait");
+        let done = self.block(acquire, "done");
+        self.b.build_unconditional_branch(attempt).map_err(llvm_err)?;
+        self.b.position_at_end(attempt);
+        let result = self
+            .b
+            .build_cmpxchg(
+                lock,
+                i32_ty.const_zero(),
+                i32_ty.const_int(1, false),
+                AtomicOrdering::Acquire,
+                AtomicOrdering::Monotonic,
+            )
+            .map_err(llvm_err)?;
+        let won = self.b.build_extract_value(result, 1, "won").map_err(llvm_err)?.into_int_value();
+        self.b.build_conditional_branch(won, done, wait).map_err(llvm_err)?;
+        self.b.position_at_end(wait);
+        self.call(yield_now, &[])?;
+        self.b.build_unconditional_branch(attempt).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+
+        let release = self.function("burdin_rt_spin_release", void.fn_type(&[ptr_ty.into()], false));
+        let store = self.b.build_store(Self::ptr_param(release, 0), i32_ty.const_zero()).map_err(llvm_err)?;
+        store.set_atomic_ordering(AtomicOrdering::Release).map_err(|e| format!("LLVM builder error: {e}"))?;
+        store.set_alignment(4).map_err(|e| format!("LLVM builder error: {e}"))?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok((acquire, release))
+    }
+
+    /// Takes the spin lock stored in the global `name`.
+    fn lock_global(&mut self, name: &str) -> GenResult<()> {
+        let lock = self.module.get_global(name).expect("the lock exists").as_pointer_value();
+        let (acquire, _) = self.spin.expect("the spin functions exist");
+        self.call(acquire, &[lock.into()])?;
+        Ok(())
+    }
+
+    /// Releases the spin lock stored in the global `name`.
+    fn unlock_global(&mut self, name: &str) -> GenResult<()> {
+        let lock = self.module.get_global(name).expect("the lock exists").as_pointer_value();
+        let (_, release) = self.spin.expect("the spin functions exist");
+        self.call(release, &[lock.into()])?;
+        Ok(())
+    }
+
     fn base_helpers(&mut self) -> GenResult<BaseHelpers<'ctx>> {
         let write_all = self.write_all()?;
         let globals = self.output_globals();
         let flush = self.flush(write_all, globals)?;
+        // The flush the program itself calls (`stdout.flush()` and the exit hook) takes the output lock; the
+        // panic and signal paths call the plain one, because the thread that panicked may hold the lock.
+        let locked = self.function("burdin_rt_flush_locked", self.cx.void_type().fn_type(&[], false));
+        self.lock_global("burdin_rt_out_lock")?;
+        self.call(flush, &[])?;
+        self.unlock_global("burdin_rt_out_lock")?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        let _ = locked;
         let _out_write = self.out_write(flush, globals)?;
         let die = self.die(flush)?;
         self.install_stack_guard(flush)?;
@@ -1018,7 +1104,11 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             self.b.build_int_compare(IntPredicate::EQ, fd, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
         self.b.build_conditional_branch(is_stdout, stdout, stderr).map_err(llvm_err)?;
 
+        // The buffer is shared by every thread that prints, so a write holds the output lock until its text and
+        // newline are in the buffer (and flushed, on a terminal).
+        let unlock = self.block(f, "stdout.unlock");
         self.b.position_at_end(stdout);
+        self.lock_global("burdin_rt_out_lock")?;
         self.call(out_write, &[Self::ptr_param(f, 1).into(), Self::int_param(f, 2).into()])?;
         let out_nl = self.block(f, "stdout.newline");
         let out_flush = self.block(f, "stdout.flush");
@@ -1026,15 +1116,18 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .b
             .build_int_compare(IntPredicate::NE, Self::int_param(f, 3), i32_ty.const_zero(), "")
             .map_err(llvm_err)?;
-        self.b.build_conditional_branch(nl, out_nl, done).map_err(llvm_err)?;
+        self.b.build_conditional_branch(nl, out_nl, unlock).map_err(llvm_err)?;
         self.b.position_at_end(out_nl);
         let nl_ptr = self.bytes(b"\n");
         self.call(out_write, &[nl_ptr.into(), usize_ty.const_int(1, false).into()])?;
         let (_, _, line_global) = self.output_globals();
         let line = self.b.build_load(self.cx.bool_type(), line_global, "line").map_err(llvm_err)?.into_int_value();
-        self.b.build_conditional_branch(line, out_flush, done).map_err(llvm_err)?;
+        self.b.build_conditional_branch(line, out_flush, unlock).map_err(llvm_err)?;
         self.b.position_at_end(out_flush);
         self.call(h.flush, &[])?;
+        self.b.build_unconditional_branch(unlock).map_err(llvm_err)?;
+        self.b.position_at_end(unlock);
+        self.unlock_global("burdin_rt_out_lock")?;
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
 
         self.b.position_at_end(stderr);
@@ -1751,7 +1844,26 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let low = self.b.build_int_sub(lo, margin, "low").map_err(llvm_err)?;
             let above = self.b.build_int_compare(IntPredicate::UGE, addr, low, "").map_err(llvm_err)?;
             let below = self.b.build_int_compare(IntPredicate::ULT, addr, lo, "").map_err(llvm_err)?;
-            Some(self.b.build_and(above, below, "stack_overflow").map_err(llvm_err)?)
+            let main_overflow = self.b.build_and(above, below, "main_overflow").map_err(llvm_err)?;
+            // A task runs on its own stack, with an inaccessible guard region below it. The context switch
+            // records where the running stack starts (`taskrt.rs`), so a fault in that region is an overflow too.
+            let cur = self
+                .module
+                .get_global("burdin_rt_cur_lo")
+                .map(|g| g.as_pointer_value())
+                .expect("the guard defines the running stack's bounds");
+            let cur = self.b.build_load(self.usize_ty, cur, "cur_lo").map_err(llvm_err)?.into_int_value();
+            let in_task = self
+                .b
+                .build_int_compare(IntPredicate::NE, cur, self.usize_ty.const_zero(), "in_task")
+                .map_err(llvm_err)?;
+            let guard = self.usize_ty.const_int(crate::taskrt::GUARD, false);
+            let guard_low = self.b.build_int_sub(cur, guard, "guard_low").map_err(llvm_err)?;
+            let above = self.b.build_int_compare(IntPredicate::UGE, addr, guard_low, "").map_err(llvm_err)?;
+            let below = self.b.build_int_compare(IntPredicate::ULT, addr, cur, "").map_err(llvm_err)?;
+            let in_guard = self.b.build_and(above, below, "").map_err(llvm_err)?;
+            let task_overflow = self.b.build_and(in_task, in_guard, "task_overflow").map_err(llvm_err)?;
+            Some(self.b.build_or(main_overflow, task_overflow, "stack_overflow").map_err(llvm_err)?)
         };
         let guard = in_handler.as_pointer_value();
         let check = self.block(handler, "check");
@@ -1807,6 +1919,11 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let lo_global = self.module.add_global(usize_ty, None, "burdin_rt_stack_lo");
         lo_global.set_initializer(&usize_ty.const_zero());
         lo_global.set_linkage(Linkage::Internal);
+        // The low end of the usable stack a thread is running a task on, or 0 (`taskrt.rs`). It is external so the
+        // task runtime, linked in later, shares it.
+        let cur_lo = self.module.add_global(usize_ty, None, "burdin_rt_cur_lo");
+        cur_lo.set_initializer(&usize_ty.const_zero());
+        cur_lo.set_thread_local(true);
         // The bounds of the main thread's stack tell the handler whether a fault is a stack overflow.
         let pthread_self = libc(self.module, "pthread_self", ptr_ty.fn_type(&[], false));
         let thread = self.call(pthread_self, &[])?.expect("pthread_self returns a thread").into_pointer_value();
@@ -1867,6 +1984,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_store(sa_flags, i32_ty.const_int(onstack | reset | siginfo, false)).map_err(llvm_err)?;
         const SIGSEGV: u64 = 11;
         self.call(sigaction, &[i32_ty.const_int(SIGSEGV, false).into(), act.into(), ptr_ty.const_null().into()])?;
+        if self.darwin {
+            // macOS reports an access to a mapped but inaccessible page, such as the guard below a task stack, as
+            // `SIGBUS` rather than `SIGSEGV`.
+            const SIGBUS_DARWIN: u64 = 10;
+            self.call(
+                sigaction,
+                &[i32_ty.const_int(SIGBUS_DARWIN, false).into(), act.into(), ptr_ty.const_null().into()],
+            )?;
+        }
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(())
     }
@@ -2096,8 +2222,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(init);
         let data = if self.checking {
-            // The header is `{ next: ptr, size: usize, site: ptr, site_len: usize, magic: i64 }`.
+            // The header is `{ next: ptr, size: usize, site: ptr, site_len: usize, magic: i64 }`. Tasks allocate from
+            // several threads, so the live list is updated under its lock.
             let live = self.module.get_global("burdin_rt_live").expect("the live list exists").as_pointer_value();
+            self.lock_global("burdin_rt_live_lock")?;
             let head = self.b.build_load(ptr_ty, live, "live.head").map_err(llvm_err)?;
             self.b.build_store(p, head).map_err(llvm_err)?;
             let size_at = self.offset(p, usize_ty.const_int(8, false))?;
@@ -2109,6 +2237,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let magic_at = self.offset(p, usize_ty.const_int(32, false))?;
             self.b.build_store(magic_at, i64_ty.const_int(MAGIC, false)).map_err(llvm_err)?;
             self.b.build_store(live, p).map_err(llvm_err)?;
+            self.unlock_global("burdin_rt_live_lock")?;
             self.offset(p, usize_ty.const_int(HEADER, false))?
         } else {
             p
@@ -2140,6 +2269,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let done = self.block(f, "done");
         let check = self.block(f, "check");
         let unlink = self.block(f, "unlink");
+        let untracked_check = self.block(f, "untracked.check");
+        let untracked = self.block(f, "untracked");
         let bad = self.block(f, "bad");
         let walk = self.block(f, "walk");
         let step = self.block(f, "step");
@@ -2156,7 +2287,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let magic = self.b.build_load(i64_ty, magic_at, "magic").map_err(llvm_err)?.into_int_value();
         let ok =
             self.b.build_int_compare(IntPredicate::EQ, magic, i64_ty.const_int(MAGIC, false), "").map_err(llvm_err)?;
-        self.b.build_conditional_branch(ok, unlink, bad).map_err(llvm_err)?;
+        self.b.build_conditional_branch(ok, unlink, untracked_check).map_err(llvm_err)?;
+
+        self.b.position_at_end(untracked_check);
+        let is_untracked = self
+            .b
+            .build_int_compare(IntPredicate::EQ, magic, i64_ty.const_int(UNTRACKED_MAGIC, false), "")
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(is_untracked, untracked, bad).map_err(llvm_err)?;
+
+        self.b.position_at_end(untracked);
+        self.b.build_store(magic_at, i64_ty.const_zero()).map_err(llvm_err)?;
+        self.call(libc_free, &[header.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
 
         self.b.position_at_end(bad);
         self.write_const(
@@ -2169,6 +2312,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_unreachable().map_err(llvm_err)?;
 
         self.b.position_at_end(unlink);
+        self.lock_global("burdin_rt_live_lock")?;
         let live = self.module.get_global("burdin_rt_live").expect("the live list exists").as_pointer_value();
         let prev = self.b.build_alloca(ptr_ty, "free.prev").map_err(llvm_err)?;
         self.b.build_store(prev, live).map_err(llvm_err)?;
@@ -2200,10 +2344,68 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let prev = self.b.build_load(ptr_ty, prev, "").map_err(llvm_err)?.into_pointer_value();
         self.b.build_store(prev, next).map_err(llvm_err)?;
         self.b.build_store(magic_at, i64_ty.const_zero()).map_err(llvm_err)?;
+        self.unlock_global("burdin_rt_live_lock")?;
         self.call(libc_free, &[header.into()])?;
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
 
         self.b.position_at_end(done);
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `untrack(ptr)`: unlinks a live block from the list the leak check reads and marks it, so it is freed later as
+    /// usual but never reported. Only built for a test build.
+    fn heap_untrack(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i64());
+        let void = self.cx.void_type();
+        let f = self.function("burdin_rt_untrack", void.fn_type(&[ptr_ty.into()], false));
+        let ptr = Self::ptr_param(f, 0);
+        let walk = self.block(f, "walk");
+        let step = self.block(f, "step");
+        let found = self.block(f, "found");
+        let done = self.block(f, "done");
+        let negative =
+            self.b.build_int_sub(usize_ty.const_zero(), usize_ty.const_int(HEADER, false), "").map_err(llvm_err)?;
+        let header = self.offset(ptr, negative)?;
+        let live = self.module.get_global("burdin_rt_live").expect("the live list exists").as_pointer_value();
+        self.lock_global("burdin_rt_live_lock")?;
+        let prev = self.b.build_alloca(ptr_ty, "untrack.prev").map_err(llvm_err)?;
+        self.b.build_store(prev, live).map_err(llvm_err)?;
+        let cur = self.b.build_alloca(ptr_ty, "untrack.cur").map_err(llvm_err)?;
+        let head = self.b.build_load(ptr_ty, live, "live.head").map_err(llvm_err)?;
+        self.b.build_store(cur, head).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(walk).map_err(llvm_err)?;
+
+        self.b.position_at_end(walk);
+        let c = self.b.build_load(ptr_ty, cur, "").map_err(llvm_err)?.into_pointer_value();
+        let c_null = self.b.build_is_null(c, "").map_err(llvm_err)?;
+        let advance = self.block(f, "advance");
+        self.b.build_conditional_branch(c_null, done, step).map_err(llvm_err)?;
+
+        self.b.position_at_end(step);
+        let c = self.b.build_load(ptr_ty, cur, "").map_err(llvm_err)?.into_pointer_value();
+        let c_int = self.b.build_ptr_to_int(c, usize_ty, "").map_err(llvm_err)?;
+        let h_int = self.b.build_ptr_to_int(header, usize_ty, "").map_err(llvm_err)?;
+        let is_it = self.b.build_int_compare(IntPredicate::EQ, c_int, h_int, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(is_it, found, advance).map_err(llvm_err)?;
+
+        self.b.position_at_end(advance);
+        let c = self.b.build_load(ptr_ty, cur, "").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_store(prev, c).map_err(llvm_err)?;
+        let next = self.b.build_load(ptr_ty, c, "").map_err(llvm_err)?;
+        self.b.build_store(cur, next).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(walk).map_err(llvm_err)?;
+
+        self.b.position_at_end(found);
+        let next = self.b.build_load(ptr_ty, header, "").map_err(llvm_err)?;
+        let prev = self.b.build_load(ptr_ty, prev, "").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_store(prev, next).map_err(llvm_err)?;
+        let magic_at = self.offset(header, usize_ty.const_int(32, false))?;
+        self.b.build_store(magic_at, i64_ty.const_int(UNTRACKED_MAGIC, false)).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        self.unlock_global("burdin_rt_live_lock")?;
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(f)
     }

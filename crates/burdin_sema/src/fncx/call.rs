@@ -104,6 +104,7 @@ impl FnCx<'_> {
                     None if id.name == "replace" || id.name == "__replace" => {
                         return self.replace_call(args, span);
                     }
+                    None if id.name == "__closure_own" => return self.closure_own_call(args, span),
                     None if id.name == "embed" => return self.embed_call(args, span, expect),
                     None if id.name == "format" && self.lookup("format").is_none() => {
                         return self.format_call(args, span);
@@ -569,6 +570,35 @@ impl FnCx<'_> {
             self.diags.error(Code::EXCLUSIVITY, span, "`swap` needs two places that do not overlap");
         }
         mk(tir::ExprKind::Builtin(Builtin::Swap, vec![a, b]), Ty::Unit, span)
+    }
+
+    /// `__closure_own(f)`: a closure value (or a parameter bounded by a closure interface) as an owned `FnOnce` of the
+    /// same signature. The representation is the same, so only the type changes: the capture record is moved, and a
+    /// borrow capture inside it is no longer second-class, which is why the operation needs `unsafe`. It exists for
+    /// the standard library's scoped tasks (`spec/tasks.md`, TK7).
+    fn closure_own_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("__closure_own", args);
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`__closure_own` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        if self.unsafe_depth == 0 {
+            self.diags.error(Code::UNSAFE_REQUIRED, span, "`__closure_own` requires an `unsafe` block");
+        }
+        let f = self.expr(&args[0].expr, None);
+        if f.ty == Ty::Error {
+            return error_expr(span);
+        }
+        let Some((sig, _)) = self.globals.fn_call_sig(&f.ty, &self.bounds) else {
+            self.diags.error(Code::TYPE_MISMATCH, span, format!("`__closure_own` needs a closure, found `{}`", f.ty));
+            return error_expr(span);
+        };
+        let ty = Ty::Fn { sig: std::rc::Rc::new(sig), kind: tir::FnKind::FnOnce, borrowed: false };
+        mk(tir::ExprKind::Builtin(Builtin::ClosureOwn, vec![f]), ty, span)
     }
 
     /// `replace(mut place, value)`: stores `value` and returns what `place` held.

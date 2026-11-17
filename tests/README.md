@@ -5,8 +5,9 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; everything the stage 1 plan still defers (the standard library's remaining
-containers, tasks, and the concurrency stage) has **no tests here** yet.
+Stage 1 starts at `m12_closures`; stage 2 starts at `s2_tasks`. Everything the plans still defer (the standard
+library's remaining containers and the rest of the concurrency stage after tasks: channels, `Mutex`, atomics, `Send`,
+and asynchronous I/O) has **no tests here** yet.
 
 ## Layout
 
@@ -37,6 +38,7 @@ tests/
   m22_build/           build.bd, dependency grants, generated modules, the minimal bindgen
   m23_allocators/      allocator parameters, Arena, Shared<T>, leak detection, allocator-aware containers
   m24_stdlib/          the standard-library roundout: Ordering, containers, text, numbers, I/O, time, random
+  s2_tasks/            stage 2.1: tasks, the work-stealing scheduler, `yield`, scoped tasks, threads
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -186,7 +188,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0103 | Partial move out of a type that implements `Drop` |
 | E0104 | Value moved in a previous loop iteration |
 | E0110 | Exclusivity violation in a call (a `mut` argument also reachable through another argument) |
-| E0111 | Conflicting borrow (write, `&mut`, or move while a reference is still used later) |
+| E0111 | Conflicting borrow (write, `&mut`, or move while a reference is still used later; a place a scoped task borrows stays borrowed until its scope body ends, and a mutable borrow in a task started in a loop conflicts with itself) |
 | E0113 | Mutable use of an immutable place: a `mut` argument or `&mut` taken from an immutable binding |
 | E0114 | Missing `mut` marker at the call site for a `mut` parameter |
 | E0115 | `mut` marker on an argument whose parameter is not `mut` |
@@ -207,7 +209,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0163 | Invalid `extern` declaration: a runtime-reserved symbol, a generic function, or a signature that conflicts with an earlier declaration of the symbol |
 | E0164 | Unsupported `repr`: only `repr(C)` exists |
 | E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, `should_panic` with `should_fail`, or `differential` with `should_panic` or `should_fail` |
-| E0171 | A closure whose captures or result would outlive the storage they borrow: a second-class closure used as an owned one, or a closure returning a view |
+| E0171 | A closure whose captures or result would outlive the storage they borrow: a second-class closure used as an owned one, a closure returning a view, or a task of `Scope.spawn` that borrows a local of the scope body or is passed by name |
 | E0180 | Type arguments given to a type that declares no type parameters |
 | E0190 | Format specifier that is malformed or does not apply to the formatted value |
 | E0191 | Placeholder naming an argument the call does not have |

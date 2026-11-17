@@ -1,0 +1,26 @@
+//@ burdin-test passed=2 failed=0
+
+// A test run's leak check finds nothing left over once its tasks and threads are joined: records, result slots, and
+// values moved into tasks are all released. (A task that is still running when the test ends cannot be checked, so
+// the detach tests live in `detach_runs.bd`, which waits through the queue order.)
+
+struct Counted {
+    n: i32
+}
+
+test "joined result is dropped by the caller" {
+    let h = task.spawn(|| Counted { n: 4 })
+    let c = h.join()
+    assert(c.n == 4)
+}
+
+test "thread handle can be dropped after the thread finished" {
+    let h = thread.spawn(|| "text".to_string())
+    // Dropping a handle before the thread is done would leave its result to a thread that may still be running when
+    // the test ends, which the leak check cannot tell from a leak; wait first. The dropped handle frees the result.
+    while !h.is_finished() {
+        thread.yield_now()
+    }
+    let kept = thread.spawn(|| "other".to_string())
+    assert(kept.join().len() == 5)
+}

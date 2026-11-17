@@ -1,0 +1,650 @@
+// Tasks and the work-stealing scheduler (spec/tasks.md).
+//
+// A task is a closure that runs on its own stack, a stackful coroutine. A pool of worker threads, one per processor,
+// runs the tasks: each worker has a queue of ready tasks, an idle worker takes from the shared queue and then steals
+// from the other workers, and a worker with nothing to do sleeps until work arrives. A task gives its worker back
+// when it finishes, when it waits for another task (`join`, the end of a `scope`), and when it calls `yield`.
+//
+// The scheduler is Burdin code over the runtime's small primitives for threads, locks, and execution contexts
+// (`__thread_start`, `__mutex_*`, `__cond_*`, `__ctx_*`, and the two slots `__tls_*` and `__global_*`). Its records
+// are `repr(C)` structs of integers and raw pointers behind `CPtr`, so nothing in them needs a destructor.
+
+use option.take
+
+// The scheduler lives as long as the process, so its records come straight from the C allocator instead of the
+// program's allocator: the leak check of `burdin test` reports what a test left behind, and the scheduler is not part
+// of any test. Task records, results, and stacks are allocated and freed per task and stay checked.
+extern "C" {
+    priv fn calloc(count: usize, size: usize): CPtr<u8>
+}
+
+/// The usable stack of a task, in bytes. The system reserves it as address space and commits pages as they are
+/// touched, and a guard region below it turns an overflow into a clean abort (spec/tasks.md, TK3).
+const TASK_STACK: usize = 262144
+/// What a task asked its worker to do when it switched back to it.
+const ACTION_YIELD: usize = 1
+const ACTION_PARK: usize = 2
+const ACTION_DONE: usize = 3
+/// Every Nth pick, a worker looks at the shared queue before its own, so tasks that were spawned from outside the
+/// pool cannot starve behind a busy worker.
+const FAIRNESS: usize = 61
+
+/// A task's record. A task spawned with a handle has the slot for its result right after the record, in the same
+/// allocation. `next` links the record into a queue.
+priv struct Task repr(C) {
+    next: CPtr<Task>
+    ctx: CPtr<u8>
+    /// The task that is parked waiting for this one to finish, or null.
+    waiter: CPtr<Task>
+    /// The scope the task belongs to, or null.
+    scope: CPtr<ScopeState>
+    done: usize
+    /// The result is in the slot.
+    stored: usize
+    /// The handle is gone: nobody will read the result.
+    detached: usize
+    /// Owners of the record: the scheduler until the task finishes, and the handle until it is joined or dropped.
+    refs: usize
+}
+
+/// A first-in first-out queue of tasks, with its own lock.
+priv struct Queue repr(C) {
+    lock: CPtr<u8>
+    head: CPtr<Task>
+    tail: CPtr<Task>
+    len: usize
+}
+
+/// A worker thread's record. `main_ctx` must stay the first field: the runtime switches to it when a task's body
+/// returns (spec/tasks.md, TK2).
+priv struct Worker repr(C) {
+    main_ctx: CPtr<u8>
+    id: usize
+    sched: CPtr<Sched>
+    queue: CPtr<Queue>
+    /// The task this worker is running, or null while it is in its own loop.
+    current: CPtr<Task>
+    action: usize
+    /// The lock to release once the task that parked has switched away.
+    unlock: CPtr<u8>
+    tick: usize
+}
+
+/// The scheduler: the workers, the shared queue, and the locks. `state_lock` guards every task's `done`, `waiter`,
+/// `stored`, `detached`, and `refs`, and every scope's counters. `park_lock` and `park_cv` put idle workers to sleep.
+priv struct Sched repr(C) {
+    count: usize
+    workers: CPtr<CPtr<Worker>>
+    shared: CPtr<Queue>
+    state_lock: CPtr<u8>
+    done_cv: CPtr<u8>
+    park_lock: CPtr<u8>
+    park_cv: CPtr<u8>
+    sleepers: usize
+    /// How many worker threads have claimed their record.
+    started: usize
+}
+
+/// The state of a `scope`: how many of its tasks have not finished, and the task waiting for them.
+priv struct ScopeState repr(C) {
+    pending: usize
+    waiter: CPtr<Task>
+}
+
+// ---- configuration and start ---------------------------------------------------------------------------------
+
+/// Sets the number of worker threads the scheduler will use. It must be called before the first task is spawned: it
+/// panics when the scheduler is already running. The default is the number of processors, and at least two.
+fn set_workers(count: usize) {
+    unsafe {
+        __spin_lock()
+        if !__global_get().is_null() {
+            __spin_unlock()
+            panic("set_workers: the scheduler is already running")
+        }
+        if count == 0 {
+            __spin_unlock()
+            panic("set_workers: at least one worker is needed")
+        }
+        __config_set(count)
+        __spin_unlock()
+    }
+}
+
+/// The scheduler, started on first use.
+priv fn __scheduler(): CPtr<Sched> {
+    unsafe {
+        let existing = __global_get() as CPtr<Sched>
+        if !existing.is_null() {
+            return existing
+        }
+        __spin_lock()
+        let again = __global_get() as CPtr<Sched>
+        if !again.is_null() {
+            __spin_unlock()
+            return again
+        }
+        let s = calloc(1, Sched.size()) as CPtr<Sched>
+        let mut count = __config_get()
+        if count == 0 {
+            count = __cpu_count()
+            if count < 2 {
+                count = 2
+            }
+            if count > 64 {
+                count = 64
+            }
+        }
+        (*s).count = count
+        (*s).workers = calloc(count, 8) as CPtr<CPtr<Worker>>
+        (*s).shared = __new_queue()
+        (*s).state_lock = __mutex_new()
+        (*s).done_cv = __cond_new()
+        (*s).park_lock = __mutex_new()
+        (*s).park_cv = __cond_new()
+        (*s).sleepers = 0
+        (*s).started = 0
+        let mut i: usize = 0
+        while i < count {
+            let w = calloc(1, Worker.size()) as CPtr<Worker>
+            (*w).main_ctx = CPtr.null()
+            (*w).id = i
+            (*w).sched = s
+            (*w).queue = __new_queue()
+            (*w).current = CPtr.null()
+            (*w).action = 0
+            (*w).unlock = CPtr.null()
+            (*w).tick = i
+            *((*s).workers + i) = w
+            i = i + 1
+        }
+        __global_set(s as CPtr<u8>)
+        // The thread's closure captures nothing, so it has no environment that would stay allocated for as long as the
+        // thread runs; each thread claims the next worker record itself.
+        i = 0
+        while i < count {
+            __thread_start(|| {
+                __worker_start()
+            })
+            i = i + 1
+        }
+        __spin_unlock()
+        s
+    }
+}
+
+priv fn __new_queue(): CPtr<Queue> {
+    unsafe {
+        let q = calloc(1, Queue.size()) as CPtr<Queue>
+        (*q).lock = __mutex_new()
+        (*q).head = CPtr.null()
+        (*q).tail = CPtr.null()
+        (*q).len = 0
+        q
+    }
+}
+
+// ---- queues ------------------------------------------------------------------------------------------------
+
+priv fn __push(q: CPtr<Queue>, t: CPtr<Task>) {
+    unsafe {
+        __mutex_lock((*q).lock)
+        (*t).next = CPtr.null()
+        if (*q).tail.is_null() {
+            (*q).head = t
+        } else {
+            (*(*q).tail).next = t
+        }
+        (*q).tail = t
+        (*q).len = (*q).len + 1
+        __mutex_unlock((*q).lock)
+    }
+}
+
+priv fn __pop(q: CPtr<Queue>): CPtr<Task> {
+    unsafe {
+        __mutex_lock((*q).lock)
+        let t = (*q).head
+        if !t.is_null() {
+            (*q).head = (*t).next
+            if (*q).head.is_null() {
+                (*q).tail = CPtr.null()
+            }
+            (*q).len = (*q).len - 1
+            (*t).next = CPtr.null()
+        }
+        __mutex_unlock((*q).lock)
+        t
+    }
+}
+
+// ---- the workers ---------------------------------------------------------------------------------------------
+
+/// Wakes one sleeping worker, if there is one. A task is always queued before this runs, and a worker that is about
+/// to sleep registers under `park_lock` and then looks at every queue, so a wake-up cannot be lost.
+priv fn __wake_one(s: CPtr<Sched>) {
+    unsafe {
+        __mutex_lock((*s).park_lock)
+        if (*s).sleepers > 0 {
+            __cond_signal((*s).park_cv)
+        }
+        __mutex_unlock((*s).park_lock)
+    }
+}
+
+/// Makes a task ready to run. A worker puts it on its own queue, any other thread on the shared one.
+priv fn __ready(s: CPtr<Sched>, t: CPtr<Task>) {
+    unsafe {
+        let w = __tls_get() as CPtr<Worker>
+        if w.is_null() {
+            __push((*s).shared, t)
+        } else {
+            __push((*w).queue, t)
+        }
+        __wake_one(s)
+    }
+}
+
+/// A task for the worker `w`: its own queue, the shared queue, then another worker's queue.
+priv fn __find(w: CPtr<Worker>): CPtr<Task> {
+    unsafe {
+        let s = (*w).sched
+        (*w).tick = (*w).tick + 1
+        if (*w).tick % FAIRNESS == 0 {
+            let t = __pop((*s).shared)
+            if !t.is_null() {
+                return t
+            }
+        }
+        let local = __pop((*w).queue)
+        if !local.is_null() {
+            return local
+        }
+        let shared = __pop((*s).shared)
+        if !shared.is_null() {
+            return shared
+        }
+        let mut i: usize = 1
+        while i < (*s).count {
+            let victim = *((*s).workers + (((*w).id + i) % (*s).count))
+            let stolen = __pop((*victim).queue)
+            if !stolen.is_null() {
+                return stolen
+            }
+            i = i + 1
+        }
+        CPtr.null()
+    }
+}
+
+/// Waits until there is a task for `w`.
+priv fn __next(w: CPtr<Worker>): CPtr<Task> {
+    unsafe {
+        let s = (*w).sched
+        loop {
+            let t = __find(w)
+            if !t.is_null() {
+                return t
+            }
+            __mutex_lock((*s).park_lock)
+            (*s).sleepers = (*s).sleepers + 1
+            // Registered as a sleeper: a task queued from now on signals, and one queued before is seen here.
+            let t = __find(w)
+            if !t.is_null() {
+                (*s).sleepers = (*s).sleepers - 1
+                __mutex_unlock((*s).park_lock)
+                return t
+            }
+            __cond_wait((*s).park_cv, (*s).park_lock)
+            (*s).sleepers = (*s).sleepers - 1
+            __mutex_unlock((*s).park_lock)
+        }
+    }
+}
+
+/// The first thing a worker thread does: claim the next unclaimed worker record and run it.
+priv fn __worker_start() {
+    unsafe {
+        let s = __global_get() as CPtr<Sched>
+        __mutex_lock((*s).state_lock)
+        let w = *((*s).workers + (*s).started)
+        (*s).started = (*s).started + 1
+        __mutex_unlock((*s).state_lock)
+        __worker_main(w)
+    }
+}
+
+/// A worker thread: take a task, run it until it switches back, then do what it asked for.
+priv fn __worker_main(w: CPtr<Worker>) {
+    unsafe {
+        let s = (*w).sched
+        (*w).main_ctx = __ctx_main()
+        __tls_set(w as CPtr<u8>)
+        loop {
+            let t = __next(w)
+            (*w).current = t
+            (*w).action = 0
+            __ctx_switch((*w).main_ctx, (*t).ctx)
+            (*w).current = CPtr.null()
+            let action = (*w).action
+            if action == ACTION_YIELD {
+                // The shared queue is first in, first out across every task that yielded or was spawned from outside
+                // the pool, so a task that yields goes behind the others instead of being picked again at once.
+                __push((*s).shared, t)
+                __wake_one(s)
+            } else if action == ACTION_PARK {
+                __mutex_unlock((*w).unlock)
+            } else if action == ACTION_DONE {
+                __finish(w, t)
+            } else {
+                panic("scheduler: a task switched back without saying why")
+            }
+        }
+    }
+}
+
+/// Ends a task: frees its stack, wakes whoever waits for it, and releases the scheduler's share of the record.
+priv fn __finish(w: CPtr<Worker>, t: CPtr<Task>) {
+    unsafe {
+        let s = (*w).sched
+        __ctx_free((*t).ctx)
+        (*t).ctx = CPtr.null()
+        __mutex_lock((*s).state_lock)
+        (*t).done = 1
+        let waiter = (*t).waiter
+        (*t).waiter = CPtr.null()
+        let mut scope_waiter: CPtr<Task> = CPtr.null()
+        if !(*t).scope.is_null() {
+            let sc = (*t).scope
+            (*sc).pending = (*sc).pending - 1
+            if (*sc).pending == 0 {
+                scope_waiter = (*sc).waiter
+                (*sc).waiter = CPtr.null()
+            }
+        }
+        (*t).refs = (*t).refs - 1
+        let last = (*t).refs == 0
+        __cond_broadcast((*s).done_cv)
+        __mutex_unlock((*s).state_lock)
+        if !waiter.is_null() {
+            __ready(s, waiter)
+        }
+        if !scope_waiter.is_null() {
+            __ready(s, scope_waiter)
+        }
+        if last {
+            __dealloc(t as CPtr<u8>, 0, 8)
+        }
+    }
+}
+
+// ---- what a task can do ----------------------------------------------------------------------------------------
+
+/// The worker running the calling code, or null when the caller is not a task.
+priv fn __current_worker(): CPtr<Worker> {
+    unsafe {
+        let w = __tls_get() as CPtr<Worker>
+        if w.is_null() {
+            return w
+        }
+        if (*w).current.is_null() {
+            return CPtr.null()
+        }
+        w
+    }
+}
+
+/// Switches from the running task back to its worker with `action`; returns when the task is resumed, possibly on
+/// another worker.
+priv fn __switch_out(w: CPtr<Worker>, action: usize, unlock: CPtr<u8>) {
+    unsafe {
+        let t = (*w).current
+        (*w).action = action
+        (*w).unlock = unlock
+        __ctx_switch((*t).ctx, (*w).main_ctx)
+    }
+}
+
+/// Gives the worker to another task. The caller is queued behind the tasks that are ready, and nothing is promised
+/// about when it runs again. Outside a task it yields the thread.
+fn yield() {
+    unsafe {
+        let w = __current_worker()
+        if w.is_null() {
+            __thread_yield()
+        } else {
+            __switch_out(w, ACTION_YIELD, CPtr.null())
+        }
+    }
+}
+
+/// Starts a task: gives it a stack and puts it in a queue. `body` runs on the task's stack; when it returns the task
+/// is finished by its worker.
+priv fn __start(t: CPtr<Task>, own body: FnOnce(): ()) {
+    unsafe {
+        let s = __scheduler()
+        (*t).ctx = __ctx_new(TASK_STACK, || {
+            unsafe {
+                body()
+                let w = __tls_get() as CPtr<Worker>
+                (*w).action = ACTION_DONE
+            }
+        })
+        __ready(s, t)
+    }
+}
+
+/// A fresh task record with `extra` bytes after it, for the result slot.
+priv fn __new_task(extra: usize): CPtr<Task> {
+    unsafe {
+        let t = __alloc(Task.size() + extra, 8) as CPtr<Task>
+        (*t).next = CPtr.null()
+        (*t).ctx = CPtr.null()
+        (*t).waiter = CPtr.null()
+        (*t).scope = CPtr.null()
+        (*t).done = 0
+        (*t).stored = 0
+        (*t).detached = 0
+        (*t).refs = 2
+        t
+    }
+}
+
+/// Parks the running task until the lock of `unlock` is released by its worker, which happens after the task has
+/// switched away. The caller holds `unlock` and has recorded itself where a waker will find it.
+priv fn __park(w: CPtr<Worker>, unlock: CPtr<u8>) {
+    unsafe {
+        __switch_out(w, ACTION_PARK, unlock)
+    }
+}
+
+// ---- spawn and join ---------------------------------------------------------------------------------------------
+
+/// The handle of a task spawned by `spawn`. `join` waits for the task and returns its result. Dropping the handle
+/// detaches the task: it keeps running and its result is dropped.
+struct JoinHandle<T> {
+    task: CPtr<u8>
+    joined: bool
+}
+
+/// Runs `f` as a task on the scheduler and returns its handle. The closure moves its captures into the task, and the
+/// task ends when `f` returns. A panic in the task aborts the process.
+fn spawn<T, F: FnOnce(): T>(own f: F): JoinHandle<T> {
+    unsafe {
+        let t = __new_task(Option<T>.size())
+        // The result slot holds `None` until the task stores its value. It is written byte by byte from a real
+        // `None`, because assigning through a raw pointer would first drop whatever the memory held.
+        let slot = ((t as CPtr<u8>) + Task.size()) as CPtr<Option<T>>
+        let empty: Option<T> = None
+        let src = (&empty) as CPtr<u8>
+        let dst = slot as CPtr<u8>
+        let mut i: usize = 0
+        while i < Option<T>.size() {
+            *(dst + i) = *(src + i)
+            i = i + 1
+        }
+        __start(t, || {
+            unsafe {
+                let value = f()
+                let s = __scheduler()
+                __mutex_lock((*s).state_lock)
+                if (*t).detached == 1 {
+                    __mutex_unlock((*s).state_lock)
+                } else {
+                    *slot = Some(value)
+                    (*t).stored = 1
+                    __mutex_unlock((*s).state_lock)
+                }
+            }
+        })
+        JoinHandle { task: t as CPtr<u8>, joined: false }
+    }
+}
+
+JoinHandle<T> {
+    /// Waits for the task to finish and returns what it returned. Inside a task this parks the task, so its worker
+    /// runs others; on another thread it blocks the thread.
+    fn join(own self): T {
+        let mut me = self
+        unsafe {
+            let t = me.task as CPtr<Task>
+            let slot = (me.task + Task.size()) as CPtr<Option<T>>
+            let s = __scheduler()
+            loop {
+                __mutex_lock((*s).state_lock)
+                if (*t).done == 1 {
+                    break
+                }
+                let w = __current_worker()
+                if w.is_null() {
+                    __cond_wait((*s).done_cv, (*s).state_lock)
+                    __mutex_unlock((*s).state_lock)
+                } else {
+                    (*t).waiter = (*w).current
+                    __park(w, (*s).state_lock)
+                }
+            }
+            let value = (*slot).take()
+            (*t).refs = (*t).refs - 1
+            let last = (*t).refs == 0
+            __mutex_unlock((*s).state_lock)
+            if last {
+                __dealloc(me.task, 0, 8)
+            }
+            me.joined = true
+            match value {
+                Some(v) => v,
+                None => panic("task: it finished without a result"),
+            }
+        }
+    }
+
+    /// Whether the task has finished.
+    fn is_finished(self): bool {
+        unsafe {
+            let t = self.task as CPtr<Task>
+            let s = __scheduler()
+            __mutex_lock((*s).state_lock)
+            let done = (*t).done == 1
+            __mutex_unlock((*s).state_lock)
+            done
+        }
+    }
+}
+
+JoinHandle<T>: Drop {
+    fn drop(mut self) {
+        if self.joined {
+            return
+        }
+        unsafe {
+            let t = self.task as CPtr<Task>
+            let slot = (self.task + Task.size()) as CPtr<Option<T>>
+            let s = __scheduler()
+            __mutex_lock((*s).state_lock)
+            let mut leftover: Option<T> = None
+            if (*t).stored == 1 {
+                leftover = (*slot).take()
+            } else {
+                (*t).detached = 1
+            }
+            (*t).refs = (*t).refs - 1
+            let last = (*t).refs == 0
+            __mutex_unlock((*s).state_lock)
+            if last {
+                __dealloc(self.task, 0, 8)
+            }
+        }
+    }
+}
+
+// ---- scoped tasks -----------------------------------------------------------------------------------------------
+
+/// The handle `scope` gives its body. `spawn` starts a task that may borrow places of the code around the scope, and
+/// `scope` does not return until every task started through the handle has finished (spec/tasks.md, TK7).
+struct Scope {
+    state: CPtr<u8>
+}
+
+/// Runs `f` with a handle for starting scoped tasks, then waits for all of them. The tasks may borrow what `f` may
+/// borrow, because they cannot outlive the scope; the compiler keeps what a task borrows unavailable to the rest of
+/// `f` until `f` ends. Returns what `f` returns.
+fn scope<R, F: FnMut(Scope): R>(own f: F): R {
+    unsafe {
+        let state = __alloc(ScopeState.size(), 8) as CPtr<ScopeState>
+        (*state).pending = 0
+        (*state).waiter = CPtr.null()
+        let mut body = f
+        let result = body(Scope { state: state as CPtr<u8> })
+        __scope_wait(state)
+        __dealloc(state as CPtr<u8>, 0, 8)
+        result
+    }
+}
+
+Scope {
+    /// Starts a task that runs `f`. Unlike `spawn`, `f` may borrow: the scope waits for the task, so the borrowed
+    /// places outlive it. Two tasks (or a task and the rest of the scope body) cannot use the same place unless
+    /// both only read it; the compiler checks that with the same rules as two closures in one function.
+    fn spawn<F: FnMut(): ()>(self, own f: F) {
+        unsafe {
+            __spawn_scoped(self.state as CPtr<ScopeState>, __closure_own(f))
+        }
+    }
+}
+
+/// Starts a task that belongs to the scope `state`.
+priv fn __spawn_scoped(state: CPtr<ScopeState>, own body: FnOnce(): ()) {
+    unsafe {
+        let s = __scheduler()
+        let t = __new_task(0)
+        (*t).refs = 1
+        (*t).scope = state
+        __mutex_lock((*s).state_lock)
+        (*state).pending = (*state).pending + 1
+        __mutex_unlock((*s).state_lock)
+        __start(t, body)
+    }
+}
+
+/// Waits until every task of the scope has finished.
+priv fn __scope_wait(state: CPtr<ScopeState>) {
+    unsafe {
+        let s = __scheduler()
+        loop {
+            __mutex_lock((*s).state_lock)
+            if (*state).pending == 0 {
+                break
+            }
+            let w = __current_worker()
+            if w.is_null() {
+                __cond_wait((*s).done_cv, (*s).state_lock)
+                __mutex_unlock((*s).state_lock)
+            } else {
+                (*state).waiter = (*w).current
+                __park(w, (*s).state_lock)
+            }
+        }
+        __mutex_unlock((*s).state_lock)
+    }
+}

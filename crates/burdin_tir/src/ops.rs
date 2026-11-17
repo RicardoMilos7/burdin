@@ -239,6 +239,13 @@ pub enum Builtin {
     ViewAsText,
     /// `String.with_capacity(n)`: an empty string whose buffer holds `n` bytes without growing.
     StringWithCapacity,
+    /// `__closure_own(f)`: the closure `f`, whose borrow captures the compiler tracks, as an owned `FnOnce` value. It
+    /// is only for the standard library's `Scope.spawn`, which guarantees the closure ends before the borrowed
+    /// places do (`spec/tasks.md`, TK7).
+    ClosureOwn,
+    /// One of the task runtime's primitives (`spec/tasks.md`, TK2): threads, locks, contexts, and the two slots the
+    /// scheduler keeps.
+    Rt(RtOp),
 }
 
 /// A floating-point function the compiler provides on `f64` and `f32` (`spec/stdlib.md`, "Float functions").
@@ -277,6 +284,84 @@ pub enum FloatOp {
     Copysign,
     /// `to_bits(self)`: the bit pattern as an unsigned integer of the same width.
     ToBits,
+}
+
+/// The primitives the task runtime generates (`spec/tasks.md`, TK2). Every one is a plain function of integers and
+/// raw pointers, except the two that take an owned `FnOnce(): ()` closure to run elsewhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RtOp {
+    /// `__thread_start(f)`: runs `f` on a new detached OS thread.
+    ThreadStart,
+    /// `__thread_yield()`: gives up the OS thread's time slice.
+    ThreadYield,
+    /// `__mutex_new() -> CPtr<u8>`, `__mutex_lock(m)`, `__mutex_unlock(m)`, `__mutex_free(m)`.
+    MutexNew,
+    MutexLock,
+    MutexUnlock,
+    MutexFree,
+    /// `__cond_new() -> CPtr<u8>`, `__cond_wait(c, m)`, `__cond_signal(c)`, `__cond_broadcast(c)`, `__cond_free(c)`.
+    CondNew,
+    CondWait,
+    CondSignal,
+    CondBroadcast,
+    CondFree,
+    /// `__ctx_main() -> CPtr<u8>`: a context that stands for the calling thread's own stack.
+    CtxMain,
+    /// `__ctx_new(stack_size, f) -> CPtr<u8>`: a context with its own stack that starts by running `f`.
+    CtxNew,
+    /// `__ctx_switch(from, to)`: saves the running context in `from` and continues `to`.
+    CtxSwitch,
+    /// `__ctx_free(ctx)`: releases a context that is not running, with its stack.
+    CtxFree,
+    /// `__tls_get() -> CPtr<u8>`, `__tls_set(p)`: the calling thread's worker slot.
+    TlsGet,
+    TlsSet,
+    /// `__global_get() -> CPtr<u8>`, `__global_set(p)`: the process-wide scheduler slot.
+    GlobalGet,
+    GlobalSet,
+    /// `__spin_lock()`, `__spin_unlock()`: the lock that guards one-time initialization.
+    SpinLock,
+    SpinUnlock,
+    /// `__config_get() -> usize`, `__config_set(n)`: the worker count the program asked for, or 0.
+    ConfigGet,
+    ConfigSet,
+    /// `__cpu_count() -> usize`: the number of processors the program may use.
+    CpuCount,
+}
+
+impl RtOp {
+    /// Every primitive, with the name `std` calls it by.
+    pub const ALL: [(&'static str, RtOp); 24] = [
+        ("__thread_start", RtOp::ThreadStart),
+        ("__thread_yield", RtOp::ThreadYield),
+        ("__mutex_new", RtOp::MutexNew),
+        ("__mutex_lock", RtOp::MutexLock),
+        ("__mutex_unlock", RtOp::MutexUnlock),
+        ("__mutex_free", RtOp::MutexFree),
+        ("__cond_new", RtOp::CondNew),
+        ("__cond_wait", RtOp::CondWait),
+        ("__cond_signal", RtOp::CondSignal),
+        ("__cond_broadcast", RtOp::CondBroadcast),
+        ("__cond_free", RtOp::CondFree),
+        ("__ctx_main", RtOp::CtxMain),
+        ("__ctx_new", RtOp::CtxNew),
+        ("__ctx_switch", RtOp::CtxSwitch),
+        ("__ctx_free", RtOp::CtxFree),
+        ("__tls_get", RtOp::TlsGet),
+        ("__tls_set", RtOp::TlsSet),
+        ("__global_get", RtOp::GlobalGet),
+        ("__global_set", RtOp::GlobalSet),
+        ("__spin_lock", RtOp::SpinLock),
+        ("__spin_unlock", RtOp::SpinUnlock),
+        ("__config_get", RtOp::ConfigGet),
+        ("__config_set", RtOp::ConfigSet),
+        ("__cpu_count", RtOp::CpuCount),
+    ];
+
+    /// Whether the primitive consumes an owned closure argument.
+    pub fn takes_closure(self) -> bool {
+        matches!(self, RtOp::ThreadStart | RtOp::CtxNew)
+    }
 }
 
 /// Built-in methods of the primitive types.

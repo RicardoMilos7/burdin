@@ -128,6 +128,16 @@ Assumptions that only those implementations back:
 - **Static linking, musl, BSD, and other Unix systems are untested.** The link step is the platform `cc` with its
   default flags, so its behavior there is unknown.
 
+### Tasks and threads
+
+`std.task` and `std.thread` (stage 2.1, `spec/tasks.md`) sit on a small runtime written as LLVM IR text
+(`crates/burdin_codegen/src/taskrt/`): POSIX threads, locks, and `mmap`-ed task stacks with an inline-assembly
+context switch on Linux and macOS (x86-64 and arm64), and threads, slim locks, and fibers on Windows. The Linux
+x86-64 path is the one that has been run; the macOS, arm64, and Windows paths follow the same contracts but their first
+run is the CI jobs for those platforms, and `tests/s2_tasks` is the check. Constants that differ per system (the
+`mmap` flags, the layout of `stack_t`, the name of the processor-count query) are filled in per target by
+`taskrt.rs`.
+
 ### Not platform-specific
 
 Language-level gaps and correctness issues that apply everywhere are tracked under "Known problems and risks" in

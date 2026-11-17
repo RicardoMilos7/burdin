@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A task can run after the scope body returns, so it cannot borrow a local of the body: the local is gone by then.
+
+fn main() {
+    scope(|s| {
+        let mut n = 0
+        s.spawn(|| { n = n + 1 }) //~ E0171
+    })
+}

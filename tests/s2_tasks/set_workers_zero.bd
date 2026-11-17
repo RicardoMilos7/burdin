@@ -1,0 +1,6 @@
+//@ run-abort
+//@ stderr: set_workers: at least one worker is needed
+
+fn main() {
+    task.set_workers(0)
+}

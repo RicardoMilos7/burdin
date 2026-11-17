@@ -1,0 +1,31 @@
+//@ run
+//> 3 6
+//> 21
+
+// A scope can start a scope inside one of its tasks, and a scope can run inside a task started by `spawn`; each waits
+// for its own tasks only.
+
+fn main() {
+    let mut x = 0
+    let mut y = 0
+    scope(|outer| {
+        outer.spawn(|| {
+            scope(|inner| {
+                inner.spawn(|| { x = 1 + 2 })
+            })
+        })
+        outer.spawn(|| { y = 6 })
+    })
+    println("{} {}", x, y)
+
+    let handle = task.spawn(|| {
+        let mut p = 0
+        let mut q = 0
+        scope(|s| {
+            s.spawn(|| { p = 10 })
+            s.spawn(|| { q = 11 })
+        })
+        p + q
+    })
+    println("{}", handle.join())
+}

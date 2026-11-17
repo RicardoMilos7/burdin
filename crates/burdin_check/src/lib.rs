@@ -15,6 +15,9 @@ struct Env<'a> {
     sigs: &'a [Signature],
     /// The vtable methods of every `any Interface`, whose receiver tells a dynamic call how it borrows the box.
     any_ifaces: &'a [AnyIface],
+    /// Which functions are `Scope.spawn` (spec/tasks.md, TK7): the closure they are given borrows from the scope's
+    /// surroundings until the scope body ends.
+    scoped_spawns: &'a [bool],
 }
 
 /// Runs every memory check on `program`, filling in what later stages need: the return origin of each function and
@@ -25,7 +28,8 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
     // The return origin of a signature is inferred from the body (RT): first to a fixpoint, then reported.
     origins::check(signatures, functions, diags);
 
-    let env = Env { defs: TypeDefs { structs, enums }, sigs: signatures, any_ifaces };
+    let scoped_spawns: Vec<bool> = functions.iter().map(|f| is_scope_spawn(&f.name)).collect();
+    let env = Env { defs: TypeDefs { structs, enums }, sigs: signatures, any_ifaces, scoped_spawns: &scoped_spawns };
     for func in functions.iter_mut().filter(|f| !f.symbolic) {
         func.moved = moves::check_function(func, env, diags);
     }
@@ -33,10 +37,11 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
         closure.func.moved = moves::check_function(&closure.func, env, diags);
     }
     for func in functions.iter().filter(|f| !f.symbolic) {
-        borrows::check(func, env, diags);
+        borrows::check(func, env, &[], diags);
     }
     for closure in &program.closures {
-        borrows::check(&closure.func, env, diags);
+        let outer: Vec<_> = closure.captures.iter().map(|c| c.local).collect();
+        borrows::check(&closure.func, env, &outer, diags);
         origins::check_closure(&closure.func, signatures, diags);
     }
     // A constant's initializer is code the comptime engine runs (`spec/comptime.md`, CT7), so it follows the same
@@ -55,6 +60,11 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
             exported: false,
         };
         moves::check_function(&func, env, diags);
-        borrows::check(&func, env, diags);
+        borrows::check(&func, env, &[], diags);
     }
+}
+
+/// Whether a function instance is `std.task.Scope.spawn` (with or without its type arguments).
+fn is_scope_spawn(name: &str) -> bool {
+    name.split('<').next() == Some("std.task.Scope.spawn")
 }

@@ -33,6 +33,8 @@ struct Loan {
     holders: Vec<LocalId>,
     /// The top-level statement the loan was created in; with no holders it lives only there.
     start: usize,
+    /// A loan taken by a task of a `scope`: it lasts to the end of the scope body, whatever holds it (TK7).
+    pinned: bool,
 }
 
 struct Checker<'a> {
@@ -45,12 +47,17 @@ struct Checker<'a> {
     /// Set while a call under `*` is checked: its reference result is consumed by the dereference, so no result
     /// loan is recorded for it (`spec/operators.md`, OP10).
     skip_result_loan: bool,
+    /// How many loops enclose the expression being checked.
+    loop_depth: usize,
+    /// The captured variables of the closure being checked: the only places a scoped task may borrow, because every
+    /// local of the scope body is gone before the scope waits for its tasks.
+    outer: &'a [LocalId],
     reported: Vec<Span>,
     diags: &'a mut Diagnostics,
 }
 
 /// Checks the borrows of one function body.
-pub(crate) fn check(f: &tir::Function, env: Env, diags: &mut Diagnostics) {
+pub(crate) fn check(f: &tir::Function, env: Env, outer: &[LocalId], diags: &mut Diagnostics) {
     let mut last_use = vec![None; f.locals.len()];
     for (i, stmt) in f.body.stmts.iter().enumerate() {
         uses_stmt(stmt, i, &mut last_use);
@@ -65,6 +72,8 @@ pub(crate) fn check(f: &tir::Function, env: Env, diags: &mut Diagnostics) {
         loans: Vec::new(),
         stmt: 0,
         skip_result_loan: false,
+        loop_depth: 0,
+        outer,
         reported: Vec::new(),
         diags,
     };
@@ -87,6 +96,9 @@ impl<'a> Checker<'a> {
     fn loan_live(&self, loan: &Loan, stmt: usize) -> bool {
         if loan.start > stmt {
             return false;
+        }
+        if loan.pinned {
+            return true;
         }
         let mut end: Option<usize> = None;
         for holder in &loan.holders {
@@ -150,7 +162,7 @@ impl<'a> Checker<'a> {
             None => self.reference_origin(e),
         };
         for (root, path) in places {
-            self.loans.push(Loan { root, path, mutable, holders: Vec::new(), start: self.stmt });
+            self.loans.push(Loan { root, path, mutable, holders: Vec::new(), start: self.stmt, pinned: false });
         }
     }
 
@@ -207,6 +219,12 @@ impl<'a> Checker<'a> {
         if let Some(tail) = &b.tail {
             self.expr(tail, Mode::Use);
         }
+    }
+
+    fn loop_block(&mut self, b: &tir::Block) {
+        self.loop_depth += 1;
+        self.block(b);
+        self.loop_depth -= 1;
     }
 
     fn block(&mut self, b: &tir::Block) {
@@ -354,6 +372,12 @@ impl<'a> Checker<'a> {
                     self.expr(&args[0], Mode::Move);
                     self.expr(&args[1], Mode::Move);
                 }
+                tir::Builtin::ClosureOwn => self.expr(&args[0], Mode::Move),
+                tir::Builtin::Rt(op) if op.takes_closure() => {
+                    for (i, arg) in args.iter().enumerate() {
+                        self.expr(arg, if i + 1 == args.len() { Mode::Move } else { Mode::Use });
+                    }
+                }
                 tir::Builtin::Swap => {
                     self.access_place(&args[0], Access::BorrowMut);
                     self.access_place(&args[1], Access::BorrowMut);
@@ -462,47 +486,47 @@ impl<'a> Checker<'a> {
             }
             K::While(cond, body) => {
                 self.expr(cond, Mode::Use);
-                self.block(body);
+                self.loop_block(body);
             }
-            K::Loop(body) => self.block(body),
+            K::Loop(body) => self.loop_block(body),
             K::ForRange { lo, hi, body, .. } => {
                 self.expr(lo, Mode::Use);
                 self.expr(hi, Mode::Use);
-                self.block(body);
+                self.loop_block(body);
             }
             K::ForRangeValue { range, body, .. } => {
                 self.expr(range, Mode::Use);
-                self.block(body);
+                self.loop_block(body);
             }
             K::ForArray { array, body, .. } => {
                 // The loop borrows the collection for as long as it runs, so the body cannot change it.
                 self.access_place(array, Access::Read);
                 self.add_loan(array, false);
-                self.block(body);
+                self.loop_block(body);
             }
             K::ForSlice { slice, body, .. } => {
                 // The loop borrows the collection for as long as it runs, so the body cannot change it.
                 self.access_place(slice, Access::Read);
                 self.add_loan(slice, false);
-                self.block(body);
+                self.loop_block(body);
             }
             K::ForList { list, body, .. } => {
                 // The loop borrows the collection for as long as it runs, so the body cannot change it.
                 self.access_place(list, Access::Read);
                 self.add_loan(list, false);
-                self.block(body);
+                self.loop_block(body);
             }
             K::ForMap { map, body, .. } => {
                 // The loop borrows the collection for as long as it runs, so the body cannot change it.
                 self.access_place(map, Access::Read);
                 self.add_loan(map, false);
-                self.block(body);
+                self.loop_block(body);
             }
             K::ForChars { string, body, .. } => {
                 // The loop borrows the collection for as long as it runs, so the body cannot change it.
                 self.access_place(string, Access::Read);
                 self.add_loan(string, false);
-                self.block(body);
+                self.loop_block(body);
             }
             K::Match(scrutinee, arms) => {
                 let start = self.loans.len();
@@ -587,6 +611,7 @@ impl<'a> Checker<'a> {
 
     fn call(&mut self, f: usize, args: &[tir::Expr]) {
         let sig = &self.env.sigs[f];
+        let loans_before = self.loans.len();
         for (i, arg) in args.iter().enumerate() {
             let Some(param) = sig.params.get(i) else {
                 self.expr(arg, Mode::Use);
@@ -602,6 +627,9 @@ impl<'a> Checker<'a> {
                 self.expr(arg, Mode::Use);
             }
         }
+        if self.env.scoped_spawns.get(f).copied().unwrap_or(false) {
+            self.scoped_spawn(loans_before, args);
+        }
         // A second-class result derived from an argument keeps that argument borrowed until the last use of the
         // result (RF5).
         if !self.skip_result_loan && sig.ret.is_second_class() {
@@ -616,6 +644,56 @@ impl<'a> Checker<'a> {
                 let mutable = param.exclusive || matches!(sig.ret, Ty::Ref { mutable: true, .. });
                 self.add_loan(arg, mutable);
             }
+        }
+    }
+}
+
+impl Checker<'_> {
+    /// `Scope.spawn(f)` (spec/tasks.md, TK7): the task runs until the scope ends, so what it borrows stays borrowed
+    /// until then. The loans the closure took are pinned to the end of the body. The task may borrow only places that
+    /// outlive the body (its own captures); borrowing a local of the body, or the same mutable place from a loop that
+    /// starts several tasks, is an error.
+    fn scoped_spawn(&mut self, loans_before: usize, args: &[tir::Expr]) {
+        use tir::ExprKind as K;
+        let Some(task) = args.last() else { return };
+        match &task.kind {
+            K::Closure { captures, .. } => {
+                for c in captures {
+                    if c.mode != tir::CaptureMode::Move && !self.outer.contains(&c.local) {
+                        self.diags.error(
+                            Code::CLOSURE_ESCAPES,
+                            task.span,
+                            "a task started by `Scope.spawn` cannot borrow a local of the scope body: the task can run after the body ends",
+                        );
+                    }
+                }
+            }
+            // A closure kept in a variable: its loans are held by that variable, so pin them too.
+            K::Local(id) => {
+                if task.ty.is_second_class() {
+                    self.diags.error(
+                        Code::CLOSURE_ESCAPES,
+                        task.span,
+                        "a task started by `Scope.spawn` must be written at the call when it borrows, so the checker can see what it borrows",
+                    );
+                }
+                let id = *id;
+                for loan in &mut self.loans {
+                    if loan.holders.contains(&id) {
+                        loan.pinned = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        let in_loop = self.loop_depth > 0;
+        let mut repeated = false;
+        for loan in &mut self.loans[loans_before..] {
+            loan.pinned = true;
+            repeated |= in_loop && loan.mutable;
+        }
+        if repeated {
+            self.error(task.span);
         }
     }
 }

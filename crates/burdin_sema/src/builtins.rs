@@ -1,7 +1,7 @@
 //! The built-in functions, types, and methods.
 
 use crate::globals::Globals;
-use burdin_tir::{Builtin, FloatOp, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, Signature, Ty};
+use burdin_tir::{Builtin, FloatOp, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, RtOp, Signature, Ty};
 use std::rc::Rc;
 
 pub(crate) fn builtin(name: &str) -> Option<Builtin> {
@@ -71,11 +71,49 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__realloc" => Builtin::RawRealloc,
         "__dealloc" => Builtin::RawDealloc,
         "__view_as_text" => Builtin::ViewAsText,
-        _ => return None,
+        _ => return RtOp::ALL.iter().find(|(n, _)| *n == name).map(|(_, op)| Builtin::Rt(*op)),
     })
 }
 
+/// The signature of a task runtime primitive (`spec/tasks.md`, TK2): raw pointers and `usize`, and for the two that
+/// start something an owned `FnOnce(): ()` closure.
+fn rt_sig(op: RtOp) -> Signature {
+    let ptr = || Ty::CPtr(Box::new(Ty::Int(IntTy::U8)));
+    let plain = ParamSig::plain;
+    let closure = || ParamSig {
+        own: true,
+        ..plain(Ty::Fn {
+            sig: Rc::new(FnSig { params: Vec::new(), ret: Box::new(Ty::Unit) }),
+            kind: FnKind::FnOnce,
+            borrowed: false,
+        })
+    };
+    let usize_ty = || Ty::Int(IntTy::Usize);
+    let (params, ret) = match op {
+        RtOp::ThreadStart => (vec![closure()], Ty::Unit),
+        RtOp::ThreadYield | RtOp::SpinLock | RtOp::SpinUnlock => (Vec::new(), Ty::Unit),
+        RtOp::MutexNew | RtOp::CondNew | RtOp::CtxMain | RtOp::TlsGet | RtOp::GlobalGet => (Vec::new(), ptr()),
+        RtOp::MutexLock
+        | RtOp::MutexUnlock
+        | RtOp::MutexFree
+        | RtOp::CondSignal
+        | RtOp::CondBroadcast
+        | RtOp::CondFree
+        | RtOp::CtxFree
+        | RtOp::TlsSet
+        | RtOp::GlobalSet => (vec![plain(ptr())], Ty::Unit),
+        RtOp::CondWait | RtOp::CtxSwitch => (vec![plain(ptr()), plain(ptr())], Ty::Unit),
+        RtOp::CtxNew => (vec![plain(usize_ty()), closure()], ptr()),
+        RtOp::CpuCount | RtOp::ConfigGet => (Vec::new(), usize_ty()),
+        RtOp::ConfigSet => (vec![plain(usize_ty())], Ty::Unit),
+    };
+    Signature { params, ret, has_self: false, ret_origins: Vec::new() }
+}
+
 pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
+    if let Builtin::Rt(op) = b {
+        return rt_sig(op);
+    }
     // The I/O primitives report the operating system's own error code; the `std` wrappers turn it into the
     // `IoError` of `spec/errors.md` ERR10 with `__io_kind` for the portable kind (ERR11).
     let os_code = || Ty::Int(IntTy::I32);

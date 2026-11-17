@@ -7,18 +7,26 @@
 //! flags and bounds checks.
 //!
 //! The roots are `main`, the `test` blocks, the exported (`extern "C" fn`) functions, every `Drop` implementation,
-//! every closure body, and every vtable entry. A closure body is a root because closures are emitted for the whole
-//! program; a vtable entry is a root because it is reached only through an indirect call the walker cannot see.
-//! Everything they call is reachable as well.
+//! and every vtable entry; a vtable entry is a root because it is reached only through an indirect call the walker
+//! cannot see. Everything they call is reachable as well, and so is every closure body a reachable body creates: a
+//! closure inside a function nothing reaches is dead code too, which keeps the scheduler of `std.task` out of a program
+//! that starts no task.
 
 use crate::emit::Codegen;
 use burdin_tir as tir;
 
+/// What the program can reach: flags indexed like `program.functions` and `program.closures`.
+pub(super) struct Reach {
+    pub(super) functions: Vec<bool>,
+    pub(super) closures: Vec<bool>,
+}
+
 impl Codegen<'_, '_> {
-    /// The functions the program can reach, as indices into `program.functions`.
-    pub(super) fn reachable_functions(&self) -> Vec<bool> {
+    /// The functions and closure bodies the program can reach.
+    pub(super) fn reachable(&self) -> Reach {
         let program = self.program;
         let mut reachable = vec![false; program.functions.len()];
+        let mut closures_reached = vec![false; program.closures.len()];
         let mut pending: Vec<usize> = Vec::new();
         if let Some(main) = program.main {
             mark(main, &mut reachable, &mut pending);
@@ -39,14 +47,6 @@ impl Codegen<'_, '_> {
         for drop in drops {
             mark(drop, &mut reachable, &mut pending);
         }
-        // Every closure body is emitted, so everything it calls is reachable too.
-        let mut closure_calls: Vec<tir::FuncId> = Vec::new();
-        for clos in &program.closures {
-            calls_in(&clos.func.body, &mut closure_calls);
-        }
-        for id in closure_calls {
-            mark(id, &mut reachable, &mut pending);
-        }
         // A vtable entry is called indirectly, through the vtable's slot.
         for vtable in &program.any_vtables {
             for entry in &vtable.entries {
@@ -61,14 +61,27 @@ impl Codegen<'_, '_> {
             mark(fns.deallocate, &mut reachable, &mut pending);
         }
         let mut calls: Vec<tir::FuncId> = Vec::new();
-        while let Some(i) = pending.pop() {
-            calls.clear();
-            calls_in(&program.functions[i].body, &mut calls);
+        let mut closures: Vec<usize> = Vec::new();
+        let mut pending_closures: Vec<usize> = Vec::new();
+        loop {
+            if let Some(i) = pending.pop() {
+                refs_in(&program.functions[i].body, &mut calls, &mut closures);
+            } else if let Some(c) = pending_closures.pop() {
+                refs_in(&program.closures[c].func.body, &mut calls, &mut closures);
+            } else {
+                break;
+            }
             for id in calls.drain(..) {
                 mark(id, &mut reachable, &mut pending);
             }
+            for c in closures.drain(..) {
+                if !closures_reached[c] {
+                    closures_reached[c] = true;
+                    pending_closures.push(c);
+                }
+            }
         }
-        reachable
+        Reach { functions: reachable, closures: closures_reached }
     }
 }
 
@@ -81,14 +94,15 @@ fn mark(id: tir::FuncId, reachable: &mut [bool], pending: &mut Vec<usize>) {
     }
 }
 
-/// Every function `b` calls, in any expression it contains.
-pub(super) fn calls_in(b: &tir::Block, out: &mut Vec<tir::FuncId>) {
-    let mut walk = Walker { out };
+/// Every function `b` calls and every closure it creates, in any expression it contains.
+fn refs_in(b: &tir::Block, calls: &mut Vec<tir::FuncId>, closures: &mut Vec<usize>) {
+    let mut walk = Walker { out: calls, closures };
     walk.block(b);
 }
 
 struct Walker<'a> {
     out: &'a mut Vec<tir::FuncId>,
+    closures: &'a mut Vec<usize>,
 }
 
 impl Walker<'_> {
@@ -122,6 +136,7 @@ impl Walker<'_> {
                 self.out.push(*f);
                 self.all(args);
             }
+            K::Closure { closure, .. } => self.closures.push(*closure),
             K::Block(b) => self.block(b),
             K::If(cond, then_block, else_expr) => {
                 self.expr(cond);
@@ -214,7 +229,6 @@ impl Walker<'_> {
             | K::Str(_)
             | K::Local(_)
             | K::Const(_)
-            | K::Closure { .. }
             | K::Break
             | K::Continue
             | K::None

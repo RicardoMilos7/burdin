@@ -1,0 +1,26 @@
+//@ run
+//> detached task ran
+//> after
+
+// Dropping a handle detaches its task: the task keeps running and nobody reads its result. With one worker the tasks
+// run in the order they were queued, so the task started second finishing means the detached one already ran.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("detached task ran")
+    }
+}
+
+fn main() {
+    task.set_workers(1)
+    {
+        let detached = task.spawn(|| Noisy { id: 1 })
+    }
+    let marker = task.spawn(|| 2)
+    marker.join()
+    println("after")
+}

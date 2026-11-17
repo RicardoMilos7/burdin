@@ -1,0 +1,20 @@
+//@ run
+//> 1023
+
+// Tasks start tasks and wait for them: a binary tree of tasks, each adding its children's results. A waiting task gives
+// its worker back, so the tree finishes even with a single worker.
+
+fn tree(depth: i32): i32 {
+    if depth == 0 {
+        return 1
+    }
+    let left = task.spawn(|| tree(depth - 1))
+    let right = task.spawn(|| tree(depth - 1))
+    1 + left.join() + right.join()
+}
+
+fn main() {
+    task.set_workers(1)
+    let root = task.spawn(|| tree(9))
+    println("{}", root.join())
+}

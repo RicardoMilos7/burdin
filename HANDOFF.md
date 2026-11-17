@@ -1,10 +1,10 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, and thirty-seventh. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, and thirty-eighth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirty-seventh session (2026-11-17). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-eighth session (2026-11-17). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 713 conformance tests; 711 pass in debug (two are skipped) and 706 in release (the release run
@@ -211,6 +211,23 @@ inheritable pipes converted to CRT descriptors. `wait_with_output` drains both p
 unbuffered, and every handle and the `Child` close their operating-system resources on drop. The tests are
 `tests/m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, and `process_test_mode`,
 plus `tests/m20_comptime/purity_process`; the suite is 713 tests (711 run in debug).
+
+The thirty-eighth session implemented milestone 2.1, tasks and the scheduler (issue #198, sub-issues #199-#206,
+#301-#304, and #405), the first stage 2 milestone. Tasks are stackful coroutines scheduled cooperatively on a pool of
+worker threads; the scheduler (per-worker queues, a shared queue, stealing, parking) is Burdin code in
+`std/src/task.bd` over about two dozen small runtime primitives (`Builtin::Rt(RtOp)`, `__closure_own`), which are
+LLVM IR text in `crates/burdin_codegen/src/taskrt/` linked in only when used. The surface is `task.spawn`/`JoinHandle`,
+`task.yield`, `task.scope`/`Scope.spawn`, `task.set_workers`, and `thread.spawn`/`Thread` (`std/src/thread.bd`). The
+decisions are `spec/tasks.md` TK1-TK12 (representation, 256 KiB stacks with a 64 KiB guard, `Send` deferred to 2.3, a
+panic in a task aborts the process, threads, shutdown) and the checker rules for scoped tasks are `spec/memory-rules.md`
+SK1-SK3 (loans from `Scope.spawn` last to the end of the scope body; a task borrows only the body's captures, E0171;
+a mutable borrow in a loop is E0111). `tests/s2_tasks/` has 27 tests, run by every CI job in both profiles. The
+runtime work touched shared state: the output buffer and the checking allocator's live list are protected by spin
+locks, the stack-overflow handler recognizes a task-stack guard, and a test run's leak check ignores the scheduler (its
+records come from `calloc`, and worker-thread environments are `untrack`ed). Code generation now emits a closure body
+only when a reachable body creates it (a closure in an unreachable function used to be emitted, which pulled the whole
+scheduler into every program). The Linux x86-64 path is the only one run so far: the macOS, arm64, and Windows paths
+are written but untested (`docs/platform-support.md`).
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -937,6 +954,15 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
     result leaks the list and its elements under the checking allocator: the iterable's temporary is not registered
     for the drop at the end of the loop statement. Binding it first (`let items = make_list(); for x in items`) is
     the workaround, and `std/src/process.bd` uses it. The failure is a leak, not corruption.
+33. **Generic inference of `T = !` crashes the checker.** `task.spawn(|| panic("x"))` makes `T` the never type and
+    `origins.rs` panics. It is not specific to tasks (any generic function whose argument closure ends in a call that
+    never returns); write the closure's last expression as a call to a function that returns `()` (the s2 tests do).
+34. **Tasks cannot be preempted, and a blocking call blocks its worker.** A task that never yields, waits, or finishes
+    keeps its worker, and a file or standard-input read inside a task blocks the thread (`spec/tasks.md` TK1, TK12).
+    With `task.set_workers(1)` this can starve every other task.
+35. **Nothing stops two tasks sharing a `Shared<T>` or a `CPtr`** until the `Send` marker of 2.3 (`spec/tasks.md` TK11).
+36. **`task.scope` starts the worker pool even when no task is spawned**, because waiting for the scope reads the
+    scheduler's lock. Harmless, but `set_workers` after a `scope` call panics.
 
 ## Decided in the third session
 
@@ -1599,8 +1625,36 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   is needed). Code generation emits one per `(T, I)` and `is`/`downcast` compare the id (AN11). Vtable entry
   functions are reachability roots, because no direct call names them.
 
+## Decided in the thirty-eighth session
+
+- **A task is a stackful coroutine on a fixed 256 KiB stack, scheduled cooperatively (`spec/tasks.md` TK1, TK3).** A
+  state-machine transform would need a function coloring; one OS thread per task does not scale. A 64 KiB `PROT_NONE`
+  guard below each stack turns an overflow into `panic: stack overflow`. There is no preemption in 2.1.
+- **The scheduler is Burdin code over runtime primitives, not Rust or generated IR (TK2).** The language already has
+  raw pointers, `repr(C)` structs, closures, and `unsafe`, so only threads, locks, the context switch, and two
+  slots need the compiler. The contract with the runtime is that the first word of the worker record is its own
+  context (`main_ctx`), which `ctx_entry` switches to when a task body returns.
+- **Yielding goes to the back of the shared queue (TK5, TK6).** Putting a yielded task on the worker's own queue starved
+  every other task behind a yielding one; the shared queue is FIFO across workers.
+- **A panic in a task aborts the process (TK8, issue #205).** No unwinding exists, and delivering it to the joiner would
+  make `join` return a `Result` for a bug.
+- **`Send` waits for 2.3 (TK11, issue #199).** Until then a program must not share a `Shared<T>` (non-atomic) or a raw
+  pointer between tasks.
+- **Scoped tasks reuse the closure borrow rules, with loans pinned to the end of the scope body (TK7, SK1-SK3).** The
+  checker recognizes `std.task.Scope.spawn` by name. A task may borrow only the body's captures, and a closure that
+  borrows must be written at the call. Disjointness is by captured variable, since a closure captures whole variables.
+- **`__closure_own` is the one unsafe relabeling (TK7).** `Scope.spawn` takes `FnMut`, so its closure borrows, and the
+  primitive that starts a task wants an owned `FnOnce` of the same representation; the checker rules, not the type,
+  make that sound.
+
 ## What is left to do, in order
 
+0. Milestone 2.1 (tasks) is complete (thirty-eighth session). The next stage 2 milestone is 2.2, channels (`Channel<T>`,
+   `select`, closing), which needs a lock or atomics the std does not expose yet: `Mutex<T>` and atomics belong to 2.3,
+   so 2.2 builds on the runtime's `__mutex_*`/`__cond_*` primitives. Before that, run the CI jobs for macOS and
+   Windows: `tests/s2_tasks` is the first run of the arm64 context-switch assembly, the Darwin constants, and
+   `taskrt/windows.ll` (fibers); fix what they find. Possible follow-ups: a per-task stack-size option, cooperative
+   preemption points, and making blocking calls suspend the task (2.4).
 1. Milestone 23 is complete (thirty-sixth session): `spec/allocators.md` AL1-AL10 is the decision and
    `tests/m23_allocators/` has 28 tests. The next milestone is 24 (`m24_stdlib`: `Set`, `Deque`, a priority heap,
    Unicode helpers, paths, time, random, and the formatting foundation), which may split as the standard library

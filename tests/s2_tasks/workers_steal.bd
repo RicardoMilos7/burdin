@@ -1,0 +1,27 @@
+//@ run
+//> 4000 children, sum 15996000
+
+// One task starts all the children, so they all land in that worker's own queue; the other workers have empty queues
+// and take work by stealing it from that one. The sum is right whichever worker ran which child.
+
+fn main() {
+    task.set_workers(8)
+    let parent = task.spawn(|| {
+        let mut handles = List<task.JoinHandle<i64>>.new()
+        let mut i: i64 = 0
+        while i < 4000 {
+            let n = i
+            handles.push(task.spawn(|| {
+                task.yield()
+                n * 2
+            }))
+            i = i + 1
+        }
+        let mut sum: i64 = 0
+        for h in handles.into_iter() {
+            sum = sum + h.join()
+        }
+        sum
+    })
+    println("4000 children, sum {}", parent.join())
+}

@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A task started in a loop is several tasks: borrowing one place mutably from it would make them all write it.
+
+fn main() {
+    let mut a = 0
+    scope(|s| {
+        for i in 0..3 {
+            s.spawn(|| { a = a + 1 }) //~ E0111
+        }
+    })
+    println("{}", a)
+}

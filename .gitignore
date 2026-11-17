@@ -13,6 +13,7 @@
 *.ilk
 *.lib
 *.ll
+!crates/burdin_codegen/src/taskrt/*.ll
 *.bc
 
 # Files the tests create in their working directory

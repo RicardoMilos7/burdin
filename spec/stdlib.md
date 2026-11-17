@@ -2176,6 +2176,25 @@ field, and the compile-fail test `m24_stdlib/interfaces_missing` pins each one. 
 issue are `Hash` for `str`/`String`/`List`/`Map`, `Default` for `List`/`Deque`/`PriorityHeap`, `Ord` for
 `Option`/`Result`, and `Eq`/`Debug` for `IoError` and `ParseIntError`.
 
+## Tasks and threads (issue #198)
+
+`std.task` and `std.thread` are specified in [`tasks.md`](tasks.md); this is the surface.
+
+```
+fn task.spawn<T, F: FnOnce(): T>(own f: F): JoinHandle<T>
+fn task.scope<R, F: FnMut(Scope): R>(own f: F): R
+fn task.yield()
+fn task.set_workers(count: usize)
+JoinHandle<T> { fn join(own self): T; fn is_finished(self): bool }      // Drop detaches an unjoined task
+Scope { fn spawn<F: FnMut(): ()>(self, own f: F) }                       // the closure may borrow; see TK7
+fn thread.spawn<T, F: FnOnce(): T>(own f: F): Thread<T>
+fn thread.yield_now()
+Thread<T> { fn join(own self): T; fn is_finished(self): bool }          // Drop detaches an unjoined thread
+```
+
+Tests: `s2_tasks/two_tasks`, `moved_value`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, and the rest of the
+folder (`tasks.md` lists them by rule).
+
 ## Tests
 
 | Area | Tests |
@@ -2188,6 +2207,7 @@ issue are `Hash` for `str`/`String`/`List`/`Map`, `Default` for `List`/`Deque`/`
 | `List` capacity, access, and bulk edits | `m24_stdlib/list_capacity`, `list_access`, `list_bulk_edits`, `list_drop_order`, `list_allocator_methods`, `list_leaks`, `list_comptime`, `list_get_mut_immutable`, `list_extend_from_slice_needs_clone`, `list_capacity_stored_allocator`, `list_with_capacity_in_not_allocator`, `list_drain_not_range`, `list_append_wrong_allocator`, `list_get_mut_borrow`, `list_swap_remove_out_of_bounds`, `list_split_off_out_of_bounds`, `list_drain_out_of_bounds`, `list_reserve_overflow` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
+| Tasks, scopes, and threads | `s2_tasks/two_tasks`, `moved_value`, `detach_runs`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, `workers_steal`, `stress_many_tasks` |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | Hashing | `m24_stdlib/hash_values`, `hash_hasher`, `hash_seeded`, `hash_generic`, `hash_map_consistent`, `hash_case_insensitive`, `hash_comptime`, `hash_float`, `hash_float_derive` |
 | `Heap` | `m05_ownership/heap_tree_eval` |

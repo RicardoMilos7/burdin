@@ -1,0 +1,17 @@
+//@ run
+//> waited, then 5
+
+// A task that waits for another by yielding in a loop must not keep the only worker to itself: the task it waits for is
+// queued and runs while the waiter is at the back of the line.
+
+fn main() {
+    task.set_workers(1)
+    let outer = task.spawn(|| {
+        let inner = task.spawn(|| 5)
+        while !inner.is_finished() {
+            task.yield()
+        }
+        inner.join()
+    })
+    println("waited, then {}", outer.join())
+}

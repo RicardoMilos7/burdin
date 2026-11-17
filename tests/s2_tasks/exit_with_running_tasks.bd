@@ -1,0 +1,17 @@
+//@ run
+//> main is done
+
+// The program ends when `main` returns, whatever the tasks are doing: workers are not waited for, and tasks that have
+// not finished are abandoned (spec/tasks.md, TK10).
+
+fn main() {
+    let busy = task.spawn(|| {
+        let mut i = 0
+        while i < 1000000 {
+            task.yield()
+            i = i + 1
+        }
+        i
+    })
+    println("main is done")
+}

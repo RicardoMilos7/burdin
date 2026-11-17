@@ -333,6 +333,11 @@ fn main() {
 ```
 <!-- /error-example -->
 
+The same code reports the conflicts between the tasks of a `task.scope`: what a task started with `Scope.spawn`
+borrows stays borrowed until the scope body ends, so the body (or another task) cannot write a place a task borrows,
+two tasks cannot both write one place, and a task started in a loop cannot borrow a place mutably, because every
+iteration would start another task that writes it (`spec/tasks.md`, TK7).
+
 **How to fix:** finish using the reference before changing the place, for example by moving the last read of `r`
 above the assignment, or by copying the value out instead of holding a view.
 
@@ -825,6 +830,12 @@ fn main() {
 }
 ```
 <!-- /error-example -->
+
+Tasks of a scope have two more cases (`spec/tasks.md`, TK7). A closure given to `Scope.spawn` that borrows must be
+written at the call; passing a closure variable that borrows hides the borrow from the checker. And a task may borrow
+only places that outlive the scope body, so borrowing a local of the body is rejected: the local is gone before the
+scope waits for the task. Declare the variable before the `scope` call, give the task a copy of the value it needs, or return the
+result through a task handle (`task.spawn`).
 
 **How to fix:** make the closure own its captures by writing it where an owned closure type is expected (the
 compiler then captures by move), or move the captured value into a local first and capture that. A captured view

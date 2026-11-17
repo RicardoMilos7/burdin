@@ -1,0 +1,29 @@
+//@ run
+//> 499500 1999000 45
+//> 5
+//> detached ok
+
+// `thread.spawn` runs a closure on an operating-system thread; `join` returns its result. A thread, a task, and the main
+// thread can run at the same time. Dropping the handle detaches the thread (spec/tasks.md, TK9).
+
+fn work(n: i32): i32 {
+    let mut s = 0
+    let mut i = 0
+    while i < n {
+        s = s + i
+        i = i + 1
+    }
+    s
+}
+
+fn main() {
+    let a = thread.spawn(|| work(1000))
+    let b = thread.spawn(|| work(2000))
+    let t = task.spawn(|| work(10))
+    println("{} {} {}", a.join(), b.join(), t.join())
+    let name = "moved".to_string()
+    let h = thread.spawn(|| name.len())
+    println("{}", h.join())
+    let d = thread.spawn(|| work(5))
+    println("detached ok")
+}

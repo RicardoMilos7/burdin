@@ -341,6 +341,12 @@ The design's concurrency section. Suggested milestones, written the same way:
 A panic in a task aborts the process, as everywhere else. `scope` closures may borrow disjoint places; the
 exclusivity checker must learn about them.
 
+Milestone 2.1 is complete: `tests/s2_tasks` passes in debug and release. The decisions (task representation, stack
+size, `Send` timing, panic behavior, scoped borrows, threads) are `spec/tasks.md` TK1-TK12 and the checker rules are
+`spec/memory-rules.md` SK1-SK3. The scheduler is Burdin code in `std/src/task.bd` over about two dozen runtime
+primitives (`crates/burdin_codegen/src/taskrt/`). It was written for Linux, macOS, and Windows on x86-64 and arm64 and
+has been run only on Linux x86-64 so far; the CI jobs for the other platforms are the first run of the rest.
+
 ### Stage 3: tooling and ecosystem
 
 | Area | Contents |
