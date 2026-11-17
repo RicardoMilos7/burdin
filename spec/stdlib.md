@@ -949,6 +949,67 @@ file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) report
 
 Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
 
+## Files and file handles (issue #702)
+
+The file operations live in `std.fs`, beside the directory operations; the prelude makes every name below visible
+unqualified. A file is opened through `OpenOptions` or the two shortcuts `File.open` and `File.create`, and the
+handle owns the system descriptor. Bytes are never translated: on every system a file is binary, so `0x00` and text
+that is not valid UTF-8 come back exactly as they were written.
+
+```
+struct OpenOptions {
+    fn new(): OpenOptions
+    fn read(mut self, on: bool)                fn write(mut self, on: bool)
+    fn append(mut self, on: bool)              fn truncate(mut self, on: bool)
+    fn create(mut self, on: bool)              fn create_new(mut self, on: bool)
+    fn open(self, path: str): Result<File, IoError>
+}
+
+struct File {
+    fn open(path: str): Result<File, IoError>          // `read` only
+    fn create(path: str): Result<File, IoError>        // write, create, and truncate
+    fn sync_all(self): Result<(), IoError>
+    fn set_len(mut self, size: u64): Result<(), IoError>
+    fn close(own self): Result<(), IoError>            // reports the error a drop would discard
+}
+File: Read     // read(mut buf: List<u8>, max: usize): Result<usize, IoError>
+File: Write    // write(data: [u8]): Result<usize, IoError>; flush(): Result<(), IoError> (there is no buffer)
+File: Seek     // seek(from: SeekFrom): Result<u64, IoError>; position() and rewind() come from `Seek`
+File: Drop     // closes the descriptor
+
+fn read(path: str): Result<List<u8>, IoError>
+fn write(path: str, data: [u8]): Result<(), IoError>
+fn append(path: str, data: [u8]): Result<(), IoError>
+fn copy_file(from: str, to: str): Result<u64, IoError>
+fn exists(path: str): bool
+```
+
+- `File.open` opens for reading, and `File.create` opens for writing, creating the file when it is missing and
+  emptying it when it exists. `OpenOptions.new()` starts with every option off; each setter changes one option.
+- `OpenOptions.open` rejects a set with no read, write, or append access, `truncate` without write or append access,
+  and `append` together with `truncate`, with `IoError.InvalidInput`, before it reaches the system. `create_new`
+  implies `create` and fails when the file exists. A handle opened only for appending is opened for writing, and
+  every write through it goes to the end whatever the position.
+- A system failure is `IoError.Read` when the options only read and `IoError.Write` otherwise, and names the path
+  the handle was opened with; a seek before the start is `IoError.Seek`.
+- `read` appends up to `max` bytes to the caller's list, growing it, and returns how many bytes it appended; `0` is
+  the end of the file. The `Read` defaults (`read_exact`, `read_to_end`, `read_to_string`) and the `Write` defaults
+  (`write_all`, `write_text`, `write_line`) are built on it, and `BufReader` and `BufWriter` wrap a `File` like any
+  other reader or writer.
+- `flush` succeeds without doing anything, because a file handle has no buffer; `sync_all` is the durability call
+  (`fsync` on Unix, `_commit` on Windows). `set_len` cuts the file or extends it with zero bytes.
+- Dropping the handle closes the descriptor. `close` closes it too and returns the failure a drop would discard;
+  it marks the handle closed, so the drop that follows does not close the descriptor again. Closing a descriptor
+  twice is an invalid descriptor, which the Windows CRT treats as a fatal parameter error.
+- `read`, `write`, and `append` are the byte-level counterparts of `read_to_string` and `write_file`; `write`
+  creates or replaces, and `append` creates a missing file. `copy_file` copies the bytes only, not permissions, and
+  returns how many it copied. It is not named `copy` because `std.rw` already exports the reader/writer `copy` under
+  that name, and the prelude has only the unqualified name for one of them; write `fs.copy_file(...)` for a file.
+  `exists` is `Path.exists`.
+- Every operation is impure: a comptime evaluation that reaches one fails with E0224.
+
+Tests: `m24_stdlib/file_handles`, `file_errors`, `file_comptime`.
+
 ## `Heap<T>`
 
 ```
@@ -1170,6 +1231,7 @@ error enum IoError {
     WriteZero                "the writer accepted no bytes"
     InvalidData              "the bytes are not valid text"
     Seek                     "seek to a position before the start"
+    InvalidInput             "invalid open options"
 }
 
 error enum ParseIntError {
@@ -1180,8 +1242,9 @@ error enum ParseIntError {
 `read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
 `IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The readers and writers return
 `UnexpectedEof` (`read_exact` on a source that ended), `WriteZero` (`write_all` on a sink that takes nothing),
-`InvalidData` (text that is not UTF-8), and `Seek` (a position before the start); the set of variants is
-settled together with the operating-system error codes in issue #701.
+`InvalidData` (text that is not UTF-8), and `Seek` (a position before the start); `OpenOptions.open` returns
+`InvalidInput` for an option set it rejects ("Files and file handles"). The set of variants is settled together
+with the operating-system error codes in issue #701.
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
@@ -1202,7 +1265,8 @@ fn process.run(command: str): Result<i32, IoError>
 normalization, so a string written and read back is byte-identical (`len` is the byte count). `process.run` runs the
 command through the system shell and returns its status: the POSIX wait status is shifted, the Windows status is
 returned as is. On failure each returns the matching `IoError` variant, and an integer `parse` returns
-`ParseIntError.Invalid` (`errors.md`, ERR10).
+`ParseIntError.Invalid` (`errors.md`, ERR10). The byte-level helpers (`read`, `write`, `append`, `copy_file`,
+`exists`) and the owning `File` handle are in "Files and file handles".
 
 None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
 
@@ -1446,6 +1510,7 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
+| Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_comptime` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
 | Characters | `m24_stdlib/char_ascii`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |

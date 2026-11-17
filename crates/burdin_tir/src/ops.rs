@@ -55,6 +55,21 @@ pub enum Builtin {
     ReadToString,
     /// `write_file(path, text)`: writes the bytes.
     WriteFile,
+    /// `__file_open(path, read, write, append, truncate, create, create_new)`: opens a file and returns its
+    /// descriptor (`spec/stdlib.md`, "Files and file handles").
+    FileOpen,
+    /// `__file_read(fd, buf, max)`: appends up to `max` bytes of the file to `buf` and returns how many.
+    FileRead,
+    /// `__file_write(fd, data)`: writes a prefix of `data` and returns how many bytes it took.
+    FileWrite,
+    /// `__file_seek(fd, offset, whence)`: moves the position and returns it (`whence` is 0, 1, or 2).
+    FileSeek,
+    /// `__file_sync(fd)`: makes the file's contents durable.
+    FileSync,
+    /// `__file_set_len(fd, size)`: truncates the file, or extends it with zeros.
+    FileSetLen,
+    /// `__file_close(fd)`: closes the descriptor.
+    FileClose,
     /// `__stdout_write(text)`: appends to the standard-output buffer.
     StdoutWrite,
     /// `__stdout_write_line(text)`: appends `text` and a newline to the standard-output buffer.

@@ -110,6 +110,7 @@ error enum IoError {
     WriteZero "the writer accepted no bytes"
     InvalidData "the bytes are not valid text"
     Seek "seek to a position before the start"
+    InvalidInput "invalid open options"
 }
 
 /// The error type of `i32.parse` and the other integer parsers.
