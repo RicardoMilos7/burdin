@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A borrowed value cannot be sent: `send` takes its value by move, so a reference is not a `T`, and a channel of
+// references cannot be named at all, because a view must not outlive the storage it borrows from (spec/channels.md, CH4).
+
+fn main() {
+    let x = 5
+    let ch = Channel<i32>.unbounded()
+    let _ = ch.send(&x) //~ E0003
+    let views = Channel<&i32>.unbounded() //~ E0120
+    let text = Channel<str>.unbounded() //~ E0120
+}

@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// A `select` is typed like the code it stands for: its arms give one type, the value of a `send` arm has the channel's
+// element type, and a guard is a `bool` (spec/channels.md, CH6, CH8).
+
+fn main() {
+    let a = Channel<i32>.unbounded()
+    let b = Channel<i32>.unbounded()
+    let r = select {
+        v = a.recv() => 1
+        w = b.recv() => "one" //~ E0003
+    }
+    select {
+        a.send("text") => { } //~ E0003
+    }
+    select {
+        v = a.recv() if 1 => { } //~ E0003
+    }
+}

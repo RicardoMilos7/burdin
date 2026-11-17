@@ -1,0 +1,18 @@
+//@ run
+//> blocked sender got its value back: 2
+
+// A sender waiting for room in a full channel wakes up when the channel is closed, and `send` returns the value it could
+// not queue (CH3). The result is the same whether the task reaches its `send` before or after the close.
+
+fn main() {
+    let ch = Channel<i32>.bounded(1)
+    ch.send(1)
+    let tx = ch.clone()
+    let sender = task.spawn(|| tx.send(2))
+    task.yield()
+    ch.close()
+    match sender.join() {
+        Some(v) => println("blocked sender got its value back: {}", v),
+        None => println("the value was queued"),
+    }
+}

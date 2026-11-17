@@ -1,0 +1,26 @@
+//@ run
+//> sum 55
+
+// A scoped task may borrow the channel: the handle is only read by the scope's tasks, which is allowed for any number of
+// them, and every operation synchronizes inside the channel (spec/channels.md, CH4; spec/tasks.md, TK7).
+
+fn main() {
+    let ch = Channel<i32>.bounded(2)
+    let mut total = 0
+    scope(|s| {
+        s.spawn(|| {
+            let mut i = 1
+            while i <= 5 {
+                ch.send(i * i)
+                i = i + 1
+            }
+            ch.close()
+        })
+        s.spawn(|| {
+            for v in ch.iter() {
+                total = total + v
+            }
+        })
+    })
+    println("sum {}", total)
+}

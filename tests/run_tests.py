@@ -7,6 +7,8 @@ Usage: tests/run_tests.py [options] [filter ...]
   -l, --list          list the tests that would run, without running them
   -t, --timeout SEC   seconds allowed per test (default 30)
   -j, --jobs N        tests to run in parallel (default: the CPU count, at most 8; 1 is sequential)
+  -n, --repeat N      run each selected test N times; a test fails when any run fails (for stress tests, where a
+                      lost wake-up or a race shows up in one run in many)
   -h, --help          show this help
   filter              run only tests whose path contains one of these strings
                       (for example: m05, drop_order, m06_conventions/exclusivity)
@@ -404,6 +406,18 @@ def test_burdin_test(case: Case, burdin: str, release: bool, timeout: int):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def run_case_repeated(case: Case, burdin: str, release: bool, timeout: int, repeat: int):
+    """Runs the case `repeat` times and reports the first failing run."""
+    result = (False, "no run", "")
+    for iteration in range(1, repeat + 1):
+        result = run_case(case, burdin, release, timeout)
+        if not result[0]:
+            if repeat > 1:
+                return False, f"run {iteration} of {repeat}: {result[1]}", result[2]
+            return result
+    return result
+
+
 def run_case(case: Case, burdin: str, release: bool, timeout: int):
     try:
         if case.kind in ("run", "run-abort"):
@@ -421,7 +435,7 @@ def run_case(case: Case, burdin: str, release: bool, timeout: int):
 
 def parse_args(argv):
     options = {"release": False, "verbose": False, "list": False, "timeout": DEFAULT_TIMEOUT,
-               "jobs": DEFAULT_JOBS, "filters": []}
+               "jobs": DEFAULT_JOBS, "repeat": 1, "filters": []}
     index = 0
     while index < len(argv):
         argument = argv[index]
@@ -454,6 +468,16 @@ def parse_args(argv):
                 return usage_error(f"invalid job count: {argv[index]}")
             if options["jobs"] < 1:
                 return usage_error(f"invalid job count: {argv[index]}")
+        elif argument in ("-n", "--repeat"):
+            index += 1
+            if index >= len(argv):
+                return usage_error(f"{argument} needs a value")
+            try:
+                options["repeat"] = int(argv[index])
+            except ValueError:
+                return usage_error(f"invalid repeat count: {argv[index]}")
+            if options["repeat"] < 1:
+                return usage_error(f"invalid repeat count: {argv[index]}")
         elif argument.startswith("-"):
             return usage_error(f"unknown option: {argument}")
         else:
@@ -529,11 +553,13 @@ def main(argv) -> int:
     jobs = min(options["jobs"], max(1, len(runnable)))
     if jobs == 1 or len(runnable) <= 1:
         for index, case in runnable:
-            results[index] = run_case(case, burdin, options["release"], options["timeout"])
+            results[index] = run_case_repeated(case, burdin, options["release"], options["timeout"], options["repeat"])
     else:
         with ThreadPoolExecutor(max_workers=jobs) as pool:
             futures = {
-                pool.submit(run_case, case, burdin, options["release"], options["timeout"]): index
+                pool.submit(
+                    run_case_repeated, case, burdin, options["release"], options["timeout"], options["repeat"]
+                ): index
                 for index, case in runnable
             }
             for future in as_completed(futures):

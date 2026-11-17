@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// The value of a `send` arm is moved when the `select` starts, whether or not that arm runs, so it cannot be used
+// afterwards (spec/channels.md, CH8).
+
+fn main() {
+    let ch = Channel<String>.unbounded()
+    let message = "hello".to_string()
+    select {
+        ch.send(message) => { }
+        default => { }
+    }
+    println("{}", message) //~ E0100
+}

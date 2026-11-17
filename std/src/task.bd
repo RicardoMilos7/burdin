@@ -83,6 +83,9 @@ priv struct Sched repr(C) {
     sleepers: usize
     /// How many worker threads have claimed their record.
     started: usize
+    /// Counts every change to any channel (a value queued or taken, a close), under `state_lock`. A `select` reads
+    /// it before it looks at its cases, so a change between the look and the wait is never missed (channel.bd).
+    epoch: usize
 }
 
 /// The state of a `scope`: how many of its tasks have not finished, and the task waiting for them.
@@ -144,6 +147,7 @@ priv fn __scheduler(): CPtr<Sched> {
         (*s).park_cv = __cond_new()
         (*s).sleepers = 0
         (*s).started = 0
+        (*s).epoch = 0
         let mut i: usize = 0
         while i < count {
             let w = calloc(1, Worker.size()) as CPtr<Worker>
@@ -646,5 +650,104 @@ priv fn __scope_wait(state: CPtr<ScopeState>) {
             }
         }
         __mutex_unlock((*s).state_lock)
+    }
+}
+
+// ---- waiting for a channel ---------------------------------------------------------------------------------------
+//
+// The channels of channel.bd keep their state under the scheduler's `state_lock` and wait through these functions. A
+// waiter is a task or a thread that is blocked until something it watches changes. They are public only because
+// another module calls them; they are not part of the surface a program uses (spec/tasks.md, CH10).
+
+/// A blocked task or thread. `task` is the parked task, or null when the waiter is a thread or is not parked.
+/// `notified` is set by whoever wakes it. Both are guarded by `state_lock`.
+struct __Waiter repr(C) {
+    task: CPtr<u8>
+    notified: usize
+}
+
+/// A fresh waiter, not notified.
+fn __waiter_new(): CPtr<__Waiter> {
+    unsafe {
+        let w = __alloc(__Waiter.size(), 8) as CPtr<__Waiter>
+        (*w).task = CPtr.null()
+        (*w).notified = 0
+        w
+    }
+}
+
+fn __waiter_free(w: CPtr<__Waiter>) {
+    unsafe {
+        __dealloc(w as CPtr<u8>, __Waiter.size(), 8)
+    }
+}
+
+/// Takes the lock that guards every channel and every waiter.
+fn __sched_lock() {
+    unsafe {
+        __mutex_lock((*__scheduler()).state_lock)
+    }
+}
+
+fn __sched_unlock() {
+    unsafe {
+        __mutex_unlock((*__scheduler()).state_lock)
+    }
+}
+
+/// The channel change counter. The lock must be held.
+fn __sched_epoch(): usize {
+    unsafe {
+        (*__scheduler()).epoch
+    }
+}
+
+/// Counts one change to a channel. The lock must be held.
+fn __sched_bump() {
+    unsafe {
+        let s = __scheduler()
+        (*s).epoch = (*s).epoch + 1
+    }
+}
+
+/// Blocks the caller until `__waiter_notify` is called for `w`. The lock must be held; it is released before the
+/// caller blocks and is not held when this returns. A waiter that was notified already does not block. In a task this
+/// parks the task, so its worker runs others; on another thread it blocks the thread.
+fn __waiter_block(w: CPtr<__Waiter>) {
+    unsafe {
+        let s = __scheduler()
+        if (*w).notified == 1 {
+            __mutex_unlock((*s).state_lock)
+            return
+        }
+        let worker = __current_worker()
+        if worker.is_null() {
+            while (*w).notified == 0 {
+                __cond_wait((*s).done_cv, (*s).state_lock)
+            }
+            __mutex_unlock((*s).state_lock)
+        } else {
+            (*w).task = (*worker).current as CPtr<u8>
+            __park(worker, (*s).state_lock)
+        }
+    }
+}
+
+/// Wakes the waiter `w` once: a parked task is made ready, a blocked thread is signalled. A waiter that is already
+/// notified is left alone, so a task is never queued twice. The lock must be held.
+fn __waiter_notify(w: CPtr<__Waiter>) {
+    unsafe {
+        if (*w).notified == 1 {
+            return
+        }
+        (*w).notified = 1
+        let s = __scheduler()
+        let t = (*w).task as CPtr<Task>
+        if t.is_null() {
+            __cond_broadcast((*s).done_cv)
+        } else {
+            (*w).task = CPtr.null()
+            __ready(s, t)
+        }
     }
 }

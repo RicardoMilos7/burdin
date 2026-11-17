@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: Channel.bounded: the capacity must be at least 1
+
+// A bounded channel needs room for at least one value; there are no rendezvous channels (CH2).
+
+fn main() {
+    let ch = Channel<i32>.bounded(0)
+    let _ = ch.send(1)
+}

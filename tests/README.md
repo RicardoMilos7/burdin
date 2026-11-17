@@ -6,8 +6,8 @@ document's snippets are illustrative; these programs are the executable form. Ea
 milestone is done when every test in its folder and in all earlier folders passes.
 
 Stage 1 starts at `m12_closures`; stage 2 starts at `s2_tasks`. Everything the plans still defer (the standard
-library's remaining containers and the rest of the concurrency stage after tasks: channels, `Mutex`, atomics, `Send`,
-and asynchronous I/O) has **no tests here** yet.
+library's remaining containers and the rest of the concurrency stage after tasks and channels: `Mutex`, atomics,
+`Send`, and asynchronous I/O) has **no tests here** yet.
 
 ## Layout
 
@@ -39,6 +39,7 @@ tests/
   m23_allocators/      allocator parameters, Arena, Shared<T>, leak detection, allocator-aware containers
   m24_stdlib/          the standard-library roundout: Ordering, containers, text, numbers, I/O, time, random
   s2_tasks/            stage 2.1: tasks, the work-stealing scheduler, `yield`, scoped tasks, threads
+  s2_channels/         stage 2.2: `Channel<T>`, send/receive, closing, `select`, and their stress tests
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -89,6 +90,7 @@ python3 tests/run_tests.py -v drop_order  # show diffs and compiler output for f
 python3 tests/run_tests.py --release      # release profile (skips debug-only tests)
 python3 tests/run_tests.py --list         # list tests and their kinds
 python3 tests/run_tests.py -j 4           # four tests at a time (default: CPU count, at most 8)
+python3 tests/run_tests.py -n 20 s2_channels/stress   # run each selected test 20 times; one failing run fails it
 BURDIN=/path/to/burdin python3 tests/run_tests.py  # choose the compiler driver
 python3 tests/check_tests.py              # check directives and error codes (no compiler needed)
 python3 tests/check_e9000.py              # check the E9000 audit and its milestone owners (no compiler needed)

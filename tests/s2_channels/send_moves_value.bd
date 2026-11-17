@@ -1,0 +1,23 @@
+//@ run
+//> the task got 3 items
+//> main still has 2
+
+// A value sent through a channel is moved: the sender gives it up, the receiver owns it. Nothing is shared except the
+// channel itself (CH4).
+
+fn main() {
+    let ch = Channel<List<i32>>.unbounded()
+    let mut items = List<i32>.new()
+    items.push(1)
+    items.push(2)
+    items.push(3)
+    let kept = [10, 20]
+    ch.send(items)
+    let rx = ch.clone()
+    let t = task.spawn(|| {
+        let got = rx.recv().unwrap()
+        format("the task got {} items", got.len())
+    })
+    println("{}", t.join())
+    println("main still has {}", kept.len())
+}

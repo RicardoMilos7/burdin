@@ -37,6 +37,7 @@ impl Parser<'_> {
                     truncated: false,
                     test_count: 0,
                     comptime_asserts: 0,
+                    select_count: 0,
                 };
                 let expr = sub.expr().ok()?;
                 if !sub.at_eof() {

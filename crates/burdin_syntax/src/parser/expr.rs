@@ -395,6 +395,7 @@ impl Parser<'_> {
                 }
                 Ok(Expr { kind: ExprKind::Name { name, args: Vec::new() }, span: start })
             }
+            TokenKind::Ident(_) if self.at_select(r) => self.select_expr(),
             TokenKind::Ident(_) => {
                 let generic = self.generic_args_ahead();
                 let name = self.ident("an expression")?;

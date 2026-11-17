@@ -6,6 +6,28 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 2
 
+### Milestone 2.2: channels and `select` (issue #207)
+
+- `Channel<T>` (`std/src/channel.bd`) is a cloneable handle to a bounded (`Channel<T>.bounded(n)`, `n >= 1`) or unbounded
+  (`.unbounded()`) multi-producer, multi-consumer queue. `send` moves a value in and waits while a bounded channel is
+  full; `recv` waits while it is empty and returns `None` once it is closed and empty; `try_send` and `try_recv` never
+  wait; `close` wakes every waiter; `for v in ch` receives until the close. A `send` on a closed channel hands the value
+  back. A task that waits parks and a thread blocks, so channels connect tasks, threads, and the main thread
+  (issues #208, #209; `spec/channels.md` CH1-CH5).
+- `select { v = rx.recv() => ..., tx.send(x) => ..., default => ... }` waits on several channel operations and runs
+  exactly one arm. It is a contextual keyword that the parser rewrites into ordinary code over a few members of
+  `Channel`, so `break`, `continue`, `return`, and `?` in an arm mean what they mean elsewhere. The first ready arm in
+  source order runs, `default` makes the `select` non-blocking, and an arm guard (`if cond`) switches an arm off, which
+  is how a loop stops selecting on a closed channel (issues #208, #210; CH6-CH8).
+- A sent value is moved, the channel owns it until it is received, and a value still queued when the last handle goes
+  is dropped with it; `Channel<&T>` is E0120 and `ch.send(&x)` is E0003. Using a sent value is E0100 (issue #211; CH4).
+- All channel state lives under the scheduler's lock, so a wake-up cannot be lost: a waiter registers before it gives up
+  the lock, and a `select` reads a change counter before it looks at its arms (CH10).
+- `tests/s2_channels` has 36 tests (producer/consumer, close, bounded and unbounded, `select` with two ready arms,
+  `default`, guards, the move and borrow errors, and the stress tests). `tests/run_tests.py --repeat N` runs each test
+  N times, and every CI job repeats the channel stress tests 20 times in both profiles, which `tests/check_ci.py` checks
+  (issue #212).
+
 ### Milestone 2.1: tasks and the scheduler (issue #198)
 
 - `task.spawn(|| ...)` runs a closure as a task on a work-stealing pool of worker threads and returns a `JoinHandle<T>`

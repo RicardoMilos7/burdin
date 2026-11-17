@@ -1,0 +1,33 @@
+//@ run
+//> closed false
+//> sent a
+//> closed true
+//> Some("a") Some("b")
+//> None None
+//> send after close hands back c
+//> closing again is fine
+
+// Closing keeps the values already queued: they can still be received, and after them `recv` returns `None`. A `send`
+// on a closed channel returns the value it was given (CH3).
+
+fn main() {
+    let ch = Channel<String>.unbounded()
+    println("closed {}", ch.is_closed())
+    ch.send("a".to_string())
+    ch.send("b".to_string())
+    println("sent a")
+    ch.close()
+    println("closed {}", ch.is_closed())
+    let first = ch.recv()
+    let second = ch.recv()
+    println("{:?} {:?}", first, second)
+    let third = ch.recv()
+    let fourth = ch.recv()
+    println("{:?} {:?}", third, fourth)
+    match ch.send("c".to_string()) {
+        Some(v) => println("send after close hands back {}", v),
+        None => println("the value was queued"),
+    }
+    ch.close()
+    println("closing again is fine")
+}

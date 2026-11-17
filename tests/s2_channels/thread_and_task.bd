@@ -1,0 +1,36 @@
+//@ run
+//> thread sent 5 values
+//> task received 15
+//> main received 6
+
+// Channels connect every kind of caller: an operating-system thread produces for a task, and the main thread (which is
+// neither) receives from a task. A thread blocks on a full or empty channel; a task parks and frees its worker (CH1).
+
+fn main() {
+    let numbers = Channel<i32>.bounded(2)
+    let tx = numbers.clone()
+    let producer = thread.spawn(|| {
+        let mut i = 1
+        while i <= 5 {
+            tx.send(i)
+            i = i + 1
+        }
+        tx.close()
+        5
+    })
+    let rx = numbers.clone()
+    let results = Channel<i32>.bounded(1)
+    let out = results.clone()
+    let consumer = task.spawn(|| {
+        let mut sum = 0
+        for v in rx {
+            sum = sum + v
+        }
+        out.send(sum)
+        out.send(6)
+    })
+    println("thread sent {} values", producer.join())
+    println("task received {}", results.recv().unwrap())
+    println("main received {}", results.recv().unwrap())
+    let _ = consumer.join()
+}

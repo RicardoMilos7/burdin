@@ -1,0 +1,30 @@
+//@ run
+//> 1000 round trips, last reply 1000
+
+// Two tasks answer each other through two capacity-1 channels. Every round trip needs both a wake-up of a waiting
+// receiver and a wake-up of a waiting sender, so a lost wake-up would hang the test (CH10).
+
+fn main() {
+    let ping = Channel<i32>.bounded(1)
+    let pong = Channel<i32>.bounded(1)
+    let ping_rx = ping.clone()
+    let pong_tx = pong.clone()
+    let echo = task.spawn(|| {
+        loop {
+            match ping_rx.recv() {
+                Some(n) => { pong_tx.send(n); }
+                None => break,
+            }
+        }
+    })
+    let mut last = 0
+    let mut i = 1
+    while i <= 1000 {
+        ping.send(i)
+        last = pong.recv().unwrap()
+        i = i + 1
+    }
+    ping.close()
+    echo.join()
+    println("{} round trips, last reply {}", i - 1, last)
+}

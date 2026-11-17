@@ -1,0 +1,38 @@
+//@ run
+//> the receiver saw None
+//> 3 values, then None
+
+// A receiver waiting on an empty channel wakes up when the channel is closed (CH3). Whether the task is already waiting
+// when `close` runs or not, it sees the same thing.
+
+fn main() {
+    let ch = Channel<i32>.unbounded()
+    let rx = ch.clone()
+    let waiter = task.spawn(|| {
+        match rx.recv() {
+            Some(v) => format("the receiver saw {}", v),
+            None => "the receiver saw None".to_string(),
+        }
+    })
+    task.yield()
+    ch.close()
+    println("{}", waiter.join())
+
+    let data = Channel<i32>.unbounded()
+    let rx2 = data.clone()
+    let counter = task.spawn(|| {
+        let mut n = 0
+        loop {
+            match rx2.recv() {
+                Some(_) => n = n + 1,
+                None => break,
+            }
+        }
+        n
+    })
+    data.send(1)
+    data.send(2)
+    data.send(3)
+    data.close()
+    println("{} values, then None", counter.join())
+}

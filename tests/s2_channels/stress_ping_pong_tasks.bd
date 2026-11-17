@@ -1,0 +1,50 @@
+//@ run
+//> 8 pairs, 500 round trips each: ok
+
+// Eight pairs of tasks, each pair answering each other through capacity-1 channels, on two workers: parking and waking in
+// both directions many times over (CH10).
+
+fn pair(rounds: i32): bool {
+    let ping = Channel<i32>.bounded(1)
+    let pong = Channel<i32>.bounded(1)
+    let ping_rx = ping.clone()
+    let pong_tx = pong.clone()
+    let echo = task.spawn(|| {
+        for n in ping_rx {
+            let _ = pong_tx.send(n + 1)
+        }
+    })
+    let mut ok = true
+    let mut i = 0
+    while i < rounds {
+        let _ = ping.send(i)
+        if pong.recv().unwrap() != i + 1 {
+            ok = false
+        }
+        i = i + 1
+    }
+    ping.close()
+    echo.join()
+    ok
+}
+
+fn main() {
+    task.set_workers(2)
+    let mut handles = List<task.JoinHandle<bool>>.new()
+    let mut p = 0
+    while p < 8 {
+        handles.push(task.spawn(|| pair(500)))
+        p = p + 1
+    }
+    let mut ok = true
+    for h in handles.into_iter() {
+        if !h.join() {
+            ok = false
+        }
+    }
+    if ok {
+        println("8 pairs, 500 round trips each: ok")
+    } else {
+        println("wrong reply")
+    }
+}

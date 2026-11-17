@@ -8,6 +8,7 @@ mod expr;
 mod format;
 mod items;
 mod pattern;
+mod select;
 mod stmt;
 mod types;
 
@@ -31,6 +32,7 @@ pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> Fi
         truncated: lexed.truncated,
         test_count: 0,
         comptime_asserts: 0,
+        select_count: 0,
     };
     p.file()
 }
@@ -48,6 +50,8 @@ pub(super) struct Parser<'a> {
     test_count: usize,
     /// How many module-scope `comptime assert` items this file has parsed, for their constant names.
     comptime_asserts: usize,
+    /// How many `select` expressions this file has parsed, for the names of their generated variables.
+    select_count: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]

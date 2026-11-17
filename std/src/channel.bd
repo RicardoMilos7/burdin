@@ -1,0 +1,592 @@
+// Channels (spec/channels.md).
+//
+// `Channel<T>` is a typed queue of values that tasks and threads share. It is a handle: `clone` gives another handle to
+// the same queue, and the queue is freed when the last handle is dropped. Sending moves a value in, receiving moves it
+// out, so nothing is shared except the channel. A channel is bounded (a sender waits while it is full) or unbounded,
+// and it can be closed.
+//
+// Every channel's state is guarded by the scheduler's one lock (`__sched_lock`), which also makes a `select` over several
+// channels simple: looking at a channel, queueing a value, and registering to be woken are each one step under that lock.
+// A task that has to wait parks (its worker runs other tasks); any other thread blocks. The waiting itself is
+// `__waiter_block`/`__waiter_notify` in task.bd.
+//
+// The `select` expression is rewritten by the parser into calls of the `__`-prefixed methods and functions below
+// (spec/channels.md, CH7); a program does not call them.
+
+use iter.{Iterable, Iterator}
+use option.take
+use task.{__Waiter, __sched_bump, __sched_epoch, __sched_lock, __sched_unlock, __waiter_block, __waiter_free, __waiter_new, __waiter_notify}
+
+/// What `try_send` reports: the value was queued, the channel is full, or it is closed. A value that was not queued
+/// comes back in the result.
+enum TrySend<T> {
+    Sent
+    Full(T)
+    Closed(T)
+}
+
+/// What `try_recv` reports: a value, no value yet, or a closed and empty channel.
+enum TryRecv<T> {
+    Value(T)
+    Empty
+    Closed
+}
+
+/// The type-erased part of a channel: the counts and the queue of nodes (a node is a pointer to the next node, then an
+/// `Option<T>` holding the value), and the two lists of waiters. Guarded by the scheduler's lock.
+priv struct Head repr(C) {
+    refs: usize
+    closed: usize
+    len: usize
+    /// The capacity, or 0 for an unbounded channel.
+    cap: usize
+    first: CPtr<u8>
+    last: CPtr<u8>
+    /// Waiters for a value or a close.
+    recv_links: CPtr<Link>
+    /// Waiters for room or a close.
+    send_links: CPtr<Link>
+}
+
+/// A waiter's registration with one channel: it is in the channel's list of receivers or senders while `linked` is 1.
+priv struct Link repr(C) {
+    next: CPtr<Link>
+    waiter: CPtr<__Waiter>
+    head: CPtr<Head>
+    send: usize
+    linked: usize
+}
+
+/// The size of a node's header, where the `Option<T>` starts.
+const NODE_HEADER: usize = 8
+
+// ---- the waiter lists (the lock must be held) ----------------------------------------------------------------------
+
+priv fn __link(l: CPtr<Link>) {
+    unsafe {
+        let h = (*l).head
+        if (*l).send == 1 {
+            (*l).next = (*h).send_links
+            (*h).send_links = l
+        } else {
+            (*l).next = (*h).recv_links
+            (*h).recv_links = l
+        }
+        (*l).linked = 1
+    }
+}
+
+priv fn __unlink(l: CPtr<Link>) {
+    unsafe {
+        if (*l).linked == 0 {
+            return
+        }
+        let h = (*l).head
+        let mut cur = (*h).recv_links
+        if (*l).send == 1 {
+            cur = (*h).send_links
+        }
+        if cur == l {
+            if (*l).send == 1 {
+                (*h).send_links = (*l).next
+            } else {
+                (*h).recv_links = (*l).next
+            }
+        } else {
+            while (*cur).next != l {
+                cur = (*cur).next
+            }
+            (*cur).next = (*l).next
+        }
+        (*l).next = CPtr.null()
+        (*l).linked = 0
+    }
+}
+
+/// Wakes every waiter in a list. A waiter that is woken checks again and registers again if it still has to wait.
+priv fn __wake_links(first: CPtr<Link>) {
+    unsafe {
+        let mut l = first
+        while !l.is_null() {
+            __waiter_notify((*l).waiter)
+            l = (*l).next
+        }
+    }
+}
+
+priv fn __link_init(l: CPtr<Link>, waiter: CPtr<__Waiter>, head: CPtr<Head>, send: usize) {
+    unsafe {
+        (*l).next = CPtr.null()
+        (*l).waiter = waiter
+        (*l).head = head
+        (*l).send = send
+        (*l).linked = 0
+    }
+}
+
+priv fn __link_new(waiter: CPtr<__Waiter>, head: CPtr<Head>, send: usize): CPtr<Link> {
+    unsafe {
+        let l = __alloc(Link.size(), 8) as CPtr<Link>
+        __link_init(l, waiter, head, send)
+        l
+    }
+}
+
+// ---- the queue (the lock must be held) ----------------------------------------------------------------------------
+
+/// Makes the memory at `slot` a valid `None`. Assigning through a raw pointer would first drop whatever the memory
+/// held, so the bytes come from a real `None`.
+priv fn __init_none<T>(slot: CPtr<Option<T>>) {
+    unsafe {
+        let empty: Option<T> = None
+        let src = (&empty) as CPtr<u8>
+        let dst = slot as CPtr<u8>
+        let mut i: usize = 0
+        while i < Option<T>.size() {
+            *(dst + i) = *(src + i)
+            i = i + 1
+        }
+    }
+}
+
+/// A node holding `value`, not linked anywhere.
+priv fn __node_new<T>(own value: T): CPtr<u8> {
+    unsafe {
+        let n = __alloc(NODE_HEADER + Option<T>.size(), 8)
+        *(n as CPtr<CPtr<u8>>) = CPtr.null()
+        let item = (n + NODE_HEADER) as CPtr<Option<T>>
+        __init_none(item)
+        *item = Some(value)
+        n
+    }
+}
+
+/// Tries to queue the value in `slot`. It is done when the value was queued (the slot is left empty) and when the
+/// channel is closed (the slot keeps the value, which the caller hands back); it is not done when the channel is full.
+priv fn __send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
+    unsafe {
+        if (*h).closed == 1 {
+            return true
+        }
+        if (*h).cap != 0 && (*h).len >= (*h).cap {
+            return false
+        }
+        match slot.take() {
+            Some(v) => {
+                let n = __node_new(v)
+                if (*h).last.is_null() {
+                    (*h).first = n
+                } else {
+                    *((*h).last as CPtr<CPtr<u8>>) = n
+                }
+                (*h).last = n
+                (*h).len = (*h).len + 1
+                __sched_bump()
+                __wake_links((*h).recv_links)
+            }
+            None => panic("channel: the value was already sent"),
+        }
+        true
+    }
+}
+
+/// Tries to take a value into `slot`. It is done when a value was taken and when the channel is closed and empty (the
+/// slot stays `None`); it is not done when the channel is open and empty.
+priv fn __recv_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
+    unsafe {
+        if (*h).len > 0 {
+            let n = (*h).first
+            (*h).first = *(n as CPtr<CPtr<u8>>)
+            if (*h).first.is_null() {
+                (*h).last = CPtr.null()
+            }
+            (*h).len = (*h).len - 1
+            let item = (n + NODE_HEADER) as CPtr<Option<T>>
+            slot = (*item).take()
+            __dealloc(n, NODE_HEADER + Option<T>.size(), 8)
+            __sched_bump()
+            __wake_links((*h).send_links)
+            return true
+        }
+        if (*h).closed == 1 {
+            return true
+        }
+        false
+    }
+}
+
+// ---- the channel -------------------------------------------------------------------------------------------------
+
+/// A typed queue shared by tasks and threads. A handle can be cloned and sent anywhere; every handle sends, receives,
+/// and closes. Values are received in the order they were sent. See spec/channels.md for the exact rules.
+struct Channel<T> {
+    head: CPtr<u8>
+}
+
+priv fn __new_head(capacity: usize): CPtr<u8> {
+    unsafe {
+        let h = __alloc(Head.size(), 8) as CPtr<Head>
+        (*h).refs = 1
+        (*h).closed = 0
+        (*h).len = 0
+        (*h).cap = capacity
+        (*h).first = CPtr.null()
+        (*h).last = CPtr.null()
+        (*h).recv_links = CPtr.null()
+        (*h).send_links = CPtr.null()
+        h as CPtr<u8>
+    }
+}
+
+Channel<T> {
+    /// A channel that holds at most `capacity` values: `send` waits while it is full. The capacity must be at least 1.
+    fn bounded(capacity: usize): Channel<T> {
+        if capacity == 0 {
+            panic("Channel.bounded: the capacity must be at least 1")
+        }
+        unsafe {
+            Channel { head: __new_head(capacity) }
+        }
+    }
+
+    /// A channel with no limit: `send` never waits.
+    fn unbounded(): Channel<T> {
+        unsafe {
+            Channel { head: __new_head(0) }
+        }
+    }
+
+    /// Moves `value` into the channel, waiting while a bounded channel is full. Returns `None` when the value was
+    /// queued, and `Some(value)` (the same value) when the channel is closed.
+    fn send(self, own value: T): Option<T> {
+        let mut slot = Some(value)
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let done = __send_ready(h, mut slot)
+            __sched_unlock()
+            if done {
+                return slot.take()
+            }
+            let waiter = __waiter_new()
+            let link = __link_new(waiter, h, 1)
+            loop {
+                __sched_lock()
+                if __send_ready(h, mut slot) {
+                    __sched_unlock()
+                    break
+                }
+                (*waiter).notified = 0
+                __link(link)
+                __waiter_block(waiter)
+                __sched_lock()
+                __unlink(link)
+                __sched_unlock()
+            }
+            __dealloc(link as CPtr<u8>, Link.size(), 8)
+            __waiter_free(waiter)
+        }
+        slot.take()
+    }
+
+    /// Takes the oldest value out of the channel, waiting while it is empty. Returns `None` when the channel is closed
+    /// and every value sent before the close has been received.
+    fn recv(self): Option<T> {
+        let mut slot: Option<T> = None
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let done = __recv_ready(h, mut slot)
+            __sched_unlock()
+            if done {
+                return slot
+            }
+            let waiter = __waiter_new()
+            let link = __link_new(waiter, h, 0)
+            loop {
+                __sched_lock()
+                if __recv_ready(h, mut slot) {
+                    __sched_unlock()
+                    break
+                }
+                (*waiter).notified = 0
+                __link(link)
+                __waiter_block(waiter)
+                __sched_lock()
+                __unlink(link)
+                __sched_unlock()
+            }
+            __dealloc(link as CPtr<u8>, Link.size(), 8)
+            __waiter_free(waiter)
+        }
+        slot
+    }
+
+    /// Like `send`, but never waits: a full channel returns the value in `Full`.
+    fn try_send(self, own value: T): TrySend<T> {
+        let mut slot = Some(value)
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let closed = (*h).closed == 1
+            let done = __send_ready(h, mut slot)
+            __sched_unlock()
+            match slot.take() {
+                None => TrySend.Sent,
+                Some(v) => if done && closed { TrySend.Closed(v) } else { TrySend.Full(v) },
+            }
+        }
+    }
+
+    /// Like `recv`, but never waits: an open and empty channel is `Empty`.
+    fn try_recv(self): TryRecv<T> {
+        let mut slot: Option<T> = None
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let done = __recv_ready(h, mut slot)
+            __sched_unlock()
+            match slot {
+                Some(v) => TryRecv.Value(v),
+                None => if done { TryRecv.Closed } else { TryRecv.Empty },
+            }
+        }
+    }
+
+    /// Closes the channel for every handle. Values already queued can still be received; after them `recv` returns
+    /// `None`, and `send` hands its value back. Waiting senders and receivers wake up. Closing twice does nothing.
+    fn close(self) {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            if (*h).closed == 0 {
+                (*h).closed = 1
+                __sched_bump()
+                __wake_links((*h).recv_links)
+                __wake_links((*h).send_links)
+            }
+            __sched_unlock()
+        }
+    }
+
+    /// Whether `close` has been called.
+    fn is_closed(self): bool {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let closed = (*h).closed == 1
+            __sched_unlock()
+            closed
+        }
+    }
+
+    /// The number of values waiting in the channel.
+    fn len(self): usize {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let n = (*h).len
+            __sched_unlock()
+            n
+        }
+    }
+
+    /// The capacity of a bounded channel, `None` for an unbounded one.
+    fn capacity(self): Option<usize> {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            if (*h).cap == 0 {
+                None
+            } else {
+                Some((*h).cap)
+            }
+        }
+    }
+
+    /// Another handle to the same channel. Both handles send, receive, and close the one queue, and the queue lives
+    /// until the last handle is dropped.
+    fn clone(self): Channel<T> {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            (*h).refs = (*h).refs + 1
+            __sched_unlock()
+            Channel { head: self.head }
+        }
+    }
+
+    // What the parser's rewriting of `select` calls (spec/channels.md, CH7).
+
+    /// An empty slot for a received value.
+    fn __empty(self): Option<T> {
+        None
+    }
+
+    /// A slot holding a value to send.
+    fn __wrap(self, own value: T): Option<T> {
+        Some(value)
+    }
+
+    /// The value in `slot`, leaving it empty.
+    fn __take(self, mut slot: Option<T>): Option<T> {
+        slot.take()
+    }
+
+    /// `recv` without waiting, into `slot`; true when the receive case can run.
+    fn __try_recv_slot(self, mut slot: Option<T>): bool {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let done = __recv_ready(h, mut slot)
+            __sched_unlock()
+            done
+        }
+    }
+
+    /// `send` without waiting, from `slot`; true when the send case can run.
+    fn __try_send_slot(self, mut slot: Option<T>): bool {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            let done = __send_ready(h, mut slot)
+            __sched_unlock()
+            done
+        }
+    }
+}
+
+Channel<T>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            let h = self.head as CPtr<Head>
+            __sched_lock()
+            (*h).refs = (*h).refs - 1
+            let last = (*h).refs == 0
+            __sched_unlock()
+            if !last {
+                return
+            }
+            // Nobody else can reach the channel, so the values still queued are dropped here, outside the lock.
+            let mut n = (*h).first
+            while !n.is_null() {
+                let next = *(n as CPtr<CPtr<u8>>)
+                let item = (n + NODE_HEADER) as CPtr<Option<T>>
+                let value = (*item).take()
+                __dealloc(n, NODE_HEADER + Option<T>.size(), 8)
+                n = next
+            }
+            __dealloc(self.head, Head.size(), 8)
+        }
+    }
+}
+
+/// The iterator of `for v in channel`: it receives values until the channel is closed and empty.
+struct ChannelIter<T> {
+    channel: Channel<T>
+}
+
+ChannelIter<T>: Iterator<T> {
+    fn next(mut self): Option<T> {
+        self.channel.recv()
+    }
+}
+
+Channel<T>: Iterable<T> {
+    /// An iterator that receives (so it removes values from the channel) until the channel is closed and empty.
+    fn iter(self): ChannelIter<T> {
+        ChannelIter { channel: self.clone() }
+    }
+}
+
+// ---- select ----------------------------------------------------------------------------------------------------
+
+/// What a `select` waits with: one registration per channel case. The cases are added once; each `wait` registers them
+/// all, blocks until some channel changes, and removes them.
+struct __Select {
+    waiter: CPtr<u8>
+    links: CPtr<u8>
+    count: usize
+    capacity: usize
+}
+
+fn __select_new(cases: usize): __Select {
+    unsafe {
+        __Select { waiter: __waiter_new() as CPtr<u8>, links: __alloc(Link.size() * cases, 8), count: 0, capacity: cases }
+    }
+}
+
+__Select {
+    /// Adds a receive case on `channel`.
+    fn add_recv<T>(mut self, channel: Channel<T>) {
+        unsafe {
+            self.__add(channel.head as CPtr<Head>, 0)
+        }
+    }
+
+    /// Adds a send case on `channel`.
+    fn add_send<T>(mut self, channel: Channel<T>) {
+        unsafe {
+            self.__add(channel.head as CPtr<Head>, 1)
+        }
+    }
+
+    priv fn __add(mut self, head: CPtr<Head>, send: usize) {
+        unsafe {
+            if self.count >= self.capacity {
+                panic("select: more cases than it was made for")
+            }
+            let slot = (self.links as CPtr<Link>) + self.count
+            __link_init(slot, self.waiter as CPtr<__Waiter>, head, send)
+            self.count = self.count + 1
+        }
+    }
+
+    /// The channels' change counter. A `select` reads it before it looks at its cases and gives it to `wait`.
+    fn epoch(self): usize {
+        __sched_lock()
+        let e = __sched_epoch()
+        __sched_unlock()
+        e
+    }
+
+    /// Waits until a channel of the cases changes. It returns at once when a channel changed since `epoch` was read
+    /// (`seen`), so a change between looking at the cases and waiting cannot be missed. A return means "look again":
+    /// it does not say which case is ready.
+    fn wait(mut self, seen: usize) {
+        unsafe {
+            if self.count == 0 {
+                panic("select: every arm is switched off by its guard and there is no `default`")
+            }
+            let w = self.waiter as CPtr<__Waiter>
+            let links = self.links as CPtr<Link>
+            __sched_lock()
+            if __sched_epoch() != seen {
+                __sched_unlock()
+                return
+            }
+            (*w).notified = 0
+            let mut i: usize = 0
+            while i < self.count {
+                __link(links + i)
+                i = i + 1
+            }
+            __waiter_block(w)
+            __sched_lock()
+            i = 0
+            while i < self.count {
+                __unlink(links + i)
+                i = i + 1
+            }
+            __sched_unlock()
+        }
+    }
+}
+
+__Select: Drop {
+    fn drop(mut self) {
+        unsafe {
+            __dealloc(self.links, Link.size() * self.capacity, 8)
+            __waiter_free(self.waiter as CPtr<__Waiter>)
+        }
+    }
+}

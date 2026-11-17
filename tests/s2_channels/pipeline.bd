@@ -1,0 +1,38 @@
+//@ run
+//> 4 16 36 64 100
+//> stages done
+
+// Three stages in a row: the even numbers, their squares, and the printer (main). Each stage closes its output when its
+// input ends, so the close travels down the pipeline (CH3).
+
+fn main() {
+    let numbers = Channel<i32>.bounded(2)
+    let squares = Channel<i32>.bounded(2)
+    let n_out = numbers.clone()
+    let n_in = numbers.clone()
+    let s_out = squares.clone()
+    let source = task.spawn(|| {
+        let mut i = 1
+        while i <= 10 {
+            if i % 2 == 0 {
+                n_out.send(i)
+            }
+            i = i + 1
+        }
+        n_out.close()
+    })
+    let stage = task.spawn(|| {
+        for n in n_in {
+            s_out.send(n * n)
+        }
+        s_out.close()
+    })
+    let mut line = List<String>.new()
+    for sq in squares {
+        line.push(sq.to_string())
+    }
+    println("{}", line.join(" "))
+    source.join()
+    stage.join()
+    println("stages done")
+}

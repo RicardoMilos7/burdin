@@ -1,0 +1,34 @@
+//@ run
+//> got 5 from b
+//> got 6 from a
+
+// A `select` with no arm ready waits until one is, and then runs that arm only. The sending tasks yield first, so the
+// receiving `select` normally parks before either value is there (CH6, CH7).
+
+fn main() {
+    let a = Channel<i32>.unbounded()
+    let b = Channel<i32>.unbounded()
+    let tx_b = b.clone()
+    let first = task.spawn(|| {
+        task.yield()
+        task.yield()
+        tx_b.send(5)
+    })
+    let r = select {
+        v = a.recv() => format("got {} from a", v.unwrap())
+        w = b.recv() => format("got {} from b", w.unwrap())
+    }
+    println("{}", r)
+    let _ = first.join()
+    let tx_a = a.clone()
+    let second = task.spawn(|| {
+        task.yield()
+        tx_a.send(6)
+    })
+    let r2 = select {
+        v = a.recv() => format("got {} from a", v.unwrap())
+        w = b.recv() => format("got {} from b", w.unwrap())
+    }
+    println("{}", r2)
+    let _ = second.join()
+}

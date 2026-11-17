@@ -1,10 +1,10 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, and thirty-eighth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, and thirty-ninth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the thirty-eighth session (2026-11-17). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the thirty-ninth session (2026-11-17). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**: 713 conformance tests; 711 pass in debug (two are skipped) and 706 in release (the release run
@@ -228,6 +228,19 @@ records come from `calloc`, and worker-thread environments are `untrack`ed). Cod
 only when a reachable body creates it (a closure in an unreachable function used to be emitted, which pulled the whole
 scheduler into every program). The Linux x86-64 path is the only one run so far: the macOS, arm64, and Windows paths
 are written but untested (`docs/platform-support.md`).
+
+The thirty-ninth session implemented milestone 2.2, channels and `select` (issue #207, sub-issues #208-#212).
+`Channel<T>` (`std/src/channel.bd`) is a cloneable handle to a bounded or unbounded multi-producer, multi-consumer
+queue: `send` (returns the value back when the channel is closed), `recv` (`None` when closed and empty), `try_send`,
+`try_recv`, `close`, `len`, `capacity`, `clone`, and `for v in ch`. All channel state, the waiter lists, and a change
+counter live under the scheduler's one lock; a waiter is a task (parked through the existing park-and-unlock-after-switch
+path) or a thread (the scheduler's condition variable), so no new runtime primitive was needed. `select` is a contextual
+keyword that the **parser rewrites** into a loop over `__try_recv_slot`/`__try_send_slot` calls plus a `match` on the
+chosen arm (`crates/burdin_syntax/src/parser/select.rs`), so sema, the checks, and codegen have no `select` of their own;
+the first ready arm in source order runs, `default` makes it non-blocking, and an arm guard (`if cond`) switches an arm
+off (a closed channel is always ready, so a fan-in loop needs guards). The decisions are `spec/channels.md` CH1-CH10 and
+`tests/s2_channels/` has 36 tests, including stress tests that CI repeats 20 times in both profiles (`tests/run_tests.py
+--repeat`, checked by `tests/check_ci.py`). `Channel<&T>` is E0120. The derived `Send` marker is still 2.3.
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -1647,12 +1660,35 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   primitive that starts a task wants an owned `FnOnce` of the same representation; the checker rules, not the type,
   make that sound.
 
+## Decided in the thirty-ninth session
+
+- **`Channel<T>` is one cloneable handle type, multi-producer and multi-consumer, closed explicitly (`spec/channels.md`
+  CH1-CH3).** Separate `Sender`/`Receiver` types would need two names and a pair-returning constructor; the design
+  asks for one `Channel<T>`. A loop `for v in rx` ends because somebody called `close`, as in Go. `send` on a closed
+  channel hands the value back (`Some(value)`) instead of panicking, because a close races with senders by design.
+- **Bounded (capacity at least 1) and unbounded; no rendezvous channel (CH2).** A capacity-1 channel is the nearest;
+  `bounded(0)` panics.
+- **`select` is a contextual keyword rewritten by the parser (CH6).** The arm bodies sit outside the generated loop, so
+  `break`/`continue`/`return`/`?` mean what they always mean. An arm is `[v =] ch.recv()`, `[r =] ch.send(x)`, or
+  `default`, with the binding the same `Option<T>` the method returns, and an optional `if guard`.
+- **Source-order priority, with guards instead of nil channels (CH7, CH8).** Deterministic on purpose. A closed channel
+  is always ready, so an earlier arm on a closed channel starved the later arms until a guard was added to switch it off;
+  an all-switched-off `select` without `default` panics rather than wait forever.
+- **A send arm's value moves when the `select` starts (CH8).** The value is evaluated once, up front, like the channel
+  expression; an arm that does not run drops it.
+- **All channel state is guarded by the scheduler's `state_lock` (CH10).** It makes `select` a few steps under one lock
+  with no lock order, at the cost that channel operations serialize; a per-channel lock is a later optimization. A change
+  counter read before a `select` looks at its arms is what makes a lost wake-up impossible.
+- **`clone` is an ordinary method, not `Clone`.** Writing a built-in interface by hand is still not implemented
+  (issue #402); the E9000 says so. `Channel<T>: Iterable<T>` works.
+- **Not done, on purpose:** a timeout arm and timers (2.4), nil channels, rendezvous channels, and the `Send` marker (2.3).
+
 ## What is left to do, in order
 
-0. Milestone 2.1 (tasks) is complete (thirty-eighth session). The next stage 2 milestone is 2.2, channels (`Channel<T>`,
-   `select`, closing), which needs a lock or atomics the std does not expose yet: `Mutex<T>` and atomics belong to 2.3,
-   so 2.2 builds on the runtime's `__mutex_*`/`__cond_*` primitives. Before that, run the CI jobs for macOS and
-   Windows: `tests/s2_tasks` is the first run of the arm64 context-switch assembly, the Darwin constants, and
+0. Milestones 2.1 (tasks, thirty-eighth session) and 2.2 (channels and `select`, thirty-ninth session) are complete. The
+   next stage 2 milestone is 2.3, sharing (`Shared<T>` with an atomic count, `Mutex<T>`, atomics, the derived `Send`
+   marker), which also turns the CH4 note into a check on `Channel<T>.send`. Before that, run the CI jobs for macOS and
+   Windows (the channels add no runtime, so they run wherever tasks do): `tests/s2_tasks` is the first run of the arm64 context-switch assembly, the Darwin constants, and
    `taskrt/windows.ll` (fibers); fix what they find. Possible follow-ups: a per-task stack-size option, cooperative
    preemption points, and making blocking calls suspend the task (2.4).
 1. Milestone 23 is complete (thirty-sixth session): `spec/allocators.md` AL1-AL10 is the decision and

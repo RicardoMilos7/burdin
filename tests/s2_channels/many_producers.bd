@@ -1,0 +1,49 @@
+//@ run
+//> received 12 values, sum 24
+//> every producer sent in order
+
+// Handles are cloned and moved into tasks, so several producers share one channel and the main thread receives from it.
+// Each producer's own values arrive in the order it sent them, whatever the interleaving between producers (CH1, CH2).
+
+fn main() {
+    let ch = Channel<i32>.bounded(3)
+    let mut handles = List<task.JoinHandle<()>>.new()
+    let mut p = 0
+    while p < 4 {
+        let tx = ch.clone()
+        let base = p * 100
+        handles.push(task.spawn(|| {
+            let mut i = 1
+            while i <= 3 {
+                tx.send(base + i)
+                i = i + 1
+            }
+        }))
+        p = p + 1
+    }
+    let mut count = 0
+    let mut sum = 0
+    let mut in_order = true
+    let mut last = List<i32>.new()
+    last.push(0)
+    last.push(100)
+    last.push(200)
+    last.push(300)
+    while count < 12 {
+        let v = ch.recv().unwrap()
+        let producer = (v / 100) as usize
+        if v <= last[producer] {
+            in_order = false
+        }
+        last[producer] = v
+        sum = sum + (v % 100)
+        count = count + 1
+    }
+    for h in handles.into_iter() {
+        h.join()
+    }
+    println("received {} values, sum {}", count, sum)
+    if in_order {
+        println("every producer sent in order")
+    }
+}

@@ -1,0 +1,28 @@
+//@ run
+//> nothing ready
+//> got 4
+//> nothing ready
+//> closed
+
+// `default` makes a `select` non-blocking: it runs when no other arm can, and never when one can (CH8). A closed channel
+// counts as ready, because a receive on it finishes at once.
+
+fn poll(ch: Channel<i32>): String {
+    select {
+        v = ch.recv() => match v {
+            Some(n) => format("got {}", n),
+            None => "closed".to_string(),
+        }
+        default => "nothing ready".to_string()
+    }
+}
+
+fn main() {
+    let ch = Channel<i32>.unbounded()
+    println("{}", poll(ch.clone()))
+    ch.send(4)
+    println("{}", poll(ch.clone()))
+    println("{}", poll(ch.clone()))
+    ch.close()
+    println("{}", poll(ch.clone()))
+}

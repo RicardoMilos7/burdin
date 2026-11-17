@@ -1,0 +1,31 @@
+//@ run
+//> got 1
+//> got 2
+//> got 3
+//> got 4
+//> got 5
+//> total 15
+
+// A producer task and a consumer through a bounded channel. The producer waits whenever two values are queued; closing
+// the channel when it is done ends the consumer's `for` loop. Values arrive in the order they were sent
+// (spec/channels.md, CH1-CH3).
+
+fn main() {
+    let ch = Channel<i32>.bounded(2)
+    let tx = ch.clone()
+    let producer = task.spawn(|| {
+        let mut i = 1
+        while i <= 5 {
+            tx.send(i)
+            i = i + 1
+        }
+        tx.close()
+    })
+    let mut total = 0
+    for v in ch {
+        println("got {}", v)
+        total = total + v
+    }
+    producer.join()
+    println("total {}", total)
+}

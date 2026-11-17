@@ -1,0 +1,59 @@
+//@ run
+//> 500 rounds: every blocked task woke up
+
+// Each round starts tasks that block on an empty channel (receivers) and on a full one (senders), then closes both from
+// the main thread. A close that does not wake every waiter hangs the test (CH3, CH10).
+
+fn round(n: i32): bool {
+    let empty = Channel<i32>.bounded(1)
+    let full = Channel<i32>.bounded(1)
+    let _ = full.send(0)
+    let mut handles = List<task.JoinHandle<bool>>.new()
+    let mut k = 0
+    while k < 3 {
+        let rx = empty.clone()
+        handles.push(task.spawn(|| {
+            match rx.recv() {
+                Some(_) => false,
+                None => true,
+            }
+        }))
+        let tx = full.clone()
+        handles.push(task.spawn(|| {
+            match tx.send(n) {
+                Some(_) => true,
+                None => false,
+            }
+        }))
+        k = k + 1
+    }
+    if n % 2 == 0 {
+        task.yield()
+    }
+    empty.close()
+    full.close()
+    let mut ok = true
+    for h in handles.into_iter() {
+        if !h.join() {
+            ok = false
+        }
+    }
+    ok
+}
+
+fn main() {
+    task.set_workers(4)
+    let mut good = 0
+    let mut n = 0
+    while n < 500 {
+        if round(n) {
+            good = good + 1
+        }
+        n = n + 1
+    }
+    if good == 500 {
+        println("500 rounds: every blocked task woke up")
+    } else {
+        println("{} of 500 rounds were wrong", 500 - good)
+    }
+}

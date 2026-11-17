@@ -1,0 +1,39 @@
+//@ run
+//> sent Guard(1)
+//> sent Guard(2)
+//> sent Guard(3)
+//> received Guard(1)
+//> dropped Guard(1)
+//> end of main
+//> dropped Guard(2)
+//> dropped Guard(3)
+
+// A value that is sent belongs to the channel until it is received, and to the receiver after that: it is dropped
+// exactly once. Values still queued when the last handle goes away are dropped with it, in the order they were sent
+// (CH2, CH4).
+
+struct Guard {
+    id: i32
+}
+
+Guard: Drop {
+    fn drop(mut self) {
+        println("dropped Guard({})", self.id)
+    }
+}
+
+fn main() {
+    let ch = Channel<Guard>.unbounded()
+    let extra = ch.clone()
+    ch.send(Guard { id: 1 })
+    println("sent Guard(1)")
+    ch.send(Guard { id: 2 })
+    println("sent Guard(2)")
+    extra.send(Guard { id: 3 })
+    println("sent Guard(3)")
+    match ch.recv() {
+        Some(g) => println("received Guard({})", g.id),
+        None => println("nothing"),
+    }
+    println("end of main")
+}
