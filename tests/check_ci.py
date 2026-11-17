@@ -391,7 +391,7 @@ check_script(
     "tests/check_codegen_opt.py", "alloca i1", "bounds.fail", "burdin.drop", "index out of bounds"
 )
 check_script(
-    "tests/check_build_flags.py", "burdin --version", "--strip", "--lto", "--pgo-use", "131072"
+    "tests/check_build_flags.py", "burdin --version", "--strip", "--lto", "--pgo-use", "147456"
 )
 check_script("tests/check_parallel.py", "BURDIN_JOBS", "unified_diff")
 check_script(
