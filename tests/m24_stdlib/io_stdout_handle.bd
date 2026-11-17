@@ -1,0 +1,22 @@
+//@ run
+//> a b
+//> c
+//> end s
+//> after print
+
+// `Stdout.write` shares its buffer with `print`, so the bytes keep the order the program wrote them; `write_line`
+// adds one newline; `flush` writes the buffer out; a `String` argument converts to `str` (IC1).
+
+fn main() {
+    let out = stdout()
+    out.write("a ")
+    print("b")
+    out.write_line("")
+    out.write_line("c")
+    out.write("end ")
+    let text = String.from("s")
+    out.write(text)
+    out.write("\n")
+    out.flush()
+    println("after print")
+}

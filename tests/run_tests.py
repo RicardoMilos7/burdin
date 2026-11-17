@@ -188,7 +188,13 @@ def matches_filter(rel: str, filters) -> bool:
     return not filters or any(f in rel for f in filters)
 
 
-def run_command(args, cwd: Path, timeout: int, merge: bool = False):
+def run_command(args, cwd: Path, timeout: int, merge: bool = False, input_data=None):
+    """Run a command. `input_data` is the bytes it reads on standard input; without it, standard input is closed,
+    so a test never waits for input it did not declare."""
+    if input_data is None:
+        kwargs = {"stdin": subprocess.DEVNULL}
+    else:
+        kwargs = {"input": input_data}
     return subprocess.run(
         args,
         cwd=str(cwd),
@@ -196,7 +202,40 @@ def run_command(args, cwd: Path, timeout: int, merge: bool = False):
         stderr=subprocess.STDOUT if merge else subprocess.PIPE,
         timeout=timeout,
         check=False,
+        **kwargs,
     )
+
+
+def unescape_stdin(value: bytes) -> bytes:
+    """The text of one `//@ stdin:` line: `\\n`, `\\r`, and `\\\\` are escapes; any other backslash is literal."""
+    out = bytearray()
+    index = 0
+    while index < len(value):
+        if value[index:index + 1] == b"\\" and index + 1 < len(value):
+            escape = value[index + 1:index + 2]
+            if escape == b"n":
+                out.append(10)
+                index += 2
+                continue
+            if escape == b"r":
+                out.append(13)
+                index += 2
+                continue
+            if escape == b"\\":
+                out.append(92)
+                index += 2
+                continue
+        out.append(value[index])
+        index += 1
+    return bytes(out)
+
+
+def stdin_bytes(directives) -> bytes:
+    """The standard input of a run test: each `//@ stdin:` line and its newline, then the `//@ stdin-eof:` text
+    (which has no terminator)."""
+    data = b"".join(unescape_stdin(value) + b"\n" for value in directive_values(directives, b"stdin"))
+    data += b"".join(unescape_stdin(value) for value in directive_values(directives, b"stdin-eof"))
+    return data
 
 
 def unified_diff(expected, actual_bytes: bytes, limit: int) -> str:
@@ -234,7 +273,7 @@ def test_run(case: Case, burdin: str, release: bool, timeout: int):
     work = Path(tempfile.mkdtemp(prefix="burdin-test-"))
     try:
         try:
-            proc = run_command(command, work, timeout)
+            proc = run_command(command, work, timeout, input_data=stdin_bytes(directives))
         except subprocess.TimeoutExpired:
             return False, f"timed out after {timeout}s", ""
         except OSError as error:

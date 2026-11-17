@@ -1,0 +1,9 @@
+//@ burdin-test passed=1 failed=0
+
+// Each test process gets a closed standard input (`spec/test-runner.md`, Isolation), so a test reads the end of
+// the input and never waits for a person.
+
+test "standard input is closed" {
+    assert(stdin().read_line().unwrap().is_none())
+    assert(stdin().read_to_string().unwrap().len() == 0)
+}

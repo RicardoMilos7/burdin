@@ -1,0 +1,30 @@
+//@ run
+//@ stdin: first
+//@ stdin: second
+//@ stdin: third\r
+//@ stdin:
+//@ stdin-eof: tail
+//> first:[first]
+//> second:[second]
+//> third:[third]
+//> empty:[]
+//> tail:[tail]
+//> none: true
+
+// `Stdin.read_line` returns one line without its terminator, strips the `\r` of a `\r\n` pair, returns the last
+// line even when it has no terminator, and reports the end of the input as `None`.
+
+fn main() {
+    let input = stdin()
+    let first = input.read_line().unwrap().unwrap()
+    println("first:[{first}]")
+    let second = input.read_line().unwrap().unwrap()
+    println("second:[{second}]")
+    let third = input.read_line().unwrap().unwrap()
+    println("third:[{third}]")
+    let empty = input.read_line().unwrap().unwrap()
+    println("empty:[{empty}]")
+    let tail = input.read_line().unwrap().unwrap()
+    println("tail:[{tail}]")
+    println("none: {}", input.read_line().unwrap().is_none())
+}

@@ -12,6 +12,14 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "panic" => Builtin::Panic,
         "__read_to_string" => Builtin::ReadToString,
         "__write_file" => Builtin::WriteFile,
+        "__stdout_write" => Builtin::StdoutWrite,
+        "__stdout_write_line" => Builtin::StdoutWriteLine,
+        "__stdout_flush" => Builtin::StdoutFlush,
+        "__stderr_write" => Builtin::StderrWrite,
+        "__stderr_write_line" => Builtin::StderrWriteLine,
+        "__is_terminal" => Builtin::IsTerminal,
+        "__stdin_read_line" => Builtin::StdinReadLine,
+        "__stdin_read_to_string" => Builtin::StdinReadToString,
         "__args" => Builtin::EnvArgs,
         "__float_str" => Builtin::FloatStr,
         "__exit" => Builtin::ProcessExit,
@@ -36,14 +44,26 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::CStringFrom => Ty::CString,
         Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(io_error())),
+        Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(io_error())),
+        Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(io_error())),
+        Builtin::IsTerminal => Ty::Bool,
         Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
         _ => Ty::Unit,
     };
     let params = match b {
-        Builtin::StringNew | Builtin::EnvArgs | Builtin::Unreachable | Builtin::TargetOs | Builtin::TargetArch => {
-            Vec::new()
+        Builtin::StringNew
+        | Builtin::EnvArgs
+        | Builtin::Unreachable
+        | Builtin::TargetOs
+        | Builtin::TargetArch
+        | Builtin::StdoutFlush
+        | Builtin::StdinReadLine
+        | Builtin::StdinReadToString => Vec::new(),
+        Builtin::IsTerminal => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
+        Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StderrWrite | Builtin::StderrWriteLine => {
+            vec![ParamSig::plain(Ty::Str)]
         }
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
@@ -248,6 +268,34 @@ mod tests {
             builtin_sig(Builtin::ReadToString, &Globals::default()).ret,
             Ty::Result(Box::new(Ty::String), Box::new(Ty::Unit))
         );
+    }
+
+    #[test]
+    fn stream_builtin_signatures() {
+        let error = Ty::Int(IntTy::I64);
+        let globals = Globals { io_error_ty: Some(error.clone()), ..Globals::default() };
+        assert_eq!(builtin("__stdin_read_line"), Some(Builtin::StdinReadLine));
+        assert_eq!(builtin("__stdin_read_to_string"), Some(Builtin::StdinReadToString));
+        assert_eq!(builtin("__stderr_write_line"), Some(Builtin::StderrWriteLine));
+        assert_eq!(builtin("__stdout_flush"), Some(Builtin::StdoutFlush));
+        assert_eq!(builtin("__is_terminal"), Some(Builtin::IsTerminal));
+
+        let line = builtin_sig(Builtin::StdinReadLine, &globals);
+        assert!(line.params.is_empty());
+        assert_eq!(line.ret, Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(error.clone())));
+        let all = builtin_sig(Builtin::StdinReadToString, &globals);
+        assert!(all.params.is_empty());
+        assert_eq!(all.ret, Ty::Result(Box::new(Ty::String), Box::new(error)));
+
+        let write = builtin_sig(Builtin::StdoutWrite, &globals);
+        assert_eq!(write.params.len(), 1);
+        assert_eq!(write.params[0].ty, Ty::Str);
+        assert_eq!(write.ret, Ty::Unit);
+        assert!(builtin_sig(Builtin::StdoutFlush, &globals).params.is_empty());
+
+        let tty = builtin_sig(Builtin::IsTerminal, &globals);
+        assert_eq!(tty.params[0].ty, Ty::Int(IntTy::I32));
+        assert_eq!(tty.ret, Ty::Bool);
     }
 
     #[test]

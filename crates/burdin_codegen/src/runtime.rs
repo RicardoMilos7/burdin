@@ -5,7 +5,12 @@
 //! **Output.** Standard output is block buffered in an 8 KiB buffer (`burdin_rt_out_write`), and flushed through the
 //! last newline of a write when fd 1 is a terminal (line buffering, `isatty`). Standard error stays unbuffered. The
 //! buffer is flushed by `burdin_rt_flush`, which is registered with `atexit`, called by `process.exit` through it,
-//! and called by the panic path, the stack-overflow handler, and `burdin_rt_die` before the process ends.
+//! and called by the panic path, the stack-overflow handler, and `burdin_rt_die` before the process ends. The
+//! `stdout`/`stderr` handles of `std/io.bd` call `burdin_rt_print` too, so they share these rules.
+//!
+//! **Input.** Standard input is block buffered in a 4 KiB buffer (`burdin_rt_in_fill`). `burdin_rt_in_read_line`
+//! and `burdin_rt_in_read_to_string` consume it, so a line longer than one block and a block that holds more than
+//! the caller asked for are both handled. `burdin_rt_is_terminal` answers `isatty` for the stream handles.
 //!
 //! **Panics.** A panic prints `path:LINE:COL: panic: message` and then a symbolized `stack backtrace:` section, so
 //! the message line keeps its stage 0 format. The runtime frames above the panicking function are skipped. On Unix
@@ -32,6 +37,9 @@ use inkwell::{AddressSpace, IntPredicate};
 /// The standard-output buffer size. A terminal is line buffered, so the size only matters for pipes and files,
 /// where larger writes are what make printing a lot of output cheap.
 const OUT_BUF: u32 = 8192;
+/// The standard-input buffer size. Reads take whole blocks, so a program that reads line by line does not call
+/// the operating system once per line.
+const IN_BUF: u32 = 4096;
 /// The number of frames a panic backtrace captures.
 const BACKTRACE_FRAMES: u32 = 64;
 /// The size of the alternate signal stack, so a `SIGSEGV` handler still runs after the main stack is gone.
@@ -45,6 +53,15 @@ const MAGIC: u64 = 0x4255_5244_4e41_4c4c;
 pub(crate) struct Runtime<'ctx> {
     /// `(fd: i32, ptr, len: usize, newline: i32)`
     pub print: FunctionValue<'ctx>,
+    /// `()`: writes the standard-output buffer to fd 1 and empties it.
+    pub flush: FunctionValue<'ctx>,
+    /// `(fd: i32) -> i1`: whether the descriptor is a terminal.
+    pub is_terminal: FunctionValue<'ctx>,
+    /// `(out: *String) -> i32`: reads one line of standard input; 0 is a line (or the last one), 1 is the end
+    /// of input with nothing read, and -1 is an error.
+    pub in_read_line: FunctionValue<'ctx>,
+    /// `(out: *String) -> i32`: reads the rest of standard input; 0 is success and -1 an error.
+    pub in_read_to_string: FunctionValue<'ctx>,
     /// `(msg, msg_len: usize, file, file_len: usize, line: i32, col: i32)`, never returns.
     pub panic: FunctionValue<'ctx>,
     /// `(index: i64, len: i64, file, file_len: usize, line: i32, col: i32)`, never returns.
@@ -408,8 +425,14 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let argv = self.module.add_global(self.ptr_ty, None, "burdin_rt_argv");
         argv.set_initializer(&self.ptr_ty.const_null());
         argv.set_linkage(Linkage::Internal);
+        // The standard-input block buffer, shared by every read of standard input.
+        let in_fill = self.in_fill()?;
         Ok(Runtime {
             print: self.print(&h)?,
+            flush: h.flush,
+            is_terminal: self.is_terminal()?,
+            in_read_line: self.in_read_line(string_push_str, in_fill)?,
+            in_read_to_string: self.in_read_to_string(string_push_str, in_fill)?,
             panic: self.panic(&h)?,
             panic_bounds: self.panic_bounds(&h)?,
             string_free: self.string_free()?,
@@ -758,6 +781,279 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(done);
         self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// The globals behind the standard-input buffer, created on first use: the block, the next byte, and the
+    /// number of bytes the block holds.
+    fn in_globals(&mut self) -> (PointerValue<'ctx>, PointerValue<'ctx>, PointerValue<'ctx>) {
+        let buf_ty = self.cx.i8_type().array_type(IN_BUF);
+        let buf = self.module.get_global("burdin_rt_in_buf").unwrap_or_else(|| {
+            let g = self.module.add_global(buf_ty, None, "burdin_rt_in_buf");
+            g.set_initializer(&buf_ty.const_zero());
+            g.set_linkage(Linkage::Internal);
+            g
+        });
+        let pos = self.module.get_global("burdin_rt_in_pos").unwrap_or_else(|| {
+            let g = self.module.add_global(self.usize_ty, None, "burdin_rt_in_pos");
+            g.set_initializer(&self.usize_ty.const_zero());
+            g.set_linkage(Linkage::Internal);
+            g
+        });
+        let len = self.module.get_global("burdin_rt_in_len").unwrap_or_else(|| {
+            let g = self.module.add_global(self.usize_ty, None, "burdin_rt_in_len");
+            g.set_initializer(&self.usize_ty.const_zero());
+            g.set_linkage(Linkage::Internal);
+            g
+        });
+        (buf.as_pointer_value(), pos.as_pointer_value(), len.as_pointer_value())
+    }
+
+    /// `is_terminal(fd: i32) -> i1`: whether the descriptor is a terminal.
+    fn is_terminal(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let i32_ty = self.i32();
+        let bool_ty = self.cx.bool_type();
+        let f = self.function("burdin_rt_is_terminal", bool_ty.fn_type(&[i32_ty.into()], false));
+        let isatty = if self.windows {
+            libc(self.module, "_isatty", i32_ty.fn_type(&[i32_ty.into()], false))
+        } else {
+            libc(self.module, "isatty", i32_ty.fn_type(&[i32_ty.into()], false))
+        };
+        let r = self.call(isatty, &[Self::int_param(f, 0).into()])?.expect("isatty returns an int").into_int_value();
+        let tty = self.b.build_int_compare(IntPredicate::NE, r, i32_ty.const_zero(), "tty").map_err(llvm_err)?;
+        self.b.build_return(Some(&tty)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `in_fill() -> i32`: makes the input block hold at least one byte. 1 means data, 0 the end of input, and
+    /// -1 a read error.
+    fn in_fill(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (buf, pos, len) = self.in_globals();
+        let (i32_ty, usize_ty, ptr_ty) = (self.i32(), self.usize_ty, self.ptr_ty);
+        let f = self.function("burdin_rt_in_fill", i32_ty.fn_type(&[], false));
+        let have = self.block(f, "have");
+        let read = self.block(f, "read");
+        let got = self.block(f, "got");
+        let none = self.block(f, "none");
+        let eof = self.block(f, "eof");
+        let failed = self.block(f, "failed");
+        let pos_v = self.b.build_load(usize_ty, pos, "pos").map_err(llvm_err)?.into_int_value();
+        let len_v = self.b.build_load(usize_ty, len, "len").map_err(llvm_err)?.into_int_value();
+        let ready = self.b.build_int_compare(IntPredicate::ULT, pos_v, len_v, "ready").map_err(llvm_err)?;
+        self.b.build_conditional_branch(ready, have, read).map_err(llvm_err)?;
+
+        self.b.position_at_end(have);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+
+        self.b.position_at_end(read);
+        let read_fn = if self.windows {
+            libc(self.module, "_read", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), i32_ty.into()], false))
+        } else {
+            libc(self.module, "read", usize_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), usize_ty.into()], false))
+        };
+        let count: BasicMetadataValueEnum<'ctx> = if self.windows {
+            i32_ty.const_int(u64::from(IN_BUF), false).into()
+        } else {
+            usize_ty.const_int(u64::from(IN_BUF), false).into()
+        };
+        let n = self
+            .b
+            .build_call(read_fn, &[i32_ty.const_zero().into(), buf.into(), count], "n")
+            .map_err(llvm_err)?
+            .try_as_basic_value()
+            .basic()
+            .expect("read returns a count");
+        let n = if self.windows {
+            self.b.build_int_s_extend(n.into_int_value(), usize_ty, "n64").map_err(llvm_err)?
+        } else {
+            n.into_int_value()
+        };
+        let positive = self.b.build_int_compare(IntPredicate::SGT, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let empty = self.b.build_int_compare(IntPredicate::EQ, n, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(positive, got, none).map_err(llvm_err)?;
+
+        self.b.position_at_end(got);
+        self.b.build_store(pos, usize_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_store(len, n).map_err(llvm_err)?;
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+
+        self.b.position_at_end(none);
+        self.b.build_conditional_branch(empty, eof, failed).map_err(llvm_err)?;
+        self.b.position_at_end(eof);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(failed);
+        self.b.build_return(Some(&i32_ty.const_int(0xFFFF_FFFF, false))).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `in_read_line(out: *String) -> i32`: appends one line of standard input to `out`, without its newline
+    /// (and without the `\r` of a `\r\n` pair). 0 is a line (the last one may be unterminated), 1 is the end of
+    /// input with nothing read, and -1 is a read error.
+    fn in_read_line(&mut self, push: FunctionValue<'ctx>, fill: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let (buf, pos, len) = self.in_globals();
+        let (i32_ty, usize_ty, ptr_ty, i8_ty) = (self.i32(), self.usize_ty, self.ptr_ty, self.i8());
+        let f = self.function("burdin_rt_in_read_line", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let out = Self::ptr_param(f, 0);
+        let start_slot = self.b.build_alloca(usize_ty, "start").map_err(llvm_err)?;
+        let scan_slot = self.b.build_alloca(usize_ty, "scan").map_err(llvm_err)?;
+        let lp = self.block(f, "loop");
+        let init = self.block(f, "scan.init");
+        let head = self.block(f, "scan.head");
+        let body = self.block(f, "scan.body");
+        let next = self.block(f, "scan.next");
+        let found = self.block(f, "found");
+        let strip = self.block(f, "strip");
+        let stripped = self.block(f, "stripped");
+        let line_done = self.block(f, "line.done");
+        let rest = self.block(f, "rest");
+        let need = self.block(f, "need");
+        let filled = self.block(f, "filled");
+        let eof = self.block(f, "eof");
+        let eof_line = self.block(f, "eof.line");
+        let eof_empty = self.block(f, "eof.empty");
+        let error = self.block(f, "error");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(lp);
+        let pos_v = self.b.build_load(usize_ty, pos, "pos").map_err(llvm_err)?.into_int_value();
+        let len_v = self.b.build_load(usize_ty, len, "len").map_err(llvm_err)?.into_int_value();
+        let at_end = self.b.build_int_compare(IntPredicate::EQ, pos_v, len_v, "end").map_err(llvm_err)?;
+        self.b.build_conditional_branch(at_end, need, init).map_err(llvm_err)?;
+
+        self.b.position_at_end(init);
+        let pos_v = self.b.build_load(usize_ty, pos, "pos").map_err(llvm_err)?.into_int_value();
+        self.b.build_store(start_slot, pos_v).map_err(llvm_err)?;
+        self.b.build_store(scan_slot, pos_v).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+
+        self.b.position_at_end(head);
+        let p = self.b.build_load(usize_ty, scan_slot, "p").map_err(llvm_err)?.into_int_value();
+        let len_v = self.b.build_load(usize_ty, len, "len").map_err(llvm_err)?.into_int_value();
+        let end = self.b.build_int_compare(IntPredicate::EQ, p, len_v, "end").map_err(llvm_err)?;
+        self.b.build_conditional_branch(end, rest, body).map_err(llvm_err)?;
+
+        self.b.position_at_end(body);
+        let at = self.offset(buf, p)?;
+        let byte = self.b.build_load(i8_ty, at, "byte").map_err(llvm_err)?.into_int_value();
+        let newline =
+            self.b.build_int_compare(IntPredicate::EQ, byte, i8_ty.const_int(10, false), "nl").map_err(llvm_err)?;
+        self.b.build_conditional_branch(newline, found, next).map_err(llvm_err)?;
+
+        self.b.position_at_end(next);
+        let p2 = self.b.build_int_add(p, usize_ty.const_int(1, false), "next").map_err(llvm_err)?;
+        self.b.build_store(scan_slot, p2).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(head).map_err(llvm_err)?;
+
+        self.b.position_at_end(found);
+        let start = self.b.build_load(usize_ty, start_slot, "start").map_err(llvm_err)?.into_int_value();
+        let p = self.b.build_load(usize_ty, scan_slot, "p").map_err(llvm_err)?.into_int_value();
+        let count = self.b.build_int_sub(p, start, "count").map_err(llvm_err)?;
+        let src = self.offset(buf, start)?;
+        self.call(push, &[out.into(), src.into(), count.into()])?;
+        let after = self.b.build_int_add(p, usize_ty.const_int(1, false), "after").map_err(llvm_err)?;
+        self.b.build_store(pos, after).map_err(llvm_err)?;
+        // A `\r\n` terminator leaves a `\r` at the end of the line; drop it, as `lines()` does.
+        let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "line.len").map_err(llvm_err)?;
+        let n = self.b.build_load(usize_ty, len_field, "n").map_err(llvm_err)?.into_int_value();
+        let has = self.b.build_int_compare(IntPredicate::UGT, n, usize_ty.const_zero(), "has").map_err(llvm_err)?;
+        self.b.build_conditional_branch(has, strip, line_done).map_err(llvm_err)?;
+
+        self.b.position_at_end(strip);
+        let n = self.b.build_load(usize_ty, len_field, "n").map_err(llvm_err)?.into_int_value();
+        let last = self.b.build_int_sub(n, usize_ty.const_int(1, false), "last").map_err(llvm_err)?;
+        let data_field = self.b.build_struct_gep(self.string_ty, out, 0, "line.ptr").map_err(llvm_err)?;
+        let data = self.b.build_load(ptr_ty, data_field, "data").map_err(llvm_err)?.into_pointer_value();
+        let last_at = self.offset(data, last)?;
+        let c = self.b.build_load(i8_ty, last_at, "last.byte").map_err(llvm_err)?.into_int_value();
+        let cr = self.b.build_int_compare(IntPredicate::EQ, c, i8_ty.const_int(13, false), "cr").map_err(llvm_err)?;
+        self.b.build_conditional_branch(cr, stripped, line_done).map_err(llvm_err)?;
+
+        self.b.position_at_end(stripped);
+        self.b.build_store(len_field, last).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(line_done).map_err(llvm_err)?;
+
+        self.b.position_at_end(line_done);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+
+        self.b.position_at_end(rest);
+        let start = self.b.build_load(usize_ty, start_slot, "start").map_err(llvm_err)?.into_int_value();
+        let len_v = self.b.build_load(usize_ty, len, "len").map_err(llvm_err)?.into_int_value();
+        let count = self.b.build_int_sub(len_v, start, "count").map_err(llvm_err)?;
+        let src = self.offset(buf, start)?;
+        self.call(push, &[out.into(), src.into(), count.into()])?;
+        self.b.build_store(pos, len_v).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(need);
+        let r = self.call(fill, &[])?.expect("fill returns a status").into_int_value();
+        let failed = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "failed").map_err(llvm_err)?;
+        let ended = self.b.build_int_compare(IntPredicate::EQ, r, i32_ty.const_zero(), "ended").map_err(llvm_err)?;
+        self.b.build_conditional_branch(failed, error, filled).map_err(llvm_err)?;
+
+        self.b.position_at_end(filled);
+        self.b.build_conditional_branch(ended, eof, lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(eof);
+        let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "line.len").map_err(llvm_err)?;
+        let n = self.b.build_load(usize_ty, len_field, "n").map_err(llvm_err)?.into_int_value();
+        let has = self.b.build_int_compare(IntPredicate::UGT, n, usize_ty.const_zero(), "has").map_err(llvm_err)?;
+        self.b.build_conditional_branch(has, eof_line, eof_empty).map_err(llvm_err)?;
+
+        self.b.position_at_end(eof_line);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(eof_empty);
+        self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        self.b.position_at_end(error);
+        self.b.build_return(Some(&i32_ty.const_int(0xFFFF_FFFF, false))).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `in_read_to_string(out: *String) -> i32`: appends the rest of standard input to `out`. 0 is success and
+    /// -1 a read error.
+    fn in_read_to_string(
+        &mut self,
+        push: FunctionValue<'ctx>,
+        fill: FunctionValue<'ctx>,
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let (buf, pos, len) = self.in_globals();
+        let (i32_ty, usize_ty, ptr_ty) = (self.i32(), self.usize_ty, self.ptr_ty);
+        let f = self.function("burdin_rt_in_read_to_string", i32_ty.fn_type(&[ptr_ty.into()], false));
+        let out = Self::ptr_param(f, 0);
+        let lp = self.block(f, "loop");
+        let append = self.block(f, "append");
+        let need = self.block(f, "need");
+        let filled = self.block(f, "filled");
+        let done = self.block(f, "done");
+        let error = self.block(f, "error");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(lp);
+        let pos_v = self.b.build_load(usize_ty, pos, "pos").map_err(llvm_err)?.into_int_value();
+        let len_v = self.b.build_load(usize_ty, len, "len").map_err(llvm_err)?.into_int_value();
+        let at_end = self.b.build_int_compare(IntPredicate::EQ, pos_v, len_v, "end").map_err(llvm_err)?;
+        self.b.build_conditional_branch(at_end, need, append).map_err(llvm_err)?;
+
+        self.b.position_at_end(append);
+        let pos_v = self.b.build_load(usize_ty, pos, "pos").map_err(llvm_err)?.into_int_value();
+        let len_v = self.b.build_load(usize_ty, len, "len").map_err(llvm_err)?.into_int_value();
+        let count = self.b.build_int_sub(len_v, pos_v, "count").map_err(llvm_err)?;
+        let src = self.offset(buf, pos_v)?;
+        self.call(push, &[out.into(), src.into(), count.into()])?;
+        self.b.build_store(pos, len_v).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(need);
+        let r = self.call(fill, &[])?.expect("fill returns a status").into_int_value();
+        let failed = self.b.build_int_compare(IntPredicate::SLT, r, i32_ty.const_zero(), "failed").map_err(llvm_err)?;
+        let ended = self.b.build_int_compare(IntPredicate::EQ, r, i32_ty.const_zero(), "ended").map_err(llvm_err)?;
+        self.b.build_conditional_branch(failed, error, filled).map_err(llvm_err)?;
+        self.b.position_at_end(filled);
+        self.b.build_conditional_branch(ended, done, lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(done);
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        self.b.position_at_end(error);
+        self.b.build_return(Some(&i32_ty.const_int(0xFFFF_FFFF, false))).map_err(llvm_err)?;
         Ok(f)
     }
 
