@@ -1,6 +1,6 @@
 //! Ids, built-in functions and methods, and operators.
 
-use crate::ty::IntTy;
+use crate::ty::{FloatTy, IntTy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FuncId(pub usize);
@@ -110,6 +110,47 @@ pub enum Builtin {
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.
     TargetArch,
+    /// `f64.from_bits(bits)` and `f32.from_bits(bits)`: the value with those bits (`spec/stdlib.md`, "Float
+    /// functions").
+    FloatFromBits(FloatTy),
+}
+
+/// A floating-point function the compiler provides on `f64` and `f32` (`spec/stdlib.md`, "Float functions").
+/// The receiver's type picks the precision: an exactly rounded operation lowers to an LLVM intrinsic, and one
+/// without an intrinsic calls the C math library. The functions `std` can write in Burdin are extension methods
+/// there instead (`min`, `max`, `clamp`, `signum`, and the predicates).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloatOp {
+    Abs,
+    Sqrt,
+    Cbrt,
+    Powi,
+    Powf,
+    Exp,
+    Exp2,
+    Ln,
+    Log2,
+    Log10,
+    Floor,
+    Ceil,
+    Round,
+    RoundTiesEven,
+    Trunc,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    Sinh,
+    Cosh,
+    Tanh,
+    Hypot,
+    MulAdd,
+    Copysign,
+    /// `to_bits(self)`: the bit pattern as an unsigned integer of the same width.
+    ToBits,
 }
 
 /// Built-in methods of the primitive types.
@@ -125,6 +166,9 @@ pub enum Method {
     Min,
     Max,
     Abs,
+    /// An `f64` or `f32` function (`spec/stdlib.md`, "Float functions"); the receiver's type picks the
+    /// precision.
+    Float(FloatOp),
     /// `String.push_str(str)`: appends bytes, growing the buffer.
     PushStr,
     /// `String.push(char)`: appends one UTF-8 character.

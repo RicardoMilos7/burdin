@@ -1,7 +1,7 @@
 //! The built-in functions, types, and methods.
 
 use crate::globals::Globals;
-use burdin_tir::{Builtin, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, Signature, Ty};
+use burdin_tir::{Builtin, FloatOp, FloatTy, FnKind, FnSig, IntTy, Method, ParamSig, Signature, Ty};
 use std::rc::Rc;
 
 pub(crate) fn builtin(name: &str) -> Option<Builtin> {
@@ -77,6 +77,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::EnvArgs => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(io_error())),
         Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
+        Builtin::FloatFromBits(ft) => Ty::Float(ft),
         _ => Ty::Unit,
     };
     let params = match b {
@@ -116,6 +117,8 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
             ParamSig::plain(Ty::Int(IntTy::I32)),
             ParamSig::plain(Ty::Bool),
         ],
+        Builtin::FloatFromBits(FloatTy::F32) => vec![ParamSig::plain(Ty::Int(IntTy::U32))],
+        Builtin::FloatFromBits(FloatTy::F64) => vec![ParamSig::plain(Ty::Int(IntTy::U64))],
         // `assert_eq` checks its two arguments specially: their type is inferred, not fixed.
         Builtin::AssertEq => Vec::new(),
         // `Heap.new` is checked separately: its result type depends on the value.
@@ -174,6 +177,11 @@ fn value_param(ty: Ty) -> ParamSig {
 /// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the
 /// receiver, and its result. `None` when `recv` has no such method.
 pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
+    // The floating-point functions the compiler provides (`spec/stdlib.md`, "Float functions"). The rest of the
+    // float surface is an extension method in `std`.
+    if matches!(recv, Ty::Float(_)) {
+        return float_method(name, recv);
+    }
     let plain = |ty: Ty| ParamSig::plain(ty);
     let elem = |t: &Ty| t.clone();
     Some(match (name, recv) {
@@ -287,6 +295,57 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
     })
 }
 
+/// The float functions the compiler provides: the ones that lower to an LLVM intrinsic or a C math library call.
+/// `signum`, `log`, `fract`, `min`, `max`, `clamp`, `to_degrees`, `to_radians`, the predicates, and `total_cmp`
+/// are extension methods in `std` (`spec/stdlib.md`, "Float functions").
+fn float_method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
+    let ty = recv.clone();
+    let plain = |t: Ty| ParamSig::plain(t);
+    let unary = |op| (Method::Float(op), Vec::new(), ty.clone());
+    let binary = |op| (Method::Float(op), vec![plain(ty.clone())], ty.clone());
+    Some(match name {
+        "abs" => unary(FloatOp::Abs),
+        "sqrt" => unary(FloatOp::Sqrt),
+        "cbrt" => unary(FloatOp::Cbrt),
+        "powi" => (Method::Float(FloatOp::Powi), vec![plain(Ty::Int(IntTy::I32))], ty.clone()),
+        "powf" => binary(FloatOp::Powf),
+        "exp" => unary(FloatOp::Exp),
+        "exp2" => unary(FloatOp::Exp2),
+        "ln" => unary(FloatOp::Ln),
+        "log2" => unary(FloatOp::Log2),
+        "log10" => unary(FloatOp::Log10),
+        "floor" => unary(FloatOp::Floor),
+        "ceil" => unary(FloatOp::Ceil),
+        "round" => unary(FloatOp::Round),
+        "round_ties_even" => unary(FloatOp::RoundTiesEven),
+        "trunc" => unary(FloatOp::Trunc),
+        "sin" => unary(FloatOp::Sin),
+        "cos" => unary(FloatOp::Cos),
+        "tan" => unary(FloatOp::Tan),
+        "asin" => unary(FloatOp::Asin),
+        "acos" => unary(FloatOp::Acos),
+        "atan" => unary(FloatOp::Atan),
+        "atan2" => binary(FloatOp::Atan2),
+        "sinh" => unary(FloatOp::Sinh),
+        "cosh" => unary(FloatOp::Cosh),
+        "tanh" => unary(FloatOp::Tanh),
+        "hypot" => binary(FloatOp::Hypot),
+        "mul_add" => {
+            let args = vec![plain(ty.clone()), plain(ty.clone())];
+            (Method::Float(FloatOp::MulAdd), args, ty.clone())
+        }
+        "copysign" => binary(FloatOp::Copysign),
+        "to_bits" => {
+            let bits = match recv {
+                Ty::Float(FloatTy::F32) => Ty::Int(IntTy::U32),
+                _ => Ty::Int(IntTy::U64),
+            };
+            (Method::Float(FloatOp::ToBits), Vec::new(), bits)
+        }
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +403,57 @@ mod tests {
     }
 
     #[test]
+    fn float_methods_map_to_compiler_operations() {
+        let f64_ = Ty::Float(FloatTy::F64);
+        let f32_ = Ty::Float(FloatTy::F32);
+        let op = |name: &str, recv: &Ty| match method(name, recv) {
+            Some((Method::Float(op), _, _)) => op,
+            _ => panic!("`{name}` is not a compiler method on `{recv}`"),
+        };
+        assert_eq!(op("abs", &f64_), FloatOp::Abs);
+        assert_eq!(op("sqrt", &f64_), FloatOp::Sqrt);
+        assert_eq!(op("cbrt", &f64_), FloatOp::Cbrt);
+        assert_eq!(op("powf", &f64_), FloatOp::Powf);
+        assert_eq!(op("ln", &f64_), FloatOp::Ln);
+        assert_eq!(op("round_ties_even", &f64_), FloatOp::RoundTiesEven);
+        assert_eq!(op("copysign", &f64_), FloatOp::Copysign);
+        assert_eq!(op("to_bits", &f64_), FloatOp::ToBits);
+        // The same names exist on `f32`, with `f32` parameters and results.
+        assert_eq!(op("sqrt", &f32_), FloatOp::Sqrt);
+        let (_, params, ret) = method("powi", &f32_).unwrap();
+        assert_eq!(params[0].ty, Ty::Int(IntTy::I32));
+        assert_eq!(ret, f32_);
+        let (_, params, ret) = method("mul_add", &f64_).unwrap();
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].ty, f64_);
+        assert_eq!(ret, f64_);
+        let (_, params, ret) = method("to_bits", &f32_).unwrap();
+        assert!(params.is_empty());
+        assert_eq!(ret, Ty::Int(IntTy::U32));
+        assert_eq!(method("to_bits", &f64_).unwrap().2, Ty::Int(IntTy::U64));
+        // The functions `std` writes in Burdin are not compiler methods, and no float method leaks to integers.
+        for name in ["signum", "log", "fract", "min", "max", "clamp", "to_degrees", "to_radians", "is_nan"] {
+            assert!(method(name, &f64_).is_none(), "`{name}` is a std extension");
+        }
+        assert!(method("sqrt", &Ty::Int(IntTy::I32)).is_none());
+        assert!(method("to_bits", &Ty::Int(IntTy::U64)).is_none());
+    }
+
+    #[test]
+    fn float_from_bits_has_the_precision_width() {
+        assert_eq!(
+            builtin_sig(Builtin::FloatFromBits(FloatTy::F64), &Globals::default()).params[0].ty,
+            Ty::Int(IntTy::U64)
+        );
+        assert_eq!(builtin_sig(Builtin::FloatFromBits(FloatTy::F64), &Globals::default()).ret, Ty::Float(FloatTy::F64));
+        assert_eq!(
+            builtin_sig(Builtin::FloatFromBits(FloatTy::F32), &Globals::default()).params[0].ty,
+            Ty::Int(IntTy::U32)
+        );
+        assert_eq!(builtin_sig(Builtin::FloatFromBits(FloatTy::F32), &Globals::default()).ret, Ty::Float(FloatTy::F32));
+    }
+
+    #[test]
     fn builtin_type_names_resolve() {
         assert_eq!(builtin_type("i32"), Some(Ty::Int(IntTy::I32)));
         assert_eq!(builtin_type("usize"), Some(Ty::Int(IntTy::Usize)));
@@ -367,7 +477,10 @@ mod tests {
         assert_eq!(ret, Ty::String);
         assert!(method("to_string", &Ty::String).is_none(), "String already is a string");
         assert!(method("abs", &Ty::Int(IntTy::U32)).is_none(), "unsigned integers have no abs");
-        assert!(method("min", &Ty::Float(FloatTy::F64)).is_none(), "min is integer-only");
+        assert!(
+            method("min", &Ty::Float(FloatTy::F64)).is_none(),
+            "float `min` is a std extension method, not a compiler method"
+        );
         assert!(method("nope", &i32_).is_none());
 
         let list = Ty::List(Box::new(i32_.clone()), burdin_tir::Alloc::Global);

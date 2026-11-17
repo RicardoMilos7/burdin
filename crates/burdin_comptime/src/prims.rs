@@ -5,7 +5,9 @@
 use crate::interp::{Fault, Interp, Mode, R, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
-use burdin_tir::{self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatTy, IntTy, Method, Program, Ty, UnOp};
+use burdin_tir::{
+    self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatOp, FloatTy, IntTy, Method, Program, Ty, UnOp,
+};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -41,6 +43,79 @@ fn round_float(v: f64, ty: &Ty) -> f64 {
     match ty {
         Ty::Float(FloatTy::F32) => f64::from(v as f32),
         _ => v,
+    }
+}
+
+/// One floating-point operation in `f64` precision (`spec/stdlib.md`, "Float functions"). `to_bits` and
+/// `from_bits` are handled with the integer values they produce and consume.
+fn float_op64(op: FloatOp, x: f64, args: &[Value]) -> f64 {
+    match op {
+        FloatOp::Abs => x.abs(),
+        FloatOp::Sqrt => x.sqrt(),
+        FloatOp::Cbrt => x.cbrt(),
+        FloatOp::Powi => x.powi(args[0].int() as i32),
+        FloatOp::Powf => x.powf(args[0].float()),
+        FloatOp::Exp => x.exp(),
+        FloatOp::Exp2 => x.exp2(),
+        FloatOp::Ln => x.ln(),
+        FloatOp::Log2 => x.log2(),
+        FloatOp::Log10 => x.log10(),
+        FloatOp::Floor => x.floor(),
+        FloatOp::Ceil => x.ceil(),
+        FloatOp::Round => x.round(),
+        FloatOp::RoundTiesEven => x.round_ties_even(),
+        FloatOp::Trunc => x.trunc(),
+        FloatOp::Sin => x.sin(),
+        FloatOp::Cos => x.cos(),
+        FloatOp::Tan => x.tan(),
+        FloatOp::Asin => x.asin(),
+        FloatOp::Acos => x.acos(),
+        FloatOp::Atan => x.atan(),
+        FloatOp::Atan2 => x.atan2(args[0].float()),
+        FloatOp::Sinh => x.sinh(),
+        FloatOp::Cosh => x.cosh(),
+        FloatOp::Tanh => x.tanh(),
+        FloatOp::Hypot => x.hypot(args[0].float()),
+        FloatOp::MulAdd => x.mul_add(args[0].float(), args[1].float()),
+        FloatOp::Copysign => x.copysign(args[0].float()),
+        FloatOp::ToBits => unreachable!("`to_bits` returns an integer"),
+    }
+}
+
+/// The `f32` form of [`float_op64`]: every step is in single precision, so computing in `f64` first cannot
+/// round twice and disagree with compiled code.
+fn float_op32(op: FloatOp, x: f32, args: &[Value]) -> f32 {
+    let arg = |i: usize| args[i].float() as f32;
+    match op {
+        FloatOp::Abs => x.abs(),
+        FloatOp::Sqrt => x.sqrt(),
+        FloatOp::Cbrt => x.cbrt(),
+        FloatOp::Powi => x.powi(args[0].int() as i32),
+        FloatOp::Powf => x.powf(arg(0)),
+        FloatOp::Exp => x.exp(),
+        FloatOp::Exp2 => x.exp2(),
+        FloatOp::Ln => x.ln(),
+        FloatOp::Log2 => x.log2(),
+        FloatOp::Log10 => x.log10(),
+        FloatOp::Floor => x.floor(),
+        FloatOp::Ceil => x.ceil(),
+        FloatOp::Round => x.round(),
+        FloatOp::RoundTiesEven => x.round_ties_even(),
+        FloatOp::Trunc => x.trunc(),
+        FloatOp::Sin => x.sin(),
+        FloatOp::Cos => x.cos(),
+        FloatOp::Tan => x.tan(),
+        FloatOp::Asin => x.asin(),
+        FloatOp::Acos => x.acos(),
+        FloatOp::Atan => x.atan(),
+        FloatOp::Atan2 => x.atan2(arg(0)),
+        FloatOp::Sinh => x.sinh(),
+        FloatOp::Cosh => x.cosh(),
+        FloatOp::Tanh => x.tanh(),
+        FloatOp::Hypot => x.hypot(arg(0)),
+        FloatOp::MulAdd => x.mul_add(arg(0), arg(1)),
+        FloatOp::Copysign => x.copysign(arg(0)),
+        FloatOp::ToBits => unreachable!("`to_bits` returns an integer"),
     }
 }
 
@@ -474,6 +549,14 @@ impl<'p> Interp<'p, '_> {
                 self.charge(text.len() as u64, span)?;
                 Value::String(text.into_bytes())
             }
+            Builtin::FloatFromBits(ft) => {
+                let bits = self.eval(&args[0], Mode::Use)?.int();
+                let v = match ft {
+                    FloatTy::F32 => f64::from(f32::from_bits(bits as u32)),
+                    FloatTy::F64 => f64::from_bits(bits as u64),
+                };
+                Value::Float(v)
+            }
             Builtin::HeapNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
             Builtin::SharedNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
             // Allocation is a run-time operation: the interpreter models containers abstractly and has no
@@ -768,7 +851,32 @@ impl<'p> Interp<'p, '_> {
                 Value::Borrow(Box::new(inner))
             }
             Method::SharedStrongCount => Value::Int(1),
+            Method::Float(op) => self.float_method(op, args, span)?,
         })
+    }
+
+    /// A floating-point method the compiler provides (`spec/stdlib.md`, "Float functions"), computed in the
+    /// receiver's precision so an `f32` result is the one compiled code produces.
+    fn float_method(&mut self, op: FloatOp, args: &'p [Expr], span: Span) -> R<Value> {
+        let ft = match &args[0].ty {
+            Ty::Float(f) => *f,
+            other => return Err(internal(format!("a floating-point method on `{other}`"), span)),
+        };
+        let x = self.eval(&args[0], Mode::Use)?.float();
+        if op == FloatOp::ToBits {
+            return Ok(Value::Int(match ft {
+                FloatTy::F32 => i128::from((x as f32).to_bits()),
+                FloatTy::F64 => i128::from(x.to_bits()),
+            }));
+        }
+        let mut rest = Vec::with_capacity(args.len() - 1);
+        for a in &args[1..] {
+            rest.push(self.eval(a, Mode::Use)?);
+        }
+        Ok(Value::Float(match ft {
+            FloatTy::F32 => f64::from(float_op32(op, x as f32, &rest)),
+            FloatTy::F64 => float_op64(op, x, &rest),
+        }))
     }
 
     fn iter_value(&mut self, recv: &'p Expr, into: bool, span: Span) -> R<Value> {
@@ -1092,6 +1200,28 @@ mod tests {
         assert_eq!(float_str(123.0, -1, false), "1.23e+02");
         assert_eq!(float_str(0.1f32 as f64, -1, true), "1e-01");
         assert_eq!(float_str(f64::INFINITY, -1, false), "inf");
+    }
+
+    #[test]
+    fn float_operations_follow_ieee_754() {
+        // The exactly rounded operations, at the bit patterns the conformance tests pin.
+        assert_eq!(float_op64(FloatOp::Sqrt, 2.0, &[]).to_bits(), 0x3ff6a09e667f3bcd);
+        assert_eq!(float_op64(FloatOp::Abs, -0.0, &[]).to_bits(), 0);
+        assert_eq!(float_op64(FloatOp::Floor, -1.5, &[]), -2.0);
+        assert_eq!(float_op64(FloatOp::Ceil, 1.5, &[]), 2.0);
+        assert_eq!(float_op64(FloatOp::Round, 2.5, &[]), 3.0);
+        assert_eq!(float_op64(FloatOp::RoundTiesEven, 2.5, &[]), 2.0);
+        assert_eq!(float_op64(FloatOp::Trunc, -1.9, &[]), -1.0);
+        assert_eq!(float_op64(FloatOp::Powi, 2.0, &[Value::Int(10)]), 1024.0);
+        let neg = Value::Float(-1.0);
+        assert_eq!(float_op64(FloatOp::Copysign, 0.1, &[neg]).to_bits(), 0xbfb999999999999a);
+        // A fused multiply-add rounds once: 0.1 * 10 - 1 is not zero, while the two-step form is.
+        let args = [Value::Float(10.0), Value::Float(-1.0)];
+        assert_eq!(float_op64(FloatOp::MulAdd, 0.1, &args).to_bits(), 0x3c90000000000000);
+        // The same functions in f32 precision; computing in f64 first would round twice.
+        assert_eq!(float_op32(FloatOp::Sqrt, 2.0, &[]).to_bits(), 0x3fb504f3);
+        assert_eq!(float_op32(FloatOp::MulAdd, 0.1, &args).to_bits(), 0x32800000);
+        assert_eq!(float_op32(FloatOp::Abs, -0.0, &[]).to_bits(), 0);
     }
 
     #[test]
