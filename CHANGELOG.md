@@ -33,8 +33,10 @@ close-out checklist in `AGENTS.md`).
   lenses; `Debug` lenses carry a DAP `launch` configuration for `burdin dap` (#576).
 - Workspaces (#372, #376): one database per package, multi-root folders added and removed, watched files, pushed and
   pulled configuration; an edit re-checks only the bodies it can affect, so a dependency's bodies are reused.
-- Editors: `editors/vscode` (extension, TextMate grammar whose keywords are the lexer's, language configuration) and
-  the Neovim and Helix setup in `editors/README.md`, with the manual checklist in `spec/lsp.md`.
+- Editors: `editors/vscode` (extension, TextMate grammar whose keywords are the lexer's, language configuration),
+  `editors/zed` (extension: the `.bd` language and `burdin lsp` from `PATH`), `editors/tree-sitter-burdin` (a lexical
+  tree-sitter grammar and highlight queries, used by Zed, with corpus and highlight tests), and the Neovim and Helix
+  setup in `editors/README.md`, with the manual checklist in `spec/lsp.md`.
 - The query library gained `Analysis::occurrences`, `locals`, `calls`, `functions`, and `tests`, and `Db::modules` and
   `Db::packages` (`crates/burdin_query/src/navigate.rs`, `spec/query.md`).
 - Tests: `crates/burdin_lsp/tests/` (lifecycle, diagnostics, navigation, editing, outline, actions, workspace; a

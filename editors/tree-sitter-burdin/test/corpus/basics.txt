@@ -1,0 +1,179 @@
+========================================
+Declarations
+========================================
+
+/// A point.
+struct Point { x: i32, y: i32 }
+
+priv enum Shape { Circle(f64), Square(f64) }
+
+fn List<T>.first(self): T { }
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+}
+
+----------------------------------------
+
+(source_file
+  (line_comment)
+  (type_declaration
+    (identifier))
+  (block
+    (identifier)
+    (identifier)
+    (identifier)
+    (identifier))
+  (type_declaration
+    (identifier))
+  (block
+    (call
+      (identifier)
+      (arguments
+        (identifier)))
+    (call
+      (identifier)
+      (arguments
+        (identifier))))
+  (function_declaration
+    (identifier))
+  (identifier)
+  (member
+    (identifier)
+    (arguments
+      (self)))
+  (identifier)
+  (block)
+  (function_declaration
+    (identifier))
+  (parenthesized)
+  (block
+    (identifier)
+    (identifier)
+    (block
+      (identifier)
+      (integer_literal)
+      (identifier)
+      (integer_literal))))
+
+========================================
+Calls, members, and variants
+========================================
+
+fn main() {
+    let s = Shape.Circle(2.5)
+    println(s.area())
+    let n = p.x + MAX_SIZE
+    for i in 0..=3 { total.push(i as u8) }
+}
+
+----------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier))
+  (parenthesized)
+  (block
+    (identifier)
+    (identifier)
+    (member
+      (identifier)
+      (arguments
+        (float_literal)))
+    (call
+      (identifier)
+      (arguments
+        (identifier)
+        (member
+          (identifier)
+          (arguments))))
+    (identifier)
+    (identifier)
+    (member
+      (identifier))
+    (identifier)
+    (identifier)
+    (integer_literal)
+    (integer_literal)
+    (block
+      (identifier)
+      (member
+        (identifier)
+        (arguments
+          (identifier)
+          (identifier))))))
+
+========================================
+Strings, holes, and escapes
+========================================
+
+fn main() {
+    println("a {x} b {{c}} \"d\" {y:>8} {f(1, 2)}")
+    let r = r#"raw "quoted" {no hole}"#
+    let c = '\n'
+}
+
+----------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier))
+  (parenthesized)
+  (block
+    (call
+      (identifier)
+      (arguments
+        (string
+          (string_content)
+          (interpolation
+            (identifier))
+          (string_content)
+          (escape_sequence)
+          (string_content)
+          (escape_sequence)
+          (string_content)
+          (escape_sequence)
+          (string_content)
+          (escape_sequence)
+          (string_content)
+          (interpolation
+            (identifier)
+            (format_specifier))
+          (string_content)
+          (interpolation
+            (call
+              (identifier)
+              (arguments
+                (integer_literal)
+                (integer_literal)))))))
+    (identifier)
+    (raw_string)
+    (identifier)
+    (char_literal)))
+
+========================================
+Tests and comments
+========================================
+
+// Line.
+/* Block */
+test "adds two numbers" {
+    assert(1 + 1 == 2)
+}
+
+----------------------------------------
+
+(source_file
+  (line_comment)
+  (block_comment)
+  (test_declaration
+    (identifier)
+    (string
+      (string_content)))
+  (block
+    (call
+      (identifier)
+      (arguments
+        (integer_literal)
+        (integer_literal)
+        (integer_literal)))))

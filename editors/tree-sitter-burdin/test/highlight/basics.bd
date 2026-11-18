@@ -1,0 +1,45 @@
+/// A shape.
+// <- comment.doc
+enum Shape { Circle(f64), Square(f64) }
+// <- keyword
+//   ^ type
+//           ^ constructor
+//                  ^ type.builtin
+
+fn Shape.area(self): f64 {
+// <- keyword
+// ^ type
+//       ^ function
+//            ^ variable.special
+    match self {
+//  ^ keyword
+        Shape.Circle(r) => 3.14 * r * r,
+//            ^ constructor
+//                         ^ number
+//                              ^ operator
+        Shape.Square(s) => s * s,
+    }
+}
+
+fn main() {
+    let total = shape.area() + MAX_SIZE
+//      ^ variable
+//                    ^ function.method
+//                             ^ constant
+    println("area {total:>8} {{done}} \n")
+//  ^ function
+//           ^ string
+//                ^ punctuation.special
+//                      ^ string.special
+//                           ^ string.escape
+//                                    ^ string.escape
+    let ok = point.x == 1 && true
+//                 ^ property
+//                           ^ boolean
+//                        ^ operator
+}
+
+test "adds" {
+// <- keyword
+//   ^ string
+}

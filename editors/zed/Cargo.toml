@@ -1,0 +1,15 @@
+[package]
+name = "zed_burdin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Its own workspace: the extension is built for wasm32-wasip2 by Zed, not as a member of the compiler's workspace.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "=0.7.0"

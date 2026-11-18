@@ -980,14 +980,17 @@ lenses with the real `burdin test --format json`, and checks the editor files, i
 keywords are exactly the lexer's.
 
 Editors: `editors/vscode` (extension with `vscode-languageclient` pinned to 9.0.1, grammar, language configuration),
-and the Neovim and Helix setup in `editors/README.md`. Using them in an editor is the manual checklist in
-`spec/lsp.md` LS20; it was not run in this session (no editor here), so run it before calling the editor side done.
+`editors/zed` (Zed extension with `zed_extension_api` pinned to 0.7.0; `burdin` from `PATH` or `lsp.burdin.binary.path`;
+highlighting from `editors/tree-sitter-burdin`, a lexical tree-sitter grammar Zed fetches at the commit in
+`extension.toml`'s `rev`, which must be bumped when the grammar changes), and the Neovim and Helix setup in
+`editors/README.md`. Using them in an editor is the manual checklist in `spec/lsp.md` LS20; it was not run in this
+session (no editor here), so run it before calling the editor side done.
 
-Follow-ups, none started: `burdin dap` (#576), which the `Debug` lenses already target with a DAP `launch`
-configuration (the VS Code extension falls back to building with `-g` and CodeLLDB for a program); bench blocks
-(#251), which would get lenses like tests; a tree-sitter grammar for Helix and Neovim highlighting; publishing the
-VS Code extension; per-file instead of per-package analysis if large packages make the debounce feel slow; and the
-`burdin doc` JSON as a richer hover source.
+Follow-ups, none started: `burdin dap` (#576), which the `Debug` lenses already target with a DAP `launch` configuration
+(the VS Code extension falls back to building with `-g` and CodeLLDB for a program); bench blocks (#251), which would
+get lenses like tests; Helix and Neovim queries for `editors/tree-sitter-burdin`; Zed runnables for `test` items;
+publishing the VS Code extension; per-file instead of per-package analysis if large packages make the debounce feel
+slow; and the `burdin doc` JSON as a richer hover source.
 
 ## Decisions already made (do not reopen without a reason)
 
