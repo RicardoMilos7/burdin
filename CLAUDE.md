@@ -37,9 +37,10 @@ not updated and may disagree with the repository.
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
    resolution, and timers, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the minimal `bindgen`; `spec/lint.md` is `burdin lint`; `spec/doc.md` is `burdin doc`,
-   the doc comments, the Markdown subset, intra-doc links and their diagnostics, the site and its search, the JSON
-   schema, and the coverage report.
+   modules, caching, and the minimal `bindgen`; `spec/lint.md` is `burdin lint` (the `[lint]` table, suppression
+   comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset, intra-doc links and
+   their diagnostics, the site and its search, the JSON schema, and the coverage report; and `spec/diagnostics.md` is
+   the versioned JSON diagnostic format, the SARIF log, and the links to the error reference.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -140,7 +141,9 @@ crates/
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
-docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the lint
+docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the
+                          diagnostics-for-tools reference and the JSON schema (docs/diagnostics.md,
+                          docs/diagnostic.schema.json, checked by tests/check_diagnostics.py), the lint
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)

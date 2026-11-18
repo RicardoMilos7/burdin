@@ -1,0 +1,22 @@
+struct Thing {
+    id: i32
+}
+
+struct Counter {
+    n: i32
+}
+
+fn take(own t: Thing) {}
+
+fn bump(mut c: Counter) {
+    c.n = c.n + 1
+}
+
+fn main() {
+    let t = Thing { id: 1 }
+    take(t)
+    let u = t
+    let mut c = Counter { n: 0 }
+    bump(c)
+    let s: i32 = "añ𝄞"
+}

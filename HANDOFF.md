@@ -239,6 +239,20 @@ choices that are not obvious are in `spec/test-runner.md`; `tests/check_test_run
 runner is now `test_runner.rs` plus `test_runner/select.rs` and `test_runner/report.rs`, and `Args` derives `Default`
 and `Clone`. Not done: the language server's test integration (issue #374), which consumes `--list --format json`.
 
+The forty-fifth session implemented stage 3's machine-readable diagnostics (issue #236, sub-issues #642-#644). One
+`Diagnostic` value (`crates/burdin_diag`) now feeds four formats. `json.rs` renders the version 1 object (a small
+ordered `Json` value, so the key order is in the code) and `sarif.rs` renders the SARIF 2.1.0 log; the driver builds the
+SARIF tool and its rules from the embedded `docs/error-codes.md` headings and the linter's table. The model gained
+`labels`, `help`, and `children`, and `Diagnostic::new`; no compiler diagnostic produces them yet (the human format
+prints `help` and children, not labels), so the fields exist for the schema and the next producers. The format is
+documented in `docs/diagnostics.md` and `spec/diagnostics.md` (DG1-DG14); `docs/diagnostic.schema.json` is closed on
+purpose. **The hosted error reference does not exist yet.** The link root, `https://ricardomilos7.github.io/burdin`
+(`URL_BASE`), is where the repository's GitHub Pages would serve `/errors/<code>` and `/lints/<code>`; the scheme is
+pinned by the tests but nothing publishes the pages, so the links 404 until someone does. Changing the root is one edit
+of `URL_BASE` plus the two scripts that pin it. SARIF columns are Unicode scalar values (`columnKind`
+`unicodeCodePoints`), and a relative path is `%SRCROOT%`-relative. Existing assertions changed only where the JSON
+summary gained `"version":1`.
+
 The forty-first session implemented stage 3's `burdin lint` (issue #230, sub-issues #231-#233, #464-#466, #661). The
 linter is the new crate `burdin_lint`, a side branch of the pipeline: it reads the syntax tree and the typed tree the
 compiler built, never changes them, and the driver (`crates/burdin_driver/src/lint.rs`) is the only caller. Syntax-tree
@@ -423,7 +437,7 @@ tests cover the syntax.
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
 | Conformance tests | `tests/` | 1055 tests. All pass: m01 to m24 and s2_tasks, s2_channels, s2_shared, and s2_io (debug and release; the release run skips the debug-only and platform-specific tests) |
 | Comptime | `spec/comptime.md`, `crates/burdin_comptime/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CT13). Codes E0220-E0225; `--comptime-steps N`; tests in `tests/m20_comptime/` |
-| Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
+| Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md`, `docs/diagnostics.md`, `spec/diagnostics.md` | Four formats (`human`, `short`, a versioned `json` with `docs/diagnostic.schema.json`, and `sarif`), color and width control, hyperlinks to the error reference, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |

@@ -12,9 +12,9 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md`, `spec/arguments.md`,
-   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md` — the standard-library
+   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/diagnostics.md` — the standard-library
    surface, the exact derived members, formatting, error handling, default and named arguments, extension methods,
-   operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), and `build.bd`.
+   operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, and the JSON and SARIF diagnostic formats.
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`, and
    `spec/test-runner.md` describe the iteration protocol, `any`/`impl`, and `burdin test`.
 5. `spec/stage0-subset.md` (complete) and `HANDOFF.md` for the current state; `Burdin Language Design.md` for the
@@ -148,7 +148,8 @@ HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, comptime, the linter, the
                           documentation generator, stage 0 scope, stage 1 plan
-docs/                     the user-facing error-code reference (checked against tests/README.md), the lint
+docs/                     the user-facing error-code reference (checked against tests/README.md), the diagnostics-for-tools
+                          reference and JSON schema (docs/diagnostics.md, docs/diagnostic.schema.json), the lint
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform support matrix
                           and known limitations, and the version/release policy (docs/releasing.md)
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification

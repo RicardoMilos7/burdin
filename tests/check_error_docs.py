@@ -14,11 +14,15 @@ What it checks:
     `//~ E0000` diagnostics marked in it, all of the section's code; a `warning-example` compiles successfully
     and emits exactly the marked warnings;
   * the page is linked from README.md and from tests/README.md;
+  * every diagnostic links to its entry (issue #644): the URL scheme is pinned here
+    (`<root>/errors/<code>`, ending in the code), the page documents it, every JSON diagnostic of every example
+    carries exactly that URL, and `burdin explain <code>` prints it;
   * `burdin explain <code>` prints every section, `burdin explain` lists every code, and an unknown code
     exits 2.
 """
 
 import difflib
+import json
 import re
 import sys
 from pathlib import Path
@@ -28,6 +32,10 @@ import harness
 problems = []
 checks = 0
 examples = 0
+
+# The stable root of the hosted error reference (issue #644). A diagnostic's link is `<URL_BASE>/errors/<code>`; a
+# change to the root or the scheme breaks every link ever printed, so it is pinned here and changed deliberately.
+URL_BASE = "https://ricardomilos7.github.io/burdin"
 
 DOCS = harness.ROOT / "docs" / "error-codes.md"
 REGISTRY = harness.TESTS / "README.md"
@@ -98,6 +106,10 @@ for code in registry_codes:
         add_problem(f"docs/error-codes.md: {code} has no '**How to fix:**' paragraph")
     if f"error-example: {code}" not in section and f"warning-example: {code}" not in section:
         add_problem(f"docs/error-codes.md: {code} has no checked example")
+
+checks += 1
+if f"{URL_BASE}/errors/E" not in docs_text:
+    add_problem(f"docs/error-codes.md: does not document the link scheme {URL_BASE}/errors/<code>")
 
 for index in (harness.ROOT / "README.md", REGISTRY):
     checks += 1
@@ -189,6 +201,26 @@ def check_example(directory: Path, code: str, target: str, mode: str, warning: b
         )
         detail = ";".join(diff) + (";" if diff else "")
         add_problem(f"example {code}: diagnostics differ from the //~ markers: {detail}")
+    # The same example in the JSON format: every diagnostic carries the stable link to this section's code.
+    json_result = harness.run(command[:-1] + ["--diagnostic-format=json"], cwd=directory, merge=True)
+    linked = 0
+    for line in harness.text(harness.normalize(json_result.stdout)).split("\n"):
+        if not line.startswith("{"):
+            continue
+        try:
+            diagnostic_object = json.loads(line)
+        except ValueError:
+            add_problem(f"example {code}: a JSON line does not parse: {line[:100]}")
+            continue
+        if diagnostic_object.get("type") != "diagnostic":
+            continue
+        linked += 1
+        checks += 1
+        expected_url = f"{URL_BASE}/errors/{code}"
+        if diagnostic_object.get("url") != expected_url:
+            add_problem(f"example {code}: a diagnostic has url {diagnostic_object.get('url')!r}, expected {expected_url!r}")
+    if linked == 0:
+        add_problem(f"example {code}: the JSON format printed no diagnostic")
     examples += 1
 
 
@@ -312,6 +344,8 @@ for code in registry_codes:
         add_problem(f"burdin explain {code} does not print its heading")
     if f"//~ {code}" not in explained_out:
         add_problem(f"burdin explain {code} does not print its example")
+    if f"Online: {URL_BASE}/errors/{code}" not in explained_out:
+        add_problem(f"burdin explain {code} does not print its link {URL_BASE}/errors/{code}")
 
 checks += 1
 unknown = run_explain("E9999")

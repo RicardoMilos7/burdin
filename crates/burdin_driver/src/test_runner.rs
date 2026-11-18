@@ -151,6 +151,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,
+        report_clean: false,
         run_build_scripts: true,
     };
     let mut compiled = Vec::new();

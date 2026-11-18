@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "burdin",
+          "version": "VERSION",
+          "informationUri": "https://ricardomilos7.github.io/burdin",
+          "rules": "RULES"
+        }
+      },
+      "columnKind": "unicodeCodePoints",
+      "invocations": [
+        {
+          "executionSuccessful": false
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "E0100",
+          "level": "error",
+          "message": {
+            "text": "use of moved value `t`"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "multi.bd",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 18,
+                  "startColumn": 13,
+                  "endLine": 18,
+                  "endColumn": 14,
+                  "byteOffset": 198,
+                  "byteLength": 1
+                }
+              }
+            }
+          ],
+          "relatedLocations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "multi.bd",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 17,
+                  "startColumn": 10,
+                  "endLine": 17,
+                  "endColumn": 11,
+                  "byteOffset": 183,
+                  "byteLength": 1
+                }
+              },
+              "id": 0,
+              "message": {
+                "text": "value moved here"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "E0114",
+          "level": "error",
+          "message": {
+            "text": "this parameter of `bump` is `mut`; pass the argument as `mut ...`"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "multi.bd",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 20,
+                  "startColumn": 10,
+                  "endLine": 20,
+                  "endColumn": 11,
+                  "byteOffset": 242,
+                  "byteLength": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "add `mut` before this argument"
+              },
+              "artifactChanges": [
+                {
+                  "artifactLocation": {
+                    "uri": "multi.bd",
+                    "uriBaseId": "%SRCROOT%"
+                  },
+                  "replacements": [
+                    {
+                      "deletedRegion": {
+                        "startLine": 20,
+                        "startColumn": 10,
+                        "endLine": 20,
+                        "endColumn": 10,
+                        "byteOffset": 242,
+                        "byteLength": 0
+                      },
+                      "insertedContent": {
+                        "text": "mut "
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "properties": {
+            "fixIsMachineApplicable": [
+              true
+            ]
+          }
+        },
+        {
+          "ruleId": "E0003",
+          "level": "error",
+          "message": {
+            "text": "expected `i32`, found `str`"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "multi.bd",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 21,
+                  "startColumn": 18,
+                  "endLine": 21,
+                  "endColumn": 23,
+                  "byteOffset": 262,
+                  "byteLength": 9
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
