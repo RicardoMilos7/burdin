@@ -10,7 +10,7 @@ mod new;
 mod package;
 mod test_runner;
 
-use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, SourceMap, Span};
+use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
 use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -83,8 +83,10 @@ fmt options:
   --range <lo>:<hi>        with --stdin, format only the items that overlap these byte offsets
 
 diagnostics:
-  --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
-                                          diagnostic; json prints one JSON object per line
+  --diagnostic-format <human|short|json|sarif>
+                                          human (default) colors and wraps; short prints one plain line per
+                                          diagnostic; json prints one version 1 JSON object per line; sarif
+                                          prints one SARIF 2.1.0 log (docs/diagnostics.md)
   --color <auto|always|never>             color (default auto: only when stderr is a terminal)
   --no-color                              same as --color never
   --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
@@ -98,6 +100,7 @@ environment:
   BURDIN_VERSION       overrides the version printed by `--version` (nightly builds)
   LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
   COLUMNS              terminal width used when --width is not given
+  FORCE_HYPERLINK      1 links error codes to the error reference in colored output, 0 never does
   NO_COLOR             disables color unless --color=always or --color=never says otherwise";
 
 const EXPLAIN_USAGE: &str = "\
@@ -378,7 +381,8 @@ fn parse_format(value: &str) -> Result<DiagnosticFormat, String> {
         "human" => Ok(DiagnosticFormat::Human),
         "short" => Ok(DiagnosticFormat::Short),
         "json" => Ok(DiagnosticFormat::Json),
-        _ => Err(format!("unknown diagnostic format `{value}` (expected human, short, or json)")),
+        "sarif" => Ok(DiagnosticFormat::Sarif),
+        _ => Err(format!("unknown diagnostic format `{value}` (expected human, short, json, or sarif)")),
     }
 }
 
@@ -473,6 +477,7 @@ fn driver_main() -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: args.emit_deps.as_deref(),
+        report_clean: args.command == "build",
         run_build_scripts: true,
     };
     match args.command.as_str() {
@@ -566,6 +571,9 @@ fn explain(args: &[String]) -> ExitCode {
         [code] => match explain_section(code) {
             Some(section) => {
                 println!("{section}");
+                if let Some(url) = burdin_diag::code_url(&code.to_ascii_uppercase()) {
+                    println!("\nOnline: {url}");
+                }
                 ExitCode::SUCCESS
             }
             None => {
@@ -682,6 +690,8 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) comptime_steps: Option<u64>,
     /// Where to list the files `embed` read; `None` writes nothing.
     pub(crate) emit_deps: Option<&'a Path>,
+    /// Write a SARIF log even when the build found nothing (`burdin build` only).
+    pub(crate) report_clean: bool,
     /// Run the package's `build.bd` (and its granted dependencies' scripts) before reading sources. A build
     /// script's own compilation passes `false`, so a script cannot run another script (BS3).
     pub(crate) run_build_scripts: bool,
@@ -860,6 +870,8 @@ pub(crate) fn compile(
             DiagnosticFormat::Json => {
                 eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
             }
+            // A SARIF log is one document, so nothing may follow it.
+            DiagnosticFormat::Sarif => {}
             _ => {
                 if rendered.shown < total {
                     let hidden = total - rendered.shown;
@@ -891,8 +903,11 @@ pub(crate) fn compile(
     }
     // Warnings do not stop compilation, but they are printed before the build goes on (`spec/extensions.md`,
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
-    if diags.has_warnings() {
-        let render = render_options(options.diagnostics, std::io::stderr().is_terminal());
+    let render = render_options(options.diagnostics, std::io::stderr().is_terminal());
+    // `burdin build` with `--diagnostic-format sarif` writes a log even when nothing was found, so a CI job always
+    // has a file to upload; the other commands write one only for a warning (issue #643).
+    let clean_log = options.report_clean && render.format == DiagnosticFormat::Sarif;
+    if diags.has_warnings() || clean_log {
         eprint!("{}", diags.render_with(&sources, &render).text);
     }
 
@@ -995,11 +1010,63 @@ fn report_build_failure(loaded: &package::Workspace, failure: build::Failure, op
 /// and whether stderr is a terminal, and the width from `--width`, then `COLUMNS`, then 80.
 fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
     let columns = std::env::var("COLUMNS").ok();
+    let color = color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal);
     RenderOptions {
         format: diagnostics.format,
-        color: color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal),
+        color,
         width: terminal_width(diagnostics.width, columns.as_deref()),
         error_limit: diagnostics.error_limit,
+        hyperlinks: color && hyperlinks_supported(&|name| std::env::var(name).ok()),
+        tool: if diagnostics.format == DiagnosticFormat::Sarif { sarif_tool() } else { Tool::default() },
+    }
+}
+
+/// Whether the terminal understands OSC 8 hyperlinks. `FORCE_HYPERLINK` decides when it is set (`0` is off, anything
+/// else is on); otherwise a `dumb` terminal and the multiplexers that swallow the sequence say no, and the terminals
+/// known to support it say yes. A terminal this list does not know gets plain text, which is always correct.
+fn hyperlinks_supported(env: &dyn Fn(&str) -> Option<String>) -> bool {
+    if let Some(force) = env("FORCE_HYPERLINK").filter(|value| !value.is_empty()) {
+        return force != "0";
+    }
+    let term = env("TERM").unwrap_or_default();
+    if term == "dumb" || term.starts_with("screen") || term.starts_with("tmux") || env("TMUX").is_some() {
+        return false;
+    }
+    if env("WT_SESSION").is_some() || env("KITTY_WINDOW_ID").is_some() || env("KONSOLE_VERSION").is_some() {
+        return true;
+    }
+    if env("VTE_VERSION").and_then(|version| version.parse::<u32>().ok()).is_some_and(|version| version >= 5000) {
+        return true;
+    }
+    if matches!(
+        env("TERM_PROGRAM").as_deref(),
+        Some("iTerm.app" | "WezTerm" | "vscode" | "ghostty" | "Hyper" | "Tabby" | "rio")
+    ) {
+        return true;
+    }
+    term.contains("kitty") || term.contains("alacritty") || term.contains("foot") || term.contains("ghostty")
+}
+
+/// The tool a SARIF log names: the compiler's version, and one rule for every error code of the reference and every
+/// lint, each with the link to its entry (`spec/diagnostics.md`, DG9).
+fn sarif_tool() -> Tool {
+    let mut rules = Vec::new();
+    for line in ERROR_DOCS.lines() {
+        if let Some(code) = heading_code(line) {
+            let name = line["## E0000: ".len()..].trim().to_string();
+            rules.push(Rule { id: code.to_string(), name, help_uri: burdin_diag::code_url(code) });
+        }
+    }
+    let lints = std::iter::once((lint::UNKNOWN_LINT_CODE, lint::UNKNOWN_LINT_NAME))
+        .chain(burdin_lint::Lint::ALL.iter().map(|lint| (lint.code(), lint.name())));
+    for (code, name) in lints {
+        rules.push(Rule { id: code.to_string(), name: name.to_string(), help_uri: burdin_diag::code_url(code) });
+    }
+    Tool {
+        name: "burdin".to_string(),
+        version: env!("BURDIN_VERSION").to_string(),
+        information_uri: burdin_diag::URL_BASE.to_string(),
+        rules,
     }
 }
 
@@ -1030,7 +1097,10 @@ fn terminal_width(explicit: Option<usize>, columns: Option<&str>) -> usize {
 /// parse the human summary.
 fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
     let limit = limit.map_or_else(|| "null".to_string(), |limit| limit.to_string());
-    format!("{{\"type\":\"summary\",\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n")
+    format!(
+        "{{\"type\":\"summary\",\"version\":{},\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n",
+        burdin_diag::JSON_VERSION
+    )
 }
 
 /// Runs `--pgo-use`: merges the profile, applies `pgo-instr-use` with `opt`, and compiles the result with `llc`.
@@ -1696,6 +1766,47 @@ mod tests {
         assert!(color_enabled(ColorChoice::Auto, false, true));
         assert!(!color_enabled(ColorChoice::Auto, true, true));
         assert!(!color_enabled(ColorChoice::Auto, false, false));
+    }
+
+    fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| pairs.iter().find(|(key, _)| *key == name).map(|(_, value)| value.to_string())
+    }
+
+    #[test]
+    fn hyperlinks_follow_force_hyperlink_then_the_terminal_that_is_running() {
+        assert!(!hyperlinks_supported(&env_of(&[])));
+        assert!(hyperlinks_supported(&env_of(&[("FORCE_HYPERLINK", "1")])));
+        assert!(!hyperlinks_supported(&env_of(&[("FORCE_HYPERLINK", "0"), ("WT_SESSION", "x")])));
+        assert!(hyperlinks_supported(&env_of(&[("FORCE_HYPERLINK", "1"), ("TERM", "dumb")])));
+        assert!(hyperlinks_supported(&env_of(&[("WT_SESSION", "abc")])));
+        assert!(hyperlinks_supported(&env_of(&[("TERM_PROGRAM", "iTerm.app")])));
+        assert!(hyperlinks_supported(&env_of(&[("VTE_VERSION", "6800")])));
+        assert!(!hyperlinks_supported(&env_of(&[("VTE_VERSION", "4000")])));
+        assert!(hyperlinks_supported(&env_of(&[("TERM", "xterm-kitty")])));
+        assert!(!hyperlinks_supported(&env_of(&[("TERM", "dumb"), ("WT_SESSION", "abc")])));
+        assert!(!hyperlinks_supported(&env_of(&[("TERM", "screen-256color"), ("TERM_PROGRAM", "vscode")])));
+        assert!(!hyperlinks_supported(&env_of(&[("TMUX", "/tmp/tmux-0/default,1,0"), ("TERM_PROGRAM", "vscode")])));
+    }
+
+    #[test]
+    fn the_sarif_tool_lists_every_error_code_and_lint_with_its_link() {
+        let tool = sarif_tool();
+        let first = &tool.rules[0];
+        assert_eq!(first.id, "E0001");
+        assert_eq!(first.name, "Syntax error");
+        assert_eq!(first.help_uri.as_deref(), Some("https://ricardomilos7.github.io/burdin/errors/E0001"));
+        assert!(tool.rules.iter().any(|rule| rule.id == "E0215"));
+        let lint = tool.rules.iter().find(|rule| rule.id == "L0007").expect("a rule for the lint");
+        assert_eq!(lint.name, "unused_variables");
+        assert_eq!(lint.help_uri.as_deref(), Some("https://ricardomilos7.github.io/burdin/lints/L0007"));
+        assert!(tool.rules.iter().any(|rule| rule.id == "L0000"));
+        assert!(tool.rules.iter().all(|rule| rule.id != "E9000"), "E9000 is not in the reference");
+    }
+
+    #[test]
+    fn sarif_is_a_diagnostic_format() {
+        assert_eq!(parse_format("sarif").unwrap(), DiagnosticFormat::Sarif);
+        assert!(parse_format("xml").unwrap_err().contains("human, short, json, or sarif"));
     }
 
     #[test]

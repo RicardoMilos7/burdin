@@ -4,21 +4,35 @@
 //! It may also carry related notes (with their own spans) and suggestions (a replacement edit for one span), which
 //! the JSON format exposes for an editor's code actions (issue #435).
 //!
-//! Three formats are rendered from the same data (issue #434):
+//! Four formats are rendered from the same data (issues #434, #642, #643):
 //!
 //! - `human`: the default. It colors the location, the severity, and the code when asked to, and wraps long
 //!   messages to a fixed width. Its first line is always
-//!   `path:LINE:COL: error[E0000]: message`, which the conformance runner reads.
+//!   `path:LINE:COL: error[E0000]: message`, which the conformance runner reads. When color is on and the
+//!   terminal supports hyperlinks, the code links to its entry in the error reference (issue #644).
 //! - `short`: exactly one plain line per diagnostic, with no notes, suggestions, or color. This is the
 //!   machine-readable format the test scripts parse.
-//! - `json`: one JSON object per diagnostic on one line, with the primary span, notes, and suggestions. Colors
-//!   and wrapping never apply to it.
+//! - `json`: one version 1 JSON object per diagnostic on one line (`json.rs`), with spans, labels, notes, help,
+//!   children, related information, suggestions with edits, the link to the error reference, and the rendered
+//!   human text. Colors and wrapping never apply to it.
+//! - `sarif`: one SARIF 2.1.0 log for all the diagnostics (`sarif.rs`), for code-scanning services.
 //!
 //! Diagnostics are sorted by file and byte offset (then by code, message, and insertion order, so equal spans are
 //! stable), and the optional error limit is applied after sorting, which keeps the output deterministic
 //! (issue #436).
 
 use std::fmt::Write as _;
+
+mod json;
+mod sarif;
+
+pub use json::{JSON_VERSION, Json};
+pub use sarif::{Rule, SARIF_SCHEMA, SARIF_VERSION, Tool};
+
+/// The root of the hosted error reference and lint reference. A code's page is `<URL_BASE>/errors/<code>` (and
+/// `<URL_BASE>/lints/<code>` for a lint), so every link ends in the code. The scheme is stable across versions:
+/// `tests/check_error_docs.py` pins it (`spec/diagnostics.md`, DG12).
+pub const URL_BASE: &str = "https://ricardomilos7.github.io/burdin";
 
 /// Index of a file in a [`SourceMap`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -62,15 +76,42 @@ impl SourceFile {
 
     /// 1-based line and column of a byte offset. The column counts characters, not bytes.
     pub fn line_col(&self, offset: u32) -> (u32, u32) {
+        let position = self.position(offset);
+        (position.line, position.column)
+    }
+
+    /// The line of a byte offset and its column counted three ways, all 1-based: in characters (Unicode scalar
+    /// values, what the human format prints), in UTF-8 bytes, and in UTF-16 code units.
+    pub fn position(&self, offset: u32) -> Position {
         let line = match self.line_starts.binary_search(&offset) {
             Ok(i) => i,
             Err(i) => i - 1,
         };
         let start = self.line_starts[line] as usize;
         let end = (offset as usize).min(self.text.len());
-        let col = self.text.get(start..end).map(|s| s.chars().count()).unwrap_or(end - start);
-        (line as u32 + 1, col as u32 + 1)
+        let (column, utf16) = match self.text.get(start..end) {
+            Some(prefix) => (prefix.chars().count(), prefix.chars().map(char::len_utf16).sum()),
+            None => (end - start, end - start),
+        };
+        Position {
+            line: line as u32 + 1,
+            column: column as u32 + 1,
+            utf8_column: (end - start) as u32 + 1,
+            utf16_column: utf16 as u32 + 1,
+        }
     }
+}
+
+/// A line and the columns of one offset. Every number is 1-based.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Position {
+    pub line: u32,
+    /// Unicode scalar values from the start of the line.
+    pub column: u32,
+    /// UTF-8 bytes from the start of the line.
+    pub utf8_column: u32,
+    /// UTF-16 code units from the start of the line.
+    pub utf16_column: u32,
 }
 
 #[derive(Default)]
@@ -263,7 +304,32 @@ impl Code {
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// Every remaining site is assigned to a milestone in `spec/e9000-audit.md`, and `tests/check_e9000.py`
     /// fails when a site is unassigned, stale, or belongs to a milestone that has shipped.
-    pub const UNSUPPORTED: Code = Code("E9000");
+    pub const UNSUPPORTED: Code = Code(UNSUPPORTED_CODE);
+
+    /// The link to this code's entry in the hosted reference (`<URL_BASE>/errors/<code>`, or `/lints/<code>` for a
+    /// lint), or `None` for a code the reference does not explain: `E9000` and anything that is not `E` or `L`
+    /// followed by four digits.
+    pub fn url(self) -> Option<String> {
+        code_url(self.0)
+    }
+}
+
+/// The code of [`Code::UNSUPPORTED`] as a plain string. [`code_url`] compares against this rather than the
+/// constant, because `tests/check_e9000.py` audits every textual use of `Code::UNSUPPORTED` as a diagnostic site
+/// and the link rule is not one.
+const UNSUPPORTED_CODE: &str = "E9000";
+
+/// [`Code::url`] for a code that is not a `&'static str`, such as one read from the error reference.
+pub fn code_url(code: &str) -> Option<String> {
+    let bytes = code.as_bytes();
+    if bytes.len() != 5 || !bytes[1..].iter().all(u8::is_ascii_digit) || code == UNSUPPORTED_CODE {
+        return None;
+    }
+    match bytes[0] {
+        b'E' => Some(format!("{URL_BASE}/errors/{code}")),
+        b'L' => Some(format!("{URL_BASE}/lints/{code}")),
+        _ => None,
+    }
 }
 
 /// How serious a diagnostic is. A warning is printed but does not stop compilation; the one warning today is a
@@ -291,6 +357,14 @@ pub struct Note {
     pub message: String,
 }
 
+/// Text attached to a span of the diagnostic's own source. A label is for a machine consumer that marks the span
+/// in an editor; the human format has no source snippets, so it does not print labels.
+#[derive(Clone, Debug)]
+pub struct Label {
+    pub span: Span,
+    pub message: String,
+}
+
 /// A fix for one span. `span.lo == span.hi` inserts `replacement`; an empty replacement deletes the span. This is
 /// the shape an editor needs for a quick-fix code action.
 #[derive(Clone, Debug)]
@@ -311,9 +385,47 @@ pub struct Diagnostic {
     pub message: String,
     pub notes: Vec<Note>,
     pub suggestions: Vec<Suggestion>,
+    /// Texts attached to spans (the primary span or others).
+    pub labels: Vec<Label>,
+    /// Advice that is not an edit, one line each.
+    pub help: Vec<String>,
+    /// Diagnostics that belong to this one, each with its own code, severity, and span.
+    pub children: Vec<Diagnostic>,
 }
 
 impl Diagnostic {
+    pub fn new(code: Code, severity: Severity, span: Span, message: impl Into<String>) -> Diagnostic {
+        Diagnostic {
+            code,
+            severity,
+            span,
+            message: message.into(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+            labels: Vec::new(),
+            help: Vec::new(),
+            children: Vec::new(),
+        }
+    }
+
+    /// Attaches a label: `message` is the short text for `span`.
+    pub fn label(&mut self, span: Span, message: impl Into<String>) -> &mut Diagnostic {
+        self.labels.push(Label { span, message: message.into() });
+        self
+    }
+
+    /// Attaches a line of advice that is not an edit.
+    pub fn help(&mut self, message: impl Into<String>) -> &mut Diagnostic {
+        self.help.push(message.into());
+        self
+    }
+
+    /// Attaches a child diagnostic.
+    pub fn child(&mut self, child: Diagnostic) -> &mut Diagnostic {
+        self.children.push(child);
+        self
+    }
+
     /// Attaches a note that points at `span`.
     pub fn note(&mut self, span: Span, message: impl Into<String>) -> &mut Diagnostic {
         self.notes.push(Note { span: Some(span), message: message.into() });
@@ -368,28 +480,14 @@ impl Diagnostics {
     /// Records an error and returns it, so notes and suggestions can be attached in the same expression:
     /// `diags.error(code, span, "message").suggest(...);`
     pub fn error(&mut self, code: Code, span: Span, message: impl Into<String>) -> &mut Diagnostic {
-        self.list.push(Diagnostic {
-            code,
-            severity: Severity::Error,
-            span,
-            message: message.into(),
-            notes: Vec::new(),
-            suggestions: Vec::new(),
-        });
+        self.list.push(Diagnostic::new(code, Severity::Error, span, message));
         self.list.last_mut().expect("a diagnostic was just pushed")
     }
 
     /// Records a warning. A warning is printed like an error but never stops compilation
     /// (`Diagnostics::has_errors` ignores it).
     pub fn warning(&mut self, code: Code, span: Span, message: impl Into<String>) -> &mut Diagnostic {
-        self.list.push(Diagnostic {
-            code,
-            severity: Severity::Warning,
-            span,
-            message: message.into(),
-            notes: Vec::new(),
-            suggestions: Vec::new(),
-        });
+        self.list.push(Diagnostic::new(code, Severity::Warning, span, message));
         self.list.last_mut().expect("a diagnostic was just pushed")
     }
 
@@ -455,11 +553,19 @@ impl Diagnostics {
         let total = sorted.len();
         let shown = options.error_limit.unwrap_or(total).min(total);
         let mut text = String::new();
-        for d in &sorted[..shown] {
-            match options.format {
-                DiagnosticFormat::Human => render_human(&mut text, d, sources, options),
-                DiagnosticFormat::Short => render_short(&mut text, d, sources),
-                DiagnosticFormat::Json => render_json(&mut text, d, sources),
+        if options.format == DiagnosticFormat::Sarif {
+            text = sarif::log(&sorted[..shown], sources, &options.tool, total - shown);
+        } else {
+            for d in &sorted[..shown] {
+                match options.format {
+                    DiagnosticFormat::Human => render_human(&mut text, d, sources, options),
+                    DiagnosticFormat::Short => render_short(&mut text, d, sources),
+                    DiagnosticFormat::Json => {
+                        json::diagnostic(d, sources, rendered_text(d, sources)).write(&mut text);
+                        text.push('\n');
+                    }
+                    DiagnosticFormat::Sarif => {}
+                }
             }
         }
         Rendered { text, shown, total }
@@ -491,8 +597,10 @@ pub enum DiagnosticFormat {
     Human,
     /// One plain line per diagnostic, in the form `path:LINE:COL: error[E0000]: message`.
     Short,
-    /// One JSON object per line, with structured spans, notes, and suggestions.
+    /// One version 1 JSON object per line (`docs/diagnostics.md`).
     Json,
+    /// One SARIF 2.1.0 log for the whole run.
+    Sarif,
 }
 
 #[derive(Clone, Debug)]
@@ -504,11 +612,23 @@ pub struct RenderOptions {
     pub width: usize,
     /// Print at most this many diagnostics after sorting; `None` prints all of them.
     pub error_limit: Option<usize>,
+    /// Link the code of a human diagnostic to its entry in the error reference with an OSC 8 hyperlink. It applies
+    /// only together with `color`: the driver turns it on when color is on and the terminal supports hyperlinks.
+    pub hyperlinks: bool,
+    /// The tool and rules a SARIF log names.
+    pub tool: Tool,
 }
 
 impl Default for RenderOptions {
     fn default() -> RenderOptions {
-        RenderOptions { format: DiagnosticFormat::Human, color: false, width: 80, error_limit: None }
+        RenderOptions {
+            format: DiagnosticFormat::Human,
+            color: false,
+            width: 80,
+            error_limit: None,
+            hyperlinks: false,
+            tool: Tool::default(),
+        }
     }
 }
 
@@ -527,6 +647,10 @@ const SEVERITY: &str = "\x1b[1;31m";
 const CODE: &str = "\x1b[33m";
 const NOTE: &str = "\x1b[1;36m";
 const HELP: &str = "\x1b[1;32m";
+// An OSC 8 hyperlink is `ESC ] 8 ; ; URL ST text ESC ] 8 ; ; ST`; `ST` is `ESC \`.
+const OSC8_OPEN: &str = "\x1b]8;;";
+const OSC8_END: &str = "\x1b\\";
+const OSC8_CLOSE: &str = "\x1b]8;;\x1b\\";
 
 fn render_short(out: &mut String, d: &Diagnostic, sources: &SourceMap) {
     let file = sources.get(d.span.file);
@@ -542,7 +666,12 @@ fn render_human(out: &mut String, d: &Diagnostic, sources: &SourceMap, options: 
     let code = d.code.0;
     let plain_prefix = format!("{location}: {severity}[{code}]: ");
     let prefix = if options.color {
-        format!("{LOCATION}{location}{RESET}: {SEVERITY}{severity}{RESET}[{CODE}{code}{RESET}]: ")
+        // The link wraps the code and nothing else, so the visible text is the same with or without it.
+        let code = match d.code.url().filter(|_| options.hyperlinks) {
+            Some(url) => format!("{OSC8_OPEN}{url}{OSC8_END}{CODE}{code}{RESET}{OSC8_CLOSE}"),
+            None => format!("{CODE}{code}{RESET}"),
+        };
+        format!("{LOCATION}{location}{RESET}: {SEVERITY}{severity}{RESET}[{code}]: ")
     } else {
         plain_prefix.clone()
     };
@@ -564,11 +693,27 @@ fn render_human(out: &mut String, d: &Diagnostic, sources: &SourceMap, options: 
         }
         push_wrapped(out, &prefix, plain.chars().count(), &note.message, options.width, DETAIL_INDENT);
     }
-    for suggestion in &d.suggestions {
+    let help = d.help.iter().chain(d.suggestions.iter().map(|suggestion| &suggestion.message));
+    for message in help {
         let plain = String::from("  = help: ");
         let prefix = if options.color { format!("  = {HELP}help{RESET}: ") } else { plain.clone() };
-        push_wrapped(out, &prefix, plain.chars().count(), &suggestion.message, options.width, DETAIL_INDENT);
+        push_wrapped(out, &prefix, plain.chars().count(), message, options.width, DETAIL_INDENT);
     }
+    for child in &d.children {
+        let file = sources.get(child.span.file);
+        let (line, column) = file.line_col(child.span.lo);
+        let plain = format!("  = {}[{}]: {}:{}:{}: ", child.severity.as_str(), child.code.0, file.path, line, column);
+        push_wrapped(out, &plain, plain.chars().count(), &child.message, options.width, DETAIL_INDENT);
+    }
+}
+
+/// The human text of one diagnostic as the `rendered` field of a JSON diagnostic carries it: no color, no links,
+/// and no wrapping, so it does not depend on the terminal the compiler ran in.
+fn rendered_text(d: &Diagnostic, sources: &SourceMap) -> String {
+    let mut out = String::new();
+    let options = RenderOptions { width: 0, ..RenderOptions::default() };
+    render_human(&mut out, d, sources, &options);
+    out
 }
 
 const HEADER_INDENT: &str = "    ";
@@ -640,60 +785,6 @@ fn wrap_text(text: &str, first: usize, rest: usize) -> Vec<String> {
         lines.push(current);
     }
     lines
-}
-
-fn render_json(out: &mut String, d: &Diagnostic, sources: &SourceMap) {
-    let _ = write!(
-        out,
-        "{{\"type\":\"diagnostic\",\"severity\":\"{}\",\"code\":\"{}\",\"span\":{},\"message\":\"{}\"",
-        d.severity.as_str(),
-        d.code.0,
-        json_span(sources, d.span),
-        json_escape(&d.message)
-    );
-    out.push_str(",\"notes\":[");
-    for (i, note) in d.notes.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        let _ = write!(out, "{{\"message\":\"{}\",\"span\":", json_escape(&note.message));
-        match note.span {
-            Some(span) => out.push_str(&json_span(sources, span)),
-            None => out.push_str("null"),
-        }
-        out.push('}');
-    }
-    out.push_str("],\"suggestions\":[");
-    for (i, suggestion) in d.suggestions.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        let applicability = if suggestion.machine_applicable { ",\"applicability\":\"machine\"" } else { "" };
-        let _ = write!(
-            out,
-            "{{\"message\":\"{}\",\"span\":{},\"replacement\":\"{}\"{applicability}}}",
-            json_escape(&suggestion.message),
-            json_span(sources, suggestion.span),
-            json_escape(&suggestion.replacement)
-        );
-    }
-    out.push_str("]}\n");
-}
-
-fn json_span(sources: &SourceMap, span: Span) -> String {
-    let file = sources.get(span.file);
-    let (line, column) = file.line_col(span.lo);
-    let (end_line, end_column) = file.line_col(span.hi);
-    format!(
-        "{{\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{},\"byte_start\":{},\"byte_end\":{}}}",
-        json_escape(&file.path),
-        line,
-        column,
-        end_line,
-        end_column,
-        span.lo,
-        span.hi
-    )
 }
 
 /// Escapes a string for a JSON document. The JSON format is a stable interface for editors, so control
@@ -887,52 +978,309 @@ mod tests {
         assert_eq!(split, ["éé", "éé", "é"]);
     }
 
+    fn json_of(d: &Diagnostics, sources: &SourceMap) -> String {
+        d.render_with(
+            sources,
+            &RenderOptions { format: DiagnosticFormat::Json, color: true, ..RenderOptions::default() },
+        )
+        .text
+    }
+
     #[test]
-    fn json_contains_structured_spans_notes_and_suggestions() {
+    fn json_is_version_1_with_every_documented_field_in_order() {
         let mut sources = SourceMap::default();
         let file = sources.add("a.bd".into(), "mut x\n".into());
         let mut d = Diagnostics::default();
         d.error(Code::MISSING_MUT_MARKER, Span::new(file, 4, 5), "pass the argument as `mut ...`")
             .note(Span::new(file, 0, 3), "declared here")
             .suggest(Span::new(file, 4, 4), "add `mut` before this argument", "mut ");
-        let rendered = d.render_with(
-            &sources,
-            &RenderOptions { format: DiagnosticFormat::Json, color: true, ..RenderOptions::default() },
-        );
-        assert_eq!(
-            rendered.text,
-            "{\"type\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0114\",\
-             \"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":5,\"end_line\":1,\"end_column\":6,\
-             \"byte_start\":4,\"byte_end\":5},\"message\":\"pass the argument as `mut ...`\",\
-             \"notes\":[{\"message\":\"declared here\",\"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":1,\
-             \"end_line\":1,\"end_column\":4,\"byte_start\":0,\"byte_end\":3}}],\
-             \"suggestions\":[{\"message\":\"add `mut` before this argument\",\"span\":{\"file\":\"a.bd\",\
-             \"line\":1,\"column\":5,\"end_line\":1,\"end_column\":5,\"byte_start\":4,\"byte_end\":4},\
-             \"replacement\":\"mut \"}]}\n"
-        );
-        assert!(!rendered.text.contains('\x1b'));
+        let text = json_of(&d, &sources);
+        assert!(!text.contains('\x1b'));
+        assert_eq!(text.lines().count(), 1);
+        let keys = [
+            "\"type\":\"diagnostic\",\"version\":1,\"severity\":\"error\",\"code\":\"E0114\",\"message\":",
+            ",\"url\":\"https://ricardomilos7.github.io/burdin/errors/E0114\",\"span\":{\"file\":\"a.bd\",\"line\":1,",
+            ",\"labels\":[],\"notes\":[{\"message\":\"declared here\",\"span\":{\"file\":\"a.bd\"",
+            ",\"help\":[],\"related\":[{\"span\":{\"file\":\"a.bd\"",
+            ",\"children\":[],\"suggestions\":[{\"message\":\"add `mut` before this argument\",\"applicability\":\"manual\",",
+            "\"edits\":[{\"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":5,",
+            "\"replacement\":\"mut \"}]}],\"rendered\":\"a.bd:1:5: error[E0114]: pass the argument as `mut ...`\\n",
+        ];
+        let mut from = 0;
+        for key in keys {
+            let at = text[from..].find(key).unwrap_or_else(|| panic!("`{key}` missing or out of order in {text}"));
+            from += at + key.len();
+        }
     }
 
     #[test]
-    fn json_represents_spanless_notes_and_deletions() {
+    fn json_represents_spanless_notes_deletions_and_machine_fixes() {
         let mut sources = SourceMap::default();
         let file = sources.add("a.bd".into(), "mut x\n".into());
         let mut d = Diagnostics::default();
         d.error(Code::UNNEEDED_MUT_MARKER, Span::new(file, 4, 5), "no marker")
             .note_without_span("see the guide")
-            .suggest(Span::new(file, 0, 4), "remove the `mut` marker", "");
-        let rendered =
-            d.render_with(&sources, &RenderOptions { format: DiagnosticFormat::Json, ..RenderOptions::default() });
-        assert_eq!(
-            rendered.text,
-            "{\"type\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0115\",\
-             \"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":5,\"end_line\":1,\"end_column\":6,\
-             \"byte_start\":4,\"byte_end\":5},\"message\":\"no marker\",\
-             \"notes\":[{\"message\":\"see the guide\",\"span\":null}],\
-             \"suggestions\":[{\"message\":\"remove the `mut` marker\",\"span\":{\"file\":\"a.bd\",\
-             \"line\":1,\"column\":1,\"end_line\":1,\"end_column\":5,\"byte_start\":0,\"byte_end\":4},\
-             \"replacement\":\"\"}]}\n"
+            .suggest_safe(Span::new(file, 0, 4), "remove the `mut` marker", "");
+        let text = json_of(&d, &sources);
+        assert!(text.contains("\"notes\":[{\"message\":\"see the guide\",\"span\":null}]"), "{text}");
+        assert!(text.contains("\"related\":[]"), "a note without a span is not related information: {text}");
+        assert!(text.contains("\"applicability\":\"machine\""), "{text}");
+        assert!(text.contains("\"replacement\":\"\"}]}]"), "{text}");
+    }
+
+    #[test]
+    fn json_carries_labels_help_children_and_related_information() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "let a = b\n".into());
+        let mut d = Diagnostics::default();
+        let child = Diagnostic::new(Code::UNKNOWN_NAME, Severity::Warning, Span::new(file, 4, 5), "also unused");
+        d.error(Code::TYPE_MISMATCH, Span::new(file, 8, 9), "mismatch")
+            .label(Span::new(file, 8, 9), "found here")
+            .label(Span::new(file, 4, 5), "declared here")
+            .note(Span::new(file, 0, 3), "see this")
+            .help("convert it")
+            .child(child);
+        let text = json_of(&d, &sources);
+        assert!(text.contains("\"labels\":[{\"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":9,"), "{text}");
+        assert!(text.contains("\"message\":\"found here\",\"primary\":true}"), "{text}");
+        assert!(text.contains("\"message\":\"declared here\",\"primary\":false}"), "{text}");
+        assert!(text.contains("\"help\":[\"convert it\"]"), "{text}");
+        assert!(text.contains("\"related\":[{\"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":1,"), "{text}");
+        assert!(
+            text.contains("\"children\":[{\"severity\":\"warning\",\"code\":\"E0002\",\"message\":\"also unused\""),
+            "{text}"
         );
+        // A child has the body of a diagnostic and no envelope or rendered text of its own.
+        assert_eq!(text.matches("\"type\":\"diagnostic\"").count(), 1);
+        assert_eq!(text.matches("\"rendered\"").count(), 1);
+        let human = d.render_with(&sources, &RenderOptions { width: 0, ..RenderOptions::default() }).text;
+        assert_eq!(
+            human,
+            "a.bd:1:9: error[E0003]: mismatch\n\
+             \x20 = note: a.bd:1:1: see this\n\
+             \x20 = help: convert it\n\
+             \x20 = warning[E0002]: a.bd:1:5: also unused\n"
+        );
+    }
+
+    /// A diagnostic that uses every field of the version 1 format: a primary span with a label, a second label, a
+    /// note with a span and one without, help, a machine-applicable suggestion, and a child. The expected line is
+    /// the committed golden `tests/diagnostics/composite.golden.json`, which `tests/check_diagnostics.py` also
+    /// validates against the schema. `BURDIN_UPDATE_GOLDEN=1` rewrites it.
+    #[test]
+    fn json_golden_for_a_diagnostic_with_every_field() {
+        let mut sources = SourceMap::default();
+        let text = "let é = 𝄞 + oops\nlet other = é\n";
+        let file = sources.add("composite.bd".into(), text.into());
+        let at = |needle: &str, from: usize| {
+            let lo = text[from..].find(needle).expect("the needle is in the text") + from;
+            Span::new(file, lo as u32, (lo + needle.len()) as u32)
+        };
+        let oops = at("oops", 0);
+        let declared = at("é", 0);
+        let other = at("other", 0);
+        let mut d = Diagnostics::default();
+        let child = Diagnostic::new(Code("L0007"), Severity::Warning, other, "`other` is never read");
+        d.error(Code::UNKNOWN_NAME, oops, "unknown name `oops`")
+            .label(oops, "not found in this scope")
+            .label(declared, "`é` is declared here")
+            .note(at("é", 20), "`é` is used again here")
+            .note_without_span("names are looked up in the enclosing scopes and the imports")
+            .help("check the spelling")
+            .suggest_safe(oops, "use `é` instead", "é")
+            .child(child);
+        let actual = json_of(&d, &sources);
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/diagnostics/composite.golden.json");
+        if std::env::var_os("BURDIN_UPDATE_GOLDEN").is_some() {
+            std::fs::write(path, &actual).expect("the golden file can be written");
+        }
+        let golden = std::fs::read_to_string(path).expect("the golden file exists").replace("\r\n", "\n");
+        assert_eq!(
+            actual, golden,
+            "the JSON format changed: update docs/diagnostics.md and the schema, then rerun with BURDIN_UPDATE_GOLDEN=1"
+        );
+    }
+
+    #[test]
+    fn json_columns_count_characters_bytes_and_utf16_units() {
+        // `é` is 2 bytes and 1 UTF-16 unit; `𝄞` is 4 bytes and 2 UTF-16 units.
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "é𝄞x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::SYNTAX, Span::new(file, 6, 7), "at x");
+        let text = json_of(&d, &sources);
+        assert!(
+            text.contains(
+                "\"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":3,\"end_line\":1,\"end_column\":4,\
+                 \"byte_start\":6,\"byte_end\":7,\"utf8_column\":7,\"utf16_column\":4,\
+                 \"end_utf8_column\":8,\"end_utf16_column\":5}"
+            ),
+            "{text}"
+        );
+        let position = sources.get(file).position(6);
+        assert_eq!((position.column, position.utf8_column, position.utf16_column), (3, 7, 4));
+    }
+
+    #[test]
+    fn json_rendered_is_the_plain_unwrapped_human_text() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::UNKNOWN_NAME, Span::new(file, 0, 1), "unknown name `a_very_long_identifier_that_does_not_fit`");
+        let text = d
+            .render_with(
+                &sources,
+                &RenderOptions { format: DiagnosticFormat::Json, color: true, width: 20, ..RenderOptions::default() },
+            )
+            .text;
+        assert!(
+            text.contains(
+                "\"rendered\":\"a.bd:1:1: error[E0002]: unknown name `a_very_long_identifier_that_does_not_fit`\\n\""
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn codes_link_to_the_reference_except_those_it_does_not_explain() {
+        assert_eq!(Code::TYPE_MISMATCH.url().as_deref(), Some("https://ricardomilos7.github.io/burdin/errors/E0003"));
+        assert_eq!(Code("L0007").url().as_deref(), Some("https://ricardomilos7.github.io/burdin/lints/L0007"));
+        assert_eq!(Code("E9000").url(), None);
+        assert_eq!(Code("X1").url(), None);
+        assert_eq!(Code("E00AB").url(), None);
+    }
+
+    #[test]
+    fn human_links_the_code_only_with_color_and_hyperlinks_and_keeps_the_visible_text() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::TYPE_MISMATCH, Span::new(file, 0, 1), "expected `i32`, found `str`");
+        let render = |color, hyperlinks| {
+            d.render_with(&sources, &RenderOptions { color, hyperlinks, width: 0, ..RenderOptions::default() }).text
+        };
+        let link =
+            "\x1b]8;;https://ricardomilos7.github.io/burdin/errors/E0003\x1b\\\x1b[33mE0003\x1b[0m\x1b]8;;\x1b\\";
+        assert!(render(true, true).contains(&format!("[{link}]")), "{}", render(true, true));
+        assert!(!render(true, false).contains("\x1b]8"));
+        // Without color there is no styling at all, links included.
+        assert_eq!(render(false, true), render(false, false));
+        assert!(!render(false, true).contains('\x1b'));
+        assert_eq!(strip_ansi_and_links(&render(true, true)), render(false, false));
+        // `E9000` has no page to link to.
+        let mut e = Diagnostics::default();
+        e.error(Code("E9000"), Span::new(file, 0, 1), "not yet");
+        let text =
+            e.render_with(&sources, &RenderOptions { color: true, hyperlinks: true, ..RenderOptions::default() }).text;
+        assert!(!text.contains("\x1b]8"), "{text}");
+    }
+
+    fn strip_ansi_and_links(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch != '\x1b' {
+                out.push(ch);
+                continue;
+            }
+            match chars.next() {
+                Some('[') => {
+                    for ch in chars.by_ref() {
+                        if ch == 'm' {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    // An OSC sequence ends at `ESC \`.
+                    while let Some(ch) = chars.next() {
+                        if ch == '\x1b' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn sarif_log_has_one_run_with_rules_results_related_locations_and_fixes() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("src/a.bd".into(), "mut x\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::MISSING_MUT_MARKER, Span::new(file, 4, 5), "pass the argument as `mut ...`")
+            .note(Span::new(file, 0, 3), "declared here")
+            .note_without_span("see the guide")
+            .suggest_safe(Span::new(file, 4, 4), "add `mut` before this argument", "mut ");
+        d.warning(Code("L0007"), Span::new(file, 4, 5), "unused");
+        let tool = Tool {
+            name: "burdin".into(),
+            version: "1.2.3".into(),
+            information_uri: "https://example.test".into(),
+            rules: vec![Rule {
+                id: "E0114".into(),
+                name: "Missing mut marker".into(),
+                help_uri: Code::MISSING_MUT_MARKER.url(),
+            }],
+        };
+        let rendered = d.render_with(
+            &sources,
+            &RenderOptions { format: DiagnosticFormat::Sarif, tool, ..RenderOptions::default() },
+        );
+        let text = rendered.text;
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.starts_with(
+            "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{"
+        ));
+        assert!(text.contains("\"tool\":{\"driver\":{\"name\":\"burdin\",\"version\":\"1.2.3\""), "{text}");
+        assert!(text.contains("\"rules\":[{\"id\":\"E0114\",\"name\":\"Missing mut marker\""), "{text}");
+        assert!(text.contains("\"helpUri\":\"https://ricardomilos7.github.io/burdin/errors/E0114\""), "{text}");
+        // A code the registry does not list gets a rule of its own, so every result can point at one.
+        assert!(text.contains("{\"id\":\"L0007\",\"name\":\"L0007\""), "{text}");
+        assert!(text.contains("\"ruleId\":\"E0114\",\"ruleIndex\":0,\"level\":\"error\""), "{text}");
+        assert!(text.contains("\"ruleId\":\"L0007\",\"ruleIndex\":1,\"level\":\"warning\""), "{text}");
+        assert!(
+            text.contains(
+                "\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"src/a.bd\",\
+                 \"uriBaseId\":\"%SRCROOT%\"},\"region\":{\"startLine\":1,\"startColumn\":5,\"endLine\":1,\
+                 \"endColumn\":6,\"byteOffset\":4,\"byteLength\":1}}}]"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("\"relatedLocations\":[{\"physicalLocation\":"), "{text}");
+        assert!(text.contains("\"message\":{\"text\":\"declared here\"}"), "{text}");
+        assert!(
+            text.contains(
+                "\"fixes\":[{\"description\":{\"text\":\"add `mut` before this argument\"},\"artifactChanges\":"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("\"insertedContent\":{\"text\":\"mut \"}"), "{text}");
+        assert!(
+            text.contains("\"properties\":{\"notes\":[\"see the guide\"],\"fixIsMachineApplicable\":[true]}"),
+            "{text}"
+        );
+        assert!(text.contains("\"invocations\":[{\"executionSuccessful\":false}]"), "{text}");
+        assert!(text.contains("\"columnKind\":\"unicodeCodePoints\""), "{text}");
+        assert!(!text.contains("diagnosticsNotShown"), "{text}");
+    }
+
+    #[test]
+    fn sarif_with_no_diagnostics_is_a_valid_empty_log_and_records_a_limit() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".into(), "x\n".into());
+        let options = RenderOptions { format: DiagnosticFormat::Sarif, ..RenderOptions::default() };
+        let empty = Diagnostics::default().render_with(&sources, &options).text;
+        assert!(empty.contains("\"results\":[]"), "{empty}");
+        assert!(empty.contains("\"invocations\":[{\"executionSuccessful\":true}]"), "{empty}");
+        let mut d = Diagnostics::default();
+        d.error(Code::SYNTAX, Span::new(file, 0, 1), "one");
+        d.error(Code::SYNTAX, Span::new(file, 1, 2), "two");
+        let limited = d.render_with(&sources, &RenderOptions { error_limit: Some(1), ..options }).text;
+        assert!(limited.contains("\"properties\":{\"diagnosticsNotShown\":1}"), "{limited}");
     }
 
     #[test]

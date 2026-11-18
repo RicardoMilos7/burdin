@@ -52,9 +52,11 @@ allowed before it stays allowed. Warnings alone do not change the exit status.
 Tests: `config/deny_by_name.bd`, `config/deny_warnings.bd`, `check_lint.py` (`--deny-warnings`).
 
 **LN5. Output and status.** A diagnostic has the lint's code (`L0007`), a primary span, a message, and notes. The
-diagnostic formats and the color and width options are the compiler's (`--diagnostic-format human|short|json`). After
-the diagnostics the command prints `lint: N warnings, M errors`, or `lint: no warnings in <target>` when there is
-nothing to report; in `json` format the last line is `{"type":"lint-summary","warnings":N,"errors":M}`. The exit status
+diagnostic formats and the color and width options are the compiler's (`--diagnostic-format human|short|json|sarif`,
+`spec/diagnostics.md`). After the diagnostics the command prints `lint: N warnings, M errors`, or `lint: no warnings in
+<target>` when there is nothing to report; in `json` format the last line is
+`{"type":"lint-summary","version":1,"warnings":N,"errors":M}`, and in `sarif` format the whole output is one SARIF log
+(written even when nothing was found) with no line after it. The exit status
 is 0 when no error was reported, 1 for a lint at `deny` or a compile error (or a source file that cannot be read), and 2
 for a usage error, an invalid manifest `[lint]` table, or a failed write.
 Tests: `check_lint.py` (summary line, json output, usage errors, `a missing file`).

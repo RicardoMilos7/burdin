@@ -6,6 +6,28 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Machine-readable diagnostics (issue #236)
+
+- The JSON format is frozen as version 1 (issue #642, `spec/diagnostics.md` DG2-DG7). Every object carries
+  `"version": 1`. A diagnostic has its `code`, `severity`, `message`, `url`, primary `span`, `labels`, `notes`, `help`,
+  `related` (the notes that have a span, shaped like the Language Server Protocol's `relatedInformation`), `children`,
+  `suggestions` (each with `applicability` and a list of `edits`), and the `rendered` human text. A location has line
+  and column in Unicode scalar values, UTF-8 bytes, and UTF-16 code units, and byte offsets. The schema is
+  `docs/diagnostic.schema.json` (closed, so any change to the output changes it) and `docs/diagnostics.md` documents
+  the fields and the versioning rule. `tests/check_diagnostics.py` validates every line printed for every failing
+  conformance test against the schema, checks that mutated objects are rejected, and compares goldens in
+  `tests/diagnostics/`. The model gained `labels`, `help`, and `children`; the human format is unchanged.
+- `--diagnostic-format sarif` writes one SARIF 2.1.0 log (issue #643, DG8-DG11): the error-code registry and the lints
+  as rules with a link to each entry, results with locations, related locations, and fixes, and `invocations` saying
+  whether the run succeeded. `burdin build` and `burdin lint` write the log even when nothing was found; `run` and
+  `test` write one only when the compilation reported something; `burdin fmt` refuses the format. A subset schema in
+  `tests/diagnostics/sarif-subset.schema.json` and a golden result list prove the shape.
+- Every diagnostic links to its entry in the hosted error reference (issue #644, DG12-DG14):
+  `https://ricardomilos7.github.io/burdin/errors/E0003` (`/lints/L0007` for a lint), a scheme that ends in the code
+  and is pinned by `tests/check_error_docs.py`. It is the `url` of JSON, the `helpUri` of SARIF, a line printed by
+  `burdin explain`, and an OSC 8 hyperlink on the code in colored human output when the terminal supports it
+  (`FORCE_HYPERLINK=1` or `0` decides). The short format stays one plain line.
+
 ### `burdin test` filters, `--list`, reports, reruns, and shards (issue #235)
 
 - **Filters (#638).** `burdin test <target> [<filter>...]` runs the tests whose full path (`module.submodule.test name`,

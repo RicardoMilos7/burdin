@@ -193,8 +193,10 @@ doc options:
   --deny-warnings          exit with status 1 when a doc comment has a broken link
 
 diagnostics:
-  --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
-                                          diagnostic; json prints one JSON object per line
+  --diagnostic-format <human|short|json|sarif>
+                                          human (default) colors and wraps; short prints one plain line per
+                                          diagnostic; json prints one version 1 JSON object per line; sarif
+                                          prints one SARIF 2.1.0 log (docs/diagnostics.md)
   --color <auto|always|never>             color (default auto: only when stderr is a terminal)
   --no-color                              same as --color never
   --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
@@ -503,18 +505,19 @@ then 80. Wrapping only inserts line breaks and indentation, and the first line a
 `path:LINE:COL: error[E0000]: message` shape.
 
 **Formats.** `--diagnostic-format short` prints exactly one plain line per diagnostic, with no notes,
-suggestions, color, or wrapping; it is the stable format the test scripts parse. `--diagnostic-format json` prints
-one JSON object per line, and the last line is a summary object:
+suggestions, link, color, or wrapping; it is the stable format the test scripts parse. `--diagnostic-format json`
+prints one version 1 JSON object per line (a diagnostic with its spans, labels, notes, help, children, related
+information, suggestions with edits, the link to its entry in the error reference, and the `rendered` human text),
+and the last line is a summary object. `--diagnostic-format sarif` prints one SARIF 2.1.0 log for the whole run, for
+code-scanning services; `burdin lint` supports it too, and `burdin build` writes a log even when it found nothing.
+JSON, SARIF, and short output are never colored or wrapped; `--color` and `--width` only affect `human`. The fields,
+the schema (`docs/diagnostic.schema.json`), and the SARIF mapping are in [`docs/diagnostics.md`](docs/diagnostics.md).
 
-```json
-{"type":"diagnostic","severity":"error","code":"E0114","span":{"file":"bad.bd","line":10,"column":9,"end_line":10,"end_column":10,"byte_start":140,"byte_end":141},"message":"this parameter of `bump` is `mut`; pass the argument as `mut ...`","notes":[],"suggestions":[{"message":"add `mut` before this argument","span":{"file":"bad.bd","line":10,"column":9,"end_line":10,"end_column":9,"byte_start":140,"byte_end":140},"replacement":"mut "}]}
-{"type":"summary","errors":1,"shown":1,"limit":null}
-```
-
-Each diagnostic carries its primary `span`, `notes` (a message and an optional span), and `suggestions` (a
-message, a span, and the replacement text). A suggestion with `byte_start == byte_end` inserts its replacement;
-an empty replacement deletes the span. Together they are what an editor turns into a diagnostic and a quick-fix
-code action. JSON and short output are never colored or wrapped. `--color` and `--width` only affect `human`.
+**Links.** Every diagnostic has a stable link to its entry in the hosted error reference,
+`https://ricardomilos7.github.io/burdin/errors/E0003` for E0003 (`/lints/L0007` for a lint). It is the `url` of the
+JSON format and the `helpUri` of the SARIF rule, and in colored `human` output the code is a terminal hyperlink
+(OSC 8) when the terminal supports it. `FORCE_HYPERLINK=1` turns the hyperlink on and `FORCE_HYPERLINK=0` turns it off;
+without color there is none.
 
 The error codes come from the registry in [`tests/README.md`](tests/README.md#error-codes). `E9000` is the temporary
 code for "not implemented in this compiler yet"; the conformance suite does not use it, and
@@ -703,9 +706,13 @@ items, the JSON schema, the coverage report and its agreement with `missing_docs
 Two checks cover the diagnostics themselves, and every CI job runs them after the build:
 
 - `tests/check_diagnostics.py` checks the default and short and JSON formats, color and `NO_COLOR`, wrapping and
-  `--width`, notes and suggestions, `--error-limit`, and deterministic ordering.
+  `--width`, notes and suggestions, `--error-limit`, and deterministic ordering. It also validates the JSON the driver
+  prints for every failing conformance test against [`docs/diagnostic.schema.json`](docs/diagnostic.schema.json), the
+  golden files in `tests/diagnostics/`, the SARIF log of `build` and `lint`, and the hyperlinks
+  ([`docs/diagnostics.md`](docs/diagnostics.md)).
 - `tests/check_error_docs.py` checks that [`docs/error-codes.md`](docs/error-codes.md) mirrors the registry, that
-  every snippet fails with exactly the marked diagnostics, and that `burdin explain` prints every entry.
+  every snippet fails with exactly the marked diagnostics, that every diagnostic links to its entry at the stable
+  address, and that `burdin explain` prints every entry.
 
 The dependency audit needs no built compiler: `tests/check_deps.py` reads `Cargo.lock`, the manifests, and
 [`tests/dependencies.txt`](tests/dependencies.txt), and re-verifies the licenses through `cargo metadata` when it can.

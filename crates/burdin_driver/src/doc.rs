@@ -135,6 +135,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,
+        report_clean: false,
         run_build_scripts: true,
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {
