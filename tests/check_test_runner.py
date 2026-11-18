@@ -776,7 +776,12 @@ with harness.temporary_dir("burdin-runner-") as work:
         failed.get("reason"),
         "expected the example to fail with E0002, but it failed with E0003",
     )
-    expect_contains("doc tests (json mapped diagnostics)", "src/lib.bd:74:20: error[E0003]", failed.get("stderr", ""))
+    # The paths in a diagnostic use the platform's separator; compare with forward slashes everywhere.
+    expect_contains(
+        "doc tests (json mapped diagnostics)",
+        "src/lib.bd:74:20: error[E0003]",
+        failed.get("stderr", "").replace("\\", "/"),
+    )
     if failed.get("reason") is None:
         add_problem(f"doc tests (json events): standard output was {out!r}, standard error was {err!r}")
 
