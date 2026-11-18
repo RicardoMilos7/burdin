@@ -115,7 +115,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
                 return Err(format!(
                     "package `{}` has no entry point: expected {}",
                     package.name,
-                    crate::source_path_text(&dir.join("src/main.bd"))
+                    source_path_text(&dir.join("src/main.bd"))
                 ));
             }
             // A library package tested on its own starts from the module other packages import, or any module.
@@ -511,11 +511,11 @@ fn strip_comment(line: &str) -> &str {
 fn discover_modules(dir: &Path) -> Result<Vec<ModuleFile>, String> {
     let src = dir.join("src");
     if !src.is_dir() {
-        return Err(format!("package {} has no `src` directory", crate::source_path_text(dir)));
+        return Err(format!("package {} has no `src` directory", source_path_text(dir)));
     }
     let modules = discover_modules_under(&src)?;
     if modules.is_empty() {
-        return Err(format!("package {} has no `.bd` files under `src`", crate::source_path_text(dir)));
+        return Err(format!("package {} has no `.bd` files under `src`", source_path_text(dir)));
     }
     Ok(modules)
 }
@@ -608,7 +608,7 @@ mod tests {
         let Err(error) = load_impl(&dir, true) else {
             panic!("a package without `src/main.bd` must not load");
         };
-        let expected = crate::source_path_text(&dir.join("src/main.bd"));
+        let expected = source_path_text(&dir.join("src/main.bd"));
         assert!(error.contains(&expected), "the error does not name {expected}: {error}");
         assert!(!error.contains(r"\\?\"), "the error prints a verbatim path: {error}");
     }
