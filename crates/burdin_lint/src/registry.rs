@@ -105,6 +105,8 @@ lints! {
         "an allocation inside a loop does not change between iterations; hoist it";
     NeedlessToList, "needless_to_list", "L0016", Warn,
         "`to_list()` builds a list only to iterate it right away";
+    MissingDocs, "missing_docs", "L0017", Allow,
+        "a public item has no doc comment";
 }
 
 impl fmt::Display for Lint {

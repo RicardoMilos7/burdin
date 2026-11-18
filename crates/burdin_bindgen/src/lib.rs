@@ -48,8 +48,7 @@ pub enum Error {
 /// Reads `options.header` and generates its bindings.
 pub fn generate(options: &Options) -> Result<Output, Error> {
     let clang = clang::Clang::load().map_err(Error::Load)?;
-    let mut args = vec!["-x".to_string(), "c".to_string()];
-    args.extend(options.clang_args.iter().cloned());
+    let args = clang_args(options);
     let unit = clang.parse(&options.header, &args).map_err(Error::Clang)?;
     let errors: Vec<String> = unit.diagnostics().into_iter().filter(|d| d.is_error).map(|d| d.text).collect();
     if !errors.is_empty() {
@@ -73,4 +72,72 @@ pub fn generate(options: &Options) -> Result<Output, Error> {
     };
     let warnings = generated.module.notes.clone();
     Ok(Output { module: generated.module.render(), wrappers, warnings })
+}
+
+/// The command line the C front end is given: `-x c`, the caller's options, and on macOS the SDK's sysroot when the
+/// caller did not name one. A libclang from Homebrew has no sysroot of its own, and without it every system header
+/// (`<stddef.h>`, `<stdint.h>`, ...) is reported missing (BG2).
+fn clang_args(options: &Options) -> Vec<String> {
+    let mut args = vec!["-x".to_string(), "c".to_string()];
+    args.extend(options.clang_args.iter().cloned());
+    let names_a_sysroot = args.iter().any(|arg| arg.starts_with("-isysroot") || arg.starts_with("--sysroot"));
+    if cfg!(target_os = "macos")
+        && !names_a_sysroot
+        && let Some(sdk) = macos_sdk()
+    {
+        args.push("-isysroot".to_string());
+        args.push(sdk);
+    }
+    args
+}
+
+/// The macOS SDK directory `xcrun --show-sdk-path` reports. `None` on other systems, when `xcrun` is missing or
+/// fails, and when the directory it prints does not exist.
+#[cfg(target_os = "macos")]
+fn macos_sdk() -> Option<String> {
+    let output = std::process::Command::new("xcrun").args(["--show-sdk-path"]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if path.is_empty() || !std::path::Path::new(&path).is_dir() {
+        return None;
+    }
+    Some(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_sdk() -> Option<String> {
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(args: &[&str]) -> Options {
+        Options {
+            header: PathBuf::from("c/lib.h"),
+            clang_args: args.iter().map(|arg| arg.to_string()).collect(),
+            wrappers: None,
+        }
+    }
+
+    #[test]
+    fn the_front_end_gets_c_and_the_callers_options() {
+        assert_eq!(clang_args(&options(&["-Iinc", "-DNAME=1"])), ["-x", "c", "-Iinc", "-DNAME=1"]);
+    }
+
+    #[test]
+    fn off_macos_no_sysroot_is_added() {
+        if !cfg!(target_os = "macos") {
+            assert_eq!(clang_args(&options(&[])), ["-x", "c"]);
+        }
+    }
+
+    #[test]
+    fn a_sysroot_from_the_caller_is_kept() {
+        let args = clang_args(&options(&["-isysroot", "/somewhere"]));
+        assert_eq!(args.iter().filter(|arg| *arg == "-isysroot").count(), 1);
+    }
 }

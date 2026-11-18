@@ -441,7 +441,16 @@ impl<'t> Sema<'t> {
                     *slot = Some(id);
                 }
                 if let [Some(func), Some(body)] = declared {
-                    self.tests.push(tir::TestEntry { name: test.name.clone(), func, body, attrs, comptime: None });
+                    let module_path = test_module_path(&self.globals.modules[module].path);
+                    self.tests.push(tir::TestEntry {
+                        name: test.name.clone(),
+                        module: module_path,
+                        span: test.name_span,
+                        func,
+                        body,
+                        attrs,
+                        comptime: None,
+                    });
                 }
             }
         }
@@ -626,6 +635,16 @@ pub(crate) fn method_bounds(
 /// (spec/test-runner.md). An unknown name, a repeated attribute, a value an attribute does not take, `should_panic`
 /// together with `should_fail`, or `differential` together with `should_panic` or `should_fail` is E0170. A bad
 /// attribute never removes the test from the program, so one report does not turn into follow-on diagnostics.
+/// The module part of a test's full path: the file's path inside the package's `src`, dotted. The entry files
+/// `src/main.bd` and `src/lib.bd` (a one-segment `main` or `lib`) and a single-file target contribute nothing, so
+/// a test in the package's entry file is named by its own name alone (spec/test-runner.md).
+fn test_module_path(path: &[String]) -> String {
+    match path {
+        [only] if only == "main" || only == "lib" => String::new(),
+        _ => path.join("."),
+    }
+}
+
 fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestAttrs {
     let mut attrs = tir::TestAttrs::default();
     let mut seen: Vec<&str> = Vec::new();

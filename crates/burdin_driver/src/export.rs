@@ -20,8 +20,7 @@ use burdin_tir::{ExprKind, FloatTy, IntTy, Program, Ty};
 
 use crate::{CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, front_end, render_options};
 
-pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>) -> ExitCode {
-    let diagnostics = DiagnosticOptions::default();
+pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &DiagnosticOptions) -> ExitCode {
     let options = CompileOptions {
         release: false,
         debug: false,
@@ -33,16 +32,17 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>) -> ExitCode {
         link_libs: &[],
         // A library package has no `main`, and the checks are the same.
         test_mode: true,
-        diagnostics: &diagnostics,
+        diagnostics,
         comptime_steps: None,
         emit_deps: None,
         run_build_scripts: true,
+        report_clean: false,
     };
     let front = match front_end(target, &options, &SourceOverrides::new()) {
         Ok(front) => front,
         Err(code) => return code,
     };
-    let render = render_options(&diagnostics, std::io::stderr().is_terminal());
+    let render = render_options(diagnostics, std::io::stderr().is_terminal());
     if front.diags.has_errors() {
         eprint!("{}", front.diags.render_with(&front.sources, &render).text);
         eprintln!("error: could not check {} (fix the errors before exporting)", target.display());

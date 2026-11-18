@@ -210,6 +210,7 @@ fn run_script(
         diagnostics: options.diagnostics,
         comptime_steps: options.comptime_steps,
         emit_deps: None,
+        report_clean: false,
         run_build_scripts: false,
     };
     let compiled = crate::compile(script, out, Some(&exe), &nested).map_err(|_| {

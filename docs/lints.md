@@ -21,11 +21,11 @@ for a command line problem.
 
 ## Levels
 
-Each lint is at one of three levels. `allow` does not run it, `warn` (the default of every lint) reports it as a warning,
+Each lint is at one of three levels. `allow` does not run it, `warn` (the default of every lint except `missing_docs`) reports it as a warning,
 and `deny` reports it as an error, which makes `burdin lint` exit with status 1. The levels come from three places,
 and a later one wins over an earlier one:
 
-1. the default, which is `warn`;
+1. the default, which is `warn` (`allow` for `missing_docs`);
 2. the `[lint]` table of `burdin.toml`, one `name = "level"` line per lint;
 3. the command line: `-A <lint>`, `-W <lint>`, `-D <lint>` (or `--allow`, `--warn`, `--deny`), applied left to right.
 
@@ -427,6 +427,32 @@ fn main() {
     for v in xs.iter().to_list() { //~ L0016
         println("{}", v)
     }
+}
+```
+<!-- /lint-example -->
+
+## L0017: missing_docs
+
+A public item has no `///` comment. The items are the ones a reader of the documentation looks for: the public functions,
+structs, enums, interfaces, type aliases, constants, derives, `extern` functions, and extension methods of a module, the
+methods of an inherent `impl` block, and the methods of a public interface. `priv` items, the members of a `priv` type,
+generated code, and `main` are never reported, and neither are fields, variants, and the methods that implement an
+interface (the interface's own comment describes them). A blank line or an ordinary `//` comment between the comment
+and the item detaches it. This lint is `allow` by default, so it runs only when it is turned on with `-W missing_docs`,
+`-D missing_docs`, or the `[lint]` table. `burdin doc --coverage` counts the same items.
+
+**How to fix:** write a `///` comment on the lines directly above the item, or make the item `priv` if it is not part of the
+package's interface.
+
+<!-- lint-example: L0017 -->
+```burdin
+fn area(width: i32, height: i32): i32 { //~ L0017
+    width * height
+}
+
+/// Prints the greeting.
+fn main() {
+    println("hello")
 }
 ```
 <!-- /lint-example -->

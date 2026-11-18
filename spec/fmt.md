@@ -194,7 +194,8 @@ burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diag
   output except the name of the file when it would change.
 - `--range` selects FM11.
 - The diagnostic options (`--diagnostic-format`, `--color`, `--no-color`, `--width`, `--error-limit`) apply to syntax
-  errors, which are reported exactly as `burdin build` reports them.
+  errors, which are reported exactly as `burdin build` reports them. `--diagnostic-format sarif` is the exception: `fmt`
+  reports file by file and a SARIF log is one document, so it is a usage error (`spec/diagnostics.md`, DG11).
 
 **Exit status.** 0: everything is formatted (or was formatted). 1: `--check` found files that are not formatted.
 2: a usage error, a file or standard input that cannot be read or written, a syntax error in a file, or an internal

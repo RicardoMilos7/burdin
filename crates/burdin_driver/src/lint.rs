@@ -152,6 +152,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,
+        report_clean: false,
         run_build_scripts: true,
     };
     if args.fix { fix(&args, &options) } else { check(&args, &options) }
@@ -166,8 +167,8 @@ fn print_list() {
     );
 }
 
-const UNKNOWN_LINT_NAME: &str = "unknown_lint";
-const UNKNOWN_LINT_CODE: &str = "L0000";
+pub(crate) const UNKNOWN_LINT_NAME: &str = "unknown_lint";
+pub(crate) const UNKNOWN_LINT_CODE: &str = "L0000";
 
 fn explain(name: &str) -> ExitCode {
     let lint = Lint::from_name(name).or_else(|| Lint::from_code(&name.to_ascii_uppercase()));
@@ -286,8 +287,13 @@ fn report(outcome: &Outcome, args: &LintArgs) -> bool {
     let warnings = all.iter().filter(|d| d.severity == Severity::Warning).count();
     match render.format {
         DiagnosticFormat::Json => {
-            eprintln!("{{\"type\":\"lint-summary\",\"warnings\":{warnings},\"errors\":{errors}}}");
+            let version = burdin_diag::JSON_VERSION;
+            eprintln!(
+                "{{\"type\":\"lint-summary\",\"version\":{version},\"warnings\":{warnings},\"errors\":{errors}}}"
+            );
         }
+        // The log is the whole report, even when the lints found nothing, and nothing may follow it.
+        DiagnosticFormat::Sarif => {}
         _ => {
             if rendered.shown < rendered.total {
                 let hidden = rendered.total - rendered.shown;

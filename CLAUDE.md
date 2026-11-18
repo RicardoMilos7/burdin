@@ -37,9 +37,11 @@ not updated and may disagree with the repository.
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
    resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the `bindgen` a script may invoke, and `spec/bindgen.md` is `burdin bindgen`: libclang, the
-   import rules, layout checks, wrappers, and `--export`.
-   `[lint]` table, suppression comments, and `--fix`.
+   modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
+   import rules, layout checks, wrappers, and `--export`; `spec/lint.md` is `burdin lint` (the `[lint]` table,
+   suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
+   intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report; and
+   `spec/diagnostics.md` is the versioned JSON diagnostic format, the SARIF log, and the links to the error reference.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -83,6 +85,7 @@ python3 tests/check_diagnostics.py       check color, width, formats, error limi
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
 python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
+python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links, JSON, coverage, and the output rules
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
@@ -131,7 +134,10 @@ crates/
   burdin_bindgen/           `burdin bindgen` (spec/bindgen.md): libclang loaded at run time (`clang.rs`), the C
                             header walk (`parse.rs`), macro evaluation (`macros.rs`), the module's rendering
                             (`model.rs`), and C's spelling of an exported type (`export.rs`); depends only on libc
-  burdin_driver/            the `burdin` binary: build, run, test, fmt, bindgen; package loading (`package.rs`: burdin.toml,
+  burdin_doc/               the documentation generator behind `burdin doc`: doc comments and signatures from the syntax
+                            trees, intra-doc link resolution, the HTML site with search, the versioned JSON schema, and
+                            the coverage report (spec/doc.md); it depends only on burdin_diag and burdin_syntax
+  burdin_driver/            the `burdin` binary: build, run, test, fmt, doc, bindgen; package loading (`package.rs`: burdin.toml,
                             modules, dependencies), build scripts (`build.rs`), the bindgen command line
                             (`bindgen.rs`), and the export header built from the checked program (`export.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
@@ -140,7 +146,9 @@ crates/
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
-docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the lint
+docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the
+                          diagnostics-for-tools reference and the JSON schema (docs/diagnostics.md,
+                          docs/diagnostic.schema.json, checked by tests/check_diagnostics.py), the lint
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)

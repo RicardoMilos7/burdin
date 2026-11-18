@@ -652,10 +652,14 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   Rust and allows `c as i32` (`m09_stdlib/tokenizer.bd`, `m02_basics/casts_and_numeric_methods.bd`).
 - **The linter is separate from the compiler.** The design's warnings (`else` on a same-package enum, "use `.iter()`")
   are `burdin lint` lints (stage 3), not compiler warnings: `burdin build` and `burdin test` never print them and no
-  conformance test depends on one. Lints have their own codes, `L0000`-`L0016`, which are not part of the `E` registry
+  conformance test depends on one. Lints have their own codes, `L0000`-`L0017`, which are not part of the `E` registry
   below; [`docs/lints.md`](../docs/lints.md) lists them and `tests/check_lint.py` runs the fixtures under `tests/lint/`
   (`//~ L0000` markers, like the `//~ E0000` markers of the conformance tests, but read by that script, not by
   `run_tests.py`).
+- **`burdin doc` has two codes of its own.** `D0001` (an intra-doc link that names nothing) and `D0002` (a link to a
+  `priv` item) are warnings the documentation generator reports, and neither is part of the `E` registry or the lint
+  codes; the fixtures under `tests/doc/links/` mark them with `//~ D0001`, and `tests/check_doc.py` (not
+  `run_tests.py`) runs them. The JSON schema version is `format_version: 1`.
 
 ### Errors and testing
 

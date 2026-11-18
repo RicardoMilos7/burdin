@@ -1,0 +1,7 @@
+test "area" {
+    assert_eq(2 * 3, 6)?
+}
+
+test "perimeter" [should_fail] {
+    assert(false)?
+}

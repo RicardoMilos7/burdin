@@ -1,6 +1,6 @@
-#define ANSWER 42
+#include <stddef.h>
 
-typedef unsigned long size_t;
+#define ANSWER 42
 
 struct Pair {
     int first;

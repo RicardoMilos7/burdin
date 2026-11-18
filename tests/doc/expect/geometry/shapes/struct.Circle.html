@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circle - geometry</title>
+<link rel="stylesheet" href="../static/doc.css">
+</head>
+<body>
+<nav class="sidebar">
+<a class="package" href="../index.html">geometry</a>
+<input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search the documentation">
+<h2>Modules</h2>
+<ul class="modules">
+<li><a href="../collections/index.html">collections</a></li>
+<li><a href="../extras/index.html">extras</a></li>
+<li><a href="../lib/index.html">geometry</a></li>
+<li class="current"><a href="../shapes/index.html">shapes</a></li>
+</ul>
+<h2>In this module</h2>
+<ul class="items">
+<li><a href="../shapes/struct.Circle.html">Circle</a></li>
+<li><a href="../shapes/struct.Point.html">Point</a></li>
+<li><a href="../shapes/error.GeometryError.html">GeometryError</a></li>
+<li><a href="../shapes/interface.Shape.html">Shape</a></li>
+</ul>
+</nav>
+<main>
+<div id="search-results" hidden></div>
+<div id="content">
+<h1><span class="kind">struct</span> <span class="name">Circle</span></h1>
+<p class="source">in <a href="../shapes/index.html">shapes</a> &middot; src/shapes.bd:34</p>
+<pre class="signature"><code>struct Circle</code></pre>
+<div class="docs">
+<p>A circle.</p>
+</div>
+<p class="origin">Re-exported by <code>geometry</code>.</p>
+<h2 id="fields">Fields</h2>
+<div class="member" id="field.radius">
+<div class="signature"><code>radius: f64</code></div>
+<div class="docs">
+<p>The radius, never negative.</p>
+</div>
+</div>
+<h2 id="methods">Methods</h2>
+<div class="member" id="method.new">
+<div class="signature"><code>fn new(radius: f64): Result&lt;<a href="../shapes/struct.Circle.html">Circle</a>&gt;</code></div>
+<div class="docs">
+<p>Makes a circle, or says why it cannot.</p>
+</div>
+</div>
+<h2 id="extensions">Extension methods</h2>
+<div class="member" id="extension.diameter">
+<div class="signature"><code>fn <a href="../shapes/struct.Circle.html">Circle</a>.diameter(self): f64</code> <span class="badge">extension</span></div>
+<p class="origin">declared in module <code>extras</code>; import it with <code>use extras.diameter</code></p>
+<div class="docs">
+<p>The diameter of a circle.</p>
+</div>
+</div>
+<h2 id="implements">Implements</h2>
+<div class="impl" id="impl.Shape"><div class="signature"><code><a href="../shapes/interface.Shape.html">Shape</a></code></div>
+<div class="member" id="method.area">
+<div class="signature"><code>fn area(self): f64</code></div>
+</div>
+</div>
+</div>
+</main>
+<script>window.BURDIN_DOC_ROOT = "../";</script>
+<script src="../search-index.js"></script>
+<script src="../static/search.js"></script>
+</body>
+</html>

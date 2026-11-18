@@ -1,0 +1,29 @@
+//! Containers.
+
+/// A last-in, first-out stack.
+struct Stack<T> {
+    items: List<T>
+}
+
+Stack<T> {
+    /// An empty stack.
+    fn new(): Stack<T> {
+        Stack { items: List<T>.new() }
+    }
+
+    /// Puts a value on top.
+    fn push(mut self, own item: T) {
+        self.items.push(item)
+    }
+}
+
+Stack<i32> {
+    /// The sum of the values, for a stack of integers.
+    fn total(self): i32 {
+        let mut sum = 0
+        for x in self.items.iter() {
+            sum = sum + x
+        }
+        sum
+    }
+}

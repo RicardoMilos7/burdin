@@ -1,0 +1,24 @@
+fn main() {}
+
+// Tests in the entry file, in the module `geometry`, and in the nested module `geometry.shapes`, so a run exercises
+// the full path (`module.submodule.test name`) that filters match.
+test "alpha" {
+    assert(true)?
+}
+
+test "beta" [ignore, timeout(500)] {
+    assert(true)?
+}
+
+test "gamma fails" {
+    assert(false)?
+}
+
+test "delta panics" [should_panic("boom")] {
+    panic("boom")
+}
+
+// Markup and quotes in a name and in the output, for the JSON and JUnit escaping.
+test "escapes <markup> & \"quotes\"" {
+    println("<b>&</b>")
+}

@@ -35,7 +35,9 @@ LLVM release archive on Windows).
 
 `burdin bindgen <header> --out <file>` parses `<header>` as C (`-x c`), with `-I`, `-D`, and `--clang-arg` passed to
 the C front end, so `#include`, the preprocessor's conditional state, and the system headers behave exactly as they
-do for the C compiler. The header's own declarations become the module; the module's first line names the header
+do for the C compiler. On macOS the SDK directory `xcrun --show-sdk-path` reports is passed as `-isysroot` unless the
+caller names a sysroot of its own, because a libclang installed by Homebrew has none of its own and would otherwise
+not find `<stddef.h>` and the rest of the system headers. The header's own declarations become the module; the module's first line names the header
 exactly as it was given.
 
 A declaration from an included header is not generated as an item of its own. It is either collapsed to what it is
@@ -243,6 +245,9 @@ and so on, in order.
 
 The command exits 0 when the header parsed, whatever was skipped, and 1 when clang reported an error in the header
 (the errors are printed as clang formatted them). A usage or I/O error, and a libclang that cannot be loaded, exit 2.
+`--export`'s diagnostics take the same `[diagnostics]` options as every other command (`--diagnostic-format`,
+`--color`, `--no-color`, `--width`, `--error-limit`), so the E0263 reports are available in the JSON and SARIF formats
+too (`spec/diagnostics.md`).
 
 ## BG10. `--export`: a C header for what a package exports
 

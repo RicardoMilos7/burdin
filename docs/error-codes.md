@@ -14,6 +14,13 @@ runs `burdin bindgen --export` on the package, because that check runs after com
 
 Run `burdin explain E0003` to print one entry in the terminal, or `burdin explain` to list the codes.
 
+Every entry also has a stable address on the hosted copy of this page: `https://ricardomilos7.github.io/burdin/errors/E0003`
+for E0003, and in general the root, `/errors/`, and the code. The address ends in the code, and the scheme does not
+change between versions, so a link in a log, a bug report, or a code-scanning alert keeps working. Every diagnostic
+carries its link: the `url` field of the JSON format, the `helpUri` of a SARIF rule, and a terminal hyperlink on the
+code in colored output when the terminal supports it (see [diagnostics.md](diagnostics.md)). `burdin explain` prints it
+under the entry.
+
 ## E0001: Syntax error
 
 The lexer or the parser could not build a syntax tree from the source: a token, statement, expression, or item

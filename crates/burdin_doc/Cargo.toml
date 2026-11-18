@@ -1,0 +1,13 @@
+[package]
+name = "burdin_doc"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The documentation generator behind `burdin doc` (spec/doc.md): it reads the syntax trees and the source text of the
+# packages the compiler loaded, and needs neither the checked program nor a backend, so it depends only on
+# `burdin_diag` and `burdin_syntax`.
+
+[dependencies]
+burdin_diag.workspace = true
+burdin_syntax.workspace = true

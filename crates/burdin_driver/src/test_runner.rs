@@ -3,11 +3,16 @@
 //! The observable contract is `spec/test-runner.md` and the `burdin test` section of the root `README.md`:
 //! tests run concurrently (`-j`, default: the number of CPUs), each in a fresh working directory with a clean
 //! environment, its output is captured and shown only when it fails, and the report is deterministic: failures and
-//! the summary are printed in declaration order after every test has finished.
+//! the summary are printed in declaration order after every test has finished. Which tests run is decided in
+//! `select`; what is printed or written is in `report`.
+
+mod report;
+mod select;
 
 use crate::package::{self, Workspace};
-use crate::{Args, CompileOptions, TempDir, USAGE, compile};
-use burdin_tir::{TestAttrs, TestOutcome};
+use crate::{Args, CompileOptions, TempDir, TestFormat, TestSite, USAGE, compile};
+use burdin_tir::{TestAttrs, TestEntry, TestOutcome};
+use select::FailedRecord;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::sync::Mutex;
@@ -17,33 +22,67 @@ use std::time::{Duration, Instant};
 /// The per-test timeout when neither `--timeout` nor `timeout(ms)` says otherwise. A test that hangs would
 /// otherwise block the runner forever.
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
+/// A test that runs at least this long is listed as slow unless `--slow-threshold` says otherwise.
+const DEFAULT_SLOW_MS: u64 = 5_000;
 /// How often a running test is checked against its deadline.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-/// One planned test: an ignored test is reported but not run; a runnable test names the binary, the dispatcher
-/// index, and the attributes that decide what counts as a pass.
-enum PlannedTest {
-    Ignored {
-        display: String,
-    },
-    Run {
-        display: String,
-        exe: PathBuf,
-        index: usize,
-        timeout: Option<Duration>,
-        attrs: TestAttrs,
-        /// The compile-time outcome of a `[differential]` test; `None` for an ordinary test.
-        comptime: Option<TestOutcome>,
-    },
+/// One test of a compiled package: everything needed to select, list, run, and report it.
+pub(super) struct TestCase {
+    pub(super) package: String,
+    /// The dotted module path inside the package; empty for the package's entry file.
+    pub(super) module: String,
+    /// The name written in `test "name"`.
+    pub(super) name: String,
+    /// The test's identity inside its package: `<module>.<name>`, or `<name>` for an empty module.
+    pub(super) local: String,
+    /// The name the report shows: `<name>`, or `<package>::<name>` when more than one package runs.
+    pub(super) display: String,
+    /// The full path filters match and `--exact` compares: `local`, prefixed with `<package>::` when more than one
+    /// package runs.
+    pub(super) path: String,
+    pub(super) file: String,
+    pub(super) line: u32,
+    pub(super) exe: PathBuf,
+    /// The dispatcher index: the argument that selects this test in the package's binary.
+    pub(super) index: usize,
+    pub(super) attrs: TestAttrs,
+    /// The compile-time outcome of a `[differential]` test; `None` for an ordinary test.
+    pub(super) comptime: Option<TestOutcome>,
+}
+
+/// A selected test. An ignored test is reported but not run; a runnable one has the timeout that applies to it.
+pub(super) struct Planned {
+    pub(super) case: TestCase,
+    pub(super) ignored: bool,
+    pub(super) timeout: Option<Duration>,
+}
+
+/// The selected tests in declaration order (packages in build order), with what selection left out.
+pub(super) struct Plan {
+    pub(super) tests: Vec<Planned>,
+    /// How many selected tests are skipped because of `[ignore]`.
+    pub(super) ignored: usize,
+    /// How many tests the name filters, `--skip`, `--failed`, or `--shard` left out.
+    pub(super) filtered_out: usize,
 }
 
 /// What one test process did. `note` explains a failure the output alone does not (a timeout, or an unmet
 /// `should_panic`/`should_fail`).
-struct Outcome {
-    passed: bool,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    note: Option<String>,
+pub(super) struct Outcome {
+    pub(super) passed: bool,
+    pub(super) stdout: Vec<u8>,
+    pub(super) stderr: Vec<u8>,
+    pub(super) note: Option<String>,
+    pub(super) duration: Duration,
+}
+
+/// One compiled package: its test binary and the tests inside it.
+struct CompiledPackage {
+    name: String,
+    exe: PathBuf,
+    tests: Vec<TestEntry>,
+    sites: Vec<TestSite>,
 }
 
 /// How a test process ended. The dispatcher returns 0 for `Ok` and 1 for `Err`; anything else is an abort or a
@@ -82,6 +121,13 @@ pub(crate) fn run(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // `--failed` reads what the previous run left under the package's `target` directory, so it needs a package.
+    let record_path = failed_record_path(&workspace, args);
+    if args.failed && record_path.is_none() {
+        eprintln!("error: `--failed` needs a package directory to keep its record in, not a single file\n{USAGE}");
+        return ExitCode::from(2);
+    }
+    let previous = record_path.as_deref().and_then(FailedRecord::load);
 
     // One temporary directory holds every test binary. Each package is compiled as its own entry package, so its
     // tests see their own package's private items and are checked with their own `main` rules.
@@ -105,6 +151,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,
+        report_clean: false,
         run_build_scripts: true,
     };
     let mut compiled = Vec::new();
@@ -113,54 +160,139 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         let target = package_target(&workspace, args, index);
         let exe = binaries.path.join(&package.name).with_extension(std::env::consts::EXE_EXTENSION);
         match compile(&target, &binaries.path, Some(&exe), &options) {
-            Ok(built) => compiled.push((package.name.clone(), exe, built.tests)),
+            Ok(built) => compiled.push(CompiledPackage {
+                name: package.name.clone(),
+                exe,
+                tests: built.tests,
+                sites: built.test_sites,
+            }),
             Err(code) => return code,
         }
     }
 
-    let (plan, ignored) = plan_tests(args, &compiled);
+    let package_names: Vec<String> = compiled.iter().map(|package| package.name.clone()).collect();
+    let cases = discover(&compiled);
+    let discovered: Vec<(String, String)> =
+        cases.iter().map(|case| (case.package.clone(), case.local.clone())).collect();
+    // `--failed` with no record at all has nothing to narrow by, so every test is selected.
+    let narrowing = if args.failed { previous.as_ref() } else { None };
+    if args.failed {
+        match &previous {
+            None => eprintln!("note: no record of a previous run was found; running every selected test"),
+            Some(record) if record.is_empty() => eprintln!("note: the previous run had no failed tests"),
+            Some(_) => {}
+        }
+    }
+    let plan = select::plan_tests(args, cases, narrowing, default_timeout(args));
+    if plan.tests.is_empty() && (!args.filters.is_empty() || !args.skip.is_empty()) {
+        eprintln!("note: no test matches the filters");
+    }
+
+    if args.list {
+        match args.format {
+            TestFormat::Human => report::print_list_human(&plan),
+            TestFormat::Json => report::print_list_json(&plan),
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    let stream = (args.format == TestFormat::Json).then_some(report::Stream { verbose: args.verbose });
+    if let Some(stream) = &stream {
+        stream.suite_started(&plan, &package_names);
+        for planned in plan.tests.iter().filter(|planned| planned.ignored) {
+            stream.test_ignored(planned);
+        }
+    }
     let runnable: Vec<usize> =
-        plan.iter().enumerate().filter(|(_, test)| matches!(test, PlannedTest::Run { .. })).map(|(i, _)| i).collect();
-    let outcomes = match execute(&plan, &runnable, args.jobs, &binaries.path) {
+        plan.tests.iter().enumerate().filter(|(_, planned)| !planned.ignored).map(|(i, _)| i).collect();
+    let started = Instant::now();
+    let outcomes = match execute(&plan, &runnable, args.jobs, &binaries.path, stream.as_ref()) {
         Ok(outcomes) => outcomes,
         Err(error) => {
             eprintln!("error: {error}");
             return ExitCode::from(2);
         }
     };
-
-    let mut passed = 0usize;
-    let mut failed = 0usize;
-    for (index, test) in plan.iter().enumerate() {
-        match test {
-            PlannedTest::Ignored { display } => {
-                if args.verbose {
-                    println!("IGNORED {display}");
-                }
-            }
-            PlannedTest::Run { display, .. } => {
-                let outcome = outcomes[index].as_ref().expect("every runnable test has an outcome");
-                if outcome.passed {
-                    passed += 1;
-                    if args.verbose {
-                        print_output(display, outcome);
-                        println!("PASS {display}");
-                    }
-                } else {
-                    failed += 1;
-                    print_failure(display, outcome);
-                    println!("FAIL {display}");
-                }
-            }
-        }
+    let slow_ms = args.slow_ms.unwrap_or(DEFAULT_SLOW_MS);
+    let summary = report::summarize(&plan, &outcomes, slow_ms, started.elapsed());
+    match &stream {
+        Some(stream) => stream.suite_finished(&plan, &summary),
+        None => report::print_human(&plan, &outcomes, &summary, args.verbose),
     }
 
-    println!("test result: {passed} passed, {failed} failed{}", ignored_suffix(ignored));
-    if failed == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) }
+    let mut exit = if summary.failed == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) };
+    if let Some(path) = &args.junit
+        && let Err(error) = report::write_junit(path, &plan, &outcomes, &summary, args.verbose)
+    {
+        eprintln!("error: {error}");
+        exit = ExitCode::from(2);
+    }
+    if let Some(path) = &record_path {
+        let ids = |wanted: bool| -> Vec<(String, String)> {
+            plan.tests
+                .iter()
+                .zip(&outcomes)
+                .filter(|(_, outcome)| outcome.as_ref().is_some_and(|outcome| outcome.passed == wanted))
+                .map(|(planned, _)| (planned.case.package.clone(), planned.case.local.clone()))
+                .collect()
+        };
+        let record = FailedRecord::updated(previous.as_ref(), &package_names, &discovered, &ids(true), &ids(false));
+        if let Err(e) = record.save(path) {
+            eprintln!("warning: cannot write {}: {e}", path.display());
+        }
+    }
+    exit
 }
 
-fn ignored_suffix(ignored: usize) -> String {
-    if ignored == 0 { String::new() } else { format!(", {ignored} ignored") }
+/// The per-test timeout that applies when a test has no `timeout(ms)` of its own.
+fn default_timeout(args: &Args) -> Option<Duration> {
+    match args.timeout_ms {
+        Some(0) => None,
+        Some(ms) => Some(Duration::from_millis(ms)),
+        None => Some(Duration::from_millis(DEFAULT_TIMEOUT_MS)),
+    }
+}
+
+/// Where `--failed` keeps its record: `<package>/target/burdin/<profile>/test-failed.txt`, next to the build-script
+/// output. A single-file target has no package directory, so it keeps none.
+fn failed_record_path(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
+    let dir = workspace.packages[workspace.entry_package].dir.as_ref()?;
+    let profile = if args.release { "release" } else { "debug" };
+    Some(dir.join("target").join("burdin").join(profile).join("test-failed.txt"))
+}
+
+/// Every test of the compiled packages, in build order and then declaration order. When more than one package runs,
+/// names are qualified with the package.
+fn discover(compiled: &[CompiledPackage]) -> Vec<TestCase> {
+    let qualify = compiled.len() > 1;
+    let mut cases = Vec::new();
+    for package in compiled {
+        for (index, test) in package.tests.iter().enumerate() {
+            let local =
+                if test.module.is_empty() { test.name.clone() } else { format!("{}.{}", test.module, test.name) };
+            let (display, path) = if qualify {
+                (format!("{}::{}", package.name, test.name), format!("{}::{local}", package.name))
+            } else {
+                (test.name.clone(), local.clone())
+            };
+            let (file, line) = package.sites.get(index).map(|site| (site.file.clone(), site.line)).unwrap_or_default();
+            cases.push(TestCase {
+                package: package.name.clone(),
+                module: test.module.clone(),
+                name: test.name.clone(),
+                local,
+                display,
+                path,
+                file,
+                line,
+                exe: package.exe.clone(),
+                index,
+                attrs: test.attrs.clone(),
+                comptime: test.comptime,
+            });
+        }
+    }
+    cases
 }
 
 /// The packages `-p`/`--workspace` select, in build order (the entry package first, then its dependencies). The
@@ -200,58 +332,17 @@ fn package_target(workspace: &Workspace, args: &Args, index: usize) -> PathBuf {
     }
 }
 
-/// Turns the compiled tests into the run plan and counts the ignored tests. The filter applies to the displayed
-/// name, which includes the package name when more than one package runs.
-fn plan_tests(args: &Args, compiled: &[(String, PathBuf, Vec<burdin_tir::TestEntry>)]) -> (Vec<PlannedTest>, usize) {
-    let qualify = compiled.len() > 1;
-    let global_timeout = match args.timeout_ms {
-        Some(0) => None,
-        Some(ms) => Some(Duration::from_millis(ms)),
-        None => Some(Duration::from_millis(DEFAULT_TIMEOUT_MS)),
-    };
-    let mut plan = Vec::new();
-    let mut ignored = 0usize;
-    for (package, exe, tests) in compiled {
-        for (index, test) in tests.iter().enumerate() {
-            let display = if qualify { format!("{}::{}", package, test.name) } else { test.name.clone() };
-            if args.filter.as_deref().is_some_and(|filter| !display.contains(filter)) {
-                continue;
-            }
-            if test.attrs.ignore && !args.ignored_only && !args.include_ignored {
-                ignored += 1;
-                plan.push(PlannedTest::Ignored { display });
-                continue;
-            }
-            if args.ignored_only && !test.attrs.ignore {
-                continue;
-            }
-            let timeout = match test.attrs.timeout_ms {
-                Some(0) => None,
-                Some(ms) => Some(Duration::from_millis(ms)),
-                None => global_timeout,
-            };
-            plan.push(PlannedTest::Run {
-                display,
-                exe: exe.clone(),
-                index,
-                timeout,
-                attrs: test.attrs.clone(),
-                comptime: test.comptime,
-            });
-        }
-    }
-    (plan, ignored)
-}
-
-/// Runs the runnable tests with `jobs` workers. The returned vector is indexed like `plan`; ignored and filtered
-/// entries stay `None`. An error means the runner itself failed (a test binary could not be started).
+/// Runs the runnable tests with `jobs` workers. The returned vector is indexed like `plan.tests`; ignored entries stay
+/// `None`. With a JSON `stream`, each test's start and end are reported as it happens. An error means the runner
+/// itself failed (a test binary could not be started).
 fn execute(
-    plan: &[PlannedTest],
+    plan: &Plan,
     runnable: &[usize],
     jobs: Option<usize>,
     capture_dir: &Path,
+    stream: Option<&report::Stream>,
 ) -> Result<Vec<Option<Outcome>>, String> {
-    let outcomes: Vec<Option<Outcome>> = (0..plan.len()).map(|_| None).collect();
+    let outcomes: Vec<Option<Outcome>> = (0..plan.tests.len()).map(|_| None).collect();
     if runnable.is_empty() {
         return Ok(outcomes);
     }
@@ -265,11 +356,17 @@ fn execute(
                 loop {
                     let slot = next.fetch_add(1, Ordering::Relaxed);
                     let Some(&plan_index) = runnable.get(slot) else { break };
-                    if !matches!(&plan[plan_index], PlannedTest::Run { .. }) {
-                        continue;
+                    let planned = &plan.tests[plan_index];
+                    if let Some(stream) = stream {
+                        stream.test_started(planned);
                     }
-                    match run_one(&plan[plan_index], capture_dir, plan_index) {
-                        Ok(outcome) => outcomes.lock().unwrap()[plan_index] = Some(outcome),
+                    match run_one(planned, capture_dir, plan_index) {
+                        Ok(outcome) => {
+                            if let Some(stream) = stream {
+                                stream.test_finished(planned, &outcome);
+                            }
+                            outcomes.lock().unwrap()[plan_index] = Some(outcome);
+                        }
                         Err(error) => {
                             *failure.lock().unwrap() = Some(error);
                             break;
@@ -293,10 +390,9 @@ fn default_jobs() -> usize {
 /// files outside the test's working directory: a pipe would deadlock when a test writes more than the pipe buffer
 /// holds (unless a reader thread drains it), and a grandchild that inherits a pipe can keep the reader blocked after
 /// a timeout kills the test.
-fn run_one(test: &PlannedTest, capture_dir: &Path, slot: usize) -> Result<Outcome, String> {
-    let PlannedTest::Run { display, exe, index, timeout, attrs, comptime } = test else {
-        unreachable!("only runnable tests are executed");
-    };
+fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome, String> {
+    let Planned { case, timeout, .. } = planned;
+    let TestCase { display, exe, index, attrs, comptime, .. } = case;
     let work = TempDir::new().map_err(|e| format!("cannot create a temporary directory: {e}"))?;
     let stdout_path = capture_dir.join(format!("capture-{slot}.out"));
     let stderr_path = capture_dir.join(format!("capture-{slot}.err"));
@@ -312,34 +408,33 @@ fn run_one(test: &PlannedTest, capture_dir: &Path, slot: usize) -> Result<Outcom
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
     isolate(&mut command, &work.path, display);
+    let start = Instant::now();
     let mut child = command.spawn().map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
     let mut timed_out_after = None;
     let status = match *timeout {
         None => child.wait().map_err(|e| format!("cannot wait for {}: {e}", exe.display()))?,
-        Some(limit) => {
-            let start = Instant::now();
-            loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => break status,
-                    Ok(None) => {}
-                    Err(e) => return Err(format!("cannot wait for {}: {e}", exe.display())),
-                }
-                if start.elapsed() >= limit {
-                    timed_out_after = Some(limit.as_millis());
-                    let _ = child.kill();
-                    break child.wait().map_err(|e| format!("cannot wait for {}: {e}", exe.display()))?;
-                }
-                std::thread::sleep(POLL_INTERVAL);
+        Some(limit) => loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(e) => return Err(format!("cannot wait for {}: {e}", exe.display())),
             }
-        }
+            if start.elapsed() >= limit {
+                timed_out_after = Some(limit.as_millis());
+                let _ = child.kill();
+                break child.wait().map_err(|e| format!("cannot wait for {}: {e}", exe.display()))?;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        },
     };
+    let duration = start.elapsed();
     let stdout = std::fs::read(&stdout_path).unwrap_or_default();
     let stderr = std::fs::read(&stderr_path).unwrap_or_default();
     let note = match timed_out_after {
         Some(ms) => Some(format!("timed out after {ms} ms")),
         None => verdict(ending(&status), attrs, *comptime, &String::from_utf8_lossy(&stderr)).err(),
     };
-    Ok(Outcome { passed: note.is_none(), stdout, stderr, note })
+    Ok(Outcome { passed: note.is_none(), stdout, stderr, note, duration })
 }
 
 /// A test process starts with an empty environment. `PATH` stays so `process.run` can find commands; the temporary
@@ -427,62 +522,13 @@ fn verdict(ending: Ending, attrs: &TestAttrs, comptime: Option<TestOutcome>, std
     }
 }
 
-fn print_failure(display: &str, outcome: &Outcome) {
-    if let Some(note) = &outcome.note
-        && !note.is_empty()
-    {
-        println!("---- test \"{display}\": {note} ----");
-    }
-    print_output(display, outcome);
-}
-
-fn print_output(display: &str, outcome: &Outcome) {
-    print_stream(display, "stdout", &outcome.stdout);
-    print_stream(display, "stderr", &outcome.stderr);
-}
-
-fn print_stream(display: &str, stream: &str, bytes: &[u8]) {
-    if bytes.is_empty() {
-        return;
-    }
-    println!("---- test \"{display}\" {stream} ----");
-    print!("{}", String::from_utf8_lossy(bytes));
-    if !bytes.ends_with(b"\n") {
-        println!();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::package::PackageFiles;
 
     fn args(target: &str) -> Args {
-        Args {
-            command: "test".to_string(),
-            target: PathBuf::from(target),
-            release: false,
-            debug: false,
-            strip: false,
-            lto: false,
-            pgo_generate: false,
-            pgo_use: None,
-            output: None,
-            emit_ir: None,
-            link_libs: Vec::new(),
-            program_args: Vec::new(),
-            diagnostics: crate::DiagnosticOptions::default(),
-            comptime_steps: None,
-            emit_deps: None,
-            jobs: None,
-            verbose: false,
-            packages: Vec::new(),
-            workspace: false,
-            ignored_only: false,
-            include_ignored: false,
-            filter: None,
-            timeout_ms: None,
-        }
+        Args { command: "test".to_string(), target: PathBuf::from(target), ..Args::default() }
     }
 
     fn package(name: &str, dir: Option<&str>) -> PackageFiles {
@@ -526,11 +572,11 @@ mod tests {
         args.packages = vec!["lib".to_string(), "lib".to_string()];
         assert_eq!(select_packages(&args, &ws).unwrap(), vec![1]);
 
-        let mut missing = args.clone_for_test();
+        let mut missing = args.clone();
         missing.packages = vec!["nope".to_string()];
         assert!(select_packages(&missing, &ws).unwrap_err().contains("no package named `nope`"));
 
-        let mut embedded = args.clone_for_test();
+        let mut embedded = args.clone();
         embedded.packages = vec!["std".to_string()];
         assert!(select_packages(&embedded, &ws).unwrap_err().contains("embedded"));
     }
@@ -638,75 +684,47 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_filter_and_ignore_modes_select_tests() {
-        fn test(name: &str, ignore: bool) -> burdin_tir::TestEntry {
-            burdin_tir::TestEntry {
-                name: name.to_string(),
-                func: burdin_tir::FuncId(0),
-                body: burdin_tir::FuncId(0),
-                attrs: TestAttrs { ignore, ..TestAttrs::default() },
-                comptime: None,
-            }
+    fn entry(name: &str, module: &str) -> TestEntry {
+        TestEntry {
+            name: name.to_string(),
+            module: module.to_string(),
+            span: burdin_diag::Span::new(burdin_diag::FileId(0), 0, 0),
+            func: burdin_tir::FuncId(0),
+            body: burdin_tir::FuncId(0),
+            attrs: TestAttrs::default(),
+            comptime: None,
         }
-        let compiled = vec![(
-            "app".to_string(),
-            PathBuf::from("app-bin"),
-            vec![test("one", false), test("skipped", true), test("two", false)],
-        )];
-
-        let (plan, ignored) = plan_tests(&args("app"), &compiled);
-        assert_eq!(ignored, 1);
-        assert_eq!(plan.len(), 3);
-
-        let mut only = args("app");
-        only.ignored_only = true;
-        let (plan, ignored) = plan_tests(&only, &compiled);
-        assert_eq!(ignored, 0);
-        assert_eq!(plan.len(), 1);
-
-        let mut all = args("app");
-        all.include_ignored = true;
-        let (plan, ignored) = plan_tests(&all, &compiled);
-        assert_eq!(ignored, 0);
-        assert_eq!(plan.len(), 3);
-
-        let mut filtered = args("app");
-        filtered.filter = Some("two".to_string());
-        let (plan, ignored) = plan_tests(&filtered, &compiled);
-        assert_eq!(ignored, 0);
-        assert_eq!(plan.len(), 1);
-        assert!(matches!(&plan[0], PlannedTest::Run { display, .. } if display == "two"));
     }
 
-    impl Args {
-        /// A copy for tests that need two variants; `Args` has no `Clone` because the command line is parsed once.
-        fn clone_for_test(&self) -> Args {
-            Args {
-                command: self.command.clone(),
-                target: self.target.clone(),
-                release: self.release,
-                debug: self.debug,
-                strip: self.strip,
-                lto: self.lto,
-                pgo_generate: self.pgo_generate,
-                pgo_use: self.pgo_use.clone(),
-                output: self.output.clone(),
-                emit_ir: self.emit_ir.clone(),
-                link_libs: self.link_libs.clone(),
-                program_args: self.program_args.clone(),
-                diagnostics: crate::DiagnosticOptions::default(),
-                comptime_steps: self.comptime_steps,
-                emit_deps: self.emit_deps.clone(),
-                jobs: self.jobs,
-                verbose: self.verbose,
-                packages: self.packages.clone(),
-                workspace: self.workspace,
-                ignored_only: self.ignored_only,
-                include_ignored: self.include_ignored,
-                filter: self.filter.clone(),
-                timeout_ms: self.timeout_ms,
-            }
-        }
+    fn compiled(name: &str, tests: Vec<TestEntry>) -> CompiledPackage {
+        let sites = tests.iter().map(|_| TestSite { file: format!("{name}/src/main.bd"), line: 3 }).collect();
+        CompiledPackage { name: name.to_string(), exe: PathBuf::from(format!("{name}-bin")), tests, sites }
+    }
+
+    #[test]
+    fn discovery_builds_the_full_path_of_each_test() {
+        let one = discover(&[compiled("app", vec![entry("plain", ""), entry("deep", "geometry.shapes")])]);
+        let paths: Vec<_> = one.iter().map(|case| (case.display.as_str(), case.path.as_str())).collect();
+        assert_eq!(paths, [("plain", "plain"), ("deep", "geometry.shapes.deep")]);
+        assert_eq!((one[1].file.as_str(), one[1].line, one[1].index), ("app/src/main.bd", 3, 1));
+
+        // With more than one package both names carry the package, and the module stays in the path.
+        let two =
+            discover(&[compiled("app", vec![entry("plain", "")]), compiled("lib", vec![entry("deep", "geometry")])]);
+        let paths: Vec<_> = two.iter().map(|case| (case.display.as_str(), case.path.as_str())).collect();
+        assert_eq!(paths, [("app::plain", "app::plain"), ("lib::deep", "lib::geometry.deep")]);
+        assert_eq!(two[1].local, "geometry.deep");
+    }
+
+    #[test]
+    fn the_failed_record_lives_under_the_package_target_directory() {
+        let ws = workspace(0, vec![package("app", Some("app")), package("std", None)]);
+        let path = failed_record_path(&ws, &args("app")).unwrap();
+        assert_eq!(path, Path::new("app").join("target").join("burdin").join("debug").join("test-failed.txt"));
+        let release = Args { release: true, ..args("app") };
+        assert!(failed_record_path(&ws, &release).unwrap().ends_with("release/test-failed.txt"));
+        // A single-file target has no directory to keep a record in.
+        let single = workspace(0, vec![package("one", None)]);
+        assert_eq!(failed_record_path(&single, &args("one.bd")), None);
     }
 }

@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ricardomilos7.github.io/burdin/schema/diagnostic-v1.json",
+  "title": "Burdin diagnostic, JSON format version 1",
+  "description": "One line of `--diagnostic-format json` output. Every line is a diagnostic, or the summary that closes the run. The schema is closed (`additionalProperties: false`) so that any change to the output has to change this file and docs/diagnostics.md too; adding a field is compatible and keeps version 1, removing or renaming one or changing what it means raises the version. Checked by tests/check_diagnostics.py.",
+  "oneOf": [
+    { "$ref": "#/$defs/diagnostic" },
+    { "$ref": "#/$defs/summary" },
+    { "$ref": "#/$defs/lint_summary" }
+  ],
+  "$defs": {
+    "diagnostic": {
+      "description": "A diagnostic: the envelope, the body, and the human text it renders to.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type", "version", "severity", "code", "message", "url", "span", "labels", "notes", "help", "related",
+        "children", "suggestions", "rendered"
+      ],
+      "properties": {
+        "type": { "const": "diagnostic" },
+        "version": { "const": 1 },
+        "severity": { "$ref": "#/$defs/severity" },
+        "code": { "$ref": "#/$defs/code" },
+        "message": { "type": "string" },
+        "url": { "$ref": "#/$defs/url" },
+        "span": { "$ref": "#/$defs/location" },
+        "labels": { "type": "array", "items": { "$ref": "#/$defs/label" } },
+        "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
+        "help": { "type": "array", "items": { "type": "string" } },
+        "related": { "type": "array", "items": { "$ref": "#/$defs/related" } },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/child" } },
+        "suggestions": { "type": "array", "items": { "$ref": "#/$defs/suggestion" } },
+        "rendered": { "type": "string", "minLength": 1 }
+      }
+    },
+    "child": {
+      "description": "A child diagnostic: the body of a diagnostic, with no envelope and no rendered text of its own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity", "code", "message", "url", "span", "labels", "notes", "help", "related", "children", "suggestions"
+      ],
+      "properties": {
+        "severity": { "$ref": "#/$defs/severity" },
+        "code": { "$ref": "#/$defs/code" },
+        "message": { "type": "string" },
+        "url": { "$ref": "#/$defs/url" },
+        "span": { "$ref": "#/$defs/location" },
+        "labels": { "type": "array", "items": { "$ref": "#/$defs/label" } },
+        "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
+        "help": { "type": "array", "items": { "type": "string" } },
+        "related": { "type": "array", "items": { "$ref": "#/$defs/related" } },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/child" } },
+        "suggestions": { "type": "array", "items": { "$ref": "#/$defs/suggestion" } }
+      }
+    },
+    "summary": {
+      "description": "The last line of a build, run, or test that failed to compile: the counts, so a consumer never parses the human summary.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version", "errors", "shown", "limit"],
+      "properties": {
+        "type": { "const": "summary" },
+        "version": { "const": 1 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "shown": { "type": "integer", "minimum": 0 },
+        "limit": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "lint_summary": {
+      "description": "The last line of `burdin lint`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version", "warnings", "errors"],
+      "properties": {
+        "type": { "const": "lint-summary" },
+        "version": { "const": 1 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "severity": { "enum": ["error", "warning"] },
+    "code": {
+      "description": "A registry code (`E0000`, tests/README.md), a lint code (`L0000`, docs/lints.md), or `E9000` for a construct not implemented yet.",
+      "type": "string",
+      "pattern": "^[EL][0-9]{4}$"
+    },
+    "url": {
+      "description": "The code's entry in the hosted reference, `<root>/errors/<code>` or `<root>/lints/<code>`; null for `E9000`, which has no entry.",
+      "type": ["string", "null"],
+      "pattern": "^https://[^ ]+/(errors/E|lints/L)[0-9]{4}$"
+    },
+    "location": {
+      "description": "A byte range of one file with the line and column of both ends. Lines and columns start at 1, byte offsets at 0, and the end is exclusive. `column` counts Unicode scalar values, `utf8_column` bytes, and `utf16_column` UTF-16 code units from the start of the line.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file", "line", "column", "end_line", "end_column", "byte_start", "byte_end", "utf8_column", "utf16_column",
+        "end_utf8_column", "end_utf16_column"
+      ],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 1 },
+        "byte_start": { "type": "integer", "minimum": 0 },
+        "byte_end": { "type": "integer", "minimum": 0 },
+        "utf8_column": { "type": "integer", "minimum": 1 },
+        "utf16_column": { "type": "integer", "minimum": 1 },
+        "end_utf8_column": { "type": "integer", "minimum": 1 },
+        "end_utf16_column": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "label": {
+      "description": "Text attached to a span. `primary` is true when the span is the diagnostic's own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["span", "message", "primary"],
+      "properties": {
+        "span": { "$ref": "#/$defs/location" },
+        "message": { "type": "string" },
+        "primary": { "type": "boolean" }
+      }
+    },
+    "note": {
+      "description": "A note; its span is null when it points at no particular place.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message", "span"],
+      "properties": {
+        "message": { "type": "string" },
+        "span": { "oneOf": [{ "$ref": "#/$defs/location" }, { "type": "null" }] }
+      }
+    },
+    "related": {
+      "description": "Related information: a note that points at a place, in the shape of the Language Server Protocol's `relatedInformation`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["span", "message"],
+      "properties": {
+        "span": { "$ref": "#/$defs/location" },
+        "message": { "type": "string" }
+      }
+    },
+    "suggestion": {
+      "description": "A fix. `machine` fixes are safe to apply without review (`burdin lint --fix` applies them); `manual` ones are for a person to look at. All the edits of one suggestion apply together; an empty replacement deletes the span, and an empty span inserts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message", "applicability", "edits"],
+      "properties": {
+        "message": { "type": "string" },
+        "applicability": { "enum": ["machine", "manual"] },
+        "edits": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/edit" } }
+      }
+    },
+    "edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["span", "replacement"],
+      "properties": {
+        "span": { "$ref": "#/$defs/location" },
+        "replacement": { "type": "string" }
+      }
+    }
+  }
+}
