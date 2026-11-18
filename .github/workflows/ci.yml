@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # A branch is checked by its pull request, so a push runs CI only on main; otherwise every push to an open pull
+  # request ran the whole workflow twice. `workflow_dispatch` runs it by hand on any branch.
   push:
+    branches: [main]
   pull_request:
   # Continuous fuzzing (issue #447). The committed corpus is replayed by `cargo test --workspace` on every
   # push; the longer deterministic session runs here once a week and by hand.
@@ -9,15 +12,30 @@ on:
     - cron: '17 4 * * 1'
   workflow_dispatch:
 
+# A new push to a pull request cancels the run for the commit it replaces. Runs on main are never cancelled, so
+# every commit there records its benchmark baseline.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   linux:
     runs-on: ubuntu-24.04
+    # Each OS runs as four parallel parts of one job, so the slowest part sets the wall-clock time instead of the
+    # sum of every step: `unit` (fmt, clippy, the Rust tests, the build and codegen checks, benchmarks), `tools`
+    # (the black-box checks of the driver's commands), and the conformance suite in the `debug` and `release`
+    # profiles, each with its repeated stress tests. Every part builds the driver from its own cargo cache.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [unit, tools, debug, release]
     env:
       LLVM_SYS_211_PREFIX: /usr/lib/llvm-21
     steps:
       - uses: actions/checkout@v4
 
       - name: Check CI workflow
+        if: matrix.part == 'unit'
         run: python3 tests/check_ci.py
 
       # The cache key is the pinned toolchain plus Cargo.lock, so a toolchain bump or a
@@ -29,7 +47,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ matrix.part }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
 
       # LLVM 21 is the slowest download in this job. actions/cache restores as the runner
       # user and cannot write under /usr, so the installed tree is kept in $HOME and copied
@@ -93,25 +111,31 @@ jobs:
           rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
+        if: matrix.part == 'unit'
         run: python3 tests/check_tests.py
 
       # Every E9000 site is assigned to a milestone and issue in spec/e9000-audit.md, and no site names a
       # milestone that CI already runs (issue #84).
       - name: Check the E9000 audit
+        if: matrix.part == 'unit'
         run: python3 tests/check_e9000.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
       - name: Check unit tests
+        if: matrix.part == 'unit'
         run: python3 tests/check_unit_tests.py
 
       - name: Format
+        if: matrix.part == 'unit'
         run: cargo fmt --all --check
 
       - name: Clippy
+        if: matrix.part == 'unit'
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
+        if: matrix.part == 'unit'
         run: cargo test --workspace
 
       - name: Build
@@ -123,6 +147,7 @@ jobs:
       # --offline` can re-verify the license fields from the crates themselves; the verification is
       # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
       - name: Audit dependencies and licenses
+        if: matrix.part == 'unit'
         env:
           BURDIN_DEPS_REQUIRE_METADATA: 1
         run: python3 tests/check_deps.py
@@ -130,25 +155,31 @@ jobs:
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
       - name: Check debug information
+        if: matrix.part == 'unit'
         run: python3 tests/check_debug_info.py
 
       - name: Check code-generation optimizations
+        if: matrix.part == 'unit'
         run: python3 tests/check_codegen_opt.py
 
       - name: Check build flags and metadata
+        if: matrix.part == 'unit'
         run: python3 tests/check_build_flags.py
 
       # The release pipeline (issues #452-#456): the six-target workflow, versioned archives, SHA-256 checksums,
       # both installers, the version/channel policy, and release notes generated from the changelog.
       - name: Check the release pipeline
+        if: matrix.part == 'unit'
         run: python3 tests/check_release.py
 
       - name: Check parallel analysis
+        if: matrix.part == 'unit'
         run: python3 tests/check_parallel.py
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
+        if: matrix.part == 'unit'
         run: cargo bench -p burdin_bench -- --smoke
 
       # Benchmark regression tracking (issue #446): the full suite runs and its medians are compared with the
@@ -157,6 +188,7 @@ jobs:
       # main records the new baseline; a pull request compares against the last main run. The step is advisory
       # for now: `continue-on-error` reports a regression without failing the job until the numbers are stable.
       - name: Restore benchmark baseline
+        if: matrix.part == 'unit'
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/burdin/bench
@@ -165,97 +197,115 @@ jobs:
             bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
 
       - name: Compiler benchmarks (regression tracking, advisory)
+        if: matrix.part == 'unit'
         continue-on-error: true
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then export BURDIN_BENCH_UPDATE=1; fi
           python3 tests/bench_regression.py
 
       - name: Save benchmark baseline
-        if: github.ref == 'refs/heads/main'
+        if: matrix.part == 'unit' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/burdin/bench
           key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check documentation
+        if: matrix.part == 'unit'
         run: python3 tests/check_docs.py
 
       # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
       # formats, the error limit, and deterministic ordering.
       - name: Check diagnostics behavior
+        if: matrix.part == 'tools'
         run: python3 tests/check_diagnostics.py
 
       # The user-facing error-code reference (issue #437): every code, every example compiled, and
       # `burdin explain`.
       - name: Check the error-code reference
+        if: matrix.part == 'tools'
         run: python3 tests/check_error_docs.py
 
       # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
       # (issues #438-#443).
       - name: Check the test runner
+        if: matrix.part == 'tools'
         run: python3 tests/check_test_runner.py
 
       # The black-box checks of `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, import
       # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
       - name: Check the formatter
+        if: matrix.part == 'tools'
         run: python3 tests/check_fmt.py
 
       # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
       # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
       - name: Check the linter
+        if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
 
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
       - name: Check burdin doc
+        if: matrix.part == 'tools'
         run: python3 tests/check_doc.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
+        if: matrix.part == 'tools'
         run: python3 tests/check_build_scripts.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
       # and the header a C library compiles and links against.
       - name: Check bindgen
+        if: matrix.part == 'tools'
         run: python3 tests/check_bindgen.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
+        if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
       - name: Check burdin check
+        if: matrix.part == 'tools'
         run: python3 tests/check_check.py
 
       # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
       # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
       - name: Check burdin lsp
+        if: matrix.part == 'tools'
         run: python3 tests/check_lsp.py
 
       - name: Check host target
+        if: matrix.part == 'unit'
         run: python3 tests/check_platform.py
 
       # The platform support matrix and its known limitations (issue #457): the page must agree with this
       # workflow, its example must run, and standard output and file I/O must stay binary-safe.
       - name: Check platform support matrix
+        if: matrix.part == 'unit'
         run: python3 tests/check_platform_support.py
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
+        if: matrix.part == 'debug'
         run: python3 tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
+        if: matrix.part == 'release'
         run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io
 
       # The incremental equivalence sweep is slow, so the wider one runs once, in release: after every edit of a
       # long sequence, the edited database must answer like a fresh one (spec/query.md, QL4). `cargo test
       # --workspace` runs the smaller sweep in every job.
       - name: Incremental equivalence sweep
+        if: matrix.part == 'unit'
         env:
           BURDIN_EQUIV_FILES: 40
           BURDIN_EQUIV_STEPS: 8
@@ -263,11 +313,16 @@ jobs:
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).
-      - name: Channel and shared-state stress tests (repeated)
+      - name: Channel and shared-state stress tests (repeated, debug)
+        if: matrix.part == 'debug'
         run: |
           python3 tests/run_tests.py --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
           python3 tests/run_tests.py --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python3 tests/run_tests.py --repeat 20 s2_io/stress s2_io/net_tcp_messages s2_io/channel_watchdog
+
+      - name: Channel and shared-state stress tests (repeated, release)
+        if: matrix.part == 'release'
+        run: |
           python3 tests/run_tests.py --release --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
           python3 tests/run_tests.py --release --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python3 tests/run_tests.py --release --repeat 20 s2_io/stress s2_io/net_tcp_messages s2_io/channel_watchdog
@@ -277,10 +332,19 @@ jobs:
   # put its llvm-config on PATH for `--link-lib LLVM-C`.
   macos:
     runs-on: macos-latest
+    # Each OS runs as four parallel parts of one job, so the slowest part sets the wall-clock time instead of the
+    # sum of every step: `unit` (fmt, clippy, the Rust tests, the build and codegen checks, benchmarks), `tools`
+    # (the black-box checks of the driver's commands), and the conformance suite in the `debug` and `release`
+    # profiles, each with its repeated stress tests. Every part builds the driver from its own cargo cache.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [unit, tools, debug, release]
     steps:
       - uses: actions/checkout@v4
 
       - name: Check CI workflow
+        if: matrix.part == 'unit'
         run: python3 tests/check_ci.py
 
       # The cache key is the pinned toolchain plus Cargo.lock, so a toolchain bump or a
@@ -292,7 +356,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ matrix.part }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
 
       # Homebrew pours llvm@21 from a bottle. Cache the downloads so a warm run does not
       # fetch the bottle and its dependencies again. `brew install` still runs, because the
@@ -325,25 +389,31 @@ jobs:
           rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
+        if: matrix.part == 'unit'
         run: python3 tests/check_tests.py
 
       # Every E9000 site is assigned to a milestone and issue in spec/e9000-audit.md, and no site names a
       # milestone that CI already runs (issue #84).
       - name: Check the E9000 audit
+        if: matrix.part == 'unit'
         run: python3 tests/check_e9000.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
       - name: Check unit tests
+        if: matrix.part == 'unit'
         run: python3 tests/check_unit_tests.py
 
       - name: Format
+        if: matrix.part == 'unit'
         run: cargo fmt --all --check
 
       - name: Clippy
+        if: matrix.part == 'unit'
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
+        if: matrix.part == 'unit'
         run: cargo test --workspace
 
       - name: Build
@@ -355,6 +425,7 @@ jobs:
       # --offline` can re-verify the license fields from the crates themselves; the verification is
       # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
       - name: Audit dependencies and licenses
+        if: matrix.part == 'unit'
         env:
           BURDIN_DEPS_REQUIRE_METADATA: 1
         run: python3 tests/check_deps.py
@@ -362,25 +433,31 @@ jobs:
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
       - name: Check debug information
+        if: matrix.part == 'unit'
         run: python3 tests/check_debug_info.py
 
       - name: Check code-generation optimizations
+        if: matrix.part == 'unit'
         run: python3 tests/check_codegen_opt.py
 
       - name: Check build flags and metadata
+        if: matrix.part == 'unit'
         run: python3 tests/check_build_flags.py
 
       # The release pipeline (issues #452-#456): the six-target workflow, versioned archives, SHA-256 checksums,
       # both installers, the version/channel policy, and release notes generated from the changelog.
       - name: Check the release pipeline
+        if: matrix.part == 'unit'
         run: python3 tests/check_release.py
 
       - name: Check parallel analysis
+        if: matrix.part == 'unit'
         run: python3 tests/check_parallel.py
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
+        if: matrix.part == 'unit'
         run: cargo bench -p burdin_bench -- --smoke
 
       # Benchmark regression tracking (issue #446): the full suite runs and its medians are compared with the
@@ -389,6 +466,7 @@ jobs:
       # main records the new baseline; a pull request compares against the last main run. The step is advisory
       # for now: `continue-on-error` reports a regression without failing the job until the numbers are stable.
       - name: Restore benchmark baseline
+        if: matrix.part == 'unit'
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/burdin/bench
@@ -397,107 +475,137 @@ jobs:
             bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
 
       - name: Compiler benchmarks (regression tracking, advisory)
+        if: matrix.part == 'unit'
         continue-on-error: true
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then export BURDIN_BENCH_UPDATE=1; fi
           python3 tests/bench_regression.py
 
       - name: Save benchmark baseline
-        if: github.ref == 'refs/heads/main'
+        if: matrix.part == 'unit' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/burdin/bench
           key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check documentation
+        if: matrix.part == 'unit'
         run: python3 tests/check_docs.py
 
       # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
       # formats, the error limit, and deterministic ordering.
       - name: Check diagnostics behavior
+        if: matrix.part == 'tools'
         run: python3 tests/check_diagnostics.py
 
       # The user-facing error-code reference (issue #437): every code, every example compiled, and
       # `burdin explain`.
       - name: Check the error-code reference
+        if: matrix.part == 'tools'
         run: python3 tests/check_error_docs.py
 
       # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
       # (issues #438-#443).
       - name: Check the test runner
+        if: matrix.part == 'tools'
         run: python3 tests/check_test_runner.py
 
       # The black-box checks of `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, import
       # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
       - name: Check the formatter
+        if: matrix.part == 'tools'
         run: python3 tests/check_fmt.py
 
       # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
       # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
       - name: Check the linter
+        if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
 
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
       - name: Check burdin doc
+        if: matrix.part == 'tools'
         run: python3 tests/check_doc.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
+        if: matrix.part == 'tools'
         run: python3 tests/check_build_scripts.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
       # and the header a C library compiles and links against.
       - name: Check bindgen
+        if: matrix.part == 'tools'
         run: python3 tests/check_bindgen.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
+        if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
       - name: Check burdin check
+        if: matrix.part == 'tools'
         run: python3 tests/check_check.py
 
       # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
       # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
       - name: Check burdin lsp
+        if: matrix.part == 'tools'
         run: python3 tests/check_lsp.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
+        if: matrix.part == 'unit'
         run: python3 tests/check_platform.py
 
       # The platform support matrix and its known limitations (issue #457): the page must agree with this
       # workflow, its example must run, and standard output and file I/O must stay binary-safe.
       - name: Check platform support matrix
+        if: matrix.part == 'unit'
         run: python3 tests/check_platform_support.py
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
+        if: matrix.part == 'debug'
         run: python3 tests/run_tests.py -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
+        if: matrix.part == 'release'
         run: python3 tests/run_tests.py -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).
-      - name: Channel and shared-state stress tests (repeated)
+      - name: Channel and shared-state stress tests (repeated, debug)
+        if: matrix.part == 'debug'
         run: |
           python3 tests/run_tests.py -v --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
           python3 tests/run_tests.py -v --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python3 tests/run_tests.py -v --repeat 20 s2_io/stress s2_io/net_tcp_messages s2_io/channel_watchdog
+
+      - name: Channel and shared-state stress tests (repeated, release)
+        if: matrix.part == 'release'
+        run: |
           python3 tests/run_tests.py -v --release --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
           python3 tests/run_tests.py -v --release --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python3 tests/run_tests.py -v --release --repeat 20 s2_io/stress s2_io/net_tcp_messages s2_io/channel_watchdog
 
   windows:
     runs-on: windows-latest
+    # Each OS runs as four parallel parts of one job, so the slowest part sets the wall-clock time instead of the
+    # sum of every step: `unit` (fmt, clippy, the Rust tests, the build and codegen checks, benchmarks), `tools`
+    # (the black-box checks of the driver's commands), and the conformance suite in the `debug` and `release`
+    # profiles, each with its repeated stress tests. Every part builds the driver from its own cargo cache.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [unit, tools, debug, release]
     defaults:
       run:
         shell: bash
@@ -507,6 +615,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check CI workflow
+        if: matrix.part == 'unit'
         run: python tests/check_ci.py
 
       # `cl` is not on PATH until the Visual Studio environment is loaded. This action exports INCLUDE, LIB,
@@ -534,7 +643,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ matrix.part }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
 
       # The official Windows release archive is the only LLVM 21 distribution that ships llvm-config.exe
       # (llvm-sys needs it) and the LLVM-C import library. It is ~900 MB, so the archive is cached and the job
@@ -580,25 +689,31 @@ jobs:
           rustup component list --installed | grep -q '^rustfmt-' || { echo "rustfmt is missing"; exit 1; }
 
       - name: Check test directives
+        if: matrix.part == 'unit'
         run: python tests/check_tests.py
 
       # Every E9000 site is assigned to a milestone and issue in spec/e9000-audit.md, and no site names a
       # milestone that CI already runs (issue #84).
       - name: Check the E9000 audit
+        if: matrix.part == 'unit'
         run: python tests/check_e9000.py
 
       # `cargo test --workspace` below runs the unit tests; this guard fails when a front-end
       # crate or one of the four focused test areas loses them (issue #45).
       - name: Check unit tests
+        if: matrix.part == 'unit'
         run: python tests/check_unit_tests.py
 
       - name: Format
+        if: matrix.part == 'unit'
         run: cargo fmt --all --check
 
       - name: Clippy
+        if: matrix.part == 'unit'
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
+        if: matrix.part == 'unit'
         run: cargo test --workspace
 
       - name: Build
@@ -610,6 +725,7 @@ jobs:
       # --offline` can re-verify the license fields from the crates themselves; the verification is
       # required here (BURDIN_DEPS_REQUIRE_METADATA), not best-effort.
       - name: Audit dependencies and licenses
+        if: matrix.part == 'unit'
         env:
           BURDIN_DEPS_REQUIRE_METADATA: 1
         run: python tests/check_deps.py
@@ -617,25 +733,31 @@ jobs:
       # Source-level debug information, drop-flag and bounds-check elimination, glue sharing, the build flags
       # (--version, --strip, --lto, PGO), and parallel parsing with deterministic diagnostics (issues #422-#432).
       - name: Check debug information
+        if: matrix.part == 'unit'
         run: python tests/check_debug_info.py
 
       - name: Check code-generation optimizations
+        if: matrix.part == 'unit'
         run: python tests/check_codegen_opt.py
 
       - name: Check build flags and metadata
+        if: matrix.part == 'unit'
         run: python tests/check_build_flags.py
 
       # The release pipeline (issues #452-#456): the six-target workflow, versioned archives, SHA-256 checksums,
       # both installers, the version/channel policy, and release notes generated from the changelog.
       - name: Check the release pipeline
+        if: matrix.part == 'unit'
         run: python tests/check_release.py
 
       - name: Check parallel analysis
+        if: matrix.part == 'unit'
         run: python tests/check_parallel.py
 
       # The benchmark smoke run compiles every stage once and enforces generous time budgets, so a hang or an
       # accidental super-linear change fails CI (issue #41).
       - name: Compiler benchmarks (smoke budgets)
+        if: matrix.part == 'unit'
         run: cargo bench -p burdin_bench -- --smoke
 
       # Benchmark regression tracking (issue #446): the full suite runs and its medians are compared with the
@@ -644,6 +766,7 @@ jobs:
       # main records the new baseline; a pull request compares against the last main run. The step is advisory
       # for now: `continue-on-error` reports a regression without failing the job until the numbers are stable.
       - name: Restore benchmark baseline
+        if: matrix.part == 'unit'
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/burdin/bench
@@ -652,104 +775,127 @@ jobs:
             bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
 
       - name: Compiler benchmarks (regression tracking, advisory)
+        if: matrix.part == 'unit'
         continue-on-error: true
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then export BURDIN_BENCH_UPDATE=1; fi
           python tests/bench_regression.py
 
       - name: Save benchmark baseline
-        if: github.ref == 'refs/heads/main'
+        if: matrix.part == 'unit' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/burdin/bench
           key: bench-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check documentation
+        if: matrix.part == 'unit'
         run: python tests/check_docs.py
 
       # Diagnostics presentation (issues #434-#436): color, wrapping, notes and suggestions, the JSON and short
       # formats, the error limit, and deterministic ordering.
       - name: Check diagnostics behavior
+        if: matrix.part == 'tools'
         run: python tests/check_diagnostics.py
 
       # The user-facing error-code reference (issue #437): every code, every example compiled, and
       # `burdin explain`.
       - name: Check the error-code reference
+        if: matrix.part == 'tools'
         run: python tests/check_error_docs.py
 
       # The black-box checks of `burdin test`: attributes, parallelism, output capture, isolation, and discovery
       # (issues #438-#443).
       - name: Check the test runner
+        if: matrix.part == 'tools'
         run: python tests/check_test_runner.py
 
       # The black-box checks of `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, import
       # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
       - name: Check the formatter
+        if: matrix.part == 'tools'
         run: python tests/check_fmt.py
 
       # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
       # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
       - name: Check the linter
+        if: matrix.part == 'tools'
         run: python tests/check_lint.py
 
       - name: Check burdin doc
+        if: matrix.part == 'tools'
         run: python tests/check_doc.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
+        if: matrix.part == 'tools'
         run: python tests/check_build_scripts.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
       # and the header a C library compiles and links against.
       - name: Check bindgen
+        if: matrix.part == 'tools'
         run: python tests/check_bindgen.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
+        if: matrix.part == 'tools'
         run: python tests/check_new.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
       - name: Check burdin check
+        if: matrix.part == 'tools'
         run: python tests/check_check.py
 
       # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
       # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
       - name: Check burdin lsp
+        if: matrix.part == 'tools'
         run: python tests/check_lsp.py
 
       - name: Check host target
+        if: matrix.part == 'unit'
         run: python tests/check_platform.py
 
       # The platform support matrix and its known limitations (issue #457): the page must agree with this
       # workflow, its example must run, and standard output and file I/O must stay binary-safe.
       - name: Check platform support matrix
+        if: matrix.part == 'unit'
         run: python tests/check_platform_support.py
 
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
+        if: matrix.part == 'debug'
         run: python tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
+        if: matrix.part == 'release'
         run: python tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).
-      - name: Channel and shared-state stress tests (repeated)
+      - name: Channel and shared-state stress tests (repeated, debug)
+        if: matrix.part == 'debug'
         run: |
           python tests/run_tests.py --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
           python tests/run_tests.py --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python tests/run_tests.py --repeat 20 s2_io/stress s2_io/net_tcp_messages s2_io/channel_watchdog
+
+      - name: Channel and shared-state stress tests (repeated, release)
+        if: matrix.part == 'release'
+        run: |
           python tests/run_tests.py --release --repeat 20 s2_channels/stress s2_channels/select_stress s2_channels/ping_pong
           python tests/run_tests.py --release --repeat 20 s2_shared/stress s2_shared/shared_count_stress
           python tests/run_tests.py --release --repeat 20 s2_io/stress s2_io/net_tcp_messages s2_io/channel_watchdog
 
       # The default linker on Windows is already `cl`; this proves the `BURDIN_CC` override takes the same path.
       - name: Conformance tests with BURDIN_CC=cl
+        if: matrix.part == 'debug'
         run: BURDIN_CC=cl python tests/run_tests.py m01_hello m11_llvm
 
   # Continuous fuzzing (issue #447). Every job replays the committed corpus through
