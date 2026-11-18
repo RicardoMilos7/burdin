@@ -16,8 +16,9 @@ markers name the exact diagnostics, by line, that must be reported, and its `//%
 (which comment belongs to which declaration) and `crates/burdin_doc/src/tests.rs` (Markdown, links, signatures) cover
 the pieces that are easier to check in isolation.
 
-Doc tests (` ``` ` blocks run as tests, issues #250 and #650-#652) are a separate piece of work and are not part of this
-behavior: `burdin doc` shows the code blocks and never runs them.
+Doc tests (` ``` ` blocks run as tests, issues #250 and #650-#652) exist now: `burdin test` extracts the Burdin code
+blocks of the doc comments and runs them ([`test-runner.md`](test-runner.md), "Doc tests"). They are not part of
+`burdin doc`'s behavior: this command shows the code blocks and never runs them.
 
 ## Doc comments
 
@@ -56,10 +57,17 @@ example `javascript:`) is shown as its text and gets no address.
 Tests: `tests/doc/safety/escape.bd`, `tests/doc/links/broken.bd` (`fn.not_links`), the `tests.rs` unit tests for
 Markdown.
 
-**DC6. Code blocks.** An untagged fenced block is Burdin and is marked `language-burdin`. The block's text is shown
-verbatim and escaped. The coverage report counts an item as documented "with examples" when its documentation has at
-least one code block.
-Tests: `tests/doc/geometry` (`lib/fn.distance_squared.html`, the coverage golden), `tests.rs`.
+**DC6. Code blocks.** An untagged fenced block is Burdin and is marked `language-burdin`; so is one tagged `burdin`
+or `bd` (the first word of the info string — the words after it are the doc-test attributes, `test-runner.md`
+"Doc-test attributes"). The block's text is shown verbatim and escaped, except for its *hidden lines*: a line that
+begins with `# ` (a hash and one space), or a line that is only `#`, is compiled by a doc test and not shown; the
+indentation before the marker is kept in the compiled line, and in a block tagged with another language the `#` is
+literal text. A block whose every line is hidden shows nothing at all — no empty code block is written. The
+coverage report counts an item as documented "with examples" when its documentation has at least one code block,
+hidden or not. The JSON keeps the doc text exactly as written, hidden lines included (DC19).
+Tests: `crates/burdin_doc/src/markdown.rs` (`hidden_lines_are_marked_and_stripped_in_place`,
+`rendered_burdin_blocks_hide_setup_lines`), `tests/doc/geometry` (`lib/fn.distance_squared.html`, whose example
+hides its `use` line), `tests.rs`.
 
 **DC7. What a package documents.** The entry package and only its public interface: the non-`priv` functions, structs,
 enums, `error enums`, interfaces and their methods, type aliases, constants, `derive` declarations, and `extern`

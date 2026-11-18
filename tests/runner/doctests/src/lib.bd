@@ -1,0 +1,120 @@
+//! A fixture package for the doc tests (`spec/test-runner.md`, "Doc tests").
+//!
+//! An example in the module documentation, with its setup hidden:
+//!
+//! ```
+//! # use docs.{double}
+//! assert_eq(double(3), 6)
+//! ```
+
+/// Doubles an integer.
+///
+/// A passing example: the hidden `use` is compiled and not shown by `burdin doc`.
+///
+/// ```
+/// # use docs.{double}
+/// let x = double(21)
+/// assert_eq(x, 42)
+/// ```
+fn double(x: i32): i32 {
+    2 * x
+}
+
+/// An example that fails at run time.
+///
+/// ```
+/// # use docs.{double}
+/// assert_eq(double(1), 3)
+/// ```
+fn failing() {}
+
+/// An example that does not compile.
+///
+/// ```
+/// # use docs.{double}
+/// let s = double("x")
+/// ```
+fn not_compiling() {}
+
+/// An example that is only checked, never run.
+///
+/// ```burdin,no_run
+/// # use docs.{double}
+/// let x = double(5)
+/// ```
+fn checked_only() {}
+
+/// An example that must panic.
+///
+/// ```burdin,should_panic
+/// panic("doc boom")
+/// ```
+fn panicking() {}
+
+/// An example that must not compile.
+///
+/// ```burdin,compile_fail
+/// # use docs.{double}
+/// let x: str = double(1)
+/// ```
+fn bad() {}
+
+/// An example that must not compile, naming the code it fails with.
+///
+/// ```burdin,compile_fail E0003
+/// # use docs.{double}
+/// let x = double("x")
+/// ```
+fn bad_with_code() {}
+
+/// An example that names a code it does not fail with.
+///
+/// ```burdin,compile_fail E0002
+/// # use docs.{double}
+/// let x = double("x")
+/// ```
+fn wrong_code() {}
+
+/// An example that is skipped.
+///
+/// ```burdin,ignore
+/// this is not even a program
+/// ```
+fn skipped() {}
+
+/// A `text` block is not a doc test.
+///
+/// ```text
+/// not Burdin at all
+/// ```
+fn plain_text() {}
+
+/// An example with an attribute the runner does not know: it warns and still runs.
+///
+/// ```burdin,mystery
+/// assert_eq(1, 1)
+/// ```
+fn unknown_attr() {}
+
+/// An example with a declaration of its own: the declaration is hoisted above the wrapper.
+///
+/// ```
+/// # use docs.{double}
+/// fn helper(x: i32): i32 { double(x) + 1 }
+/// assert_eq(helper(1), 3)
+/// ```
+fn with_helper() {}
+
+/// An example that is a whole program.
+///
+/// ```burdin
+/// # use docs.{double}
+/// fn main() {
+///     assert_eq(double(2), 4)
+/// }
+/// ```
+fn whole_program() {}
+
+test "block runs too" {
+    assert_eq(double(2), 4)
+}

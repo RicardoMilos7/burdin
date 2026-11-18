@@ -19,7 +19,8 @@ const PI: f64 = 3.14159
 /// It never fails. [Circle.new] is the call that can, with [GeometryError.NegativeRadius].
 ///
 /// ```
-/// let d = distance_squared(Point { x: 0, y: 0, tag: 0 }, Point { x: 3, y: 4, tag: 0 })
+/// # use geometry.{Point, distance_squared}
+/// let d = distance_squared(Point.new(0, 0), Point.new(3, 4))
 /// assert_eq(d, 25)
 /// ```
 fn distance_squared(a: Point, b: Point): i32 {

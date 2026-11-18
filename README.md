@@ -22,7 +22,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
-| [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, parallelism, output capture, isolation, and discovery. |
+| [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, the doc tests of doc comments, parallelism, output capture, isolation, and discovery. |
 | [`spec/fmt.md`](spec/fmt.md) | The behavior of `burdin fmt`: the one style (4-space indentation, 120 columns), comments, blank lines, the magic trailing comma, `use` sorting and grouping, doc-comment code blocks, range formatting, and the command line. |
 | [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the `bindgen` a script may invoke. |
 | [`spec/bindgen.md`](spec/bindgen.md) | `burdin bindgen`: C headers to Burdin declarations through libclang, the layout check, wrappers for `static inline` functions, and `--export` for a C header of what a package exports. |
@@ -375,7 +375,7 @@ $ ./target/debug/burdin run args.bd -- x y
 ```
 burdin test <target> [<filter>...] [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
             [--exact] [--skip <pattern>]... [--ignored | --include-ignored] [--failed] [--shard <i>/<n>]
-            [--timeout <ms>] [--slow-threshold <ms>] [--list] [--format <human|json>] [--junit <file>]
+            [--timeout <ms>] [--slow-threshold <ms>] [--list] [--doc] [--format <human|json>] [--junit <file>]
             [diagnostics]
 ```
 
@@ -398,6 +398,15 @@ The report is deterministic: failures and the summary follow declaration order, 
 By default only the entry package's tests run. `-p <package>` selects a package of the build (it may repeat), and
 `--workspace` selects the entry package and every path dependency. With more than one package, names are displayed as
 `<package>::<test>`.
+
+Doc tests run with the `test` blocks: every Burdin code block in a `///` or `//!` comment of the selected packages
+is built as its own program against the package as a dependency (its public API only) and run like a `test` block;
+`--doc` runs only them. A doc test's name is `<owner> (line N)` — the documented item (or the file, for module
+documentation) and the line of the block's opening fence — and a failure is reported at the doc comment's file and
+line, with the compile's diagnostics moved from the generated program back to the comment. The block's fence takes
+attributes (`ignore`, `no_run`, `should_panic`, `compile_fail`, `compile_fail E0123`); an unknown attribute warns.
+A line the marker `# ` starts is setup: compiled and hidden from the rendered documentation (`burdin doc` hides it).
+The full behavior is [`spec/test-runner.md`](spec/test-runner.md), "Doc tests".
 
 Every test has a full path, `module.submodule.test name` (the module is the file's path inside `src`, empty for
 `src/main.bd`; with more than one package it starts with `<package>::`). The filters after the target keep the tests
@@ -440,7 +449,8 @@ skipped); with no path it formats the current directory. The path of every file 
 already formatted is not written, and the result is always a fixed point: running `burdin fmt` again changes nothing.
 Comments and blank lines are kept, lines are at most 120 columns, a list with a trailing comma stays one element
 per line, `use` declarations are sorted and grouped (the standard library, the dependencies in `burdin.toml`, then the
-package), and the code in the fenced blocks of doc comments is formatted too. The formatter checks its own output
+package), and the code in the fenced blocks of doc comments is formatted too (a block with hidden `# ` setup lines
+keeps the shape its author gave it). The formatter checks its own output
 with the compiler's parser: the formatted program must be the same program with the same comments, or the file is
 left alone and the failure is reported as a bug.
 

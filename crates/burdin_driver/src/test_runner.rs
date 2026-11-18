@@ -1,17 +1,20 @@
-//! `burdin test`: compile the selected packages in test mode and run each `test` block in its own process.
+//! `burdin test`: compile the selected packages in test mode and run each `test` block in its own process, and
+//! build and run the doc tests of their doc comments.
 //!
 //! The observable contract is `spec/test-runner.md` and the `burdin test` section of the root `README.md`:
 //! tests run concurrently (`-j`, default: the number of CPUs), each in a fresh working directory with a clean
 //! environment, its output is captured and shown only when it fails, and the report is deterministic: failures and
 //! the summary are printed in declaration order after every test has finished. Which tests run is decided in
-//! `select`; what is printed or written is in `report`.
+//! `select`; what is printed or written is in `report`; the doc tests are in `doc_tests`.
 
+mod doc_tests;
 mod report;
 mod select;
 
 use crate::package::{self, Workspace};
 use crate::{Args, CompileOptions, TempDir, TestFormat, TestSite, USAGE, compile};
 use burdin_tir::{TestAttrs, TestEntry, TestOutcome};
+use doc_tests::{DocAttrs, DocExample};
 use select::FailedRecord;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
@@ -28,11 +31,11 @@ const DEFAULT_SLOW_MS: u64 = 5_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// One test of a compiled package: everything needed to select, list, run, and report it.
-pub(super) struct TestCase {
+struct TestCase {
     pub(super) package: String,
     /// The dotted module path inside the package; empty for the package's entry file.
     pub(super) module: String,
-    /// The name written in `test "name"`.
+    /// The name written in `test "name"`, or `<owner> (line N)` for a doc test.
     pub(super) name: String,
     /// The test's identity inside its package: `<module>.<name>`, or `<name>` for an empty module.
     pub(super) local: String,
@@ -43,23 +46,81 @@ pub(super) struct TestCase {
     pub(super) path: String,
     pub(super) file: String,
     pub(super) line: u32,
-    pub(super) exe: PathBuf,
-    /// The dispatcher index: the argument that selects this test in the package's binary.
-    pub(super) index: usize,
-    pub(super) attrs: TestAttrs,
-    /// The compile-time outcome of a `[differential]` test; `None` for an ordinary test.
-    pub(super) comptime: Option<TestOutcome>,
+    /// How the test runs.
+    pub(super) run: Run,
+    pub(super) attrs: Attrs,
+}
+
+/// How one test runs: a `test` block of a compiled package, or a doc test with its own program. The doc tests of
+/// the plan hold a `DocExample` until the build turns them into executables or decided outcomes.
+#[derive(Clone, Debug)]
+enum Run {
+    /// A `test` block: the package's test binary and the dispatcher index that selects it. The compile-time
+    /// outcome of a `[differential]` test rides along; `None` for an ordinary test.
+    Block { exe: PathBuf, index: usize, comptime: Option<TestOutcome> },
+    /// A doc test that still needs its program built (the plan holds these until the build decides them).
+    Doc(DocExample),
+    /// A doc test whose program is built: ready for its process, which takes no index argument.
+    DocExe(PathBuf),
+}
+
+/// The attributes a test runs by, one shape for `test` blocks and one for doc blocks (`Attrs::doc` selects the
+/// doc shape, whose attributes are the doc block's). A `test` block's come from `tir::TestAttrs`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Attrs {
+    pub(super) ignore: bool,
+    pub(super) timeout_ms: Option<u64>,
+    pub(super) should_panic: bool,
+    pub(super) should_panic_message: Option<String>,
+    pub(super) should_fail: bool,
+    pub(super) differential: bool,
+    /// A doc test: the attributes below are its, and `should_fail`, `differential`, and `timeout_ms` never apply.
+    pub(super) doc: bool,
+    pub(super) no_run: bool,
+    pub(super) compile_fail: bool,
+    pub(super) compile_fail_code: Option<String>,
+}
+
+impl Attrs {
+    /// The attributes of a `test` block.
+    fn of_block(attrs: &TestAttrs) -> Attrs {
+        Attrs {
+            ignore: attrs.ignore,
+            timeout_ms: attrs.timeout_ms,
+            should_panic: attrs.should_panic,
+            should_panic_message: attrs.should_panic_message.clone(),
+            should_fail: attrs.should_fail,
+            differential: attrs.differential,
+            doc: false,
+            no_run: false,
+            compile_fail: false,
+            compile_fail_code: None,
+        }
+    }
+
+    /// The attributes of a doc block.
+    fn of_doc(attrs: &DocAttrs) -> Attrs {
+        Attrs {
+            ignore: attrs.ignore,
+            should_panic: attrs.should_panic,
+            doc: true,
+            no_run: attrs.no_run,
+            compile_fail: attrs.compile_fail,
+            compile_fail_code: attrs.compile_fail_code.clone(),
+            ..Attrs::default()
+        }
+    }
 }
 
 /// A selected test. An ignored test is reported but not run; a runnable one has the timeout that applies to it.
-pub(super) struct Planned {
+struct Planned {
     pub(super) case: TestCase,
     pub(super) ignored: bool,
     pub(super) timeout: Option<Duration>,
 }
 
 /// The selected tests in declaration order (packages in build order), with what selection left out.
-pub(super) struct Plan {
+struct Plan {
     pub(super) tests: Vec<Planned>,
     /// How many selected tests are skipped because of `[ignore]`.
     pub(super) ignored: usize,
@@ -69,7 +130,7 @@ pub(super) struct Plan {
 
 /// What one test process did. `note` explains a failure the output alone does not (a timeout, or an unmet
 /// `should_panic`/`should_fail`).
-pub(super) struct Outcome {
+struct Outcome {
     pub(super) passed: bool,
     pub(super) stdout: Vec<u8>,
     pub(super) stderr: Vec<u8>,
@@ -129,8 +190,9 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     }
     let previous = record_path.as_deref().and_then(FailedRecord::load);
 
-    // One temporary directory holds every test binary. Each package is compiled as its own entry package, so its
-    // tests see their own package's private items and are checked with their own `main` rules.
+    // One temporary directory holds every test binary and every doc test's package. Each package is compiled as
+    // its own entry package, so its tests see their own package's private items and are checked with their own
+    // `main` rules.
     let binaries = match TempDir::new() {
         Ok(dir) => dir,
         Err(e) => {
@@ -155,24 +217,34 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         run_build_scripts: true,
         jobs: crate::jobs_or_default(args.jobs),
     };
+    // `--doc` runs only the doc tests, so no `test` block is compiled.
     let mut compiled = Vec::new();
-    for &index in &selected {
-        let package = &workspace.packages[index];
-        let target = package_target(&workspace, args, index);
-        let exe = binaries.path.join(&package.name).with_extension(std::env::consts::EXE_EXTENSION);
-        match compile(&target, &binaries.path, Some(&exe), &options) {
-            Ok(built) => compiled.push(CompiledPackage {
-                name: package.name.clone(),
-                exe,
-                tests: built.tests,
-                sites: built.test_sites,
-            }),
-            Err(code) => return code,
+    if !args.doc_only {
+        for &index in &selected {
+            let package = &workspace.packages[index];
+            let target = package_target(&workspace, args, index);
+            let exe = binaries.path.join(&package.name).with_extension(std::env::consts::EXE_EXTENSION);
+            match compile(&target, &binaries.path, Some(&exe), &options) {
+                Ok(built) => compiled.push(CompiledPackage {
+                    name: package.name.clone(),
+                    exe,
+                    tests: built.tests,
+                    sites: built.test_sites,
+                }),
+                Err(code) => return code,
+            }
         }
     }
 
-    let package_names: Vec<String> = compiled.iter().map(|package| package.name.clone()).collect();
-    let cases = discover(&compiled);
+    // The doc tests of the selected packages, read from their doc comments: they run together with the `test`
+    // blocks, or alone with `--doc`.
+    let examples = doc_tests::collect(&workspace, &selected);
+    let package_names: Vec<String> = selected.iter().map(|&index| workspace.packages[index].name.clone()).collect();
+    let cases = merge_cases(
+        discover(&compiled, selected.len() > 1),
+        doc_tests::cases(&examples, selected.len() > 1),
+        &package_names,
+    );
     let discovered: Vec<(String, String)> =
         cases.iter().map(|case| (case.package.clone(), case.local.clone())).collect();
     // `--failed` with no record at all has nothing to narrow by, so every test is selected.
@@ -184,7 +256,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
             Some(_) => {}
         }
     }
-    let plan = select::plan_tests(args, cases, narrowing, default_timeout(args));
+    let mut plan = select::plan_tests(args, cases, narrowing, default_timeout(args));
     if plan.tests.is_empty() && (!args.filters.is_empty() || !args.skip.is_empty()) {
         eprintln!("note: no test matches the filters");
     }
@@ -204,10 +276,38 @@ pub(crate) fn run(args: &Args) -> ExitCode {
             stream.test_ignored(planned);
         }
     }
-    let runnable: Vec<usize> =
-        plan.tests.iter().enumerate().filter(|(_, planned)| !planned.ignored).map(|(i, _)| i).collect();
+    // The outcomes a test has before any process runs: a doc test that failed to build, or one whose attributes
+    // decide it without a run.
+    let mut prefilled: Vec<Option<Outcome>> = (0..plan.tests.len()).map(|_| None).collect();
+    let doc_indices: Vec<usize> = plan
+        .tests
+        .iter()
+        .enumerate()
+        .filter(|(_, planned)| !planned.ignored && matches!(planned.case.run, Run::Doc(_)))
+        .map(|(index, _)| index)
+        .collect();
+    if !doc_indices.is_empty() {
+        let built =
+            match doc_tests::build(&binaries.path, &doc_indices, &plan.tests, &options, args.jobs, stream.as_ref()) {
+                Ok(built) => built,
+                Err(code) => return code,
+            };
+        for (index, built) in built {
+            match built {
+                doc_tests::Built::Exe(exe) => plan.tests[index].case.run = Run::DocExe(exe),
+                doc_tests::Built::Done(outcome) => prefilled[index] = Some(outcome),
+            }
+        }
+    }
+    let runnable: Vec<usize> = plan
+        .tests
+        .iter()
+        .enumerate()
+        .filter(|(_, planned)| !planned.ignored && matches!(planned.case.run, Run::Block { .. } | Run::DocExe(_)))
+        .map(|(index, _)| index)
+        .collect();
     let started = Instant::now();
-    let outcomes = match execute(&plan, &runnable, args.jobs, &binaries.path, stream.as_ref()) {
+    let outcomes = match execute(&plan, &runnable, args.jobs, &binaries.path, stream.as_ref(), prefilled) {
         Ok(outcomes) => outcomes,
         Err(error) => {
             eprintln!("error: {error}");
@@ -264,8 +364,7 @@ fn failed_record_path(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
 
 /// Every test of the compiled packages, in build order and then declaration order. When more than one package runs,
 /// names are qualified with the package.
-fn discover(compiled: &[CompiledPackage]) -> Vec<TestCase> {
-    let qualify = compiled.len() > 1;
+fn discover(compiled: &[CompiledPackage], qualify: bool) -> Vec<TestCase> {
     let mut cases = Vec::new();
     for package in compiled {
         for (index, test) in package.tests.iter().enumerate() {
@@ -286,13 +385,30 @@ fn discover(compiled: &[CompiledPackage]) -> Vec<TestCase> {
                 path,
                 file,
                 line,
-                exe: package.exe.clone(),
-                index,
-                attrs: test.attrs.clone(),
-                comptime: test.comptime,
+                run: Run::Block { exe: package.exe.clone(), index, comptime: test.comptime },
+                attrs: Attrs::of_block(&test.attrs),
             });
         }
     }
+    cases
+}
+
+/// The tests of a run in report order: each selected package's `test` blocks and then its doc tests, package by
+/// package. `blocks` and `docs` are each in package order already; this only interleaves the two lists.
+fn merge_cases(blocks: Vec<TestCase>, docs: Vec<TestCase>, packages: &[String]) -> Vec<TestCase> {
+    let mut blocks = blocks.into_iter().peekable();
+    let mut docs = docs.into_iter().peekable();
+    let mut cases = Vec::new();
+    for package in packages {
+        while blocks.peek().is_some_and(|case| &case.package == package) {
+            cases.push(blocks.next().expect("peeked"));
+        }
+        while docs.peek().is_some_and(|case| &case.package == package) {
+            cases.push(docs.next().expect("peeked"));
+        }
+    }
+    cases.extend(blocks);
+    cases.extend(docs);
     cases
 }
 
@@ -333,17 +449,19 @@ fn package_target(workspace: &Workspace, args: &Args, index: usize) -> PathBuf {
     }
 }
 
-/// Runs the runnable tests with `jobs` workers. The returned vector is indexed like `plan.tests`; ignored entries stay
-/// `None`. With a JSON `stream`, each test's start and end are reported as it happens. An error means the runner
-/// itself failed (a test binary could not be started).
+/// Runs the runnable tests with `jobs` workers. The returned vector is indexed like `plan.tests`; an entry that
+/// already has an outcome (a doc test decided without a process) keeps it, and ignored entries stay `None`. With a
+/// JSON `stream`, each test's start and end are reported as it happens. An error means the runner itself failed (a
+/// test binary could not be started).
 fn execute(
     plan: &Plan,
     runnable: &[usize],
     jobs: Option<usize>,
     capture_dir: &Path,
     stream: Option<&report::Stream>,
+    prefilled: Vec<Option<Outcome>>,
 ) -> Result<Vec<Option<Outcome>>, String> {
-    let outcomes: Vec<Option<Outcome>> = (0..plan.tests.len()).map(|_| None).collect();
+    let outcomes: Vec<Option<Outcome>> = prefilled;
     if runnable.is_empty() {
         return Ok(outcomes);
     }
@@ -393,7 +511,13 @@ fn default_jobs() -> usize {
 /// a timeout kills the test.
 fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome, String> {
     let Planned { case, timeout, .. } = planned;
-    let TestCase { display, exe, index, attrs, comptime, .. } = case;
+    let TestCase { display, attrs, run, .. } = case;
+    // A doc test's process takes no dispatcher index: the program is the test.
+    let (exe, argument, comptime) = match run {
+        Run::Block { exe, index, comptime } => (exe, Some(index.to_string()), *comptime),
+        Run::DocExe(exe) => (exe, None, None),
+        Run::Doc(_) => unreachable!("the doc build decided or compiled every planned doc test"),
+    };
     let work = TempDir::new().map_err(|e| format!("cannot create a temporary directory: {e}"))?;
     let stdout_path = capture_dir.join(format!("capture-{slot}.out"));
     let stderr_path = capture_dir.join(format!("capture-{slot}.err"));
@@ -403,11 +527,13 @@ fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome
         std::fs::File::create(&stderr_path).map_err(|e| format!("cannot create {}: {e}", stderr_path.display()))?;
     let mut command = Command::new(exe);
     command
-        .arg(index.to_string())
         .current_dir(&work.path)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
+    if let Some(argument) = argument {
+        command.arg(argument);
+    }
     isolate(&mut command, &work.path, display);
     let start = Instant::now();
     let mut child = command.spawn().map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
@@ -433,9 +559,30 @@ fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome
     let stderr = std::fs::read(&stderr_path).unwrap_or_default();
     let note = match timed_out_after {
         Some(ms) => Some(format!("timed out after {ms} ms")),
-        None => verdict(ending(&status), attrs, *comptime, &String::from_utf8_lossy(&stderr)).err(),
+        None => match run {
+            Run::Block { .. } => verdict(ending(&status), attrs, comptime, &String::from_utf8_lossy(&stderr)).err(),
+            Run::DocExe(_) => doc_verdict(ending(&status), attrs).err(),
+            Run::Doc(_) => unreachable!("the doc build decided every planned doc test"),
+        },
     };
     Ok(Outcome { passed: note.is_none(), stdout, stderr, note, duration })
+}
+
+/// Whether a doc test's ending satisfies its attributes: the example must exit 0, or abort when it is
+/// `should_panic`. A doc test is an ordinary program, so there is no returned error to expect.
+fn doc_verdict(ending: Ending, attrs: &Attrs) -> Result<(), String> {
+    if attrs.should_panic {
+        return match ending {
+            Ending::Abnormal => Ok(()),
+            Ending::Success => Err("expected the example to panic, but it passed".to_string()),
+            Ending::ReturnedError => Err("expected a panic abort, but the example exited with status 1".to_string()),
+        };
+    }
+    match ending {
+        Ending::Success => Ok(()),
+        // The output (a panic message) is the explanation.
+        Ending::ReturnedError | Ending::Abnormal => Err(String::new()),
+    }
 }
 
 /// A test process starts with an empty environment. `PATH` stays so `process.run` can find commands; the temporary
@@ -478,8 +625,9 @@ fn isolation_env(workdir: &Path, display: &str) -> Vec<(&'static str, std::ffi::
 
 /// Whether the test's ending satisfies its attributes. For a `[differential]` test, `comptime` is the outcome of
 /// the same body run by the interpreter while the package was compiled; the compiled test must produce it too
-/// (`spec/test-runner.md`).
-fn verdict(ending: Ending, attrs: &TestAttrs, comptime: Option<TestOutcome>, stderr: &str) -> Result<(), String> {
+/// (`spec/test-runner.md`). A doc test has its own verdict (`doc_verdict`): it is an ordinary program, so no
+/// dispatcher exit status and no differential comparison apply.
+fn verdict(ending: Ending, attrs: &Attrs, comptime: Option<TestOutcome>, stderr: &str) -> Result<(), String> {
     if let Some(expected) = comptime {
         return match (ending, expected) {
             (Ending::Success, TestOutcome::Ok) | (Ending::ReturnedError, TestOutcome::Err) => Ok(()),
@@ -548,8 +696,8 @@ mod tests {
         Workspace { packages, entry_package: entry, entry_module: 0, stem: "entry".to_string() }
     }
 
-    fn attrs() -> TestAttrs {
-        TestAttrs::default()
+    fn attrs() -> Attrs {
+        Attrs::default()
     }
 
     #[test]
@@ -619,6 +767,26 @@ mod tests {
         assert!(verdict(Ending::Success, &attrs(), None, "").is_ok());
         assert_eq!(verdict(Ending::ReturnedError, &attrs(), None, ""), Err(String::new()));
         assert_eq!(verdict(Ending::Abnormal, &attrs(), None, ""), Err(String::new()));
+    }
+
+    #[test]
+    fn a_doc_test_passes_on_a_clean_exit_and_panics_only_when_asked() {
+        // A doc test is an ordinary program: exit 0 is the only success, and a returned error is a failure.
+        assert!(doc_verdict(Ending::Success, &attrs()).is_ok());
+        assert_eq!(doc_verdict(Ending::ReturnedError, &attrs()), Err(String::new()));
+        assert_eq!(doc_verdict(Ending::Abnormal, &attrs()), Err(String::new()));
+        // `should_panic` needs the abort; the exit status a dispatcher would give means nothing here.
+        let mut panics = attrs();
+        panics.should_panic = true;
+        assert!(doc_verdict(Ending::Abnormal, &panics).is_ok());
+        assert_eq!(
+            doc_verdict(Ending::Success, &panics),
+            Err("expected the example to panic, but it passed".to_string())
+        );
+        assert_eq!(
+            doc_verdict(Ending::ReturnedError, &panics),
+            Err("expected a panic abort, but the example exited with status 1".to_string())
+        );
     }
 
     #[test]
@@ -704,17 +872,73 @@ mod tests {
 
     #[test]
     fn discovery_builds_the_full_path_of_each_test() {
-        let one = discover(&[compiled("app", vec![entry("plain", ""), entry("deep", "geometry.shapes")])]);
+        let one = discover(&[compiled("app", vec![entry("plain", ""), entry("deep", "geometry.shapes")])], false);
         let paths: Vec<_> = one.iter().map(|case| (case.display.as_str(), case.path.as_str())).collect();
         assert_eq!(paths, [("plain", "plain"), ("deep", "geometry.shapes.deep")]);
-        assert_eq!((one[1].file.as_str(), one[1].line, one[1].index), ("app/src/main.bd", 3, 1));
+        let index = match &one[1].run {
+            Run::Block { index, .. } => *index,
+            _ => panic!("a test block runs from the package's binary"),
+        };
+        assert_eq!((one[1].file.as_str(), one[1].line, index), ("app/src/main.bd", 3, 1));
 
         // With more than one package both names carry the package, and the module stays in the path.
-        let two =
-            discover(&[compiled("app", vec![entry("plain", "")]), compiled("lib", vec![entry("deep", "geometry")])]);
+        let two = discover(
+            &[compiled("app", vec![entry("plain", "")]), compiled("lib", vec![entry("deep", "geometry")])],
+            true,
+        );
         let paths: Vec<_> = two.iter().map(|case| (case.display.as_str(), case.path.as_str())).collect();
         assert_eq!(paths, [("app::plain", "app::plain"), ("lib::deep", "lib::geometry.deep")]);
         assert_eq!(two[1].local, "geometry.deep");
+    }
+
+    /// A doc test case built by hand, standing in for what `doc_tests::cases` builds from a doc comment.
+    fn doc_case(package: &str, module: &str, name: &str) -> TestCase {
+        let local = if module.is_empty() { name.to_string() } else { format!("{module}.{name}") };
+        TestCase {
+            package: package.to_string(),
+            module: module.to_string(),
+            name: name.to_string(),
+            local: local.clone(),
+            display: name.to_string(),
+            path: local,
+            file: "src/lib.bd".to_string(),
+            line: 12,
+            run: Run::Doc(doc_tests::DocExample {
+                package: package.to_string(),
+                module: module.to_string(),
+                owner: name.to_string(),
+                file: "src/lib.bd".to_string(),
+                line: 12,
+                attrs: doc_tests::DocAttrs::default(),
+                dep: doc_tests::Dep::None,
+                lines: Vec::new(),
+                fence: (0, 0),
+                text: std::sync::Arc::new(String::new()),
+            }),
+            attrs: Attrs { doc: true, ..Attrs::default() },
+        }
+    }
+
+    #[test]
+    fn blocks_and_doc_tests_interleave_by_package() {
+        let blocks = discover(
+            &[compiled("app", vec![entry("plain", "")]), compiled("lib", vec![entry("deep", "geometry")])],
+            false,
+        );
+        let docs = vec![
+            doc_case("app", "", "Point (line 3)"),
+            doc_case("lib", "geometry", "Shape (line 9)"),
+            doc_case("lib", "", "later (line 20)"),
+        ];
+        let cases = merge_cases(blocks, docs, &["app".to_string(), "lib".to_string()]);
+        let names: Vec<&str> = cases.iter().map(|case| case.display.as_str()).collect();
+        assert_eq!(names, ["plain", "Point (line 3)", "deep", "Shape (line 9)", "later (line 20)"]);
+        // A package with no doc tests, and doc tests of a package with no test blocks, keep their order.
+        let docs2 = vec![doc_case("app", "", "Point (line 3)")];
+        let blocks2 = discover(&[compiled("lib", vec![entry("deep", "geometry")])], false);
+        let cases2 = merge_cases(blocks2, docs2, &["app".to_string(), "lib".to_string()]);
+        let names2: Vec<&str> = cases2.iter().map(|case| case.display.as_str()).collect();
+        assert_eq!(names2, ["Point (line 3)", "deep"]);
     }
 
     #[test]

@@ -28,7 +28,7 @@ usage:
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
-              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
+              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list] [--doc]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
   burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
@@ -81,6 +81,7 @@ test options:
   --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
   --slow-threshold <ms>  list tests that ran at least this long (default: 5000; 0 disables it)
   --list               print the selected tests and their attributes without running them
+  --doc                run only the doc tests: the Burdin code blocks of doc comments (spec/test-runner.md)
   --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
                        test per line)
   --junit <file>       also write a JUnit XML report of the run
@@ -174,6 +175,8 @@ pub(crate) struct Args {
     pub(crate) slow_ms: Option<u64>,
     /// `--list`: print the selected tests instead of running them.
     pub(crate) list: bool,
+    /// `--doc`: run only the doc tests, the Burdin code blocks of doc comments (`spec/test-runner.md`).
+    pub(crate) doc_only: bool,
     /// `--format`: the report format of `burdin test`.
     pub(crate) format: TestFormat,
     /// `--junit`: where to write the JUnit XML report.
@@ -282,6 +285,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--failed" => args.failed = flag_without_value(a, inline)?,
             "--shard" => args.shard = Some(parse_shard(&option_value(&mut it, inline, a, "`<i>/<n>`")?)?),
             "--list" => args.list = flag_without_value(a, inline)?,
+            "--doc" => args.doc_only = flag_without_value(a, inline)?,
             "--format" => args.format = parse_test_format(&option_value(&mut it, inline, a, "a value")?)?,
             "--junit" => args.junit = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--slow-threshold" => {
@@ -342,6 +346,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         }
         if args.failed || args.shard.is_some() || args.list || args.junit.is_some() {
             return Err("`--failed`, `--shard`, `--list`, and `--junit` are only valid for `burdin test`".to_string());
+        }
+        if args.doc_only {
+            return Err("`--doc` is only valid for `burdin test`".to_string());
         }
         if args.format != TestFormat::Human {
             return Err("`--format` is only valid for `burdin test`".to_string());
@@ -849,10 +856,6 @@ pub(crate) fn compile(
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
     print_warnings(&diags, &sources, options.diagnostics, options.report_clean);
 
-    let fail = |msg: String| {
-        eprintln!("error: {msg}");
-        ExitCode::from(2)
-    };
     let output = match output {
         Some(path) => path.to_path_buf(),
         None => output_dir.join(&loaded.stem).with_extension(std::env::consts::EXE_EXTENSION),
@@ -860,8 +863,35 @@ pub(crate) fn compile(
     // `burdin build app` from the package's parent directory would otherwise ask the linker to replace the package
     // directory with a file.
     if output.is_dir() {
-        return Err(fail(format!("the output path `{}` is a directory; pass `-o <file>`", output.display())));
+        eprintln!("error: the output path `{}` is a directory; pass `-o <file>`", output.display());
+        return Err(ExitCode::from(2));
     }
+    emit_program(&program, &sources, &loaded.stem, &output, options)?;
+    let test_sites = program
+        .tests
+        .iter()
+        .map(|test| {
+            let file = sources.get(test.span.file);
+            TestSite { file: file.path.clone(), line: file.line_col(test.span.lo).0 }
+        })
+        .collect();
+    Ok(Compiled { exe: output, tests: program.tests, test_sites, build_inputs: program.build_inputs })
+}
+
+/// Emits the object files of the checked `program` and links them into `output`. This is the half of `compile` after
+/// the front end; the doc-test builds (`test_runner/doc_tests.rs`) share it, rendering a failed build themselves
+/// instead of printing it here.
+pub(crate) fn emit_program(
+    program: &burdin_tir::Program,
+    sources: &SourceMap,
+    stem: &str,
+    output: &Path,
+    options: &CompileOptions,
+) -> Result<(), ExitCode> {
+    let fail = |msg: String| {
+        eprintln!("error: {msg}");
+        ExitCode::from(2)
+    };
     let dir = TempDir::new().map_err(|e| fail(format!("cannot create a temporary directory: {e}")))?;
     let extension = if options.lto {
         "bc"
@@ -883,7 +913,7 @@ pub(crate) fn compile(
         units: env_codegen_units(),
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
-    let objects = burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
+    let objects = burdin_codegen::emit_object(program, sources, stem, &object, &opts).map_err(fail)?;
     let objects = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");
@@ -899,16 +929,8 @@ pub(crate) fn compile(
         lto: options.lto,
         pgo_generate: options.pgo_generate,
     };
-    link(&objects, &output, options.link_libs, &link_opts).map_err(fail)?;
-    let test_sites = program
-        .tests
-        .iter()
-        .map(|test| {
-            let file = sources.get(test.span.file);
-            TestSite { file: file.path.clone(), line: file.line_col(test.span.lo).0 }
-        })
-        .collect();
-    Ok(Compiled { exe: output, tests: program.tests, test_sites, build_inputs: program.build_inputs })
+    link(&objects, output, options.link_libs, &link_opts).map_err(fail)?;
+    Ok(())
 }
 
 /// Prints the errors of a failed front end and the closing line, `could not <verb> <target> (N errors)`: `compile`
@@ -981,7 +1003,7 @@ fn report_build_failure(loaded: &package::Workspace, failure: build::Failure, op
 
 /// The rendering choices for this run: the format from the command line, color from the choice, the environment,
 /// and whether stderr is a terminal, and the width from `--width`, then `COLUMNS`, then 80.
-fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
+pub(crate) fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
     let columns = std::env::var("COLUMNS").ok();
     let color = color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal);
     RenderOptions {
