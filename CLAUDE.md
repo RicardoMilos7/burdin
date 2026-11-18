@@ -35,8 +35,9 @@ not updated and may disagree with the repository.
    is the behavior of `burdin test`, `spec/fmt.md` is the behavior of `burdin fmt` (the one style, comments, `use`
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
-   the atomic `Shared<T>`, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the minimal `bindgen`, and `spec/lint.md` is `burdin lint`: the lints, levels and the manifest
+   the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
+   resolution, and timers, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   modules, caching, and the minimal `bindgen`.
    `[lint]` table, suppression comments, and `--fix`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the

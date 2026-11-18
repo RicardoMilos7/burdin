@@ -16,6 +16,11 @@ use inkwell::module::{Linkage, Module};
 
 const UNIX_IR: &str = include_str!("taskrt/unix.ll");
 const WINDOWS_IR: &str = include_str!("taskrt/windows.ll");
+/// The reactor of `spec/io.md` (IO2): epoll on Linux, kqueue on macOS, and a completion port with `WSAPoll` on
+/// Windows. Each defines the same `burdin_rt_io_*` functions and the helper pool.
+const EPOLL_IR: &str = include_str!("taskrt/reactor_epoll.ll");
+const KQUEUE_IR: &str = include_str!("taskrt/reactor_kqueue.ll");
+const IOCP_IR: &str = include_str!("taskrt/reactor_iocp.ll");
 
 /// The size of the guard region below a task stack, in bytes. A fault inside it is a stack overflow
 /// (`burdin_rt_stack_overflow` compares the fault address with the running stack's low end).
@@ -42,11 +47,15 @@ pub(crate) fn link<'ctx>(cx: &'ctx Context, module: &Module<'ctx>, triple: &str)
             .replace("@SC_NPROC@", &nproc.to_string())
             .replace("@INIT_FRAME@", if aarch64 { INIT_FRAME_AARCH64 } else { INIT_FRAME_X86_64 });
     }
-    let buffer = MemoryBuffer::create_from_memory_range_copy(text.as_bytes(), "burdin_taskrt");
-    let tasks = cx.create_module_from_ir(buffer).map_err(|e| format!("the task runtime IR is invalid: {e}"))?;
-    tasks.set_triple(&module.get_triple());
-    tasks.set_data_layout(&module.get_data_layout());
-    module.link_in_module(tasks).map_err(|e| format!("linking the task runtime failed: {e}"))?;
+    link_text(cx, module, &text, "burdin_taskrt")?;
+    let reactor = if windows {
+        IOCP_IR
+    } else if darwin {
+        KQUEUE_IR
+    } else {
+        EPOLL_IR
+    };
+    link_text(cx, module, reactor, "burdin_reactor")?;
     if !windows {
         // The module has no other inline assembly, so setting it does not replace anything.
         module.set_inline_assembly(&switch_asm(darwin, aarch64));
@@ -60,6 +69,15 @@ pub(crate) fn link<'ctx>(cx: &'ctx Context, module: &Module<'ctx>, triple: &str)
         }
     }
     Ok(())
+}
+
+/// Parses `text` as a module and links it into `module`.
+fn link_text<'ctx>(cx: &'ctx Context, module: &Module<'ctx>, text: &str, name: &str) -> GenResult<()> {
+    let buffer = MemoryBuffer::create_from_memory_range_copy(text.as_bytes(), name);
+    let part = cx.create_module_from_ir(buffer).map_err(|e| format!("the {name} IR is invalid: {e}"))?;
+    part.set_triple(&module.get_triple());
+    part.set_data_layout(&module.get_data_layout());
+    module.link_in_module(part).map_err(|e| format!("linking {name} failed: {e}"))
 }
 
 /// The initial frame of a new x86-64 context: the six callee-saved registers `ctx_asm_switch` pops, then the return

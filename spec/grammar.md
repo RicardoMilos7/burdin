@@ -153,7 +153,7 @@ ConstItem     = "const" IDENT ":" Type "=" Expr ;
 UseItem       = [ "pub" ] "use" IDENT { "." IDENT } [ "." "{" IDENT { "," IDENT } [ "," ] "}" | "as" IDENT ] ;   (* `pub` re-exports *)
 
 ExternItem    = "extern" STRING ( "{" { [ "priv" ] ExternFnSig } "}" | ExternFnSig Block ) ;
-ExternFnSig   = [ "unsafe" ] "fn" IDENT "(" [ ExternParams ] ")" [ ":" Type ] ;   (* no generics, no `where` *)
+ExternFnSig   = [ "blocking" ] [ "unsafe" ] "fn" IDENT "(" [ ExternParams ] ")" [ ":" Type ] ;   (* no generics, no `where` *)
 ExternParams  = Param { "," Param } [ "," [ "..." ] ] ;   (* `...` only in a declaration *)
 
 TestItem      = "test" STRING [ TestAttrs ] Block ;
@@ -207,7 +207,9 @@ or returning it by value across the C ABI is E0162 (`stdlib.md`). `repr(...)` wi
 its plain C symbol. The signature rules are in `stdlib.md`; `...` is only allowed in a declaration, and a variadic
 parameter list on any other function is E0001. The convention must be `C` (E0162). A generic declaration in a block,
 a runtime-reserved symbol, and a second declaration of one symbol with a different signature are E0163; an exported
-function's generic or variadic form is E0162.
+function's generic or variadic form is E0162. `blocking` before the declaration marks a C function that may block:
+a call runs on the helper pool and parks the calling task (`io.md`, IO4). It is allowed only in a block, not on a
+variadic declaration, and every declaration of one symbol must agree about it, or it is E0290.
 
 **`pub use` and module visibility.** `pub use` adds the imported names to the exporting module's exported names, so
 another module or package can import them. `use <package>` names a dependency's root module (`src/<package>.bd` or

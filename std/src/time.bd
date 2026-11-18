@@ -12,6 +12,7 @@
 use fmt.{Debug, Display, Formatter}
 use int.{abs_diff, div_euclid, rem_euclid}
 use ops.{Add, Sub}
+use reactor.{__in_task, __sleep_async}
 
 priv const __NANOS_PER_SECOND: u64 = 1_000_000_000
 priv const __SECONDS_PER_DAY: i64 = 86_400
@@ -684,6 +685,11 @@ ManualClock: Clock {
 /// Suspends the current thread for about `d`: the system may round it up to its timer resolution, and a signal can
 /// end a Unix sleep early. A comptime evaluation that reaches it fails with E0224.
 fn sleep(d: Duration) {
+    if __in_task() {
+        // A task parks on the reactor's timer instead of holding its worker (`spec/io.md`, IO7).
+        __sleep_async(d.nanos)
+        return
+    }
     let mut remaining = d.nanos
     while remaining > 0 {
         let chunk = remaining.min(__SLEEP_CHUNK_NANOS)

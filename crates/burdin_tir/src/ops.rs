@@ -159,6 +159,9 @@ pub enum Builtin {
     /// `__io_kind(code)`: the portable `IoErrorKind` of an operating system error code (`spec/errors.md`,
     /// ERR11). The compiler knows the target's table (`ioerror`).
     IoErrorKind,
+    /// `__dns_lookup(host) -> Result<String, i32>`: resolves a host name to its IPv4 addresses. The text is one
+    /// `a.b.c.d` per line; the error is the system code (`spec/io.md`, IO6). `std` runs it on the helper pool.
+    DnsLookup,
     /// `__clock(kind)`: nanoseconds from the real-time clock (kind 0, since the Unix epoch) or the monotonic clock
     /// (any other kind, from an unspecified start) (`spec/stdlib.md`, issue #195).
     Clock,
@@ -413,11 +416,52 @@ pub enum RtOp {
     ConfigSet,
     /// `__cpu_count() -> usize`: the number of processors the program may use.
     CpuCount,
+    /// `__io_new() -> CPtr<u8>`: the reactor's operating-system facility (`spec/io.md`, IO2).
+    IoNew,
+    /// `__io_watch(io, fd, events, wait) -> i32`: registers readiness for `events` (1 read, 2 write) one time.
+    IoWatch,
+    /// `__io_unwatch(io, fd)`: removes a registration that has not fired.
+    IoUnwatch,
+    /// `__io_poll(io, timeout_ms) -> CPtr<u8>`: waits; the result is a list of the waiting records that fired,
+    /// linked through their first word, each carrying event kind 1 (ready) or 2 (an offloaded call finished).
+    IoPoll,
+    /// `__io_wake(io)`: makes a pending or future poll return.
+    IoWake,
+    /// `__io_global_get() -> CPtr<u8>`, `__io_global_set(p)`: the process-wide reactor slot.
+    IoGlobalGet,
+    IoGlobalSet,
+    /// `__pool_submit(io, wait, f)`: runs `f` on a helper thread; the thread queues `wait` as a completion.
+    PoolSubmit,
+    /// `__pool_submit_raw(io, wait, code, env)`: the same, for the compiler's `blocking` extern calls, which
+    /// generate the thunk themselves (`spec/io.md`, IO4).
+    PoolSubmitRaw,
+    /// The socket primitives (`spec/io.md`, IO5). Success is `>= 0` (bytes, a descriptor, or 0), `-1` is
+    /// would-block or an operation in progress, and `-2` is a failure whose system code
+    /// `__net_last_error()` reports.
+    NetSocket,
+    NetBind,
+    NetListen,
+    NetAccept,
+    NetConnect,
+    NetSend,
+    NetRecv,
+    NetSendTo,
+    NetRecvFrom,
+    NetClose,
+    NetShutdown,
+    NetError,
+    NetSetNoDelay,
+    NetLocalAddr,
+    NetPeerAddr,
+    /// `__net_last_peer() -> u64`: the packed address of the datagram `__net_recv_from` just returned.
+    NetLastPeer,
+    /// `__net_last_error() -> i32`: the system code of the last failed socket primitive on this thread.
+    NetLastError,
 }
 
 impl RtOp {
     /// Every primitive, with the name `std` calls it by.
-    pub const ALL: [(&'static str, RtOp); 24] = [
+    pub const ALL: [(&'static str, RtOp); 50] = [
         ("__thread_start", RtOp::ThreadStart),
         ("__thread_yield", RtOp::ThreadYield),
         ("__mutex_new", RtOp::MutexNew),
@@ -442,11 +486,37 @@ impl RtOp {
         ("__config_get", RtOp::ConfigGet),
         ("__config_set", RtOp::ConfigSet),
         ("__cpu_count", RtOp::CpuCount),
+        ("__io_new", RtOp::IoNew),
+        ("__io_watch", RtOp::IoWatch),
+        ("__io_unwatch", RtOp::IoUnwatch),
+        ("__io_poll", RtOp::IoPoll),
+        ("__io_wake", RtOp::IoWake),
+        ("__io_global_get", RtOp::IoGlobalGet),
+        ("__io_global_set", RtOp::IoGlobalSet),
+        ("__pool_submit", RtOp::PoolSubmit),
+        ("__pool_submit_raw", RtOp::PoolSubmitRaw),
+        ("__net_socket", RtOp::NetSocket),
+        ("__net_bind", RtOp::NetBind),
+        ("__net_listen", RtOp::NetListen),
+        ("__net_accept", RtOp::NetAccept),
+        ("__net_connect", RtOp::NetConnect),
+        ("__net_send", RtOp::NetSend),
+        ("__net_recv", RtOp::NetRecv),
+        ("__net_send_to", RtOp::NetSendTo),
+        ("__net_recv_from", RtOp::NetRecvFrom),
+        ("__net_close", RtOp::NetClose),
+        ("__net_shutdown", RtOp::NetShutdown),
+        ("__net_error", RtOp::NetError),
+        ("__net_set_nodelay", RtOp::NetSetNoDelay),
+        ("__net_local_addr", RtOp::NetLocalAddr),
+        ("__net_peer_addr", RtOp::NetPeerAddr),
+        ("__net_last_peer", RtOp::NetLastPeer),
+        ("__net_last_error", RtOp::NetLastError),
     ];
 
     /// Whether the primitive consumes an owned closure argument.
     pub fn takes_closure(self) -> bool {
-        matches!(self, RtOp::ThreadStart | RtOp::CtxNew)
+        matches!(self, RtOp::ThreadStart | RtOp::CtxNew | RtOp::PoolSubmit)
     }
 }
 

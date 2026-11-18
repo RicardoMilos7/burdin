@@ -1,0 +1,38 @@
+//@ run
+//> fast done
+//> slow done
+//> done
+
+// A `blocking` extern runs on a helper thread, so a task that calls one parks and its worker keeps running other
+// tasks (spec/io.md, IO4). With one worker, the fast task must finish first.
+
+extern "C" {
+    blocking fn usleep(usec: u32): i32
+    blocking fn Sleep(ms: u32)
+}
+
+fn block(ms: u32) {
+    comptime if target.os() == target.Os.Windows {
+        unsafe {
+            Sleep(ms)
+        }
+    } else {
+        unsafe {
+            let _ = usleep(ms * 1000)
+        }
+    }
+}
+
+fn main() {
+    task.set_workers(1)
+    let slow = task.spawn(|| {
+        block(200)
+        println("slow done")
+    })
+    let fast = task.spawn(|| {
+        println("fast done")
+    })
+    slow.join()
+    fast.join()
+    println("done")
+}

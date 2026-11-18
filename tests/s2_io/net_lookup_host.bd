@@ -1,0 +1,25 @@
+//@ run
+//> resolved localhost
+//> numeric address accepted
+//> done
+
+// Host-name resolution runs on the helper pool, so a slow resolver parks the task instead of holding a worker
+// (spec/io.md, IO6; issue #408).
+
+fn main() {
+    task.set_workers(1)
+    let found = net.lookup_host("localhost", 8080).unwrap()
+    if found.len() == 0 {
+        panic("localhost resolved to nothing")
+    }
+    if found[0].port() != 8080 {
+        panic("lookup_host ignored the port")
+    }
+    println("resolved localhost")
+    let numeric = net.lookup_host("127.0.0.1", 9).unwrap()
+    if numeric[0].to_text().as_str() != "127.0.0.1:9" {
+        panic("a numeric address did not round-trip")
+    }
+    println("numeric address accepted")
+    println("done")
+}

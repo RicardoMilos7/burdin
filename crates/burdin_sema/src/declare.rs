@@ -516,6 +516,7 @@ impl<'t> Sema<'t> {
                         symbol: symbol.clone(),
                         sig: Signature::placeholder(),
                         vararg: decl.is_vararg,
+                        blocking: decl.is_blocking,
                     });
                     self.globals.extern_symbols.insert(symbol.clone(), id);
                     id

@@ -45,9 +45,27 @@ impl Parser<'_> {
         matches!(self.kind(), TokenKind::Ident(name) if name == "test") && matches!(self.nth_kind(1), TokenKind::Str(_))
     }
 
+    /// The contextual `blocking` marker: `blocking fn` or `blocking unsafe fn`. It is a marker only there, so a
+    /// name `blocking` stays usable everywhere else (`spec/io.md`, IO4).
+    fn at_blocking(&self) -> bool {
+        matches!(self.kind(), TokenKind::Ident(name) if name == "blocking")
+            && matches!(self.nth_kind(1), TokenKind::Fn | TokenKind::Unsafe)
+    }
+
     pub(super) fn item(&mut self) -> PResult<Option<Item>> {
         let start = self.span();
         let is_priv = self.eat(&TokenKind::Priv);
+        // `blocking fn` is contextual: it is only a marker inside an `extern "C" { ... }` block, so at item level
+        // it is reported and then read as the function it precedes (`spec/io.md`, IO4).
+        if self.at_blocking() {
+            let span = self.span();
+            self.diags.error(
+                Code::INVALID_BLOCKING,
+                span,
+                "`blocking` is allowed only on an `extern \"C\"` function declaration (`spec/io.md`, IO4)",
+            );
+            self.bump();
+        }
         match self.kind() {
             // `unsafe Type: Send { }`: an `unsafe` followed by a type name is an impl block, not a function.
             TokenKind::Unsafe if !is_priv && matches!(self.nth_kind(1), TokenKind::Ident(_) | TokenKind::SelfType) => {
@@ -135,13 +153,15 @@ impl Parser<'_> {
                 }
                 let fn_start = self.span();
                 let fn_priv = self.eat(&TokenKind::Priv);
+                let blocking = self.eat_blocking();
                 if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
                     return Err(self.unexpected("a function signature"));
                 }
-                let (decl, has_body) = self.fn_decl_opt(fn_priv, fn_start, true)?;
+                let (mut decl, has_body) = self.fn_decl_opt(fn_priv, fn_start, true, blocking)?;
                 if has_body {
                     self.diags.error(Code::SYNTAX, decl.body.span, "an `extern` function has no body");
                 }
+                decl.is_blocking = blocking;
                 decls.push(decl);
             }
             self.close(&TokenKind::RBrace)?;
@@ -149,11 +169,38 @@ impl Parser<'_> {
         }
         let fn_start = self.span();
         let fn_priv = self.eat(&TokenKind::Priv);
+        // `extern "C" blocking fn ...` declares a Burdin function exported with the C ABI; `blocking` has no
+        // meaning on an exported function, so it is rejected where it is written.
+        let blocking_span = self.blocking_span();
+        if let Some(span) = blocking_span {
+            self.diags.error(
+                Code::INVALID_BLOCKING,
+                span,
+                "`blocking` is allowed only on a declaration inside an `extern \"C\" { ... }` block; an exported \
+                 function is an implementation, not a declaration (`spec/io.md`, IO4)",
+            );
+            self.bump();
+        }
         if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
             return Err(self.unexpected("`{` or a function signature"));
         }
-        let (decl, _) = self.fn_decl_opt(fn_priv, fn_start, false)?;
+        let (decl, _) = self.fn_decl_opt(fn_priv, fn_start, false, false)?;
         Ok(Item::ExternFn(ExternFnDecl { abi, abi_span, decl }))
+    }
+
+    /// The span of the contextual `blocking` marker when one is written here.
+    fn blocking_span(&self) -> Option<Span> {
+        self.at_blocking().then(|| self.span())
+    }
+
+    /// Eats the contextual `blocking` marker, returning whether it was there.
+    fn eat_blocking(&mut self) -> bool {
+        if self.at_blocking() {
+            self.bump();
+            true
+        } else {
+            false
+        }
     }
 
     /// Ends one entry of a list inside braces: a `,` or a line break separates entries (grammar section 2,
@@ -414,6 +461,7 @@ impl Parser<'_> {
         let func = FnDecl {
             is_priv: true,
             is_unsafe: false,
+            is_blocking: false,
             name: Ident { name: format!("__burdin_test_{index}"), span: name_span },
             generics: Vec::new(),
             params: Vec::new(),
@@ -429,6 +477,7 @@ impl Parser<'_> {
         let body_func = FnDecl {
             is_priv: true,
             is_unsafe: false,
+            is_blocking: false,
             name: Ident { name: format!("__burdin_test_{index}_body"), span: name_span },
             generics: Vec::new(),
             params: Vec::new(),
@@ -498,7 +547,7 @@ impl Parser<'_> {
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
                 return Err(self.unexpected("a method"));
             }
-            let (decl, has_body) = self.fn_decl_opt(is_priv, fn_start, true)?;
+            let (decl, has_body) = self.fn_decl_opt(is_priv, fn_start, true, false)?;
             methods.push(InterfaceFn { decl, has_body });
         }
         self.close(&TokenKind::RBrace)?;
@@ -529,7 +578,7 @@ impl Parser<'_> {
             self.expect(&TokenKind::Dot)?;
             let name = self.ident("a method name")?;
             let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
-            let (func, _) = self.fn_rest(is_priv, is_unsafe, start, name, generics, false)?;
+            let (func, _) = self.fn_rest(is_priv, is_unsafe, false, start, name, generics, false)?;
             return Ok(ExtensionDecl { recv, func });
         }
         let mut segments: Vec<PathSegment> = Vec::new();
@@ -557,30 +606,38 @@ impl Parser<'_> {
             recv_start.to(last.name.span)
         };
         let recv = Type { kind: TypeKind::Path(segments), span: recv_span };
-        let (func, _) = self.fn_rest(is_priv, is_unsafe, start, name, generics, false)?;
+        let (func, _) = self.fn_rest(is_priv, is_unsafe, false, start, name, generics, false)?;
         Ok(ExtensionDecl { recv, func })
     }
 
     pub(super) fn fn_decl(&mut self, is_priv: bool, start: Span) -> PResult<FnDecl> {
-        Ok(self.fn_decl_opt(is_priv, start, false)?.0)
+        Ok(self.fn_decl_opt(is_priv, start, false, false)?.0)
     }
 
     /// A function. With `body_optional`, a signature without a body is accepted (an interface method); the flag
-    /// says whether a body was present.
-    pub(super) fn fn_decl_opt(&mut self, is_priv: bool, start: Span, body_optional: bool) -> PResult<(FnDecl, bool)> {
+    /// says whether a body was present. `is_blocking` carries the `blocking` marker of an `extern` declaration.
+    pub(super) fn fn_decl_opt(
+        &mut self,
+        is_priv: bool,
+        start: Span,
+        body_optional: bool,
+        is_blocking: bool,
+    ) -> PResult<(FnDecl, bool)> {
         let is_unsafe = self.eat(&TokenKind::Unsafe);
         self.expect(&TokenKind::Fn)?;
         let name = self.ident("a function name")?;
         let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
-        self.fn_rest(is_priv, is_unsafe, start, name, generics, body_optional)
+        self.fn_rest(is_priv, is_unsafe, is_blocking, start, name, generics, body_optional)
     }
 
     /// The rest of a function after `fn name [generics]`: parameters, return type, bounds, and body. An
     /// extension method shares it with an ordinary function.
+    #[allow(clippy::too_many_arguments)]
     fn fn_rest(
         &mut self,
         is_priv: bool,
         is_unsafe: bool,
+        is_blocking: bool,
         start: Span,
         name: Ident,
         mut generics: Vec<GenericParam>,
@@ -608,13 +665,40 @@ impl Parser<'_> {
             let span = start.to(self.prev_span());
             let body = Block { stmts: Vec::new(), span };
             return Ok((
-                FnDecl { is_priv, is_unsafe, name, generics, params, is_vararg, ret, where_clause, body, span },
+                FnDecl {
+                    is_priv,
+                    is_unsafe,
+                    is_blocking,
+                    name,
+                    generics,
+                    params,
+                    is_vararg,
+                    ret,
+                    where_clause,
+                    body,
+                    span,
+                },
                 false,
             ));
         }
         let body = self.block()?;
         let span = start.to(body.span);
-        Ok((FnDecl { is_priv, is_unsafe, name, generics, params, is_vararg, ret, where_clause, body, span }, true))
+        Ok((
+            FnDecl {
+                is_priv,
+                is_unsafe,
+                is_blocking,
+                name,
+                generics,
+                params,
+                is_vararg,
+                ret,
+                where_clause,
+                body,
+                span,
+            },
+            true,
+        ))
     }
 
     pub(super) fn const_decl(&mut self, is_priv: bool, start: Span) -> PResult<ConstDecl> {

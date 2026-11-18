@@ -250,6 +250,9 @@ pub enum Convention {
 pub struct FnDecl {
     pub is_priv: bool,
     pub is_unsafe: bool,
+    /// `blocking fn`: an `extern` function that may block its thread, so a task's call runs it on a helper thread
+    /// (`spec/io.md`, IO4). Only an `extern "C"` declaration may carry it.
+    pub is_blocking: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,

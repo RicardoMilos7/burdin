@@ -72,6 +72,32 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 2
 
+### Milestone 2.4: asynchronous I/O (issue #220)
+
+- Sockets, file operations, name resolution, and `blocking` extern calls look blocking but park only the calling
+  task: its worker runs other tasks while the system works. On the main thread and on `thread.spawn` threads the
+  same calls block the thread. There is no `async`/`await` and no second API (`spec/io.md` IO1).
+- The reactor is one interface with three implementations: `epoll` on Linux, `kqueue` on macOS, and an I/O completion
+  port with `WSAPoll` on Windows. A reactor thread waits for socket readiness or the nearest deadline and wakes the
+  waiting task; the event facility, its wakeup, and a small helper pool are compiler runtime primitives
+  (`crates/burdin_codegen/src/taskrt/reactor_*.ll`), and the timers and scheduler integration are Burdin
+  (`std/src/reactor.bd`). A wait is claimed exactly once, and each descriptor registration is one-shot (issue #222;
+  IO2).
+- File and directory operations run on the helper pool, so a blocking disk call does not hold a worker. The pool is
+  wrapped as `__offload`, which is sound without a `Send` bound because the call does not return before the helper
+  is done (issue #224; IO3).
+- `extern "C" { blocking fn ... }` marks a C function that may block: the compiler marshals its arguments, generates
+  a thunk, and runs it on the helper pool. A `blocking` marker outside an `extern` block, on a variadic declaration,
+  or contradicting another declaration of the same symbol is E0290 (issue #223; IO4).
+- `std.net` adds `TcpListener`, `TcpStream`, `UdpSocket`, and `SocketAddr`, with blocking-looking `accept`, `read`,
+  `write`, `recv_from`, and `send_to`; `TcpStream` implements `Read` and `Write`; read and write timeouts are
+  deadlines on the reactor's timer list; `lookup_host` resolves names on the helper pool. Errors are
+  `IoError.Net`, and `IoErrorKind` gains the connection, address, and reachability kinds (issues #408, #225; IO5-IO6).
+- `time.sleep` inside a task parks on the reactor's timer instead of holding its worker (IO7).
+- `tests/s2_io` has 21 tests, including a TCP echo server, UDP, DNS, timeouts, a FIFO that would deadlock without
+  the helper pool, and two stress tests that every CI job repeats 20 times in both profiles. `spec/io.md` records
+  the decisions IO1-IO8.
+
 ### Milestone 2.3: shared state (issue #213)
 
 - `Shared<T>` counts its handles atomically in every program: relaxed increment on `clone`, release decrement on drop,

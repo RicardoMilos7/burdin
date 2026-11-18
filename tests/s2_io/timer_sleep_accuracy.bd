@@ -1,0 +1,27 @@
+//@ run
+//> zero returns
+//> slept at least 50ms: true
+//> slept at least 30ms: true
+
+// A sleep inside a task lasts at least the requested time, and a zero sleep returns at once (spec/io.md, IO7).
+
+fn main() {
+    task.set_workers(2)
+    let zero = task.spawn(|| {
+        time.sleep(Duration.zero())
+        println("zero returns")
+    })
+    zero.join()
+    let long = task.spawn(|| {
+        let start = Instant.now()
+        time.sleep(Duration.from_millis(50))
+        println("slept at least 50ms: {}", start.elapsed() >= Duration.from_millis(50))
+    })
+    long.join()
+    let again = task.spawn(|| {
+        let start = Instant.now()
+        time.sleep(Duration.from_millis(30))
+        println("slept at least 30ms: {}", start.elapsed() >= Duration.from_millis(30))
+    })
+    again.join()
+}

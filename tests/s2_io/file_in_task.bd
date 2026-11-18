@@ -1,0 +1,38 @@
+//@ run
+//> before
+//> read 15 bytes
+//> wrote 15 bytes
+//> after
+//> done
+
+// File operations inside a task run on the helper pool and park the task, so the rest of the program runs while the
+// system works (spec/io.md, IO3).
+
+fn main() {
+    task.set_workers(1)
+    let text = "hello from task"
+    let bytes = text.to_utf8()
+    fs.write("io-task.txt", bytes[0..bytes.len()]).unwrap()
+    println("before")
+    let reader = task.spawn(|| {
+        let mut file = fs.File.open("io-task.txt").unwrap()
+        let mut buf = List<u8>.new()
+        let n = file.read(mut buf, 64).unwrap()
+        println("read {} bytes", n)
+        n
+    })
+    let n = reader.join()
+    let writer = task.spawn(|| {
+        let mut file = fs.File.create("io-task-out.txt").unwrap()
+        let data = "hello from task".to_utf8()
+        file.write_all(data[0..data.len()]).unwrap()
+        println("wrote {} bytes", data.len())
+    })
+    writer.join()
+    println("after")
+    let read_back = fs.read("io-task-out.txt").unwrap()
+    if read_back.len() != n {
+        panic("the file written through the pool has the wrong length")
+    }
+    println("done")
+}

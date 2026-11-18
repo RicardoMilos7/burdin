@@ -15,7 +15,7 @@ links. When a platform, a check, or a gap changes, update this page in the same 
 
 | OS | Architecture | Target triple | Support | Evidence |
 | --- | --- | --- | --- | --- |
-| Linux | x86-64 | `x86_64-unknown-linux-gnu` | Tested | `linux` job on `ubuntu-24.04`: m01-m11 in the debug and release profiles, every check script, LLVM 21 from apt.llvm.org, and `cc` (gcc and glibc) linking |
+| Linux | x86-64 | `x86_64-unknown-linux-gnu` | Tested | `linux` job on `ubuntu-24.04`: m01-m24 and s2_tasks, s2_channels, s2_shared, and s2_io in the debug and release profiles, every check script, LLVM 21 from apt.llvm.org, and `cc` (gcc and glibc) linking |
 | macOS | arm64 | `aarch64-apple-darwin` | Tested | `macos` job on `macos-latest` (Apple Silicon): the same suite and scripts, Homebrew `llvm@21`, and Apple `cc` (clang and libSystem) linking |
 | Windows | x86-64 | `x86_64-pc-windows-msvc` | Tested | `windows` job on `windows-latest` (MSVC): the same suite and scripts, LLVM 21 from the official archive, MSVC `cl` linking, and a `BURDIN_CC=cl` rerun of m01 and m11 |
 | Linux | arm64 | `aarch64-unknown-linux-gnu` | Untested | The compiler uses the host triple and `tests/check_platform.py` recognizes the host, but no CI job runs the suite there |
@@ -24,8 +24,8 @@ links. When a platform, a check, or a gap changes, update this page in the same 
 | other OS or 32-bit | — | — | Unsupported | `tests/check_platform.py` reports a skip, and nothing in the build or the suite exercises it |
 
 The compiler targets the host it runs on (`TargetMachine::get_default_triple` in `burdin_codegen`); there is no
-cross-compilation flag. "Tested" means the full conformance suite (m01-m11) passes in the debug and release profiles
-and every check script runs on that host in CI. "Untested" means the code path is expected to work because nothing
+cross-compilation flag. "Tested" means the full conformance suite (m01-m24 and the stage 2 folders) passes in the
+debug and release profiles and every check script runs on that host in CI. "Untested" means the code path is expected to work because nothing
 in it is architecture-specific, but no job proves it, so a failure there is not a CI regression. "Unsupported" means
 no claim at all.
 
@@ -33,7 +33,7 @@ no claim at all.
 
 | Runtime feature | Checked by | Linux x86-64 | macOS arm64 | Windows x86-64 |
 | --- | --- | --- | --- | --- |
-| Language, runtime, and code generation (m01-m11) | `tests/run_tests.py` (debug and release) | yes | yes | yes |
+| Language, runtime, and code generation (m01-m24) | `tests/run_tests.py` (debug and release) | yes | yes | yes |
 | Host triple and 64-bit `usize`/`isize` | `tests/check_platform.py` | yes | yes | yes |
 | Binary-safe standard output and file I/O | `tests/check_platform_support.py`, `tests/m09_stdlib/file_io_binary.bd` | yes | yes | yes |
 | Buffered output flushed on return, `process.exit`, and panics | `tests/m02_basics/panic_flushes_stdout.bd`, `tests/m09_stdlib/exit_code.bd` | yes | yes | yes |
@@ -49,6 +49,8 @@ no claim at all.
 | LLVM C API (`--link-lib LLVM-C`) | `tests/m11_llvm/llvm_return_42.bd` | yes | yes | yes, with `LLVM-C.dll` on `PATH` |
 | Parallel parsing and deterministic diagnostics | `tests/check_parallel.py` | yes | yes | yes |
 | Lexer/parser fuzzing | `cargo test --workspace` in every job; `tests/fuzz.py` in the scheduled `fuzz` job | corpus replay and the long session | corpus replay | corpus replay |
+| Tasks, channels, shared state | `tests/s2_tasks`, `tests/s2_channels`, `tests/s2_shared` (debug and release, stress tests repeated) | yes | yes | yes |
+| Sockets, the file helper pool, and timers | `tests/s2_io` (debug and release, stress tests repeated) | yes | yes | yes |
 
 The `windows` job runs every script in the table through Git Bash. `tests/check_platform_support.py` is the check
 that these columns stay true: it fails when a script or a conformance test named here disappears, when a script
@@ -146,6 +148,13 @@ The atomics, `Mutex<T>`, `RwLock<T>`, and the atomic `Shared<T>` count (stage 2.
 instructions, which every supported target lowers natively, and the scheduler's lock and waiters, so they run wherever
 tasks do. `tests/s2_shared` is their check, and its stress tests run 20 times in every CI job's debug and release
 profiles.
+
+The reactor of stage 2.4 (`spec/io.md`) has one implementation per family: `epoll` with an `eventfd` on Linux,
+`kqueue` with an `EVFILT_USER` event on macOS, and a completion port with a `WSAPoll` readiness wait and a loopback
+UDP wakeup on Windows (`crates/burdin_codegen/src/taskrt/reactor_*.ll`). The socket calls use the platform's C
+library (Winsock on Windows, where `ws2_32` is linked), and the helper pool and timers are the same code everywhere.
+Each backend is exercised by the CI job for its family: `tests/s2_io` runs in the Linux, macOS, and Windows jobs, and
+its stress tests run 20 times in each job's debug and release profiles.
 
 ### Not platform-specific
 

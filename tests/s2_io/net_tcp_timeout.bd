@@ -1,0 +1,37 @@
+//@ run
+//> read timed out
+//> done
+
+// A socket timeout parks the task on the reactor with a deadline; when it passes, the read or write reports
+// `TimedOut` (spec/io.md, IO5-IO7).
+
+fn main() {
+    task.set_workers(2)
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    task.scope(|s| {
+        s.spawn(|| {
+            // Accept and then say nothing until the client's timeouts have passed.
+            let (conn, _) = listener.accept().unwrap()
+            let _ = conn.local_addr()
+            time.sleep(Duration.from_millis(500))
+            conn.close().unwrap()
+        })
+        s.spawn(|| {
+            let mut client = net.TcpStream.connect(target.clone()).unwrap()
+            client.set_read_timeout(Some(Duration.from_millis(50)))
+            let mut buf = List<u8>.new()
+            match client.read(mut buf, 16) {
+                Ok(_) => println("the read did not time out"),
+                Err(failure) => println("read {}", match failure.kind() {
+                    IoErrorKind.TimedOut => "timed out".to_string(),
+                    _ => "failed".to_string(),
+                }),
+            }
+            client.close().unwrap()
+        })
+    })
+    println("done")
+}

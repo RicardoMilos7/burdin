@@ -1,0 +1,28 @@
+//@ burdin-test passed=2 failed=0
+
+// A file operation inside a task leaves nothing behind: the helper frees the job, the task frees the wait, and the
+// result is owned by the test (spec/io.md, IO3; spec/allocators.md, AL9).
+
+test "read through the pool" {
+    let text = "0123456789abcdefghijklmn"
+    let bytes = text.to_utf8()
+    fs.write("leak-check.txt", bytes[0..bytes.len()]).unwrap()
+    let read = fs.read("leak-check.txt").unwrap()
+    assert_eq(read.len(), 24)?
+}
+
+test "two tasks read at once" {
+    let text = "0123456789abcdefghijklmn"
+    let bytes = text.to_utf8()
+    fs.write("leak-check.txt", bytes[0..bytes.len()]).unwrap()
+    task.scope(|s| {
+        s.spawn(|| {
+            let a = fs.read("leak-check.txt").unwrap()
+            assert_eq(a.len(), 24).unwrap()
+        })
+        s.spawn(|| {
+            let b = fs.read("leak-check.txt").unwrap()
+            assert_eq(b.len(), 24).unwrap()
+        })
+    })
+}

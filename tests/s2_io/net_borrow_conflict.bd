@@ -1,0 +1,14 @@
+//@ compile-fail
+fn main() {
+    let mut stream = net.TcpStream.connect("127.0.0.1:1").unwrap()
+    let mut buf = List<u8>.new()
+    task.scope(|s| {
+        s.spawn(|| {
+            let _ = stream.read(mut buf, 1)
+        })
+        let _ = stream.read(mut buf, 1) //~ E0111
+    })
+}
+
+// A scoped task's borrow of a socket lasts to the end of the scope body, so the body cannot use the same place
+// (spec/tasks.md, TK7; spec/memory-rules.md, SK1).

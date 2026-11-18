@@ -1,0 +1,21 @@
+//@ run
+//> refused: connection refused
+//> done
+
+// A non-blocking connect that the system refuses reports the portable kind (spec/io.md, IO5). Port 1 on localhost
+// has no listener in the test environment.
+
+fn main() {
+    task.set_workers(1)
+    match net.TcpStream.connect("127.0.0.1:1") {
+        Ok(stream) => {
+            let _ = stream.close()
+            println("connected")
+        }
+        Err(failure) => match failure.kind() {
+            IoErrorKind.ConnectionRefused => println("refused: connection refused"),
+            other => println("refused: {}", other),
+        },
+    }
+    println("done")
+}

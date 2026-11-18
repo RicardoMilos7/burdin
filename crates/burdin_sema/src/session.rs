@@ -321,6 +321,7 @@ impl<'t> Sema<'t> {
                 params: e.sig.params.into_iter().map(|p| p.ty).collect(),
                 ret: e.sig.ret,
                 vararg: e.vararg,
+                blocking: e.blocking,
             })
             .collect();
         tir::Program {

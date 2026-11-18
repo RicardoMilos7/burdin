@@ -126,6 +126,9 @@ pub struct ExternFn {
     pub ret: Ty,
     /// A C variadic function (`...` after the named parameters): a call may pass extra C-ABI values.
     pub vararg: bool,
+    /// `blocking fn`: inside a task the call runs on a helper thread, so it does not stall a worker
+    /// (`spec/io.md`, IO4).
+    pub blocking: bool,
 }
 
 #[derive(Clone)]

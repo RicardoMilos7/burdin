@@ -1,0 +1,61 @@
+//@ run
+//> server echoed 200 messages
+//> client received 200 messages, sum 20100
+//> done
+
+// One connection carries two hundred messages in both directions: every read waits for the reactor and every
+// write returns to the same task (spec/io.md, IO5). Both tasks return what they did, and `main` prints the two
+// lines after joining them, so the output does not depend on which task finishes first.
+
+fn server(own conn: net.TcpStream): i32 {
+    let mut conn = conn
+    let mut i: i32 = 0
+    let mut done = false
+    while !done {
+        let mut buf = List<u8>.new()
+        let n = conn.read(mut buf, 4).unwrap()
+        if n == 0 {
+            done = true
+        } else {
+            conn.write_all(buf[0..n]).unwrap()
+            i = i + 1
+        }
+    }
+    conn.close().unwrap()
+    i
+}
+
+fn main() {
+    task.set_workers(2)
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    let server_task = task.spawn(|| {
+        let (conn, _) = listener.accept().unwrap()
+        server(conn)
+    })
+    let address = target.clone()
+    let client_task = task.spawn(|| {
+        let mut client = net.TcpStream.connect(address.clone()).unwrap()
+        let mut sum: i32 = 0
+        let mut i: i32 = 1
+        while i <= 200 {
+            let text_out = i.to_string()
+            let bytes = text_out.to_utf8()
+            client.write_all(bytes[0..bytes.len()]).unwrap()
+            let mut buf = List<u8>.new()
+            let n = client.read(mut buf, 4).unwrap()
+            let text = from_utf8(buf[0..n]).unwrap()
+            sum = sum + i32.parse(text.as_str()).unwrap()
+            i = i + 1
+        }
+        client.close().unwrap()
+        sum
+    })
+    let echoed = server_task.join()
+    let sum = client_task.join()
+    println("server echoed {} messages", echoed)
+    println("client received 200 messages, sum {}", sum)
+    println("done")
+}

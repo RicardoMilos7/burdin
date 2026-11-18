@@ -42,6 +42,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__metadata" => Builtin::Metadata,
         "__canonicalize" => Builtin::Canonicalize,
         "__io_kind" => Builtin::IoErrorKind,
+        "__dns_lookup" => Builtin::DnsLookup,
         "__clock" => Builtin::Clock,
         "__entropy" => Builtin::Entropy,
         "__sleep" => Builtin::Sleep,
@@ -96,6 +97,9 @@ fn rt_sig(op: RtOp) -> Signature {
         })
     };
     let usize_ty = || Ty::Int(IntTy::Usize);
+    let i32_ty = || Ty::Int(IntTy::I32);
+    let i64_ty = || Ty::Int(IntTy::I64);
+    let u64_ty = || Ty::Int(IntTy::U64);
     let (params, ret) = match op {
         RtOp::ThreadStart => (vec![closure()], Ty::Unit),
         RtOp::ThreadYield | RtOp::SpinLock | RtOp::SpinUnlock => (Vec::new(), Ty::Unit),
@@ -113,6 +117,48 @@ fn rt_sig(op: RtOp) -> Signature {
         RtOp::CtxNew => (vec![plain(usize_ty()), closure()], ptr()),
         RtOp::CpuCount | RtOp::ConfigGet => (Vec::new(), usize_ty()),
         RtOp::ConfigSet => (vec![plain(usize_ty())], Ty::Unit),
+        // The reactor (`spec/io.md`, IO2). A wait record is a raw pointer the standard library lays out
+        // (`__Wait`, `reactor.bd`); the reactor primitives only link records through their first word.
+        RtOp::IoNew => (Vec::new(), ptr()),
+        RtOp::IoWatch => (vec![plain(ptr()), plain(i64_ty()), plain(i32_ty()), plain(ptr())], i32_ty()),
+        RtOp::IoUnwatch => (vec![plain(ptr()), plain(i64_ty())], Ty::Unit),
+        RtOp::IoPoll => (vec![plain(ptr()), plain(i64_ty())], ptr()),
+        RtOp::IoWake | RtOp::IoGlobalSet => (vec![plain(ptr())], Ty::Unit),
+        RtOp::IoGlobalGet => (Vec::new(), ptr()),
+        // `__pool_submit(io, wait, f)`: the helper runs `f`; completion goes through `wait`.
+        RtOp::PoolSubmit => (vec![plain(ptr()), plain(ptr()), closure()], Ty::Unit),
+        // `__pool_submit_raw(io, wait, code, env)`: the closure as its two raw words.
+        RtOp::PoolSubmitRaw => (vec![plain(ptr()), plain(ptr()), plain(ptr()), plain(ptr())], Ty::Unit),
+        // Sockets (`spec/io.md`, IO5). A descriptor is an `i64`, because a Windows `SOCKET` is pointer-sized.
+        // The socket type is 1 for TCP and 2 for UDP; the event mask is 1 for readable and 2 for writable.
+        RtOp::NetSocket => (vec![plain(i32_ty())], i64_ty()),
+        RtOp::NetBind => (vec![plain(i64_ty()), plain(Ty::Str), plain(i32_ty())], i64_ty()),
+        RtOp::NetListen => (vec![plain(i64_ty()), plain(i32_ty())], i64_ty()),
+        RtOp::NetAccept => (vec![plain(i64_ty())], i64_ty()),
+        RtOp::NetConnect => (vec![plain(i64_ty()), plain(Ty::Str), plain(i32_ty())], i64_ty()),
+        RtOp::NetSend | RtOp::NetSendTo => {
+            let mut params = vec![plain(i64_ty()), plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))];
+            if op == RtOp::NetSendTo {
+                params.push(plain(Ty::Str));
+                params.push(plain(i32_ty()));
+            }
+            (params, i64_ty())
+        }
+        RtOp::NetRecv | RtOp::NetRecvFrom => {
+            let mut buf = ParamSig::plain(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global));
+            buf.by_ref = true;
+            buf.mut_param = true;
+            buf.exclusive = true;
+            let params = vec![plain(i64_ty()), buf, plain(usize_ty())];
+            (params, i64_ty())
+        }
+        RtOp::NetClose => (vec![plain(i64_ty())], i64_ty()),
+        RtOp::NetShutdown => (vec![plain(i64_ty()), plain(i32_ty())], i64_ty()),
+        RtOp::NetError => (vec![plain(i64_ty())], i32_ty()),
+        RtOp::NetSetNoDelay => (vec![plain(i64_ty()), plain(i32_ty())], i64_ty()),
+        RtOp::NetLocalAddr | RtOp::NetPeerAddr => (vec![plain(i64_ty())], u64_ty()),
+        RtOp::NetLastPeer => (Vec::new(), u64_ty()),
+        RtOp::NetLastError => (Vec::new(), i32_ty()),
     };
     Signature { params, ret, has_self: false, ret_origins: Vec::new() }
 }
@@ -153,7 +199,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
         Builtin::ViewAsText => Ty::Str,
         Builtin::CStringFrom => Ty::CString,
-        Builtin::ReadToString => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
+        Builtin::ReadToString | Builtin::DnsLookup => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
         Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(os_code())),
         Builtin::FileOpen => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(os_code())),
         Builtin::FileRead | Builtin::FileWrite => Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(os_code())),
@@ -315,7 +361,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
             vec![ParamSig::plain(Ty::Int(IntTy::I32)), ParamSig::plain(Ty::Int(IntTy::U64))]
         }
         Builtin::RenamePath => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
-        Builtin::ReadToString | Builtin::RunCommand => vec![ParamSig::plain(Ty::Str)],
+        Builtin::ReadToString | Builtin::RunCommand | Builtin::DnsLookup => vec![ParamSig::plain(Ty::Str)],
         Builtin::IoErrorKind => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::RawAlloc => vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Int(IntTy::Usize))],

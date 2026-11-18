@@ -1834,7 +1834,9 @@ none (`errors.md`, ERR7).
 ```
 enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
     NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
-    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut  Other
+    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut
+    ConnectionRefused  ConnectionReset  ConnectionAborted  NotConnected
+    AddrInUse  AddrNotAvailable  NetworkUnreachable  HostUnreachable  Other
 }
 IoErrorKind: Display { fn fmt(self, mut f: Formatter) }   // "not found", "permission denied", ...
 
@@ -1842,6 +1844,7 @@ error enum IoError {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> }      "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> }     "cannot write {path}: {kind}"
     Run { command: String, kind: IoErrorKind, os_code: Option<i32> }    "cannot run {command}: {kind}"
+    Net { op: String, addr: String, kind: IoErrorKind, os_code: Option<i32> } "cannot {op} {addr}: {kind}"
     UnexpectedEof            "unexpected end of input"
     WriteZero                "the writer accepted no bytes"
     InvalidData              "the bytes are not valid text"
@@ -1859,7 +1862,7 @@ error enum ParseIntError {
 ```
 
 `read_to_string` returns `IoError.Read` on failure, `write_file` returns `IoError.Write`, `process.run` returns
-`IoError.Run`, and an integer `parse` returns `ParseIntError.Invalid`. The kind is portable and the OS code is the
+`IoError.Run`, a socket operation returns `IoError.Net`, and an integer `parse` returns `ParseIntError.Invalid`. The kind is portable and the OS code is the
 platform's own (`errno`, or the Win32 error code); the message ends with the kind's text, so a missing file prints
 `cannot read missing.txt: not found`. The readers and writers return `UnexpectedEof` (`read_exact` on a source that
 ended), `WriteZero` (`write_all` on a sink that takes nothing), `InvalidData` (text that is not UTF-8), and `Seek`
@@ -1871,6 +1874,62 @@ An `error enum` declaration lowers to an ordinary enum plus generated `Display` 
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
 function written `fn main(): Result<T>` prints an `Err` with `Display` to standard error and exits 1; `Ok` prints
 nothing and exits 0 (`errors.md`, ERR8).
+
+## Networking (issue #220)
+
+```
+struct SocketAddr derives (Copy, Clone, Eq, Debug) {
+    priv ip: u32       // a.b.c.d, a in the highest byte
+    priv port: u16
+}
+SocketAddr {
+    fn new(a: u8, b: u8, c: u8, d: u8, port: u16): SocketAddr
+    fn ip(self): u32
+    fn port(self): u16
+    fn octets(self): (u8, u8, u8, u8)
+    fn to_text(self): String                       // "a.b.c.d:port"
+    fn parse(text: str): Result<SocketAddr, IoError>   // numeric only
+}
+SocketAddr: Display
+
+struct TcpListener {
+    fn bind(addr: str): Result<TcpListener, IoError>
+    fn accept(self): Result<(TcpStream, SocketAddr), IoError>
+    fn local_addr(self): Result<SocketAddr, IoError>
+    fn close(own self): Result<(), IoError>
+}
+
+struct TcpStream {
+    fn connect(addr: str): Result<TcpStream, IoError>
+    fn peer_addr(self): Result<SocketAddr, IoError>
+    fn local_addr(self): Result<SocketAddr, IoError>
+    fn set_read_timeout(mut self, Option<Duration>)
+    fn set_write_timeout(mut self, Option<Duration>)
+    fn set_nodelay(self, on: bool): Result<(), IoError>
+    fn shutdown_read(mut self): Result<(), IoError>
+    fn shutdown_write(mut self): Result<(), IoError>
+    fn close(own self): Result<(), IoError>
+}
+TcpStream: Read      // read, read_exact, read_to_end, read_to_string
+TcpStream: Write     // write, flush, write_all, write_text, write_line
+
+struct UdpSocket {
+    fn bind(addr: str): Result<UdpSocket, IoError>
+    fn recv_from(mut self, mut buf: List<u8>, max: usize): Result<(usize, SocketAddr), IoError>
+    fn send_to(self, data: [u8], addr: str): Result<usize, IoError>
+    fn local_addr(self): Result<SocketAddr, IoError>
+    fn set_read_timeout(mut self, Option<Duration>)
+    fn close(own self): Result<(), IoError>
+}
+
+fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
+```
+
+An address is `host:port`; port 0 asks the system for a free port, which `local_addr` reports. The sockets are
+IPv4 only. Every call looks blocking and parks the calling task (or blocks the calling thread); the reactor and the
+helper pool that make that work are `spec/io.md` IO1-IO8. A socket is `Send` and `Sync` because its state is in the
+kernel and its value is a descriptor; `TcpStream` and `UdpSocket` implement `Read`/`Write` where the interface
+applies. A failure is `IoError.Net { op, addr, kind, os_code }`, with the network kinds of ERR11.
 
 ## Files, processes, and environment
 
@@ -2270,6 +2329,7 @@ lists them by rule).
 | Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
 | Tasks, scopes, and threads | `s2_tasks/two_tasks`, `moved_value`, `detach_runs`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, `workers_steal`, `stress_many_tasks` |
 | Channels and `select` | `s2_channels/producer_consumer`, `close_semantics`, `bounded_capacity`, `select_priority`, `select_default`, `select_send`, `stress_mpmc`, `select_stress` |
+| Networking and asynchronous I/O | `s2_io/net_tcp_echo`, `net_tcp_messages`, `net_tcp_timeout`, `net_tcp_refused`, `net_udp`, `net_lookup_host`, `file_in_task`, `file_fifo_offload`, `blocking_parks_worker`, `timer_parks_task`, `stress_files`, `stress_connections` (`io.md` lists them by rule) |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
 | Hashing | `m24_stdlib/hash_values`, `hash_hasher`, `hash_seeded`, `hash_generic`, `hash_map_consistent`, `hash_case_insensitive`, `hash_comptime`, `hash_float`, `hash_float_derive` |
 | `Heap` | `m05_ownership/heap_tree_eval` |

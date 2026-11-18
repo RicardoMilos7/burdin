@@ -8,6 +8,7 @@
 
 use fmt.{Debug, Formatter}
 use path.Path
+use reactor.__offload
 use rw.{Read, Seek, SeekFrom, Write}
 use sort.sort_by
 use std.{IoError, IoErrorKind}
@@ -54,7 +55,7 @@ Metadata {
 /// The names of the entries in the directory `path`, in the order the system returns them, without `.` and `..`.
 /// Sort the list for a deterministic order. The names are not paths; join them with `Path.join`.
 fn read_dir(path: str): Result<List<String>, IoError> {
-    match __read_dir(path) {
+    match __offload(|| __read_dir(path)) {
         Ok(names) => Ok(names),
         Err(code) => Err(IoError.Read {
             path: path.to_string(),
@@ -67,7 +68,7 @@ fn read_dir(path: str): Result<List<String>, IoError> {
 /// Creates one directory. The parent must exist, and an existing directory is an error (`create_dir_all` treats
 /// an existing directory as success).
 fn create_dir(path: str): Result<(), IoError> {
-    match __create_dir(path) {
+    match __offload(|| __create_dir(path)) {
         Ok(_) => Ok(()),
         Err(code) => Err(IoError.Write {
             path: path.to_string(),
@@ -100,7 +101,7 @@ fn create_dir_all(path: str): Result<(), IoError> {
 
 /// Removes an empty directory. A non-empty directory is an error; `remove_dir_all` removes it with its contents.
 fn remove_dir(path: str): Result<(), IoError> {
-    match __remove_dir(path) {
+    match __offload(|| __remove_dir(path)) {
         Ok(_) => Ok(()),
         Err(code) => Err(IoError.Write {
             path: path.to_string(),
@@ -112,7 +113,7 @@ fn remove_dir(path: str): Result<(), IoError> {
 
 /// Removes a file or a symbolic link. A directory is an error; `remove_dir_all` removes a directory.
 fn remove_file(path: str): Result<(), IoError> {
-    match __remove_file(path) {
+    match __offload(|| __remove_file(path)) {
         Ok(_) => Ok(()),
         Err(code) => Err(IoError.Write {
             path: path.to_string(),
@@ -166,7 +167,7 @@ priv fn __remove_entry(path: str): Result<(), IoError> {
 
 /// Renames a file or a directory, replacing an existing `to`. The error names `to`.
 fn rename(from: str, to: str): Result<(), IoError> {
-    match __rename(from, to) {
+    match __offload(|| __rename(from, to)) {
         Ok(_) => Ok(()),
         Err(code) => Err(IoError.Write {
             path: to.to_string(),
@@ -179,7 +180,7 @@ fn rename(from: str, to: str): Result<(), IoError> {
 /// What the system reports about `path`. The entry itself is read (`lstat` on Unix), so a symbolic link reports
 /// its own kind; on Windows the CRT's `_stat64` follows a link, so its size and times may describe the target.
 fn metadata(path: str): Result<Metadata, IoError> {
-    match __metadata(path) {
+    match __offload(|| __metadata(path)) {
         Ok((size, mode, modified, accessed, flags)) => Ok(Metadata {
             size,
             mode: mode as u32,
@@ -211,7 +212,7 @@ priv fn __file_kind(flags: u64): FileKind {
 /// exist. On Unix this is `realpath`, which also resolves symbolic links; on Windows it is `_fullpath`, which
 /// only normalizes the text and keeps a link's name.
 fn canonicalize(path: str): Result<String, IoError> {
-    match __canonicalize(path) {
+    match __offload(|| __canonicalize(path)) {
         Ok(text) => Ok(text),
         Err(code) => Err(IoError.Read {
             path: path.to_string(),
@@ -436,7 +437,13 @@ OpenOptions {
         if self.truncate && self.append {
             return Err(IoError.InvalidInput)
         }
-        match __file_open(path, self.read, self.write, self.append, self.truncate, self.create, self.create_new) {
+        let read = self.read
+        let write = self.write
+        let append = self.append
+        let truncate = self.truncate
+        let create = self.create
+        let create_new = self.create_new
+        match __offload(|| __file_open(path, read, write, append, truncate, create, create_new)) {
             Ok(fd) => Ok(File { fd: fd, path: path.to_string() }),
             Err(_) => {
                 let code = __file_error()
@@ -487,7 +494,8 @@ File {
 
     /// Makes the file's contents durable: `fsync` on Unix, `_commit` on Windows.
     fn sync_all(self): Result<(), IoError> {
-        match __file_sync(self.fd) {
+        let fd = self.fd
+        match __offload(|| __file_sync(fd)) {
             Ok(()) => Ok(()),
             Err(_) => {
                 let code = __file_error()
@@ -502,7 +510,8 @@ File {
 
     /// Sets the file's length. The bytes past `size` are removed, and a shorter file is extended with zero bytes.
     fn set_len(mut self, size: u64): Result<(), IoError> {
-        match __file_set_len(self.fd, size) {
+        let fd = self.fd
+        match __offload(|| __file_set_len(fd, size)) {
             Ok(()) => Ok(()),
             Err(_) => {
                 let code = __file_error()
@@ -538,7 +547,13 @@ File {
 
 File: Read {
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
-        match __file_read(self.fd, mut buf, max) {
+        let fd = self.fd
+        let buf_ptr = unsafe { (&mut buf) as CPtr<List<u8>> }
+        match unsafe {
+            __offload(|| unsafe {
+                __file_read(fd, mut *buf_ptr, max)
+            })
+        } {
             Ok(n) => Ok(n),
             Err(_) => {
                 let code = __file_error()
@@ -554,7 +569,8 @@ File: Read {
 
 File: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
-        match __file_write(self.fd, data) {
+        let fd = self.fd
+        match __offload(|| __file_write(fd, data)) {
             Ok(n) => Ok(n),
             Err(_) => {
                 let code = __file_error()
@@ -580,7 +596,8 @@ File: Seek {
             SeekFrom.End(d) => (d, 2),
             SeekFrom.Current(d) => (d, 1),
         }
-        match __file_seek(self.fd, offset, whence) {
+        let fd = self.fd
+        match __offload(|| __file_seek(fd, offset, whence)) {
             Ok(position) => Ok(position as u64),
             Err(_) => Err(IoError.Seek),
         }
