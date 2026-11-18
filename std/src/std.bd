@@ -5,6 +5,7 @@
 // Burdin program can express is here.
 
 use fmt.{Debug, Display, Formatter}
+use reactor.__offload_raw
 
 /// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `Error`.
 interface Error requires Display { }
@@ -118,6 +119,14 @@ enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
     BrokenPipe
     WouldBlock
     TimedOut
+    ConnectionRefused
+    ConnectionReset
+    ConnectionAborted
+    NotConnected
+    AddrInUse
+    AddrNotAvailable
+    NetworkUnreachable
+    HostUnreachable
     Other
 }
 
@@ -137,6 +146,14 @@ IoErrorKind: Display {
             IoErrorKind.BrokenPipe => "broken pipe",
             IoErrorKind.WouldBlock => "would block",
             IoErrorKind.TimedOut => "timed out",
+            IoErrorKind.ConnectionRefused => "connection refused",
+            IoErrorKind.ConnectionReset => "connection reset",
+            IoErrorKind.ConnectionAborted => "connection aborted",
+            IoErrorKind.NotConnected => "not connected",
+            IoErrorKind.AddrInUse => "address already in use",
+            IoErrorKind.AddrNotAvailable => "address not available",
+            IoErrorKind.NetworkUnreachable => "network unreachable",
+            IoErrorKind.HostUnreachable => "host unreachable",
             IoErrorKind.Other => "other",
         })
     }
@@ -151,6 +168,7 @@ error enum IoError derives (Eq, Debug) {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot write {path}: {kind}"
     Run { command: String, kind: IoErrorKind, os_code: Option<i32> } "cannot run {command}: {kind}"
+    Net { op: String, addr: String, kind: IoErrorKind, os_code: Option<i32> } "cannot {op} {addr}: {kind}"
     UnexpectedEof "unexpected end of input"
     WriteZero "the writer accepted no bytes"
     InvalidData "the bytes are not valid text"
@@ -165,6 +183,7 @@ IoError {
             IoError.Read { path: _, kind, os_code: _ } => kind,
             IoError.Write { path: _, kind, os_code: _ } => kind,
             IoError.Run { command: _, kind, os_code: _ } => kind,
+            IoError.Net { op: _, addr: _, kind, os_code: _ } => kind,
             IoError.UnexpectedEof => IoErrorKind.UnexpectedEof,
             IoError.InvalidData => IoErrorKind.InvalidData,
             IoError.WriteZero => IoErrorKind.Other,
@@ -180,6 +199,7 @@ IoError {
             IoError.Read { path: _, kind: _, os_code } => os_code,
             IoError.Write { path: _, kind: _, os_code } => os_code,
             IoError.Run { command: _, kind: _, os_code } => os_code,
+            IoError.Net { op: _, addr: _, kind: _, os_code } => os_code,
             IoError.UnexpectedEof
             | IoError.WriteZero
             | IoError.InvalidData
@@ -350,4 +370,13 @@ fn todo(): ! {
 /// Panics with `not implemented`, for a function that is declared but not supported.
 fn unimplemented(): ! {
     panic("not implemented")
+}
+
+/// The shim a call to a `blocking` extern goes through (`spec/io.md`, IO4). The compiler generates a thunk that
+/// performs the C call from the arguments it marshals, then calls this function with the thunk and the block. The
+/// thunk runs on the helper pool, so the calling task parks instead of holding a worker.
+fn __offload_blocking(own code: CPtr<u8>, own env: CPtr<u8>) {
+    unsafe {
+        __offload_raw(code, env)
+    }
 }

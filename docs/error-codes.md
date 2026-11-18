@@ -1746,3 +1746,21 @@ fn main() {}
 
 **How to fix:** write `unsafe Handle: Send { }` when the promise holds, or remove the implementation and let the
 compiler derive the interface from the fields.
+
+## E0290: Invalid `blocking` marker
+
+`blocking` marks an `extern "C"` function declaration as one that may block its thread, so a call to it runs on the
+helper pool and parks the calling task (`spec/io.md`, IO4). The marker is allowed only there, only on a declaration
+whose parameters are fixed, and every declaration of one C symbol must agree about it.
+
+<!-- error-example: E0290 -->
+```burdin
+blocking fn slow(): i32 { 0 } //~ E0290
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** write a helper with an ordinary body when the call does not block, or declare the C function inside
+an `extern "C" { ... }` block and mark the declaration there. A variadic declaration cannot be `blocking`, because
+the thunk marshals a fixed argument list, and every declaration of one C symbol must agree about the marker.

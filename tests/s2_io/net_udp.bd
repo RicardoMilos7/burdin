@@ -1,0 +1,33 @@
+//@ run
+//> sent 4 bytes
+//> received 4 bytes from the peer
+//> reply received
+//> done
+
+// UDP send/receive inside tasks: the two sockets exchange a datagram each way, and `recv_from` reports the sender
+// (spec/io.md, IO5; issue #408).
+
+fn main() {
+    task.set_workers(2)
+    let mut peer = net.UdpSocket.bind("127.0.0.1:0").unwrap()
+    let mut client = net.UdpSocket.bind("127.0.0.1:0").unwrap()
+    let peer_addr = peer.local_addr().unwrap().to_text()
+    task.scope(|s| {
+        s.spawn(|| {
+            let mut buf = List<u8>.new()
+            let (n, from) = peer.recv_from(mut buf, 32).unwrap()
+            println("received {} bytes from the peer", n)
+            let reply = "pong".to_utf8()
+            let _ = peer.send_to(reply[0..4], from.to_text().as_str()).unwrap()
+        })
+        s.spawn(|| {
+            let data = "ping".to_utf8()
+            let sent = client.send_to(data[0..4], peer_addr.as_str()).unwrap()
+            println("sent {} bytes", sent)
+            let mut buf = List<u8>.new()
+            let _ = client.recv_from(mut buf, 32).unwrap()
+            println("reply received")
+        })
+    })
+    println("done")
+}

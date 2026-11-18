@@ -77,6 +77,63 @@ const STAT_MODE_BYTES: u32 = 2;
 const STAT_MODE_BYTES: u32 = 4;
 /// The Windows `WIN32_FIND_DATAA` layout: `dwFileAttributes` first and `cFileName` after the fixed fields.
 const FIND_DATA_FILE_NAME_OFFSET: u64 = 44;
+/// `sockaddr_in` is 16 bytes on every supported platform. The address bytes start at offset 4; the family's
+/// offset differs because Darwin's structure begins with `sin_len`.
+const SOCKADDR_PORT_OFFSET: u64 = 2;
+const SOCKADDR_ADDR_OFFSET: u64 = 4;
+const SOCKADDR_SIZE: u64 = 16;
+/// The fields of `struct addrinfo` the resolver reads. The Boost/Winsock `ADDRINFOA` has the same 48-byte layout
+/// on 64-bit Windows with 32-bit `int` fields; the Unix structure's offsets come from the host header.
+#[cfg(unix)]
+const ADDRINFO_FAMILY_OFFSET: u64 = std::mem::offset_of!(libc::addrinfo, ai_family) as u64;
+#[cfg(windows)]
+const ADDRINFO_FAMILY_OFFSET: u64 = 4;
+#[cfg(unix)]
+const ADDRINFO_ADDR_OFFSET: u64 = std::mem::offset_of!(libc::addrinfo, ai_addr) as u64;
+#[cfg(windows)]
+const ADDRINFO_ADDR_OFFSET: u64 = 32;
+#[cfg(unix)]
+const ADDRINFO_NEXT_OFFSET: u64 = std::mem::offset_of!(libc::addrinfo, ai_next) as u64;
+#[cfg(windows)]
+const ADDRINFO_NEXT_OFFSET: u64 = 40;
+#[cfg(unix)]
+const ADDRINFO_SIZE: u64 = std::mem::size_of::<libc::addrinfo>() as u64;
+#[cfg(windows)]
+const ADDRINFO_SIZE: u64 = 48;
+/// `addrinfo.ai_flags`, at the start of the structure on both platforms.
+const ADDRINFO_FLAGS_OFFSET: u64 = 0;
+/// `AI_PASSIVE`: resolve a wildcard address for `bind`.
+const AI_PASSIVE: i32 = 1;
+const AF_INET: i32 = 2;
+const SOCK_STREAM: i32 = 1;
+const SOCK_DGRAM: i32 = 2;
+#[cfg(unix)]
+const SOL_SOCKET: i32 = libc::SOL_SOCKET;
+#[cfg(windows)]
+const SOL_SOCKET: i32 = 0xffff;
+#[cfg(unix)]
+const SO_ERROR: i32 = libc::SO_ERROR;
+#[cfg(windows)]
+const SO_ERROR: i32 = 0x1007;
+#[cfg(unix)]
+const SO_REUSEADDR: i32 = libc::SO_REUSEADDR;
+#[cfg(windows)]
+const SO_REUSEADDR: i32 = 0x0004;
+const IPPROTO_TCP: i32 = 6;
+#[cfg(unix)]
+const TCP_NODELAY: i32 = libc::TCP_NODELAY;
+#[cfg(windows)]
+const TCP_NODELAY: i32 = 0x0001;
+/// `ioctlsocket`'s "set non-blocking" request. Only Windows uses it; the value is defined everywhere so the
+/// same function body can name it.
+const FIONBIO: i32 = 0x8004_667e_u32 as i32;
+/// The `errno` values that mean "try again": a non-blocking call would block, a connect is still in progress,
+/// or a signal interrupted the call.
+#[cfg(unix)]
+const RETRY_CODES: [i32; 4] = [libc::EAGAIN, libc::EWOULDBLOCK, libc::EINPROGRESS, libc::EINTR];
+/// The Winsock equivalents, reported by `WSAGetLastError`.
+#[cfg(windows)]
+const RETRY_CODES: [i32; 5] = [10035, 10036, 10004, 10037, 10055];
 /// `WIN32_FIND_DATAA` is 320 bytes with its 4-byte alignment.
 const FIND_DATA_WORDS: u32 = 40;
 /// `FILE_ATTRIBUTE_REPARSE_POINT`, the bit that marks a link or junction on Windows.
@@ -617,6 +674,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let alloc_string = self.alloc_string(&h0)?;
         let h = h0.with_alloc_string(alloc_string);
         let string_push_str = self.string_push_str(&h)?;
+        let string_push_char = self.string_push_char(string_push_str)?;
         let cstring_from = self.cstring_from(&h)?;
         // The arguments `define_main` receives, saved for `env.args()`.
         let argc_ty = self.i32();
@@ -638,7 +696,21 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         file_error.set_initializer(&argc_ty.const_zero());
         file_error.set_linkage(Linkage::Internal);
         let file_error_ptr = file_error.as_pointer_value();
+        // The socket layer's per-thread results: the system code of the last failure and the address of the last
+        // datagram a `recv_from` returned (`spec/io.md`, IO5).
+        let net_error = self.module.add_global(argc_ty, None, "burdin_rt_net_err");
+        net_error.set_initializer(&argc_ty.const_zero());
+        net_error.set_thread_local(true);
+        net_error.set_linkage(Linkage::Internal);
+        let net_peer = self.module.add_global(self.i64(), None, "burdin_rt_net_peer");
+        net_peer.set_initializer(&self.i64().const_zero());
+        net_peer.set_thread_local(true);
+        net_peer.set_linkage(Linkage::Internal);
+        let wsa = self.module.add_global(self.i32(), None, "burdin_rt_wsa");
+        wsa.set_initializer(&self.i32().const_zero());
+        wsa.set_linkage(Linkage::Internal);
         let clock = self.clock()?;
+        self.net_functions(string_push_str, string_push_char)?;
         Ok(Runtime {
             print: self.print(&h)?,
             flush: self.module.get_function("burdin_rt_flush_locked").expect("the locked flush exists"),
@@ -669,7 +741,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             strlen: libc(self.module, "strlen", self.usize_ty.fn_type(&[self.ptr_ty.into()], false)),
             cstring_clone: self.cstring_clone(&h, cstring_from)?,
             realloc,
-            string_push_char: self.string_push_char(string_push_str)?,
+            string_push_char,
             str_eq: self.str_eq()?,
             str_cmp: self.str_cmp()?,
             str_hash: self.str_hash()?,
@@ -7094,6 +7166,866 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
         self.b.position_at_end(done);
         self.b.build_load(ptr_ty, result, "utf8.result").map_err(llvm_err).map(|v| v.into_pointer_value())
+    }
+
+    // ----- sockets and name resolution (`spec/io.md`, IO5-IO6) -------------------------------------------------
+    //
+    // The socket primitives report one result for every operation: `>= 0` is success (a descriptor, a byte count,
+    // or zero), `-1` means the non-blocking call would block (or a connect is still in progress), and `-2` means
+    // failure, with the system's code in the thread-local `burdin_rt_net_err`.
+
+    /// The descriptor type of the platform: `SOCKET` is 64 bits on 64-bit Windows, `int` on Unix.
+    fn fd_ty(&self) -> IntType<'ctx> {
+        if self.windows { self.i64() } else { self.i32() }
+    }
+
+    /// An integer widened to `i64` (by sign extension when it is narrower).
+    fn widen_i64(&mut self, value: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        if value.get_type().get_bit_width() == 64 {
+            Ok(value)
+        } else {
+            self.b.build_int_s_extend(value, self.i64(), "").map_err(llvm_err)
+        }
+    }
+
+    /// An integer converted to `usize` without changing its value (supported targets have a 64-bit `usize`).
+    fn widen_usize(&mut self, value: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let from = value.get_type().get_bit_width();
+        let to = self.usize_ty.get_bit_width();
+        if from == to {
+            Ok(value)
+        } else if from < to {
+            self.b.build_int_z_extend(value, self.usize_ty, "").map_err(llvm_err)
+        } else {
+            self.b.build_int_truncate(value, self.usize_ty, "").map_err(llvm_err)
+        }
+    }
+
+    /// The system code of the socket failure that just happened: `WSAGetLastError` on Windows, `errno` on Unix.
+    /// It is stored in `@burdin_rt_net_err` so `__net_last_error` can report it.
+    fn net_capture_error(&mut self) -> GenResult<IntValue<'ctx>> {
+        let i32_ty = self.i32();
+        let code = if self.windows {
+            let get = libc(self.module, "WSAGetLastError", i32_ty.fn_type(&[], false));
+            self.call(get, &[])?.expect("WSAGetLastError returns a code").into_int_value()
+        } else {
+            let at = self.errno_ptr()?;
+            self.b.build_load(i32_ty, at, "errno").map_err(llvm_err)?.into_int_value()
+        };
+        let slot = self.module.get_global("burdin_rt_net_err").expect("the socket error slot exists");
+        self.b.build_store(slot.as_pointer_value(), code).map_err(llvm_err)?;
+        Ok(code)
+    }
+
+    /// The result of a socket operation whose raw outcome is `raw`: negative is a failure, which becomes `-1` when
+    /// the system says to retry and `-2` otherwise; anything else passes through.
+    fn net_result(&mut self, raw: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let i64_ty = self.i64();
+        let raw = if raw.get_type().get_bit_width() < 64 {
+            self.b.build_int_s_extend(raw, i64_ty, "net.raw").map_err(llvm_err)?
+        } else {
+            raw
+        };
+        let code = self.net_capture_error()?;
+        let failed =
+            self.b.build_int_compare(IntPredicate::SLT, raw, i64_ty.const_zero(), "net.failed").map_err(llvm_err)?;
+        let mut retry = self
+            .b
+            .build_int_compare(
+                IntPredicate::EQ,
+                code,
+                self.i32().const_int(u64::from(RETRY_CODES[0] as u32), false),
+                "",
+            )
+            .map_err(llvm_err)?;
+        for c in &RETRY_CODES[1..] {
+            let same = self
+                .b
+                .build_int_compare(IntPredicate::EQ, code, self.i32().const_int(u64::from(*c as u32), false), "")
+                .map_err(llvm_err)?;
+            retry = self.b.build_or(retry, same, "").map_err(llvm_err)?;
+        }
+        let failure = self
+            .b
+            .build_select(retry, i64_ty.const_int(u64::MAX, true), i64_ty.const_int(u64::MAX - 1, true), "net.why")
+            .map_err(llvm_err)?
+            .into_int_value();
+        Ok(self.b.build_select(failed, failure, raw, "net.out").map_err(llvm_err)?.into_int_value())
+    }
+
+    /// On Windows, Winsock must be started before the first socket call. `WSAStartup` is refcounted, so a
+    /// concurrent second call is harmless; the flag only saves the repeated call.
+    fn net_startup(&mut self) -> GenResult<()> {
+        if !self.windows {
+            return Ok(());
+        }
+        let i32_ty = self.i32();
+        let started = self.module.get_global("burdin_rt_wsa").expect("the Winsock flag exists").as_pointer_value();
+        let flag = self.b.build_load(i32_ty, started, "wsa.started").map_err(llvm_err)?.into_int_value();
+        let done = self.block(self.current_function(), "wsa.done");
+        let begin = self.block(self.current_function(), "wsa.begin");
+        let is = self.b.build_int_compare(IntPredicate::NE, flag, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(is, done, begin).map_err(llvm_err)?;
+        self.b.position_at_end(begin);
+        let data = self.b.build_alloca(i32_ty.array_type(102), "wsa.data").map_err(llvm_err)?;
+        let startup = libc(self.module, "WSAStartup", i32_ty.fn_type(&[i32_ty.into(), self.ptr_ty.into()], false));
+        self.call(startup, &[i32_ty.const_int(0x202, false).into(), data.into()])?;
+        self.b.build_store(started, i32_ty.const_int(1, false)).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        Ok(())
+    }
+
+    /// The function value of the current function, for the small helpers that need its blocks.
+    fn current_function(&self) -> FunctionValue<'ctx> {
+        self.b.get_insert_block().and_then(|b| b.get_parent()).expect("the builder is inside a function")
+    }
+
+    /// `resolve(host, len, port, out_sockaddr, passive) -> i64`: the first IPv4 address of `host` as a 16-byte
+    /// `sockaddr_in` with the port filled in. `host` with length 0 is the wildcard address for `bind`.
+    fn net_resolve(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (i64_ty, ptr_ty, i32_ty) = (self.i64(), self.ptr_ty, self.i32());
+        let params = [ptr_ty.into(), i64_ty.into(), i32_ty.into(), ptr_ty.into(), i32_ty.into()];
+        let f = self.function("burdin_rt_net_resolve", i64_ty.fn_type(&params, false));
+        let (host, len, port, out, passive) = (
+            Self::ptr_param(f, 0),
+            Self::int_param(f, 1),
+            Self::int_param(f, 2),
+            Self::ptr_param(f, 3),
+            Self::int_param(f, 4),
+        );
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[self.usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let hints = self.b.build_alloca(self.i8().array_type(ADDRINFO_SIZE as u32), "ai.hints").map_err(llvm_err)?;
+        self.b
+            .build_memset(hints, 8, self.i8().const_zero(), self.usize_ty.const_int(ADDRINFO_SIZE, false))
+            .map_err(llvm_err)?;
+        let family = self.offset(hints, self.usize_ty.const_int(ADDRINFO_FAMILY_OFFSET, false))?;
+        self.b.build_store(family, i32_ty.const_int(u64::from(AF_INET as u32), false)).map_err(llvm_err)?;
+        let flags = self.offset(hints, self.usize_ty.const_int(ADDRINFO_FLAGS_OFFSET, false))?;
+        let passive_flag = self
+            .b
+            .build_select(
+                self.b.build_int_compare(IntPredicate::NE, passive, i32_ty.const_zero(), "").map_err(llvm_err)?,
+                i32_ty.const_int(u64::from(AI_PASSIVE as u32), false),
+                i32_ty.const_zero(),
+                "ai.flags",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        self.b.build_store(flags, passive_flag).map_err(llvm_err)?;
+        let result = self.b.build_alloca(ptr_ty, "ai.result").map_err(llvm_err)?;
+        self.b.build_store(result, ptr_ty.const_null()).map_err(llvm_err)?;
+        let named = self.block(f, "resolve.named");
+        let resolved = self.block(f, "resolve.resolved");
+        let missing =
+            self.b.build_int_compare(IntPredicate::EQ, len, i64_ty.const_zero(), "wildcard").map_err(llvm_err)?;
+        let host_slot = self.b.build_alloca(ptr_ty, "host.nul").map_err(llvm_err)?;
+        self.b.build_store(host_slot, ptr_ty.const_null()).map_err(llvm_err)?;
+        self.b.build_conditional_branch(missing, resolved, named).map_err(llvm_err)?;
+        self.b.position_at_end(named);
+        let nul = self.cstring_of(host, len, malloc)?;
+        self.b.build_store(host_slot, nul).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(resolved).map_err(llvm_err)?;
+        self.b.position_at_end(resolved);
+        let node = self.b.build_load(ptr_ty, host_slot, "node").map_err(llvm_err)?.into_pointer_value();
+        let getaddrinfo = libc(
+            self.module,
+            "getaddrinfo",
+            i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false),
+        );
+        let code = self
+            .call(getaddrinfo, &[node.into(), ptr_ty.const_null().into(), hints.into(), result.into()])?
+            .expect("getaddrinfo returns a code")
+            .into_int_value();
+        let freeaddrinfo = libc(self.module, "freeaddrinfo", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let bad =
+            self.b.build_int_compare(IntPredicate::NE, code, i32_ty.const_zero(), "resolve.bad").map_err(llvm_err)?;
+        let fail = self.block(f, "resolve.fail");
+        let found = self.block(f, "resolve.found");
+        self.b.build_conditional_branch(bad, fail, found).map_err(llvm_err)?;
+
+        self.b.position_at_end(fail);
+        let slot = self.module.get_global("burdin_rt_net_err").expect("the socket error slot exists");
+        self.b.build_store(slot.as_pointer_value(), code).map_err(llvm_err)?;
+        self.call(free, &[node.into()])?;
+        self.b.build_return(Some(&i64_ty.const_int(u64::MAX - 1, true))).map_err(llvm_err)?;
+
+        self.b.position_at_end(found);
+        let first = self.b.build_load(ptr_ty, result, "ai.first").map_err(llvm_err)?.into_pointer_value();
+        let empty = self.b.build_is_null(first, "ai.none").map_err(llvm_err)?;
+        let none = self.block(f, "resolve.none");
+        let copy = self.block(f, "resolve.copy");
+        self.b.build_conditional_branch(empty, none, copy).map_err(llvm_err)?;
+        self.b.position_at_end(none);
+        let no_name: i32 = if self.windows { 11001 } else { -2 }; // WSAHOST_NOT_FOUND / EAI_NONAME
+        self.b.build_store(slot.as_pointer_value(), i32_ty.const_int(no_name as u32 as u64, true)).map_err(llvm_err)?;
+        self.call(free, &[node.into()])?;
+        self.b.build_return(Some(&i64_ty.const_int(u64::MAX - 1, true))).map_err(llvm_err)?;
+
+        self.b.position_at_end(copy);
+        let addr_at = self.offset(first, self.usize_ty.const_int(ADDRINFO_ADDR_OFFSET, false))?;
+        let addr = self.b.build_load(ptr_ty, addr_at, "ai.addr").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_memcpy(out, 1, addr, 1, self.usize_ty.const_int(SOCKADDR_SIZE, false)).map_err(llvm_err)?;
+        // The port is in network byte order: the high byte first.
+        let high = self
+            .b
+            .build_int_truncate(
+                self.b.build_right_shift(port, i32_ty.const_int(8, false), false, "").map_err(llvm_err)?,
+                self.i8(),
+                "",
+            )
+            .map_err(llvm_err)?;
+        let low = self.b.build_int_truncate(port, self.i8(), "").map_err(llvm_err)?;
+        let high_at = self.offset(out, self.usize_ty.const_int(SOCKADDR_PORT_OFFSET, false))?;
+        let low_at = self.offset(out, self.usize_ty.const_int(SOCKADDR_PORT_OFFSET + 1, false))?;
+        self.b.build_store(high_at, high).map_err(llvm_err)?;
+        self.b.build_store(low_at, low).map_err(llvm_err)?;
+        self.call(freeaddrinfo, &[first.into()])?;
+        self.call(free, &[node.into()])?;
+        self.b.build_return(Some(&i64_ty.const_zero())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// The runtime's socket functions.
+    fn net_functions(
+        &mut self,
+        string_push_str: FunctionValue<'ctx>,
+        string_push_char: FunctionValue<'ctx>,
+    ) -> GenResult<()> {
+        let (i64_ty, ptr_ty, i32_ty) = (self.i64(), self.ptr_ty, self.i32());
+        let void_ty = self.cx.void_type();
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[self.usize_ty.into()], false));
+        let free = libc(self.module, "free", void_ty.fn_type(&[ptr_ty.into()], false));
+        let fd_ty = self.fd_ty();
+
+        let resolve = self.net_resolve()?;
+
+        // `net_socket(kind)`: 1 is a stream socket and 2 a datagram socket.
+        let f = self.function("burdin_rt_net_socket", i64_ty.fn_type(&[i32_ty.into()], false));
+        let kind = Self::int_param(f, 0);
+        self.net_startup()?;
+        let socket = libc(self.module, "socket", fd_ty.fn_type(&[i32_ty.into(), i32_ty.into(), i32_ty.into()], false));
+        let type_ = self
+            .b
+            .build_select(
+                self.b.build_int_compare(IntPredicate::EQ, kind, i32_ty.const_int(2, false), "").map_err(llvm_err)?,
+                i32_ty.const_int(u64::from(SOCK_DGRAM as u32), false),
+                i32_ty.const_int(u64::from(SOCK_STREAM as u32), false),
+                "sock.type",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let raw = self
+            .call(
+                socket,
+                &[i32_ty.const_int(u64::from(AF_INET as u32), false).into(), type_.into(), i32_ty.const_zero().into()],
+            )?
+            .expect("socket returns a descriptor")
+            .into_int_value();
+        let fd = self.widen_i64(raw)?;
+        let failed =
+            self.b.build_int_compare(IntPredicate::SLT, fd, i64_ty.const_zero(), "sock.failed").map_err(llvm_err)?;
+        let fail = self.block(f, "sock.fail");
+        let ok = self.block(f, "sock.ok");
+        self.b.build_conditional_branch(failed, fail, ok).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.net_capture_error()?;
+        self.b.build_return(Some(&i64_ty.const_int(u64::MAX - 1, true))).map_err(llvm_err)?;
+        self.b.position_at_end(ok);
+        // Non-blocking is what makes a wait on the reactor possible.
+        if self.windows {
+            let on = self.b.build_alloca(i32_ty, "nonblock").map_err(llvm_err)?;
+            self.b.build_store(on, i32_ty.const_int(1, false)).map_err(llvm_err)?;
+            let ioctlsocket =
+                libc(self.module, "ioctlsocket", i32_ty.fn_type(&[i64_ty.into(), i32_ty.into(), ptr_ty.into()], false));
+            self.call(ioctlsocket, &[raw.into(), i32_ty.const_int(FIONBIO as u32 as u64, true).into(), on.into()])?;
+        } else {
+            // The runtime's file primitives already declare `fcntl` with an `int` descriptor, so this uses the
+            // same declaration and truncates the socket descriptor for it.
+            let fcntl = libc(self.module, "fcntl", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], true));
+            let small = self.b.build_int_truncate(fd, i32_ty, "fd32").map_err(llvm_err)?;
+            let current = self
+                .call(fcntl, &[small.into(), i32_ty.const_int(libc::F_GETFL as u32 as u64, false).into()])?
+                .expect("fcntl returns flags")
+                .into_int_value();
+            let flags = self
+                .b
+                .build_or(current, i32_ty.const_int(libc::O_NONBLOCK as u32 as u64, false), "")
+                .map_err(llvm_err)?;
+            self.call(
+                fcntl,
+                &[small.into(), i32_ty.const_int(libc::F_SETFL as u32 as u64, false).into(), flags.into()],
+            )?;
+            // A TCP socket takes `SO_REUSEADDR`, so a quick restart can bind a port a test just used. Windows
+            // gives the option a different meaning (it permits hijacking), so it is not set there.
+            let one = self.b.build_alloca(i32_ty, "reuse").map_err(llvm_err)?;
+            self.b.build_store(one, i32_ty.const_int(1, false)).map_err(llvm_err)?;
+            let setsockopt = libc(
+                self.module,
+                "setsockopt",
+                i32_ty.fn_type(&[i64_ty.into(), i32_ty.into(), i32_ty.into(), ptr_ty.into(), i32_ty.into()], false),
+            );
+            self.call(
+                setsockopt,
+                &[
+                    fd.into(),
+                    i32_ty.const_int(u64::from(SOL_SOCKET as u32), false).into(),
+                    i32_ty.const_int(u64::from(SO_REUSEADDR as u32), false).into(),
+                    one.into(),
+                    i32_ty.const_int(4, false).into(),
+                ],
+            )?;
+        }
+        self.b.build_return(Some(&fd)).map_err(llvm_err)?;
+
+        // `net_bind(fd, host, len, port)`: `net_resolve` fills a `sockaddr_in`.
+        let f = self.function(
+            "burdin_rt_net_bind",
+            i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
+        );
+        let (fd, host, len, port) =
+            (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2), Self::int_param(f, 3));
+        let sockaddr = self.b.build_alloca(self.i8().array_type(SOCKADDR_SIZE as u32), "sockaddr").map_err(llvm_err)?;
+        let resolved = self
+            .call(resolve, &[host.into(), len.into(), port.into(), sockaddr.into(), i32_ty.const_int(1, false).into()])?
+            .expect("resolve returns a code")
+            .into_int_value();
+        let bad = self
+            .b
+            .build_int_compare(IntPredicate::SLT, resolved, i64_ty.const_zero(), "bind.resolve")
+            .map_err(llvm_err)?;
+        let fail = self.block(f, "bind.fail");
+        let go = self.block(f, "bind.go");
+        self.b.build_conditional_branch(bad, fail, go).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.b.build_return(Some(&i64_ty.const_int(u64::MAX - 1, true))).map_err(llvm_err)?;
+        self.b.position_at_end(go);
+        let bind = libc(self.module, "bind", i32_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i32_ty.into()], false));
+        let raw = self
+            .call(bind, &[fd.into(), sockaddr.into(), i32_ty.const_int(SOCKADDR_SIZE, false).into()])?
+            .expect("bind returns a code")
+            .into_int_value();
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_listen(fd, backlog)`.
+        let f = self.function("burdin_rt_net_listen", i64_ty.fn_type(&[i64_ty.into(), i32_ty.into()], false));
+        let (fd, backlog) = (Self::int_param(f, 0), Self::int_param(f, 1));
+        let listen = libc(self.module, "listen", i32_ty.fn_type(&[i64_ty.into(), i32_ty.into()], false));
+        let raw = self.call(listen, &[fd.into(), backlog.into()])?.expect("listen returns a code").into_int_value();
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_accept(fd)`: the new descriptor, or a retry code.
+        let f = self.function("burdin_rt_net_accept", i64_ty.fn_type(&[i64_ty.into()], false));
+        let fd = Self::int_param(f, 0);
+        let accept = libc(self.module, "accept", fd_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), ptr_ty.into()], false));
+        let raw = self
+            .call(accept, &[fd.into(), ptr_ty.const_null().into(), ptr_ty.const_null().into()])?
+            .expect("accept returns a descriptor")
+            .into_int_value();
+        let raw = self.widen_i64(raw)?;
+        let out = self.net_result(raw)?;
+        let failed =
+            self.b.build_int_compare(IntPredicate::SLT, out, i64_ty.const_zero(), "accept.failed").map_err(llvm_err)?;
+        let fail = self.block(f, "accept.fail");
+        let ok = self.block(f, "accept.ok");
+        self.b.build_conditional_branch(failed, fail, ok).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+        self.b.position_at_end(ok);
+        // The accepted descriptor inherits the listening socket's non-blocking mode on Linux but not on macOS or
+        // Windows, so it is set again.
+        if self.windows {
+            let on = self.b.build_alloca(i32_ty, "nonblock").map_err(llvm_err)?;
+            self.b.build_store(on, i32_ty.const_int(1, false)).map_err(llvm_err)?;
+            let ioctlsocket =
+                libc(self.module, "ioctlsocket", i32_ty.fn_type(&[i64_ty.into(), i32_ty.into(), ptr_ty.into()], false));
+            self.call(ioctlsocket, &[out.into(), i32_ty.const_int(FIONBIO as u32 as u64, true).into(), on.into()])?;
+        } else {
+            let fcntl = libc(self.module, "fcntl", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], true));
+            let small = self.b.build_int_truncate(out, i32_ty, "fd32").map_err(llvm_err)?;
+            let current = self
+                .call(fcntl, &[small.into(), i32_ty.const_int(libc::F_GETFL as u32 as u64, false).into()])?
+                .expect("fcntl returns flags")
+                .into_int_value();
+            let flags = self
+                .b
+                .build_or(current, i32_ty.const_int(libc::O_NONBLOCK as u32 as u64, false), "")
+                .map_err(llvm_err)?;
+            self.call(
+                fcntl,
+                &[small.into(), i32_ty.const_int(libc::F_SETFL as u32 as u64, false).into(), flags.into()],
+            )?;
+        }
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_connect(fd, host, len, port)`.
+        let f = self.function(
+            "burdin_rt_net_connect",
+            i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
+        );
+        let (fd, host, len, port) =
+            (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2), Self::int_param(f, 3));
+        let sockaddr = self.b.build_alloca(self.i8().array_type(SOCKADDR_SIZE as u32), "sockaddr").map_err(llvm_err)?;
+        self.net_startup()?;
+        let resolved = self
+            .call(resolve, &[host.into(), len.into(), port.into(), sockaddr.into(), i32_ty.const_zero().into()])?
+            .expect("resolve returns a code")
+            .into_int_value();
+        let bad = self
+            .b
+            .build_int_compare(IntPredicate::SLT, resolved, i64_ty.const_zero(), "connect.resolve")
+            .map_err(llvm_err)?;
+        let fail = self.block(f, "connect.fail");
+        let go = self.block(f, "connect.go");
+        self.b.build_conditional_branch(bad, fail, go).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.b.build_return(Some(&i64_ty.const_int(u64::MAX - 1, true))).map_err(llvm_err)?;
+        self.b.position_at_end(go);
+        let connect =
+            libc(self.module, "connect", i32_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i32_ty.into()], false));
+        let raw = self
+            .call(connect, &[fd.into(), sockaddr.into(), i32_ty.const_int(SOCKADDR_SIZE, false).into()])?
+            .expect("connect returns a code")
+            .into_int_value();
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_send(fd, data, len)`.
+        let f =
+            self.function("burdin_rt_net_send", i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into()], false));
+        let (fd, data, len) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
+        let send = libc(
+            self.module,
+            "send",
+            i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
+        );
+        let raw = self
+            .call(send, &[fd.into(), data.into(), len.into(), i32_ty.const_zero().into()])?
+            .expect("send returns a count")
+            .into_int_value();
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_send_to(fd, data, len, host, host_len, port)`.
+        let f = self.function(
+            "burdin_rt_net_send_to",
+            i64_ty.fn_type(
+                &[i64_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()],
+                false,
+            ),
+        );
+        let (fd, data, len, host, host_len, port) = (
+            Self::int_param(f, 0),
+            Self::ptr_param(f, 1),
+            Self::int_param(f, 2),
+            Self::ptr_param(f, 3),
+            Self::int_param(f, 4),
+            Self::int_param(f, 5),
+        );
+        let sockaddr = self.b.build_alloca(self.i8().array_type(SOCKADDR_SIZE as u32), "sockaddr").map_err(llvm_err)?;
+        let resolved = self
+            .call(resolve, &[host.into(), host_len.into(), port.into(), sockaddr.into(), i32_ty.const_zero().into()])?
+            .expect("resolve returns a code")
+            .into_int_value();
+        let bad = self
+            .b
+            .build_int_compare(IntPredicate::SLT, resolved, i64_ty.const_zero(), "sendto.resolve")
+            .map_err(llvm_err)?;
+        let fail = self.block(f, "sendto.fail");
+        let go = self.block(f, "sendto.go");
+        self.b.build_conditional_branch(bad, fail, go).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.b.build_return(Some(&i64_ty.const_int(u64::MAX - 1, true))).map_err(llvm_err)?;
+        self.b.position_at_end(go);
+        let sendto = libc(
+            self.module,
+            "sendto",
+            i64_ty.fn_type(
+                &[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into(), ptr_ty.into(), i32_ty.into()],
+                false,
+            ),
+        );
+        let raw = self
+            .call(
+                sendto,
+                &[
+                    fd.into(),
+                    data.into(),
+                    len.into(),
+                    i32_ty.const_zero().into(),
+                    sockaddr.into(),
+                    i32_ty.const_int(SOCKADDR_SIZE, false).into(),
+                ],
+            )?
+            .expect("sendto returns a count")
+            .into_int_value();
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_recv(fd, out: *List<u8>, max)` and `net_recv_from`: append what arrived, like `file_read`.
+        for (name, with_peer) in [("burdin_rt_net_recv", false), ("burdin_rt_net_recv_from", true)] {
+            let f = self.function(name, i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into()], false));
+            let (fd, out, max) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
+            let ptr_field = self.b.build_struct_gep(self.string_ty, out, 0, "list.ptr").map_err(llvm_err)?;
+            let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "list.len").map_err(llvm_err)?;
+            let cap_field = self.b.build_struct_gep(self.string_ty, out, 2, "list.cap").map_err(llvm_err)?;
+            let zero = i64_ty.const_zero();
+            let empty = self.b.build_int_compare(IntPredicate::EQ, max, zero, "empty").map_err(llvm_err)?;
+            let check = self.block(f, "recv.check");
+            let none = self.block(f, "recv.none");
+            self.b.build_conditional_branch(empty, none, check).map_err(llvm_err)?;
+            self.b.position_at_end(none);
+            self.b.build_return(Some(&zero)).map_err(llvm_err)?;
+
+            self.b.position_at_end(check);
+            let len = self.b.build_load(self.usize_ty, len_field, "len").map_err(llvm_err)?.into_int_value();
+            let cap = self.b.build_load(self.usize_ty, cap_field, "cap").map_err(llvm_err)?.into_int_value();
+            let max_usize = self.widen_usize(max)?;
+            let needed = self.b.build_int_add(len, max_usize, "needed").map_err(llvm_err)?;
+            let full = self.b.build_int_compare(IntPredicate::ULT, cap, needed, "full").map_err(llvm_err)?;
+            let grow = self.block(f, "recv.grow");
+            let read = self.block(f, "recv.read");
+            self.b.build_conditional_branch(full, grow, read).map_err(llvm_err)?;
+
+            self.b.position_at_end(grow);
+            let doubled = self.b.build_int_mul(cap, self.usize_ty.const_int(2, false), "doubled").map_err(llvm_err)?;
+            let wide = self
+                .b
+                .build_select(
+                    self.b.build_int_compare(IntPredicate::ULT, doubled, needed, "").map_err(llvm_err)?,
+                    needed,
+                    doubled,
+                    "cap",
+                )
+                .map_err(llvm_err)?
+                .into_int_value();
+            let grown = self
+                .b
+                .build_select(
+                    self.b
+                        .build_int_compare(IntPredicate::ULT, wide, self.usize_ty.const_int(4, false), "")
+                        .map_err(llvm_err)?,
+                    self.usize_ty.const_int(4, false),
+                    wide,
+                    "cap",
+                )
+                .map_err(llvm_err)?
+                .into_int_value();
+            let data = self.b.build_load(ptr_ty, ptr_field, "ptr").map_err(llvm_err)?.into_pointer_value();
+            let fresh = self.call_rt_realloc(data, grown)?;
+            self.b.build_store(ptr_field, fresh).map_err(llvm_err)?;
+            self.b.build_store(cap_field, grown).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(read).map_err(llvm_err)?;
+
+            self.b.position_at_end(read);
+            let len = self.b.build_load(self.usize_ty, len_field, "len").map_err(llvm_err)?.into_int_value();
+            let data = self.b.build_load(ptr_ty, ptr_field, "ptr").map_err(llvm_err)?.into_pointer_value();
+            let dest = self.offset(data, len)?;
+            let raw = if with_peer {
+                let addr =
+                    self.b.build_alloca(self.i8().array_type(SOCKADDR_SIZE as u32), "peer.addr").map_err(llvm_err)?;
+                let addr_len = self.b.build_alloca(i32_ty, "peer.len").map_err(llvm_err)?;
+                self.b.build_store(addr_len, i32_ty.const_int(SOCKADDR_SIZE, false)).map_err(llvm_err)?;
+                let recvfrom = libc(
+                    self.module,
+                    "recvfrom",
+                    i64_ty.fn_type(
+                        &[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()],
+                        false,
+                    ),
+                );
+                let raw = self
+                    .call(
+                        recvfrom,
+                        &[fd.into(), dest.into(), max.into(), i32_ty.const_zero().into(), addr.into(), addr_len.into()],
+                    )?
+                    .expect("recvfrom returns a count")
+                    .into_int_value();
+                // Pack the sender: bits 0-31 the address in big-endian order, bits 32-63 the port.
+                let peer_slot = self.module.get_global("burdin_rt_net_peer").expect("the peer slot exists");
+                let packed = self.pack_address(addr)?;
+                self.b.build_store(peer_slot.as_pointer_value(), packed).map_err(llvm_err)?;
+                raw
+            } else {
+                let recv = libc(
+                    self.module,
+                    "recv",
+                    i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
+                );
+                self.call(recv, &[fd.into(), dest.into(), max.into(), i32_ty.const_zero().into()])?
+                    .expect("recv returns a count")
+                    .into_int_value()
+            };
+            let out_code = self.net_result(raw)?;
+            let failed =
+                self.b.build_int_compare(IntPredicate::SLT, out_code, zero, "recv.failed").map_err(llvm_err)?;
+            let fail = self.block(f, "recv.fail");
+            let done = self.block(f, "recv.done");
+            self.b.build_conditional_branch(failed, fail, done).map_err(llvm_err)?;
+            self.b.position_at_end(fail);
+            self.b.build_return(Some(&out_code)).map_err(llvm_err)?;
+            self.b.position_at_end(done);
+            let count = self.b.build_int_truncate(out_code, self.usize_ty, "count").map_err(llvm_err)?;
+            let next = self.b.build_int_add(len, count, "next").map_err(llvm_err)?;
+            self.b.build_store(len_field, next).map_err(llvm_err)?;
+            self.b.build_return(Some(&out_code)).map_err(llvm_err)?;
+        }
+
+        // `net_close(fd)`.
+        let f = self.function("burdin_rt_net_close", i64_ty.fn_type(&[i64_ty.into()], false));
+        let fd = Self::int_param(f, 0);
+        // The runtime already declares the Unix `close` for the file primitives, with an `int` descriptor; the
+        // socket descriptor is truncated for it. Windows closes a socket with its own call.
+        let raw = if self.windows {
+            let close = libc(self.module, "closesocket", i32_ty.fn_type(&[i64_ty.into()], false));
+            self.call(close, &[fd.into()])?.expect("closesocket returns a code").into_int_value()
+        } else {
+            let close = libc(self.module, "close", i32_ty.fn_type(&[i32_ty.into()], false));
+            let small = self.b.build_int_truncate(fd, i32_ty, "fd32").map_err(llvm_err)?;
+            self.call(close, &[small.into()])?.expect("close returns a code").into_int_value()
+        };
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_shutdown(fd, how)`: 1 is the read side, 2 the write side, and 3 both.
+        let f = self.function("burdin_rt_net_shutdown", i64_ty.fn_type(&[i64_ty.into(), i32_ty.into()], false));
+        let (fd, how) = (Self::int_param(f, 0), Self::int_param(f, 1));
+        let shut = self
+            .b
+            .build_select(
+                self.b.build_int_compare(IntPredicate::EQ, how, i32_ty.const_int(1, false), "").map_err(llvm_err)?,
+                i32_ty.const_zero(),
+                self.b
+                    .build_select(
+                        self.b
+                            .build_int_compare(IntPredicate::EQ, how, i32_ty.const_int(2, false), "")
+                            .map_err(llvm_err)?,
+                        i32_ty.const_int(1, false),
+                        i32_ty.const_int(2, false),
+                        "",
+                    )
+                    .map_err(llvm_err)?
+                    .into_int_value(),
+                "shut.how",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let shutdown = libc(self.module, "shutdown", i32_ty.fn_type(&[i64_ty.into(), i32_ty.into()], false));
+        let raw = self.call(shutdown, &[fd.into(), shut.into()])?.expect("shutdown returns a code").into_int_value();
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_error(fd)`: `SO_ERROR`, the error a completed non-blocking connect reports.
+        let f = self.function("burdin_rt_net_error", i32_ty.fn_type(&[i64_ty.into()], false));
+        let fd = Self::int_param(f, 0);
+        let value = self.b.build_alloca(i32_ty, "so.error").map_err(llvm_err)?;
+        let length = self.b.build_alloca(i32_ty, "so.len").map_err(llvm_err)?;
+        self.b.build_store(value, i32_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_store(length, i32_ty.const_int(4, false)).map_err(llvm_err)?;
+        let getsockopt = libc(
+            self.module,
+            "getsockopt",
+            i32_ty.fn_type(&[i64_ty.into(), i32_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false),
+        );
+        self.call(
+            getsockopt,
+            &[
+                fd.into(),
+                i32_ty.const_int(u64::from(SOL_SOCKET as u32), false).into(),
+                i32_ty.const_int(u64::from(SO_ERROR as u32), false).into(),
+                value.into(),
+                length.into(),
+            ],
+        )?;
+        let code = self.b.build_load(i32_ty, value, "so.error").map_err(llvm_err)?.into_int_value();
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
+
+        // `net_set_nodelay(fd, on)`.
+        let f = self.function("burdin_rt_net_set_nodelay", i64_ty.fn_type(&[i64_ty.into(), i32_ty.into()], false));
+        let (fd, on) = (Self::int_param(f, 0), Self::int_param(f, 1));
+        let setsockopt = libc(
+            self.module,
+            "setsockopt",
+            i32_ty.fn_type(&[i64_ty.into(), i32_ty.into(), i32_ty.into(), ptr_ty.into(), i32_ty.into()], false),
+        );
+        let option = self.b.build_alloca(i32_ty, "nodelay").map_err(llvm_err)?;
+        self.b.build_store(option, on).map_err(llvm_err)?;
+        let raw = self
+            .call(
+                setsockopt,
+                &[
+                    fd.into(),
+                    i32_ty.const_int(u64::from(IPPROTO_TCP as u32), false).into(),
+                    i32_ty.const_int(u64::from(TCP_NODELAY as u32), false).into(),
+                    option.into(),
+                    i32_ty.const_int(4, false).into(),
+                ],
+            )?
+            .expect("setsockopt returns a code")
+            .into_int_value();
+        let out = self.net_result(raw)?;
+        self.b.build_return(Some(&out)).map_err(llvm_err)?;
+
+        // `net_local_addr(fd)` and `net_peer_addr(fd)`: the packed address, or -1.
+        for (name, peer) in [("burdin_rt_net_local_addr", false), ("burdin_rt_net_peer_addr", true)] {
+            let f = self.function(name, i64_ty.fn_type(&[i64_ty.into()], false));
+            let fd = Self::int_param(f, 0);
+            let addr = self.b.build_alloca(self.i8().array_type(SOCKADDR_SIZE as u32), "addr").map_err(llvm_err)?;
+            let length = self.b.build_alloca(i32_ty, "addr.len").map_err(llvm_err)?;
+            self.b.build_store(length, i32_ty.const_int(SOCKADDR_SIZE, false)).map_err(llvm_err)?;
+            let call_name = if peer { "getpeername" } else { "getsockname" };
+            let get =
+                libc(self.module, call_name, i32_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), ptr_ty.into()], false));
+            let raw = self
+                .call(get, &[fd.into(), addr.into(), length.into()])?
+                .expect("the address call returns a code")
+                .into_int_value();
+            let bad = self
+                .b
+                .build_int_compare(IntPredicate::SLT, raw, i32_ty.const_zero(), "addr.failed")
+                .map_err(llvm_err)?;
+            let fail = self.block(f, "addr.fail");
+            let ok = self.block(f, "addr.ok");
+            self.b.build_conditional_branch(bad, fail, ok).map_err(llvm_err)?;
+            self.b.position_at_end(fail);
+            self.b.build_return(Some(&i64_ty.const_int(u64::MAX, true))).map_err(llvm_err)?;
+            self.b.position_at_end(ok);
+            let packed = self.pack_address(addr)?;
+            self.b.build_return(Some(&packed)).map_err(llvm_err)?;
+        }
+
+        // `net_last_peer()` and `net_last_error()`.
+        let _f = self.function("burdin_rt_net_last_peer", i64_ty.fn_type(&[], false));
+        let slot = self.module.get_global("burdin_rt_net_peer").expect("the peer slot exists");
+        let peer = self.b.build_load(i64_ty, slot.as_pointer_value(), "peer").map_err(llvm_err)?.into_int_value();
+        self.b.build_return(Some(&peer)).map_err(llvm_err)?;
+        let _f = self.function("burdin_rt_net_last_error", i32_ty.fn_type(&[], false));
+        let slot = self.module.get_global("burdin_rt_net_err").expect("the socket error slot exists");
+        let code = self.b.build_load(i32_ty, slot.as_pointer_value(), "net.err").map_err(llvm_err)?.into_int_value();
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
+
+        // `dns_lookup(host, len, out: *String) -> i32`: one `a.b.c.d` line per address, `0` or the resolver's
+        // code. The caller runs it on the helper pool, so a slow resolver never holds a scheduler worker.
+        let f = self
+            .function("burdin_rt_dns_lookup", i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false));
+        let (host, len, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        self.net_startup()?;
+        let hints = self.b.build_alloca(self.i8().array_type(ADDRINFO_SIZE as u32), "dns.hints").map_err(llvm_err)?;
+        self.b
+            .build_memset(hints, 8, self.i8().const_zero(), self.usize_ty.const_int(ADDRINFO_SIZE, false))
+            .map_err(llvm_err)?;
+        let family = self.offset(hints, self.usize_ty.const_int(ADDRINFO_FAMILY_OFFSET, false))?;
+        self.b.build_store(family, i32_ty.const_int(u64::from(AF_INET as u32), false)).map_err(llvm_err)?;
+        let node = self.cstring_of(host, len, malloc)?;
+        let head = self.b.build_alloca(ptr_ty, "dns.head").map_err(llvm_err)?;
+        let cursor = self.b.build_alloca(ptr_ty, "dns.cursor").map_err(llvm_err)?;
+        self.b.build_store(head, ptr_ty.const_null()).map_err(llvm_err)?;
+        let getaddrinfo = libc(
+            self.module,
+            "getaddrinfo",
+            i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false),
+        );
+        let code = self
+            .call(getaddrinfo, &[node.into(), ptr_ty.const_null().into(), hints.into(), head.into()])?
+            .expect("getaddrinfo returns a code")
+            .into_int_value();
+        self.call(free, &[node.into()])?;
+        let freeaddrinfo = libc(self.module, "freeaddrinfo", void_ty.fn_type(&[ptr_ty.into()], false));
+        let list = self.b.build_load(ptr_ty, head, "dns.list").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_store(cursor, list).map_err(llvm_err)?;
+        let bad = self.b.build_int_compare(IntPredicate::NE, code, i32_ty.const_zero(), "dns.bad").map_err(llvm_err)?;
+        let fail = self.block(f, "dns.fail");
+        let walk = self.block(f, "dns.walk");
+        let next = self.block(f, "dns.next");
+        let done = self.block(f, "dns.done");
+        self.b.build_conditional_branch(bad, fail, walk).map_err(llvm_err)?;
+        self.b.position_at_end(fail);
+        self.b.build_return(Some(&code)).map_err(llvm_err)?;
+        self.b.position_at_end(walk);
+        let entry = self.b.build_load(ptr_ty, cursor, "dns.entry").map_err(llvm_err)?.into_pointer_value();
+        let at_end = self.b.build_is_null(entry, "dns.end").map_err(llvm_err)?;
+        self.b.build_conditional_branch(at_end, done, next).map_err(llvm_err)?;
+        self.b.position_at_end(next);
+        let addr_at = self.offset(entry, self.usize_ty.const_int(ADDRINFO_ADDR_OFFSET, false))?;
+        let addr = self.b.build_load(ptr_ty, addr_at, "dns.addr").map_err(llvm_err)?.into_pointer_value();
+        // `inet_ntop` takes the 4-byte address, not the whole `sockaddr_in`.
+        let in_addr = self.offset(addr, self.usize_ty.const_int(SOCKADDR_ADDR_OFFSET, false))?;
+        let text = self.b.build_alloca(self.i8().array_type(16), "dns.text").map_err(llvm_err)?;
+        if self.windows {
+            let inet = libc(
+                self.module,
+                "InetNtopA",
+                ptr_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false),
+            );
+            self.call(
+                inet,
+                &[
+                    i32_ty.const_int(u64::from(AF_INET as u32), false).into(),
+                    in_addr.into(),
+                    text.into(),
+                    i32_ty.const_int(16, false).into(),
+                ],
+            )?;
+        } else {
+            let inet = libc(
+                self.module,
+                "inet_ntop",
+                ptr_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false),
+            );
+            self.call(
+                inet,
+                &[
+                    i32_ty.const_int(u64::from(AF_INET as u32), false).into(),
+                    in_addr.into(),
+                    text.into(),
+                    i32_ty.const_int(16, false).into(),
+                ],
+            )?;
+        }
+        let strlen = libc(self.module, "strlen", self.usize_ty.fn_type(&[ptr_ty.into()], false));
+        let text_len = self.call(strlen, &[text.into()])?.expect("strlen returns a size").into_int_value();
+        self.call(string_push_str, &[out.into(), text.into(), text_len.into()])?;
+        self.call(string_push_char, &[out.into(), i32_ty.const_int(10, false).into()])?;
+        let next_at = self.offset(entry, self.usize_ty.const_int(ADDRINFO_NEXT_OFFSET, false))?;
+        let following = self.b.build_load(ptr_ty, next_at, "dns.next").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_store(cursor, following).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(walk).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.call(freeaddrinfo, &[list.into()])?;
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// The packed form of a `sockaddr_in`: bits 0-31 the address in big-endian order (`a<<24 | b<<16 | c<<8 | d`)
+    /// and bits 32-63 the port.
+    fn pack_address(&mut self, addr: PointerValue<'ctx>) -> GenResult<IntValue<'ctx>> {
+        let i8_ty = self.i8();
+        let i64_ty = self.i64();
+        let mut value = i64_ty.const_zero();
+        for i in 0..4u64 {
+            let at = self.offset(addr, self.usize_ty.const_int(SOCKADDR_ADDR_OFFSET + i, false))?;
+            let byte = self.b.build_load(i8_ty, at, "").map_err(llvm_err)?.into_int_value();
+            let byte = self.b.build_int_z_extend(byte, i64_ty, "").map_err(llvm_err)?;
+            let shift = i64_ty.const_int((3 - i) * 8, false);
+            let shifted = self.b.build_left_shift(byte, shift, "").map_err(llvm_err)?;
+            value = self.b.build_or(value, shifted, "").map_err(llvm_err)?;
+        }
+        let high_at = self.offset(addr, self.usize_ty.const_int(SOCKADDR_PORT_OFFSET, false))?;
+        let low_at = self.offset(addr, self.usize_ty.const_int(SOCKADDR_PORT_OFFSET + 1, false))?;
+        let high = self.b.build_load(i8_ty, high_at, "").map_err(llvm_err)?.into_int_value();
+        let low = self.b.build_load(i8_ty, low_at, "").map_err(llvm_err)?.into_int_value();
+        let high = self.b.build_int_z_extend(high, i64_ty, "").map_err(llvm_err)?;
+        let low = self.b.build_int_z_extend(low, i64_ty, "").map_err(llvm_err)?;
+        let port = self
+            .b
+            .build_int_add(self.b.build_left_shift(high, i64_ty.const_int(8, false), "").map_err(llvm_err)?, low, "")
+            .map_err(llvm_err)?;
+        self.b
+            .build_int_add(value, self.b.build_left_shift(port, i64_ty.const_int(32, false), "").map_err(llvm_err)?, "")
+            .map_err(llvm_err)
     }
 }
 

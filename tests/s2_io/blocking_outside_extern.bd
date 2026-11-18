@@ -1,0 +1,8 @@
+//@ compile-fail
+blocking fn slow(): i32 { 0 } //~ E0290
+
+// `blocking` is a marker on an `extern "C"` declaration only (spec/io.md, IO4).
+
+fn main() {
+    let _ = slow()
+}

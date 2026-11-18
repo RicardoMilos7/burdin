@@ -361,6 +361,14 @@ poisoned; and `Send` and `Sync` are derived from a type's parts, declared with `
 compiler cannot see why a type is safe, and required by `task.spawn`, `thread.spawn`, `Scope.spawn`, and `Channel<T>`
 (E0280, E0281). The decisions are `spec/shared.md` SH1-SH11.
 
+Milestone 2.4 is complete: `tests/s2_io` passes in debug and release, and its stress tests run repeatedly in CI.
+Sockets, file operations, name resolution, and `blocking` extern calls look blocking but park only the calling task:
+a reactor (epoll on Linux, kqueue on macOS, an I/O completion port with `WSAPoll` on Windows) reports socket
+readiness and timers, and a small helper pool runs file operations, name lookups, and the compiler-generated thunk
+of a `blocking` extern. The surface is `std.net` (`TcpListener`, `TcpStream`, `UdpSocket`, `SocketAddr`,
+`lookup_host`), the reactor is `std/src/reactor.bd`, and the decisions are `spec/io.md` IO1-IO8. IPv6 and an
+overlapped per-operation Windows path are later refinements.
+
 ### Stage 3: tooling and ecosystem
 
 | Area | Contents |

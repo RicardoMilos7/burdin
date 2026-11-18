@@ -6,6 +6,105 @@ use inkwell::AddressSpace;
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
+    /// A call to a `blocking` extern (`spec/io.md`, IO4). The arguments are stored in an 8-byte-slot block, a
+    /// generated thunk makes the C call from that block on the helper pool, and the result is read back from the
+    /// slot after the argument slots. The calling task parks while the helper runs.
+    fn blocking_extern_call(
+        &mut self,
+        id: usize,
+        args: &'a [tir::Expr],
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let symbol = self.program.externs[id].symbol.clone();
+        let vararg = self.program.externs[id].vararg;
+        let params = self.program.externs[id].params.clone();
+        if vararg {
+            return Err(format!(
+                "`{symbol}` is a variadic `blocking` extern; a blocking declaration cannot take `...`"
+            ));
+        }
+        let slots = args.len() + 1;
+        let bytes = (slots as u64) * 8;
+        let env = self
+            .entry_builder
+            .build_alloca(self.cx.i8_type().array_type(bytes as u32), "blocking.env")
+            .map_err(llvm_err)?;
+        for (i, arg) in args.iter().enumerate() {
+            if self.llvm_ty(&params[i]).is_none() {
+                continue;
+            }
+            let value = self.expr_mode(arg, Mode::Use)?;
+            let value = self.need(value, &params[i]);
+            let slot = self.blocking_slot(env, i)?;
+            self.builder.build_store(slot, value).map_err(llvm_err)?;
+        }
+        let thunk = self.blocking_thunk(id)?;
+        let shim = self.module.get_function("burdin.std.__offload_blocking").ok_or(
+            "a `blocking` extern needs the standard library's `__offload_blocking` function (`spec/io.md`, IO4)",
+        )?;
+        let thunk_ptr = thunk.as_global_value().as_pointer_value();
+        self.builder.build_call(shim, &[thunk_ptr.into(), env.into()], "").map_err(llvm_err)?;
+        match self.llvm_ty(ty) {
+            Some(result_ty) => {
+                let slot = self.blocking_slot(env, args.len())?;
+                Ok(Some(self.builder.build_load(result_ty, slot, "blocking.result").map_err(llvm_err)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// The address of slot `i` in a blocking call's argument block.
+    fn blocking_slot(
+        &mut self,
+        env: inkwell::values::PointerValue<'ctx>,
+        i: usize,
+    ) -> GenResult<inkwell::values::PointerValue<'ctx>> {
+        let offset = self.cx.i64_type().const_int((i as u64) * 8, false);
+        unsafe { self.builder.build_in_bounds_gep(self.cx.i8_type(), env, &[offset], "blocking.slot") }
+            .map_err(llvm_err)
+    }
+
+    /// The thunk of one `blocking` extern: `void (ptr env, i1 owned)`, which loads the arguments from `env`, makes
+    /// the C call, and stores the result after them. It is generated once per extern, in its own builder so the
+    /// builder of the body being generated is not disturbed.
+    fn blocking_thunk(&mut self, id: usize) -> GenResult<inkwell::values::FunctionValue<'ctx>> {
+        if let Some(thunk) = self.blocking_thunks[id] {
+            return Ok(thunk);
+        }
+        let params = self.program.externs[id].params.clone();
+        let ret = self.program.externs[id].ret.clone();
+        let declaration = self.externs[id];
+        let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+        let void = self.cx.void_type();
+        let thunk_ty = void.fn_type(&[ptr_ty.into(), self.cx.bool_type().into()], false);
+        let name = format!("burdin.blocking.{id}");
+        let thunk = self.module.add_function(&name, thunk_ty, Some(inkwell::module::Linkage::Internal));
+        let builder = self.cx.create_builder();
+        let entry = self.cx.append_basic_block(thunk, "entry");
+        builder.position_at_end(entry);
+        let env = thunk.get_nth_param(0).expect("the thunk has an argument block").into_pointer_value();
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+        for (i, param) in params.iter().enumerate() {
+            let Some(llvm_ty) = self.llvm_ty(param) else { continue };
+            let offset = self.cx.i64_type().const_int((i as u64) * 8, false);
+            let slot =
+                unsafe { builder.build_in_bounds_gep(self.cx.i8_type(), env, &[offset], "") }.map_err(llvm_err)?;
+            let value = builder.build_load(llvm_ty, slot, "arg").map_err(llvm_err)?;
+            values.push(value.into());
+        }
+        let call = builder.build_call(declaration, &values, "").map_err(llvm_err)?;
+        let has_result = self.llvm_ty(&ret).is_some();
+        if has_result && let Some(result) = call.try_as_basic_value().basic() {
+            let offset = self.cx.i64_type().const_int((params.len() as u64) * 8, false);
+            let slot =
+                unsafe { builder.build_in_bounds_gep(self.cx.i8_type(), env, &[offset], "") }.map_err(llvm_err)?;
+            builder.build_store(slot, result).map_err(llvm_err)?;
+        }
+        builder.build_return(None).map_err(llvm_err)?;
+        self.blocking_thunks[id] = Some(thunk);
+        Ok(thunk)
+    }
+
     pub(super) fn expr_mode(&mut self, e: &'a tir::Expr, mode: Mode) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         use tir::ExprKind as K;
         self.debug_at(e.span);
@@ -66,6 +165,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     Some(_) => call.try_as_basic_value().basic(),
                     None => None,
                 }
+            }
+            K::ExternCall(id, args) if self.program.externs[*id].blocking => {
+                self.blocking_extern_call(*id, args, &e.ty)?
             }
             K::ExternCall(id, args) => {
                 let ext = &self.program.externs[*id];

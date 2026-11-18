@@ -1,0 +1,9 @@
+//@ compile-fail
+extern "C" {
+    blocking fn printf(format: CPtr<CChar>, ...): i32 //~ E0290
+}
+
+// A blocking call's thunk marshals a fixed argument list, so a variadic declaration is rejected (spec/io.md, IO4).
+
+fn main() {
+}

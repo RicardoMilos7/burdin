@@ -11,8 +11,8 @@ This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18, #
   * every job passes every milestone folder under tests/ (m01..., and the stage 2 folders s2_...) to the conformance
     runner in both the debug and release profiles; the release step uses --release, and the runner skips tests
     marked debug-only;
-  * every job repeats the channel stress tests in both profiles (`--repeat`), because a lost wake-up or a race
-    shows up in one run in many (issue #209);
+  * every job repeats the channel, shared-state, and I/O stress tests in both profiles (`--repeat`), because a lost
+    wake-up or a race shows up in one run in many (issues #209, #220);
   * the Windows job also runs the suite with BURDIN_CC=cl;
   * the scripts CI runs exist, are executable, and use LF endings;
   * the Rust toolchain is pinned to an exact version with clippy and rustfmt, and CI installs and verifies
@@ -125,10 +125,14 @@ def check_conformance(job: str, block: str, profile: str) -> None:
 
 
 def check_stress_repeat(job: str, block: str) -> None:
-    """Every job repeats the channel and the shared-state stress tests in the debug and the release profile."""
+    """Every job repeats the channel, shared-state, and I/O stress tests in the debug and the release profile."""
     repeated = [line for line in block.split("\n") if "tests/run_tests.py" in line and "--repeat" in line]
     for label, wanted in (("debug-profile", False), ("release-profile", True)):
-        for folder, what in (("s2_channels/stress", "channel"), ("s2_shared/stress", "shared-state")):
+        for folder, what in (
+            ("s2_channels/stress", "channel"),
+            ("s2_shared/stress", "shared-state"),
+            ("s2_io/stress", "I/O"),
+        ):
             matching = [line for line in repeated if ("--release" in line) == wanted and folder in line]
             if not matching:
                 add_problem(f"ci.yml: {job} job: no {label} repeated {what} stress step (run_tests.py --repeat)")

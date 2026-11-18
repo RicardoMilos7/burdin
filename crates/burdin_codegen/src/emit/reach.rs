@@ -53,6 +53,13 @@ impl Codegen<'_, '_> {
                 mark(*entry, &mut reachable, &mut pending);
             }
         }
+        // A `blocking` extern call goes through the standard library's offload shim, which no expression names
+        // (`spec/io.md`, IO4). It is only rooted when the program actually declares one.
+        if program.externs.iter().any(|e| e.blocking)
+            && let Some(shim) = program.functions.iter().position(|f| f.name == "std.__offload_blocking")
+        {
+            mark(tir::FuncId(shim), &mut reachable, &mut pending);
+        }
         // A container's buffer is allocated and freed through its allocator implementation, which no expression
         // calls directly (`spec/allocators.md`, AL4).
         for fns in &program.allocator_fns {

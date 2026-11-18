@@ -1,0 +1,33 @@
+//@ run
+//> echoed through two tasks
+//> done
+
+// A scoped task may borrow the listener and the target address: the scope waits for its tasks, so the places
+// outlive them (spec/tasks.md, TK7; spec/io.md, IO5).
+
+fn main() {
+    task.set_workers(2)
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (mut conn, _) = listener.accept().unwrap()
+            let mut buf = List<u8>.new()
+            let n = conn.read(mut buf, 4).unwrap()
+            conn.write_all(buf[0..n]).unwrap()
+            conn.close().unwrap()
+        })
+        s.spawn(|| {
+            let mut client = net.TcpStream.connect(target.as_str()).unwrap()
+            let data = "ping".to_utf8()
+            client.write_all(data[0..4]).unwrap()
+            let mut buf = List<u8>.new()
+            let _ = client.read(mut buf, 4).unwrap()
+            println("echoed through two tasks")
+            client.close().unwrap()
+        })
+    })
+    println("done")
+}

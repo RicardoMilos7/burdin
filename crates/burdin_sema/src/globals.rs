@@ -114,6 +114,8 @@ pub(crate) struct ExternInfo {
     pub(crate) sig: Signature,
     /// A C variadic function: a call may pass extra C-ABI arguments.
     pub(crate) vararg: bool,
+    /// `blocking fn`: a call runs on a helper thread inside a task (`spec/io.md`, IO4).
+    pub(crate) blocking: bool,
 }
 
 /// One `Type: From<Source>` block: the `from` method `?` calls to convert a `Source` error.

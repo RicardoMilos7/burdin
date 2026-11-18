@@ -1,0 +1,39 @@
+//@ run
+//@ skip-platform: windows
+//> mkfifo 0
+//> writer started
+//> fifo read 17 bytes
+//> done
+
+// Opening a FIFO for reading blocks until a writer opens it. Offloaded to the helper pool, that open parks the
+// reading task while the writer task runs — with one worker, a blocking open would deadlock (spec/io.md, IO3).
+
+extern "C" {
+    fn mkfifo(path: CPtr<CChar>, mode: u32): i32
+}
+
+fn main() {
+    task.set_workers(1)
+    let name = CString.from("pipe")
+    unsafe {
+        println("mkfifo {}", mkfifo(name.as_ptr(), 384))
+    }
+    task.scope(|s| {
+        s.spawn(|| {
+            let mut options = fs.OpenOptions.new()
+            options.read(true)
+            let mut file = options.open("pipe").unwrap()
+            let mut buf = List<u8>.new()
+            let n = file.read(mut buf, 64).unwrap()
+            println("fifo read {} bytes", n)
+        })
+        s.spawn(|| {
+            time.sleep(Duration.from_millis(150))
+            println("writer started")
+            let mut file = fs.File.create("pipe").unwrap()
+            let data = "through the pipe\n".to_utf8()
+            file.write_all(data[0..data.len()]).unwrap()
+        })
+    })
+    println("done")
+}

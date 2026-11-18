@@ -1,0 +1,23 @@
+//@ run
+//> start
+//> tick
+//> slept
+//> done
+
+// Sleeping inside a task parks it on the reactor's timer; it does not hold its worker (spec/io.md, IO7). With one
+// worker, the other task must run while the sleeper waits.
+
+fn main() {
+    task.set_workers(1)
+    let sleeper = task.spawn(|| {
+        println("start")
+        time.sleep(Duration.from_millis(150))
+        println("slept")
+    })
+    let ticker = task.spawn(|| {
+        println("tick")
+    })
+    sleeper.join()
+    ticker.join()
+    println("done")
+}

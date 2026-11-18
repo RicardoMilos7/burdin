@@ -170,6 +170,15 @@ impl Sema<'_> {
         let mut signatures: Vec<(usize, String, Signature)> = Vec::new();
         for (id, decl, module, symbol) in externs {
             let sig = extern_signature(decl, module, &self.globals, diags);
+            // One symbol has one declaration; the second must agree with the first about `blocking` too, because
+            // it decides how every call in the program is made (`spec/io.md`, IO4).
+            if self.globals.externs[id].blocking != decl.is_blocking {
+                diags.error(
+                    Code::INVALID_BLOCKING,
+                    decl.name.span,
+                    format!("the C function `{symbol}` is declared both with and without `blocking`"),
+                );
+            }
             match signatures.iter().find(|(other, _, _)| *other == id) {
                 Some((_, _, first)) if !same_signature(first, &sig) => {
                     diags.error(
@@ -396,6 +405,13 @@ pub(crate) fn fn_signature(
 /// The signature of an `extern "C"` function: every parameter is passed by value, and only C-compatible types may
 /// cross the boundary.
 fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &mut Diagnostics) -> Signature {
+    if f.is_blocking && f.is_vararg {
+        diags.error(
+            Code::INVALID_BLOCKING,
+            f.name.span,
+            "a `blocking` extern cannot be variadic; the thunk of a blocking call marshals a fixed parameter list",
+        );
+    }
     let mut params = Vec::new();
     for p in &f.params {
         if matches!(p.kind, ast::ParamKind::SelfParam) {

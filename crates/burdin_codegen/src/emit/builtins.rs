@@ -708,6 +708,53 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
             }
+            // `__dns_lookup(host) -> Result<String, i32>`: one `a.b.c.d` per line, or the resolver's code. The
+            // standard library runs it on the helper pool, so the call is the same shape as `read_to_string`.
+            Builtin::DnsLookup => {
+                let (ptr, len) = self.str_parts(&args[0])?;
+                let out = self.alloca(self.string_ty.into(), "dns.string")?;
+                self.builder.build_call(self.rt.string_new, &[out.into()], "").map_err(llvm_err)?;
+                let function = self
+                    .module
+                    .get_function("burdin_rt_dns_lookup")
+                    .ok_or("the runtime has no `burdin_rt_dns_lookup`")?;
+                let call =
+                    self.builder.build_call(function, &[ptr.into(), len.into(), out.into()], "").map_err(llvm_err)?;
+                let code = call.try_as_basic_value().basic().expect("dns returns a code").into_int_value();
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, code, self.cx.i32_type().const_zero(), "dns.ok")
+                    .map_err(llvm_err)?;
+                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("dns_lookup returns a Result") };
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "dns.out")?;
+                let good = self.new_block("dns.good");
+                let bad = self.new_block("dns.err");
+                let end = self.new_block("dns.end");
+                self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
+                self.builder.position_at_end(good);
+                let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let mut value = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                value = self.builder.build_insert_value(value, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(bad);
+                self.drop_value(out, &Ty::String)?;
+                let mut failure = self
+                    .builder
+                    .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
+                    .map_err(llvm_err)?
+                    .into_struct_value();
+                failure = self.builder.build_insert_value(failure, code, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, failure).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+            }
             Builtin::WriteFile => {
                 let path = self.expr_mode(&args[0], Mode::Use)?;
                 let path = self.need(path, &Ty::Str).into_struct_value();
@@ -1860,7 +1907,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// The pointer and length of a `str` expression's bytes.
-    fn str_parts(&mut self, e: &'a tir::Expr) -> GenResult<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>)> {
+    pub(super) fn str_parts(&mut self, e: &'a tir::Expr) -> GenResult<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>)> {
         let s = self.expr_mode(e, Mode::Use)?;
         let s = self.need(s, &Ty::Str).into_struct_value();
         let ptr = self.builder.build_extract_value(s, 0, "").map_err(llvm_err)?;

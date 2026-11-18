@@ -121,6 +121,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     closure_drops: Vec<FunctionValue<'ctx>>,
     /// The declarations of `Program::externs`, in the same order.
     externs: Vec<FunctionValue<'ctx>>,
+    /// The thunk of each `blocking` extern that has been called, created on first use (`spec/io.md`, IO4).
+    blocking_thunks: Vec<Option<FunctionValue<'ctx>>>,
     /// The private constant vtable of each `Program::any_vtables` entry, created on first use.
     vtables: Vec<Option<GlobalValue<'ctx>>>,
     str_literals: HashMap<Vec<u8>, StructValue<'ctx>>,
@@ -228,6 +230,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             windows,
             triple,
             tasks_linked: false,
+            blocking_thunks: vec![None; program.externs.len()],
             platform,
             current_span: None,
             debug,

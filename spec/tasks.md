@@ -206,8 +206,9 @@ The decision order was deliberate: `Send` is derived from field types, and the t
   the worker threads are taken off the list (`burdin_rt_untrack`), because they live until the process ends and are not
   part of any test. Task records, result slots, task closures, and everything the program allocates are tracked: a test
   that leaves a joined task's data behind fails with a leak report.
-* Blocking system calls (file and standard input reads, `thread.spawn` joins) block the worker that made them. Making
-  them suspend the task instead is stage 2.4.
+* File operations, sockets, name resolution, and `blocking` extern calls park the task and run on the reactor or the
+  helper pool (`spec/io.md`, IO1-IO7). Standard-input reads and `thread.spawn` joins still block the worker that made
+  them.
 
 ## Tests
 

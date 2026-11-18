@@ -1,0 +1,76 @@
+//@ run
+//> 6 connections echoed their messages
+//> done
+
+// Six clients and one server task at once: every connection waits on the reactor, and every message must come
+// back. The runner repeats this test in CI (spec/io.md, IO5).
+
+fn client(target: String): i32 {
+    let mut stream = net.TcpStream.connect(target.as_str()).unwrap()
+    let mut sum: i32 = 0
+    let mut i: i32 = 1
+    while i <= 10 {
+        let text = i.to_string()
+        let bytes = text.to_utf8()
+        stream.write_all(bytes[0..bytes.len()]).unwrap()
+        let mut buf = List<u8>.new()
+        let n = stream.read(mut buf, 8).unwrap()
+        sum = sum + n as i32
+        i = i + 1
+    }
+    stream.close().unwrap()
+    sum
+}
+
+fn server(own conn: net.TcpStream) {
+    let mut conn = conn
+    let mut done = false
+    while !done {
+        let mut buf = List<u8>.new()
+        let n = conn.read(mut buf, 8).unwrap()
+        if n == 0 {
+            done = true
+        } else {
+            conn.write_all(buf[0..n]).unwrap()
+        }
+    }
+    conn.close().unwrap()
+}
+
+fn main() {
+    task.set_workers(4)
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    let mut clients = List<JoinHandle<i32>>.new()
+    let mut i: usize = 0
+    while i < 6 {
+        let address = target.clone()
+        let handle = task.spawn(|| client(address))
+        clients.push(handle)
+        i = i + 1
+    }
+    let mut servers = List<JoinHandle<()>>.new()
+    let mut j: usize = 0
+    while j < 6 {
+        let (conn, _) = listener.accept().unwrap()
+        let handle = task.spawn(|| server(conn))
+        servers.push(handle)
+        j = j + 1
+    }
+    while servers.len() > 0 {
+        let server_handle = servers.pop().unwrap()
+        server_handle.join()
+    }
+    let mut total = 0
+    while clients.len() > 0 {
+        let client_handle = clients.pop().unwrap()
+        total = total + client_handle.join()
+    }
+    if total <= 0 {
+        panic("no connection echoed a message")
+    }
+    println("6 connections echoed their messages")
+    println("done")
+}

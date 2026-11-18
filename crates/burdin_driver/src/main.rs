@@ -1062,9 +1062,11 @@ fn msvc_link_args(object: &Path, output: &Path, libs: &[String], llvm_libdir: Op
         "libcmt.lib".into(),
         "libucrt.lib".into(),
         "libvcruntime.lib".into(),
-        // The runtime calls `CaptureStackBackTrace` for panic backtraces. An object emitted by LLVM carries no
-        // default-library directives, so name kernel32 explicitly; `cl` does not add it for a bare object.
+        // The runtime calls `CaptureStackBackTrace` for panic backtraces and Winsock for sockets. An object
+        // emitted by LLVM carries no default-library directives, so name these explicitly; `cl` does not add them
+        // for a bare object.
         "kernel32.lib".into(),
+        "ws2_32.lib".into(),
     ];
     if let Some(dir) = llvm_libdir {
         args.push(format!("/LIBPATH:{}", dir.display()).into());
@@ -1289,6 +1291,7 @@ mod tests {
         assert!(args.contains(&"libucrt.lib".to_string()));
         assert!(args.contains(&"libvcruntime.lib".to_string()));
         assert!(args.contains(&"kernel32.lib".to_string()));
+        assert!(args.contains(&"ws2_32.lib".to_string()));
         assert!(args.contains(&"LLVM-C.lib".to_string()));
         assert!(!args.iter().any(|arg| arg.starts_with("/LIBPATH:")));
     }

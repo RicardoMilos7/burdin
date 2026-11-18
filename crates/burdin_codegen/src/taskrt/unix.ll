@@ -35,6 +35,7 @@ declare void @burdin_rt_ctx_boot()
 @burdin_rt_tls_worker = internal thread_local global ptr null
 @burdin_rt_spin = internal global i32 0
 @burdin_rt_global = internal global ptr null
+@burdin_rt_io_global = internal global ptr null
 @burdin_rt_config = internal global i64 0
 
 @msg_thread = private constant [32 x i8] c"panic: could not start a thread\0A"
@@ -154,6 +155,14 @@ define ptr @burdin_rt_global_get() {
 }
 define void @burdin_rt_global_set(ptr %p) {
   store atomic ptr %p, ptr @burdin_rt_global release, align 8
+  ret void
+}
+define ptr @burdin_rt_io_global_get() {
+  %v = load atomic ptr, ptr @burdin_rt_io_global acquire, align 8
+  ret ptr %v
+}
+define void @burdin_rt_io_global_set(ptr %p) {
+  store atomic ptr %p, ptr @burdin_rt_io_global release, align 8
   ret void
 }
 define i64 @burdin_rt_config_get() {

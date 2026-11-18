@@ -254,6 +254,9 @@ impl Code {
     /// An invalid `Send` or `Sync` declaration: not written `unsafe`, naming a type that is not a struct or enum
     /// of this package, or an `unsafe` block for another interface (`spec/shared.md`, SH5).
     pub const INVALID_MARKER_IMPL: Code = Code("E0281");
+    /// An invalid `blocking` marker: on a declaration that is not an `extern "C"` function, or two declarations
+    /// of one C symbol that disagree about it (`spec/io.md`, IO4).
+    pub const INVALID_BLOCKING: Code = Code("E0290");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

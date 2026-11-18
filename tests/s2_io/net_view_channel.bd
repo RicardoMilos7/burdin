@@ -1,0 +1,9 @@
+//@ compile-fail
+fn main() {
+    let stream = net.TcpStream.connect("127.0.0.1:1").unwrap()
+    let reference = &stream
+    let channel = Channel<&TcpStream>.new(1) //~ E0120
+}
+
+// A channel's element is an owned value: a view of a socket cannot be sent through it (spec/channels.md;
+// spec/io.md, IO5).

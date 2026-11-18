@@ -192,6 +192,7 @@ error enum IoError {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> }      "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> }     "cannot write {path}: {kind}"
     Run { command: String, kind: IoErrorKind, os_code: Option<i32> }    "cannot run {command}: {kind}"
+    Net { op: String, addr: String, kind: IoErrorKind, os_code: Option<i32> } "cannot {op} {addr}: {kind}"
     UnexpectedEof             "unexpected end of input"
     WriteZero                 "the writer accepted no bytes"
     InvalidData               "the bytes are not valid text"
@@ -213,7 +214,8 @@ error enum EnvError {
 ```
 
 `read_to_string` returns `Result<String, IoError>` with `IoError.Read`; `write_file` returns
-`Result<(), IoError>` with `IoError.Write`; `process.run` returns `Result<i32, IoError>` with `IoError.Run`.
+`Result<(), IoError>` with `IoError.Write`; `process.run` returns `Result<i32, IoError>` with `IoError.Run`; a socket
+operation returns `IoError.Net` with the operation's verb and the address it used (`io.md`, IO5).
 The `Stdin` handle's `read_line` and `read_to_string` return `IoError.Read` with the path `<stdin>` (`stdlib.md`,
 Streams). The reader and writer interfaces return `UnexpectedEof`, `WriteZero`, `InvalidData`, and `Seek` (`stdlib.md`,
 Readers and writers). `i32.parse` (and the other integer parsers) returns `Result<T, ParseIntError>` with `Invalid`. The
@@ -255,14 +257,18 @@ The kind is portable; the code is not. `std` declares the kinds once and `IoErro
 ```
 enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
     NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
-    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut  Other
+    InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut
+    ConnectionRefused  ConnectionReset  ConnectionAborted  NotConnected
+    AddrInUse  AddrNotAvailable  NetworkUnreachable  HostUnreachable  Other
 }
 ```
 
 `IoErrorKind` implements `Display` with lowercase text, and that text is what an `IoError` message ends with:
 `not found`, `permission denied`, `already exists`, `is a directory`, `not a directory`, `directory not empty`,
 `invalid input`, `invalid data`, `unexpected end of file`, `interrupted`, `broken pipe`, `would block`, `timed out`,
-and `other`. The message is stable, so a test can compare it.
+`connection refused`, `connection reset`, `connection aborted`, `not connected`, `address already in use`,
+`address not available`, `network unreachable`, `host unreachable`, and `other`. The message is stable, so a test
+can compare it.
 
 `IoError.kind()` returns the kind and `IoError.os_code()` returns `Some(code)` when a system call reported the
 failure. The compiler maps a code with the target's table (`burdin_tir::ioerror`): `errno` on Linux and macOS, and
@@ -283,8 +289,21 @@ The codes that matter are:
 | `Interrupted` | `EINTR` | `ERROR_OPERATION_ABORTED` |
 | `BrokenPipe` | `EPIPE` | `ERROR_BROKEN_PIPE`, `ERROR_NO_DATA` |
 | `WouldBlock` | `EAGAIN` (11 on Linux, 35 on macOS) | `ERROR_IO_PENDING` |
-| `TimedOut` | `ETIMEDOUT` (110 on Linux, 60 on macOS) | `ERROR_SEM_TIMEOUT`, `ERROR_TIMEOUT` |
+| `TimedOut` | `ETIMEDOUT` (110 on Linux, 60 on macOS) | `ERROR_SEM_TIMEOUT`, `ERROR_TIMEOUT`, `WSAETIMEDOUT` |
+| `ConnectionRefused` | `ECONNREFUSED` (111 on Linux, 61 on macOS) | `WSAECONNREFUSED` |
+| `ConnectionReset` | `ECONNRESET` (104 on Linux, 54 on macOS) | `WSAECONNRESET` |
+| `ConnectionAborted` | `ECONNABORTED` (103 on Linux, 53 on macOS) | `WSAECONNABORTED` |
+| `NotConnected` | `ENOTCONN` (107 on Linux, 57 on macOS) | `WSAENOTCONN` |
+| `AddrInUse` | `EADDRINUSE` (98 on Linux, 48 on macOS) | `WSAEADDRINUSE` |
+| `AddrNotAvailable` | `EADDRNOTAVAIL` (99 on Linux, 49 on macOS) | `WSAEADDRNOTAVAIL` |
+| `NetworkUnreachable` | `ENETUNREACH` (101 on Linux, 51 on macOS) | `WSAENETUNREACH` |
+| `HostUnreachable` | `EHOSTUNREACH` (113 on Linux, 65 on macOS) | `WSAEHOSTUNREACH` |
 | `Other` | every other code | every other code |
+
+The socket primitives also report the resolver's own codes (`EAI_NONAME`, `WSAHOST_NOT_FOUND`) and the Win32 codes
+that a socket call can leave; a code no table lists is `Other`. A network failure that `std` detects itself (an
+address that does not parse, a timeout that passed) has `os_code() == None`, so a program that wants to tell the two
+apart looks at the code instead of guessing from the kind.
 
 The numeric values are the platform's; a program that compares `os_code()` with a number is platform-specific and
 should ask `target.os()` first (`comptime.md`, CT5), while `kind()` is the same on every platform.

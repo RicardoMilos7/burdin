@@ -17,7 +17,7 @@ pub enum Platform {
 }
 
 /// The portable kinds, in the order `std.IoErrorKind` declares them (`spec/errors.md`, ERR11).
-pub const KINDS: [&str; 14] = [
+pub const KINDS: [&str; 22] = [
     "NotFound",
     "PermissionDenied",
     "AlreadyExists",
@@ -31,6 +31,14 @@ pub const KINDS: [&str; 14] = [
     "BrokenPipe",
     "WouldBlock",
     "TimedOut",
+    "ConnectionRefused",
+    "ConnectionReset",
+    "ConnectionAborted",
+    "NotConnected",
+    "AddrInUse",
+    "AddrNotAvailable",
+    "NetworkUnreachable",
+    "HostUnreachable",
     "Other",
 ];
 
@@ -74,72 +82,97 @@ pub fn kind_name(platform: Platform, code: i32) -> &'static str {
 
 /// Linux's `errno` values. The comment on each entry names the `errno` constant.
 const LINUX: &[(i32, &str)] = &[
-    (1, "PermissionDenied"),   // EPERM
-    (2, "NotFound"),           // ENOENT
-    (4, "Interrupted"),        // EINTR
-    (8, "InvalidData"),        // ENOEXEC
-    (11, "WouldBlock"),        // EAGAIN (and EWOULDBLOCK)
-    (13, "PermissionDenied"),  // EACCES
-    (17, "AlreadyExists"),     // EEXIST
-    (20, "NotADirectory"),     // ENOTDIR
-    (21, "IsADirectory"),      // EISDIR
-    (22, "InvalidInput"),      // EINVAL
-    (30, "PermissionDenied"),  // EROFS
-    (32, "BrokenPipe"),        // EPIPE
-    (36, "InvalidInput"),      // ENAMETOOLONG
-    (39, "DirectoryNotEmpty"), // ENOTEMPTY
-    (40, "InvalidInput"),      // ELOOP
-    (84, "InvalidData"),       // EILSEQ
-    (110, "TimedOut"),         // ETIMEDOUT
+    (1, "PermissionDenied"),     // EPERM
+    (2, "NotFound"),             // ENOENT
+    (4, "Interrupted"),          // EINTR
+    (8, "InvalidData"),          // ENOEXEC
+    (11, "WouldBlock"),          // EAGAIN (and EWOULDBLOCK)
+    (13, "PermissionDenied"),    // EACCES
+    (17, "AlreadyExists"),       // EEXIST
+    (20, "NotADirectory"),       // ENOTDIR
+    (21, "IsADirectory"),        // EISDIR
+    (22, "InvalidInput"),        // EINVAL
+    (30, "PermissionDenied"),    // EROFS
+    (32, "BrokenPipe"),          // EPIPE
+    (36, "InvalidInput"),        // ENAMETOOLONG
+    (39, "DirectoryNotEmpty"),   // ENOTEMPTY
+    (40, "InvalidInput"),        // ELOOP
+    (84, "InvalidData"),         // EILSEQ
+    (98, "AddrInUse"),           // EADDRINUSE
+    (99, "AddrNotAvailable"),    // EADDRNOTAVAIL
+    (101, "NetworkUnreachable"), // ENETUNREACH
+    (103, "ConnectionAborted"),  // ECONNABORTED
+    (104, "ConnectionReset"),    // ECONNRESET
+    (107, "NotConnected"),       // ENOTCONN
+    (110, "TimedOut"),           // ETIMEDOUT
+    (111, "ConnectionRefused"),  // ECONNREFUSED
+    (113, "HostUnreachable"),    // EHOSTUNREACH
 ];
 
 /// macOS's `errno` values. Several differ from Linux's, so the two tables cannot be shared.
 const MACOS: &[(i32, &str)] = &[
-    (1, "PermissionDenied"),   // EPERM
-    (2, "NotFound"),           // ENOENT
-    (4, "Interrupted"),        // EINTR
-    (8, "InvalidData"),        // ENOEXEC
-    (13, "PermissionDenied"),  // EACCES
-    (17, "AlreadyExists"),     // EEXIST
-    (20, "NotADirectory"),     // ENOTDIR
-    (21, "IsADirectory"),      // EISDIR
-    (22, "InvalidInput"),      // EINVAL
-    (30, "PermissionDenied"),  // EROFS
-    (32, "BrokenPipe"),        // EPIPE
-    (35, "WouldBlock"),        // EAGAIN (and EWOULDBLOCK)
-    (60, "TimedOut"),          // ETIMEDOUT
-    (62, "InvalidInput"),      // ELOOP
-    (63, "InvalidInput"),      // ENAMETOOLONG
-    (66, "DirectoryNotEmpty"), // ENOTEMPTY
-    (92, "InvalidData"),       // EILSEQ
+    (1, "PermissionDenied"),    // EPERM
+    (2, "NotFound"),            // ENOENT
+    (4, "Interrupted"),         // EINTR
+    (8, "InvalidData"),         // ENOEXEC
+    (13, "PermissionDenied"),   // EACCES
+    (17, "AlreadyExists"),      // EEXIST
+    (20, "NotADirectory"),      // ENOTDIR
+    (21, "IsADirectory"),       // EISDIR
+    (22, "InvalidInput"),       // EINVAL
+    (30, "PermissionDenied"),   // EROFS
+    (32, "BrokenPipe"),         // EPIPE
+    (35, "WouldBlock"),         // EAGAIN (and EWOULDBLOCK)
+    (48, "AddrInUse"),          // EADDRINUSE
+    (49, "AddrNotAvailable"),   // EADDRNOTAVAIL
+    (51, "NetworkUnreachable"), // ENETUNREACH
+    (53, "ConnectionAborted"),  // ECONNABORTED
+    (54, "ConnectionReset"),    // ECONNRESET
+    (57, "NotConnected"),       // ENOTCONN
+    (60, "TimedOut"),           // ETIMEDOUT
+    (61, "ConnectionRefused"),  // ECONNREFUSED
+    (62, "InvalidInput"),       // ELOOP
+    (63, "InvalidInput"),       // ENAMETOOLONG
+    (65, "HostUnreachable"),    // EHOSTUNREACH
+    (66, "DirectoryNotEmpty"),  // ENOTEMPTY
+    (92, "InvalidData"),        // EILSEQ
 ];
 
 /// The Windows error codes (`GetLastError`) the runtime can meet. Windows has no code for "is a directory";
 /// removing one is `ERROR_ACCESS_DENIED`, so that failure is `PermissionDenied` there.
 const WINDOWS: &[(i32, &str)] = &[
-    (2, "NotFound"),            // ERROR_FILE_NOT_FOUND
-    (3, "NotFound"),            // ERROR_PATH_NOT_FOUND
-    (5, "PermissionDenied"),    // ERROR_ACCESS_DENIED
-    (13, "InvalidData"),        // ERROR_INVALID_DATA
-    (15, "NotFound"),           // ERROR_INVALID_DRIVE
-    (19, "PermissionDenied"),   // ERROR_WRITE_PROTECT
-    (23, "InvalidData"),        // ERROR_CRC
-    (32, "PermissionDenied"),   // ERROR_SHARING_VIOLATION
-    (33, "PermissionDenied"),   // ERROR_LOCK_VIOLATION
-    (38, "UnexpectedEof"),      // ERROR_HANDLE_EOF
-    (80, "AlreadyExists"),      // ERROR_FILE_EXISTS
-    (87, "InvalidInput"),       // ERROR_INVALID_PARAMETER
-    (109, "BrokenPipe"),        // ERROR_BROKEN_PIPE
-    (121, "TimedOut"),          // ERROR_SEM_TIMEOUT
-    (123, "InvalidInput"),      // ERROR_INVALID_NAME
-    (145, "DirectoryNotEmpty"), // ERROR_DIR_NOT_EMPTY
-    (183, "AlreadyExists"),     // ERROR_ALREADY_EXISTS
-    (206, "InvalidInput"),      // ERROR_FILENAME_EXCED_RANGE
-    (232, "BrokenPipe"),        // ERROR_NO_DATA
-    (267, "NotADirectory"),     // ERROR_DIRECTORY
-    (995, "Interrupted"),       // ERROR_OPERATION_ABORTED
-    (997, "WouldBlock"),        // ERROR_IO_PENDING
-    (1460, "TimedOut"),         // ERROR_TIMEOUT
+    (2, "NotFound"),               // ERROR_FILE_NOT_FOUND
+    (3, "NotFound"),               // ERROR_PATH_NOT_FOUND
+    (5, "PermissionDenied"),       // ERROR_ACCESS_DENIED
+    (13, "InvalidData"),           // ERROR_INVALID_DATA
+    (15, "NotFound"),              // ERROR_INVALID_DRIVE
+    (19, "PermissionDenied"),      // ERROR_WRITE_PROTECT
+    (23, "InvalidData"),           // ERROR_CRC
+    (32, "PermissionDenied"),      // ERROR_SHARING_VIOLATION
+    (33, "PermissionDenied"),      // ERROR_LOCK_VIOLATION
+    (38, "UnexpectedEof"),         // ERROR_HANDLE_EOF
+    (80, "AlreadyExists"),         // ERROR_FILE_EXISTS
+    (87, "InvalidInput"),          // ERROR_INVALID_PARAMETER
+    (109, "BrokenPipe"),           // ERROR_BROKEN_PIPE
+    (121, "TimedOut"),             // ERROR_SEM_TIMEOUT
+    (123, "InvalidInput"),         // ERROR_INVALID_NAME
+    (145, "DirectoryNotEmpty"),    // ERROR_DIR_NOT_EMPTY
+    (183, "AlreadyExists"),        // ERROR_ALREADY_EXISTS
+    (206, "InvalidInput"),         // ERROR_FILENAME_EXCED_RANGE
+    (232, "BrokenPipe"),           // ERROR_NO_DATA
+    (267, "NotADirectory"),        // ERROR_DIRECTORY
+    (995, "Interrupted"),          // ERROR_OPERATION_ABORTED
+    (997, "WouldBlock"),           // ERROR_IO_PENDING
+    (1460, "TimedOut"),            // ERROR_TIMEOUT
+    (10048, "AddrInUse"),          // WSAEADDRINUSE
+    (10049, "AddrNotAvailable"),   // WSAEADDRNOTAVAIL
+    (10051, "NetworkUnreachable"), // WSAENETUNREACH
+    (10053, "ConnectionAborted"),  // WSAECONNABORTED
+    (10054, "ConnectionReset"),    // WSAECONNRESET
+    (10057, "NotConnected"),       // WSAENOTCONN
+    (10060, "TimedOut"),           // WSAETIMEDOUT
+    (10061, "ConnectionRefused"),  // WSAECONNREFUSED
+    (10065, "HostUnreachable"),    // WSAEHOSTUNREACH
 ];
 
 #[cfg(test)]
@@ -237,7 +270,15 @@ mod tests {
             (libc::ENOTEMPTY, "DirectoryNotEmpty"),
             (libc::ELOOP, "InvalidInput"),
             (libc::EILSEQ, "InvalidData"),
+            (libc::EADDRINUSE, "AddrInUse"),
+            (libc::EADDRNOTAVAIL, "AddrNotAvailable"),
+            (libc::ENETUNREACH, "NetworkUnreachable"),
+            (libc::ECONNABORTED, "ConnectionAborted"),
+            (libc::ECONNRESET, "ConnectionReset"),
+            (libc::ENOTCONN, "NotConnected"),
             (libc::ETIMEDOUT, "TimedOut"),
+            (libc::ECONNREFUSED, "ConnectionRefused"),
+            (libc::EHOSTUNREACH, "HostUnreachable"),
         ];
         assert_eq!(LINUX, &expected);
     }
@@ -259,9 +300,17 @@ mod tests {
             (libc::EROFS, "PermissionDenied"),
             (libc::EPIPE, "BrokenPipe"),
             (libc::EAGAIN, "WouldBlock"),
+            (libc::EADDRINUSE, "AddrInUse"),
+            (libc::EADDRNOTAVAIL, "AddrNotAvailable"),
+            (libc::ENETUNREACH, "NetworkUnreachable"),
+            (libc::ECONNABORTED, "ConnectionAborted"),
+            (libc::ECONNRESET, "ConnectionReset"),
+            (libc::ENOTCONN, "NotConnected"),
             (libc::ETIMEDOUT, "TimedOut"),
+            (libc::ECONNREFUSED, "ConnectionRefused"),
             (libc::ELOOP, "InvalidInput"),
             (libc::ENAMETOOLONG, "InvalidInput"),
+            (libc::EHOSTUNREACH, "HostUnreachable"),
             (libc::ENOTEMPTY, "DirectoryNotEmpty"),
             (libc::EILSEQ, "InvalidData"),
         ];

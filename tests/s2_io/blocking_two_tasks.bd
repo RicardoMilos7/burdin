@@ -1,0 +1,40 @@
+//@ run
+//> both blocking calls finished
+//> done
+
+// Two tasks call a blocking extern at the same time; both calls run on the helper pool and both tasks get their
+// results (spec/io.md, IO4).
+
+extern "C" {
+    blocking fn usleep(usec: u32): i32
+    blocking fn Sleep(ms: u32)
+}
+
+fn block(ms: u32) {
+    comptime if target.os() == target.Os.Windows {
+        unsafe {
+            Sleep(ms)
+        }
+    } else {
+        unsafe {
+            let _ = usleep(ms * 1000)
+        }
+    }
+}
+
+fn main() {
+    task.set_workers(2)
+    let a = task.spawn(|| {
+        block(40)
+        1
+    })
+    let b = task.spawn(|| {
+        block(40)
+        2
+    })
+    if a.join() + b.join() != 3 {
+        panic("a blocking call returned the wrong value")
+    }
+    println("both blocking calls finished")
+    println("done")
+}

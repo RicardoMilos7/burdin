@@ -5,9 +5,8 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; stage 2 starts at `s2_tasks`. Everything the plans still defer (the standard
-library's remaining containers and the rest of the concurrency stage after tasks and channels: `Mutex`, atomics,
-`Send`, and asynchronous I/O) has **no tests here** yet.
+Stage 1 starts at `m12_closures`; stage 2 starts at `s2_tasks`. Everything the plans still defer (stage 3's
+tooling and ecosystem) has **no tests here** yet.
 
 ## Layout
 
@@ -42,6 +41,8 @@ tests/
   s2_channels/         stage 2.2: `Channel<T>`, send/receive, closing, `select`, and their stress tests
   s2_shared/           stage 2.3: atomic `Shared<T>`, `Mutex<T>`, `RwLock<T>`, atomics, derived `Send`/`Sync`, and
                        their stress tests
+  s2_io/               stage 2.4: the reactor, timers, the file helper pool, `blocking` extern functions, TCP and
+                       UDP sockets, name resolution, and their stress tests
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -254,6 +255,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0272 | A container with a stored allocator created with `new`, `from_iter`, or `from`, which have no allocator value to store; it is made with `new_in` |
 | E0280 | A value that is not `Send` (or not `Sync`) given to something that needs it: a task or thread whose closure moves or borrows one, a `Channel<T>` of one, or a call whose type argument misses a `Send` or `Sync` bound. The message names the field or capture that makes it so |
 | E0281 | An invalid `Send` or `Sync` implementation: one not written `unsafe`, an `unsafe` block for an interface other than `Send` or `Sync`, or one that gives a method |
+| E0290 | An invalid `blocking` marker: on a declaration that is not an `extern "C"` function, on a variadic declaration, or two declarations of one C symbol that disagree about it |
 
 ### Codes without a compile-fail test
 
