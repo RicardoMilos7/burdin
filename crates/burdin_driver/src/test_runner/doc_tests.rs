@@ -591,9 +591,12 @@ fn build_one(
     };
     let FrontEnd { files, sources, program: checked, diags, .. } =
         front_end(&dir, &doc_options, &SourceOverrides::new())?;
+    // The compiler lists canonical paths (`\\?\` on Windows, `/private/var` on macOS), so compare canonical forms.
+    let entry_file = dir.join("src").join("main.bd");
+    let entry_file = entry_file.canonicalize().unwrap_or(entry_file);
     let generated = files
         .iter()
-        .position(|(path, _)| path == &dir.join("src").join("main.bd"))
+        .position(|(path, _)| path == &entry_file || path.canonicalize().is_ok_and(|canonical| canonical == entry_file))
         .map(|index| FileId(index as u32))
         .expect("the generated package's entry file is among the compiled files");
     if diags.has_errors() {
