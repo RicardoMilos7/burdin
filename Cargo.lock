@@ -21,6 +21,7 @@ dependencies = [
  "burdin_check",
  "burdin_codegen",
  "burdin_diag",
+ "burdin_query",
  "burdin_sema",
  "burdin_syntax",
  "burdin_tir",
@@ -68,14 +69,12 @@ dependencies = [
 name = "burdin_driver"
 version = "0.1.0"
 dependencies = [
- "burdin_check",
  "burdin_codegen",
- "burdin_comptime",
  "burdin_diag",
  "burdin_doc",
  "burdin_fmt",
  "burdin_lint",
- "burdin_sema",
+ "burdin_query",
  "burdin_syntax",
  "burdin_tir",
 ]
@@ -102,6 +101,18 @@ name = "burdin_lint"
 version = "0.1.0"
 dependencies = [
  "burdin_diag",
+ "burdin_syntax",
+ "burdin_tir",
+]
+
+[[package]]
+name = "burdin_query"
+version = "0.1.0"
+dependencies = [
+ "burdin_check",
+ "burdin_comptime",
+ "burdin_diag",
+ "burdin_sema",
  "burdin_syntax",
  "burdin_tir",
 ]

@@ -38,6 +38,7 @@ impl FnCx<'_> {
             );
             return error_expr(span);
         }
+        self.globals.impure.set(true);
         let source = &self.sources.get(span.file).path;
         let full = Path::new(source).parent().unwrap_or(Path::new("")).join(relative);
         let bytes = match std::fs::read(&full) {

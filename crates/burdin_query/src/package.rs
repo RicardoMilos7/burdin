@@ -50,6 +50,51 @@ pub fn load(target: &Path) -> Result<Workspace, String> {
     load_impl(target, true)
 }
 
+/// A package of in-memory files: `paths` name the files as `geometry/shapes.bd` (module `geometry.shapes`). The entry
+/// module is `main.bd`, or the first file when there is none. The embedded standard library is attached.
+pub fn in_memory<'a>(paths: impl IntoIterator<Item = &'a str>) -> Workspace {
+    let modules: Vec<ModuleFile> = paths
+        .into_iter()
+        .map(|path| ModuleFile {
+            path: path.trim_end_matches(".bd").split('/').map(str::to_string).collect(),
+            file: PathBuf::from(path),
+            text: None,
+        })
+        .collect();
+    let entry_module = modules.iter().position(|m| m.path == ["main"]).unwrap_or(0);
+    let package = PackageFiles {
+        name: "app".to_string(),
+        dir: None,
+        modules,
+        deps: Vec::new(),
+        build_allow: Vec::new(),
+        root_module: Some(entry_module),
+        lint: Vec::new(),
+    };
+    let mut packages = vec![package];
+    attach_std(&mut packages);
+    Workspace { packages, entry_package: 0, entry_module, stem: "app".to_string() }
+}
+
+/// A source path as diagnostics and recorded allocation sites spell it. On Windows, `fs::canonicalize` returns a
+/// verbatim path (`\?\C:\...`); the prefix is an implementation detail, so it is removed (`\?\UNC\server\share`
+/// becomes `\server\share`). Every other platform keeps the path as it is.
+pub fn source_path_text(path: &Path) -> String {
+    let text = path.display().to_string();
+    if cfg!(windows) { strip_verbatim_prefix(&text) } else { text }
+}
+
+/// Removes the extended-length prefix Windows uses for canonical paths.
+pub fn strip_verbatim_prefix(text: &str) -> String {
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => text.to_string(),
+    }
+}
+
 /// Loads the target for `burdin test`, which does not need a `main` function: a library package's tests live in
 /// its own modules. The entry module falls back to `src/<package>.bd` or `src/lib.bd`, then the first module.
 pub fn load_for_tests(target: &Path) -> Result<Workspace, String> {
@@ -70,7 +115,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
                 return Err(format!(
                     "package `{}` has no entry point: expected {}",
                     package.name,
-                    crate::source_path_text(&dir.join("src/main.bd"))
+                    source_path_text(&dir.join("src/main.bd"))
                 ));
             }
             // A library package tested on its own starts from the module other packages import, or any module.
@@ -270,14 +315,14 @@ impl Loader {
     }
 }
 
-pub(crate) struct Manifest {
-    pub(crate) name: String,
+pub struct Manifest {
+    pub name: String,
     /// `(dependency name, path relative to the manifest)`.
-    deps: Vec<(String, String)>,
+    pub deps: Vec<(String, String)>,
     /// The dependency names whose build scripts the manifest grants (`[build] allow`).
-    build_allow: Vec<String>,
+    pub build_allow: Vec<String>,
     /// The `[lint]` entries: `(name, level, line)`.
-    lint: Vec<(String, String, usize)>,
+    pub lint: Vec<(String, String, usize)>,
 }
 
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."`, `[dependencies]` entries with a
@@ -288,7 +333,7 @@ fn parse_manifest(path: &Path) -> Result<Manifest, String> {
     parse_manifest_text(&text, path)
 }
 
-pub(crate) fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
+pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
     let mut section = String::new();
     let mut name: Option<String> = None;
     let mut deps: Vec<(String, String)> = Vec::new();
@@ -466,18 +511,18 @@ fn strip_comment(line: &str) -> &str {
 fn discover_modules(dir: &Path) -> Result<Vec<ModuleFile>, String> {
     let src = dir.join("src");
     if !src.is_dir() {
-        return Err(format!("package {} has no `src` directory", crate::source_path_text(dir)));
+        return Err(format!("package {} has no `src` directory", source_path_text(dir)));
     }
     let modules = discover_modules_under(&src)?;
     if modules.is_empty() {
-        return Err(format!("package {} has no `.bd` files under `src`", crate::source_path_text(dir)));
+        return Err(format!("package {} has no `.bd` files under `src`", source_path_text(dir)));
     }
     Ok(modules)
 }
 
 /// Every `.bd` file under one source root, as modules. Used for a package's `src/` and for the generated modules
 /// under its build output directory (`spec/build-scripts.md`, BS4).
-pub(crate) fn discover_modules_under(src: &Path) -> Result<Vec<ModuleFile>, String> {
+pub fn discover_modules_under(src: &Path) -> Result<Vec<ModuleFile>, String> {
     let mut modules = Vec::new();
     walk(src, &mut Vec::new(), &mut modules)?;
     modules.sort_by(|a, b| a.path.cmp(&b.path));
@@ -518,7 +563,7 @@ fn walk(dir: &Path, prefix: &mut Vec<String>, modules: &mut Vec<ModuleFile>) -> 
 }
 
 /// `[A-Za-z_][A-Za-z0-9_]*`, the identifiers the lexer accepts.
-pub(crate) fn is_ident(name: &str) -> bool {
+pub fn is_ident(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else { return false };
     (first.is_ascii_alphabetic() || first == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -563,7 +608,7 @@ mod tests {
         let Err(error) = load_impl(&dir, true) else {
             panic!("a package without `src/main.bd` must not load");
         };
-        let expected = crate::source_path_text(&dir.join("src/main.bd"));
+        let expected = source_path_text(&dir.join("src/main.bd"));
         assert!(error.contains(&expected), "the error does not name {expected}: {error}");
         assert!(!error.contains(r"\\?\"), "the error prints a verbatim path: {error}");
     }

@@ -13,9 +13,10 @@ burdin_diag.workspace = true
 burdin_syntax.workspace = true
 burdin_fmt.workspace = true
 burdin_tir.workspace = true
-burdin_sema.workspace = true
-burdin_check.workspace = true
-burdin_comptime.workspace = true
 burdin_codegen.workspace = true
 burdin_lint.workspace = true
 burdin_doc.workspace = true
+burdin_query.workspace = true
+
+[dev-dependencies]
+burdin_query.workspace = true

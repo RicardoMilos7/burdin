@@ -139,6 +139,7 @@ impl<'a> FnCx<'a> {
 
     /// The source path, line, and column of `span`, for a trace frame or a typed assertion's location.
     pub(super) fn location(&self, span: Span) -> (String, i32, i32) {
+        self.globals.located.set(true);
         let file = self.sources.get(span.file);
         let (line, col) = file.line_col(span.lo);
         (file.path.clone(), line as i32, col as i32)

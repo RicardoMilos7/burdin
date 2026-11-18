@@ -1,0 +1,76 @@
+resolve main.bd:6:5
+  function `add` at main.bd:6:5, declared at math.bd:1:1
+  type fn add(a: i32, b: i32): i32
+resolve main.bd:6:9
+  parameter `a` at main.bd:6:9, declared at main.bd:5:15
+  type i32
+resolve main.bd:6:12
+  parameter `b` at main.bd:6:12, declared at main.bd:5:23
+  type i32
+resolve main.bd:17:16
+  local `s` at main.bd:17:16, declared at main.bd:14:9
+  type Square
+resolve main.bd:20:43
+  local `areas` at main.bd:20:43, declared at main.bd:16:13
+  type List<i32>
+type main.bd:20:33
+  List<i32> at main.bd:20:33
+type main.bd:17:16
+  Square at main.bd:17:16
+type main.bd:14:13
+  Square at main.bd:14:13
+type main.bd:20:13
+  String at main.bd:20:13
+signature math.bd:1:1
+  fn add(a: i32, b: i32): i32
+  name math.add
+  param a i32 Read default=false
+  param b i32 Read default=false
+  ret i32
+signature math.bd:5:4
+  fn mul(a: i32, b: i32): i32
+  name math.mul
+  param a i32 Read default=false
+  param b i32 Read default=false
+  ret i32
+signature geometry/shapes.bd:11:5
+  fn area(self): i32
+  name geometry.shapes.Square.area
+  param self Square Read default=false
+  ret i32
+signature geometry/shapes.bd:17:5
+  fn new(w: i32, h: i32): Rect
+  name geometry.shapes.Rect.new
+  param w i32 Read default=false
+  param h i32 Read default=false
+  ret Rect
+signature report.bd:1:1
+  fn describe(n: i32): String
+  name report.describe
+  param n i32 Read default=false
+  ret String
+resolve report.bd:3:15
+  parameter `n` at report.bd:3:15, declared at report.bd:1:13
+  type i32
+resolve report.bd:3:7
+  local `label` at report.bd:3:7, declared at report.bd:2:9
+  type str
+type report.bd:2:17
+  str at report.bd:2:17
+ownership main.bd:13:1
+  function main.main
+  owned s Square parameter=false
+  owned r Rect parameter=false
+  owned areas List<i32> parameter=false
+  move s [] always_moved=true
+  origins []
+ownership main.bd:24:1
+  function main.consume
+  owned s Square parameter=true
+  owned side i32 parameter=false
+  origins []
+ownership math.bd:1:1
+  function math.add
+  origins []
+type math.bd:1:1
+  nothing

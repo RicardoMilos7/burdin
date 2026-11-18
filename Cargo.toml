@@ -17,6 +17,7 @@ burdin_sema = { path = "crates/burdin_sema" }
 burdin_check = { path = "crates/burdin_check" }
 burdin_comptime = { path = "crates/burdin_comptime" }
 burdin_lint = { path = "crates/burdin_lint" }
+burdin_query = { path = "crates/burdin_query" }
 burdin_codegen = { path = "crates/burdin_codegen" }
 # LLVM 21 is the pinned version. `llvm-sys` finds it through `llvm-config` (or LLVM_SYS_211_PREFIX) and
 # `burdin_codegen/build.rs` links the shared library, because the static LLVM libraries do not work on Windows/MSVC.

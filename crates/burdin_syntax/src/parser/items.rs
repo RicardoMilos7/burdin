@@ -31,6 +31,7 @@ impl Parser<'_> {
                 Err(Reported) => self.recover_item(),
             }
         }
+        file.bodies = std::mem::take(&mut self.bodies);
         file
     }
 
@@ -441,6 +442,7 @@ impl Parser<'_> {
         let attrs = self.test_attrs()?;
         let body = self.block()?;
         let body_span = body.span;
+        self.bodies.push(body_span);
         let index = self.test_count;
         self.test_count += 1;
         let span = start.to(body_span);
@@ -682,6 +684,7 @@ impl Parser<'_> {
             ));
         }
         let body = self.block()?;
+        self.bodies.push(body.span);
         let span = start.to(body.span);
         Ok((
             FnDecl {

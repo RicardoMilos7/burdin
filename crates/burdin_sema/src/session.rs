@@ -2,6 +2,7 @@
 //! and which functions are waiting to be checked. The phases that fill and use it are in `declare`, `imports`,
 //! `impls`, `instances`, `resolve`, and `bodies`.
 
+use crate::cache::CheckCache;
 use crate::consts::check_const_cycles;
 use crate::derives::validate_derives;
 use crate::generics::Bound;
@@ -261,7 +262,8 @@ impl<'t> Sema<'t> {
     pub(crate) fn settle(
         &mut self,
         diags: &mut Diagnostics,
-    ) -> (Vec<tir::Function>, Vec<tir::Const>, Vec<tir::Closure>) {
+        cache: &mut CheckCache,
+    ) -> Option<(Vec<tir::Function>, Vec<tir::Const>, Vec<tir::Closure>)> {
         let file = self.entry_file();
         let mut sig_diags;
         let mut body_diags;
@@ -277,7 +279,7 @@ impl<'t> Sema<'t> {
                 }
             }
             body_diags = Diagnostics::default();
-            let checked = self.check_bodies(&mut body_diags);
+            let checked = self.check_bodies(&mut body_diags, cache)?;
             // Impl signatures and requirements may substitute generic instances, so they run inside the loop:
             // what they request is allocated by the drain below and checked again on the next pass.
             crate::validate::check_impl_requirements(&self.globals, &mut body_diags);
@@ -289,7 +291,7 @@ impl<'t> Sema<'t> {
         diags.absorb(alloc_diags);
         diags.absorb(sig_diags);
         diags.absorb(body_diags);
-        checked
+        Some(checked)
     }
 
     /// The declaration-level checks that need every body done, and the finished program.

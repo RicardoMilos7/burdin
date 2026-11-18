@@ -6,6 +6,35 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### The query-based compiler library (issue #241, sub-issues #645-#649)
+
+- The front end is a library with a memo (new crate `burdin_query`, `spec/query.md`): file texts in, diagnostics and
+  the typed program out, with everything an edit cannot affect reused. `burdin build`, `run`, `test`, and `lint` run
+  their front end through it (`burdin_driver::front_end`), so the command line and a tool share one implementation.
+- The engine is an in-house memo, not salsa (QL1): the typed tree and the checker's registries are `Rc`/`RefCell`
+  graphs, and salsa's storage wants `Send + Sync` values; the memo is a table keyed by 128-bit fingerprints.
+- Granularity (QL2): a file's parse is keyed by its text, and a function or constant body is keyed by the text of its
+  declaration span, the declaration fingerprint (every file's text with the parser-recorded body spans elided), and
+  the pass chain. A body edit rechecks that body; a declaration edit rechecks every body. The memory checks and
+  compile-time evaluation are whole-program passes on every analysis (QL3).
+- An edit inside one function body reparses only that body (QL6): the parser records every body span, the new block
+  is parsed alone, and the tree's spans after the edit are moved. `main`, `select`, a file with syntax errors, and an
+  edit that is not strictly inside one body fall back to a full parse.
+- The tool API (QL7) is plain data: a lossless syntax tree with tokens and trivia, the diagnostics of one file, and
+  `resolve_at`, `type_at`, `signature_of`, and `ownership_of` at a byte offset. `spec/query.md` is the behavior, with
+  a golden file of answers for the fixture package.
+- Cancellation and the budget (QL8): `CancelHandle` stops an analysis from another thread and leaves the database
+  usable; `Budget { bodies }` (40,000 by default) evicts the least recently used checked bodies, and `Options::no_cache`
+  turns the memo off for a one-shot build.
+- Parity (QL4): the answer of an edited database equals a fresh one (`tests/equivalence.rs`, random edits over the
+  conformance corpus) and the library reports the command line's error diagnostics for every conformance test that
+  must fail to compile (`crates/burdin_driver/tests/parity.rs`).
+- Counters (QL5) make the work visible: `Db::stats()` per analysis and `Db::counters()` in total. The benchmark gains
+  the query cases (QL9): `cargo bench -p burdin_bench -- query` measures a keystroke edit and a cold analysis on a
+  generated package of one, two, and four modules, and `--smoke` fails unless a keystroke rechecks exactly one body.
+- Tests: `crates/burdin_query/tests/` (`incremental.rs`, `reparse.rs`, `equivalence.rs`, `api.rs` with
+  `fixtures/api.golden`, `stress.rs`, `memory.rs` with a counting allocator), the driver's `parity.rs`, and the new
+  unit tests of `db.rs` and `spans.rs`.
 ### Machine-readable diagnostics (issue #236)
 
 - The JSON format is frozen as version 1 (issue #642, `spec/diagnostics.md` DG2-DG7). Every object carries
@@ -59,8 +88,8 @@ close-out checklist in `AGENTS.md`).
   1 and end with `error: could not check <target> (N errors)`, and a usage error exits 2. `--tests` also checks `test`
   blocks and accepts a library package without `src/main.bd`; `--release` and `--comptime-steps` are as for a build;
   the options that only matter for an output (`-o`, `--emit-ir`, `-g`, `--lto`, `--link-lib`, ...) are rejected.
-- The query-based compiler library the issue mentions is a later stage 3 item; `burdin check` reuses `front_end`, the
-  shared front end that `build`, `run`, `test`, and `lint` already call, and will move with it.
+- `burdin check` reuses `front_end`, the shared front end that `build`, `run`, `test`, and `lint` also call; that
+  front end runs through the query-based compiler library (the entry above).
 - The error reporting of a failed compilation moved out of `compile` into `report_errors`, and the diagnostics options
   of the command line into `parse_diagnostic_option`, so the commands share them.
 - `crates/burdin_driver/src/check.rs` has unit tests for the command line; `tests/check_check.py` black-boxes the

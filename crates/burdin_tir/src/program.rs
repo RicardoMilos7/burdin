@@ -7,6 +7,7 @@ use crate::ty::Ty;
 use burdin_diag::Span;
 
 /// A type-checked program: the input of the memory checks and then of code generation.
+#[derive(Debug)]
 pub struct Program {
     pub functions: Vec<Function>,
     /// The closure bodies, indexed by [`crate::tree::ExprKind::Closure`].
@@ -42,7 +43,7 @@ pub struct Program {
 }
 
 /// The three functions of one type's `Allocator` implementation.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AllocatorFns {
     pub ty: Ty,
     pub allocate: FuncId,
@@ -51,6 +52,7 @@ pub struct AllocatorFns {
 }
 
 /// The vtable layout of one interface instance (`any I`), in the order of `spec/existentials.md`, AN2/AN11.
+#[derive(Debug)]
 pub struct AnyIface {
     /// The display name, such as `Shape` or `Store<i32>`.
     pub name: String,
@@ -60,7 +62,7 @@ pub struct AnyIface {
 
 /// One vtable slot: the interface method's substituted signature. Every object-safe implementation matches it, so
 /// one signature describes the slot for every boxed type.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AnyMethod {
     pub name: String,
     pub sig: Signature,
@@ -68,7 +70,7 @@ pub struct AnyMethod {
 }
 
 /// One `(T, I)` vtable: the concrete type, its identity, and one function per interface method.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AnyVTable {
     pub concrete: Ty,
     /// The concrete type's identity: an index into [`Program::any_type_ids`], shared by every interface.
@@ -80,6 +82,7 @@ pub struct AnyVTable {
 }
 
 /// One `test "name" [attrs] { ... }` block, compiled as the function `func`.
+#[derive(Debug)]
 pub struct TestEntry {
     pub name: String,
     /// The dotted path of the module the test is declared in, relative to its package (`geometry.shapes`). It is
@@ -126,6 +129,7 @@ pub struct TestAttrs {
 }
 
 /// One `extern "C"` declaration. Its parameters are passed by value, as the C ABI expects.
+#[derive(Debug)]
 pub struct ExternFn {
     /// The symbol to link against: the name as written in the `extern` block.
     pub symbol: String,
@@ -138,7 +142,7 @@ pub struct ExternFn {
     pub blocking: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParamSig {
     pub ty: Ty,
     /// The callee sees the caller's place: every parameter except an `own` one (a read-only or `mut` parameter,
@@ -180,7 +184,7 @@ impl ParamSig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Signature {
     pub params: Vec<ParamSig>,
     pub ret: Ty,

@@ -1,0 +1,27 @@
+use geometry.shapes.{Rect, Square}
+use math.{add, mul}
+use report.describe
+
+fn total_area(a: i32, b: i32): i32 {
+    add(a, b)
+}
+
+fn scaled(n: i32): i32 {
+    mul(n, 2)
+}
+
+fn main() {
+    let s = Square { side: 4 }
+    let r = Rect.new(2, 3)
+    let mut areas = List<i32>.new()
+    areas.push(s.area())
+    areas.push(r.area())
+    consume(s)
+    println(describe(total_area(areas[0], areas[1])))
+    println(describe(scaled(5)))
+}
+
+fn consume(own s: Square) {
+    let side = s.side
+    println(describe(side))
+}

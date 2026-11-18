@@ -20,7 +20,7 @@ pub struct Derives {
     pub clone_span: Option<Span>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FieldDef {
     pub name: String,
     pub ty: Ty,
@@ -29,6 +29,7 @@ pub struct FieldDef {
     pub is_priv: bool,
 }
 
+#[derive(Debug)]
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
@@ -47,6 +48,7 @@ pub enum VariantShape {
     Struct,
 }
 
+#[derive(Debug)]
 pub struct VariantDef {
     pub name: String,
     pub shape: VariantShape,
@@ -54,6 +56,7 @@ pub struct VariantDef {
     pub fields: Vec<FieldDef>,
 }
 
+#[derive(Debug)]
 pub struct EnumDef {
     pub name: String,
     pub variants: Vec<VariantDef>,
