@@ -31,14 +31,20 @@ pub struct Client {
 /// A copy of a fixture in a fresh temporary directory, so a test may change files.
 pub fn fixture(name: &str) -> PathBuf {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
-    let unique = format!(
-        "burdin-lsp-{}-{}-{}",
-        name.replace('/', "-"),
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-    );
-    let target = std::env::temp_dir().join(unique);
+    let target = fresh_dir(&name.replace('/', "-"));
     copy_dir(&source, &target);
+    target.canonicalize().unwrap()
+}
+
+/// A new, empty temporary directory. The tests of one binary run in parallel in one process, and the clock is too
+/// coarse on some platforms to tell two of them apart, so a counter makes the name unique.
+pub fn fresh_dir(label: &str) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let target = std::env::temp_dir().join(format!("burdin-lsp-{label}-{}-{n}-{nanos}", std::process::id()));
+    assert!(!target.exists(), "{} already exists", target.display());
+    std::fs::create_dir_all(&target).unwrap();
     target.canonicalize().unwrap()
 }
 

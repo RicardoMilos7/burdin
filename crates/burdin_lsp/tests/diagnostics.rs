@@ -148,13 +148,14 @@ fn diagnostic_ranges_after_non_ascii_text_follow_the_encoding() {
 
 #[test]
 fn closing_a_file_outside_any_package_clears_its_diagnostics() {
-    let dir = fixture("lints");
+    // A directory with no `burdin.toml` (and none above it in the temporary directory).
+    let dir = fresh_dir("lone");
     let lone = dir.join("lone.bd");
     std::fs::write(&lone, "fn main() {\n    let x: i32 = true\n}\n").unwrap();
     let mut client = Client::new(&[]);
     let (uri, _) = client.open(&lone);
     let diagnostics = client.diagnostics(&uri, |p| !p.get("diagnostics").as_array().is_empty());
-    assert!(codes(&diagnostics).contains(&"E0003".to_string()));
+    assert!(codes(&diagnostics).contains(&"E0003".to_string()), "{diagnostics:?}");
     client.notify("textDocument/didClose", doc(&uri));
     let cleared = client.diagnostics(&uri, |_| true);
     assert!(cleared.is_empty());
