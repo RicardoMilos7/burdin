@@ -277,7 +277,7 @@ check(
     "json output: the first four lines are not diagnostics",
 )
 check(
-    lines[-1] == '{"type":"summary","errors":4,"shown":4,"limit":null}',
+    lines[-1] == '{"type":"summary","version":1,"errors":4,"shown":4,"limit":null}',
     f"json output: the last line is {lines[-1] if lines else None!r}",
 )
 
