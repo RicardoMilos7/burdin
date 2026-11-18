@@ -1,0 +1,13 @@
+//% args: -A all -W missing_docs
+// lint: allow-file(missing_docs)
+// An `allow-file` comment silences the lint everywhere in the file.
+
+fn one() {}
+
+struct Two {
+    side: i32
+}
+
+fn main() {
+    println("hi")
+}

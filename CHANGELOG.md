@@ -69,7 +69,7 @@ close-out checklist in `AGENTS.md`).
 ### `burdin lint` (issue #230)
 
 - `burdin lint [path]` is a linter that is separate from the compiler (new crate `burdin_lint`, called only by the
-  driver). It checks the program the compiler already accepted and reports lints `L0001`-`L0016` (plus `L0000` for an
+  driver). It checks the program the compiler already accepted and reports lints `L0001`-`L0017` (plus `L0000` for an
   unknown lint name in a configuration or a suppression comment); `docs/lints.md` documents each one with an example
   that `tests/check_lint.py` runs, and `spec/lint.md` (LN1-LN32) is the behavior.
 - Naming conventions: `non_snake_case`, `non_pascal_case`, `non_screaming_case`, with the suggested name in a note
@@ -90,6 +90,37 @@ close-out checklist in `AGENTS.md`).
   `docs/lints.md` ships in the release archive.
 - Two small changes to the shared crates support it: a typed `Local` carries its source span, and a diagnostic's
   suggestion can be marked machine-applicable (`Diagnostic::suggest_safe`).
+
+### `burdin doc` (issues #234, #467-#469, #656-#658)
+
+- `burdin doc [path]` writes the documented interface of a package from its `///` comments and `//!` module comments
+  (new crate `burdin_doc`, called only by the driver): a self-contained static HTML site (default
+  `<package>/target/doc`), versioned JSON (`--output-format json`), or a per-module coverage report (`--coverage`).
+  `spec/doc.md` (DC1-DC23) is the behavior, and doc tests remain separate work (issues #250, #650-#652).
+- The site has an overview, a page per module, a page per item, a sidebar, cross-links from signatures and doc comments,
+  and client-side search. Its stylesheet and search script are compiled into the binary and copied under `static/`, and
+  the index is a script (`search-index.js`), so the site loads nothing from another server and works from disk
+  (issue #467).
+- Doc comments are a Markdown subset (headings, lists, tables, quotes, fenced code, emphasis, links). Text is always
+  escaped; a `javascript:` or other unsafe address is dropped. Intra-doc links `[Type]`, `[module.fn]`,
+  ``[`Type::method`]``, and the explicit `[text]`-with-a-target and `[text][path]` forms resolve like code paths from a
+  comment's module; an
+  unresolved link is `D0001` and a link to a `priv` item is `D0002`, both warnings that `--deny-warnings` turns into a
+  failure (issue #468).
+- `priv` items, fields, and methods are left out by default and shown, marked, with `--private`; `pub use` re-exports
+  are listed on the module page and "re-exported by" on the item (issue #469).
+- A type's page lists its methods, its operators written as they are written (`a + b`, `-a`), its extension methods
+  with the module that declares them and the `use` a caller needs, its derived and implemented interfaces, and the
+  methods of impl blocks for a specific instance (`Stack<i32>`) (issue #658).
+- The JSON output carries `format_version: 1`; the schema has modules, items, members, implementations, link
+  resolutions, spans, and member origins (issue #656).
+- `--coverage` prints documented and undocumented items per module, and the `missing_docs` lint (`L0017`, allow by
+  default) reports the same items from the same reading of the source (issue #657).
+- The output directory is guarded: `burdin doc` refuses a directory that holds files it did not write (status 2), keeps
+  a `.burdin-doc` marker, and removes the pages of items that are gone. A package that does not compile is reported and
+  not documented (status 1).
+- Unit tests in `burdin_syntax::docs` and `burdin_doc`, the fixtures in `tests/doc/` with golden pages in
+  `tests/doc/expect/`, and `tests/check_doc.py`, which every CI job runs.
 
 ## Unreleased — Stage 2
 

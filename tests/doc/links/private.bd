@@ -1,0 +1,13 @@
+//% args: --diagnostic-format=short
+// A link to a `priv` item has no page to lead to, so it is D0002; `--private` documents the item and the link works.
+
+priv struct Secret {
+    value: i32
+}
+
+/// Uses [Secret] and [Secret.value]. //~ D0002 D0002
+fn visible() {}
+
+fn main() {
+    visible()
+}

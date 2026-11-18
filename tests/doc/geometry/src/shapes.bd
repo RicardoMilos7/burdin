@@ -1,0 +1,75 @@
+//! Shapes and what they can do.
+
+/// A point in the plane.
+///
+/// Points add component by component: `a + b`.
+struct Point derives (Copy, Eq, Debug) {
+    /// The horizontal position.
+    x: i32
+    /// The vertical position.
+    y: i32
+    priv tag: i32
+}
+
+/// Why a shape could not be made.
+error enum GeometryError {
+    /// The radius was below zero.
+    NegativeRadius(f64) "radius {0} must not be negative"
+    /// The radius was not a number.
+    NotANumber "radius is not a number"
+}
+
+/// Something with an area.
+interface Shape {
+    /// The area of the shape.
+    fn area(self): f64
+
+    /// A short description, `shape` unless overridden.
+    fn describe(self): String {
+        String.from("shape")
+    }
+}
+
+/// A circle.
+struct Circle {
+    /// The radius, never negative.
+    radius: f64
+}
+
+Circle {
+    /// Makes a circle, or says why it cannot.
+    fn new(radius: f64): Result<Circle> {
+        if radius < 0.0 {
+            return Err(GeometryError.NegativeRadius(radius))
+        }
+        Ok(Circle { radius })
+    }
+
+    priv fn secret(self): f64 {
+        self.radius
+    }
+}
+
+Circle: Shape {
+    fn area(self): f64 {
+        3.14159 * self.radius * self.radius
+    }
+}
+
+Point: Add {
+    /// Adds the coordinates.
+    fn add(self, other: Point): Point {
+        Point { x: self.x + other.x, y: self.y + other.y, tag: 0 }
+    }
+}
+
+Point: Neg {
+    fn neg(self): Point {
+        Point { x: -self.x, y: -self.y, tag: 0 }
+    }
+}
+
+/// Doubles both coordinates.
+fn Point.doubled(self): Point {
+    Point { x: self.x * 2, y: self.y * 2, tag: 0 }
+}

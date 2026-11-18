@@ -319,6 +319,7 @@ required_steps = [
     "tests/check_test_runner.py",
     "tests/check_fmt.py",
     "tests/check_lint.py",
+    "tests/check_doc.py",
     "tests/check_platform_support.py",
     "tests/check_release.py",
     "tests/bench_regression.py",
@@ -423,6 +424,9 @@ check_script(
 )
 check_script("tests/check_parallel.py", "BURDIN_JOBS", "unified_diff")
 check_script("tests/check_fmt.py", "--check", "--stdin", "--range", "idempotent", "TRICKY", "E0001")
+check_script(
+    "tests/check_doc.py", "--output-format", "--private", "--coverage", "--deny-warnings", "D0001", "D0002", "missing_docs"
+)
 check_script(
     "tests/check_e9000.py", "e9000-audit.md", "Code::UNSUPPORTED", "// e9000:", "run_tests.py", "Stage 1"
 )
@@ -557,6 +561,7 @@ scripts = [
     "tests/check_test_runner.py",
     "tests/check_fmt.py",
     "tests/check_lint.py",
+    "tests/check_doc.py",
     "tests/check_debug_info.py",
     "tests/check_codegen_opt.py",
     "tests/check_build_flags.py",

@@ -37,8 +37,9 @@ not updated and may disagree with the repository.
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
    resolution, and timers, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the minimal `bindgen`.
-   `[lint]` table, suppression comments, and `--fix`.
+   modules, caching, and the minimal `bindgen`; `spec/lint.md` is `burdin lint`; `spec/doc.md` is `burdin doc`,
+   the doc comments, the Markdown subset, intra-doc links and their diagnostics, the site and its search, the JSON
+   schema, and the coverage report.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -82,6 +83,7 @@ python3 tests/check_diagnostics.py       check color, width, formats, error limi
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
 python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
+python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links, JSON, coverage, and the output rules
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
@@ -126,7 +128,10 @@ crates/
   burdin_fmt/               the formatter behind `burdin fmt`: its own lossless layout parser, the document printer,
                             comment and `use` handling, doc-comment code blocks, and the checks of its own output
                             (spec/fmt.md); it depends only on burdin_diag and burdin_syntax
-  burdin_driver/            the `burdin` binary: build, run, test, fmt, bindgen; package loading (`package.rs`: burdin.toml,
+  burdin_doc/               the documentation generator behind `burdin doc`: doc comments and signatures from the syntax
+                            trees, intra-doc link resolution, the HTML site with search, the versioned JSON schema, and
+                            the coverage report (spec/doc.md); it depends only on burdin_diag and burdin_syntax
+  burdin_driver/            the `burdin` binary: build, run, test, fmt, doc, bindgen; package loading (`package.rs`: burdin.toml,
                             modules, dependencies), build scripts (`build.rs`), and the minimal C bindgen
                             (`bindgen.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name

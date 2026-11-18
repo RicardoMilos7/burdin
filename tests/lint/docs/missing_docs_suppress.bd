@@ -1,0 +1,11 @@
+//% args: -A all -W missing_docs
+// `// lint: allow(missing_docs)` silences the lint for one item, and `allow-file` for the whole file.
+
+// lint: allow(missing_docs)
+fn skipped() {}
+
+fn reported() {} //~ L0017
+
+fn main() {
+    println("hi")
+}

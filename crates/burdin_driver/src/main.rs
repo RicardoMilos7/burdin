@@ -3,6 +3,7 @@
 
 mod bindgen;
 mod build;
+mod doc;
 mod fmt;
 mod lint;
 mod new;
@@ -32,6 +33,8 @@ usage:
               [--comptime-steps <n>] [diagnostics]
   burdin lint --list
   burdin lint --explain <lint>
+  burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
+             [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
@@ -45,6 +48,13 @@ lint options (the lint reference is docs/lints.md):
   -A, --allow <lint>   do not run the lint        -W, --warn <lint>   report it as a warning
   -D, --deny <lint>    report it as an error      --deny-warnings     deny every lint that warns
   --fix                apply the safe fixes (checked, all or nothing); --dry-run prints the diff only
+
+doc options (the behavior is spec/doc.md):
+  -o, --out <path>     a directory for html (default: <package>/target/doc), a file for json (default: stdout)
+  --output-format <f>  html (default) writes a static site; json writes the documented API as JSON
+  --private            document `priv` items, fields, and methods too
+  --coverage           print how much of the public interface is documented, per module
+  --deny-warnings      exit with status 1 when a doc comment has a broken link
 
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
@@ -436,6 +446,9 @@ fn driver_main() -> ExitCode {
     }
     if argv.first().map(String::as_str) == Some("lint") {
         return lint::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("doc") {
+        return doc::run(&argv[1..]);
     }
     if argv.first().map(String::as_str) == Some("new") {
         return new::run(&argv[1..]);

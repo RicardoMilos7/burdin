@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod derive;
+pub mod docs;
 pub mod error_item;
 pub mod lexer;
 pub mod lookahead;

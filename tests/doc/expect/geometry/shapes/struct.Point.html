@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Point - geometry</title>
+<link rel="stylesheet" href="../static/doc.css">
+</head>
+<body>
+<nav class="sidebar">
+<a class="package" href="../index.html">geometry</a>
+<input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search the documentation">
+<h2>Modules</h2>
+<ul class="modules">
+<li><a href="../collections/index.html">collections</a></li>
+<li><a href="../extras/index.html">extras</a></li>
+<li><a href="../lib/index.html">geometry</a></li>
+<li class="current"><a href="../shapes/index.html">shapes</a></li>
+</ul>
+<h2>In this module</h2>
+<ul class="items">
+<li><a href="../shapes/struct.Circle.html">Circle</a></li>
+<li><a href="../shapes/struct.Point.html">Point</a></li>
+<li><a href="../shapes/error.GeometryError.html">GeometryError</a></li>
+<li><a href="../shapes/interface.Shape.html">Shape</a></li>
+</ul>
+</nav>
+<main>
+<div id="search-results" hidden></div>
+<div id="content">
+<h1><span class="kind">struct</span> <span class="name">Point</span></h1>
+<p class="source">in <a href="../shapes/index.html">shapes</a> &middot; src/shapes.bd:6</p>
+<pre class="signature"><code>struct Point derives (Copy, Eq, Debug)</code></pre>
+<div class="docs">
+<p>A point in the plane.</p>
+<p>Points add component by component: <code>a + b</code>.</p>
+</div>
+<p class="origin">Re-exported by <code>geometry</code>.</p>
+<h2 id="fields">Fields</h2>
+<div class="member" id="field.x">
+<div class="signature"><code>x: i32</code></div>
+<div class="docs">
+<p>The horizontal position.</p>
+</div>
+</div>
+<div class="member" id="field.y">
+<div class="signature"><code>y: i32</code></div>
+<div class="docs">
+<p>The vertical position.</p>
+</div>
+</div>
+<h2 id="operators">Operators</h2>
+<div class="member" id="operator.add">
+<div class="signature"><code class="operator">a + b</code> <code>fn add(self, other: <a href="../shapes/struct.Point.html">Point</a>): <a href="../shapes/struct.Point.html">Point</a></code></div>
+<div class="docs">
+<p>Adds the coordinates.</p>
+</div>
+</div>
+<div class="member" id="operator.neg">
+<div class="signature"><code class="operator">-a</code> <code>fn neg(self): <a href="../shapes/struct.Point.html">Point</a></code></div>
+</div>
+<h2 id="extensions">Extension methods</h2>
+<div class="member" id="extension.doubled">
+<div class="signature"><code>fn <a href="../shapes/struct.Point.html">Point</a>.doubled(self): <a href="../shapes/struct.Point.html">Point</a></code> <span class="badge">extension</span></div>
+<p class="origin">declared in module <code>shapes</code>; import it with <code>use shapes.doubled</code></p>
+<div class="docs">
+<p>Doubles both coordinates.</p>
+</div>
+</div>
+<h2 id="implements">Implements</h2>
+<div class="impl" id="impl.Copy"><div class="signature"><code>Copy</code> <span class="badge">derived</span></div>
+</div>
+<div class="impl" id="impl.Eq"><div class="signature"><code>Eq</code> <span class="badge">derived</span></div>
+</div>
+<div class="impl" id="impl.Debug"><div class="signature"><code>Debug</code> <span class="badge">derived</span></div>
+</div>
+<div class="impl" id="impl.Add"><div class="signature"><code>Add</code></div>
+</div>
+<div class="impl" id="impl.Neg"><div class="signature"><code>Neg</code></div>
+</div>
+</div>
+</main>
+<script>window.BURDIN_DOC_ROOT = "../";</script>
+<script src="../search-index.js"></script>
+<script src="../static/search.js"></script>
+</body>
+</html>

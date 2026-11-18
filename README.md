@@ -29,12 +29,14 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
+| [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Shipped milestones. |
 | [`crates/burdin_fuzz/`](crates/burdin_fuzz/) | The lexer/parser fuzzer and its committed corpus. |
 | [`crates/burdin_fmt/`](crates/burdin_fmt/) | The formatter behind `burdin fmt`, with its unit, corpus, and fuzz tests. |
+| [`crates/burdin_doc/`](crates/burdin_doc/) | The documentation generator behind `burdin doc`, with the fixtures it is checked against. |
 | [`std/README.md`](std/README.md) | The stage 0 standard library. |
 | [`Burdin Language Design.md`](Burdin%20Language%20Design.md) | The full language design, including features after stage 0. |
 
@@ -129,7 +131,7 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `fmt`, `explain`, `bindgen`, and `new`. This section is the
+The `burdin` command has the subcommands `build`, `run`, `test`, `fmt`, `doc`, `explain`, `bindgen`, and `new`. This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
@@ -145,6 +147,8 @@ usage:
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
+  burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
+             [--coverage] [--deny-warnings] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
@@ -179,6 +183,14 @@ fmt options:
   --stdin                  format standard input to standard output
   --stdin-filepath <path>  the path standard input stands for (names it in diagnostics, finds its package)
   --range <lo>:<hi>        with --stdin, format only the items that overlap these byte offsets
+
+doc options:
+  -o, --out <path>         where to write: a directory for html (default: <package>/target/doc), a file for json
+                           (default: standard output)
+  --output-format <f>      html (default) writes a static site; json writes the documented API as JSON
+  --private                document `priv` items, fields, and methods too
+  --coverage               print how much of the public interface is documented, per module, and write nothing else
+  --deny-warnings          exit with status 1 when a doc comment has a broken link
 
 diagnostics:
   --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
@@ -522,6 +534,28 @@ burdin explain            list every code
 `burdin explain` writes to stdout and exits 0; an unknown code exits 2. The human diagnostics end with a note
 pointing at the command.
 
+### `burdin doc`
+
+`burdin doc` builds the documented interface of a package from its `///` comments and `//!` module comments and writes
+it as a static HTML site, as JSON, or as a coverage report. The site is self-contained: the stylesheet and the search
+script are compiled into the driver, so a page loads nothing from another server and the site works when opened from
+disk. Doc comments are Markdown (headings, lists, tables, quotes, fenced code) and may link to the API with `[Circle]`,
+`[shapes.Shape]`, or ``[`Circle.area`]`` (a Markdown link `[text]` with a target in parentheses works too); a link
+that resolves to nothing is warning `D0001`, and one
+that names a `priv` item is `D0002`. [`spec/doc.md`](spec/doc.md) is the specification.
+
+```
+burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
+           [--coverage] [--deny-warnings] [diagnostics]
+```
+
+The HTML site documents the public interface: by default `priv` items, fields, and methods are left out and `--private`
+shows them, marked. A type's page lists its fields and variants, its methods, the operators it implements written as
+they are written (`a + b`, `-a`), its extension methods with the `use` a caller needs, the interfaces it implements
+(derived ones marked), and the methods of impl blocks for a specific instance (`Stack<i32>`). The JSON output has a
+schema version (`format_version`), so other tools can read the API. `--coverage` prints the documented and undocumented
+items per module; they are the ones the `missing_docs` lint (`L0017`, off by default) reports.
+
 ### `burdin lint`
 
 `burdin lint` is the built-in linter. It checks a file or a package that already compiles for code that is legal but
@@ -652,6 +686,7 @@ $ tests/check_build_flags.py    # --version, --strip's budget, --lto, and PGO
 $ tests/check_parallel.py       # parallel parsing and deterministic diagnostics
 $ tests/check_fmt.py            # burdin fmt: golden outputs, idempotence, --check, --stdin, --range, grouping
 $ tests/check_release.py        # release workflow, archives, checksums, installers, and version channels
+$ tests/check_doc.py            # burdin doc: the site and its goldens, links, JSON, coverage, output
 ```
 
 The release pipeline has three scripts of its own: `tests/build_release.py` builds and packages one target (and
@@ -661,7 +696,9 @@ checksums, and publishes only from a tag push or an explicit manual `publish`. S
 [`docs/releasing.md`](docs/releasing.md).
 `tests/check_lint.py` covers `burdin lint`: every documented example, the fixtures under `tests/lint/` (each with the
 diagnostics its `//~` markers name), `--fix` and `--dry-run` against golden files, the all-or-nothing write, levels, the
-manifest `[lint]` table, and the output formats. Every CI job runs it after the build.
+manifest `[lint]` table, and the output formats. Every CI job runs it after the build. `tests/check_doc.py` covers `burdin doc`: the fixture package under `tests/doc/geometry` against the golden pages in
+`tests/doc/expect`, the integrity of every link in the site, the intra-doc link diagnostics of `tests/doc/links`, private
+items, the JSON schema, the coverage report and its agreement with `missing_docs`, and the output directory rules.
 
 Two checks cover the diagnostics themselves, and every CI job runs them after the build:
 

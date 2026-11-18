@@ -203,6 +203,11 @@ jobs:
       - name: Check the linter
         run: python3 tests/check_lint.py
 
+      # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
+      # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
+      - name: Check burdin doc
+        run: python3 tests/check_doc.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
@@ -404,6 +409,11 @@ jobs:
       # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
       - name: Check the linter
         run: python3 tests/check_lint.py
+
+      # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
+      # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
+      - name: Check burdin doc
+        run: python3 tests/check_doc.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
@@ -638,6 +648,9 @@ jobs:
       # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
       - name: Check the linter
         run: python tests/check_lint.py
+
+      - name: Check burdin doc
+        run: python tests/check_doc.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts

@@ -311,6 +311,21 @@ anything. The `.gitignore` lists `/target/` and the executable `burdin build .` 
 because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
 CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
 
+The forty-fourth session implemented `burdin doc` (issue #234, sub-issues #467-#469, #656-#658): a documentation
+generator that reads `///` and `//!` comments from the syntax trees (`burdin_syntax::docs`, shared with the
+`missing_docs` lint so the two always agree), builds the documented API in the new crate `burdin_doc` (depending only
+on `burdin_diag` and `burdin_syntax`), and writes it as a self-contained HTML site, versioned JSON, or a coverage
+report. The site documents the public interface, with `--private` for `priv` items; a type's page lists its fields and
+variants, methods, operators written as `a + b`/`-a`, extension methods with the module and `use` they need, derived
+and implemented interfaces, and the methods of impl blocks for a specific instance (`Stack<i32>`). Intra-doc links
+(`[Type]`, `[module.fn]`, `[`Type::method`]`, and explicit targets) resolve from the comment's module and report `D0001`
+(nothing named) and `D0002` (a `priv` item) as warnings, which `--deny-warnings` turns into a failure; `--coverage`
+counts the same items `missing_docs` (`L0017`, allow by default) reports. The site embeds its stylesheet and search
+script and writes `search-index.js` as a script, so it works from disk; the output directory is refused unless it is
+empty or was written by `burdin doc` (`.burdin-doc` lists what a run wrote, and a later run removes what is gone).
+`spec/doc.md` is the specification (DC1-DC23), `tests/check_doc.py` runs the fixtures under `tests/doc/` against the
+golden pages in `tests/doc/expect/` in every CI job, and doc tests (issues #250, #650-#652) remain separate work.
+
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
 the new crate `crates/burdin_comptime` (depending only on `burdin_tir` and `burdin_diag`), run by the driver after
@@ -1800,6 +1815,29 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   a value; a panic aborts the process, so no lock is ever left poisoned. A waiter parks (a thread blocks) and is woken by
   the releaser; the lock state is under the scheduler's lock (SH9). A waiting writer blocks new readers (SH10).
 - **`Weak<T>`, condition variables, barriers, and `Once` are deferred.** Nothing in the tests needs them.
+
+## Decided in the forty-fourth session (`burdin doc`, issue #234)
+
+- **The generator reads syntax trees, not the typed tree.** Documentation is a property of the source, and a package
+  that compiles is documented whether or not its types are monomorphized; this also keeps `burdin doc` free of the
+  compiler stages and lets `missing_docs` share the exact reading of the comments (`burdin_syntax::docs`).
+- **The site is one set of static files and needs no server.** The stylesheet and the search script are compiled into
+  the binary and copied into `static/`, and the index is `search-index.js` (`window.BURDIN_DOC_INDEX`) rather than a
+  JSON fetched at run time, because a `fetch` from `file://` is blocked in browsers. Pages load nothing from another
+  server.
+- **Links are Markdown links with Burdin paths, resolved like code.** One or two `.`- or `::`-separated segments are
+  looked up the way a path in the module would be; anything that leaves the package is `external` and not an error.
+  The warning codes are `D0001` (unresolved) and `D0002` (a `priv` item), registered in `tests/README.md`.
+- **The JSON schema is versioned (`format_version: 1`)** and is the API for tools that do not read HTML; a field is
+  removed or changes meaning only with a version bump. It carries spans, link resolutions, operator displays, member
+  origins, and instances.
+- **`--private` is the only switch over the public interface**, and the default never writes a `priv` item. The
+  coverage report and the `missing_docs` lint are one definition seen twice, so they cannot disagree.
+- **The output directory is guarded.** `burdin doc` writes a `.burdin-doc` marker listing its files, refuses a
+  directory that holds other files (status 2), and removes the pages of items that are gone; `-o .` cannot overwrite a
+  project.
+- **Not done, on purpose:** doc tests (#250, #650-#652), a `--document-private-items` alias, a theme switch beyond the
+  system setting, and wiring the JSON into an LSP symbol view (stage 3 tooling).
 
 ## What is left to do, in order
 

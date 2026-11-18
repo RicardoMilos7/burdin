@@ -46,6 +46,7 @@ python3 tests/check_diagnostics.py       check color, width, formats, error limi
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
 python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
+python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links and their diagnostics, JSON, coverage, and output
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
@@ -145,8 +146,8 @@ CLAUDE.md                 Claude-specific entry point and working rules
 AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
-spec/                     grammar, memory rules, standard-library surface, derives, comptime, the linter, stage 0
-                          scope, stage 1 plan
+spec/                     grammar, memory rules, standard-library surface, derives, comptime, the linter, the
+                          documentation generator, stage 0 scope, stage 1 plan
 docs/                     the user-facing error-code reference (checked against tests/README.md), the lint
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform support matrix
                           and known limitations, and the version/release policy (docs/releasing.md)
@@ -155,7 +156,7 @@ install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA
 tests/                    conformance suite, README with the format and error codes, and the release scripts
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_comptime, burdin_codegen, burdin_driver, burdin_fmt (the formatter),
-                          burdin_lint (the linter),
+                          burdin_lint (the linter), burdin_doc (the documentation generator),
                           burdin_bench (generated inputs and `cargo bench` targets),
                           burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin
