@@ -212,6 +212,7 @@ fn run_script(
         emit_deps: None,
         report_clean: false,
         run_build_scripts: false,
+        jobs: options.jobs,
     };
     let compiled = crate::compile(script, out, Some(&exe), &nested).map_err(|_| {
         Failure::new(Code::BUILD_SCRIPT, format!("the build script of package `{}` did not compile", package.name))

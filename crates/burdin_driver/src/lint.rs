@@ -4,8 +4,8 @@
 //! checks that the edited package still compiles, and writes every file or none.
 
 use crate::{
-    CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, flag_without_value, front_end, option_value,
-    parse_color, parse_format, parse_number, render_options,
+    CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, flag_without_value, front_end, jobs_or_default,
+    option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
 };
 use burdin_diag::{DiagnosticFormat, Diagnostics, FileId, Severity};
 use burdin_lint::{Config, Input, Level, Lint, Source};
@@ -17,7 +17,7 @@ use std::process::ExitCode;
 pub(crate) const LINT_USAGE: &str = "\
 usage:
   burdin lint <file.bd | package directory> [-A <lint>]... [-W <lint>]... [-D <lint>]... [--deny-warnings]
-              [--fix [--dry-run]] [--comptime-steps <n>] [diagnostics]
+              [--fix [--dry-run]] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lint --list
   burdin lint --explain <lint name | lint code>
 
@@ -28,6 +28,7 @@ lint options:
   --deny-warnings      the same as `-D warnings`
   --fix                apply the safe fixes, check that the package still compiles, and write the files
   --dry-run            with --fix: print the diff and write nothing
+  -j, --jobs <n>       parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
   --list               print every lint with its code and default level
   --explain <lint>     print the reference entry for a lint
 
@@ -50,6 +51,8 @@ struct LintArgs {
     explain: Option<String>,
     diagnostics: DiagnosticOptions,
     comptime_steps: Option<u64>,
+    /// `-j`: the most parser threads.
+    jobs: Option<usize>,
 }
 
 fn parse(argv: &[String]) -> Result<LintArgs, String> {
@@ -62,12 +65,15 @@ fn parse(argv: &[String]) -> Result<LintArgs, String> {
         explain: None,
         diagnostics: DiagnosticOptions::default(),
         comptime_steps: None,
+        jobs: None,
     };
     let mut target = None;
     let mut it = argv.iter();
     while let Some(raw) = it.next() {
         let (a, inline) = match raw.split_once('=') {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            // `-j4` is `-j 4`, as in cargo and make.
+            _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         match a {
@@ -78,6 +84,7 @@ fn parse(argv: &[String]) -> Result<LintArgs, String> {
                 flag_without_value(a, inline)?;
                 args.levels.push(("warnings".to_string(), Level::Deny));
             }
+            "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--fix" => args.fix = flag_without_value(a, inline)?,
             "--dry-run" => args.dry_run = flag_without_value(a, inline)?,
             "--list" => args.list = flag_without_value(a, inline)?,
@@ -154,6 +161,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,
+        jobs: jobs_or_default(args.jobs),
     };
     if args.fix { fix(&args, &options) } else { check(&args, &options) }
 }

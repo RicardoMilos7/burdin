@@ -59,7 +59,8 @@ declared, so one bad attribute does not cascade into follow-on diagnostics.
   the command line selects one. Only the selected package's tests are declared and checked, so a dependency's tests
   never leak into the entry package's build.
 - Independent tests run concurrently. `-j N`/`--jobs N` sets the number of test processes at once; the default is
-  the number of available CPUs. `-j 1` is sequential. Compilation itself is sequential.
+  the number of available CPUs. `-j 1` is sequential. The same `-j` bounds the threads that compile the test
+  binary (parsing and code generation); the report does not depend on it.
 - The report is deterministic: failures and the summary are printed after every test has finished, in package order
   and then declaration order, regardless of completion order.
 - A test's stdout and stderr are captured. By default they are printed only when the test fails, under

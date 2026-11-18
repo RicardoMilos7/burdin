@@ -3,8 +3,8 @@
 //! syntax trees with `burdin_doc`, and writes a static HTML site, a JSON document, or a coverage report.
 
 use crate::{
-    CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, flag_without_value, front_end, option_value,
-    parse_color, parse_format, parse_number, render_options,
+    CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, flag_without_value, front_end, jobs_or_default,
+    option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
 };
 use burdin_diag::{DiagnosticFormat, Severity};
 use std::collections::BTreeSet;
@@ -15,7 +15,7 @@ use std::process::ExitCode;
 pub(crate) const DOC_USAGE: &str = "\
 usage:
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
-             [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
+             [--coverage] [--deny-warnings] [-j <n>] [--comptime-steps <n>] [diagnostics]
 
 doc options:
   -o, --out <path>         where to write: a directory for html (default: <package>/target/doc), a file for json
@@ -23,7 +23,8 @@ doc options:
   --output-format <f>      html (default) writes a static site; json writes the documented API as JSON
   --private                document `priv` items, fields, and methods too
   --coverage               print how much of the public interface is documented, per module, and write nothing else
-  --deny-warnings          exit with status 1 when a doc comment has a broken link";
+  --deny-warnings          exit with status 1 when a doc comment has a broken link
+  -j, --jobs <n>           parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)";
 
 /// The marker file that says a directory holds a site `burdin doc` wrote, and which files it wrote.
 const MARKER: &str = ".burdin-doc";
@@ -43,6 +44,8 @@ struct DocArgs {
     deny_warnings: bool,
     diagnostics: DiagnosticOptions,
     comptime_steps: Option<u64>,
+    /// `-j`: the most parser threads.
+    jobs: Option<usize>,
 }
 
 fn parse(argv: &[String]) -> Result<DocArgs, String> {
@@ -55,12 +58,15 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
         deny_warnings: false,
         diagnostics: DiagnosticOptions::default(),
         comptime_steps: None,
+        jobs: None,
     };
     let mut target = None;
     let mut it = argv.iter();
     while let Some(raw) = it.next() {
         let (a, inline) = match raw.split_once('=') {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            // `-j4` is `-j 4`, as in cargo and make.
+            _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         match a {
@@ -72,6 +78,7 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
                     other => return Err(format!("unknown output format `{other}` (expected html or json)")),
                 };
             }
+            "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--private" => args.private = flag_without_value(a, inline)?,
             "--coverage" => args.coverage = flag_without_value(a, inline)?,
             "--deny-warnings" => args.deny_warnings = flag_without_value(a, inline)?,
@@ -137,6 +144,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,
+        jobs: jobs_or_default(args.jobs),
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {
         Ok(f) => f,

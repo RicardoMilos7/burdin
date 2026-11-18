@@ -11,6 +11,9 @@
 //! `query-cold/SIZE` is the first analysis of the same package. The package has one module per file for the
 //! larger sizes, so the edit cannot be absorbed by a single small file.
 //!
+//! The `fmt/SIZE` cases format the generated program with `burdin fmt`'s formatter (issue #773), including the
+//! check of its own output that every run does.
+//!
 //! `cargo bench -p burdin_bench -- --smoke` runs one small generated input through every stage, checks that it
 //! compiles, and fails when a stage takes longer than a deliberately generous budget. That is the CI guard
 //! against catastrophic regressions (a hang or an accidental quadratic pass). The smoke run also makes one
@@ -29,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use burdin_bench::{
-    Comparison, Generated, Measurement, check, check_memory, compare, emit, generate_package, parse_baseline,
+    Comparison, Generated, Measurement, check, check_memory, compare, emit, format, generate_package, parse_baseline,
     parse_generated, render_baseline,
 };
 use burdin_diag::Diagnostics;
@@ -180,6 +183,18 @@ fn measure(filter: Option<&str>) -> Vec<Measurement> {
             );
             report("parse", size, stats);
             measurements.push(measurement("parse", size, stats.median));
+        }
+
+        if enabled(filter, "fmt", size) {
+            let stats = run_iterations(
+                || {
+                    black_box(format(&generated.text).len());
+                },
+                2,
+                200,
+            );
+            report("fmt", size, stats);
+            measurements.push(measurement("fmt", size, stats.median));
         }
 
         if enabled(filter, "sema", size) {
@@ -399,6 +414,10 @@ fn smoke() -> i32 {
         black_box(ast.items.len());
     });
 
+    let fmt_time = time(|| {
+        black_box(format(&generated.text).len());
+    });
+
     let (mut program, sema_diags) = check(&generated);
     assert!(
         !sema_diags.has_errors(),
@@ -461,6 +480,7 @@ fn smoke() -> i32 {
     for (stage, elapsed, budget) in [
         ("lex", lex_time, Duration::from_secs(1)),
         ("parse", parse_time, Duration::from_secs(1)),
+        ("fmt", fmt_time, Duration::from_secs(2)),
         ("sema", sema_time, Duration::from_secs(2)),
         ("codegen", codegen_time, Duration::from_secs(10)),
         ("query-cold", query_cold_time, Duration::from_secs(30)),

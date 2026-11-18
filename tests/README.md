@@ -126,7 +126,9 @@ and macOS),
 (`m02_basics/panic_flushes_stdout.bd`, `m09_stdlib/exit_code.bd`). The flags and code-generation effects have the
 four scripts above: they read the `--emit-ir` text (drop flags, bounds checks, glue) and compare parallel and
 sequential diagnostics. `BURDIN_JOBS=1` forces sequential parsing for a comparison; the default is the machine's
-parallelism.
+parallelism. `tests/check_parallel.py` also checks parallel code generation: the same executable with any `-j`, and
+the code-generation-heavy milestones with `BURDIN_CODEGEN_UNITS=8`, which splits every program into eight units.
+`BURDIN_CODEGEN_UNITS=8 python3 tests/run_tests.py` runs the whole suite that way.
 
 The runner finds the driver in `BURDIN`, then `target/{debug,release}/burdin`, then `PATH`. It expects `burdin build`,
 `burdin run`, and `burdin test` to behave as documented in [the driver contract](../README.md#the-driver-contract) at

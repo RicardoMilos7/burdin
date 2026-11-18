@@ -30,6 +30,7 @@
 //! predecessors, so the rest of the tree can be generated without special cases.
 mod emit;
 mod runtime;
+mod split;
 mod taskrt;
 
 use burdin_diag::SourceMap;
@@ -40,8 +41,11 @@ use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+pub use split::{MAX_UNITS, UNIT_INSTRUCTIONS};
+
+#[derive(Default)]
 pub struct Options {
     pub release: bool,
     /// Also write the LLVM IR as text to this path.
@@ -54,6 +58,11 @@ pub struct Options {
     pub bitcode: bool,
     /// Add profile instrumentation (`instrprof`) so the program writes a profile when it runs.
     pub instrument: bool,
+    /// How many threads compile codegen units at once; 0 uses the machine's parallelism (`-j`).
+    pub jobs: usize,
+    /// Split into exactly this many codegen units instead of choosing by size (`BURDIN_CODEGEN_UNITS`). Bitcode,
+    /// instrumentation, and the `--pgo-use` IR always use one unit.
+    pub units: Option<usize>,
 }
 
 /// The version of the LLVM library the compiler was linked against, as `major.minor.patch`.
@@ -64,24 +73,37 @@ pub fn llvm_version() -> String {
     format!("{major}.{minor}.{patch}")
 }
 
-/// Compiles the program to a native object file for the host. `sources` gives panic messages their file and line.
+/// The host target machine at the optimization level of the profile. PIC on every platform, including COFF: a
+/// static relocation model makes LLVM address string constants with 32-bit absolute relocations
+/// (`IMAGE_REL_AMD64_ADDR32`), which the MSVC linker rejects without `/LARGEADDRESSAWARE:NO`.
+fn target_machine(release: bool) -> Result<TargetMachine, String> {
+    Target::initialize_native(&InitializationConfig::default())?;
+    let triple = TargetMachine::get_default_triple();
+    let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+    let level = if release { OptimizationLevel::Default } else { OptimizationLevel::None };
+    target
+        .create_target_machine(&triple, "generic", "", level, RelocMode::PIC, CodeModel::Default)
+        .ok_or_else(|| format!("LLVM cannot create a target machine for {}", triple.as_str().to_string_lossy()))
+}
+
+/// The number of threads `jobs` asks for: itself, or the machine's parallelism for 0.
+pub fn resolve_jobs(jobs: usize) -> usize {
+    if jobs > 0 { jobs } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) }
+}
+
+/// Compiles the program to native object files for the host: `object` itself, and for a program large enough to
+/// be split into codegen units (`split.rs`), `<stem>.1.<ext>`, `<stem>.2.<ext>`, ... next to it, compiled on up to
+/// `opts.jobs` threads. Returns every object written, in link order. `sources` gives panic messages their file and
+/// line. With `opts.bitcode` the single output is LLVM bitcode.
 pub fn emit_object(
     program: &Program,
     sources: &SourceMap,
     module_name: &str,
     object: &Path,
     opts: &Options,
-) -> Result<(), String> {
-    Target::initialize_native(&InitializationConfig::default())?;
+) -> Result<Vec<PathBuf>, String> {
+    let machine = target_machine(opts.release)?;
     let triple = TargetMachine::get_default_triple();
-    let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
-    let level = if opts.release { OptimizationLevel::Default } else { OptimizationLevel::None };
-    // PIC on every platform, including COFF: a static relocation model makes LLVM address string constants with
-    // 32-bit absolute relocations (`IMAGE_REL_AMD64_ADDR32`), which the MSVC linker rejects without
-    // `/LARGEADDRESSAWARE:NO`.
-    let machine = target
-        .create_target_machine(&triple, "generic", "", level, RelocMode::PIC, CodeModel::Default)
-        .ok_or_else(|| format!("LLVM cannot create a target machine for {}", triple.as_str().to_string_lossy()))?;
 
     let context = Context::create();
     let module = context.create_module(module_name);
@@ -109,6 +131,21 @@ pub fn emit_object(
         module.print_to_file(path).map_err(|e| e.to_string())?;
     }
     module.verify().map_err(|e| format!("LLVM module verification failed:\n{}", e.to_string_lossy()))?;
+    // The runtime and the glue are generated whole, and most programs use a small part of them: what nothing
+    // reaches goes before the backend spends time on it, in both profiles.
+    module
+        .run_passes("globaldce", &machine, inkwell::passes::PassBuilderOptions::create())
+        .map_err(|e| e.to_string_lossy().to_string())?;
+    let single = opts.bitcode || opts.instrument || opts.pgo_ir.is_some();
+    let units = if single {
+        1
+    } else {
+        let (instructions, functions) = split::measure(&module);
+        split::unit_count(instructions, functions, opts.units)
+    };
+    if units > 1 {
+        return split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.release, object);
+    }
     if opts.release {
         module
             .run_passes("default<O2>", &machine, inkwell::passes::PassBuilderOptions::create())
@@ -126,10 +163,10 @@ pub fn emit_object(
         if !module.write_bitcode_to_path(object) {
             return Err(format!("cannot write LLVM bitcode to {}", object.display()));
         }
-        Ok(())
     } else {
-        machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())
+        machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
     }
+    Ok(vec![object.to_path_buf()])
 }
 
 /// Marks every defined function `uwtable`: without it LLVM emits no `.eh_frame` entry for a generated function, and

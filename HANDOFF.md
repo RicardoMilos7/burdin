@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the forty-ninth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fiftieth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -992,6 +992,47 @@ get lenses like tests; Helix and Neovim queries for `editors/tree-sitter-burdin`
 publishing the VS Code extension; per-file instead of per-package analysis if large packages make the debounce feel
 slow; and the `burdin doc` JSON as a richer hover source.
 
+## The fiftieth session: parallel compilation and `-j` (issues #334, #352, #773)
+
+Profiled first, on a generated 16-module package (about 65,000 LLVM instructions) and on hello world, in WSL with a
+clean `PATH` (Windows entries on `PATH` make each `cc` call take half a second there, which is the environment, not
+the compiler). Debug build of the package: parse 23 ms, sema 140 ms, memory checks 9 ms, lowering to LLVM 30 ms,
+LLVM object emission 300 ms, link 20 ms. Release: LLVM's `default<O2>` 650 ms and emission 450 ms. So the LLVM
+backend was 60% of a debug build and 80% of a release build, and it ran on one thread. Hello world spends 90 ms in
+sema, almost all of it checking the standard library, and 70 ms emitting a runtime most of which it never calls.
+
+- **Parallel code generation (#334, `burdin_codegen/src/split.rs`).** The typed tree is still lowered to one module
+  on one thread. Then `globaldce` drops what nothing reaches (every build; hello world's debug executable went from
+  171 KB to 24 KB), and a module of more than `UNIT_INSTRUCTIONS` (8,000) instructions is split into up to 16 codegen
+  units the way LLVM's `SplitModule` does it: internal definitions become external, hidden, and renamed
+  `burdin.cgu.<name>`; private `unnamed_addr` constants are copied into every unit; each function is owned by one unit
+  (contiguous runs in module order, balanced by instruction count); globals, the inline assembly, and appending
+  globals belong to the first unit. Each unit reads the whole module from bitcode in its own `Context` and thread,
+  turns what it does not own into `available_externally` and runs `elim-avail-extern,globaldce`; in release, functions
+  of at most 40 instructions owned elsewhere stay `available_externally` through `default<O2>` so they can still be
+  inlined. The objects are linked in unit order. The unit count depends only on the program, never on `-j`, so the
+  executable is byte-identical across thread counts. `--lto`, `--pgo-generate`, and `--pgo-use` keep one unit.
+  Result: the package's debug build went from 0.63 s to 0.46 s and its release build from 1.40 s to 0.62 s.
+  `BURDIN_CODEGEN_UNITS=n` forces a split; the whole conformance suite passes with it set to 8 in both profiles, and
+  so do the debug-info, build-flag, and codegen-optimization checks.
+- **`-j`/`--jobs` (#352).** Every command that compiles or formats takes `-j <n>` (also `-jN` and `--jobs=n`):
+  `build`, `run`, `test`, `check`, `lint`, `doc`, and `fmt`. It bounds the parser threads and the codegen threads;
+  for `burdin test` it still also bounds the test processes. The default is `BURDIN_JOBS`, then the machine's
+  parallelism; `burdin_query::Options::jobs` carries it into the front end. Parsing now hands files out from a shared
+  counter instead of fixed chunks.
+- **`burdin fmt -j` (#773).** Files are read and formatted on worker threads; reports, writes, and the exit status
+  follow the sorted file order afterwards, so the output does not depend on the thread count. `cargo bench -p
+  burdin_bench -- fmt` measures the formatter, and `--smoke` gives it a budget.
+- `tests/check_parallel.py` builds the generated package with `-j 1/2/8` in both profiles (identical bytes on Linux),
+  runs `m11_llvm`, `m12_closures`, `m15_any`, and `s2_tasks` with `BURDIN_CODEGEN_UNITS=8`, checks `-j` on every
+  command, and compares `fmt -j 1` with `fmt -j 8`.
+
+What is left: sema and the memory checks are still sequential. The typed tree uses `Rc` (`Ty` holds `Rc<str>` and
+`Rc<FnSig>`), so it is not `Send`; checking function bodies on several threads needs `Arc` there (or interned
+names) and a sema whose shared state is read-only while bodies are checked. That is the next big win for small
+programs, whose time is mostly sema over the standard library. A `burdin test --workspace` still compiles its
+packages one after another. Build timing reports (#472) and cached objects (#243) remain open.
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least
@@ -1611,7 +1652,8 @@ slow; and the `burdin doc` JSON as a richer hover source.
 - **`--version` prints stable lines, and diagnostics do not carry the version.** Keeping every diagnostic line
   in the registry format matters more than embedding a version; a bug report includes `burdin --version` (documented
   in README.md). The twenty-second session added a `channel:` line, so a release build now prints six.
-- **Parsing is parallel by default; checking is not.** `BURDIN_JOBS` controls the workers (1 is sequential). Each
+- **Parsing and code generation are parallel by default; checking is not.** `-j` (default `BURDIN_JOBS`, then the
+  CPU count) controls the workers (1 is sequential), and the codegen unit count never depends on it. Each
   worker keeps its own diagnostics and the driver merges them in file order, so output is byte-identical. The query
   library (forty-seventh session) made checking incremental but not parallel: `Sema` is still one shared mutable state,
   and the memo is not shared between threads.

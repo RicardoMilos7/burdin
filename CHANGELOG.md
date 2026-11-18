@@ -6,6 +6,22 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Parallel compilation and `-j` (issues #334, #352, #773)
+
+- Code generation is parallel: after lowering, unused runtime and glue functions are dropped, and a program of more
+  than about 8,000 LLVM instructions is split into up to 16 codegen units, each optimized and compiled to its own
+  object on its own thread, then linked in order (`burdin_codegen/src/split.rs`). The unit count depends only on the
+  program, so the executable does not depend on the thread count. A release build keeps small functions inlinable
+  across units. On a generated 16-module package a debug build went from 0.63 s to 0.46 s and a release build from
+  1.40 s to 0.62 s; hello world's debug executable shrank from 171 KB to 24 KB. `BURDIN_CODEGEN_UNITS` forces a
+  split for testing.
+- `-j <n>`/`--jobs <n>` (also `-jN`) is an option of `build`, `run`, `test`, `check`, `lint`, `doc`, and `fmt`: the
+  most threads the command uses for parsing, code generation, and formatting. `BURDIN_JOBS` is its default.
+- `burdin fmt` formats files on several threads with output, written files, and exit status independent of `-j`,
+  and the benchmarks have `fmt/SIZE` cases and a smoke budget for the formatter.
+- `tests/check_parallel.py` checks the determinism across `-j`, a forced split over the code-generation-heavy
+  milestones, `-j` on every command, and `fmt -j`.
+
 ### The language server (issue #242, sub-issues #309-#313, #365-#376, #470, #662)
 
 - `burdin lsp` is a Language Server Protocol 3.17 server over standard input and output (new crate `burdin_lsp`,

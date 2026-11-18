@@ -23,6 +23,6 @@ pub use api::{
     Convention, DefinitionKind, ItemSignature, Location, MoveEvent, OwnedLocal, Ownership, ParamInfo, Resolution,
     SyntaxTree, Trivia, TriviaKind, Typed,
 };
-pub use db::{Analysis, Budget, CancelHandle, Cancelled, Db, Options, Parsed};
+pub use db::{Analysis, Budget, CancelHandle, Cancelled, Db, Options, Parsed, env_jobs};
 pub use navigate::{CallSite, FunctionInfo, LocalInfo, ModuleInfo, Occurrence, PackageInfo, TestInfo};
 pub use stats::{Counters, RevisionStats};
