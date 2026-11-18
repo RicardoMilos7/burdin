@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::{ColorChoice, DiagnosticOptions};
+use crate::DiagnosticOptions;
 
 const USAGE: &str =
     "usage: burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
@@ -127,6 +127,11 @@ fn parse(args: &[String]) -> Result<Option<Request>, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
             _ => (raw.as_str(), None),
         };
+        // The `[diagnostics]` group is the one `build`, `run`, `test`, `check`, `lint`, and `doc` take, parsed by the
+        // same function so the two can never disagree.
+        if crate::parse_diagnostic_option(&mut iterator, inline.as_deref(), option, &mut request.diagnostics)? {
+            continue;
+        }
         let mut value = |name: &str| -> Result<String, String> {
             match &inline {
                 Some(value) => Ok(value.clone()),
@@ -140,14 +145,6 @@ fn parse(args: &[String]) -> Result<Option<Request>, String> {
             "--wrappers" => request.wrappers = Some(value("--wrappers")?),
             "--wrapper-include" => request.wrapper_include = Some(value("--wrapper-include")?),
             "--clang-arg" => request.clang_args.push(value("--clang-arg")?),
-            "--diagnostic-format" => request.diagnostics.format = crate::parse_format(&value("--diagnostic-format")?)?,
-            "--color" => request.diagnostics.color = crate::parse_color(&value("--color")?)?,
-            "--no-color" => request.diagnostics.color = ColorChoice::Never,
-            "--width" => request.diagnostics.width = Some(crate::parse_number("--width", &value("--width")?)?),
-            "--error-limit" => {
-                let limit = crate::parse_number("--error-limit", &value("--error-limit")?)?;
-                request.diagnostics.error_limit = (limit > 0).then_some(limit);
-            }
             "-I" => request.clang_args.push(format!("-I{}", value("-I")?)),
             "-D" => request.clang_args.push(format!("-D{}", value("-D")?)),
             "-h" | "--help" => {
@@ -207,7 +204,7 @@ mod tests {
         assert_eq!(request.diagnostics.format, crate::DiagnosticFormat::Json);
         let request = parse(&args(&["--export", "pkg", "--out", "pkg.h", "--no-color", "--width", "100"])).unwrap();
         let request = request.unwrap();
-        assert_eq!(request.diagnostics.color, ColorChoice::Never);
+        assert_eq!(request.diagnostics.color, crate::ColorChoice::Never);
         assert_eq!(request.diagnostics.width, Some(100));
         assert!(parse(&args(&["--export", "pkg", "--out", "pkg.h", "--diagnostic-format=xml"])).is_err());
     }

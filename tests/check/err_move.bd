@@ -1,0 +1,16 @@
+//% exit: 1
+
+// The move checker runs: a value moved in a loop is E0104.
+
+struct Thing {
+    id: i32
+}
+
+fn take(own t: Thing) {}
+
+fn main() {
+    let a = Thing { id: 1 }
+    for i in 0..3 {
+        take(a) //~ E0104
+    }
+}

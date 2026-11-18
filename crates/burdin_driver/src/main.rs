@@ -1,8 +1,9 @@
-//! The `burdin` command: `build`, `run`, `test`, `fmt`, `lint`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
+//! The `burdin` command: `build`, `run`, `test`, `check`, `fmt`, `lint`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
 //! at the repository root (`The driver contract`) and summarized at the top of tests/run_tests.py.
 
 mod bindgen;
 mod build;
+mod check;
 mod doc;
 mod export;
 mod fmt;
@@ -28,6 +29,7 @@ usage:
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
@@ -56,6 +58,9 @@ doc options (the behavior is spec/doc.md):
   --private            document `priv` items, fields, and methods too
   --coverage           print how much of the public interface is documented, per module
   --deny-warnings      exit with status 1 when a doc comment has a broken link
+
+check options (type-check only: the front end and every memory check, no code generation or linking):
+  --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
 
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
@@ -356,6 +361,35 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     Ok(args)
 }
 
+/// Handles one of the diagnostics options shared by every command (`--diagnostic-format`, `--color`, `--no-color`,
+/// `--width`, `--error-limit`). Returns whether `option` was one of them.
+pub(crate) fn parse_diagnostic_option(
+    it: &mut std::slice::Iter<'_, String>,
+    inline: Option<&str>,
+    option: &str,
+    diagnostics: &mut DiagnosticOptions,
+) -> Result<bool, String> {
+    match option {
+        "--diagnostic-format" => diagnostics.format = parse_format(&option_value(it, inline, option, "a value")?)?,
+        "--color" => diagnostics.color = parse_color(&option_value(it, inline, option, "a value")?)?,
+        "--no-color" => {
+            flag_without_value(option, inline)?;
+            diagnostics.color = ColorChoice::Never;
+        }
+        "--width" => {
+            let value = option_value(it, inline, option, "a number")?;
+            diagnostics.width = Some(parse_number(option, &value)?);
+        }
+        "--error-limit" => {
+            let value = option_value(it, inline, option, "a number")?;
+            let limit = parse_number(option, &value)?;
+            diagnostics.error_limit = (limit > 0).then_some(limit);
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
 /// The value of an option: the part after `=` when written inline, otherwise the next argument.
 fn option_value(
     it: &mut std::slice::Iter<'_, String>,
@@ -442,6 +476,9 @@ fn driver_main() -> ExitCode {
     }
     if argv.first().map(String::as_str) == Some("fmt") {
         return fmt::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("check") {
+        return check::run(&argv[1..]);
     }
     if argv.first().map(String::as_str) == Some("explain") {
         return explain(&argv[1..]);
@@ -862,30 +899,7 @@ pub(crate) fn compile(
     let FrontEnd { loaded, sources, program, diags, script_inputs, .. } =
         front_end(target, options, &SourceOverrides::new())?;
     if diags.has_errors() {
-        let options = render_options(options.diagnostics, std::io::stderr().is_terminal());
-        let rendered = diags.render_with(&sources, &options);
-        eprint!("{}", rendered.text);
-        let total = rendered.total;
-        let suffix = if total == 1 { "" } else { "s" };
-        match options.format {
-            DiagnosticFormat::Json => {
-                eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
-            }
-            // A SARIF log is one document, so nothing may follow it.
-            DiagnosticFormat::Sarif => {}
-            _ => {
-                if rendered.shown < total {
-                    let hidden = total - rendered.shown;
-                    let plural = if hidden == 1 { "" } else { "s" };
-                    let limit = options.error_limit.unwrap_or(0);
-                    eprintln!("note: {hidden} more error{plural} not shown (--error-limit {limit})");
-                }
-                eprintln!("error: could not compile {} ({total} error{suffix})", target.display());
-                if options.format == DiagnosticFormat::Human {
-                    eprintln!("note: for an explanation of an error code, run `burdin explain <code>`");
-                }
-            }
-        }
+        report_errors("compile", target, &diags, &sources, options.diagnostics);
         return Err(ExitCode::from(1));
     }
     let mut program = program.expect("no errors means checking produced a program");
@@ -904,13 +918,7 @@ pub(crate) fn compile(
     }
     // Warnings do not stop compilation, but they are printed before the build goes on (`spec/extensions.md`,
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
-    let render = render_options(options.diagnostics, std::io::stderr().is_terminal());
-    // `burdin build` with `--diagnostic-format sarif` writes a log even when nothing was found, so a CI job always
-    // has a file to upload; the other commands write one only for a warning (issue #643).
-    let clean_log = options.report_clean && render.format == DiagnosticFormat::Sarif;
-    if diags.has_warnings() || clean_log {
-        eprint!("{}", diags.render_with(&sources, &render).text);
-    }
+    print_warnings(&diags, &sources, options.diagnostics, options.report_clean);
 
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -971,10 +979,61 @@ pub(crate) fn compile(
     Ok(Compiled { exe: output, tests: program.tests, test_sites, build_inputs: program.build_inputs })
 }
 
+/// Prints the errors of a failed front end and the closing line, `could not <verb> <target> (N errors)`: `compile`
+/// for `build`, `run`, and `test`, `check` for `burdin check`. Everything goes to standard error.
+pub(crate) fn report_errors(
+    verb: &str,
+    target: &Path,
+    diags: &Diagnostics,
+    sources: &SourceMap,
+    diagnostics: &DiagnosticOptions,
+) {
+    let options = render_options(diagnostics, std::io::stderr().is_terminal());
+    let rendered = diags.render_with(sources, &options);
+    eprint!("{}", rendered.text);
+    let total = rendered.total;
+    let suffix = if total == 1 { "" } else { "s" };
+    match options.format {
+        DiagnosticFormat::Json => {
+            eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
+        }
+        // A SARIF log is one document, so nothing may follow it.
+        DiagnosticFormat::Sarif => {}
+        _ => {
+            if rendered.shown < total {
+                let hidden = total - rendered.shown;
+                let plural = if hidden == 1 { "" } else { "s" };
+                let limit = options.error_limit.unwrap_or(0);
+                eprintln!("note: {hidden} more error{plural} not shown (--error-limit {limit})");
+            }
+            eprintln!("error: could not {verb} {} ({total} error{suffix})", target.display());
+            if options.format == DiagnosticFormat::Human {
+                eprintln!("note: for an explanation of an error code, run `burdin explain <code>`");
+            }
+        }
+    }
+}
+
+/// Prints the warnings of a front end that found no errors; nothing when there are none. With `report_clean`, a
+/// SARIF log is written even when there is nothing to report, so a CI job always has a file to upload
+/// (`spec/diagnostics.md`, DG11).
+pub(crate) fn print_warnings(
+    diags: &Diagnostics,
+    sources: &SourceMap,
+    diagnostics: &DiagnosticOptions,
+    report_clean: bool,
+) {
+    let render = render_options(diagnostics, std::io::stderr().is_terminal());
+    let clean_log = report_clean && render.format == DiagnosticFormat::Sarif;
+    if diags.has_warnings() || clean_log {
+        eprint!("{}", diags.render_with(sources, &render).text);
+    }
+}
+
 /// A source path as diagnostics and recorded allocation sites spell it. On Windows, `fs::canonicalize` returns a
 /// verbatim path (`\\?\C:\...`); the prefix is an implementation detail, so it is removed (`\\?\UNC\server\share`
 /// becomes `\\server\share`). Every other platform keeps the path as it is.
-fn source_path_text(path: &Path) -> String {
+pub(crate) fn source_path_text(path: &Path) -> String {
     let text = path.display().to_string();
     if cfg!(windows) { strip_verbatim_prefix(&text) } else { text }
 }

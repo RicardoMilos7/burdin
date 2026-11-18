@@ -49,6 +49,25 @@ close-out checklist in `AGENTS.md`).
   150 black-box checks over the fixtures `tests/runner/selection/` and `tests/runner/slow/`, and the driver has unit
   tests for each rule.
 
+### Tooling: `burdin check` (issue #237)
+
+- `burdin check <file.bd | package directory>` type-checks without building: it runs the front end of `burdin build`
+  (build scripts, parsing, name resolution and type checking, the return-origin, move, and borrow checks, and
+  compile-time evaluation) and stops before code generation, so it needs no linker and writes no file. It is for fast CI
+  gates and editor feedback (`spec/check.md`, CK1-CK8).
+- The diagnostics, formats, and exit statuses are those of a build: a clean check prints nothing and exits 0, errors exit
+  1 and end with `error: could not check <target> (N errors)`, and a usage error exits 2. `--tests` also checks `test`
+  blocks and accepts a library package without `src/main.bd`; `--release` and `--comptime-steps` are as for a build;
+  the options that only matter for an output (`-o`, `--emit-ir`, `-g`, `--lto`, `--link-lib`, ...) are rejected.
+- The query-based compiler library the issue mentions is a later stage 3 item; `burdin check` reuses `front_end`, the
+  shared front end that `build`, `run`, `test`, and `lint` already call, and will move with it.
+- The error reporting of a failed compilation moved out of `compile` into `report_errors`, and the diagnostics options
+  of the command line into `parse_diagnostic_option`, so the commands share them.
+- `crates/burdin_driver/src/check.rs` has unit tests for the command line; `tests/check_check.py` black-boxes the
+  command: the fixtures and golden outputs under `tests/check/`, equality with `burdin build`'s diagnostics, every
+  conformance test (a `compile-fail` program must report exactly its markers, every other program must be accepted),
+  no linker needed and nothing written, and the command line. It runs in every CI job.
+
 ### C bindgen (issue #244)
 
 - `burdin bindgen <header> --out <file>` reads a C header through **libclang**, which the new `burdin_bindgen` crate

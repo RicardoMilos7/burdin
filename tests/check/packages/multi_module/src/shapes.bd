@@ -1,0 +1,4 @@
+fn area(w: i32, h: i32): i32 {
+    let unit: String = w * h //~ E0003
+    w * h
+}

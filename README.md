@@ -31,6 +31,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
+| [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
@@ -132,7 +133,8 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `fmt`, `doc`, `explain`, `bindgen`, and `new`. This section is the
+The `burdin` command has the subcommands `build`, `run`, `test`, `check`, `fmt`, `doc`, `explain`, `bindgen`, and `new`.
+This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
@@ -146,6 +148,7 @@ usage:
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
@@ -160,6 +163,9 @@ usage:
 compile options:
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
+
+check options (type-check only: the front end and every memory check, no code generation or linking):
+  --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
 
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
@@ -211,6 +217,15 @@ Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `
 rejects them.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
+
+`burdin check <target>` runs the front end of `burdin build` (build scripts, parsing, name resolution and type checking, the
+move and borrow checks, and compile-time evaluation) and stops before code generation: it needs no linker, writes no
+file, and prints the same diagnostics in the same formats as a build. A clean check prints nothing and exits 0; errors exit
+1 and end with `error: could not check <target> (N errors)`. `--tests` also checks the package's `test` blocks and accepts
+a library package without `src/main.bd`; `--release` checks as `build --release` does. It is meant for CI gates and editor
+feedback. [`spec/check.md`](spec/check.md) is the specification and `tests/check_check.py` checks it: the fixtures under
+`tests/check/`, and the whole conformance suite, whose `compile-fail` programs must report exactly their markers and
+whose other programs must be accepted.
 
 `burdin new <name>` creates the package directory `<name>` (a path; its last component is the package name, which must be
 an identifier that is not a reserved word or `std`) with a `burdin.toml`, a `src/main.bd` that prints a greeting, and a
@@ -739,6 +754,9 @@ The release pipeline has three scripts of its own: `tests/build_release.py` buil
 changelog section and checks its links, and `.github/workflows/release.yml` builds the six targets, verifies the
 checksums, and publishes only from a tag push or an explicit manual `publish`. See
 [`docs/releasing.md`](docs/releasing.md).
+`tests/check_check.py` covers `burdin check`: the fixtures under `tests/check/` with their golden outputs, the equivalence with
+`burdin build`, every conformance test (a `compile-fail` program reports exactly its markers, every other program is
+accepted), the absence of code generation and linking, and the command line. Every CI job runs it after the build.
 `tests/check_lint.py` covers `burdin lint`: every documented example, the fixtures under `tests/lint/` (each with the
 diagnostics its `//~` markers name), `--fix` and `--dry-run` against golden files, the all-or-nothing write, levels, the
 manifest `[lint]` table, and the output formats. Every CI job runs it after the build. `tests/check_doc.py` covers `burdin doc`: the fixture package under `tests/doc/geometry` against the golden pages in

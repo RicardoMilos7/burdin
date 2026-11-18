@@ -1,6 +1,7 @@
 # Diagnostics for tools
 
-`burdin build`, `run`, `test`, and `lint` print their diagnostics to stderr in the format `--diagnostic-format` selects.
+`burdin build`, `check`, `run`, `test`, and `lint` print their diagnostics to stderr in the format `--diagnostic-format`
+selects.
 This page is the reference for the two formats that tools read: `json`, for editors and scripts, and `sarif`, for CI and
 code-scanning services. The behavior is specified in [`spec/diagnostics.md`](../spec/diagnostics.md) and checked by
 `tests/check_diagnostics.py` and `tests/check_error_docs.py`.
@@ -117,7 +118,7 @@ The link is in every format that has room for one:
 ## SARIF
 
 `--diagnostic-format sarif` prints one [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
-log on stderr. `burdin build` and `burdin lint` write the log even when they found nothing (an empty `results` and
+log on stderr. `burdin build`, `burdin check`, and `burdin lint` write the log even when they found nothing (an empty `results` and
 `"executionSuccessful": true`), so a CI job always has a file to upload; `run` and `test` write one only when the
 compilation reported something. Nothing else is written to the stream after the log: no summary line and no hint.
 `burdin fmt` does not support the format, because it reports file by file.

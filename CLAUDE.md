@@ -40,7 +40,8 @@ not updated and may disagree with the repository.
    modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
    import rules, layout checks, wrappers, and `--export`; `spec/lint.md` is `burdin lint` (the `[lint]` table,
    suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
-   intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report; and
+   intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report;
+   `spec/check.md` is `burdin check`, the type-check-only command (what it shares with a build, and `--tests`); and
    `spec/diagnostics.md` is the versioned JSON diagnostic format, the SARIF log, and the links to the error reference.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
@@ -90,6 +91,7 @@ python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, ide
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
+python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
@@ -137,9 +139,10 @@ crates/
   burdin_doc/               the documentation generator behind `burdin doc`: doc comments and signatures from the syntax
                             trees, intra-doc link resolution, the HTML site with search, the versioned JSON schema, and
                             the coverage report (spec/doc.md); it depends only on burdin_diag and burdin_syntax
-  burdin_driver/            the `burdin` binary: build, run, test, fmt, doc, bindgen; package loading (`package.rs`: burdin.toml,
-                            modules, dependencies), build scripts (`build.rs`), the bindgen command line
-                            (`bindgen.rs`), and the export header built from the checked program (`export.rs`)
+  burdin_driver/            the `burdin` binary: build, run, test, check, fmt, lint, doc, bindgen; package loading
+                            (`package.rs`: burdin.toml, modules, dependencies), build scripts (`build.rs`), the bindgen
+                            command line (`bindgen.rs`), and the export header built from the checked program
+                            (`export.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, and code generation
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed

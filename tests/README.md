@@ -110,6 +110,7 @@ python3 tests/check_diagnostics.py        # check color, width, formats, error l
 python3 tests/check_error_docs.py         # check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py        # check `burdin test` attributes, parallelism, output, isolation, discovery
 python3 tests/check_build_scripts.py      # check build-script caching, declared inputs, --emit-deps, and bindgen
+python3 tests/check_check.py              # check `burdin check`: fixtures and goldens, the conformance suite, no codegen
 ```
 
 CI runs every finished milestone in both profiles, so a milestone is done only when its folder passes in debug and

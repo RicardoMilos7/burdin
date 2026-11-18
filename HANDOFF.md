@@ -253,6 +253,20 @@ of `URL_BASE` plus the two scripts that pin it. SARIF columns are Unicode scalar
 `unicodeCodePoints`), and a relative path is `%SRCROOT%`-relative. Existing assertions changed only where the JSON
 summary gained `"version":1`.
 
+The forty-sixth session implemented stage 3's `burdin check` (issue #237): the type-check-only command. It is not a new
+pipeline: `check.rs` calls `front_end` (`main.rs`), the one function that `build`, `run`, `test`, and `lint` use to load
+a package, run its build script, parse it, check it, run the memory checks, and evaluate `comptime`, and stops there. The
+issue says to reuse the query-based library; that library does not exist yet (it is a later stage 3 item), so the
+command reuses `front_end`, and the query-based library will replace `front_end` for every command at once. The output
+is a build's (the failure text moved from `compile` into `report_errors`; a clean check prints nothing), and the exit
+statuses are a build's. Two choices came with it: `--tests` is how test blocks are checked and how a library package
+without `src/main.bd` is checked (it uses the test-mode front end, which does not look up `main`), and a build's
+output-only options are usage errors. The decisions are `spec/check.md` CK1-CK8. `tests/check_check.py` proves it,
+including by running `burdin check` over all 1053 runnable conformance tests and comparing with their markers (about a
+minute and a half with eight workers on a debug build; every CI job runs it). Not done: watch mode and an editor
+protocol (the language server is its own item), checking a workspace's members with one command, and `check` of a
+package with a `build.bd` without running the script (a generated module has to exist first).
+
 The forty-first session implemented stage 3's `burdin lint` (issue #230, sub-issues #231-#233, #464-#466, #661). The
 linter is the new crate `burdin_lint`, a side branch of the pipeline: it reads the syntax tree and the typed tree the
 compiler built, never changes them, and the driver (`crates/burdin_driver/src/lint.rs`) is the only caller. Syntax-tree
@@ -458,6 +472,7 @@ tests cover the syntax.
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md`, `docs/diagnostics.md`, `spec/diagnostics.md` | Four formats (`human`, `short`, a versioned `json` with `docs/diagnostic.schema.json`, and `sarif`), color and width control, hyperlinks to the error reference, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
+| Type-check command | `spec/check.md`, `crates/burdin_driver/src/check.rs`, `tests/check_check.py`, `tests/check/` | `burdin check`: `front_end` without code generation or linking, a build's diagnostics and exit statuses, `--tests` for `test` blocks and library packages, `--release`, `--comptime-steps`. The script runs fixtures with goldens and every conformance test, and every CI job runs it (issue #237) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
