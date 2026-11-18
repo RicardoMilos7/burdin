@@ -4,6 +4,7 @@ use crate::defs::{EnumDef, StructDef};
 use crate::ops::FuncId;
 use crate::tree::{Closure, Const, Expr, Function};
 use crate::ty::Ty;
+use burdin_diag::Span;
 
 /// A type-checked program: the input of the memory checks and then of code generation.
 pub struct Program {
@@ -81,6 +82,12 @@ pub struct AnyVTable {
 /// One `test "name" [attrs] { ... }` block, compiled as the function `func`.
 pub struct TestEntry {
     pub name: String,
+    /// The dotted path of the module the test is declared in, relative to its package (`geometry.shapes`). It is
+    /// empty for the package's entry file (`src/main.bd`, `src/lib.bd`) and for a single-file target, so the full
+    /// path of a test is `<module>.<name>`, or just `<name>` when the module is empty (spec/test-runner.md).
+    pub module: String,
+    /// Where the test is declared: the span of its name, for `burdin test --list` and the reports.
+    pub span: Span,
     /// The function the runner calls: the test body plus the wrapper that prints an `Err` before returning it.
     pub func: FuncId,
     /// The test's own body, `__burdin_test_N_body`. A `[differential]` test is executed at compile time through

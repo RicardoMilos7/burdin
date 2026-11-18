@@ -229,6 +229,16 @@ only when a reachable body creates it (a closure in an unreachable function used
 scheduler into every program). The Linux x86-64 path is the only one run so far: the macOS, arm64, and Windows paths
 are written but untested (`docs/platform-support.md`).
 
+The forty-fourth session implemented stage 3's `burdin test` selection and reporting (issue #235, sub-issues #638-#641).
+`burdin test` takes positional name filters, `--exact`, and `--skip` over a test's full path
+(`module.submodule.test name`); `--list` prints the selected tests with their attributes (human or `--format json`);
+`--format json` streams events and `--junit <file>` writes JUnit XML; `--failed` reruns the previous failures from
+`<package>/target/burdin/<profile>/test-failed.txt`, `--shard <i>/<n>` takes a round-robin slice, and tests that ran at
+least `--slow-threshold` milliseconds are listed before the summary. The rules, the JSON schema (version 1), and the
+choices that are not obvious are in `spec/test-runner.md`; `tests/check_test_runner.py` proves them. The driver's test
+runner is now `test_runner.rs` plus `test_runner/select.rs` and `test_runner/report.rs`, and `Args` derives `Default`
+and `Clone`. Not done: the language server's test integration (issue #374), which consumes `--list --format json`.
+
 The forty-first session implemented stage 3's `burdin lint` (issue #230, sub-issues #231-#233, #464-#466, #661). The
 linter is the new crate `burdin_lint`, a side branch of the pipeline: it reads the syntax tree and the typed tree the
 compiler built, never changes them, and the driver (`crates/burdin_driver/src/lint.rs`) is the only caller. Syntax-tree
@@ -399,7 +409,7 @@ tests cover the syntax.
 | Conformance tests | `tests/` | 1055 tests. All pass: m01 to m24 and s2_tasks, s2_channels, s2_shared, and s2_io (debug and release; the release run skips the debug-only and platform-specific tests) |
 | Comptime | `spec/comptime.md`, `crates/burdin_comptime/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CT13). Codes E0220-E0225; `--comptime-steps N`; tests in `tests/m20_comptime/` |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
-| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
+| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |

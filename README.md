@@ -139,9 +139,10 @@ usage:
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
-              [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
-              [--comptime-steps <n>] [diagnostics]
+  burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+              [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
+              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
+              [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin explain [<error code>]
@@ -157,10 +158,20 @@ test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
   -p <package>         run the tests of one package of the build; may repeat
   --workspace          run the tests of the entry package and every path dependency
-  --filter <text>      run only tests whose name contains text
+  <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
+                       is the same as a positional filter
+  --exact              filters and --skip patterns must equal the full path instead of being contained in it
+  --skip <pattern>     do not run tests whose full path contains pattern; may repeat
   --ignored            run only tests marked [ignore]
   --include-ignored    run ignored tests too
+  --failed             run only the tests that failed in the previous run (kept under <package>/target/burdin)
+  --shard <i>/<n>      run the i-th of n deterministic slices of the selected tests (1 <= i <= n)
   --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
+  --slow-threshold <ms>  list tests that ran at least this long (default: 5000; 0 disables it)
+  --list               print the selected tests and their attributes without running them
+  --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
+                       test per line)
+  --junit <file>       also write a JUnit XML report of the run
   -v, --verbose        print the output of passing tests too
 
 fmt options:
@@ -177,8 +188,9 @@ diagnostics:
   --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
   --error-limit <n>                       print at most n errors after sorting (0 prints all)```
 
-Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `--filter`,
-`--ignored`/`--include-ignored`, `--timeout`, and `--verbose` are options of `burdin test`; any other command
+Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `--filter`, `--exact`, `--skip`,
+`--ignored`/`--include-ignored`, `--failed`, `--shard`, `--timeout`, `--slow-threshold`, `--list`, `--format`,
+`--junit`, and `--verbose` are options of `burdin test` (and so are the filters after the target); any other command
 rejects them.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
@@ -313,8 +325,10 @@ $ ./target/debug/burdin run args.bd -- x y
 ### `burdin test`
 
 ```
-burdin test <target> [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
-            [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>] [diagnostics]
+burdin test <target> [<filter>...] [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
+            [--exact] [--skip <pattern>]... [--ignored | --include-ignored] [--failed] [--shard <i>/<n>]
+            [--timeout <ms>] [--slow-threshold <ms>] [--list] [--format <human|json>] [--junit <file>]
+            [diagnostics]
 ```
 
 Builds the selected packages in test mode and runs every `test "name" [attrs] { ... }` block, each in its own
@@ -334,8 +348,18 @@ clean environment. Their output is captured and printed only when they fail; `--
 The report is deterministic: failures and the summary follow declaration order, not completion order.
 
 By default only the entry package's tests run. `-p <package>` selects a package of the build (it may repeat), and
-`--workspace` selects the entry package and every path dependency. `--filter <text>` keeps the tests whose name
-contains `text`. With more than one package, names are displayed as `<package>::<test>`.
+`--workspace` selects the entry package and every path dependency. With more than one package, names are displayed as
+`<package>::<test>`.
+
+Every test has a full path, `module.submodule.test name` (the module is the file's path inside `src`, empty for
+`src/main.bd`; with more than one package it starts with `<package>::`). The filters after the target keep the tests
+whose full path contains any of them (`--filter <text>` is the same thing), `--exact` requires an equal path, and
+`--skip <pattern>` leaves tests out. The summary says how many tests were filtered out. `--list` prints the selected
+tests and their attributes without running them (`--list --format json` is one JSON object per test, with file and
+line, for editors and CI). `--format json` streams one JSON event per line while the tests run, and `--junit <file>`
+writes a JUnit XML report. `--failed` reruns the tests that failed in the previous run (kept in
+`<package>/target/burdin`), `--shard <i>/<n>` runs one deterministic slice for CI parallelism, and tests that ran at
+least `--slow-threshold` milliseconds are listed before the summary.
 
 The output is one `---- test "name" stdout ----` / `stderr` section and `FAIL <test name>` line per failed test,
 followed by a summary line; a passing test prints nothing by default:
@@ -348,7 +372,8 @@ FAIL second one fails
 test result: 2 passed, 1 failed
 ```
 
-When tests are marked `[ignore]`, the summary ends with `, N ignored`. The exit status is 0 only when every run test
+When tests are marked `[ignore]`, the summary ends with `, N ignored`, and `, N filtered out` follows when the filters
+left tests out. The exit status is 0 only when every run test
 passes, 1 when a test fails or compilation fails, and 2 for a usage error (an unknown package, a bad `-j`,
 conflicting flags) or a driver failure after loading. `tests/run_tests.py` reads the `FAIL ` prefix and the
 `test result: N passed, M failed` summary; the full behavior, including isolation and discovery, is
