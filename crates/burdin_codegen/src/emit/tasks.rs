@@ -9,7 +9,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The runtime function behind a primitive, linking the task runtime in the first time.
     fn rt_function(&mut self, name: &str) -> GenResult<FunctionValue<'ctx>> {
         if !self.tasks_linked {
+            // The functions the linked-in IR defines are recorded for the `-g` frame table (`spec/debug.md`,
+            // DBG2): they are internal, so the table's sweep over the module's external functions cannot find
+            // them, but a panic in scheduler code can stop inside one.
+            let before: std::collections::HashSet<_> =
+                self.module.get_functions().map(|f| f.get_name().to_string_lossy().to_string()).collect();
             crate::taskrt::link(self.cx, self.module, &self.triple)?;
+            for f in self.module.get_functions() {
+                if !before.contains(&f.get_name().to_string_lossy().to_string()) {
+                    self.taskrt_fns.push(f);
+                }
+            }
             self.tasks_linked = true;
         }
         self.module.get_function(name).ok_or_else(|| format!("the task runtime has no `{name}`"))

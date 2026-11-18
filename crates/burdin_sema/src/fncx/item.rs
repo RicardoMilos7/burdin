@@ -107,6 +107,7 @@ fn check_one(
         item.symbolic,
         closures,
         sources,
+        item.name.clone(),
         traces,
     );
     cx.subst = item.subst.clone();
@@ -130,7 +131,19 @@ pub(crate) fn check_const(
     traces: bool,
     diags: &mut Diagnostics,
 ) -> tir::Const {
-    let mut cx = FnCx::new(globals, diags, Ty::Unit, None, module, false, false, closures, sources, traces);
+    let mut cx = FnCx::new(
+        globals,
+        diags,
+        Ty::Unit,
+        None,
+        module,
+        false,
+        false,
+        closures,
+        sources,
+        decl.name.name.clone(),
+        traces,
+    );
     let value = cx.expr(&decl.value, Some(ty));
     let value = cx.expect_ty(value, ty);
     if !globals.materializable(ty) {
@@ -196,6 +209,7 @@ pub(crate) fn check_function(
         item.symbolic,
         closures,
         sources,
+        f.name.name.clone(),
         traces,
     );
     cx.subst = item.subst.clone();

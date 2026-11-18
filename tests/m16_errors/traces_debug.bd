@@ -1,11 +1,13 @@
 //@ run
 //@ debug-only
 //> frames 2
-//> 15:13
-//> 15:47
+//> load 17:13
+//> load 17:47
 
-// A debug build records the creation site and the propagation site of a dynamic error
-// (spec/errors.md, ERR7). Only the line and column are printed, because the file path is a temporary path.
+// A debug build records the creation site and the propagation site of a dynamic error (spec/errors.md, ERR7),
+// and each frame also names the function the error passed through (`spec/debug.md`, DBG3): here the error is
+// boxed into the dynamic `Error` by `.context` in `load` and propagated by the `?` in `load`, so both frames
+// name `load`. Only the line and column are printed as text, because the file path is a temporary path.
 
 fn read(): Result<i32, IoError> {
     Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
@@ -22,7 +24,7 @@ fn main() {
         Err(e) => {
             println("frames {}", e.frames.len())
             for f in e.frames {
-                println("{f.line}:{f.col}")
+                println("{f.func} {f.line}:{f.col}")
             }
         }
     }

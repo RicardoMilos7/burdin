@@ -384,6 +384,7 @@ impl FnCx<'_> {
             let (path, line, col) = self.location(at);
             let args = vec![
                 value,
+                mk(tir::ExprKind::Str(self.fn_name.clone()), Ty::Str, span),
                 mk(tir::ExprKind::Str(path), Ty::Str, span),
                 mk(tir::ExprKind::Int(i128::from(line)), Ty::Int(IntTy::I32), span),
                 mk(tir::ExprKind::Int(i128::from(col)), Ty::Int(IntTy::I32), span),

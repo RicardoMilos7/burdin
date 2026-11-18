@@ -1,0 +1,23 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: loading settings: cannot read cfg.toml: not found
+//@ stderr: at __burdin_main_result (
+//@ stderr: :21:13)
+//@ stderr: :21:47)
+//> before
+
+// The generated `main` of `fn main(): Result<T>` prints the error's trace frames after its message
+// (spec/debug.md, DBG3): one `at <func> (<file>:<line>:<col>)` line per recorded frame, and none in a release
+// build, which records no frames. The error is boxed by `.context` in the renamed `main` and propagated by its
+// `?`, so both frames name `__burdin_main_result`. The file path is the temporary path the runner copies the
+// source to, so the assertions match around it.
+
+fn read(): Result<i32, IoError> {
+    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
+}
+
+fn main(): Result<i32> {
+    println("before")
+    let n = read().context("loading settings")?
+    Ok(n)
+}

@@ -129,20 +129,24 @@ A debug build (`burdin build`/`run`/`test` without `--release`) records a `Trace
 - when an error type is converted into `Error` (the creation site), and
 - at every `?` that propagates a `Result<..., Error>` outward (the propagation site).
 
-Frames are in order, creation first, and hold the source file path, line, and column of the expression that
-caused the conversion (`err?` reports the `?`). `.context` keeps the frames it receives. A release build records
-none: the `frames` list stays empty and no frame is allocated. The `Error` value has the same layout in both
-profiles; only the recording differs.
+Frames are in order, creation first, and hold the function the error passed through, and the source file path,
+line, and column of the expression that caused the conversion (`err?` reports the `?`). `.context` keeps the
+frames it receives. A release build records none: the `frames` list stays empty and no frame is allocated. The
+`Error` value has the same layout in both profiles; only the recording differs.
 
 `error.frames` is a public field (a `List<TraceFrame>`), and `TraceFrame` implements `Display` as
-`file:line:col`.
+`at {func} ({file}:{line}:{col})` (`spec/debug.md`, DBG3). `error.print_trace()` prints each frame on its own
+line to standard error, and the generated `main` of `fn main(): Result<T>` (ERR8) and a failing test's wrapper
+call it after printing the message.
 
 ## ERR8. `fn main(): Result<T>`
 
 A `main` written directly as returning `Result<...>` is accepted:
 
 - `Ok(_)` prints nothing and the process exits with status 0;
-- `Err(e)` prints `e` with `Display` to standard error, then exits with status 1.
+- `Err(e)` prints `e` with `Display` to standard error, then the recorded trace frames, one per line
+  (`spec/debug.md`, DBG3), and exits with status 1. A release build recorded no frames, so its output is the
+  message alone.
 
 The printed error needs `Display` (E0193 at the `main` declaration otherwise). The source must write the
 `Result` type directly; an alias that resolves to a `Result` is E0003 (main's signature rule). `fn main()`

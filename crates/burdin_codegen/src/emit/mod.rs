@@ -12,6 +12,7 @@ mod collections;
 mod control;
 mod debug;
 mod expr;
+mod frames;
 mod function;
 mod glue;
 mod iterate;
@@ -154,6 +155,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     triple: String,
     /// The task runtime (`taskrt.rs`) has been linked into the module.
     tasks_linked: bool,
+    /// The functions the task runtime's IR defined, for the `-g` frame table (`spec/debug.md`, DBG2).
+    taskrt_fns: Vec<FunctionValue<'ctx>>,
     /// The operating system whose I/O error codes the program reports (`spec/errors.md`, ERR11).
     platform: tir::ioerror::Platform,
     /// The span of the expression being generated, for the allocation site a leak report names.
@@ -230,6 +233,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             windows,
             triple,
             tasks_linked: false,
+            taskrt_fns: Vec::new(),
             blocking_thunks: vec![None; program.externs.len()],
             platform,
             current_span: None,

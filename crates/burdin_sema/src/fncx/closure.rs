@@ -224,6 +224,7 @@ impl FnCx<'_> {
             self.symbolic,
             closures,
             self.sources,
+            self.fn_name.clone(),
             self.traces,
         );
         child.subst = subst;

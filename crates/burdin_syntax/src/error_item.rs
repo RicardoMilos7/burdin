@@ -430,6 +430,7 @@ fn main() {
         Ok(_) => (),
         Err(__err) => {
             eprintln(\"{__err}\")
+            __err.print_trace()
             process.exit(1)
         }
     }
@@ -451,6 +452,7 @@ priv fn __burdin_test_{index}(): Result<()> {{
         Ok(_) => Ok(()),
         Err(__e) => {{
             eprintln(\"{{__e}}\")
+            __e.print_trace()
             Err(__e)
         }}
     }}

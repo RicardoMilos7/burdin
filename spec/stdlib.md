@@ -1814,6 +1814,7 @@ struct Error {
 }
 
 struct TraceFrame {
+    func: String
     file: String
     line: i32
     col: i32
@@ -1823,11 +1824,13 @@ struct TraceFrame {
 A type is an error type when it implements `Error`, which requires `Display`. The dynamic `Error` is an owned
 `any Error` box together with the context messages `.context` added (outermost first) and the frames a debug build
 records. An error type is boxed implicitly wherever `Error` is expected; `e.is<T>()` reports whether the box holds
-a `T`, `e.downcast<T>()` consumes the box and yields `Some(value)` on a match (both need `T: Error`), and `{}`
-prints the wrapped error's `Display` (`errors.md`, ERR4). `TraceFrame` implements `Display` as `file:line:col`, and
+a `T`, `e.downcast<T>()` consumes the box and yields `Some(value)` on a match (both need `T: Error`), `{}`
+prints the wrapped error's `Display` (`errors.md`, ERR4), and `e.print_trace()` prints the recorded frames, one
+`at {func} ({file}:{line}:{col})` line each, to standard error (`debug.md`, DBG3; nothing when there are none, which
+is every release build). `TraceFrame` implements `Display` as `at {func} ({file}:{line}:{col})`, and
 `error.frames` is its public `List<TraceFrame>`; a debug build records a creation frame at each conversion into
-`Error` and a propagation frame at each `?` that passes a `Result<..., Error>` outward, and a release build records
-none (`errors.md`, ERR7).
+`Error` and a propagation frame at each `?` that passes a `Result<..., Error>` outward, each naming the function
+the error passed through, and a release build records none (`errors.md`, ERR7).
 
 `std` declares its error types (`errors.md`, ERR10-ERR11):
 

@@ -104,6 +104,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 crate::runtime::define_test_main(self.cx, self.module, &tests, self.rt.leak_check, self.windows)?
             }
         }
+        // Last, when every body exists: the frame table the panic backtrace reads with `-g`
+        // (`spec/debug.md`, DBG2), or the stub lookup that keeps the non-`-g` trace unchanged.
+        self.emit_frame_table(&reach)?;
         Ok(())
     }
 
