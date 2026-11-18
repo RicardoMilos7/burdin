@@ -1,0 +1,13 @@
+# The Burdin extension for Zed (spec/lsp.md, LS20): the `Burdin` language for `.bd` files and the `burdin lsp`
+# language server. `burdin` must be on PATH (or `lsp.burdin.binary.path` must name it); src/lib.rs finds it.
+id = "burdin"
+name = "Burdin"
+version = "0.1.0"
+schema_version = 1
+authors = ["The Burdin authors"]
+description = "Burdin language support through the burdin lsp language server."
+repository = "https://github.com/RicardoMilos7/burdin"
+
+[language_servers.burdin]
+name = "Burdin"
+languages = ["Burdin"]

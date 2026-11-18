@@ -26,9 +26,10 @@ with the rule IDs it covers.
 - **Threads.** The query database is not thread-safe (`Rc` and `RefCell`), so one thread owns every database and
   answers requests in order. A reader thread takes messages off the input, records cancellations, and stops a running
   analysis; test runs happen on worker threads (LS19).
-- **Editor targets.** VS Code, through the extension in `editors/vscode`; Neovim (0.10 and later) and Helix through
-  their built-in clients, configured as `editors/README.md` shows. Anything else that speaks LSP over stdio works the
-  same way. LS20 lists what is checked automatically and what is a manual checklist.
+- **Editor targets.** VS Code, through the extension in `editors/vscode`; Zed, through the extension in `editors/zed`;
+  Neovim (0.10 and later) and Helix through their built-in clients, configured as `editors/README.md` shows. Anything
+  else that speaks LSP over stdio works the same way. LS20 lists what is checked automatically and what is a manual
+  checklist.
 - **Test path.** `cargo test -p burdin_lsp` (the integration tests above, in CI's Rust job on every platform) and
   `python3 tests/check_lsp.py` (the driver's `burdin lsp`, in CI's LLVM jobs).
 
@@ -236,15 +237,18 @@ lens with the real driver and checks the result lens.
 
 ## Editors
 
-**LS20. Editor packaging.** `editors/vscode` is a VS Code extension: it starts `burdin lsp` (the `burdin.path`
-setting, else `burdin` on `PATH`), passes the `burdin` settings, registers the `burdin` language for `.bd` files with a
-TextMate grammar and a language configuration (comments, brackets, indentation), and implements the client commands
-of LS19. `editors/README.md` gives the Neovim and Helix configuration. `tests/check_lsp.py` checks what can be checked
-without an editor: the extension's manifest names the server command, the settings it declares are the ones LS5
-lists, the grammar's keywords are exactly the lexer's, and the files parse. Installing and using the extension in a
-real editor is the manual checklist below, recorded in the closing comment of each editor change.
+**LS20. Editor packaging.** `editors/vscode` is a VS Code extension: it starts `burdin lsp` (the `burdin.path` setting,
+else `burdin` on `PATH`), passes the `burdin` settings, registers the `burdin` language for `.bd` files with a TextMate
+grammar and a language configuration (comments, brackets, indentation), and implements the client commands of LS19.
+`editors/zed` is a Zed extension: it registers the `Burdin` language for `.bd` files, highlighted by the tree-sitter
+grammar in `editors/tree-sitter-burdin`, and starts `burdin lsp` (`lsp.burdin.binary.path`, else `burdin` on `PATH`)
+with the `lsp.burdin.settings` object as the `burdin` settings. `editors/README.md` gives the Neovim and Helix
+configuration. `tests/check_lsp.py` checks what can be checked without an editor: the extension's manifest names the
+server command, the settings it declares are the ones LS5 lists, the grammar's keywords are exactly the lexer's, the Zed
+extension starts `burdin lsp` for a `.bd` language and pins its API crate, and the files parse. Installing and using the
+extension in a real editor is the manual checklist below, recorded in the closing comment of each editor change.
 
-Manual checklist (VS Code; repeat the relevant items in Neovim and Helix):
+Manual checklist (VS Code; repeat the relevant items in Zed, Neovim, and Helix):
 
 1. Open a package; the status shows the server running, and a file with an error shows it underlined.
 2. Fix the error; the underline goes away within the debounce.

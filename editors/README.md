@@ -2,8 +2,8 @@
 
 Every editor talks to the same language server, `burdin lsp` ([`spec/lsp.md`](../spec/lsp.md)): it speaks the Language
 Server Protocol over standard input and output, so any editor with an LSP client can use it. This directory has the VS
-Code extension and the configuration for Neovim and Helix. `tests/check_lsp.py` checks the files here (LS20); using them
-in an editor is the manual checklist in `spec/lsp.md`.
+Code extension, the Zed extension, and the configuration for Neovim and Helix. `tests/check_lsp.py` checks the files
+here (LS20); using them in an editor is the manual checklist in `spec/lsp.md`.
 
 ## Settings
 
@@ -38,6 +38,57 @@ The `â–¶ Run test` lenses run in the server and show their result as a lens; `â–
 command line. `Debug` starts a session of type `burdin` once `burdin dap` exists (issue #576); until then a program is
 built with `-g` and started under [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
 when it is installed.
+
+## Zed
+
+`zed/` is the extension: the `Burdin` language for `.bd` files, highlighted by the tree-sitter grammar below (with
+brackets, indentation, and the outline of functions, types, and tests), and the `burdin lsp` language server. Zed builds
+its Rust part (`src/lib.rs`, against `zed_extension_api`, pinned in `Cargo.toml`) to WebAssembly, so Rust through rustup
+must be installed. To install it from this repository, run `zed: install dev extension` from the command palette and
+pick `editors/zed`.
+
+`burdin` must be on `PATH`; the extension finds it there and starts `burdin lsp`. To use another `burdin`, or to change
+the settings above, use the `lsp` table of Zed's `settings.json`:
+
+```json
+{
+  "lsp": {
+    "burdin": {
+      "binary": { "path": "/path/to/burdin" },
+      "settings": { "inlayHints": { "types": true, "parameterNames": false } }
+    }
+  }
+}
+```
+
+`settings` is the object under `burdin`; it reaches the server as `initializationOptions` and again whenever it changes,
+without a restart. A `binary.path` is also passed as the `path` setting, so the test lenses run the same `burdin`.
+Inlay hints are off by default in Zed (`"inlay_hints": { "enabled": true }`). Code lenses are not shown in Zed; the
+server's other features work.
+
+Zed fetches the grammar from Git: `[grammars.burdin]` in `extension.toml` names this repository, the commit (`rev`), and
+the grammar's directory. After changing the grammar or its `src/`, commit it and set `rev` to that commit.
+
+## The tree-sitter grammar
+
+`tree-sitter-burdin/` is the grammar Zed highlights with. Like the TextMate grammar, it is lexical: comments, strings
+with their `{...}` holes and format specifiers, numbers, keywords, and operators, nested by their brackets, plus the
+shapes highlighting needs (the name after `fn`, `struct`, `enum`, `interface`, `type`, and `error`; calls; members after
+`.`; `test "..."`). It does not parse statements, so a new expression form needs no change; the language server's
+semantic tokens color names by what they resolve to. `queries/highlights.scm` is the highlighting, and
+`zed/languages/burdin/highlights.scm` is a copy of it.
+
+`src/` is generated and committed, because editors compile `src/parser.c` themselves. After changing `grammar.js`:
+
+```
+cd editors/tree-sitter-burdin
+npx tree-sitter-cli@0.26.13 generate --abi 14    # regenerates src/
+npx tree-sitter-cli@0.26.13 test                 # test/corpus (trees) and test/highlight (highlight assertions)
+```
+
+then copy `queries/highlights.scm` to `zed/languages/burdin/`. `tests/check_lsp.py` checks that the grammar's keywords
+are the lexer's, that `src/` is not older than them, that every node and field the queries name exists, and that the two
+copies of `highlights.scm` agree.
 
 ## Neovim
 
@@ -99,5 +150,6 @@ indent = { tab-width = 4, unit = "    " }
 language-servers = ["burdin"]
 ```
 
-Helix highlights with tree-sitter grammars, and there is none for Burdin yet, so files are not highlighted; the
+Helix highlights with tree-sitter grammars; `tree-sitter-burdin` is not set up for Helix yet (its query captures follow
+Zed's), so files are not highlighted; the
 server's other features work. Code lenses are not shown in Helix.

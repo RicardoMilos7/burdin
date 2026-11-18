@@ -1,0 +1,19 @@
+# The `Burdin` language for Zed. The grammar is editors/tree-sitter-burdin (declared in extension.toml); the queries
+# here read it, and highlights.scm is a copy of the grammar's own. Everything else (diagnostics, navigation, hovers,
+# completion, formatting, inlay hints) is the language server's.
+name = "Burdin"
+grammar = "burdin"
+path_suffixes = ["bd"]
+line_comments = ["// ", "/// ", "//! "]
+block_comment = ["/* ", " */"]
+tab_size = 4
+hard_tabs = false
+autoclose_before = ";:.,=}])"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+]
+word_characters = ["_"]

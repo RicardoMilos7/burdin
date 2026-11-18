@@ -10,7 +10,11 @@ Needs a built driver for the second part. BURDIN selects it, like tests/run_test
 What it checks:
   * the editor files (LS20): the VS Code manifest, grammar, and language configuration parse; the extension starts
     `burdin lsp`; the settings it declares are exactly the ones spec/lsp.md (LS5) lists; the grammar's keywords are
-    exactly the lexer's (crates/burdin_syntax/src/token.rs), the reserved word included;
+    exactly the lexer's (crates/burdin_syntax/src/token.rs), the reserved word included; the Zed extension's manifest
+    declares the `burdin` server for the `Burdin` language, the language takes `.bd` files, the extension starts
+    `burdin lsp` from `PATH`, and it pins `zed_extension_api` in a workspace of its own; the tree-sitter grammar's
+    keywords are exactly the lexer's, its generated `src/` is present and not older than `grammar.js`, every node and
+    field the queries name exists, and Zed's `highlights.scm` is a copy of the grammar's and is declared at a commit;
   * `burdin lsp` (LS1, LS2): it initializes, publishes the diagnostics of an opened file with an error, and exits 0
     after shutdown and exit; an unknown argument is a usage error (exit status 2);
   * the test lenses (LS19): the lens above a passing test runs it through `workspace/executeCommand` with the real
@@ -47,6 +51,8 @@ def check(condition: bool, message: str) -> bool:
 
 ROOT = harness.ROOT
 EDITOR = ROOT / "editors" / "vscode"
+ZED = ROOT / "editors" / "zed"
+TREE_SITTER = ROOT / "editors" / "tree-sitter-burdin"
 SETTINGS = [
     "inlayHints.types",
     "inlayHints.parameterNames",
@@ -113,6 +119,85 @@ def check_editor_files() -> None:
         lexer, ours = lexer_keywords(), grammar_keywords(grammar)
         check(len(lexer) > 30, f"could not read the lexer's keywords from token.rs ({len(lexer)})")
         check(ours == lexer, f"grammar keywords differ from the lexer's: missing {sorted(lexer - ours)}, extra {sorted(ours - lexer)}")
+
+
+def toml_value(text: str, table: str, key: str):
+    """The raw value of `key` in `[table]` ("" for the top level) of a small TOML file, or None."""
+    current = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("[") and not line.startswith("[["):
+            current = line.strip("[]").strip()
+        elif current == table and re.match(rf"{re.escape(key)}\s*=", line):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def check_zed_files() -> None:
+    manifest = harness.read_text(ZED / "extension.toml")
+    check(toml_value(manifest, "", "id") == '"burdin"', "editors/zed/extension.toml: the id is not `burdin`")
+    check(toml_value(manifest, "", "schema_version") == "1", "editors/zed/extension.toml: schema_version is not 1")
+    check(
+        toml_value(manifest, "language_servers.burdin", "languages") == '["Burdin"]',
+        "editors/zed/extension.toml: no `burdin` language server for the `Burdin` language",
+    )
+    language = harness.read_text(ZED / "languages" / "burdin" / "config.toml")
+    check(toml_value(language, "", "name") == '"Burdin"', "editors/zed: the language is not named `Burdin`")
+    check(toml_value(language, "", "path_suffixes") == '["bd"]', "editors/zed: the language does not take `.bd` files")
+    cargo = harness.read_text(ZED / "Cargo.toml")
+    check("\n[workspace]\n" in cargo, "editors/zed/Cargo.toml: not a workspace of its own")
+    pin = toml_value(cargo, "dependencies", "zed_extension_api") or ""
+    check(re.fullmatch(r'"=\d+\.\d+\.\d+"', pin) is not None, f"zed_extension_api is not pinned: {pin!r}")
+    check((ZED / "Cargo.lock").is_file(), "editors/zed/Cargo.lock is missing")
+    source = harness.read_text(ZED / "src" / "lib.rs")
+    check('const SERVER: &str = "burdin";' in source, "editors/zed/src/lib.rs: the server is not `burdin`")
+    check("worktree.which(SERVER)" in source, "editors/zed/src/lib.rs: does not find `burdin` on PATH")
+    check('vec!["lsp".to_string()]' in source, "editors/zed/src/lib.rs: does not start `burdin lsp`")
+    check('json!({ "burdin":' in source, "editors/zed/src/lib.rs: the workspace configuration is not under `burdin`")
+    check(toml_value(language, "", "grammar") == '"burdin"', "editors/zed: the language does not use the `burdin` grammar")
+    check(
+        toml_value(manifest, "grammars.burdin", "path") == '"editors/tree-sitter-burdin"',
+        "editors/zed/extension.toml: the `burdin` grammar is not editors/tree-sitter-burdin",
+    )
+    rev = toml_value(manifest, "grammars.burdin", "rev") or ""
+    check(re.fullmatch(r'"[0-9a-f]{40}"', rev) is not None, f"editors/zed/extension.toml: the grammar's rev is not a commit: {rev!r}")
+    check(
+        harness.read_text(ZED / "languages" / "burdin" / "highlights.scm")
+        == harness.read_text(TREE_SITTER / "queries" / "highlights.scm"),
+        "editors/zed/languages/burdin/highlights.scm is not a copy of editors/tree-sitter-burdin/queries/highlights.scm",
+    )
+
+
+def tree_sitter_keywords(source: str) -> set:
+    body = source[source.index("const KEYWORDS = [") :]
+    body = body[: body.index("];")]
+    return set(re.findall(r"'([A-Za-z]+)'", body))
+
+
+def check_tree_sitter_files() -> None:
+    """The grammar's keywords are the lexer's, its generated parser is current, and the queries name its nodes."""
+    grammar = harness.read_text(TREE_SITTER / "grammar.js")
+    lexer, ours = lexer_keywords(), tree_sitter_keywords(grammar)
+    check(ours == lexer, f"grammar.js keywords differ from the lexer's: missing {sorted(lexer - ours)}, extra {sorted(ours - lexer)}")
+    check((TREE_SITTER / "src" / "parser.c").is_file(), "editors/tree-sitter-burdin/src/parser.c is missing")
+    generated = load_json(TREE_SITTER / "src" / "grammar.json")
+    nodes = load_json(TREE_SITTER / "src" / "node-types.json")
+    if generated is None or nodes is None:
+        return
+    strings = set(re.findall(r'"type": "STRING",\s*"value": "([A-Za-z]+)"', json.dumps(generated, indent=1)))
+    check(lexer <= strings, f"src/grammar.json is older than grammar.js (regenerate it): missing {sorted(lexer - strings)}")
+    named = {n["type"] for n in nodes if n["named"]}
+    fields = {f for n in nodes for f in n.get("fields", {})}
+    queries = sorted((TREE_SITTER / "queries").glob("*.scm")) + sorted((ZED / "languages" / "burdin").glob("*.scm"))
+    check(len(queries) >= 6, f"the tree-sitter queries are missing: {[q.name for q in queries]}")
+    for query in queries:
+        text = re.sub(r'"(?:[^"\\]|\\.)*"', '""', harness.read_text(query))
+        text = "\n".join(line.split(";", 1)[0] for line in text.splitlines())
+        name = query.relative_to(ROOT).as_posix()
+        for node in re.findall(r"\((\w+)", text):
+            check(node in named, f"{name}: no node `{node}` in the grammar")
+        for field in re.findall(r"(\w+):", text):
+            check(field in fields, f"{name}: no field `{field}` in the grammar")
 
 
 class Server:
@@ -267,6 +352,8 @@ def check_server(burdin: str) -> None:
 
 
 check_editor_files()
+check_zed_files()
+check_tree_sitter_files()
 check_server(harness.require_burdin())
 
 print(f"Checked `burdin lsp` and the editor files ({checks} checks)")

@@ -1,0 +1,4 @@
+# What Zed builds when it installs the extension from this directory
+/extension.wasm
+/grammars/
+/target/
