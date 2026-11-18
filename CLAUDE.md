@@ -43,8 +43,9 @@ not updated and may disagree with the repository.
    intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report;
    `spec/check.md` is `burdin check`, the type-check-only command (what it shares with a build, and `--tests`);
    `spec/diagnostics.md` is the versioned JSON diagnostic format, the SARIF log, and the links to the error
-   reference; and `spec/query.md` is the query-based compiler library: the memo, its granularity, cancellation, the
-   budget, the tool API, and the parity between the library and the command line.
+   reference; `spec/query.md` is the query-based compiler library: the memo, its granularity, cancellation, the
+   budget, the tool API, and the parity between the library and the command line; and `spec/lsp.md` is `burdin lsp`,
+   the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -94,6 +95,7 @@ python3 tests/check_build_scripts.py     check build-script caching, declared in
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
+python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
@@ -101,6 +103,7 @@ python3 tests/check_platform_support.py  check the platform support page against
 python3 tests/fuzz.py                    long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 cargo test --workspace                   the Rust unit and integration tests, including `burdin_query` and the
                                          driver's parity test (`crates/burdin_driver/tests/parity.rs`)
+cargo test -p burdin_lsp                 the language server's JSON-RPC integration tests, against `burdin-lsp` (no LLVM)
 ```
 
 The test scripts are Python 3 and run unchanged on every platform (invoke them with `python3` on Unix and `python`
@@ -148,7 +151,12 @@ crates/
                             budget, the tool API (syntax tree with trivia, resolve/type/signature/ownership at a
                             position), and the package loader (`package.rs`); the driver and a language server share
                             it, and it never links LLVM
-  burdin_driver/            the `burdin` binary: build, run, test, check, fmt, lint, doc, bindgen; it runs its front
+  burdin_lsp/               the language server behind `burdin lsp` (spec/lsp.md): JSON and the framing (`json.rs`,
+                            `rpc.rs`), positions and URIs (`text.rs`), one query database per package (`project.rs`),
+                            the loop, lifecycle, cancellation, and progress (`server.rs`), and the features (`diagnostics.rs`,
+                            `nav.rs`, `edit.rs`, `outline.rs`, `actions.rs`); its `burdin-lsp` binary is the same server
+                            without LLVM, which the integration tests in `tests/` drive over JSON-RPC
+  burdin_driver/            the `burdin` binary: build, run, test, check, fmt, lint, doc, bindgen, lsp; it runs its front
                             end through `burdin_query`, and keeps build scripts (`build.rs`), the bindgen command
                             line (`bindgen.rs`), and the export header built from the checked program (`export.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
@@ -156,6 +164,7 @@ crates/
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
+editors/                  the VS Code extension (vscode/) and the Neovim and Helix setup for `burdin lsp`
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
 docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the
                           diagnostics-for-tools reference and the JSON schema (docs/diagnostics.md,
@@ -172,7 +181,8 @@ tests/                    conformance tests and scripts
 Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_comptime` to `burdin_codegen`, with
 `burdin_tir` as the shared vocabulary and `burdin_diag` under everything. `burdin_query` sits beside the stages: it
 drives them for a whole package, memoizes what an edit cannot affect, and is the one front end the driver and a tool
-share. `burdin_lint` is a side branch: it reads the
+share. `burdin_lsp` is such a tool: it depends on `burdin_query`, `burdin_fmt`, `burdin_lint`, `burdin_syntax`, and
+`burdin_diag`, never on LLVM, and the driver calls it for `burdin lsp`. `burdin_lint` is a side branch: it reads the
 syntax tree and the typed tree the compiler built, depends on `burdin_syntax`, `burdin_tir`, and `burdin_diag` only, and
 is called from the driver, never from the compiler stages. `burdin_bindgen` is another: it depends on nothing in the
 compiler (only libc, for loading libclang), and the driver calls it for `burdin bindgen`. `burdin_check`, `burdin_comptime`, and

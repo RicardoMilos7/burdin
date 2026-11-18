@@ -1,0 +1,41 @@
+/// Something with an area.
+interface Shape {
+    fn area(self): i32
+}
+
+/// A square.
+struct Square {
+    side: i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect {
+    fn new(w: i32, h: i32): Rect {
+        Rect { w, h }
+    }
+}
+
+Square: Shape {
+    fn area(self): i32 {
+        self.side * self.side
+    }
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+enum Color {
+    Red
+    Green
+}
+
+fn favorite(): Color {
+    Color.Green
+}

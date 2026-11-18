@@ -1,0 +1,208 @@
+[
+  {
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 0
+      },
+      "end": {
+        "line": 0,
+        "character": 0
+      }
+    },
+    "command": {
+      "title": "▶ Run 2 tests in file",
+      "command": "burdin.runTests",
+      "arguments": [
+        {
+          "kind": "tests",
+          "root": "ROOT",
+          "tests": [
+            "total adds",
+            "square area"
+          ],
+          "argv": [
+            "/opt/burdin/bin/burdin",
+            "test",
+            "ROOT",
+            "total adds",
+            "square area",
+            "--exact"
+          ],
+          "cwd": "ROOT"
+        }
+      ]
+    }
+  },
+  {
+    "range": {
+      "start": {
+        "line": 17,
+        "character": 5
+      },
+      "end": {
+        "line": 17,
+        "character": 17
+      }
+    },
+    "command": {
+      "title": "▶ Run test",
+      "command": "burdin.runTest",
+      "arguments": [
+        {
+          "kind": "test",
+          "root": "ROOT",
+          "tests": [
+            "total adds"
+          ],
+          "argv": [
+            "/opt/burdin/bin/burdin",
+            "test",
+            "ROOT",
+            "--exact",
+            "total adds"
+          ],
+          "cwd": "ROOT"
+        }
+      ]
+    }
+  },
+  {
+    "range": {
+      "start": {
+        "line": 17,
+        "character": 5
+      },
+      "end": {
+        "line": 17,
+        "character": 17
+      }
+    },
+    "command": {
+      "title": "Debug",
+      "command": "burdin.debug",
+      "arguments": [
+        {
+          "type": "burdin",
+          "request": "launch",
+          "name": "Debug test total adds",
+          "program": "ROOT",
+          "test": "total adds",
+          "cwd": "ROOT"
+        }
+      ]
+    }
+  },
+  {
+    "range": {
+      "start": {
+        "line": 21,
+        "character": 5
+      },
+      "end": {
+        "line": 21,
+        "character": 18
+      }
+    },
+    "command": {
+      "title": "▶ Run test",
+      "command": "burdin.runTest",
+      "arguments": [
+        {
+          "kind": "test",
+          "root": "ROOT",
+          "tests": [
+            "square area"
+          ],
+          "argv": [
+            "/opt/burdin/bin/burdin",
+            "test",
+            "ROOT",
+            "--exact",
+            "square area"
+          ],
+          "cwd": "ROOT"
+        }
+      ]
+    }
+  },
+  {
+    "range": {
+      "start": {
+        "line": 21,
+        "character": 5
+      },
+      "end": {
+        "line": 21,
+        "character": 18
+      }
+    },
+    "command": {
+      "title": "Debug",
+      "command": "burdin.debug",
+      "arguments": [
+        {
+          "type": "burdin",
+          "request": "launch",
+          "name": "Debug test square area",
+          "program": "ROOT",
+          "test": "square area",
+          "cwd": "ROOT"
+        }
+      ]
+    }
+  },
+  {
+    "range": {
+      "start": {
+        "line": 8,
+        "character": 3
+      },
+      "end": {
+        "line": 8,
+        "character": 7
+      }
+    },
+    "command": {
+      "title": "▶ Run",
+      "command": "burdin.run",
+      "arguments": [
+        {
+          "kind": "main",
+          "root": "ROOT",
+          "argv": [
+            "/opt/burdin/bin/burdin",
+            "run",
+            "ROOT"
+          ],
+          "cwd": "ROOT"
+        }
+      ]
+    }
+  },
+  {
+    "range": {
+      "start": {
+        "line": 8,
+        "character": 3
+      },
+      "end": {
+        "line": 8,
+        "character": 7
+      }
+    },
+    "command": {
+      "title": "Debug",
+      "command": "burdin.debug",
+      "arguments": [
+        {
+          "type": "burdin",
+          "request": "launch",
+          "name": "Debug geometry",
+          "program": "ROOT",
+          "cwd": "ROOT"
+        }
+      ]
+    }
+  }
+]

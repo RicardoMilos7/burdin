@@ -1,0 +1,28 @@
+interface Named {
+    fn name(self): String
+    fn id(self): i32
+}
+
+struct Cat {
+    age: i32
+}
+
+Cat: Named {
+    fn name(self): String {
+        String.from("cat")
+    }
+}
+
+fn bump(mut n: i32) {
+    n = n + 1
+}
+
+fn main() {
+    let count = 1
+    count = 2
+    let text: i32 = "text"
+    let tripled = triple(count)
+    let mut k = 0
+    bump(k)
+    println("{text} {tripled} {k}")
+}

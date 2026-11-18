@@ -1,0 +1,159 @@
+[
+  {
+    "position": {
+      "line": 9,
+      "character": 13
+    },
+    "label": ": str",
+    "kind": 1
+  },
+  {
+    "position": {
+      "line": 10,
+      "character": 10
+    },
+    "label": ": Square",
+    "kind": 1
+  },
+  {
+    "position": {
+      "line": 11,
+      "character": 9
+    },
+    "label": ": Rect",
+    "kind": 1
+  },
+  {
+    "position": {
+      "line": 11,
+      "character": 21
+    },
+    "label": "w:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 11,
+      "character": 24
+    },
+    "label": "h:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 12,
+      "character": 15
+    },
+    "label": ": i32",
+    "kind": 1
+  },
+  {
+    "position": {
+      "line": 12,
+      "character": 24
+    },
+    "label": "a:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 12,
+      "character": 35
+    },
+    "label": "b:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 13,
+      "character": 14
+    },
+    "label": "a:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 13,
+      "character": 19
+    },
+    "label": "b:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 14,
+      "character": 12
+    },
+    "label": "s:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 18,
+      "character": 14
+    },
+    "label": "a:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 18,
+      "character": 20
+    },
+    "label": "a:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 18,
+      "character": 23
+    },
+    "label": "b:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 18,
+      "character": 27
+    },
+    "label": "b:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 22,
+      "character": 9
+    },
+    "label": ": Square",
+    "kind": 1
+  },
+  {
+    "position": {
+      "line": 23,
+      "character": 14
+    },
+    "label": "a:",
+    "kind": 2,
+    "paddingRight": true
+  },
+  {
+    "position": {
+      "line": 23,
+      "character": 24
+    },
+    "label": "b:",
+    "kind": 2,
+    "paddingRight": true
+  }
+]

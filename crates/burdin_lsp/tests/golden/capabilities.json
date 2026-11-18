@@ -1,0 +1,99 @@
+{
+  "capabilities": {
+    "positionEncoding": "utf-16",
+    "textDocumentSync": {
+      "openClose": true,
+      "change": 2,
+      "save": {
+        "includeText": false
+      }
+    },
+    "hoverProvider": true,
+    "definitionProvider": true,
+    "declarationProvider": true,
+    "implementationProvider": true,
+    "referencesProvider": true,
+    "documentHighlightProvider": true,
+    "renameProvider": {
+      "prepareProvider": true
+    },
+    "completionProvider": {
+      "triggerCharacters": [
+        "."
+      ],
+      "resolveProvider": false
+    },
+    "signatureHelpProvider": {
+      "triggerCharacters": [
+        "(",
+        ","
+      ],
+      "retriggerCharacters": [
+        ","
+      ]
+    },
+    "documentFormattingProvider": true,
+    "documentRangeFormattingProvider": true,
+    "documentSymbolProvider": true,
+    "workspaceSymbolProvider": true,
+    "codeActionProvider": {
+      "codeActionKinds": [
+        "quickfix",
+        "refactor.rewrite",
+        "source.organizeImports"
+      ]
+    },
+    "codeLensProvider": {
+      "resolveProvider": false
+    },
+    "executeCommandProvider": {
+      "commands": [
+        "burdin.runTest",
+        "burdin.runTests"
+      ]
+    },
+    "semanticTokensProvider": {
+      "legend": {
+        "tokenTypes": [
+          "namespace",
+          "type",
+          "struct",
+          "enum",
+          "interface",
+          "enumMember",
+          "function",
+          "method",
+          "parameter",
+          "variable",
+          "property"
+        ],
+        "tokenModifiers": [
+          "declaration",
+          "readonly",
+          "mutable",
+          "defaultLibrary"
+        ]
+      },
+      "full": true,
+      "range": true
+    },
+    "inlayHintProvider": true,
+    "foldingRangeProvider": true,
+    "selectionRangeProvider": true,
+    "documentLinkProvider": {
+      "resolveProvider": false
+    },
+    "callHierarchyProvider": true,
+    "typeHierarchyProvider": true,
+    "workspace": {
+      "workspaceFolders": {
+        "supported": true,
+        "changeNotifications": true
+      }
+    }
+  },
+  "serverInfo": {
+    "name": "burdin",
+    "version": "VERSION"
+  }
+}

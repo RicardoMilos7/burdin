@@ -1,0 +1,97 @@
+[
+  {
+    "name": "Shape",
+    "kind": 11,
+    "detail": "interface Shape",
+    "uri": "ROOT/src/shapes.bd",
+    "range": {
+      "start": {
+        "line": 1,
+        "character": 0
+      },
+      "end": {
+        "line": 3,
+        "character": 1
+      }
+    },
+    "selectionRange": {
+      "start": {
+        "line": 1,
+        "character": 10
+      },
+      "end": {
+        "line": 1,
+        "character": 15
+      }
+    },
+    "data": {
+      "path": "ROOT/src/shapes.bd",
+      "lo": 38,
+      "hi": 43
+    }
+  },
+  [
+    {
+      "name": "Square",
+      "kind": 23,
+      "detail": "struct Square",
+      "uri": "ROOT/src/shapes.bd",
+      "range": {
+        "start": {
+          "line": 6,
+          "character": 0
+        },
+        "end": {
+          "line": 8,
+          "character": 1
+        }
+      },
+      "selectionRange": {
+        "start": {
+          "line": 6,
+          "character": 7
+        },
+        "end": {
+          "line": 6,
+          "character": 13
+        }
+      },
+      "data": {
+        "path": "ROOT/src/shapes.bd",
+        "lo": 93,
+        "hi": 99
+      }
+    },
+    {
+      "name": "Rect",
+      "kind": 23,
+      "detail": "struct Rect",
+      "uri": "ROOT/src/shapes.bd",
+      "range": {
+        "start": {
+          "line": 10,
+          "character": 0
+        },
+        "end": {
+          "line": 13,
+          "character": 1
+        }
+      },
+      "selectionRange": {
+        "start": {
+          "line": 10,
+          "character": 7
+        },
+        "end": {
+          "line": 10,
+          "character": 11
+        }
+      },
+      "data": {
+        "path": "ROOT/src/shapes.bd",
+        "lo": 126,
+        "hi": 130
+      }
+    }
+  ]
+]

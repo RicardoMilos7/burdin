@@ -65,6 +65,12 @@ impl CancelHandle {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
+
+    /// Withdraws a cancellation that arrived after the analysis it was meant for had finished, so it does not
+    /// cancel the next one. A language server calls it when the request the handle was given for is answered.
+    pub fn reset(&self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
 }
 
 /// How much the database may remember. After every analysis the least recently used results beyond the budget are
@@ -120,6 +126,7 @@ struct LayoutModule {
 
 struct LayoutPackage {
     name: String,
+    dir: Option<PathBuf>,
     deps: Vec<(String, usize)>,
     root_module: Option<usize>,
     modules: Vec<LayoutModule>,
@@ -215,6 +222,7 @@ impl Db {
             }
             db.layout.packages.push(LayoutPackage {
                 name: package.name.clone(),
+                dir: package.dir.clone(),
                 deps: package.deps.clone(),
                 root_module: package.root_module,
                 modules,
@@ -270,6 +278,44 @@ impl Db {
 
     pub fn options(&self) -> &Options {
         &self.options
+    }
+
+    /// Every file of the program with its package and module path (`navigate::ModuleInfo`).
+    pub fn modules(&self) -> Vec<crate::navigate::ModuleInfo> {
+        let mut out = Vec::new();
+        for (index, package) in self.layout.packages.iter().enumerate() {
+            for module in &package.modules {
+                out.push(crate::navigate::ModuleInfo {
+                    path: self.files[module.file.0 as usize].path.clone(),
+                    package: index,
+                    module: module.path.clone(),
+                });
+            }
+        }
+        out
+    }
+
+    /// The packages of the program, in the order [`crate::navigate::ModuleInfo::package`] indexes them.
+    pub fn packages(&self) -> Vec<crate::navigate::PackageInfo> {
+        self.layout
+            .packages
+            .iter()
+            .enumerate()
+            .map(|(index, package)| crate::navigate::PackageInfo {
+                name: package.name.clone(),
+                dir: package.dir.clone(),
+                deps: package.deps.clone(),
+                root_file: package
+                    .root_module
+                    .and_then(|m| package.modules.get(m))
+                    .map(|m| self.files[m.file.0 as usize].path.clone()),
+                is_entry: index == self.layout.entry_package,
+                embedded: package
+                    .modules
+                    .first()
+                    .is_some_and(|m| self.files[m.file.0 as usize].path.starts_with("<std>")),
+            })
+            .collect()
     }
 
     /// A handle for cancelling the analysis in progress from another thread.

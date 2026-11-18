@@ -12,9 +12,9 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md`, `spec/arguments.md`,
-   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/diagnostics.md`, `spec/query.md` — the standard-library
+   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md` — the standard-library
    surface, the exact derived members, formatting, error handling, default and named arguments, extension methods,
-   operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, and the query-based compiler library.
+   operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, the query-based compiler library, and the language server.
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`, and
    `spec/test-runner.md` describe the iteration protocol, `any`/`impl`, and `burdin test`.
 5. `spec/stage0-subset.md` (complete) and `HANDOFF.md` for the current state; `Burdin Language Design.md` for the
@@ -52,12 +52,14 @@ python3 tests/check_build_scripts.py     check build-script caching, declared in
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
+python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
+cargo test -p burdin_lsp           the language server's JSON-RPC integration tests (no LLVM)
 cargo bench -p burdin_bench        compiler benchmarks (lex, parse, sema, codegen)
 cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs
 cargo bench -p burdin_bench -- --save FILE       record a benchmark baseline
@@ -149,7 +151,7 @@ AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, comptime, the linter, the
-                          documentation generator, the query library, stage 0 scope, stage 1 plan
+                          documentation generator, the query library, the language server, stage 0 scope, stage 1 plan
 docs/                     the user-facing error-code reference (checked against tests/README.md), the diagnostics-for-tools
                           reference and JSON schema (docs/diagnostics.md, docs/diagnostic.schema.json), the lint
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform support matrix
@@ -161,7 +163,9 @@ crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_comptime, burdin_codegen, burdin_driver, burdin_fmt (the formatter),
                           burdin_lint (the linter), burdin_doc (the documentation generator),
                           burdin_query (the query-based compiler library),
+                          burdin_lsp (the language server behind `burdin lsp`),
                           burdin_bench (generated inputs and `cargo bench` targets),
                           burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin
+editors/                  the VS Code extension and the Neovim and Helix setup for `burdin lsp`
 ```

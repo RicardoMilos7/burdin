@@ -122,10 +122,27 @@ source writes them, without the module path the checker uses to disambiguate.
   places it moves out of (with the field path and whether the checker proved the local is dead there), the locals it
   owns, and the parameters a second-class result derives from.
 
+The navigation questions a language server asks of a whole program (`navigate.rs`; `spec/lsp.md` reads them):
+
+- `Analysis::occurrences()` — every resolved name in every body (the standard library's too), once per span and
+  name, with its kind and declaration. The span is the expression that resolves: the name for a path, the whole call
+  for a call, and the literal for the calls an interpolated string makes.
+- `Analysis::locals(path)` — the locals and parameters bound in a file, in source order, with their types and
+  whether they are `mut`.
+- `Analysis::calls()` — every call: the caller (a closure's calls belong to the function it is written in, and a test
+  is shown by its name), the callee and its declaration, the call's span, and, for each argument written in the
+  call, the parameter it binds.
+- `Analysis::functions()` — every function and method once (a generic one by its declaration), with its signature.
+- `Analysis::tests()` — the entry package's `test` items with their full path as `burdin test --list` prints it
+  (`module.name`, or the name in the entry module), the name's span, and whether they are `[ignore]`d.
+- `Db::modules()` and `Db::packages()` — every file's package and module path, and every package's name,
+  directory, dependencies, root module, and whether it is the entry or the embedded standard library.
+
 `crates/burdin_query/tests/api.rs` answers a fixture package probe by probe and compares the answers with
 `tests/fixtures/api.golden`; `BURDIN_QUERY_UPDATE=1` rewrites the golden file after a deliberate change. The same
 test checks that tokens and trivia tile the file, that a body edit updates the tree, that diagnostics are grouped by
-file, and that a position outside a body has no type and no name.
+file, and that a position outside a body has no type and no name. `tests/navigate.rs` pins the navigation questions on
+the same fixture.
 
 ## Cancellation, budget, and memory
 

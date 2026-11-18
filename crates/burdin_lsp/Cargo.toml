@@ -1,0 +1,18 @@
+[package]
+name = "burdin_lsp"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The language server (`spec/lsp.md`). `burdin lsp` runs it from the driver; the `burdin-lsp` binary is the same
+# server without the LLVM back end, for the integration tests and for developing the server.
+[[bin]]
+name = "burdin-lsp"
+path = "src/main.rs"
+
+[dependencies]
+burdin_diag.workspace = true
+burdin_syntax.workspace = true
+burdin_query.workspace = true
+burdin_fmt.workspace = true
+burdin_lint.workspace = true

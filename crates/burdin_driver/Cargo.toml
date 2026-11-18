@@ -18,6 +18,7 @@ burdin_lint.workspace = true
 burdin_bindgen.workspace = true
 burdin_doc.workspace = true
 burdin_query.workspace = true
+burdin_lsp.workspace = true
 
 [dev-dependencies]
 burdin_query.workspace = true

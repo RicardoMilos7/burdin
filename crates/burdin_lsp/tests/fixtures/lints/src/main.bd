@@ -1,0 +1,6 @@
+use helpers.{double, half}
+
+fn main() {
+    let unused = 5
+    println("{double(2)}")
+}

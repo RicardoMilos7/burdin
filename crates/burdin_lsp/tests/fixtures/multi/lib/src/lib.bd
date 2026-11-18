@@ -1,0 +1,8 @@
+/// The answer.
+fn answer(): i32 {
+    42
+}
+
+priv fn hidden(): i32 {
+    1
+}

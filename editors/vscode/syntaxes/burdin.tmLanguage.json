@@ -1,0 +1,127 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Burdin",
+  "scopeName": "source.burdin",
+  "fileTypes": ["bd"],
+  "comment": "The lexical grammar of spec/grammar.md section 1. tests/check_lsp.py checks that the keywords here are exactly the lexer's (crates/burdin_syntax/src/token.rs). The language server's semantic tokens (spec/lsp.md, LS14) color names by what they resolve to.",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#chars" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#declarations" },
+    { "include": "#types" },
+    { "include": "#calls" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.documentation.burdin", "match": "//[/!].*$" },
+        { "name": "comment.line.double-slash.burdin", "match": "//.*$" },
+        { "name": "comment.block.burdin", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.raw.burdin",
+          "begin": "r(#*)\"",
+          "end": "\"\\1"
+        },
+        {
+          "name": "string.quoted.double.burdin",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.burdin", "match": "\\\\[nrt0\\\\\"]" },
+            { "name": "constant.character.escape.burdin", "match": "\\{\\{|\\}\\}" },
+            {
+              "name": "meta.interpolation.burdin",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.burdin" } },
+              "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.burdin" } },
+              "patterns": [{ "include": "$self" }]
+            }
+          ]
+        }
+      ]
+    },
+    "chars": {
+      "patterns": [
+        { "name": "constant.character.burdin", "match": "'(?:\\\\[nrt0\\\\']|[^'\\\\])'" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.burdin", "match": "\\b0x[0-9A-Fa-f_]+\\b" },
+        { "name": "constant.numeric.octal.burdin", "match": "\\b0o[0-7_]+\\b" },
+        { "name": "constant.numeric.binary.burdin", "match": "\\b0b[01_]+\\b" },
+        { "name": "constant.numeric.float.burdin", "match": "\\b[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?(?:[eE][+-]?[0-9_]+)\\b" },
+        { "name": "constant.numeric.float.burdin", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*\\b" },
+        { "name": "constant.numeric.integer.burdin", "match": "\\b[0-9][0-9_]*\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.burdin",
+          "match": "\\b(break|continue|else|for|if|in|loop|match|orelse|return|while)\\b"
+        },
+        {
+          "name": "keyword.declaration.burdin",
+          "match": "\\b(const|enum|error|extern|fn|impl|interface|let|struct|type|use)\\b"
+        },
+        {
+          "name": "storage.modifier.burdin",
+          "match": "\\b(any|comptime|mut|own|priv|unsafe|where)\\b"
+        },
+        { "name": "keyword.operator.cast.burdin", "match": "\\b(as)\\b" },
+        { "name": "constant.language.boolean.burdin", "match": "\\b(false|true)\\b" },
+        { "name": "variable.language.self.burdin", "match": "\\b(self|Self)\\b" },
+        { "name": "invalid.illegal.reserved.burdin", "match": "\\b(derive)\\b" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "keyword.declaration.burdin" }, "2": { "name": "entity.name.function.burdin" } }
+        },
+        {
+          "match": "\\b(struct|enum|interface|type|error)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "keyword.declaration.burdin" }, "2": { "name": "entity.name.type.burdin" } }
+        },
+        {
+          "match": "^\\s*(test)\\s+(?=\")",
+          "captures": { "1": { "name": "keyword.declaration.test.burdin" } }
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.burdin",
+          "match": "\\b(bool|char|str|f32|f64|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize)\\b"
+        },
+        { "name": "entity.name.type.burdin", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": { "1": { "name": "entity.name.function.call.burdin" } }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.range.burdin", "match": "\\.\\.=?" },
+        { "name": "keyword.operator.burdin", "match": "=>|==|!=|<=|>=|&&|\\|\\||<<|>>|[-+*/%&|^!<>=?@]" }
+      ]
+    }
+  }
+}

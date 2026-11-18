@@ -1,0 +1,262 @@
+# The language server
+
+`burdin lsp` is the Burdin language server (stage 3; issue #242 and its sub-issues #309-#313, #365-#376, #470, and
+#662). It speaks the Language Server Protocol 3.17 over standard input and output and answers every request from the
+query-based compiler library (`spec/query.md`), so an editor sees exactly the diagnostics, types, and names the command
+line does. This file is the exact behavior, with a rule ID for each point and the tests that cover it.
+
+The server lives in `crates/burdin_lsp`. `burdin lsp` runs it from the driver; the crate's own `burdin-lsp` binary is the
+same server without the LLVM back end, which the integration tests start. The tests are black-box: each one starts the
+binary as a child process and talks JSON-RPC to it through the client in `crates/burdin_lsp/tests/common/mod.rs`, with
+the fixtures under `crates/burdin_lsp/tests/fixtures/` copied to a fresh temporary directory, and compares structured
+answers with golden files in `crates/burdin_lsp/tests/golden/` (`BURDIN_LSP_UPDATE=1` rewrites them; paths are
+written `ROOT/...` and the standard library `STD/...`, so the goldens hold on every platform). The unit tests inside the
+crate cover the JSON value, the framing, position conversion, the file index, and the text mapping of stale analyses.
+`tests/check_lsp.py` drives the real `burdin lsp` binary, including a test run through a lens. Every test file starts
+with the rule IDs it covers.
+
+## The decision (issue #365)
+
+- **Stack.** The server is Rust, in this workspace, with no new external dependency: JSON and the `Content-Length`
+  framing are small enough to write (`json.rs`, `rpc.rs`), and a protocol crate would bring a serialization stack the
+  rest of the compiler does not use. It links the query library, the formatter, and the linter, and never LLVM.
+- **Transport.** Standard input and output only (`--stdio` is accepted and changes nothing). No socket or pipe
+  transport: every editor the project targets starts a server as a child process.
+- **Command.** Editors run `burdin lsp`. The `burdin.path` setting (LS5) names another `burdin` for the test lenses.
+- **Threads.** The query database is not thread-safe (`Rc` and `RefCell`), so one thread owns every database and
+  answers requests in order. A reader thread takes messages off the input, records cancellations, and stops a running
+  analysis; test runs happen on worker threads (LS19).
+- **Editor targets.** VS Code, through the extension in `editors/vscode`; Neovim (0.10 and later) and Helix through
+  their built-in clients, configured as `editors/README.md` shows. Anything else that speaks LSP over stdio works the
+  same way. LS20 lists what is checked automatically and what is a manual checklist.
+- **Test path.** `cargo test -p burdin_lsp` (the integration tests above, in CI's Rust job on every platform) and
+  `python3 tests/check_lsp.py` (the driver's `burdin lsp`, in CI's LLVM jobs).
+
+## Transport and lifecycle
+
+**LS1. Framing.** Each message is a `Content-Length` header (other headers are ignored), an empty line, and a UTF-8
+JSON body of exactly that length. A body that is not JSON is answered with a `-32700` parse error (id `null`); a body
+that is JSON but not an object with `-32600`; the server then goes on reading. A malformed header (a line without
+`:`, or a length that is not a number) means the stream is not LSP at all and ends the server as if the input closed. Responses and notifications are written whole, one at a
+time.
+Tests: `malformed_messages_get_a_parse_error_and_the_server_goes_on`; `rpc.rs` and `json.rs` unit tests.
+
+**LS2. Lifecycle and documents.** Before `initialize`, a request gets `-32002` and a notification is dropped (except
+`exit`). `initialize` answers the capabilities in `tests/golden/capabilities.json` and `serverInfo`; a second
+`initialize` is `-32600`. After `shutdown`, requests get `-32600`. `exit` ends the process with status 0 after
+`shutdown` and 1 without it; the input closing ends it the same way. An unknown request is `-32601`; an unknown
+notification is ignored. Documents sync incrementally (`textDocumentSync.change = 2`): `didOpen` takes the editor's
+text over the file on disk, `didChange` applies each change in order (a change without a range replaces the text),
+`didClose` returns the file to its text on disk, and `didSave` changes nothing (the editor's text is already current).
+Tests: `initialize_announces_the_capabilities`, `exit_after_shutdown_is_0_and_without_it_is_1`,
+`requests_out_of_order_and_unknown_methods_are_errors`.
+
+**LS3. Positions and URIs.** The client may offer `general.positionEncodings`; the server picks `utf-8` when offered
+and `utf-16` otherwise (the protocol's default), and announces the choice as `positionEncoding`. Every position the
+server reads or writes counts in that encoding: UTF-16 code units (an emoji is two) or bytes. A character past the end
+of its line means the end of the line, and a line past the end means the end of the text. Only `file:` URIs are served;
+paths are percent-decoded, drive letters are normalized, and Windows' `\\?\` prefix never reaches a URI.
+Tests: `positions_count_utf16_units_or_utf8_bytes_as_negotiated`,
+`diagnostic_ranges_after_non_ascii_text_follow_the_encoding`; `text.rs` unit tests.
+
+## Packages and workspaces
+
+**LS4. One database per package.** A file belongs to the package of the nearest directory above it with a
+`burdin.toml`, or, with none, is a package of one file. Each package root has one query database (`spec/query.md`),
+loaded the way `burdin test` loads a package, so `test` blocks are checked. The workspace folders' packages are found
+when the client is initialized (a folder's own `burdin.toml`, and those in its subdirectories up to four levels down,
+skipping hidden directories, `target`, and `node_modules`); others load when one of their files opens. A package's path dependencies are part of its database, and
+an edit in one is applied to every database that contains the file, so the packages that depend on it see the change.
+The memo of the query library means an edit re-checks only the bodies it can affect: the bodies of a dependency are
+reused, not checked again, after an edit of the package that uses it (`burdin/status` reports the bodies the last
+analysis checked). Workspace folders can be added and removed (`workspace/didChangeWorkspaceFolders`); a removed
+folder's packages are dropped unless a file of theirs is open. The server registers a watcher for `**/*.bd` and
+`**/burdin.toml` when the client allows dynamic registration: a module created or deleted on disk reloads its package,
+a changed manifest reloads the packages that use it, and a changed file that is not open replaces its text.
+Tests: `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
+`folders_come_and_go_and_new_files_are_picked_up`, `workspace_symbols_match_fuzzily_across_files`.
+
+**LS5. Configuration.** The settings live under `burdin` and arrive as `initializationOptions`, in
+`workspace/didChangeConfiguration`, or, when that notification carries no `burdin` settings and the client supports
+`workspace/configuration`, from a request the server sends. A key that is absent keeps its value.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `inlayHints.types` | `true` | the inferred type after a `let` name without one |
+| `inlayHints.parameterNames` | `true` | the parameter's name before a positional argument |
+| `diagnostics.lints` | `true` | publish `burdin lint` diagnostics too (LS7) |
+| `diagnostics.debounceMs` | `200` | the quiet time after an edit before the analysis (at most 10000) |
+| `formatting.enabled` | `true` | answer formatting requests (LS15) |
+| `codeLens.enabled` | `true` | show the lenses (LS19) |
+| `path` | `""` | the `burdin` a lens runs; empty means this executable when it is `burdin`, else `burdin` on `PATH` |
+
+A change republishes the diagnostics and asks the client to refresh its inlay hints and lenses when it supports that.
+Tests: `lints_are_published_unless_turned_off`, `configuration_is_pulled_when_the_client_only_says_it_changed`,
+`inlay_hints_for_types_and_parameter_names_can_be_turned_off`, `lenses_run_and_debug_tests_and_main_with_exact_command_lines`,
+`formatting_matches_burdin_fmt_and_refuses_a_file_that_does_not_parse`.
+
+**LS6. Cancellation and progress.** `$/cancelRequest` for a request that has not started makes it answer `-32800`
+(`RequestCancelled`) without doing the work; for one that is running, it stops the analysis it waits on (through the
+query library's cancellation, `spec/query.md`) and the request answers `-32800`. Cancelling a request that has been
+answered does nothing. An edit stops the background analysis of the package it changes; the analysis starts again
+after the debounce. When the client supports `window.workDoneProgress`, loading and analyzing a package and running
+tests report `$/progress` (`begin`, then `end`) on a token the server creates first; a client without that support
+gets no progress.
+Tests: `a_cancelled_request_answers_request_cancelled_and_the_next_one_succeeds`, `loading_a_package_reports_progress`,
+`the_test_command_reports_a_missing_compiler_and_rejects_other_commands`.
+
+## Diagnostics
+
+**LS7. Published diagnostics.** After an edit and the debounce, the server analyzes the package and publishes the
+diagnostics of every file of the entry package that has some, of every open file (an empty list clears it), and of
+every file whose diagnostics went away. A publication carries the document's version, and an analysis overtaken by a
+newer edit is cancelled, never published: rapid edits publish once, for the last version. Each diagnostic has the
+compiler's code (`E....`, a link to the error reference as `codeDescription`), severity, message, the span the compiler
+reports (in the negotiated encoding), and the related locations as `relatedInformation`. Every error of a file is
+published, not the first (CLAUDE.md, "Report every error in a file"). On a program that compiles, `burdin lint` runs
+with the levels of the package manifest's `[lint]` table and its diagnostics are published with source
+`burdin lint`; unused imports, variables, and code carry the `Unnecessary` tag. A file outside every package and
+every folder is analyzed alone; closing it clears its diagnostics. A package whose manifest does not load reports
+`cannot load the package: ...` at the start of each of its open files, and is loaded again when the manifest changes.
+Tests: `every_error_of_a_file_is_published_with_its_code_and_span` (`broken-diagnostics.json`),
+`a_fix_clears_the_diagnostics_and_a_syntax_error_is_reported`, `rapid_edits_publish_once_for_the_latest_version`,
+`lints_are_published_unless_turned_off`, `closing_a_file_outside_any_package_clears_its_diagnostics`,
+`a_manifest_that_does_not_load_is_reported_until_it_is_fixed`.
+
+## Navigation
+
+**LS8. Definition.** `textDocument/definition` (and `declaration`, the same) resolves the name under the cursor: a
+declaration names itself; a local or parameter its binding; a `use` path its module or item; a call, type, constant,
+or variant its declaration; a field or method after `.` the member of the receiver's type (through the analysis); a
+field in a struct literal the struct's field, and a shorthand field (`Rect { w, h }`) the local it reads. A name of the
+standard library opens a copy of its source materialized under the temporary directory. A keyword, literal, or comment
+has no definition (`null`). When the latest analysis has no program (the file does not parse), the last analysis that
+had one answers, with positions mapped through the edit.
+Tests: `definition_finds_functions_types_methods_fields_locals_and_modules`.
+
+**LS9. References, highlights, rename.** `textDocument/references` lists every identifier, in every file of every
+package that contains the declaration, that resolves to the same declaration; `includeDeclaration` adds the
+declaration. A method of one implementation is a different symbol from the same method of another.
+`textDocument/documentHighlight` is the references in the file, with the declaration and assignments as writes (kind 3)
+and the rest as reads (kind 2). `textDocument/rename` edits every reference; a new name that is not an identifier or is
+a keyword is `-32602`, and the standard library, a module, a test's name, and a keyword cannot be renamed
+(`prepareRename` answers `null` or an error, rename an error). Renaming a field written in shorthand keeps the local
+(`Rect { width: w }`), and renaming a local written in shorthand keeps the field (`Rect { w: wide }`).
+Tests: `references_and_highlights`, `rename_changes_every_use_across_files`.
+
+**LS10. Implementations and hierarchies.** `textDocument/implementation` goes from an interface to the types'
+implementations of it, from an interface's method to each implementation's method, from an implementation's method to
+the interface's declaration, and from a type to its impl blocks. The call hierarchy (`prepareCallHierarchy`,
+`incomingCalls`, `outgoingCalls`) is built from the typed program: a call is listed only when the source writes the
+callee's name (not the formatting calls of an interpolated string, nor an overloaded operator), a call inside a closure
+belongs to the function the closure is written in, a `test` block is a caller, and a built-in function without a
+declaration is not a callee. The type hierarchy goes from an interface to the types that implement it and the
+interfaces that require it (subtypes), and back (supertypes).
+Tests: `implementations_of_interfaces_their_methods_and_types`, `call_hierarchy_in_both_directions`,
+`type_hierarchy_between_interfaces_and_types` (`type-hierarchy.json`).
+
+## Editing
+
+**LS11. Hover.** A declaration, call, or member shows its signature as the command line prints it (`fn total(a: i32,
+b: i32): i32`), followed by its doc comment; a local or parameter shows `let name: Type`; any other expression shows its
+type. The answer's range is the name.
+Tests: `hover_shows_signatures_types_and_docs`, `positions_count_utf16_units_or_utf8_bytes_as_negotiated`.
+
+**LS12. Completion.** After `x.`, the members of `x`: a module's items, a type's variants and methods, or a value's
+fields and then methods, by the receiver's type (on a line that does not parse yet, from the last analysis with a
+program and the receiver's declaration). In a `use` path, the modules and the public items below the path written so
+far, from the package and its dependencies (a dependency's `priv` items are left out). Anywhere else, the locals and
+parameters declared before the cursor (nearest first), the file's items, the imported names, the standard library's
+prelude, the built-in types, and the keywords. `.` triggers completion.
+Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_another_root_is_navigable_and_not_checked_again`.
+
+**LS13. Signature help and inlay hints.** Inside a call's argument list, signature help shows the callee's signature
+with each parameter's label range and the active parameter (counting commas at the call's depth; a method's `self` is
+not a parameter); outside a call it is `null`. Inlay hints show `: Type` after a `let` name without a written type
+(not when the type is unknown or an error), and `name:` before a positional argument written in an argument list,
+unless the argument already says the name (`a` for `a`, `x.a` for `a`), the argument is named, or the parameter is
+`self`; a `mut` marker comes after the hint. LS5's two settings turn each kind off.
+Tests: `signature_help_marks_the_active_parameter`, `inlay_hints_for_types_and_parameter_names_can_be_turned_off`
+(`inlay-hints.json`).
+
+**LS14. Semantic tokens.** `semanticTokens/full` and `/range` classify every identifier by what it resolves to, with
+the legend in the capabilities: `namespace` (modules), `type`, `struct`, `enum`, `interface`, `enumMember`, `function`,
+`method`, `parameter`, `variable`, and `property` (fields), with the modifiers `declaration`, `readonly` (a
+constant), `mutable` (a `mut` binding), and `defaultLibrary` (the standard library and the built-ins). A range request answers the
+tokens that start inside the range. Keywords, strings, numbers, and comments are left to the editor's grammar.
+Tests: `semantic_tokens_cover_the_file_and_a_range` (`semantic-tokens.json`).
+
+**LS15. Formatting.** `textDocument/formatting` and `rangeFormatting` format with the library `burdin fmt` uses
+(`spec/fmt.md`), with the package's dependencies grouped as `burdin fmt` groups them, and answer one minimal edit (the
+changed middle of the text) or none when the text is already formatted. A file with syntax errors is not formatted
+(`null`, with a log message), because the diagnostics already say why. The client's tab size is ignored: Burdin has
+one style.
+Tests: `formatting_matches_burdin_fmt_and_refuses_a_file_that_does_not_parse`.
+
+## Outline
+
+**LS16. Symbols.** `textDocument/documentSymbol` answers the items of a file nested (types with their fields, methods,
+and variants; impl blocks with their methods) when the client supports hierarchical symbols, and a flat list with
+container names otherwise. `workspace/symbol` searches every loaded package's own items (not the standard library's)
+by a fuzzy match: the query's letters in order, case-insensitive, exact matches first, then prefixes, then the rest.
+Tests: `document_symbols_are_nested_or_flat_as_the_client_asks` (`document-symbols.json`),
+`workspace_symbols_match_fuzzily_across_files`.
+
+**LS17. Folding, selection, links.** Folding ranges cover blocks of items and statements, runs of `use`
+declarations (kind `imports`), and runs of comments (kind `comment`). A selection range grows from the token to each
+syntax node around it, to the file. Document links: each module of a `use` path links to its file, a URL in a comment
+to itself, and a `[name]` in a doc comment to the declaration it names (`#L<line>`).
+Tests: `folding_selection_and_links`.
+
+## Actions and lenses
+
+**LS18. Code actions.** Quick fixes come from the compiler's suggestions and from the server: E0002 for an unknown
+name that another module declares imports it (`use helpers.triple`); E0005 and E0113 make the binding `mut`; E0114 adds
+the `mut` marker before the argument; E0140 adds the missing methods of an implementation, with the interface's
+signatures and `todo()` bodies. Each quick fix names its diagnostic. `refactor.rewrite` writes the inferred type of a
+`let` under the cursor; `source.organizeImports` applies the linter's removals of unused imports. Every edit is a
+workspace edit (`changes` by URI), which the client previews.
+Tests: `quick_fixes_for_the_errors_of_a_file`, `organize_imports_and_write_a_type`.
+
+**LS19. Lenses and test commands.** In a file with tests, a lens at the top runs them all (`▶ Run N tests in file`), and
+above each `test` block a lens runs it and another debugs it; above the entry module's `main`, a lens runs the program
+and another debugs it. Each lens's argument carries the exact command line (`burdin test <root> --exact <path>`, where
+the path is the test's full path as `burdin test --list` prints it), the root, and the working directory, so an editor
+and a terminal run the same thing. `burdin.runTest` and `burdin.runTests` are server commands
+(`workspace/executeCommand`): the server runs that `burdin test` invocation with `--format json` on a worker thread,
+reports progress, and answers with each test's path, status, duration, and failure reason; the next lenses show the
+result (`✓ passed (N ms)` or `✗ failed: reason`). An argument that is not a `burdin test` command line is `-32602`, and a
+`burdin` that cannot run is `-32803` with a message to the user. `burdin.run` and `burdin.debug` are client commands:
+the editor runs the program in a terminal, and starts a debug session with the lens's DAP-style `launch`
+configuration (`type: "burdin"`, the program or test) once `burdin dap` exists (issue #576); until then the VS Code
+extension builds with `-g` and starts a native debugger when one is installed.
+Tests: `lenses_run_and_debug_tests_and_main_with_exact_command_lines` (`code-lenses.json`),
+`the_test_command_reports_a_missing_compiler_and_rejects_other_commands`; `tests/check_lsp.py` runs a test through a
+lens with the real driver and checks the result lens.
+
+## Editors
+
+**LS20. Editor packaging.** `editors/vscode` is a VS Code extension: it starts `burdin lsp` (the `burdin.path`
+setting, else `burdin` on `PATH`), passes the `burdin` settings, registers the `burdin` language for `.bd` files with a
+TextMate grammar and a language configuration (comments, brackets, indentation), and implements the client commands
+of LS19. `editors/README.md` gives the Neovim and Helix configuration. `tests/check_lsp.py` checks what can be checked
+without an editor: the extension's manifest names the server command, the settings it declares are the ones LS5
+lists, the grammar's keywords are exactly the lexer's, and the files parse. Installing and using the extension in a
+real editor is the manual checklist below, recorded in the closing comment of each editor change.
+
+Manual checklist (VS Code; repeat the relevant items in Neovim and Helix):
+
+1. Open a package; the status shows the server running, and a file with an error shows it underlined.
+2. Fix the error; the underline goes away within the debounce.
+3. Go to definition, find references, and rename a function used in two files.
+4. Hover a call and a local; complete after `x.` and in a `use` path.
+5. Format a file with a formatting mistake (and on save, when the editor formats on save).
+6. Click `▶ Run test` above a test; the result lens appears.
+7. Turn off `burdin.inlayHints.types`; the type hints go away without a restart.
+
+## Tests and commands
+
+```
+cargo test -p burdin_lsp          the unit tests and the JSON-RPC integration tests (no LLVM)
+python3 tests/check_lsp.py        `burdin lsp` from the driver, a test run through a lens, and the editor files
+```
