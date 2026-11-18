@@ -152,8 +152,9 @@ script receives the package directory as its working directory and as `argv[1]`,
 `<out>/src` is a module of the package and a path that repeats a source module is E0262; a script failure is E0261
 at the entry source; the cache is a content key per package and profile over the script, the manifest, the compiler
 binary, the inputs listed in `<out>/inputs`, the script's `embed` files, and the generated outputs; and
-`burdin bindgen <header> --out <file>` is the minimal C declaration generator a script may invoke (the full bindgen
-remains stage 3). A build script is native code with no OS sandbox; the grant is the trust boundary.
+`burdin bindgen <header> --out <file>` is the C declaration generator a script may invoke; the full tool
+(`spec/bindgen.md`) landed with stage 3's issue #244 and a script uses it unchanged. A build script is native code
+with no OS sandbox; the grant is the trust boundary.
 
 Milestone 23 is complete: `tests/m23_allocators` and every earlier folder pass in debug and release, and the
 rules are recorded in `spec/allocators.md` AL1-AL10. The decisions: an allocator is an ordinary generic parameter
@@ -189,8 +190,9 @@ registry code, a test, and a spec update **before** the code, per the working ru
    field are tracked; `let x = xs[i]` with a non-constant `i` is still E9000 because the checker cannot tell which
    element moves. Extend the move checker (or the typed tree) instead of rejecting the program.
 2. **C function pointers and unions.** `repr(C)` structs have a decided layout and cross the ABI through `CPtr<T>`;
-   function-pointer types and `union` declarations are still missing. The minimal bindgen of milestone 22 skips
-   them (a function pointer is a `CPtr<CVoid>` and a union is not generated), so they remain stage 1/3 work.
+   function-pointer types and `union` declarations are still missing. `burdin bindgen` (`spec/bindgen.md`, BG6 and
+   BG4) declares a function pointer as a `CPtr<CVoid>` and a union as a byte blob, so they remain stage 1/3 work for
+   Burdin programs that do not go through the bindings.
 3. **Private modules.** Stage 0 has no syntax for a private module. The rule is that a dependency's non-root
    modules are hidden: only its root (`src/<package>.bd` or `src/lib.bd`) is reachable, and it re-exports what it
    wants with `pub use` (`m08_modules/reexports*`). A `priv` marker on a module can refine this in stage 1 if a
@@ -318,9 +320,8 @@ easier with them:
 
 - Tasks, `spawn`, `scope`, channels, `select`, `Mutex`, atomics, `thread.spawn`, the scheduler, cooperative
   preemption, and `Send`.
-- `burdin fmt`, `lint`, `doc`, `add`, the language server, the lockfile, multiple-package workspaces, the package
-  registry, and bindgen as a finished tool (a build script may invoke a minimal `bindgen`, but the generator itself
-  is stage 3).
+- `burdin doc`, `add`, the language server, the lockfile, multiple-package workspaces, and the package registry.
+  (`burdin fmt` and `lint` have landed; `burdin bindgen` is `spec/bindgen.md`.)
 - Declaration generation in comptime (new types or functions), doc tests, `bench` blocks, a custom debug backend,
   fallible allocation, and `i128`/`u128`.
 - Self-hosting. The compiler stays in Rust (decided).
@@ -373,7 +374,7 @@ overlapped per-operation Windows path are later refinements.
 
 | Area | Contents |
 | --- | --- |
-| Tooling | `burdin new`, `fmt` (opinionated, no options), `lint` (landed: `spec/lint.md`), `check` (landed: `spec/check.md`), `doc`, `add`, bindgen for C headers, Rust interop through generated C-ABI shims |
+| Tooling | `burdin new`, `fmt` (opinionated, no options), `lint` (landed: `spec/lint.md`), `check` (landed: `spec/check.md`), bindgen for C headers (landed: `spec/bindgen.md`), `doc`, `add`, Rust interop through generated C-ABI shims |
 | Compiler | A query-based compiler library shared by the CLI and a language server; a lockfile; multiple-package workspaces; cached object files; a possibly faster debug backend |
 | Ecosystem | The serialization framework (`Serialize`/`Deserialize` derives and format packages), JSON/TOML/CSV, HTTP client and server, TLS, WebSockets, regex, compression, images, math, database drivers |
 | Standard library | What `m24` did not ship: the serialization framework's foundation and anything the author's projects still need. `Set`, `Deque`, `PriorityHeap`, the Unicode helpers, `Path`, time, and `Random` are in `std` already |

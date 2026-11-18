@@ -97,6 +97,54 @@ close-out checklist in `AGENTS.md`).
   conformance test (a `compile-fail` program must report exactly its markers, every other program must be accepted),
   no linker needed and nothing written, and the command line. It runs in every CI job.
 
+### C bindgen (issue #244)
+
+- `burdin bindgen <header> --out <file>` reads a C header through **libclang**, which the new `burdin_bindgen` crate
+  loads at run time (`dlopen`/`dlsym`, `LoadLibraryA`/`GetProcAddress`), so no libclang is linked into the compiler and
+  every other command works without it (issues #245, #246). `-I`, `-D`, and `--clang-arg` reach the C front end, so
+  `#include`, the preprocessor's conditional state, and the system headers behave as they do for the C compiler
+  (issue #245). `BURDIN_LIBCLANG` and `LIBCLANG_PATH` override where it is found; a missing library is exit 2 with
+  every place that was tried.
+- Types: the fixed-width and pointer-sized names become their Burdin primitive, `char` is `CChar`, `void *` is
+  `CPtr<CVoid>`, and a typedef of the header keeps its name. A struct used by value is declared in full, one reached
+  only through a pointer in an included header is declared with no fields, and a type with no Burdin equivalent skips
+  the declaration that needs it (issues #246, #247).
+- Structs and unions (issue #247): a struct whose layout Burdin can spell becomes a `repr(C)` struct with
+  `comptime assert`s for its size and alignment against the C header; a union, a packed struct, a bit-field, a flexible
+  array member, an anonymous member, or a field at an offset Burdin would not choose becomes a byte blob of C's size
+  and alignment with its members listed, and an alignment with no Burdin integer makes the struct empty
+  (issue #476). Enumerations become an alias of the smallest of `i32`, `u32`, `i64`, and `u64` that holds every
+  enumerator, so the same header generates the same module on every platform while the layout still matches C.
+- Function pointers are `CPtr<CVoid>` with a note, since Burdin has no function-pointer type across the C ABI, and a
+  variadic function keeps its `...` (issue #248). A parameter declared as an array is a pointer to its element. On
+  macOS the SDK that `xcrun --show-sdk-path` reports is passed as `-isysroot` unless the caller gives one, because a
+  Homebrew libclang has no sysroot of its own and would not find the system headers. The directory of clang's
+  built-in headers is passed as `-resource-dir`, because libclang derives it from where its shared library sits and
+  a distribution that splits the library out of the LLVM tree (Ubuntu's multiarch directory) otherwise loses
+  `<stddef.h>`.
+- Object-like macros whose body is a constant expression are evaluated with C's rules (suffixes, bases, character and
+  string literals, casts, arithmetic, comparisons, `?:`, names resolved to other macros or enumerators) and become
+  `const`s; one that is not a constant is skipped with a note, and function-like macros are counted in one note
+  (issue #475).
+- `--wrappers <file.c>` writes C that calls each `static inline` function and exports it as `<name>__extern`, because
+  it has no symbol; `--wrapper-include` sets the `#include` line (issue #475). `--link-lib` now accepts a file path
+  (an object, static archive, or shared library) so that wrapper compiles into the program.
+- Every skipped or changed declaration is named with its line and reason in a `// bindgen:` comment and on stderr;
+  the command exits 0 when the header parsed, 1 when clang rejects it, and 2 for a usage or I/O error.
+- `burdin bindgen --export <target> --out <header.h> [--guard NAME] [diagnostics]` writes the other direction (issue #663): a header
+  with a prototype for every `extern "C" fn` the package exports, the `repr(C)` structs they reach, opaque
+  declarations for the ones only used through pointers, and the public constants as `#define`s, in an include guard
+  and an `extern "C"` block for C++. Its diagnostics take the `[diagnostics]` group every command takes, so E0263 is
+  available in the JSON and SARIF formats too. A declaration a C header cannot spell is the new error **E0263** (every one is
+  reported, and no header is written); on Linux the driver already links with `-rdynamic`, so a C shared library rings
+  the exported functions through the header.
+- Tests: `tests/check_bindgen.py` in every CI job compares the golden modules in `tests/bindgen/expected`, compiles
+  and runs each generated module (its `comptime assert`s are the layout check), builds the wrappers with the system C
+  compiler and calls them, compiles a C and a C++ program against the export header, and on Linux builds a C shared
+  library that calls the Burdin exports and checks what it prints; `tests/bindgen/export_invalid` covers E0263, and
+  `tests/m22_build/bindgen` invokes the tool from a build script. Linux CI installs `libclang-21-dev`. `spec/bindgen.md`
+  (BG1-BG11) is the behavior.
+
 ### Tooling: `burdin new` (issue #228)
 
 - `burdin new <name>` creates the package directory `<name>` with `burdin.toml` (`[package]` with the name and version

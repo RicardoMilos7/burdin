@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the forty-seventh session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the forty-eighth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -339,6 +339,24 @@ anything. The `.gitignore` lists `/target/` and the executable `burdin build .` 
 because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
 CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
 
+The forty-eighth session implemented stage 3's C bindgen (issue #244, sub-issues #245-#248, #475, #476, #663). The
+import side is a new crate, `crates/burdin_bindgen`, which knows nothing about the compiler: `clang.rs` finds and loads
+libclang at run time with hand-written C API bindings over `dlopen`/`dlsym` (no LLVM link, no new Rust dependency),
+`parse.rs` walks the header, `macros.rs` evaluates macro bodies with C's typing rules, and `model.rs` renders the
+module. `SKIP_FUNCTION_BODIES` is deliberately not passed to clang: with it, every function looks like a declaration,
+and `static inline` functions then cannot be told from declarations (the trap the first version fell into). The
+generated module is `extern "C"` declarations, `repr(C)` structs with `comptime assert` size and alignment checks, a
+byte blob with the member list for a union, packed struct, bit-field, flexible array member, or anonymous member, an
+alias plus constants per enumeration, constants from object-like macros, and `CPtr<CVoid>` for a function pointer
+(BG1-BG9 in `spec/bindgen.md`). An enumeration's integer type is chosen from its values rather than from clang, because
+the Itanium and MSVC ABIs pick different signedness for the same enum and the choice only has to keep C's size.
+`--wrappers` writes C for `static inline` functions as `<name>__extern`, and `--link-lib` now accepts a file path so
+that C joins the link. The export side (`crates/burdin_driver/src/export.rs`) reads the checked program, writes a
+header for the package's `extern "C" fn`s, their `repr(C)` structs, and their constants, and reports E0263 for a
+declaration C cannot spell. `tests/check_bindgen.py` (every CI job) checks goldens, compiles and runs each generated
+module, builds and calls the wrappers, compiles C and C++ against the export header, and on Linux runs the round trip
+of a C shared library calling Burdin exports; `tests/m22_build/bindgen` invokes the tool from a build script. Linux CI
+now installs `libclang-21-dev`.
 The forty-fourth session implemented `burdin doc` (issue #234, sub-issues #467-#469, #656-#658): a documentation
 generator that reads `///` and `//!` comments from the syntax trees (`burdin_syntax::docs`, shared with the
 `missing_docs` lint so the two always agree), builds the documented API in the new crate `burdin_doc` (depending only
@@ -1933,8 +1951,8 @@ function, and there is no language server yet — the API is what it would call.
    `tests/m23_allocators/` has 28 tests. The next milestone is 24 (`m24_stdlib`: `Set`, `Deque`, a priority heap,
    Unicode helpers, paths, time, random, and the formatting foundation), which may split as the standard library
    grows. Issue #444 (differential tests between comptime and compiled code) is done (thirty-sixth session);
-   `spec/test-runner.md` holds its behavior. The full bindgen, C function-pointer types, and `union` declarations
-   remain stage 3 / the stage 1 "Fixes" list.
+   `spec/test-runner.md` holds its behavior. The C bindgen is done (forty-third session, `spec/bindgen.md`); Burdin
+   function-pointer types and `union` declarations of its own remain on the stage 1 "Fixes" list.
 2. The remaining stage 1 work is milestone 24 and the open type-system item: writing a built-in interface by
    hand (#402). Known limits to keep in mind: the comptime ones (a closure inside a function with comptime
    parameters is shared by its specializations; `Map` iteration at compile time is insertion order, CT9;

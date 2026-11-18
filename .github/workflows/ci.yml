@@ -36,12 +36,13 @@ jobs:
       # into place with sudo. A distribution that splits libLLVM or libclang-cpp into the
       # multiarch directory leaves /usr/lib/llvm-21/lib/*.so pointing outside the tree, so
       # the resolved real files are cached under their absolute paths too (issue #46).
+      # v3 adds `libclang-21-dev`, which `burdin bindgen` loads at run time (issue #245).
       - name: Cache LLVM 21
         id: cache-llvm
         uses: actions/cache@v4
         with:
           path: ~/.cache/burdin/llvm-21
-          key: ${{ runner.os }}-llvm-21-v2
+          key: ${{ runner.os }}-llvm-21-v3
 
       - name: Install LLVM 21
         run: |
@@ -57,7 +58,7 @@ jobs:
             wget -q https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
             sudo ./llvm.sh 21
-            sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
+            sudo apt-get install -y llvm-21-dev libclang-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
             mkdir -p "$cache/root"
             sudo cp -a /usr/lib/llvm-21 "$cache/llvm-21"
             # Ubuntu splits the headers and libLLVM out of the tree: the in-tree symlinks
@@ -66,7 +67,8 @@ jobs:
             for extra in /usr/include/llvm-21 /usr/include/llvm-c-21; do
               if [ -e "$extra" ]; then sudo cp -a --parents "$extra" "$cache/root"; fi
             done
-            for link in /usr/lib/llvm-21/lib/libLLVM*.so* /usr/lib/llvm-21/lib/libclang-cpp*.so*; do
+            for link in /usr/lib/llvm-21/lib/libLLVM*.so* /usr/lib/llvm-21/lib/libclang-cpp*.so* \
+                        /usr/lib/llvm-21/lib/libclang*.so*; do
               if [ -L "$link" ]; then readlink -f "$link"; fi
             done | sort -u | while read -r target; do
               case "$target" in
@@ -211,6 +213,12 @@ jobs:
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
+
+      # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
+      # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
+      # and the header a C library compiles and links against.
+      - name: Check bindgen
+        run: python3 tests/check_bindgen.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
@@ -432,6 +440,12 @@ jobs:
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
+
+      # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
+      # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
+      # and the header a C library compiles and links against.
+      - name: Check bindgen
+        run: python3 tests/check_bindgen.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
@@ -674,6 +688,12 @@ jobs:
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python tests/check_build_scripts.py
+
+      # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
+      # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
+      # and the header a C library compiles and links against.
+      - name: Check bindgen
+        run: python tests/check_bindgen.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new

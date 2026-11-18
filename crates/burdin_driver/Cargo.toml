@@ -15,6 +15,7 @@ burdin_fmt.workspace = true
 burdin_tir.workspace = true
 burdin_codegen.workspace = true
 burdin_lint.workspace = true
+burdin_bindgen.workspace = true
 burdin_doc.workspace = true
 burdin_query.workspace = true
 

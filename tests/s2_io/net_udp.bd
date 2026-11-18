@@ -12,10 +12,16 @@ fn main() {
     let mut peer = net.UdpSocket.bind("127.0.0.1:0").unwrap()
     let mut client = net.UdpSocket.bind("127.0.0.1:0").unwrap()
     let peer_addr = peer.local_addr().unwrap().to_text()
+    // Both tasks print to the same standard output, and which worker runs first is not defined. The peer waits on
+    // this channel before it prints, and the sender signals it after its own line, so the lines below come out in the
+    // same order on every platform.
+    let ordered = Channel<bool>.bounded(1)
+    let peer_ordered = ordered.clone()
     task.scope(|s| {
         s.spawn(|| {
             let mut buf = List<u8>.new()
             let (n, from) = peer.recv_from(mut buf, 32).unwrap()
+            let _ = peer_ordered.recv()
             println("received {} bytes from the peer", n)
             let reply = "pong".to_utf8()
             let _ = peer.send_to(reply[0..4], from.to_text().as_str()).unwrap()
@@ -24,6 +30,7 @@ fn main() {
             let data = "ping".to_utf8()
             let sent = client.send_to(data[0..4], peer_addr.as_str()).unwrap()
             println("sent {} bytes", sent)
+            ordered.send(true)
             let mut buf = List<u8>.new()
             let _ = client.recv_from(mut buf, 32).unwrap()
             println("reply received")

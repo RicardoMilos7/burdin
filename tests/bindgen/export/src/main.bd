@@ -1,0 +1,81 @@
+// A package that exports C functions, the structs they use, and constants. `burdin bindgen --export` writes the
+// header; `c/user.c` is built against it and calls these functions (tests/check_bindgen.py).
+
+const LIB_VERSION: i32 = 3
+const LIB_RATIO: f64 = 2.5
+const LIB_NAME: str = "exports \"v3\"\n"
+const LIB_OFFSET: i32 = -4
+const LIB_BIG: u64 = 5000000000
+
+struct Point repr(C) {
+    x: i32
+    y: i32
+}
+
+struct Segment repr(C) {
+    from: Point
+    to: Point
+    label: [CChar; 8]
+    weight: f32
+}
+
+// Not `repr(C)`: C only ever holds a pointer to it.
+struct Counter {
+    ticks: i32
+}
+
+extern "C" fn add_one(own x: i32): i32 {
+    x + 1
+}
+
+extern "C" fn scale(own x: f64, own k: f64): f64 {
+    x * k
+}
+
+extern "C" fn point_sum(own p: CPtr<Point>): i32 {
+    unsafe { (*p).x + (*p).y }
+}
+
+extern "C" fn segment_dx(own s: CPtr<Segment>): i32 {
+    unsafe { (*s).to.x - (*s).from.x }
+}
+
+extern "C" fn fill(own buffer: CPtr<u8>, own length: usize, own value: u8) {
+    unsafe {
+        let mut i = 0 as usize
+        while i < length {
+            *(buffer + i) = value
+            i = i + 1
+        }
+    }
+}
+
+extern "C" fn name_length(own name: CPtr<CChar>): usize {
+    unsafe { CStr.to_string(name).len() }
+}
+
+extern "C" fn counter_ticks(own counter: CPtr<Counter>): i32 {
+    42
+}
+
+extern "C" fn nothing() {}
+
+// Private: not part of the header.
+priv extern "C" fn hidden(own x: i32): i32 {
+    x
+}
+
+// Not exported to C: no `extern "C"`.
+fn helper(x: i32): i32 {
+    x
+}
+
+extern "C" {
+    // The C side of the test (c/user.c).
+    fn run_c(): i32
+}
+
+fn main() {
+    let status = unsafe { run_c() }
+    println("c returned {}", status)
+}

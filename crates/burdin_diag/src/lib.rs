@@ -296,6 +296,9 @@ impl Code {
     /// A build script's generated modules are invalid: a path that is not a module name, a module that
     /// conflicts with a source module, or an output directory that cannot be read (BS4).
     pub const BUILD_OUTPUT: Code = Code("E0262");
+    /// `burdin bindgen --export` cannot write a C declaration for an exported function: a type with no C spelling,
+    /// a name that is not a C identifier, or two exports that share a C name (`spec/bindgen.md`, BG11).
+    pub const EXPORT_HEADER: Code = Code("E0263");
     /// A type argument of an allocator-aware container that does not implement `Allocator`
     /// (`spec/allocators.md`, AL3).
     pub const NOT_AN_ALLOCATOR: Code = Code("E0270");

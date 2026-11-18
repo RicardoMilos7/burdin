@@ -8,7 +8,8 @@ The page and its examples are checked by `tests/check_error_docs.py` in CI: the 
 exactly, every `burdin` snippet below is a complete program that the check compiles and expects to fail with
 exactly the marked diagnostics, and `burdin explain <code>` (which reads this page) must print every entry. The
 `//~ E0000` comment at the end of a line marks the line the diagnostic is reported on. An example marked
-`mode=test` is compiled with `burdin test`, because a test attribute is checked only in test mode. An example in a
+`mode=test` is compiled with `burdin test`, because a test attribute is checked only in test mode; `mode=export`
+runs `burdin bindgen --export` on the package, because that check runs after compilation and only for that command. An example in a
 `warning-example` block must compile and emit exactly the marked warnings.
 
 Run `burdin explain E0003` to print one entry in the terminal, or `burdin explain` to list the codes.
@@ -1645,6 +1646,45 @@ fn main() {} //~ E0262
 
 **How to fix:** give the generated module a name the package does not already use, for example
 `<out>/src/generated.bd`, and import it with that name.
+
+## E0263: A declaration that cannot be exported to a C header
+
+`burdin bindgen --export` writes a C header for the `extern "C" fn`s of a package, the `repr(C)` structs they reach,
+and the constants those modules declare. Some declarations have no C form: a name C reserves (`int`, `double`) or
+one that is not a C identifier, two declarations that would share a C name, a generic struct, a struct held by value
+that is not `repr(C)`, or a field whose name C cannot declare. Every offending declaration is reported, and no header
+is written. `spec/bindgen.md` BG10 and BG11.
+
+<!-- error-example: E0263 target=. mode=export -->
+```burdin
+// --- burdin.toml ---
+[package]
+name = "app"
+
+// --- src/main.bd ---
+struct Loose {
+    a: i32
+}
+
+struct Holder repr(C) {
+    loose: Loose
+}
+
+extern "C" fn holder_value(own h: CPtr<Holder>): i32 { //~ E0263
+    0
+}
+
+extern "C" fn int(own x: i32): i32 { //~ E0263
+    x
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** rename the declaration to a C identifier C does not reserve (and keep C names unique across the
+package), use a concrete struct instead of a generic one, mark a struct that C holds by value `repr(C)`, and rename
+any field that is not a C identifier.
 
 ## E0270: Not an allocator
 

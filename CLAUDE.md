@@ -36,14 +36,15 @@ not updated and may disagree with the repository.
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
-   resolution, and timers, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the minimal `bindgen`; `spec/lint.md` is `burdin lint` (the `[lint]` table, suppression
-   comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset, intra-doc links and
-   their diagnostics, the site and its search, the JSON schema, and the coverage report; `spec/check.md` is
-   `burdin check`, the type-check-only command (what it shares with a build, and `--tests`); `spec/diagnostics.md`
-   is the versioned JSON diagnostic format, the SARIF log, and the links to the error reference; and `spec/query.md`
-   is the query-based compiler library: the memo, its granularity, cancellation, the budget, the tool API, and the
-   parity between the library and the command line.
+   resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
+   import rules, layout checks, wrappers, and `--export`; `spec/lint.md` is `burdin lint` (the `[lint]` table,
+   suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
+   intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report;
+   `spec/check.md` is `burdin check`, the type-check-only command (what it shares with a build, and `--tests`);
+   `spec/diagnostics.md` is the versioned JSON diagnostic format, the SARIF log, and the links to the error
+   reference; and `spec/query.md` is the query-based compiler library: the memo, its granularity, cancellation, the
+   budget, the tool API, and the parity between the library and the command line.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -90,6 +91,7 @@ python3 tests/check_lint.py              check `burdin lint`: the documented lin
 python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links, JSON, coverage, and the output rules
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
+python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
@@ -135,6 +137,9 @@ crates/
   burdin_fmt/               the formatter behind `burdin fmt`: its own lossless layout parser, the document printer,
                             comment and `use` handling, doc-comment code blocks, and the checks of its own output
                             (spec/fmt.md); it depends only on burdin_diag and burdin_syntax
+  burdin_bindgen/           `burdin bindgen` (spec/bindgen.md): libclang loaded at run time (`clang.rs`), the C
+                            header walk (`parse.rs`), macro evaluation (`macros.rs`), the module's rendering
+                            (`model.rs`), and C's spelling of an exported type (`export.rs`); depends only on libc
   burdin_doc/               the documentation generator behind `burdin doc`: doc comments and signatures from the syntax
                             trees, intra-doc link resolution, the HTML site with search, the versioned JSON schema, and
                             the coverage report (spec/doc.md); it depends only on burdin_diag and burdin_syntax
@@ -144,9 +149,8 @@ crates/
                             position), and the package loader (`package.rs`); the driver and a language server share
                             it, and it never links LLVM
   burdin_driver/            the `burdin` binary: build, run, test, check, fmt, lint, doc, bindgen; it runs its front
-                            end through `burdin_query`, and keeps build scripts (`build.rs`) and the minimal C
-                            bindgen (`bindgen.rs`)
-                            (`bindgen.rs`)
+                            end through `burdin_query`, and keeps build scripts (`build.rs`), the bindgen command
+                            line (`bindgen.rs`), and the export header built from the checked program (`export.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, code generation, and the query library's keystroke edits
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
@@ -170,7 +174,8 @@ Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdi
 drives them for a whole package, memoizes what an edit cannot affect, and is the one front end the driver and a tool
 share. `burdin_lint` is a side branch: it reads the
 syntax tree and the typed tree the compiler built, depends on `burdin_syntax`, `burdin_tir`, and `burdin_diag` only, and
-is called from the driver, never from the compiler stages. `burdin_check`, `burdin_comptime`, and
+is called from the driver, never from the compiler stages. `burdin_bindgen` is another: it depends on nothing in the
+compiler (only libc, for loading libclang), and the driver calls it for `burdin bindgen`. `burdin_check`, `burdin_comptime`, and
 `burdin_codegen` depend only on `burdin_tir` (and `burdin_diag`), not on sema. Keep everything before codegen free of
 LLVM so the checks can be tested without a backend. There is no MIR (`burdin_mir`), decided in milestone 20 (issue
 #158): sema monomorphizes, the checks read the typed tree, and the comptime engine interprets the same tree and

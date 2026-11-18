@@ -12,7 +12,8 @@ What it checks:
     unchecked snippets;
   * every example is a complete program (or package) that the driver compiles and rejects with exactly the
     `//~ E0000` diagnostics marked in it, all of the section's code; a `warning-example` compiles successfully
-    and emits exactly the marked warnings;
+    and emits exactly the marked warnings; an example marked `mode=export` is rejected by `burdin bindgen
+    --export` instead, because that check runs after compilation;
   * the page is linked from README.md and from tests/README.md;
   * every diagnostic links to its entry (issue #644): the URL scheme is pinned here
     (`<root>/errors/<code>`, ending in the code), the page documents it, every JSON diagnostic of every example
@@ -139,7 +140,14 @@ def check_example(directory: Path, code: str, target: str, mode: str, warning: b
         add_problem(f"example {code}: target {target} is not one of the example files")
         return
 
-    command = [burdin, "test" if mode == "test" else "build", target, "--no-color", "--diagnostic-format=short"]
+    if mode == "export":
+        command = [burdin, "bindgen", "--export", target, "--out", str(directory / "exports.h")]
+        # `--out` takes a value, so the JSON run repeats the whole command rather than replacing its last argument.
+        json_command = [burdin, "bindgen", "--export", target, "--out", str(directory / "exports.json.h"),
+                        "--diagnostic-format=json"]
+    else:
+        command = [burdin, "test" if mode == "test" else "build", target, "--no-color", "--diagnostic-format=short"]
+        json_command = command[:-1] + ["--diagnostic-format=json"]
     result = harness.run(command, cwd=directory, merge=True)
     output = harness.text(harness.normalize(result.stdout))
     if warning:
@@ -202,7 +210,7 @@ def check_example(directory: Path, code: str, target: str, mode: str, warning: b
         detail = ";".join(diff) + (";" if diff else "")
         add_problem(f"example {code}: diagnostics differ from the //~ markers: {detail}")
     # The same example in the JSON format: every diagnostic carries the stable link to this section's code.
-    json_result = harness.run(command[:-1] + ["--diagnostic-format=json"], cwd=directory, merge=True)
+    json_result = harness.run(json_command, cwd=directory, merge=True)
     linked = 0
     for line in harness.text(harness.normalize(json_result.stdout)).split("\n"):
         if not line.startswith("{"):
@@ -254,8 +262,8 @@ with harness.temporary_dir("burdin-error-docs-") as work:
                 for attribute in rest.split():
                     if attribute.startswith("target="):
                         target = attribute[len("target="):]
-                    elif attribute == "mode=test":
-                        mode = "test"
+                    elif attribute in ("mode=test", "mode=export"):
+                        mode = attribute[len("mode="):]
                     else:
                         add_problem(f"docs/error-codes.md: unknown example attribute: {attribute}")
                 if not re.fullmatch(r"E[0-9]{4}", code):

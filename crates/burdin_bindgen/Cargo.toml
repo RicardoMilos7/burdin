@@ -1,0 +1,8 @@
+[package]
+name = "burdin_bindgen"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc.workspace = true

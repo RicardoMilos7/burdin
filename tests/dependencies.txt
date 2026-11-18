@@ -16,7 +16,8 @@
 #
 # The compiler has two direct external dependencies: inkwell, which wraps LLVM 21, and libc, whose
 # `struct stat` and `struct dirent` layouts the generated runtime reads for the directory and metadata
-# operations (issue #411). Everything else comes through inkwell: inkwell -> llvm-sys -> (build) anyhow,
+# operations (issue #411) and whose `dlopen` and `dlsym` load libclang when `burdin bindgen` runs (issue
+# #245). Everything else comes through inkwell: inkwell -> llvm-sys -> (build) anyhow,
 # cc, lazy_static, regex-lite, semver; cc -> find-msvc-tools, shlex; inkwell_internals -> proc-macro2,
 # quote, syn; thiserror -> thiserror-impl; and the macro plumbing -> unicode-ident.
 #
@@ -36,7 +37,7 @@ find-msvc-tools	0.1.15	MIT OR Apache-2.0	cc: MSVC tool discovery on Windows
 inkwell	0.11.0	Apache-2.0	the LLVM backend bindings (a direct external dependency)
 inkwell_internals	0.16.0	Apache-2.0	inkwell's derive macros
 lazy_static	1.5.1	MIT OR Apache-2.0	llvm-sys: process-wide configuration
-libc	0.2.191	MIT OR Apache-2.0	inkwell and llvm-sys: C types; burdin_codegen: the host's `stat`/`dirent` layouts; burdin_tir tests: the host's `errno` values
+libc	0.2.191	MIT OR Apache-2.0	inkwell and llvm-sys: C types; burdin_codegen: the host's `stat`/`dirent` layouts; burdin_bindgen: `dlopen`/`dlsym` and `LoadLibrary`/`GetProcAddress` for libclang; burdin_tir tests: the host's `errno` values
 llvm-sys	211.1.1	MIT	raw LLVM 21 C API bindings under inkwell
 proc-macro2	1.0.107	MIT OR Apache-2.0	inkwell_internals and thiserror-impl: macro plumbing
 quote	1.0.47	MIT OR Apache-2.0	inkwell_internals and thiserror-impl: macro plumbing
