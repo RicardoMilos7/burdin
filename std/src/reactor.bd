@@ -152,6 +152,10 @@ priv fn __wait_io(fd: i64, events: i32, timeout_nanos: u64): i32 {
                 __waiter_free(wait.waiter)
                 return -1
             }
+            // The reactor may be waiting with a poll set taken before this registration. epoll and kqueue wake
+            // when one is added, but `WSAPoll` keeps waiting on the set it was given, so the reactor is woken
+            // explicitly to take a fresh one.
+            __io_wake((*r).io)
         }
         __waiter_block(wait.waiter)
         __waiter_free(wait.waiter)

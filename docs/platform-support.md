@@ -153,9 +153,8 @@ The reactor of stage 2.4 (`spec/io.md`) has one implementation per family: `epol
 `kqueue` with an `EVFILT_USER` event on macOS, and a completion port with a `WSAPoll` readiness wait and a loopback
 UDP wakeup on Windows (`crates/burdin_codegen/src/taskrt/reactor_*.ll`). The socket calls use the platform's C
 library (Winsock on Windows, where `ws2_32` is linked), and the helper pool and timers are the same code everywhere.
-As with the scheduler, the Linux x86-64 path is the one that has been run: the macOS and Windows reactors are written
-to the same contracts, and their first run is the CI jobs for those platforms. `tests/s2_io` is the check, and its
-stress tests run 20 times in every CI job's debug and release profiles.
+Each backend is exercised by the CI job for its family: `tests/s2_io` runs in the Linux, macOS, and Windows jobs, and
+its stress tests run 20 times in each job's debug and release profiles.
 
 ### Not platform-specific
 

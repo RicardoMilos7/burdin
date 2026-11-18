@@ -274,9 +274,10 @@ a blocking extern exists. `time.sleep` parks a task instead of holding a worker.
 `IoErrorKind` the connection, address, and reachability kinds, with the errno and Winsock tables extended
 (`burdin_tir::ioerror`). The new code is E0290 (invalid `blocking`), and `tests/s2_io/` has 21 tests, including a TCP
 echo server, UDP, DNS, read timeouts, a FIFO whose blocking open would deadlock without the pool, and two stress tests
-that CI repeats 20 times in both profiles. The Windows reactor uses a completion port for finished helper calls, a
-`WSAPoll` readiness wait, and a loopback UDP wakeup; the macOS path uses `kqueue`, and neither has been run yet (only
-Linux x86-64 has).
+that CI repeats 20 times in both profiles. The Windows reactor uses a completion port for finished helper calls, a `WSAPoll` readiness wait, and a loopback
+UDP wakeup sent from a second socket (Winsock serializes the socket a thread is polling, so the polled socket cannot
+wake itself); the macOS path uses `kqueue`. Every CI job runs `tests/s2_io` on its own platform, and the Windows
+socket and pool paths were also run locally on Windows x86-64 while fixing that job.
 
 The forty-second session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
 package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component

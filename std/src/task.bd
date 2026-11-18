@@ -369,6 +369,12 @@ priv fn __finish(w: CPtr<Worker>, t: CPtr<Task>) {
         }
         (*t).refs = (*t).refs - 1
         let last = (*t).refs == 0
+        // The record is freed before anyone is told the task finished. A waiter that wakes (a scope's task, or the
+        // thread waiting on the condition variable) may run a leak check at once, and the record must already be
+        // gone. Only a scope waiter can wake when this is the last reference, and it does not read the record.
+        if last {
+            __dealloc(t as CPtr<u8>, 0, 8)
+        }
         __cond_broadcast((*s).done_cv)
         __mutex_unlock((*s).state_lock)
         if !waiter.is_null() {
@@ -376,9 +382,6 @@ priv fn __finish(w: CPtr<Worker>, t: CPtr<Task>) {
         }
         if !scope_waiter.is_null() {
             __ready(s, scope_waiter)
-        }
-        if last {
-            __dealloc(t as CPtr<u8>, 0, 8)
         }
     }
 }

@@ -27,13 +27,14 @@ declare void @InitializeConditionVariable(ptr)
 declare i32 @SleepConditionVariableSRW(ptr, ptr, i32, i32)
 declare void @WakeConditionVariable(ptr)
 declare i32 @GetActiveProcessorCount(i16)
+declare i32 @ioctlsocket(i64, i32, ptr)
 
 ; WSAPoll's event bits and the table's capacity.
 ; POLLRDNORM = 0x0100, POLLWRNORM = 0x0010.
 ; A `WSAPOLLFD` is 16 bytes: SOCKET fd, SHORT events, SHORT revents, padding.
 %Reactor = type {
   i64,    ; completion port
-  i64,    ; wake socket
+  i64,    ; wake socket (the one `WSAPoll` waits on)
   ptr,    ; wake address (`sockaddr_in`, 16 bytes)
   ptr,    ; readiness table (`%Entry`)
   ptr,    ; table lock (SRW)
@@ -42,7 +43,8 @@ declare i32 @GetActiveProcessorCount(i16)
   ptr,    ; job-queue condition variable
   ptr,    ; job queue head
   ptr,    ; job queue tail
-  i32     ; whether the helper threads were started
+  i32,    ; whether the helper threads were started
+  i64     ; sender socket: it wakes the poll without sending from the polled socket
 }
 
 %Job = type {
@@ -58,13 +60,23 @@ entry:
   ; Winsock, so a socket call made before `burdin_rt_net_socket` still works.
   %wsa = alloca [512 x i8], align 8
   %ws = call i32 @WSAStartup(i32 514, ptr %wsa)
-  %r = call ptr @calloc(i64 1, i64 88)
+  %r = call ptr @calloc(i64 1, i64 96)
   ; The completion port: INVALID_HANDLE_VALUE (-1) creates a new one with no file handle.
   %iocp = call i64 @CreateIoCompletionPort(i64 -1, i64 0, i64 0, i32 1)
   %at0 = getelementptr %Reactor, ptr %r, i32 0, i32 0
   store i64 %iocp, ptr %at0
-  ; The wake socket: a datagram socket bound to 127.0.0.1:0; `io_wake` sends one byte to it.
+  ; The wake socket: a datagram socket bound to 127.0.0.1:0; `io_wake` sends one byte to it. Sending from the
+  ; same socket while another thread waits in `WSAPoll` or `recv` on it deadlocks Winsock, so a second socket is
+  ; the sender.
   %wake = call i64 @WSASocketA(i32 2, i32 2, i32 0, ptr null, i32 0, i32 0)
+  %sender = call i64 @WSASocketA(i32 2, i32 2, i32 0, ptr null, i32 0, i32 0)
+  ; The sender never blocks: a full receive queue means a datagram is already waiting, so the poll will return and
+  ; take a fresh set without the one that would have been dropped.
+  %nb = alloca i32, align 4
+  store i32 1, ptr %nb
+  %nbr = call i32 @ioctlsocket(i64 %sender, i32 2147772030, ptr %nb)
+  %at11 = getelementptr %Reactor, ptr %r, i32 0, i32 11
+  store i64 %sender, ptr %at11
   %addr = call ptr @calloc(i64 1, i64 16)
   store i16 2, ptr %addr, align 2
   %port_at = getelementptr i8, ptr %addr, i64 2
@@ -391,13 +403,13 @@ done:
 
 define void @burdin_rt_io_wake(ptr %io) {
 entry:
-  %wake_at = getelementptr %Reactor, ptr %io, i32 0, i32 1
-  %wake = load i64, ptr %wake_at
+  %sender_at = getelementptr %Reactor, ptr %io, i32 0, i32 11
+  %sender = load i64, ptr %sender_at
   %addr_at = getelementptr %Reactor, ptr %io, i32 0, i32 2
   %addr = load ptr, ptr %addr_at
   %one = alloca [1 x i8], align 1
   store i8 1, ptr %one
-  %r = call i64 @sendto(i64 %wake, ptr %one, i64 1, i32 0, ptr %addr, i32 16)
+  %r = call i64 @sendto(i64 %sender, ptr %one, i64 1, i32 0, ptr %addr, i32 16)
   ret void
 }
 

@@ -57,12 +57,16 @@ reactor is three things:
   * Linux: `epoll`, with an `eventfd` in the set as the wakeup token.
   * macOS: `kqueue`, with an `EVFILT_USER` event as the wakeup token.
   * Windows: an I/O completion port carries finished helper calls, Winsock `WSAPoll` reports socket readiness, and a
-    loopback UDP socket wakes the poll. (A fully overlapped, per-operation I/O path for Windows is a later refinement;
-    the socket layer is readiness-based, so it waits the same way on every platform.)
+    loopback UDP datagram wakes the poll. The datagram is sent from a second socket, because Winsock serializes the
+    socket a thread is polling or receiving on, so the polled socket cannot also be the sender. (A fully overlapped,
+    per-operation I/O path for Windows is a later refinement; the socket layer is readiness-based, so it waits the
+    same way on every platform.)
 * **The reactor thread**, a Burdin thread started with `__thread_start`. It waits for events or the nearest deadline,
   claims each fired wait exactly once, wakes the waiting task or thread, and repeats. It is not a worker: the tasks it
   wakes run on the scheduler's workers.
-* **The timer list**, sorted by deadline, and its lock. A new timer wakes the reactor so it recomputes its wait.
+* **The timer list**, sorted by deadline, and its lock. A new timer and a new descriptor registration each wake the
+  reactor so it recomputes its wait: `epoll` and `kqueue` take a new set when one is added, but `WSAPoll` keeps
+  waiting on the set it was given.
 
 A **wait record** (`__Wait`) is allocated on the waiting task's stack. The runtime reads two fields of it by fixed
 offset: the first word is the result-list link and the field at offset 24 is the event kind (1 ready, 2 completed).

@@ -7194,6 +7194,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         if self.windows { self.i64() } else { self.i32() }
     }
 
+    /// The return type of the calls that report a byte count or `-1`: `int` on Windows and `ssize_t` on Unix.
+    /// Declaring the real width matters: a 32-bit `-1` read as 64 bits would look like a byte count.
+    fn count_ty(&self) -> IntType<'ctx> {
+        if self.windows { self.i32() } else { self.i64() }
+    }
+
     /// An integer widened to `i64` (by sign extension when it is narrower).
     fn widen_i64(&mut self, value: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
         if value.get_type().get_bit_width() == 64 {
@@ -7605,7 +7611,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let send = libc(
             self.module,
             "send",
-            i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
+            self.count_ty().fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
         );
         let raw = self
             .call(send, &[fd.into(), data.into(), len.into(), i32_ty.const_zero().into()])?
@@ -7648,7 +7654,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let sendto = libc(
             self.module,
             "sendto",
-            i64_ty.fn_type(
+            self.count_ty().fn_type(
                 &[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into(), ptr_ty.into(), i32_ty.into()],
                 false,
             ),
@@ -7737,7 +7743,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 let recvfrom = libc(
                     self.module,
                     "recvfrom",
-                    i64_ty.fn_type(
+                    self.count_ty().fn_type(
                         &[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()],
                         false,
                     ),
@@ -7758,7 +7764,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 let recv = libc(
                     self.module,
                     "recv",
-                    i64_ty.fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
+                    self.count_ty().fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
                 );
                 self.call(recv, &[fd.into(), dest.into(), max.into(), i32_ty.const_zero().into()])?
                     .expect("recv returns a count")
@@ -7956,40 +7962,24 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.position_at_end(next);
         let addr_at = self.offset(entry, self.usize_ty.const_int(ADDRINFO_ADDR_OFFSET, false))?;
         let addr = self.b.build_load(ptr_ty, addr_at, "dns.addr").map_err(llvm_err)?.into_pointer_value();
-        // `inet_ntop` takes the 4-byte address, not the whole `sockaddr_in`.
+        // `inet_ntop` takes the 4-byte address, not the whole `sockaddr_in`. Winsock's `InetNtopA` is a macro for
+        // it, and `ws2_32.lib` exports the `inet_ntop` symbol, so the same name works on both platforms.
         let in_addr = self.offset(addr, self.usize_ty.const_int(SOCKADDR_ADDR_OFFSET, false))?;
         let text = self.b.build_alloca(self.i8().array_type(16), "dns.text").map_err(llvm_err)?;
-        if self.windows {
-            let inet = libc(
-                self.module,
-                "InetNtopA",
-                ptr_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false),
-            );
-            self.call(
-                inet,
-                &[
-                    i32_ty.const_int(u64::from(AF_INET as u32), false).into(),
-                    in_addr.into(),
-                    text.into(),
-                    i32_ty.const_int(16, false).into(),
-                ],
-            )?;
-        } else {
-            let inet = libc(
-                self.module,
-                "inet_ntop",
-                ptr_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false),
-            );
-            self.call(
-                inet,
-                &[
-                    i32_ty.const_int(u64::from(AF_INET as u32), false).into(),
-                    in_addr.into(),
-                    text.into(),
-                    i32_ty.const_int(16, false).into(),
-                ],
-            )?;
-        }
+        let inet = libc(
+            self.module,
+            "inet_ntop",
+            ptr_ty.fn_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false),
+        );
+        self.call(
+            inet,
+            &[
+                i32_ty.const_int(u64::from(AF_INET as u32), false).into(),
+                in_addr.into(),
+                text.into(),
+                i32_ty.const_int(16, false).into(),
+            ],
+        )?;
         let strlen = libc(self.module, "strlen", self.usize_ty.fn_type(&[ptr_ty.into()], false));
         let text_len = self.call(strlen, &[text.into()])?.expect("strlen returns a size").into_int_value();
         self.call(string_push_str, &[out.into(), text.into(), text_len.into()])?;
