@@ -1,0 +1,8 @@
+//% exit: 1
+
+// A syntax error stops before type checking, so only the syntax errors are reported.
+
+fn main() {
+    let = 5 //~ E0001
+    let x: i32 = "text"
+}

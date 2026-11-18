@@ -216,6 +216,11 @@ jobs:
       - name: Check burdin new
         run: python3 tests/check_new.py
 
+      # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
+      # reject exactly as a build does, without code generation or a linker (issue #237).
+      - name: Check burdin check
+        run: python3 tests/check_check.py
+
       - name: Check host target
         run: python3 tests/check_platform.py
 
@@ -422,6 +427,11 @@ jobs:
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
         run: python3 tests/check_new.py
+
+      # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
+      # reject exactly as a build does, without code generation or a linker (issue #237).
+      - name: Check burdin check
+        run: python3 tests/check_check.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -659,6 +669,11 @@ jobs:
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
         run: python tests/check_new.py
+
+      # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
+      # reject exactly as a build does, without code generation or a linker (issue #237).
+      - name: Check burdin check
+        run: python tests/check_check.py
 
       - name: Check host target
         run: python tests/check_platform.py

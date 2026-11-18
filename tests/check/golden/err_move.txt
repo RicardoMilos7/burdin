@@ -1,0 +1,2 @@
+err_move.bd:14:14: error[E0104]: this value is moved in a previous loop iteration; reinitialize it before the next one
+error: could not check err_move.bd (1 error)

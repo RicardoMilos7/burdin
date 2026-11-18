@@ -1,0 +1,2 @@
+packages/tests_error/src/main.bd:8:18: error[E0003]: expected `i32`, found `str`
+error: could not check packages/tests_error (1 error)

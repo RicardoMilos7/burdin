@@ -1,0 +1,5 @@
+err_types.bd:10:18: error[E0003]: expected `i32`, found `str`
+err_types.bd:11:13: error[E0004]: `double` takes 1 parameter(s), but 1 extra positional argument(s) were given
+err_types.bd:12:13: error[E0002]: unknown name `missing`
+err_types.bd:13:20: error[E0003]: expected `i32`, found `str`
+error: could not check err_types.bd (4 errors)

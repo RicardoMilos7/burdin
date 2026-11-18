@@ -1,0 +1,9 @@
+// `burdin check` needs an entry point, like `burdin build`: the error is at the start of the file. //~ E0002
+//% exit: 1
+//% stderr: the program has no `main` function
+
+// With `--tests` no `main` is needed (see the lib_tests package).
+
+fn helper(): i32 {
+    1
+}
