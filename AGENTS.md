@@ -45,6 +45,7 @@ python3 tests/check_parallel.py          check parallel parsing and deterministi
 python3 tests/check_diagnostics.py       check color, width, formats, error limits, and ordering (needs a built driver)
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
+python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
@@ -150,7 +151,7 @@ install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA
 .github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
 tests/                    conformance suite, README with the format and error codes, and the release scripts
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
-                          burdin_check, burdin_comptime, burdin_codegen, burdin_driver,
+                          burdin_check, burdin_comptime, burdin_codegen, burdin_driver, burdin_fmt (the formatter),
                           burdin_bench (generated inputs and `cargo bench` targets),
                           burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin

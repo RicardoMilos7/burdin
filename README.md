@@ -22,6 +22,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
 | [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, parallelism, output capture, isolation, and discovery. |
+| [`spec/fmt.md`](spec/fmt.md) | The behavior of `burdin fmt`: the one style (4-space indentation, 120 columns), comments, blank lines, the magic trailing comma, `use` sorting and grouping, doc-comment code blocks, range formatting, and the command line. |
 | [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the minimal `bindgen`. |
 | [`spec/tasks.md`](spec/tasks.md) | Tasks, the work-stealing scheduler, `yield`, scoped tasks that borrow, panics in tasks, and OS threads (stage 2.1). |
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
@@ -31,6 +32,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Shipped milestones. |
 | [`crates/burdin_fuzz/`](crates/burdin_fuzz/) | The lexer/parser fuzzer and its committed corpus. |
+| [`crates/burdin_fmt/`](crates/burdin_fmt/) | The formatter behind `burdin fmt`, with its unit, corpus, and fuzz tests. |
 | [`std/README.md`](std/README.md) | The stage 0 standard library. |
 | [`Burdin Language Design.md`](Burdin%20Language%20Design.md) | The full language design, including features after stage 0. |
 
@@ -125,7 +127,7 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `explain`, and `bindgen`. This section is the
+The `burdin` command has the subcommands `build`, `run`, `test`, `fmt`, `explain`, and `bindgen`. This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
@@ -138,6 +140,8 @@ usage:
   burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
               [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
               [--comptime-steps <n>] [diagnostics]
+  burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
+  burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin --version
@@ -155,6 +159,12 @@ test options:
   --include-ignored    run ignored tests too
   --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
   -v, --verbose        print the output of passing tests too
+
+fmt options:
+  --check                  change nothing; list the files that are not formatted and exit with status 1
+  --stdin                  format standard input to standard output
+  --stdin-filepath <path>  the path standard input stands for (names it in diagnostics, finds its package)
+  --range <lo>:<hi>        with --stdin, format only the items that overlap these byte offsets
 
 diagnostics:
   --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
@@ -335,6 +345,32 @@ passes, 1 when a test fails or compilation fails, and 2 for a usage error (an un
 conflicting flags) or a driver failure after loading. `tests/run_tests.py` reads the `FAIL ` prefix and the
 `test result: N passed, M failed` summary; the full behavior, including isolation and discovery, is
 [`spec/test-runner.md`](spec/test-runner.md), and `tests/check_test_runner.py` checks it black-box.
+
+### `burdin fmt`
+
+```
+burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
+burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
+```
+
+Formats Burdin source in the one style `burdin fmt` has: it takes no options. Each `.bd` file named on the command
+line is rewritten in place, and a directory means every `.bd` file under it (hidden directories and `target` are
+skipped); with no path it formats the current directory. The path of every file it changed is printed. A file that is
+already formatted is not written, and the result is always a fixed point: running `burdin fmt` again changes nothing.
+Comments and blank lines are kept, lines are at most 120 columns, a list with a trailing comma stays one element
+per line, `use` declarations are sorted and grouped (the standard library, the dependencies in `burdin.toml`, then the
+package), and the code in the fenced blocks of doc comments is formatted too. The formatter checks its own output
+with the compiler's parser: the formatted program must be the same program with the same comments, or the file is
+left alone and the failure is reported as a bug.
+
+`--check` writes nothing: it lists the files that are not formatted and exits 1 when there is one, for CI.
+`--stdin` reads one source from standard input and writes the formatted source to standard output, for editors;
+`--stdin-filepath` says which file it is (for diagnostics and the package whose dependencies group the `use`
+declarations) and `--range lo:hi` formats only the items that overlap those byte offsets. A source with a syntax error
+is not formatted: the compiler's diagnostics are printed and the exit status is 2. The status is 0 when everything is
+formatted, 1 when `--check` finds a file that is not, and 2 for a usage error, an unreadable file, a syntax error, or
+an internal formatter error. The full behavior is [`spec/fmt.md`](spec/fmt.md), and `tests/check_fmt.py` checks it
+black-box.
 
 ### `burdin --version`
 
@@ -525,7 +561,9 @@ Usage errors print `error: <message>` followed by the usage block.
 
 ## Fuzzing the lexer and parser
 
-`crates/burdin_fuzz` lexes and parses a committed corpus and deterministic mutations of it. `cargo test --workspace`
+`crates/burdin_fuzz` lexes and parses a committed corpus and deterministic mutations of it. The formatter has its own
+fuzz test, `crates/burdin_fmt/tests/fuzz.rs`, which formats the same inputs and requires that everything that parses
+formats to a fixed point. `cargo test --workspace`
 replays the corpus in every CI job, so a panic reintroduced by a change fails CI. The scheduled `fuzz` job runs a
 longer session through `tests/fuzz.py`; a found input is written under `fuzz-out/crashes` and is committed under
 `crates/burdin_fuzz/corpus/syntax/` together with its fix. See
@@ -554,6 +592,7 @@ $ tests/check_debug_info.py     # -g: DWARF, line table, and a gdb breakpoint wh
 $ tests/check_codegen_opt.py    # drop-flag elimination, bounds-check elision, shared glue
 $ tests/check_build_flags.py    # --version, --strip's budget, --lto, and PGO
 $ tests/check_parallel.py       # parallel parsing and deterministic diagnostics
+$ tests/check_fmt.py            # burdin fmt: golden outputs, idempotence, --check, --stdin, --range, grouping
 $ tests/check_release.py        # release workflow, archives, checksums, installers, and version channels
 ```
 

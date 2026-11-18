@@ -1,0 +1,19 @@
+fn main() {
+    let short = [1, 2, 3]
+    let kept = [
+        1,
+        2,
+        3,
+    ]
+    let joined = [1, 2, 3]
+    let call = add(
+        1,
+        2,
+    )
+    let point = Point {
+        x: 1,
+        y: 2,
+    }
+    let one_line = Point { x: 1, y: 2 }
+    let tuple = (1,)
+}

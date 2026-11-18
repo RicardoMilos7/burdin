@@ -150,6 +150,25 @@ fn std_package() -> PackageFiles {
     PackageFiles { name: "std".to_string(), dir: None, modules, deps: Vec::new(), build_allow: Vec::new(), root_module }
 }
 
+/// The names of the standard library's modules, which a `use` declaration may start with (`burdin fmt` groups them).
+pub fn std_module_names() -> Vec<String> {
+    std_package().modules.iter().filter_map(|m| m.path.first().cloned()).collect()
+}
+
+/// The directory of the nearest `burdin.toml` above `file`, if any.
+pub fn manifest_dir(file: &Path) -> Option<PathBuf> {
+    let absolute = std::path::absolute(file).ok()?;
+    absolute.ancestors().skip(1).find(|dir| dir.join("burdin.toml").is_file()).map(Path::to_path_buf)
+}
+
+/// The names a package's manifest gives its dependencies; empty when the manifest does not read.
+pub fn dependency_names(dir: &Path) -> Vec<String> {
+    match parse_manifest(&dir.join("burdin.toml")) {
+        Ok(manifest) => manifest.deps.into_iter().map(|(name, _)| name).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Adds the embedded standard library as a dependency of every package, unless a package already uses the
 /// name `std` (then that package is the standard library).
 fn attach_std(packages: &mut Vec<PackageFiles>) {

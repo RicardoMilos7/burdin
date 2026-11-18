@@ -107,52 +107,9 @@ impl Parser<'_> {
         }
     }
 
-    /// Grammar rule 8.2: after an identifier that starts with an uppercase letter, a `<` starts generic arguments
-    /// if a type list parses and its closing `>` is followed by `.`, `(`, or `{`. Otherwise the `<` is a comparison.
-    /// The test is a scan ahead, so a comparison never leaves a `>>` split in its wake.
+    /// Grammar rule 8.2 (`crate::lookahead::generic_args_ahead`).
     pub(super) fn generic_args_ahead(&self) -> bool {
-        let TokenKind::Ident(name) = self.kind() else { return false };
-        if !name.starts_with(|c: char| c.is_ascii_uppercase()) || !matches!(self.nth_kind(1), TokenKind::Lt) {
-            return false;
-        }
-        let continues = |i: usize| {
-            matches!(self.toks.get(i).map(|t| &t.kind), Some(TokenKind::Dot | TokenKind::LParen | TokenKind::LBrace))
-        };
-        let mut depth = 0i32;
-        // Parentheses and brackets inside a type (`Fn(i32)`, `(i32, i32)`) do not end the scan; only a closer
-        // that is not matched inside it can belong to the surrounding expression.
-        let mut parens = 0i32;
-        let mut i = self.pos + 1;
-        while let Some(t) = self.toks.get(i) {
-            match &t.kind {
-                TokenKind::Lt => depth += 1,
-                TokenKind::Gt => {
-                    depth -= 1;
-                    if depth <= 0 {
-                        return depth == 0 && continues(i + 1);
-                    }
-                }
-                // `>>` can close two levels; `>=` can never close a generic argument list.
-                TokenKind::Shr => {
-                    depth -= 2;
-                    if depth <= 0 {
-                        return depth == 0 && continues(i + 1);
-                    }
-                }
-                // A `{ ... }` inside the list is a const argument (`Matrix<f64, { N + 1 }, C>`).
-                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => parens += 1,
-                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
-                    if parens == 0 {
-                        return false;
-                    }
-                    parens -= 1;
-                }
-                TokenKind::Ge | TokenKind::Eof if parens == 0 => return false,
-                _ => {}
-            }
-            i += 1;
-        }
-        false
+        crate::lookahead::generic_args_ahead(&self.toks, self.pos)
     }
 
     /// One generic argument: a type, or a const argument (an integer literal or a `{ expr }`;
