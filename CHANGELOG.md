@@ -6,6 +6,18 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Tooling: `burdin new` (issue #228)
+
+- `burdin new <name>` creates the package directory `<name>` with `burdin.toml` (`[package]` with the name and version
+  `0.1.0`), `src/main.bd` (a hello-world `main`), and a `.gitignore` covering `target/` and the executable
+  `burdin build .` leaves in the package directory. The package name is the last component of the path and must be an
+  identifier that is not a reserved word and is not `std`; missing parent directories are created.
+- It never overwrites: an existing directory (empty or not), file, or link is refused with exit status 2 before anything
+  is written, and a failure while writing removes the directory it created. Usage errors and I/O failures also exit 2.
+- `crates/burdin_driver/src/new.rs` has unit tests for the files, names, nesting, and refusals; `tests/check_new.py`
+  black-boxes the command (golden contents, the new package builds, runs, and tests, refusals leave existing files
+  untouched, invalid names create nothing, the command line) and runs in every CI job.
+
 ### `burdin fmt` (issue #229)
 
 - `burdin fmt` formats Burdin source in one opinionated style with no options (`spec/fmt.md`): four-space indentation,
