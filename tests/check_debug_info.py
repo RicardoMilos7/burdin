@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Checks source-level debug information (issue #422). Needs a built driver; uses llvm-dwarfdump to read the
-DWARF (from the executable on Linux, from the .dSYM bundle on macOS) and gdb, when it is installed, to prove a
-breakpoint on a Burdin line and a local read work.
+"""Checks source-level debug information (issue #422) and the variable lifetimes of issue #571
+(`spec/debug.md`, DBG4). Needs a built driver; uses llvm-dwarfdump to read the DWARF (from the executable on
+Linux, from the .dSYM bundle on macOS) and gdb and lldb, when they are installed, to prove a breakpoint on a
+Burdin line, a local read, and the `<optimized out>` of a moved or dropped local work.
 
 BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin is used.
 
@@ -10,7 +11,9 @@ What it checks:
   * the DWARF has the source file and line table, a DW_TAG_subprogram per Burdin function, a
     DW_TAG_formal_parameter for each parameter, and a DW_TAG_variable for each local, with declaration lines;
   * with gdb installed, `break <file>:<line>` stops in the expected function and `print` reads the locals;
-  * the release profile with -g still carries the line table.
+  * the release profile with -g still carries the line table;
+  * a local that was moved out, dropped, or is not yet initialized reads as `<optimized out>` in gdb and as
+    `<variable not available>` in lldb, and a conditional move keeps its location (DBG4).
 """
 
 import re
@@ -226,6 +229,122 @@ with harness.temporary_dir("burdin-dbg-") as work:
         checks += 1
         if not re.search(r"Breakpoint 1, .*add", transcript):
             add_problem("gdb: the breakpoint did not stop in add")
+
+    # DBG4 (`spec/debug.md`): a local's location starts at its initialization and ends at the move or scope end
+    # the checker proved, so a debugger shows `<optimized out>` / `<variable not available>` instead of stale
+    # bytes, and a conditional move keeps its location.
+    harness.write_text(
+        work / "dbgkill.bd",
+        "fn consume(own s: String) {\n"
+        "    println(s.len().to_string())\n"
+        "}\n"
+        "\n"
+        "fn main() {\n"
+        "    let s = String.from(\"hello\")\n"
+        "    let t = s\n"
+        "    println(\"after move\")\n"
+        "    {\n"
+        "        let v = String.from(\"inner\")\n"
+        "        println(v.as_str())\n"
+        "    }\n"
+        "    println(\"after scope\")\n"
+        "    let mut c = String.from(\"maybe\")\n"
+        "    if c.len() > 1 {\n"
+        "        consume(c)\n"
+        "    }\n"
+        "    println(\"after conditional\")\n"
+        "}\n",
+    )
+    lifetimes = harness.run([burdin, "build", "dbgkill.bd", "-g", "-o", "dbgkill"], cwd=work)
+    checks += 1
+    if lifetimes.returncode != 0:
+        add_problem(
+            f"burdin build -g (dbgkill): exit status {lifetimes.returncode}: "
+            f"{harness.text(lifetimes.stderr).rstrip(chr(10))}"
+        )
+    else:
+        kill_exe = harness.executable_in(work, "dbgkill")
+        ran = harness.run([kill_exe], cwd=work)
+        if harness.text(ran.stdout) != "after move\ninner\nafter scope\n5\nafter conditional\n":
+            checks += 1
+            add_problem(f"dbgkill: the fixture's output changed: {harness.text(ran.stdout)!r}")
+
+        def check_lifetimes(debugger_name: str, read: str, unavailable: str) -> None:
+            """The five DBG4 assertions, one small session per stop point: (line, variable, gone?)."""
+            global checks
+            cases = [
+                (8, "t", False),  # after the move: `t` owns the value
+                (8, "s", True),  # ... and `s` was moved out of it
+                (13, "v", True),  # after the block: `v` was dropped at the scope end
+                (14, "c", True),  # before its `let`: `c` has no location yet
+                (18, "c", False),  # after the conditional move: `c` may still be moved, so it stays readable
+            ]
+            for line, variable, gone in cases:
+                transcript = read(line, variable)
+                checks += 1
+                has = unavailable in transcript
+                if has != gone:
+                    what = "is gone" if gone else "is still readable"
+                    add_problem(
+                        f"{debugger_name}: at dbgkill.bd:{line} `{variable}` should be {what} "
+                        f"({'<' + unavailable + '>' if gone else 'a value'}):\n{transcript}"
+                    )
+
+        if windows_host:
+            print("note: the Windows linker kept no DWARF; skipping the lifetime checks", file=sys.stderr)
+        else:
+            gdb = harness.which("gdb")
+            if gdb:
+
+                def gdb_read(line: int, variable: str) -> str:
+                    debugged = harness.run(
+                        [
+                            gdb,
+                            "-q",
+                            "-batch",
+                            "-nx",
+                            "-ex",
+                            "set debuginfod enabled off",
+                            "-ex",
+                            f"break dbgkill.bd:{line}",
+                            "-ex",
+                            "run",
+                            "-ex",
+                            f"print {variable}",
+                            kill_exe,
+                        ],
+                        cwd=work,
+                        merge=True,
+                    )
+                    return harness.text(debugged.stdout)
+
+                check_lifetimes("gdb", gdb_read, "<optimized out>")
+            else:
+                print("skip: gdb is not installed; the moved-local checks were not run", file=sys.stderr)
+            lldb = harness.find_llvm_tool("lldb")
+            if lldb:
+
+                def lldb_read(line: int, variable: str) -> str:
+                    debugged = harness.run(
+                        [
+                            lldb,
+                            "-b",
+                            "-o",
+                            f"breakpoint set --file dbgkill.bd --line {line}",
+                            "-o",
+                            "run",
+                            "-o",
+                            f"frame variable {variable}",
+                            kill_exe,
+                        ],
+                        cwd=work,
+                        merge=True,
+                    )
+                    return harness.text(debugged.stdout)
+
+                check_lifetimes("lldb", lldb_read, "<variable not available>")
+            else:
+                print("skip: lldb is not installed; the moved-local checks were not run", file=sys.stderr)
 
 print(f"Checked debug information ({checks} checks)")
 

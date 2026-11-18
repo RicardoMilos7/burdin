@@ -170,6 +170,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         self.debug_entry = Some(entry);
         self.debug_function(value, f);
+        // A parameter is initialized by the stores above, so its debug location starts here; `set_initialized`
+        // never runs for one (`spec/debug.md`, DBG4).
+        for p in &f.params {
+            self.debug_reopen(*p);
+        }
         // A function with no expressions (a generic stub, for instance) would otherwise inherit the previous
         // function's location for its return.
         self.debug_at(f.span);

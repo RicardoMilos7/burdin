@@ -79,6 +79,11 @@ struct SavedContext<'ctx, 'a> {
     debug_scope: Option<inkwell::debug_info::DISubprogram<'ctx>>,
     debug_file: Option<inkwell::debug_info::DIFile<'ctx>>,
     debug_entry: Option<BasicBlock<'ctx>>,
+    /// The per-function debug state of the function the glue interrupts: its location record, the debug variables
+    /// of its locals, and its kill sites (`spec/debug.md`, DBG4). Glue has no variables of its own.
+    debug_fn_location: Option<inkwell::debug_info::DILocation<'ctx>>,
+    debug_vars: Vec<Option<inkwell::debug_info::DILocalVariable<'ctx>>>,
+    debug_kills: Vec<(burdin_tir::LocalId, Span)>,
     dead_locals: HashSet<tir::LocalId>,
     bounds_facts: Vec<(tir::LocalId, tir::LocalId)>,
     /// The capture record a `FnOnce` body owns and must free on an early `return` too.

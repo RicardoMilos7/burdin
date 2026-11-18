@@ -372,6 +372,7 @@ impl FnCx<'_> {
             locals: child.locals,
             body: block,
             moved: Vec::new(),
+            debug_kills: Vec::new(),
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,

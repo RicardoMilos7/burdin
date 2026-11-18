@@ -31,10 +31,14 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
     let scoped_spawns: Vec<bool> = functions.iter().map(|f| is_scope_spawn(&f.name)).collect();
     let env = Env { defs: TypeDefs { structs, enums }, sigs: signatures, any_ifaces, scoped_spawns: &scoped_spawns };
     for func in functions.iter_mut().filter(|f| !f.symbolic) {
-        func.moved = moves::check_function(func, env, diags);
+        let (moved, debug_kills) = moves::check_function(func, env, diags);
+        func.moved = moved;
+        func.debug_kills = debug_kills;
     }
     for closure in &mut *program.closures {
-        closure.func.moved = moves::check_function(&closure.func, env, diags);
+        let (moved, debug_kills) = moves::check_function(&closure.func, env, diags);
+        closure.func.moved = moved;
+        closure.func.debug_kills = debug_kills;
     }
     for func in functions.iter().filter(|f| !f.symbolic) {
         borrows::check(func, env, &[], diags);
@@ -55,6 +59,7 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
             locals: c.locals.clone(),
             body: Block { stmts: Vec::new(), tail: Some(Box::new(c.value.clone())) },
             moved: Vec::new(),
+            debug_kills: Vec::new(),
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,

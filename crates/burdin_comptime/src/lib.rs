@@ -334,6 +334,7 @@ impl Rewriter<'_> {
             locals: t.locals.clone(),
             body: t.body.clone(),
             moved: t.moved.clone(),
+            debug_kills: t.debug_kills.clone(),
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,

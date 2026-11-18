@@ -29,6 +29,8 @@ const DW_ATE_FLOAT: u32 = 0x04;
 const DW_ATE_SIGNED: u32 = 0x05;
 const DW_ATE_UNSIGNED: u32 = 0x07;
 const DW_ATE_UTF: u32 = 0x10;
+/// `DW_OP_deref`: the variable's value is in memory at the address the value names.
+const DW_OP_DEREF: i64 = 0x06;
 
 /// The module's debug metadata: the builder, the compile unit, and the current function's scope.
 pub(crate) struct DebugInfo<'ctx> {
@@ -43,6 +45,14 @@ pub(crate) struct DebugInfo<'ctx> {
     /// The subprogram and file of the function being generated.
     pub(crate) scope: Option<DISubprogram<'ctx>>,
     pub(crate) file: Option<DIFile<'ctx>>,
+    /// The debug location of the function's declaration, reused for the location records that carry no
+    /// position of their own (a kill or a restore between statements).
+    pub(crate) fn_location: Option<DILocation<'ctx>>,
+    /// The debug variable of each local of the function being generated, indexed by local id.
+    pub(crate) vars: Vec<Option<DILocalVariable<'ctx>>>,
+    /// The whole-local kill sites of the function being generated (`spec/debug.md`, DBG4): the local and the
+    /// span of the statement that moves it out.
+    pub(crate) kills: Vec<(burdin_tir::LocalId, Span)>,
 }
 
 impl<'ctx> DebugInfo<'ctx> {
@@ -77,6 +87,9 @@ impl<'ctx> DebugInfo<'ctx> {
             building: HashSet::new(),
             scope: None,
             file: None,
+            fn_location: None,
+            vars: Vec::new(),
+            kills: Vec::new(),
         }
     }
 
@@ -94,19 +107,43 @@ impl<'ctx> DebugInfo<'ctx> {
         file
     }
 
-    /// Inserts a `dbg.declare` for `var` at the end of `block`. inkwell's wrapper for the LLVM 19+ API turns the
-    /// returned debug record into an `InstructionValue` and asserts, so the C call is made directly.
-    pub(crate) fn declare(
+    /// Ends the location of `var` from the end of `block`: a `dbg.value` naming an undefined value is LLVM's
+    /// kill, and a debugger shows `<optimized out>` for the variable afterwards (`spec/debug.md`, DBG4).
+    pub(crate) fn kill(
+        &self,
+        value: &inkwell::values::BasicValueEnum<'ctx>,
+        var: DILocalVariable<'ctx>,
+        location: DILocation<'ctx>,
+        block: BasicBlock<'ctx>,
+    ) {
+        let expr = self.builder.create_expression(vec![]);
+        // SAFETY: as `declare`, with `value` a constant of this module.
+        unsafe {
+            inkwell::llvm_sys::debuginfo::LLVMDIBuilderInsertDbgValueRecordAtEnd(
+                self.builder.as_mut_ptr(),
+                value.as_value_ref(),
+                var.as_mut_ptr(),
+                expr.as_mut_ptr(),
+                location.as_mut_ptr(),
+                block.as_mut_ptr(),
+            );
+        }
+    }
+
+    /// Restores the location of `var` to the storage `slot` at the end of `block`: a `dbg.value` naming
+    /// the slot with `DW_OP_deref` says the variable's value lives in memory there, which is what `dbg.declare`
+    /// said before a kill ended it (`spec/debug.md`, DBG4).
+    pub(crate) fn reopen(
         &self,
         slot: PointerValue<'ctx>,
         var: DILocalVariable<'ctx>,
         location: DILocation<'ctx>,
         block: BasicBlock<'ctx>,
     ) {
-        let expr = self.builder.create_expression(vec![]);
-        // SAFETY: the builder, the storage, the variable, and the block belong to the same module.
+        let expr = self.builder.create_expression(vec![DW_OP_DEREF]);
+        // SAFETY: as `declare`.
         unsafe {
-            inkwell::llvm_sys::debuginfo::LLVMDIBuilderInsertDeclareRecordAtEnd(
+            inkwell::llvm_sys::debuginfo::LLVMDIBuilderInsertDbgValueRecordAtEnd(
                 self.builder.as_mut_ptr(),
                 slot.as_value_ref(),
                 var.as_mut_ptr(),
@@ -166,7 +203,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.debug_declare_locals(f, scope, file, line, column);
     }
 
-    /// Declares every local and parameter in the function's entry block, so a debugger can read them there.
+    /// Creates the debug variables of every local and parameter. No `dbg.declare` is emitted: a declare pins a
+    /// stack slot for the whole function and LLVM then drops every later location change, so the locations are
+    /// driven by `dbg.value` records alone (`spec/debug.md`, DBG4). A parameter's location is restored right
+    /// after its store (by the caller of this method); a local's location starts at its first initialization,
+    /// ends at the move or scope end the kill sites name, and shows `<optimized out>` in between — which is
+    /// nothing at all, since a variable without a record has no location yet.
     fn debug_declare_locals(
         &mut self,
         f: &'a tir::Function,
@@ -175,9 +217,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         line: u32,
         column: u32,
     ) {
-        let Some(entry) = self.debug_entry else { return };
         let body_scope = scope.as_debug_info_scope();
-        let mut declares = Vec::new();
+        let mut var_of: Vec<Option<DILocalVariable<'ctx>>> = vec![None; f.locals.len()];
         for (index, local) in f.locals.iter().enumerate() {
             let Some(slot) = self.slots.get(index).copied().flatten() else { continue };
             let ty = self.debug_type(&local.ty);
@@ -209,13 +250,55 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     )
                 }
             };
-            declares.push((slot, var));
+            var_of[index] = Some(var);
+            let _ = slot;
         }
-        let db = self.debug.as_ref().expect("debug info is on");
+        let db = self.debug.as_mut().expect("debug info is on");
         let location = db.builder.create_debug_location(self.cx, line, column, body_scope, None);
-        for (slot, var) in declares {
-            db.declare(slot, var, location, entry);
-        }
+        db.fn_location = Some(location);
+        db.vars = var_of;
+        db.kills = f.debug_kills.iter().map(|k| (k.local, k.span)).collect();
+    }
+
+    /// The debug variable of local `id`, when debug information is on and the local has storage.
+    pub(super) fn debug_var(&self, id: tir::LocalId) -> Option<DILocalVariable<'ctx>> {
+        let db = self.debug.as_ref()?;
+        db.vars.get(id.0).copied().flatten()
+    }
+
+    /// Restores the location of local `id` at the current position: the place was just initialized, so what a
+    /// debugger reads is the slot again (`spec/debug.md`, DBG4).
+    pub(super) fn debug_reopen(&mut self, id: tir::LocalId) {
+        let Some(slot) = self.slots.get(id.0).copied().flatten() else { return };
+        let Some(var) = self.debug_var(id) else { return };
+        let Some(block) = self.builder.get_insert_block() else { return };
+        let db = self.debug.as_ref().expect("debug info is on");
+        let location = db.fn_location.expect("the function's location exists");
+        db.reopen(slot, var, location, block);
+    }
+
+    /// Ends the location of local `id` at the current position, before the value it names is dropped or freed.
+    pub(super) fn debug_kill(&mut self, id: tir::LocalId) {
+        let Some(var) = self.debug_var(id) else { return };
+        let Some(block) = self.builder.get_insert_block() else { return };
+        let undef = match self.llvm_ty(&self.locals[id.0].ty) {
+            Some(t) => super::undef(t),
+            None => self.cx.i64_type().get_undef().into(),
+        };
+        let db = self.debug.as_ref().expect("debug info is on");
+        let location = db.fn_location.expect("the function's location exists");
+        db.kill(&undef, var, location, block);
+    }
+
+    /// The locals whose kill site is inside `span`: the statement at `span` is the last one they are alive at
+    /// (`spec/debug.md`, DBG4).
+    pub(super) fn debug_kills_in(&self, span: Span) -> Vec<tir::LocalId> {
+        let Some(db) = self.debug.as_ref() else { return Vec::new() };
+        db.kills
+            .iter()
+            .filter(|(_, at)| at.file == span.file && at.lo >= span.lo && at.hi <= span.hi)
+            .map(|(local, _)| *local)
+            .collect()
     }
 
     /// The debug type of `ty`, memoized. Unsupported types become an unnamed type with their name.
