@@ -1,0 +1,70 @@
+use io
+//! not a doc
+
+/// A point.
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Pair<T> {
+    left: T,
+    right: T,
+}
+
+enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+    Unit,
+}
+
+error enum ParseFailure {
+    Empty "empty",
+    Bad(String) "bad {0}",
+}
+
+interface Area {
+    fn area(self): f64
+}
+
+Point {
+    fn new(x: i32, y: i32): Point {
+        Point { x: x, y: y }
+    }
+    fn sum(self): i32 {
+        self.x + self.y
+    }
+}
+
+fn add(a: i32, b: i32): i32 {
+    a + b
+}
+
+fn first<T>(p: Pair<T>): T where T: Copy {
+    p.left
+}
+
+fn main() {
+    let p = Point.new(1, 2)
+    let total = p.sum()
+    if total > 3 {
+        println("big")
+    } else if total > 1 {
+        println("mid")
+    } else {
+        println("small")
+    }
+    for i in 0..10 {
+        println("{i}")
+    }
+    while total < 100 {
+        total = total * 2
+    }
+    let v = List<i32>.new()
+    v.push(1)
+    match total {
+        1 => println("one"),
+        2 | 3 => { println("two or three") }
+        else => {}
+    }
+}

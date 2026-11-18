@@ -4,6 +4,7 @@ pub mod ast;
 pub mod derive;
 pub mod error_item;
 pub mod lexer;
+pub mod lookahead;
 pub mod parser;
 pub mod token;
 

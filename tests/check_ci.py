@@ -31,7 +31,7 @@ This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18, #
   * a conformance test still exercises --link-lib LLVM-C;
   * the documentation check (which reads the driver contract in README.md) runs in every job;
   * every job runs the diagnostics presentation check and the error-code reference check;
-  * every job runs the black-box check of the test runner;
+  * every job runs the black-box check of the test runner and the black-box check of the formatter;
   * every job runs the dependency and license audit after `cargo build`, with the license metadata
     verification required;
   * every job runs the platform support check, and docs/platform-support.md exists and is linked;
@@ -209,6 +209,8 @@ def check_fuzz(block: str) -> None:
         add_problem("ci.yml: fuzz job: does not replay the corpus with cargo test -p burdin_fuzz")
     if "tests/fuzz.py" not in block:
         add_problem("ci.yml: fuzz job: does not run tests/fuzz.py")
+    if "-p burdin_fmt --test fuzz" not in block:
+        add_problem("ci.yml: fuzz job: does not fuzz the formatter with cargo test -p burdin_fmt --test fuzz")
     if "github.run_id" not in block:
         add_problem("ci.yml: fuzz job: uses the same generator seed every run (no github.run_id)")
     if "actions/upload-artifact@v4" not in block:
@@ -311,6 +313,7 @@ required_steps = [
     "tests/check_diagnostics.py",
     "tests/check_error_docs.py",
     "tests/check_test_runner.py",
+    "tests/check_fmt.py",
     "tests/check_lint.py",
     "tests/check_platform_support.py",
     "tests/check_release.py",
@@ -415,6 +418,7 @@ check_script(
     "tests/check_build_flags.py", "burdin --version", "--strip", "--lto", "--pgo-use", "147456"
 )
 check_script("tests/check_parallel.py", "BURDIN_JOBS", "unified_diff")
+check_script("tests/check_fmt.py", "--check", "--stdin", "--range", "idempotent", "TRICKY", "E0001")
 check_script(
     "tests/check_e9000.py", "e9000-audit.md", "Code::UNSUPPORTED", "// e9000:", "run_tests.py", "Stage 1"
 )
@@ -547,6 +551,7 @@ scripts = [
     "tests/check_diagnostics.py",
     "tests/check_error_docs.py",
     "tests/check_test_runner.py",
+    "tests/check_fmt.py",
     "tests/check_lint.py",
     "tests/check_debug_info.py",
     "tests/check_codegen_opt.py",

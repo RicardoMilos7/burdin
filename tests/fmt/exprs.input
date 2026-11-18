@@ -1,0 +1,42 @@
+fn main() {
+    let f = |x: i32, y: i32| x + y
+    let g = |x| { let y = x * 2; y + 1 }
+    let h = |x| x
+    let n = if a { 1 } else { 2 }
+    let m = match x { Some(v) => v, None => 0 }
+    let s = "interp {a + b} text"
+    let r = a orelse b
+    let t = x as f64
+    let u = &x
+    let w = &mut y
+    let z = -x + !flag
+    let arr = [0; 10]
+    let idx = arr[i + 1]
+    let range = 0..=10
+    let slice = items[1..3]
+    let opt = a?.b?.c
+    let cast = (a + b) * c
+    let generic = Map<String, List<i32>>.new()
+    let nested = Outer<Inner<i32>>.new()
+    x = x + 1
+    loop {
+        if done { break }
+        continue
+    }
+    return
+}
+
+fn select_it(a: Channel<i32>, b: Channel<i32>) {
+    select {
+        v = a.recv() => { println("{v}") }
+        w = b.recv() => { println("{w}") }
+        default => { println("none") }
+    }
+}
+
+fn with_defaults(a: i32, b: i32 = 5) {}
+extern "C" { fn c_call(x: i32): i32 }
+unsafe fn raw(p: CPtr<u8>) {}
+const LIMIT: i32 = 100
+type Ints = List<i32>
+test "adds" { assert_eq(1 + 1, 2) }

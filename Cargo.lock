@@ -64,10 +64,20 @@ dependencies = [
  "burdin_codegen",
  "burdin_comptime",
  "burdin_diag",
+ "burdin_fmt",
  "burdin_lint",
  "burdin_sema",
  "burdin_syntax",
  "burdin_tir",
+]
+
+[[package]]
+name = "burdin_fmt"
+version = "0.1.0"
+dependencies = [
+ "burdin_diag",
+ "burdin_fuzz",
+ "burdin_syntax",
 ]
 
 [[package]]

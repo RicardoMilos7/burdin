@@ -10,6 +10,7 @@ publish = false
 [workspace.dependencies]
 burdin_diag = { path = "crates/burdin_diag" }
 burdin_syntax = { path = "crates/burdin_syntax" }
+burdin_fmt = { path = "crates/burdin_fmt" }
 burdin_tir = { path = "crates/burdin_tir" }
 burdin_sema = { path = "crates/burdin_sema" }
 burdin_check = { path = "crates/burdin_check" }

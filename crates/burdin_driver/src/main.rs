@@ -1,9 +1,11 @@
-//! The `burdin` command: `build`, `run`, `test`, `explain`, and `bindgen`. The contract is documented in `README.md`
+//! The `burdin` command: `build`, `run`, `test`, `fmt`, `lint`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
 //! at the repository root (`The driver contract`) and summarized at the top of tests/run_tests.py.
 
 mod bindgen;
 mod build;
+mod fmt;
 mod lint;
+mod new;
 mod package;
 mod test_runner;
 
@@ -23,12 +25,15 @@ usage:
   burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
               [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
               [--comptime-steps <n>] [diagnostics]
+  burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
+  burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
               [--comptime-steps <n>] [diagnostics]
   burdin lint --list
   burdin lint --explain <lint>
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
+  burdin new <name>
   burdin --version
 
 compile options:
@@ -49,6 +54,12 @@ test options:
   --include-ignored    run ignored tests too
   --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
   -v, --verbose        print the output of passing tests too
+
+fmt options:
+  --check                  change nothing; list the files that are not formatted and exit with status 1
+  --stdin                  format standard input to standard output
+  --stdin-filepath <path>  the path standard input stands for (names it in diagnostics, finds its package)
+  --range <lo>:<hi>        with --stdin, format only the items that overlap these byte offsets
 
 diagnostics:
   --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
@@ -354,6 +365,9 @@ fn driver_main() -> ExitCode {
         println!("{}", version_text());
         return ExitCode::SUCCESS;
     }
+    if argv.first().map(String::as_str) == Some("fmt") {
+        return fmt::run(&argv[1..]);
+    }
     if argv.first().map(String::as_str) == Some("explain") {
         return explain(&argv[1..]);
     }
@@ -362,6 +376,9 @@ fn driver_main() -> ExitCode {
     }
     if argv.first().map(String::as_str) == Some("lint") {
         return lint::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("new") {
+        return new::run(&argv[1..]);
     }
     let args = match parse_args(&argv) {
         Ok(a) => a,

@@ -1,0 +1,28 @@
+use mem
+use io
+
+/// Doc comment
+struct Point { x: i32, y: i32 }
+
+enum Shape { Circle(f64), Rect { w: f64, h: f64 }, Unit }
+
+fn add(a:i32,b:i32):i32{a+b}
+
+fn main() {
+    let p = Point { x: 1, y: 2 } // trailing
+    // leading
+    let total = p.x + p.y
+    if total > 3 { println("big") } else { println("small") }
+    for i in 0..10 {
+        println("{i}")
+    }
+    let v = List<i32>.new()
+    v.push(1)
+    match total {
+        1 => println("one"),
+        2 | 3 => {
+            println("two or three")
+        }
+        else => {}
+    }
+}

@@ -271,6 +271,13 @@ pointer takes the origin of the storage that holds the pointer, so a handle's me
 decisions are `spec/shared.md` SH1-SH11 and `tests/s2_shared/` has 26 tests, including stress tests that CI repeats 20
 times in both profiles.
 
+The forty-first session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
+package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component
+(an identifier, not a reserved word, not `std`), and refuses an existing path with exit status 2 before writing
+anything. The `.gitignore` lists `/target/` and the executable `burdin build .` leaves in the package directory,
+because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
+CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
+
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
 the new crate `crates/burdin_comptime` (depending only on `burdin_tir` and `burdin_diag`), run by the driver after
@@ -1715,6 +1722,35 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 - **`clone` is an ordinary method, not `Clone`.** Writing a built-in interface by hand is still not implemented
   (issue #402); the E9000 says so. `Channel<T>: Iterable<T>` works.
 - **Not done, on purpose:** a timeout arm and timers (2.4), nil channels, and rendezvous channels.
+
+## Decided in the forty-first session (`burdin fmt`, issue #229)
+
+- **The formatter has its own parser.** The compiler's syntax tree is lossy (a `select` is rewritten, impl parameters
+  are desugared, `use` declarations are separated, parentheses and comments are gone), so `burdin_fmt` reads the lexer's
+  tokens and lays them out itself, sharing only the look-ahead rules (`burdin_syntax::lookahead`). The compiler's parser
+  is the judge: the source must parse, and the output must parse to the same span-free tree and the same comment
+  multiset, or the result is an internal error and the file is left alone (`crates/burdin_fmt/src/verify.rs`). The
+  layout is then repeated until it stops changing (at most four rounds), which makes idempotence hold by construction
+  for the odd comment placements that move on the first pass.
+- **One style, written down in `spec/fmt.md` (FM1-FM13).** 4 spaces, 120 columns, magic trailing comma, leading
+  `&&`/`||`/`orelse` and trailing other operators, method chains broken before `.` from two calls, one member per line
+  in type bodies, `;` dropped, short single-expression blocks inline only inside expressions. These are taste; change
+  them in the spec and the goldens together (`tests/fmt/*.golden`).
+- **`use` merging is conservative.** Only brace lists with the same path merge; `use a.b` (maybe a module) and
+  `use a.{b}` (an item) stay apart; a declaration with a comment is never merged. Groups are std (`std` or a standard
+  module), the dependencies named in `burdin.toml`, then the package.
+- **Doc-comment code blocks** (FM10) are formatted as items, else as a function body, at the width left after the
+  indentation, and only when the result passes the same program and idempotence checks.
+- **Range formatting** (FM11) reformats whole top-level items overlapping the range and copies the rest verbatim; it does
+  not sort `use` declarations.
+- **Known limits.** A comment between two tokens where the grammar allows no line break moves to the end of its line;
+  two such line comments go on separate lines. `1.` followed by a line break and an integer keeps the break so it is not
+  read as a float. Nothing formats a file with syntax errors. `burdin fmt` is not wired to the language server
+  (stage 3); `--range` and `--stdin` are its contract.
+- **Tests:** `tests/check_fmt.py` (fixtures in `tests/fmt/`, black-box), and in `crates/burdin_fmt`: unit tests, the
+  repository corpus, a fuzz round trip (`BURDIN_FMT_FUZZ_SEED` and `BURDIN_FMT_FUZZ_MUTATIONS` choose a longer session),
+  and the regressions the fuzzer found. A change to the style regenerates the goldens with
+  `burdin fmt --stdin < tests/fmt/<name>.input > tests/fmt/<name>.golden` and the diff is reviewed.
 
 ## Decided in the fortieth session
 
