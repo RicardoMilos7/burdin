@@ -236,8 +236,8 @@ impl Loader {
     }
 }
 
-struct Manifest {
-    name: String,
+pub(crate) struct Manifest {
+    pub(crate) name: String,
     /// `(dependency name, path relative to the manifest)`.
     deps: Vec<(String, String)>,
     /// The dependency names whose build scripts the manifest grants (`[build] allow`).
@@ -252,7 +252,7 @@ fn parse_manifest(path: &Path) -> Result<Manifest, String> {
     parse_manifest_text(&text, path)
 }
 
-fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
+pub(crate) fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
     let mut section = String::new();
     let mut name: Option<String> = None;
     let mut deps: Vec<(String, String)> = Vec::new();
@@ -477,7 +477,7 @@ fn walk(dir: &Path, prefix: &mut Vec<String>, modules: &mut Vec<ModuleFile>) -> 
 }
 
 /// `[A-Za-z_][A-Za-z0-9_]*`, the identifiers the lexer accepts.
-fn is_ident(name: &str) -> bool {
+pub(crate) fn is_ident(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else { return false };
     (first.is_ascii_alphabetic() || first == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')

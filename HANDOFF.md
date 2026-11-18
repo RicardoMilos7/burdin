@@ -256,6 +256,13 @@ pointer takes the origin of the storage that holds the pointer, so a handle's me
 decisions are `spec/shared.md` SH1-SH11 and `tests/s2_shared/` has 26 tests, including stress tests that CI repeats 20
 times in both profiles.
 
+The forty-first session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
+package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component
+(an identifier, not a reserved word, not `std`), and refuses an existing path with exit status 2 before writing
+anything. The `.gitignore` lists `/target/` and the executable `burdin build .` leaves in the package directory,
+because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
+CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
+
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
 the new crate `crates/burdin_comptime` (depending only on `burdin_tir` and `burdin_diag`), run by the driver after

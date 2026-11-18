@@ -1,8 +1,9 @@
-//! The `burdin` command: `build`, `run`, `test`, `explain`, and `bindgen`. The contract is documented in `README.md`
+//! The `burdin` command: `build`, `run`, `test`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
 //! at the repository root (`The driver contract`) and summarized at the top of tests/run_tests.py.
 
 mod bindgen;
 mod build;
+mod new;
 mod package;
 mod test_runner;
 
@@ -24,6 +25,7 @@ usage:
               [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
+  burdin new <name>
   burdin --version
 
 compile options:
@@ -349,6 +351,9 @@ fn driver_main() -> ExitCode {
     }
     if argv.first().map(String::as_str) == Some("bindgen") {
         return bindgen::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("new") {
+        return new::run(&argv[1..]);
     }
     let args = match parse_args(&argv) {
         Ok(a) => a,
