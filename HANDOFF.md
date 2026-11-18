@@ -1730,7 +1730,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   (issue #402); the E9000 says so. `Channel<T>: Iterable<T>` works.
 - **Not done, on purpose:** a timeout arm and timers (2.4), nil channels, and rendezvous channels.
 
-## Decided in the forty-first session (`burdin fmt`, issue #229)
+## Decided in the forty-third session (`burdin fmt`, issue #229)
 
 - **The formatter has its own parser.** The compiler's syntax tree is lossy (a `select` is rewritten, impl parameters
   are desugared, `use` declarations are separated, parentheses and comments are gone), so `burdin_fmt` reads the lexer's

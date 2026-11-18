@@ -349,9 +349,10 @@ impl Fmt<'_> {
 
     // ----- interfaces, impls, extern ---------------------------------------------------------------------------
 
-    /// `{ [priv] fn ... }`: methods, one per line, blank lines kept. With `body_optional` a method may be a bare
-    /// signature.
-    fn method_list(&mut self, body_optional: bool) -> R<D> {
+    /// `{ [priv] [blocking] fn ... }`: methods, one per line, blank lines kept. With `body_optional` a method may be
+    /// a bare signature; with `blocking_ok` the contextual `blocking` marker is accepted, as it is inside
+    /// `extern "C" { ... }` (`spec/io.md`, IO4).
+    fn method_list(&mut self, body_optional: bool, blocking_ok: bool) -> R<D> {
         let open = self.open(&TokenKind::LBrace, true)?;
         self.depth += 1;
         let mut members = Vec::new();
@@ -363,6 +364,10 @@ impl Fmt<'_> {
             let lead = self.start_of_line();
             let mut parts = vec![lead];
             if self.at(&TokenKind::Priv) {
+                parts.push(self.tok_doc());
+                parts.push(space());
+            }
+            if blocking_ok && self.at_word("blocking") {
                 parts.push(self.tok_doc());
                 parts.push(space());
             }
@@ -389,7 +394,7 @@ impl Fmt<'_> {
             parts.push(self.bounds()?);
         }
         parts.push(space());
-        parts.push(self.method_list(true)?);
+        parts.push(self.method_list(true, false)?);
         Ok(concat(parts))
     }
 
@@ -406,7 +411,7 @@ impl Fmt<'_> {
         } else {
             parts.push(space());
         }
-        parts.push(self.method_list(false)?);
+        parts.push(self.method_list(false, false)?);
         Ok(concat(parts))
     }
 
@@ -414,7 +419,7 @@ impl Fmt<'_> {
     fn derive_decl(&mut self) -> R<D> {
         let kw = self.tok_doc();
         let name = self.ident()?;
-        let methods = self.method_list(false)?;
+        let methods = self.method_list(false, false)?;
         Ok(concat(vec![kw, space(), name, space(), methods]))
     }
 
@@ -427,7 +432,7 @@ impl Fmt<'_> {
         let abi = self.tok_doc();
         let mut parts = vec![kw, space(), abi, space()];
         if self.at(&TokenKind::LBrace) {
-            parts.push(self.method_list(true)?);
+            parts.push(self.method_list(true, true)?);
         } else {
             if self.at(&TokenKind::Priv) {
                 parts.push(self.tok_doc());
