@@ -125,7 +125,7 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `explain`, and `bindgen`. This section is the
+The `burdin` command has the subcommands `build`, `run`, `test`, `explain`, `bindgen`, and `new`. This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
@@ -140,6 +140,7 @@ usage:
               [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
+  burdin new <name>
   burdin --version
 
 compile options:
@@ -169,6 +170,11 @@ Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `
 rejects them.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
+
+`burdin new <name>` creates the package directory `<name>` (a path; its last component is the package name, which must be
+an identifier that is not a reserved word or `std`) with a `burdin.toml`, a `src/main.bd` that prints a greeting, and a
+`.gitignore` for `target/` and the executable `burdin build .` leaves in the package directory. It refuses, with exit
+status 2, to touch a path that already exists. `tests/check_new.py` checks it.
 
 Environment:
 
