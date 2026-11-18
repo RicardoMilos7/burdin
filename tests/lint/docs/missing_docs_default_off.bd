@@ -1,0 +1,11 @@
+// `missing_docs` is `allow` by default: the same undocumented items produce nothing without the flag.
+
+fn undocumented() {}
+
+struct Bare {
+    side: i32
+}
+
+fn main() {
+    println("hi")
+}

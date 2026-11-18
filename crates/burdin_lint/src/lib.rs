@@ -13,6 +13,7 @@ mod dead_code;
 mod else_enum;
 mod fix;
 mod mentions;
+mod missing_docs;
 mod naming;
 mod registry;
 mod scopes;
@@ -125,6 +126,9 @@ pub fn run(input: &Input) -> Diagnostics {
     }
     if on(&[Lint::UnusedImports, Lint::UnusedVariables, Lint::UnusedParameters]) {
         scopes::check(&cx, &mut findings);
+    }
+    if on(&[Lint::MissingDocs]) {
+        missing_docs::check(&cx, &mut findings);
     }
     if on(&[Lint::UnreachableCode]) {
         unreachable::check(&cx, &mut findings);

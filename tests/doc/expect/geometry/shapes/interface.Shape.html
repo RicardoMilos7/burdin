@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shape - geometry</title>
+<link rel="stylesheet" href="../static/doc.css">
+</head>
+<body>
+<nav class="sidebar">
+<a class="package" href="../index.html">geometry</a>
+<input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search the documentation">
+<h2>Modules</h2>
+<ul class="modules">
+<li><a href="../collections/index.html">collections</a></li>
+<li><a href="../extras/index.html">extras</a></li>
+<li><a href="../lib/index.html">geometry</a></li>
+<li class="current"><a href="../shapes/index.html">shapes</a></li>
+</ul>
+<h2>In this module</h2>
+<ul class="items">
+<li><a href="../shapes/struct.Circle.html">Circle</a></li>
+<li><a href="../shapes/struct.Point.html">Point</a></li>
+<li><a href="../shapes/error.GeometryError.html">GeometryError</a></li>
+<li><a href="../shapes/interface.Shape.html">Shape</a></li>
+</ul>
+</nav>
+<main>
+<div id="search-results" hidden></div>
+<div id="content">
+<h1><span class="kind">interface</span> <span class="name">Shape</span></h1>
+<p class="source">in <a href="../shapes/index.html">shapes</a> &middot; src/shapes.bd:23</p>
+<pre class="signature"><code>interface Shape</code></pre>
+<div class="docs">
+<p>Something with an area.</p>
+</div>
+<p class="origin">Re-exported by <code>geometry</code>.</p>
+<h2 id="required">Required methods</h2>
+<div class="member" id="method.area">
+<div class="signature"><code>fn area(self): f64</code> <span class="badge">required</span></div>
+<div class="docs">
+<p>The area of the shape.</p>
+</div>
+</div>
+<h2 id="provided">Provided methods</h2>
+<div class="member" id="method.describe">
+<div class="signature"><code>fn describe(self): String</code> <span class="badge">provided</span></div>
+<div class="docs">
+<p>A short description, <code>shape</code> unless overridden.</p>
+</div>
+</div>
+</div>
+</main>
+<script>window.BURDIN_DOC_ROOT = "../";</script>
+<script src="../search-index.js"></script>
+<script src="../static/search.js"></script>
+</body>
+</html>

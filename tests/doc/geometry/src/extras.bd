@@ -1,0 +1,14 @@
+//! Extension methods for the other modules' types.
+
+use shapes.Circle
+
+/// The diameter of a circle.
+fn Circle.diameter(self): f64 {
+    self.radius * 2.0
+}
+
+fn String.shout(self): String {
+    let mut out = String.from(self)
+    out.push_str("!")
+    out
+}

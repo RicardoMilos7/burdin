@@ -1,0 +1,82 @@
+//% args: -A all -W missing_docs
+// `missing_docs` (spec/lint.md LN33): public items without a `///` comment. The lint is `allow` by default, so the
+// fixture turns it on. Private items, `main`, generated code, and documented items are not reported.
+
+/// Documented.
+fn documented() {}
+
+fn undocumented() {} //~ L0017
+
+priv fn private_needs_nothing() {}
+
+/// A documented type.
+struct Shape {
+    side: i32
+}
+
+struct Bare { //~ L0017
+    side: i32
+}
+
+priv struct Hidden {
+    side: i32
+}
+
+enum Color { //~ L0017
+    Red
+}
+
+/// An error.
+error enum Failure {
+    Bad "bad"
+}
+
+interface Named { //~ L0017
+    fn name(self): String //~ L0017
+    /// Documented.
+    fn label(self): String { self.name() }
+}
+
+type Pair = (i32, i32) //~ L0017
+
+const LIMIT: i32 = 10 //~ L0017
+
+/// Documented constant.
+const OTHER: i32 = 20
+
+Shape {
+    /// Documented.
+    fn new(): Shape { Shape { side: 1 } }
+
+    fn area(self): i32 { self.side * self.side } //~ L0017
+
+    priv fn secret(self): i32 { self.side }
+}
+
+Hidden {
+    fn visible_method_of_a_private_type(self): i32 { self.side }
+}
+
+Shape: Named {
+    fn name(self): String { String.from("shape") }
+}
+
+fn Shape.doubled(self): i32 { self.side * 2 } //~ L0017
+
+/// Documented extension.
+fn Shape.tripled(self): i32 { self.side * 3 }
+
+// A plain comment is not documentation, and a blank line detaches a doc comment.
+fn plain_comment() {} //~ L0017
+
+/// Detached by the blank line below.
+
+fn detached() {} //~ L0017
+
+/// Documented with a suppression comment between the doc and the item.
+// lint: allow(dead_code)
+fn doc_then_suppress() {}
+
+fn main() {
+    println("hi")
+}

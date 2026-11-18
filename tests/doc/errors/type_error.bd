@@ -1,0 +1,10 @@
+// A package that does not compile has no documentation: `burdin doc` reports the errors and writes nothing.
+
+/// Documented.
+fn broken(): i32 {
+    "not a number"
+}
+
+fn main() {
+    broken()
+}
