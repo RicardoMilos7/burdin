@@ -198,6 +198,11 @@ jobs:
       - name: Check the formatter
         run: python3 tests/check_fmt.py
 
+      # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
+      # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
+      - name: Check the linter
+        run: python3 tests/check_lint.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
@@ -392,6 +397,11 @@ jobs:
       # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
       - name: Check the formatter
         run: python3 tests/check_fmt.py
+
+      # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
+      # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
+      - name: Check the linter
+        run: python3 tests/check_lint.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
@@ -619,6 +629,11 @@ jobs:
       # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
       - name: Check the formatter
         run: python tests/check_fmt.py
+
+      # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
+      # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
+      - name: Check the linter
+        run: python tests/check_lint.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts

@@ -621,6 +621,7 @@ mod tests {
                 .collect(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            lint: Vec::new(),
             root_module: None,
         };
         let mut package = package_with(vec!["main"]);
@@ -648,6 +649,7 @@ mod tests {
             modules: Vec::new(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            lint: Vec::new(),
             root_module: None,
         }
     }

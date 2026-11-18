@@ -1,0 +1,36 @@
+// Names that break the conventions (spec/lint.md LN13): snake_case for functions, variables, parameters and fields,
+// PascalCase for types, interfaces, variants and type parameters, SCREAMING_SNAKE_CASE for constants.
+
+struct bad_struct { //~ L0002
+    myField: i32 //~ L0001
+}
+
+enum Shape {
+    circle(i32) //~ L0002
+    Square(i32)
+}
+
+type my_alias = i32 //~ L0002
+
+const maxSize: i32 = 8 //~ L0003
+
+fn doThing(someArg: i32): i32 { //~ L0001 L0001
+    let myLocal = someArg + 1 //~ L0001
+    myLocal
+}
+
+fn identity<t>(x: t): t { //~ L0002
+    x
+}
+
+fn main() {
+    let s = bad_struct { myField: 1 }
+    let c = Shape.circle(2)
+    let a: my_alias = maxSize
+    let total = |inputValue: i32| inputValue + 1 //~ L0001
+    println("{} {} {}", s.myField, doThing(a), total(identity(1)))
+    match c {
+        Shape.circle(radius) => println("{}", radius)
+        Shape.Square(side) => println("{}", side)
+    }
+}

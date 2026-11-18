@@ -646,8 +646,12 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   `public_signature_leaks.bd`, `pub_use_private`).
 - **`as` also converts `char` to an integer.** The design says `as` converts between numeric types; stage 0 follows
   Rust and allows `c as i32` (`m09_stdlib/tokenizer.bd`, `m02_basics/casts_and_numeric_methods.bd`).
-- **No linter (deviation).** The design's warnings (`else` on a same-package enum, "use `.iter()`") are deferred with
-  `burdin lint`. No test depends on a warning; `m04_data/match_patterns.bd` uses `else` only on integers.
+- **The linter is separate from the compiler.** The design's warnings (`else` on a same-package enum, "use `.iter()`")
+  are `burdin lint` lints (stage 3), not compiler warnings: `burdin build` and `burdin test` never print them and no
+  conformance test depends on one. Lints have their own codes, `L0000`-`L0016`, which are not part of the `E` registry
+  below; [`docs/lints.md`](../docs/lints.md) lists them and `tests/check_lint.py` runs the fixtures under `tests/lint/`
+  (`//~ L0000` markers, like the `//~ E0000` markers of the conformance tests, but read by that script, not by
+  `run_tests.py`).
 
 ### Errors and testing
 

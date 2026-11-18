@@ -35,8 +35,9 @@ not updated and may disagree with the repository.
    is the behavior of `burdin test`, `spec/fmt.md` is the behavior of `burdin fmt` (the one style, comments, `use`
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
-   the atomic `Shared<T>`, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the minimal `bindgen`.
+   the atomic `Shared<T>`, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   modules, caching, and the minimal `bindgen`, and `spec/lint.md` is `burdin lint`: the lints, levels and the manifest
+   `[lint]` table, suppression comments, and `--fix`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -79,6 +80,7 @@ python3 tests/check_parallel.py          check parallel parsing and deterministi
 python3 tests/check_diagnostics.py       check color, width, formats, error limits, and ordering (needs a built driver)
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
+python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
@@ -114,6 +116,10 @@ crates/
   burdin_check/             return-origin, move, and borrow checks over the typed tree (spec/memory-rules.md)
   burdin_comptime/          the compile-time interpreter over the typed tree: constants, comptime expressions,
                             specialization of comptime parameters (spec/comptime.md)
+  burdin_lint/              the linter (`burdin lint`, spec/lint.md): syntax-tree lints (names, imports, unused and
+                            unreachable code, dead code, `else` on a local enum) and typed-tree lints (clones, copies,
+                            `mut`, allocations in loops), suppression comments, levels, and the `--fix` edits; reads
+                            what the compiler built and changes nothing
   burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime; taskrt/ holds the task
                             runtime (threads, locks, context switch) as LLVM IR text, linked in only when used
   burdin_fmt/               the formatter behind `burdin fmt`: its own lossless layout parser, the document printer,
@@ -128,7 +134,8 @@ crates/
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
-docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the platform
+docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the lint
+                          reference (docs/lints.md, checked by tests/check_lint.py), the platform
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)
 .github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
@@ -138,7 +145,9 @@ tests/                    conformance tests and scripts
 ```
 
 Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_comptime` to `burdin_codegen`, with
-`burdin_tir` as the shared vocabulary and `burdin_diag` under everything. `burdin_check`, `burdin_comptime`, and
+`burdin_tir` as the shared vocabulary and `burdin_diag` under everything. `burdin_lint` is a side branch: it reads the
+syntax tree and the typed tree the compiler built, depends on `burdin_syntax`, `burdin_tir`, and `burdin_diag` only, and
+is called from the driver, never from the compiler stages. `burdin_check`, `burdin_comptime`, and
 `burdin_codegen` depend only on `burdin_tir` (and `burdin_diag`), not on sema. Keep everything before codegen free of
 LLVM so the checks can be tested without a backend. There is no MIR (`burdin_mir`), decided in milestone 20 (issue
 #158): sema monomorphizes, the checks read the typed tree, and the comptime engine interprets the same tree and

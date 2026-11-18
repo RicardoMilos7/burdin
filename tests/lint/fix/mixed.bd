@@ -1,0 +1,21 @@
+// One run applies every safe fix and leaves the rest (spec/lint.md LN28-LN31): the unused variable, the needless `mut`,
+// and the clone are fixed; the badly named function, the unused parameter, the unreachable statement, and the dead
+// function are reported but not touched. A binding that is both unused and `mut` gets both edits.
+
+fn badName(unused_param: i32): i32 {
+    let mut counter = 0
+    let kept = 1
+    return kept
+    println("never")
+}
+
+priv fn never_called() {}
+
+fn consume(own xs: List<i32>): usize {
+    xs.len()
+}
+
+fn main() {
+    let xs: List<i32> = [1].iter().to_list()
+    println("{} {}", badName(1), consume(xs.clone()))
+}

@@ -329,7 +329,8 @@ impl FnCx<'_> {
     /// A compiler-made local (no user name can collide with `__iter`).
     pub(super) fn declare_hidden(&mut self, name: &str, ty: Ty, mutable: bool, kind: LocalKind) -> LocalId {
         let id = LocalId(self.locals.len());
-        self.locals.push(tir::Local { name: name.to_string(), ty, mutable, by_ref: false, kind });
+        let span = Span::new(burdin_diag::FileId(0), 0, 0);
+        self.locals.push(tir::Local { name: name.to_string(), ty, mutable, by_ref: false, kind, span });
         id
     }
 

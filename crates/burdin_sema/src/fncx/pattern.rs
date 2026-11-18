@@ -28,7 +28,7 @@ impl FnCx<'_> {
     ) -> (LocalId, BindMode) {
         let mode = self.bind_mode(ty, owned);
         let kind = if mode == BindMode::View { LocalKind::View } else { LocalKind::Owned };
-        (self.declare(&name.name, ty.clone(), mutable, kind), mode)
+        (self.declare(&name.name, ty.clone(), mutable, kind, name.span), mode)
     }
 
     pub(super) fn pattern(&mut self, p: &ast::Pattern, ty: &Ty, owned: bool) -> Pat {

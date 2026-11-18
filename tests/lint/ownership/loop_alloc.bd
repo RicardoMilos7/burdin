@@ -1,0 +1,32 @@
+// An allocation inside a loop that builds the same value every time (spec/lint.md LN25). Only values made from
+// literals and constants are reported; anything that depends on the loop is left alone.
+
+fn main() {
+    let mut n: usize = 0
+    for k in 0..3 {
+        let fixed = String.from("abc") //~ L0015
+        let boxed = Heap.new(5) //~ L0015
+        let varying = k.to_string()
+        n = n + fixed.len() + varying.len() + (*boxed + k) as usize
+    }
+    let mut i = 0
+    while i < 2 {
+        let note = "note".to_string() //~ L0015
+        n = n + note.len()
+        i = i + 1
+    }
+    // Declared `mut`, so the value changes below, and not allocated at all.
+    for _k in 0..2 {
+        let mut text = String.from("x")
+        text.push_str("y")
+        let empty: List<i32> = List<i32>.new()
+        let plain: usize = 5
+        n = n + text.len() + empty.len() + plain
+    }
+    // Allocated once, before the loop.
+    let once = String.from("abc")
+    for _k in 0..2 {
+        n = n + once.len()
+    }
+    println("{}", n)
+}

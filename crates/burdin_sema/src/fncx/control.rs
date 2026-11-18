@@ -89,7 +89,7 @@ impl FnCx<'_> {
             self.scopes.push(HashMap::new());
             let var = match &pattern.kind {
                 ast::PatternKind::Binding { name, mutable } => {
-                    Some(self.declare(&name.name, ty, *mutable, LocalKind::Owned))
+                    Some(self.declare(&name.name, ty, *mutable, LocalKind::Owned, name.span))
                 }
                 ast::PatternKind::Wild => None,
                 _ => {
@@ -194,7 +194,7 @@ impl FnCx<'_> {
             // literal form.
             let var = match &pattern.kind {
                 ast::PatternKind::Binding { name, mutable } => {
-                    Some(self.declare(&name.name, elem, *mutable, LocalKind::Owned))
+                    Some(self.declare(&name.name, elem, *mutable, LocalKind::Owned, name.span))
                 }
                 ast::PatternKind::Wild => None,
                 _ => {
@@ -497,7 +497,8 @@ impl FnCx<'_> {
         let mode = self.bind_mode(&ty, owned);
         let kind = if mode == tir::BindMode::View { LocalKind::View } else { LocalKind::Owned };
         let id = LocalId(self.locals.len());
-        self.locals.push(tir::Local { name: name.to_string(), ty, mutable: false, by_ref: false, kind });
+        let span = Span::new(burdin_diag::FileId(0), 0, 0);
+        self.locals.push(tir::Local { name: name.to_string(), ty, mutable: false, by_ref: false, kind, span });
         (id, mode)
     }
 
@@ -550,6 +551,7 @@ impl FnCx<'_> {
             mutable: false,
             by_ref: false,
             kind: LocalKind::Scrutinee,
+            span: Span::new(span.file, span.lo, span.lo),
         });
         (mk(tir::ExprKind::Local(id), ty, span), Some((id, value)))
     }

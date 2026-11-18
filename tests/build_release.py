@@ -13,7 +13,7 @@ Usage: tests/build_release.py [options]
   -h, --help              show this help
 
 The archive is `burdin-<version>-<target>.tar.gz`; its root directory is `burdin-<version>-<target>/` and holds the
-compiler, README.md, CHANGELOG.md, and docs/error-codes.md. Next to it the script writes
+compiler, README.md, CHANGELOG.md, docs/error-codes.md, and docs/lints.md. Next to it the script writes
 `<archive>.sha256` and `SHA256SUMS.<target>`, both in the `sha256sum -c` format. The release workflow aggregates the
 per-target files into one `SHA256SUMS` (docs/releasing.md).
 
@@ -261,6 +261,7 @@ def package_binary(binary: Path, out: Path, version: str, target: str, epoch: in
             (ROOT / "README.md", stage / root / "README.md"),
             (ROOT / "CHANGELOG.md", stage / root / "CHANGELOG.md"),
             (ROOT / "docs" / "error-codes.md", stage / root / "docs" / "error-codes.md"),
+            (ROOT / "docs" / "lints.md", stage / root / "docs" / "lints.md"),
         ):
             shutil.copyfile(source, destination)
         make_archive(stage, root, archive, epoch)

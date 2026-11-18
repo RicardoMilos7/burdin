@@ -1,0 +1,12 @@
+//% args: --deny L0007 -A L0001
+//% exit: 1
+//% stderr: error[L0007]
+// A lint is named by its name or its code, in either case (spec/lint.md LN2).
+
+fn badName() { // allowed by code, so it is not reported
+    let never_read = 1 //~ L0007
+}
+
+fn main() {
+    badName()
+}

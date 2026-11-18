@@ -1,0 +1,15 @@
+//% args: -A all
+//% stderr: lint: no warnings in
+// `all` names every lint (spec/lint.md LN2).
+
+fn badName() {
+    let never_read = 1
+    return
+    println("never")
+}
+
+priv fn dead() {}
+
+fn main() {
+    badName()
+}

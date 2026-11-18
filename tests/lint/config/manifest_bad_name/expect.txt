@@ -1,0 +1,2 @@
+exit: 2
+stderr: burdin.toml:6: unknown lint `no_such_lint`

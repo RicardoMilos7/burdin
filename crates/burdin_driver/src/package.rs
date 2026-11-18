@@ -31,6 +31,9 @@ pub struct PackageFiles {
     pub build_allow: Vec<String>,
     /// The module other packages reach as `use <package>`.
     pub root_module: Option<usize>,
+    /// The `[lint]` table of the manifest: `(lint name, level, line)` in file order (`spec/lint.md`, LN3). The
+    /// linter checks the names and levels, so a manifest from a newer compiler still loads.
+    pub lint: Vec<(String, String, usize)>,
 }
 
 pub struct Workspace {
@@ -86,6 +89,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
             deps: Vec::new(),
             build_allow: Vec::new(),
             root_module: Some(0),
+            lint: Vec::new(),
         };
         let mut packages = vec![package];
         attach_std(&mut packages);
@@ -147,7 +151,15 @@ fn std_package() -> PackageFiles {
         })
         .collect();
     let root_module = modules.iter().position(|m| m.path == ["std"]);
-    PackageFiles { name: "std".to_string(), dir: None, modules, deps: Vec::new(), build_allow: Vec::new(), root_module }
+    PackageFiles {
+        name: "std".to_string(),
+        dir: None,
+        modules,
+        deps: Vec::new(),
+        build_allow: Vec::new(),
+        root_module,
+        lint: Vec::new(),
+    }
 }
 
 /// The names of the standard library's modules, which a `use` declaration may start with (`burdin fmt` groups them).
@@ -232,6 +244,7 @@ impl Loader {
             deps: Vec::new(),
             build_allow: manifest.build_allow,
             root_module,
+            lint: manifest.lint,
         });
         self.loaded.insert(dir.to_path_buf(), id);
         self.loading.push(dir.to_path_buf());
@@ -261,6 +274,8 @@ pub(crate) struct Manifest {
     deps: Vec<(String, String)>,
     /// The dependency names whose build scripts the manifest grants (`[build] allow`).
     build_allow: Vec<String>,
+    /// The `[lint]` entries: `(name, level, line)`.
+    lint: Vec<(String, String, usize)>,
 }
 
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."`, `[dependencies]` entries with a
@@ -276,6 +291,7 @@ pub(crate) fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, S
     let mut name: Option<String> = None;
     let mut deps: Vec<(String, String)> = Vec::new();
     let mut build_allow: Vec<String> = Vec::new();
+    let mut lint: Vec<(String, String, usize)> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
@@ -306,6 +322,10 @@ pub(crate) fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, S
                 let dep_path = parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))?;
                 deps.push((key.to_string(), dep_path));
             }
+            "lint" => {
+                let level = parse_string(value).map_err(|e| format!("{}: {e}", where_()))?;
+                lint.push((key.to_string(), level, index + 1));
+            }
             "build" if key == "allow" => {
                 let names = parse_string_array(value).map_err(|e| format!("{}: {e}", where_()))?;
                 for allowed in names {
@@ -329,7 +349,7 @@ pub(crate) fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, S
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    Ok(Manifest { name, deps, build_allow })
+    Ok(Manifest { name, deps, build_allow, lint })
 }
 
 /// A `["a", "b"]` array of quoted strings, also accepting a single `"a"`.

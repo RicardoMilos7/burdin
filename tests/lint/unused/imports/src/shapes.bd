@@ -1,0 +1,7 @@
+struct Circle {
+    r: i32
+}
+
+struct Square {
+    side: i32
+}
