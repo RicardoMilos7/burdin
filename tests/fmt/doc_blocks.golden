@@ -1,0 +1,34 @@
+/// Adds two numbers.
+///
+/// ```
+/// let x = add(1, 2)
+/// println("{x}")
+/// ```
+///
+/// ```text
+/// let   x   =  1
+/// ```
+///
+/// ```burdin
+/// let = = broken
+/// ```
+///
+/// ```bd
+/// fn double(x: i32): i32 {
+///     x * 2
+/// }
+/// ```
+fn add(a: i32, b: i32): i32 {
+    a + b
+}
+
+struct S {
+    /// ```
+    /// let s = S { x: 1 }
+    /// ```
+    x: i32,
+}
+
+/// ```
+/// not closed
+fn unclosed() {}

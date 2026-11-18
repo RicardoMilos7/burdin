@@ -505,101 +505,14 @@ impl Parser<'_> {
         Ok(InterfaceDecl { is_priv, name, generics, requires, methods, span: start.to(self.prev_span()) })
     }
 
-    /// Whether the `fn` (or `unsafe fn`) at the current position is an extension method: an identifier, then
-    /// either a `.` or a generic argument list followed by a `.`, as in `fn String.shout(...)` or
-    /// `fn List<T>.sum(...)`, or a slice type followed by a `.`, as in `fn [T].first(...)`. The scan does not
-    /// consume anything.
+    /// Whether the `fn` (or `unsafe fn`) at the current position is an extension method (`crate::lookahead`).
     fn extension_ahead(&self) -> bool {
-        let kind_at = |i: usize| self.toks.get(i).map(|t| &t.kind);
-        let mut i = self.pos;
-        if matches!(kind_at(i), Some(TokenKind::Unsafe)) {
-            i += 1;
-        }
-        if !matches!(kind_at(i), Some(TokenKind::Fn)) {
-            return false;
-        }
-        i += 1;
-        if matches!(kind_at(i), Some(TokenKind::LBracket)) {
-            return self.bracket_list_end(i).is_some_and(|end| matches!(kind_at(end), Some(TokenKind::Dot)));
-        }
-        if !matches!(kind_at(i), Some(TokenKind::Ident(_))) {
-            return false;
-        }
-        i += 1;
-        match kind_at(i) {
-            Some(TokenKind::Dot) => true,
-            Some(TokenKind::Lt) => {
-                self.generic_list_end(i).is_some_and(|end| matches!(kind_at(end), Some(TokenKind::Dot)))
-            }
-            _ => false,
-        }
+        crate::lookahead::extension_ahead(&self.toks, self.pos)
     }
 
-    /// The token index just past the `]` that closes the bracket opening at `start`. `None` when it does not
-    /// close cleanly.
-    fn bracket_list_end(&self, start: usize) -> Option<usize> {
-        let mut depth = 0i32;
-        let mut i = start;
-        while let Some(t) = self.toks.get(i) {
-            match &t.kind {
-                TokenKind::LBracket => depth += 1,
-                TokenKind::RBracket => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(i + 1);
-                    }
-                    if depth < 0 {
-                        return None;
-                    }
-                }
-                TokenKind::Eof => return None,
-                _ => {}
-            }
-            i += 1;
-        }
-        None
-    }
-
-    /// The token index just past the `>` that closes the generic list opening at `start` (a `<`). `>>` closes two
-    /// levels; `>=` closes none. `None` when the list does not close cleanly.
+    /// The token index just past the `>` that closes the generic list opening at `start`.
     fn generic_list_end(&self, start: usize) -> Option<usize> {
-        let mut depth = 0i32;
-        let mut parens = 0i32;
-        let mut i = start;
-        while let Some(t) = self.toks.get(i) {
-            match &t.kind {
-                TokenKind::Lt => depth += 1,
-                TokenKind::Gt => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(i + 1);
-                    }
-                    if depth < 0 {
-                        return None;
-                    }
-                }
-                TokenKind::Shr => {
-                    depth -= 2;
-                    if depth == 0 {
-                        return Some(i + 1);
-                    }
-                    if depth < 0 {
-                        return None;
-                    }
-                }
-                TokenKind::LParen | TokenKind::LBracket => parens += 1,
-                TokenKind::RParen | TokenKind::RBracket => {
-                    if parens == 0 {
-                        return None;
-                    }
-                    parens -= 1;
-                }
-                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace if parens == 0 => return None,
-                _ => {}
-            }
-            i += 1;
-        }
-        None
+        crate::lookahead::generic_list_end(&self.toks, start)
     }
 
     /// `fn Type.name(self, ...) { ... }`: the receiver type, then the method name and an ordinary function

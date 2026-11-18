@@ -1,0 +1,62 @@
+fn very_long_function_name(
+    first_parameter: i32,
+    second_parameter: String,
+    third_parameter: List<String>,
+    fourth: bool,
+): Result<i32> {
+    let result = some_function_with_a_long_name(
+        first_argument_name,
+        second_argument_name,
+        third_argument_name,
+        fourth_argument_name,
+        fifth,
+    )
+    let condition =
+        first_condition_is_true && second_condition_is_true || third_condition_is_true && fourth_condition_is_also_true
+    let total =
+        first_number_with_a_long_name +
+        second_number_with_a_long_name * third_number_with_a_long_name -
+        fourth_number_with_a_long_name
+    let chained = items
+        .iter()
+        .map(|item| item.value * 2)
+        .filter(|value| value > 10)
+        .collect<List<i32>>()
+        .len()
+        .to_string()
+    let short = items.iter().map(|item| item.value).len()
+    run_in_background(first_argument, second_argument, |value| {
+        println("{value}")
+        value + 1
+    })
+    let point = Point {
+        x: first_coordinate_with_a_long_name,
+        y: second_coordinate_with_a_long_name,
+        z: third_coordinate_name,
+    }
+    let tuple = (
+        first_element_with_a_long_name,
+        second_element_with_a_long_name,
+        third_element_with_a_long_name,
+        fourth_element,
+    )
+    let message = "a string literal that is far too long to fit on one line is never split by the formatter, even when it passes the limit"
+    some_object
+        .some_method_with_a_long_name(argument)
+        .another_method_with_a_long_name(argument_two)
+        .third_method_name(argument_three)
+    Ok(result)
+}
+
+fn generic<Key, Value, Hasher>(map: HashMap<Key, Value, Hasher>, key: Key): Option<Value>
+where
+    Key: Hash + Eq + Clone + Display,
+    Value: Clone + Debug,
+    Hasher: Default
+{
+    map.get(key)
+}
+
+fn short_where<T>(x: T): T where T: Copy {
+    x
+}

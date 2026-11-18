@@ -193,6 +193,11 @@ jobs:
       - name: Check the test runner
         run: python3 tests/check_test_runner.py
 
+      # The black-box checks of `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, import
+      # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
+      - name: Check the formatter
+        run: python3 tests/check_fmt.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
@@ -382,6 +387,11 @@ jobs:
       # (issues #438-#443).
       - name: Check the test runner
         run: python3 tests/check_test_runner.py
+
+      # The black-box checks of `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, import
+      # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
+      - name: Check the formatter
+        run: python3 tests/check_fmt.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
@@ -605,6 +615,11 @@ jobs:
       - name: Check the test runner
         run: python tests/check_test_runner.py
 
+      # The black-box checks of `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, import
+      # grouping, doc-comment code blocks, and the tricky sources (issues #229, #460-#463, #659, #660).
+      - name: Check the formatter
+        run: python tests/check_fmt.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python tests/check_build_scripts.py
@@ -678,7 +693,7 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy -p burdin_fuzz --all-targets -- -D warnings
+        run: cargo clippy -p burdin_fuzz -p burdin_fmt --all-targets -- -D warnings
 
       # The same replay that `cargo test --workspace` runs in the other jobs, named here so a scheduled
       # failure is easy to read before the long session starts.
@@ -690,6 +705,11 @@ jobs:
       # the run id, so each scheduled run explores a different sequence; the finding prints the seed.
       - name: Fuzz the lexer and parser
         run: python3 tests/fuzz.py --seconds 600 --seed "${{ github.run_id }}"
+
+      # The formatter must format every input the parser accepts to a fixed point without an internal error
+      # (issue #462). The seed is the run id, like the lexer and parser session.
+      - name: Fuzz the formatter
+        run: BURDIN_FMT_FUZZ_SEED="${{ github.run_id }}" BURDIN_FMT_FUZZ_MUTATIONS=300000 cargo test --release -p burdin_fmt --test fuzz
 
       - name: Upload found inputs
         if: failure()

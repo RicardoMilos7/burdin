@@ -1,0 +1,48 @@
+// A file comment.
+
+/// Adds two numbers. // not a trailing comment
+fn add(a: i32, /* the first */ b: i32): i32 { // trailing on the brace
+    // leading a statement
+    let sum = a + b // trailing a statement
+
+    /* a block comment */
+    sum
+    // dangling at the end of the block
+}
+
+struct Config {
+    // the name
+    name: String, // trailing the name
+    size: i32,
+    // dangling in the struct
+}
+
+enum Kind {
+    A, // first
+    // before B
+    B,
+}
+
+fn many(
+    a: i32, // first
+    b: i32,
+    // dangling in the list
+): i32 {
+    let total = a + // the first operand
+        b // the second operand
+    total
+}
+
+fn main() {
+    let x = 1 /* inline */ + 2
+    match x {
+        // before an arm
+        1 => println("one"), // after an arm
+        else => {
+            // only a comment
+        }
+    }
+    call(1, // one
+        2)
+}
+// at the end of the file
