@@ -666,6 +666,10 @@ pub(crate) fn define_bench_main<'ctx>(
         b.position_at_end(cal_done);
         let batch = b.build_load(i64_ty, batch_at, "batch").map_err(llvm_err)?.into_int_value();
         let taken = b.build_load(i64_ty, taken_at, "taken").map_err(llvm_err)?.into_int_value();
+        // A clock that read no time at all (the coarsest timers) must not divide by zero.
+        let idle = b.build_int_compare(IntPredicate::SLT, taken, i64_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let taken =
+            b.build_select(idle, i64_ty.const_int(1, false), taken, "taken").map_err(llvm_err)?.into_int_value();
         // `iters = target_ns * batch / taken`, split so the product cannot overflow: the batches that stop the
         // loop take at least a millisecond, so `target_ns / taken` is at most about a million.
         let whole = b.build_int_unsigned_div(target_ns, taken, "").map_err(llvm_err)?;
@@ -750,6 +754,12 @@ pub(crate) fn define_bench_main<'ctx>(
     Ok(())
 }
 
+/// Keeps the timing loops out of `main`: inlined there, the optimizer sees which bench the pointer names, inlines
+/// it, and deletes the loop of an empty bench, which then measures no time at all.
+fn mark_noinline<'ctx>(cx: &'ctx Context, f: FunctionValue<'ctx>) {
+    f.add_attribute(AttributeLoc::Function, cx.create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0));
+}
+
 /// `burdin_bench_run_for(bench: ptr, nanos: i64)`: calls the bench until `nanos` of the monotonic clock have
 /// passed, always at least once, so a zero warmup still primes the code once (`spec/bench.md`, BN4).
 fn bench_run_for<'ctx>(
@@ -759,6 +769,7 @@ fn bench_run_for<'ctx>(
 ) -> GenResult<FunctionValue<'ctx>> {
     let (i64_ty, ptr_ty, void_ty) = (cx.i64_type(), cx.ptr_type(AddressSpace::default()), cx.void_type());
     let f = module.add_function("burdin_bench_run_for", void_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false), None);
+    mark_noinline(cx, f);
     let bench = f.get_nth_param(0).expect("the bench pointer").into_pointer_value();
     let nanos = f.get_nth_param(1).expect("the nanosecond budget").into_int_value();
     let b = cx.create_builder();
@@ -787,6 +798,7 @@ fn bench_sample<'ctx>(
 ) -> GenResult<FunctionValue<'ctx>> {
     let (i64_ty, ptr_ty, void_ty) = (cx.i64_type(), cx.ptr_type(AddressSpace::default()), cx.void_type());
     let f = module.add_function("burdin_bench_sample", i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false), None);
+    mark_noinline(cx, f);
     let bench = f.get_nth_param(0).expect("the bench pointer").into_pointer_value();
     let iters = f.get_nth_param(1).expect("the iteration count").into_int_value();
     let b = cx.create_builder();

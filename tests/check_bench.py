@@ -214,7 +214,9 @@ with harness.temporary_dir("burdin-bench-") as work:
 
     status, out, err = bench(*SMALL, target=work / "panics")
     check(status == 1, f"a panicking bench must fail the run, got exit {status}")
-    check("FAIL panics on purpose: the bench was terminated by a signal" in out, f"the panic was not reported:\n{out}")
+    # A panic ends the process with SIGABRT on Unix and with exit code 3 (the CRT's abort) on Windows.
+    ended = "the bench aborted (exit code 3)" if sys.platform == "win32" else "the bench was terminated by a signal"
+    check(f"FAIL panics on purpose: {ended}" in out, f"the panic was not reported:\n{out}")
     check('---- bench "panics on purpose" stderr ----' in out and "panic: boom" in out,
           f"the panic output was not captured:\n{out}")
     check("still measured:" in out, f"a good bench next to a failure was not measured:\n{out}")
