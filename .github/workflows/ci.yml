@@ -197,6 +197,10 @@ jobs:
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
 
+      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
+      - name: Check burdin new
+        run: python3 tests/check_new.py
+
       - name: Check host target
         run: python3 tests/check_platform.py
 
@@ -382,6 +386,10 @@ jobs:
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
+
+      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
+      - name: Check burdin new
+        run: python3 tests/check_new.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -600,6 +608,10 @@ jobs:
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python tests/check_build_scripts.py
+
+      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
+      - name: Check burdin new
+        run: python tests/check_new.py
 
       - name: Check host target
         run: python tests/check_platform.py

@@ -46,6 +46,7 @@ python3 tests/check_diagnostics.py       check color, width, formats, error limi
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
+python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
