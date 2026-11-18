@@ -1,0 +1,2 @@
+err_borrow.bd:18:10: error[E0111]: this access conflicts with a borrow that is still live
+error: could not check err_borrow.bd (1 error)

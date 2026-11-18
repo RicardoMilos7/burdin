@@ -105,14 +105,15 @@ percent-encoded.
 Tests: `check_diagnostics.py` (`sarif multi.bd`: the related location, the `mut ` fix, the region of the non-ASCII
 string; the golden `tests/diagnostics/multi.golden.sarif`), `burdin_diag` `relative_paths_stay_relative_and_absolute_paths_become_file_uris`.
 
-**DG11. When a log is written.** `burdin build` and `burdin lint` always write the log, with an empty `results` when there is
-nothing to report. `burdin run` and `burdin test` write it only when the compilation reported something (a warning or an
+**DG11. When a log is written.** `burdin build`, `burdin check`, and `burdin lint` always write the log, with an empty
+`results` when there is nothing to report. `burdin run` and `burdin test` write it only when the compilation reported something (a warning or an
 error), so a program's own stderr is not preceded by an empty log. With `--error-limit`, the log has the first diagnostics
 and `properties.diagnosticsNotShown` on the run says how many were left out. `burdin lint` writes the log for a lint
 at any level, and its `fixes` are the machine-applicable ones. `burdin fmt` does not support the format (status 2),
 because it reports file by file and a SARIF log is one document.
 Tests: `check_diagnostics.py` (`sarif clean build`, `sarif warning-only build`, `sarif clean run`, `sarif lint, clean`,
-`sarif lint, a warning`, `sarif lint, a denied lint`, `sarif --error-limit`, `fmt refuses sarif`), `burdin_diag`
+`sarif lint, a warning`, `sarif lint, a denied lint`, `sarif --error-limit`, `fmt refuses sarif`), `check_diagnostics.py`
+and `check_check.py` (`a clean check writes an empty SARIF log`, `a failed check writes one SARIF log`), `burdin_diag`
 `sarif_with_no_diagnostics_is_a_valid_empty_log_and_records_a_limit`.
 
 ## Links to the error reference

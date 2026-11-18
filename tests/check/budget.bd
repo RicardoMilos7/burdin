@@ -1,0 +1,20 @@
+//% args: --comptime-steps 1000
+//% exit: 1
+
+// `--comptime-steps` sets the step budget of compile-time evaluation. This constant needs about a hundred thousand
+// steps: it is fine with the default budget (the check script runs the file without the option too) and E0225 with
+// a budget of a thousand.
+
+fn work(): i32 {
+    let mut total = 0
+    for i in 0..100000 {
+        total = (total + i) % 7
+    }
+    total
+}
+
+const RESULT: i32 = work() //~ E0225
+
+fn main() {
+    println(RESULT.to_string())
+}

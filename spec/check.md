@@ -1,0 +1,91 @@
+# `burdin check`
+
+The type-check-only command (stage 3; issue #237). It runs the compiler's front end and every memory check and stops
+before code generation, so it is fast enough for CI gates and editor feedback and needs neither LLVM work nor a linker.
+This file is the exact behavior, with a rule ID for each point and the tests that cover it.
+
+Every behavior below is covered by `tests/check_check.py`, which runs the fixtures under `tests/check/` and checks the
+command against the whole conformance suite. A fixture is a `.bd` file (or a package under `tests/check/packages/`)
+whose `//~ E0000` markers name the exact diagnostics, by file and line, that the command must report; a fixture with no
+markers proves that nothing is reported. The `//% args:`, `//% exit:`, and `//% stderr:` header lines set the command
+line, the exit status, and the text the output must contain. The golden files in `tests/check/golden/` hold the whole
+output of every failing fixture. The Rust unit tests in `crates/burdin_driver/src/check.rs` cover the command line.
+
+## The command
+
+```
+burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
+```
+
+`diagnostics` is the group of options every command shares (`--diagnostic-format`, `--color`, `--no-color`, `--width`,
+`--error-limit`; the driver contract in `README.md`).
+
+**CK1. The same front end as a build.** `burdin check` loads the target like `burdin build` does and runs the same
+stages in the same order: build scripts, parsing, name resolution and type checking (including monomorphization), the
+return-origin, move, and borrow checks, and compile-time evaluation (`comptime`, constants, `embed`). It is one function,
+`front_end` in `crates/burdin_driver/src/main.rs`, which `build`, `run`, `test`, and `lint` call too, so a diagnostic
+cannot be reported by one command and missed by another. The command exits 0 exactly when `burdin build` would reach code
+generation, and 1 when the front end reports an error. A `main` is required (E0002, "the program has no `main`
+function"), as it is for a build.
+Tests: every fixture; every conformance test (`compile-fail` programs report exactly their markers, every other program
+is accepted); `err_*` fixtures against `burdin build` line for line.
+
+**CK2. Nothing is generated.** The command runs no code generation and no linker: it succeeds without `cc`, writes no
+file (no executable, object, or IR), and has no option for one. The options of a build that only matter for its output
+(`-o`, `--emit-ir`, `-g`, `--strip`, `--lto`, the PGO options, `--link-lib`, `--emit-deps`) are usage errors. A package
+with a `build.bd` still runs its script, because a generated module has to exist before the modules are read (see
+`spec/build-scripts.md`, BS3-BS4), and a script is built and run, so that one needs the linker.
+Tests: `a clean check with no linker`, `checking a package wrote files or needed a linker`, the rejected options.
+
+**CK3. Output.** The diagnostics are printed to standard error in the chosen format, exactly as `burdin build` prints
+them (`--diagnostic-format`, `--color`, `--width`, `--error-limit`), and a failed check ends with `error: could not check
+<target> (N errors)` (and, in the human format, the note about `burdin explain`); the JSON format ends with the same
+`summary` object. Warnings are printed too and do not fail the check. A check with no errors and no warnings prints
+nothing at all, on either stream. The SARIF format follows `spec/diagnostics.md` (DG11): a check is a CI gate like a
+build, so it writes one log even when the package is clean, and the log is the only thing on standard error. Standard
+output is never used.
+Tests: the goldens, `ok_program.bd` (silent), `ok_warning.bd`, the JSON, `--error-limit`, the human-format and SARIF
+checks.
+
+**CK4. Every error is reported.** Like a build, a check reports every error of the front end, not the first. Parsing
+errors stop the later stages (a tree with syntax errors would mostly produce follow-on errors); every later stage runs
+even when an earlier one failed, as in a build, except compile-time evaluation, which runs only on a program every other
+check accepted (`spec/comptime.md`, CT1).
+Tests: `err_types.bd` (four errors in one file), `two_errors` (two files), `err_syntax.bd`, `err_comptime.bd`.
+
+**CK5. `test` blocks: `--tests`.** A plain check does not declare or check `test` blocks, and neither does a build. With
+`--tests` the package is loaded the way `burdin test` loads it: the `test` blocks and their attributes are checked, and a
+package without `src/main.bd` is accepted (a library package; its entry module is the one other packages import, or its
+first module), so `--tests` is also how a library is checked. In this mode `main` is not looked up, so a wrong
+signature of `main` is not reported; check without `--tests` for that.
+Tests: `lib_tests` and `tests_error` packages, the `test-compile-fail` and `burdin-test` conformance tests.
+
+**CK6. `--release`.** The profile changes what the front end does in two places: error trace frames are recorded only in
+a debug build (`spec/errors.md`, ERR7), and compile-time evaluation follows the profile's overflow rule
+(`spec/comptime.md`). `--release` checks as `burdin build --release` would. The default is the debug profile.
+Tests: `--release on a clean program`, the `release-only` conformance tests.
+
+**CK7. `--comptime-steps <n>`.** Sets the step budget of each compile-time evaluation, as for a build
+(`spec/comptime.md`, CT11). `0` and non-numbers are usage errors.
+Tests: `budget.bd` (fine with the default budget, E0225 with 1000 steps), the usage-error checks.
+
+**CK8. Exit statuses.** 0: no errors (warnings allowed). 1: the front end reported errors, or the package could not be
+loaded or read (a missing target, an unreadable file, a missing `main.bd`, a failing build script). 2: a usage error (a
+missing target, an unknown option, a bad value); the usage is printed after the message. `--help` prints the usage to
+standard output and exits 0.
+Tests: the exit status of every fixture, the missing target, the usage-error checks, `--help`.
+
+## Choices that are not obvious
+
+- **There is no separate "check" implementation.** The issue asks to reuse the query-based library. That library is a
+  later stage 3 item and does not exist yet; `front_end` is the one shared entry point today, and the day the
+  query-based library lands it replaces `front_end` for every command at once, `check` included. Nothing in
+  `check.rs` would change but the call.
+- **`--tests` is explicit.** Checking `test` blocks needs the test-mode front end, which changes how the entry package
+  is loaded and drops the `main` lookup. Doing it silently would hide errors of `main`; doing it only for a package
+  without `main.bd` would make the same command check different things in a library and a program. One flag says what
+  is checked.
+- **Silence on success.** A build prints nothing when it succeeds, and a check is the part of a build that needs no
+  output at all. A summary line would only be noise in a CI log and in an editor's problem list.
+- **The conformance suite is the equivalence test.** CK1 is a claim about every program, so the check script runs the
+  command on every conformance test and compares it with that test's markers, instead of on a few hand-picked programs.

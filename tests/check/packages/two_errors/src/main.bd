@@ -1,0 +1,6 @@
+use util.twice
+
+fn main() {
+    let n: i32 = "text" //~ E0003
+    println(twice(n).to_string())
+}
