@@ -770,8 +770,15 @@ with harness.temporary_dir("burdin-runner-") as work:
     events = json_lines(out)
     expect_equal("doc tests (json events)", [event["event"] for event in events],
                  ["suite_started", "test_started", "test_failed", "suite_finished"])
-    expect_equal("doc tests (json reason)", events[2]["reason"], "expected the example to fail with E0002, but it failed with E0003")
-    expect_contains("doc tests (json mapped diagnostics)", "src/lib.bd:74:20: error[E0003]", events[2]["stderr"])
+    failed = next((event for event in events if event["event"] == "test_failed"), {})
+    expect_equal(
+        "doc tests (json reason)",
+        failed.get("reason"),
+        "expected the example to fail with E0002, but it failed with E0003",
+    )
+    expect_contains("doc tests (json mapped diagnostics)", "src/lib.bd:74:20: error[E0003]", failed.get("stderr", ""))
+    if failed.get("reason") is None:
+        add_problem(f"doc tests (json events): standard output was {out!r}, standard error was {err!r}")
 
     # Passing tests print their `PASS` line only with --verbose, like a `test` block.
     run_driver(burdin, "test", str(doctests), "--doc", "--filter", "whole_program", "-v")
