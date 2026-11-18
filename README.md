@@ -24,7 +24,8 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
 | [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, parallelism, output capture, isolation, and discovery. |
 | [`spec/fmt.md`](spec/fmt.md) | The behavior of `burdin fmt`: the one style (4-space indentation, 120 columns), comments, blank lines, the magic trailing comma, `use` sorting and grouping, doc-comment code blocks, range formatting, and the command line. |
-| [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the minimal `bindgen`. |
+| [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the `bindgen` a script may invoke. |
+| [`spec/bindgen.md`](spec/bindgen.md) | `burdin bindgen`: C headers to Burdin declarations through libclang, the layout check, wrappers for `static inline` functions, and `--export` for a C header of what a package exports. |
 | [`spec/tasks.md`](spec/tasks.md) | Tasks, the work-stealing scheduler, `yield`, scoped tasks that borrow, panics in tasks, and OS threads (stage 2.1). |
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
@@ -145,7 +146,9 @@ usage:
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin explain [<error code>]
-  burdin bindgen <header> --out <file>
+  burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
+                 [--wrappers <file.c>] [--wrapper-include <text>]
+  burdin bindgen --export <target> --out <header.h> [--guard <NAME>]
   burdin new <name>
   burdin --version
 
@@ -236,9 +239,13 @@ script is E0261. The script reruns only when its source, the manifest, the compi
 `<out>/inputs` (or read by the script's `embed` calls) changes; the cache key records content per package and
 profile. `spec/build-scripts.md` is the exact rule.
 
-`burdin bindgen <header> --out <file>` writes raw C declarations as a Burdin module: functions as `extern "C"`,
-`repr(C)` structs, typedefs, enums, and object-like `#define` constants. It is the minimal generator a build script
-may invoke; the full tool is stage 3, so `#include`, function-pointer types, and unions are skipped with a comment.
+`burdin bindgen <header> --out <file>` reads the header through libclang, so `#include`, the preprocessor's state,
+and the system headers behave as they do for the C compiler, and writes a Burdin module of raw declarations:
+`extern "C"` prototypes, `repr(C)` structs with a compile-time size and alignment check, typedefs, enumerations,
+constants from object-like macros, and C wrappers for `static inline` functions. A declaration it cannot represent
+is skipped and named in a comment at the top of the module. `--export` goes the other way and writes a C header for
+a package's exports. [`spec/bindgen.md`](spec/bindgen.md) is the exact rule; [the command](#burdin-bindgen) has the
+options.
 
 ```console
 $ ./target/debug/burdin bindgen c/strings.h --out src/bindings.bd
@@ -522,6 +529,37 @@ needless `mut`, a clone of a value that is not used again). It prints a unified 
 still compiles, and writes every file or none; `--fix --dry-run` writes nothing. The exit status is 0 when no lint is at
 `deny`, 1 when one is reported (or the package has compile errors), and 2 for a usage error.
 
+### `burdin bindgen`
+
+```
+burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
+               [--wrappers <file.c>] [--wrapper-include <text>]
+burdin bindgen --export <target> --out <header.h> [--guard <NAME>]
+```
+
+The first form reads a C header through libclang and writes a Burdin module of raw declarations. libclang is loaded
+when the command runs and is never linked into the compiler, so every other command works without it; when it is
+missing the error names the places that were searched and how to install it. `BURDIN_LIBCLANG` and `LIBCLANG_PATH`
+override the search, and `LLVM_SYS_211_PREFIX` is honored.
+
+`-I`, `-D`, and `--clang-arg` are passed to the C front end, so the preprocessor sees the same configuration the C
+compiler would. `--wrappers <file.c>` also writes C that calls the header's `static inline` functions and exports
+them as `<name>__extern`, because they have no symbol of their own; `--wrapper-include <text>` is the `#include` line
+of that file (the header path by default). Link the compiled wrapper with `--link-lib <file.o>`.
+
+What was skipped, and why, is printed to stderr and repeated as a `// bindgen:` comment at the top of the module.
+The exit status is 0 when the header parsed, 1 when clang reports an error in it, and 2 for a usage or I/O error or
+a libclang that cannot be loaded.
+
+`--export <target> --out <header.h>` writes the other direction: a C header with a prototype for every
+`extern "C" fn` the package exports, the `repr(C)` structs they use, and their public constants, inside an include
+guard and an `extern "C"` block for C++. A declaration a C header cannot spell is E0263, and no header is written.
+
+```console
+$ ./target/debug/burdin bindgen c/strings.h --out src/bindings.bd
+$ ./target/debug/burdin bindgen --export . --out build/exports.h
+```
+
 ### Emitting LLVM IR
 
 `--emit-ir <file.ll>` also writes the textual LLVM IR, both for inspecting the backend and for debugging code
@@ -542,6 +580,9 @@ IR is the module that is handed to LLVM for the object file; it is not a stable 
 
 - On Linux and macOS the driver passes `-l<name>` to the C compiler driver.
 - With MSVC (`cl`) it passes `<name>.lib`.
+- A value that names a file (it contains a path separator, or ends in `.a`, `.o`, `.obj`, `.lib`, `.so`, `.dylib`,
+  or `.dll`) is passed to the linker as it is. That is how the C wrappers `burdin bindgen --wrappers` writes, or a
+  shared library that calls exported Burdin functions, joins the link: `--link-lib build/wrappers.o`.
 
 `LLVM-C` is the one special name. On Ubuntu the LLVM C API is exported by `libLLVM-21.so`, not by a `libLLVM-C.so`, so
 the driver resolves the library through `llvm-config` instead of leaving `-lLLVM-C` to the linker:

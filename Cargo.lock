@@ -27,6 +27,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "burdin_bindgen"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "burdin_check"
 version = "0.1.0"
 dependencies = [
@@ -60,6 +67,7 @@ version = "0.1.0"
 name = "burdin_driver"
 version = "0.1.0"
 dependencies = [
+ "burdin_bindgen",
  "burdin_check",
  "burdin_codegen",
  "burdin_comptime",

@@ -31,7 +31,7 @@ This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18, #
   * a conformance test still exercises --link-lib LLVM-C;
   * the documentation check (which reads the driver contract in README.md) runs in every job;
   * every job runs the diagnostics presentation check and the error-code reference check;
-  * every job runs the black-box check of the test runner and the black-box check of the formatter;
+  * every job runs the black-box check of the test runner, of the formatter, and of `burdin bindgen`;
   * every job runs the dependency and license audit after `cargo build`, with the license metadata
     verification required;
   * every job runs the platform support check, and docs/platform-support.md exists and is linked;
@@ -314,6 +314,7 @@ required_steps = [
     "tests/check_codegen_opt.py",
     "tests/check_build_flags.py",
     "tests/check_parallel.py",
+    "tests/check_bindgen.py",
     "tests/check_diagnostics.py",
     "tests/check_error_docs.py",
     "tests/check_test_runner.py",
@@ -561,6 +562,7 @@ scripts = [
     "tests/check_codegen_opt.py",
     "tests/check_build_flags.py",
     "tests/check_parallel.py",
+    "tests/check_bindgen.py",
     "tests/check_release.py",
     "tests/build_release.py",
     "tests/release_notes.py",

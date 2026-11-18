@@ -122,30 +122,15 @@ rather than one expression. They are preceded by any diagnostics of the script i
 | E0261 | A build script failed: it did not compile, could not be run, or ended non-zero; or a declared input is missing |
 | E0262 | Invalid generated modules: a bad module path, a conflict with a source module, or an unreadable output directory |
 
-## BS7. The minimal `bindgen`
+## BS7. `bindgen` from a build script
 
-`burdin bindgen <header> --out <file>` writes a Burdin module of raw C declarations. It is a deliberately small
-tool, available for `build.bd`; the full bindgen (libclang, `#include`, function-pointer types, unions, safe
-wrappers) is stage 3. It understands:
+A build script may invoke the full `burdin bindgen`, which reads the C header through libclang and writes a Burdin
+module of raw declarations: `extern "C"` prototypes, `repr(C)` structs with a compile-time layout check, typedefs,
+enumerations, constants from object-like macros, and C wrappers for `static inline` functions
+([`spec/bindgen.md`](bindgen.md)). Nothing about the tool changes when a script runs it; the driver has already put
+`burdin` first on `PATH`, and the script's working directory is its package, so relative paths resolve there.
 
-- object-like `#define NAME value` where the value is an integer (with an optional `u`/`l`/`ll` suffix that picks
-  the width, and a leading-zero C octal read as base 8), a float, or a string →
-  `const NAME: <inferred type> = value`;
-- `typedef` of a primitive, pointer, or named type → `type Alias = ...`; `size_t`, `ssize_t`, `ptrdiff_t`,
-  `intptr_t`, and `uintptr_t` map to `usize`/`isize` by name, and C `long` is 32-bit on Windows and 64-bit
-  elsewhere; C `char` is `CChar` and C `_Bool` is `u8`;
-- `struct`/`typedef struct` with fields of primitives, pointers, fixed arrays, and known structs →
-  `struct Name repr(C) { ... }`; a bitfield, packed struct, nested anonymous aggregate, or union makes the
-  declaration unrepresentable and it is skipped;
-- `enum`/`typedef enum` → `type Name = i32` (or `i64` when a value does not fit) plus one `const` per enumerator;
-- function prototypes → one `extern "C" { ... }` block, with `...` for a variadic parameter; an unnamed parameter
-  becomes `arg0`, `arg1`, and so on.
-
-A construct outside the list (a function-pointer typedef or field, a union, a struct by value across the ABI, a
-macro that is not a single literal, `#include`) is skipped and named in a comment at the top of the output rather
-than guessed at. The tool is quiet on success and exits 2 on a usage or I/O error.
-
-The build script invokes it through `process.run`; the driver has already put `burdin` on `PATH`:
+The script invokes it through `process.run` and passes the failure on:
 
 ```
 match process.run("burdin bindgen c/strings.h --out \"{out}/src/bindings.bd\"") {
@@ -154,6 +139,11 @@ match process.run("burdin bindgen c/strings.h --out \"{out}/src/bindings.bd\"") 
     Err(_) => process.exit(1)
 }
 ```
+
+A wrapper file (`--wrappers <out>/src/wrappers.c`) is not a module: the script compiles it itself and the package
+links it, or the script leaves `static inline` functions out by not passing the option. The generated module's notes
+(the declarations that were skipped, and why) are printed to stderr, which is the compiler's stderr, so a build that
+skips something says so.
 
 ## BS8. What is not sandboxed
 
@@ -185,5 +175,5 @@ interrupted run is never treated as fresh.
 The cache logic the conformance suite cannot observe in one run (content keys, a changed or deleted input or output,
 the profile, a missing declared input, the merge and its conflict) is covered by unit tests in
 `crates/burdin_driver/src/build.rs` and black-box by `tests/check_build_scripts.py` (rerun and reuse, touching,
-`--emit-deps`, and the `bindgen` command line); the header parser is covered by unit tests in
-`crates/burdin_driver/src/bindgen.rs`.
+`--emit-deps`, and the `bindgen` command line). The generator itself is covered by `tests/check_bindgen.py`
+(`spec/bindgen.md`).

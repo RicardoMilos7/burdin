@@ -12,7 +12,8 @@ What it checks:
     unchecked snippets;
   * every example is a complete program (or package) that the driver compiles and rejects with exactly the
     `//~ E0000` diagnostics marked in it, all of the section's code; a `warning-example` compiles successfully
-    and emits exactly the marked warnings;
+    and emits exactly the marked warnings; an example marked `mode=export` is rejected by `burdin bindgen
+    --export` instead, because that check runs after compilation;
   * the page is linked from README.md and from tests/README.md;
   * `burdin explain <code>` prints every section, `burdin explain` lists every code, and an unknown code
     exits 2.
@@ -127,7 +128,10 @@ def check_example(directory: Path, code: str, target: str, mode: str, warning: b
         add_problem(f"example {code}: target {target} is not one of the example files")
         return
 
-    command = [burdin, "test" if mode == "test" else "build", target, "--no-color", "--diagnostic-format=short"]
+    if mode == "export":
+        command = [burdin, "bindgen", "--export", target, "--out", str(directory / "exports.h")]
+    else:
+        command = [burdin, "test" if mode == "test" else "build", target, "--no-color", "--diagnostic-format=short"]
     result = harness.run(command, cwd=directory, merge=True)
     output = harness.text(harness.normalize(result.stdout))
     if warning:
@@ -222,8 +226,8 @@ with harness.temporary_dir("burdin-error-docs-") as work:
                 for attribute in rest.split():
                     if attribute.startswith("target="):
                         target = attribute[len("target="):]
-                    elif attribute == "mode=test":
-                        mode = "test"
+                    elif attribute in ("mode=test", "mode=export"):
+                        mode = attribute[len("mode="):]
                     else:
                         add_problem(f"docs/error-codes.md: unknown example attribute: {attribute}")
                 if not re.fullmatch(r"E[0-9]{4}", code):

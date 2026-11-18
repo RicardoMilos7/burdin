@@ -184,7 +184,9 @@ impl Parser<'_> {
         if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
             return Err(self.unexpected("`{` or a function signature"));
         }
-        let (decl, _) = self.fn_decl_opt(fn_priv, fn_start, false, false)?;
+        let (mut decl, _) = self.fn_decl_opt(fn_priv, fn_start, false, false)?;
+        // `priv extern "C" fn` and `extern "C" priv fn` both mark the function package-private.
+        decl.is_priv |= is_priv;
         Ok(Item::ExternFn(ExternFnDecl { abi, abi_span, decl }))
     }
 

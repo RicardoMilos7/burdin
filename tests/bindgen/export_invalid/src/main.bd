@@ -1,0 +1,39 @@
+// A package whose exports cannot all become C declarations; every report here is E0263 (spec/bindgen.md, BG11, and
+// tests/check_bindgen.py).
+//
+// `int` and `double` are C keywords, a generic struct has no C declaration, and C cannot see the layout of a struct
+// that is not `repr(C)` when another one holds it by value.
+
+const double: f64 = 1.5
+
+struct Loose {
+    a: i32
+}
+
+struct Holder repr(C) {
+    loose: Loose
+}
+
+struct Odd repr(C) {
+    int: i32
+}
+
+struct Wrapper<T> {
+    value: T
+}
+
+extern "C" fn int(own x: i32): i32 {
+    x
+}
+
+extern "C" fn holder_value(own h: CPtr<Holder>): i32 {
+    0
+}
+
+extern "C" fn odd_value(own o: CPtr<Odd>): i32 {
+    0
+}
+
+extern "C" fn wrapped(own w: CPtr<Wrapper<i32>>): i32 {
+    0
+}

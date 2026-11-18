@@ -46,6 +46,7 @@ no claim at all.
 | Diagnostics formats, color, width, and limits | `tests/check_diagnostics.py` | yes | yes | yes |
 | Error-code reference and `burdin explain` | `tests/check_error_docs.py` | yes | yes | yes |
 | C bridge (`extern "C"`, `CPtr`, `CString`) | `tests/m08_modules/extern_libc.bd`, `tests/m08_modules/cstr_roundtrip.bd` | yes | yes | yes |
+| `burdin bindgen` (libclang loaded at run time) | `tests/check_bindgen.py` | yes; goldens, wrappers, and the C-to-Burdin round trip | yes; goldens and wrappers | yes; the generated modules are compiled and run (the goldens assume a non-MSVC C ABI) |
 | LLVM C API (`--link-lib LLVM-C`) | `tests/m11_llvm/llvm_return_42.bd` | yes | yes | yes, with `LLVM-C.dll` on `PATH` |
 | Parallel parsing and deterministic diagnostics | `tests/check_parallel.py` | yes | yes | yes |
 | Lexer/parser fuzzing | `cargo test --workspace` in every job; `tests/fuzz.py` in the scheduled `fuzz` job | corpus replay and the long session | corpus replay | corpus replay |
@@ -83,6 +84,18 @@ stops being a CI step, or when a milestone it names leaves the workflow's confor
   `rb`/`wb`, so there is no newline translation. `tests/check_platform_support.py` proves both on the Windows job
   by inspecting the raw bytes. The conformance suite alone could not: a text-mode round-trip through the same API,
   and the runner's `\r\n` normalization of stdout, hide the translation.
+
+### `burdin bindgen`
+
+- **libclang is a run-time dependency of that one command.** Nothing else in the compiler links or loads it. The
+  CI Linux job installs `libclang-21-dev`, the macOS job gets it with Homebrew's `llvm@21`, and the Windows job with
+  the official LLVM 21 archive; a machine without it can build, run, test, format, and lint Burdin, and only
+  `burdin bindgen` reports where it looked (exit 2).
+- **The golden modules are compared on Linux and macOS only.** They assume a 64-bit, non-MSVC C ABI; the Windows job
+  compiles and runs the generated modules instead, which is what checks their declarations and layout assertions.
+- **The C-to-Burdin round trip is tested on Linux only.** The executable exports its symbols (`-rdynamic`), which is
+  how the C shared library `tests/check_bindgen.py` builds finds the Burdin functions; the same setup is not wired
+  for Mach-O and not for MSVC's linker.
 
 ### arm64
 

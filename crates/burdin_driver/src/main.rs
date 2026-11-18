@@ -3,6 +3,7 @@
 
 mod bindgen;
 mod build;
+mod export;
 mod fmt;
 mod lint;
 mod new;
@@ -1135,9 +1136,22 @@ fn msvc_link_args(object: &Path, output: &Path, libs: &[String], llvm_libdir: Op
         args.push(format!("/LIBPATH:{}", dir.display()).into());
     }
     for lib in libs {
-        args.push(format!("{lib}.lib").into());
+        if is_library_path(lib) {
+            args.push(lib.into());
+        } else {
+            args.push(format!("{lib}.lib").into());
+        }
     }
     args
+}
+
+/// Whether a `--link-lib` value names a file (a path, or a library or object file name) rather than a library to look
+/// up, so `--link-lib build/wrappers.a` links that file as it is. This is how a C file that `burdin bindgen --wrappers`
+/// generated joins the link (`spec/bindgen.md`, BG8).
+fn is_library_path(lib: &str) -> bool {
+    let lower = lib.to_ascii_lowercase();
+    lib.contains(['/', '\\'])
+        || [".a", ".o", ".obj", ".lib", ".so", ".dylib", ".dll"].iter().any(|extension| lower.ends_with(extension))
 }
 
 fn unix_link_args(object: &Path, output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
@@ -1164,6 +1178,10 @@ fn unix_link_args(object: &Path, output: &Path, libs: &[String], opts: &LinkOpti
         }
     }
     for lib in libs {
+        if is_library_path(lib) {
+            args.push(lib.into());
+            continue;
+        }
         match resolve_llvm_c(lib) {
             // `LLVM-C` is the C API of the LLVM shared library. Ubuntu installs it as `libLLVM-21.so`, not as
             // `libLLVM-C.so`, so `llvm-config` says which directory and flag to use.
@@ -1411,6 +1429,17 @@ mod tests {
             &LinkOptions::default(),
         ));
         assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
+    }
+
+    #[test]
+    fn a_link_lib_that_names_a_file_is_linked_as_it_is() {
+        let libs = ["build/wrappers.a".to_string(), "extra.o".to_string(), "z".to_string()];
+        let unix = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &libs, &LinkOptions::default()));
+        assert_eq!(unix, ["-o", "out", "program.o", "build/wrappers.a", "extra.o", "-lz", "-lm"]);
+        let msvc = as_strings(msvc_link_args(Path::new("program.obj"), Path::new("out.exe"), &libs, None));
+        assert!(msvc.contains(&"build/wrappers.a".to_string()), "{msvc:?}");
+        assert!(msvc.contains(&"extra.o".to_string()), "{msvc:?}");
+        assert!(msvc.contains(&"z.lib".to_string()), "{msvc:?}");
     }
 
     #[test]

@@ -250,6 +250,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0260 | Invalid build configuration: a dependency has a `build.bd` that the entry package's `[build] allow` list does not name, or the list names a package that is not a dependency |
 | E0261 | A build script failed: it did not compile, could not be run, or ended with a non-zero status |
 | E0262 | Invalid generated modules: a generated path is not a module name, a generated module repeats a source module's name, or the output directory cannot be read |
+| E0263 | A declaration `burdin bindgen --export` cannot put in a C header: a name C reserves, two C names that collide, a generic struct, a struct held by value that is not `repr(C)`, or a field that is not a C identifier |
 | E0270 | An allocator-aware container whose allocator type does not implement `Allocator` |
 | E0271 | Invalid default type parameter: a parameter without a default after one with a default, a const parameter's default, or a default on a declaration that takes none (a function, an interface, or a type alias) |
 | E0272 | A container with a stored allocator created with `new`, `from_iter`, or `from`, which have no allocator value to store; it is made with `new_in` |
@@ -267,6 +268,7 @@ here names an unknown code, a code that already has a test, or no reason.
 | Code | Why it has no compile-fail test |
 | --- | --- |
 | E0215 | A warning, so compilation continues. `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, and `shadowed_interface_method.bd` assert it with `//@ stderr: warning[E0215]`. |
+| E0263 | Reported by `burdin bindgen --export`, which checks a package after the compiler is done; the conformance runner only builds and runs programs. `tests/check_bindgen.py` runs the fixture in `tests/bindgen/export_invalid` and checks every report. |
 
 ## Decisions the tests encode
 
