@@ -18,6 +18,33 @@ close-out checklist in `AGENTS.md`).
   black-boxes the command (golden contents, the new package builds, runs, and tests, refusals leave existing files
   untouched, invalid names create nothing, the command line) and runs in every CI job.
 
+### `burdin fmt` (issue #229)
+
+- `burdin fmt` formats Burdin source in one opinionated style with no options (`spec/fmt.md`): four-space indentation,
+  lines of at most 120 columns, a magic trailing comma that keeps a list one element per line, and blank lines kept (at
+  most one in a row). It runs on files, directories, and packages, rewrites only the files that change, and is
+  idempotent. `--check` lists the files that are not formatted and exits 1, for CI (issues #229, #463).
+- Comments are kept in place: own-line comments stay on their own lines, trailing comments stay at the end of their
+  line, and a comment before a closing bracket stays inside it. A comment the grammar gives no line for moves to the end
+  of the line; none is dropped or merged (issue #460).
+- Breaking follows the width: a bracketed list breaks one element per line with a trailing comma, the last closure or
+  literal argument of a call stays on its line, binary operators break before `&&`, `||`, and `orelse` and after the
+  others, and a method chain of two calls or more breaks before each `.` (issue #461).
+- `use` declarations are merged where the meaning is the same, sorted, and grouped into the standard library, the
+  dependencies in `burdin.toml`, and the package, with comments kept; a plain `use a.b` is never merged into
+  `use a.{b}` because it may name a module (issue #659).
+- The code in the fenced blocks of `///` comments (an empty fence, `burdin`, or `bd`) is formatted as items or as the
+  statements of a function; a block tagged with another word, or that does not parse, is left alone (issue #660).
+- `--stdin` formats standard input to standard output for editors, `--stdin-filepath` names it and finds its package,
+  and `--range lo:hi` formats only the top-level items that overlap a byte range (issue #463).
+- The formatter checks itself: its output must parse to the same syntax tree with the same comments, and is laid out
+  again until it stops changing, or the file is left alone and the failure reported (issue #462).
+- The new crate `burdin_fmt` depends only on `burdin_diag` and `burdin_syntax`; the look-ahead rules the formatter
+  shares with the parser moved to `burdin_syntax::lookahead`.
+- Tests: `crates/burdin_fmt` (unit tests, `tests/corpus.rs` over every `.bd` file of `std/` and `tests/`,
+  `tests/fuzz.rs` with 20,000 mutations in every CI job and a long session in the scheduled `fuzz` job, and
+  `tests/regressions.rs`), and `tests/check_fmt.py` with the fixtures in `tests/fmt/`, which every CI job runs.
+
 ## Unreleased — Stage 2
 
 ### Milestone 2.4: asynchronous I/O (issue #220)

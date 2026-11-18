@@ -58,10 +58,11 @@ def text(data: bytes) -> str:
     return data.decode("utf-8", "replace")
 
 
-def run(args, cwd=None, env=None, timeout=None, merge: bool = False, stream: bool = False):
+def run(args, cwd=None, env=None, timeout=None, merge: bool = False, stream: bool = False, input=None):
     """Run a command with captured output by default, or inherited output with stream=True.
 
-    With merge=True, stderr is redirected into the captured stdout, like the shell's `2>&1`.
+    With merge=True, stderr is redirected into the captured stdout, like the shell's `2>&1`. `input` (bytes) is
+    written to the command's standard input.
     """
     command = [str(argument) for argument in args]
     if stream:
@@ -74,7 +75,7 @@ def run(args, cwd=None, env=None, timeout=None, merge: bool = False, stream: boo
         command,
         cwd=str(cwd) if cwd is not None else None,
         env=env,
-        input=None,
+        input=input,
         stdout=stdout,
         stderr=stderr,
         timeout=timeout,

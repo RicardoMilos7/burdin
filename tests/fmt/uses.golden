@@ -1,0 +1,18 @@
+use io
+use mem
+use text
+use text.{lower, shout, trim}
+
+use json
+use shapes
+
+pub use io.{read_all, read_line}
+
+pub use shapes.circle
+use fs.{copy, create, create_dir, link, metadata, open, read_dir, read_file, remove, remove_dir, rename, write_file}
+
+use alpha
+// kept with its declaration
+use zeta // and this one
+
+fn main() {}

@@ -32,7 +32,8 @@ not updated and may disagree with the repository.
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
    `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
    default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
-   is the behavior of `burdin test`, `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
+   is the behavior of `burdin test`, `spec/fmt.md` is the behavior of `burdin fmt` (the one style, comments, `use`
+   sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
    resolution, and timers, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
@@ -79,6 +80,7 @@ python3 tests/check_parallel.py          check parallel parsing and deterministi
 python3 tests/check_diagnostics.py       check color, width, formats, error limits, and ordering (needs a built driver)
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
+python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
@@ -115,7 +117,10 @@ crates/
                             specialization of comptime parameters (spec/comptime.md)
   burdin_codegen/           LLVM backend (emit/: one file per theme) and the generated runtime; taskrt/ holds the task
                             runtime (threads, locks, context switch) as LLVM IR text, linked in only when used
-  burdin_driver/            the `burdin` binary: build, run, test, bindgen; package loading (`package.rs`: burdin.toml,
+  burdin_fmt/               the formatter behind `burdin fmt`: its own lossless layout parser, the document printer,
+                            comment and `use` handling, doc-comment code blocks, and the checks of its own output
+                            (spec/fmt.md); it depends only on burdin_diag and burdin_syntax
+  burdin_driver/            the `burdin` binary: build, run, test, fmt, bindgen; package loading (`package.rs`: burdin.toml,
                             modules, dependencies), build scripts (`build.rs`), and the minimal C bindgen
                             (`bindgen.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name

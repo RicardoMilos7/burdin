@@ -243,83 +243,14 @@ impl Parser<'_> {
         Ok(e)
     }
 
-    /// Whether the current `<` (right after a member name) starts a type-argument list rather than a comparison:
-    /// a type list parses and its `>` is followed by `(`, `.`, or `{`. Comparison operators do not chain
-    /// (spec/grammar.md), so `a.b < c > (d)` is already invalid and cannot be made ambiguous by this rule.
+    /// Whether the current `<` (right after a member name) starts a type-argument list rather than a comparison
+    /// (`crate::lookahead::member_type_args_ahead`).
     fn member_type_args_ahead(&self) -> bool {
-        if !matches!(self.kind(), TokenKind::Lt) {
-            return false;
-        }
-        let continues = |i: usize| {
-            matches!(self.toks.get(i).map(|t| &t.kind), Some(TokenKind::Dot | TokenKind::LParen | TokenKind::LBrace))
-        };
-        let mut depth = 0i32;
-        let mut parens = 0i32;
-        let mut i = self.pos;
-        while let Some(t) = self.toks.get(i) {
-            match &t.kind {
-                TokenKind::Lt => depth += 1,
-                TokenKind::Gt => {
-                    depth -= 1;
-                    if depth <= 0 {
-                        return depth == 0 && continues(i + 1);
-                    }
-                }
-                TokenKind::Shr => {
-                    depth -= 2;
-                    if depth <= 0 {
-                        return depth == 0 && continues(i + 1);
-                    }
-                }
-                TokenKind::LParen | TokenKind::LBracket => parens += 1,
-                TokenKind::RParen | TokenKind::RBracket => {
-                    if parens == 0 {
-                        return false;
-                    }
-                    parens -= 1;
-                }
-                TokenKind::Ge | TokenKind::Eof | TokenKind::RBrace if parens == 0 => return false,
-                _ => {}
-            }
-            i += 1;
-        }
-        false
+        crate::lookahead::member_type_args_ahead(&self.toks, self.pos)
     }
 
     pub(super) fn can_start_expr(kind: &TokenKind) -> bool {
-        use TokenKind::*;
-        matches!(
-            kind,
-            Ident(_)
-                | Int(_)
-                | Float(_)
-                | Char(_)
-                | Str(_)
-                | Interp(_)
-                | True
-                | False
-                | SelfValue
-                | SelfType
-                | LParen
-                | LBracket
-                | LBrace
-                | If
-                | Match
-                | Loop
-                | While
-                | For
-                | Unsafe
-                | Comptime
-                | Return
-                | Break
-                | Continue
-                | Minus
-                | Bang
-                | Star
-                | Amp
-                | Pipe
-                | OrOr
-        )
+        crate::lookahead::can_start_expr(kind)
     }
 
     /// `|a, b| body`, `|| body`, or `|a: i32|: bool body`. The body is one expression, so a block after the
@@ -604,12 +535,7 @@ fn expr_path(e: &Expr) -> Option<Vec<Ident>> {
     }
 }
 
-/// `Name {` starts a struct literal when the brace is followed by `}` or by `ident` and then `:`, `,`, `}` or a
-/// line break. A block after a name (as in `while x { ... }`) is excluded by the restriction instead.
+/// `Name {` starts a struct literal (`crate::lookahead::looks_like_struct_literal`).
 fn looks_like_struct_literal(p: &Parser<'_>) -> bool {
-    match p.nth_kind(1) {
-        TokenKind::RBrace => true,
-        TokenKind::Ident(_) => matches!(p.nth_kind(2), TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace),
-        _ => false,
-    }
+    crate::lookahead::looks_like_struct_literal(&p.toks, p.pos)
 }
