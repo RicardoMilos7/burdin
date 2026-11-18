@@ -6,7 +6,8 @@
 //! binary — proportional to what the program uses, which the code-generation checks rely on when they count drop
 //! flags and bounds checks.
 //!
-//! The roots are `main`, the `test` blocks, the exported (`extern "C" fn`) functions, every `Drop` implementation,
+//! The roots are `main`, the `test` and `bench` blocks, the exported (`extern "C" fn`) functions, every `Drop`
+//! implementation,
 //! and every vtable entry; a vtable entry is a root because it is reached only through an indirect call the walker
 //! cannot see. Everything they call is reachable as well, and so is every closure body a reachable body creates: a
 //! closure inside a function nothing reaches is dead code too, which keeps the scheduler of `std.task` out of a program
@@ -33,6 +34,10 @@ impl Codegen<'_, '_> {
         }
         for test in &program.tests {
             mark(test.func, &mut reachable, &mut pending);
+        }
+        // The bench dispatcher calls each bench the same way (`spec/bench.md`, BN4).
+        for bench in &program.benches {
+            mark(bench.func, &mut reachable, &mut pending);
         }
         for (i, f) in program.functions.iter().enumerate() {
             if f.exported {

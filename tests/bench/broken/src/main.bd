@@ -1,0 +1,5 @@
+fn main() {}
+
+bench "broken body" {
+    let x: i32 = "no"
+}

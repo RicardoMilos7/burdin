@@ -30,8 +30,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// What a run of the compiler front end is for.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
-    /// `burdin test`: declare and check the `test` items of the entry package, and do not require `main`.
-    pub test_mode: bool,
+    /// What the entry point of this build is: the program's `main`, its `test` items (`burdin test`), or its
+    /// `bench` items (`burdin bench`). A test or bench build does not require `main`.
+    pub mode: burdin_sema::EntryMode,
     /// Compile for release: no error trace frames, and `comptime` code sees `release` as true.
     pub release: bool,
     /// The step budget of each compile-time evaluation; `None` is the default (`spec/comptime.md`, CT11).
@@ -175,7 +176,11 @@ pub struct Analysis {
 impl Db {
     /// Opens a package directory or a single `.bd` file from disk, with the embedded standard library.
     pub fn open(target: &Path, options: Options) -> Result<Db, String> {
-        let workspace = if options.test_mode { package::load_for_tests(target)? } else { package::load(target)? };
+        let workspace = if options.mode == burdin_sema::EntryMode::Build {
+            package::load(target)?
+        } else {
+            package::load_for_tests(target)?
+        };
         Db::from_workspace(&workspace, &HashMap::new(), options)
     }
 
@@ -538,7 +543,7 @@ impl Db {
             &packages,
             self.layout.entry_package,
             self.layout.entry_module,
-            self.options.test_mode,
+            self.options.mode,
             !self.options.release,
             &self.sources,
             &mut diags,

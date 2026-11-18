@@ -246,6 +246,9 @@ pub enum Builtin {
     /// is only for the standard library's `Scope.spawn`, which guarantees the closure ends before the borrowed
     /// places do (`spec/tasks.md`, TK7).
     ClosureOwn,
+    /// `black_box(value)`: the same value through a barrier the optimizer cannot see through, so measured work is
+    /// not deleted (`spec/bench.md`, BN9). The argument type is any first-class type; the result type is the same.
+    BlackBox,
     /// One of the task runtime's primitives (`spec/tasks.md`, TK2): threads, locks, contexts, and the two slots the
     /// scheduler keeps.
     Rt(RtOp),

@@ -1,0 +1,9 @@
+fn main() {}
+
+bench "panics on purpose" {
+    panic("boom")
+}
+
+bench "still measured" {
+    black_box(1 + 1)
+}

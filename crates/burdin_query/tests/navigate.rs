@@ -113,7 +113,7 @@ fn functions_are_listed_once_with_their_signatures() {
 #[test]
 fn tests_and_the_layout_of_modules_and_packages() {
     let text = "fn double(n: i32): i32 {\n    n * 2\n}\n\ntest \"doubles\" {\n    assert_eq(double(2), 4)?\n}\n\ntest \"later\" [ignore] {\n}\n";
-    let options = Options { test_mode: true, ..Options::default() };
+    let options = Options { mode: burdin_query::EntryMode::Test, ..Options::default() };
     let mut db = Db::from_files(&[("main.bd", text)], options).unwrap();
     let analysis = db.analyze().unwrap();
     let tests = analysis.tests();

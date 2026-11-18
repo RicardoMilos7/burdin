@@ -2124,6 +2124,17 @@ is the call's source text, `left` and `right` are its values formatted with `Deb
 message (only present when the call wrote one), and `location` is its `path:line:col` (`errors.md`, ERR9). A normal
 build keeps the panicking assertions.
 
+## The optimizer barrier
+
+```
+fn black_box(value: T): T   // the same value, through a barrier the optimizer cannot see through
+```
+
+`black_box` moves its argument in and the same value back out, with no observable effect: it exists so a benchmark's
+measured work cannot be deleted (`bench.md`, BN9). At compile time it is the identity. The argument may be any
+first-class type; a view is E0120. It is a compiler-known call like `format`: it takes no named arguments and no
+bare `black_box` value exists.
+
 ## C bridge
 
 ```

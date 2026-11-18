@@ -6,6 +6,30 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Bench blocks and `burdin bench` (issue #251, sub-issues #653-#655)
+
+- `bench "name" { ... }` is a module-scope item beside `test` (`spec/bench.md` BN1, `spec/grammar.md`): a contextual
+  keyword, no attributes, stripped from every build but `burdin bench`. One call of the body is one iteration,
+  and `black_box(value)` (`spec/stdlib.md`) hands a value back through an opaque barrier so measured work cannot be
+  optimized away; at compile time it is the identity, and a view argument is E0120.
+- `burdin bench` (new `crates/burdin_driver/src/bench_runner.rs`, the harness in
+  `burdin_codegen/src/runtime.rs::define_bench_main`) compiles the selected packages in the release profile and
+  measures each bench in its own process: a warmup, a growing-batch calibration so the clock's granularity cannot
+  swamp the estimate, then `--sample-count` samples of about `--sample-time` milliseconds each.
+- The report gives the median, the mean, a 95% confidence interval, the median absolute deviation, and the
+  outliers; `--format json` streams a version 1 event schema, and `--list` prints the selected benches. The filters,
+  `--exact`, `--skip`, `-p`, `--workspace`, and the full-path rules are the test runner's; `-j` bounds compilation
+  only, because benches are measured one at a time.
+- Baselines (#654): `--save-baseline <name>` stores the statistics under `<package>/target/burdin/bench/`, and
+  `--baseline <name>` compares against them, calling a change beyond noise when the medians differ by more than
+  three times the larger spread; `--fail-on-regression <percent>` fails the run for benches that regressed that
+  far, for CI.
+- Profiler hook (#655): `--profile-time <seconds>` runs one selected bench in a loop, with no clock, for an
+  external profiler.
+- `burdin fmt` lays out bench items, `tests/s3_bench/` adds seven conformance tests with the `bench-compile-fail`
+  and `burdin-bench` directives, `tests/check_bench.py` checks the command black-box in every CI job, and the
+  driver, runner, and parser unit tests cover the statistics, the baseline files, the result line, and the parser.
+
 ### Parallel compilation and `-j` (issues #334, #352, #773)
 
 - Code generation is parallel: after lowering, unused runtime and glue functions are dropped, and a program of more

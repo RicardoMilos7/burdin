@@ -5,8 +5,8 @@ These programs are the target for the stage 0 compiler (Rust, LLVM backend). The
 document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
-Stage 1 starts at `m12_closures`; stage 2 starts at `s2_tasks`. Everything the plans still defer (stage 3's
-tooling and ecosystem) has **no tests here** yet.
+Stage 1 starts at `m12_closures`; stage 2 starts at `s2_tasks`; stage 3 has the one conformance folder
+`s3_bench`, and its other work is pinned by the black-box scripts named in [AGENTS.md](../AGENTS.md).
 
 ## Layout
 
@@ -43,7 +43,11 @@ tests/
                        their stress tests
   s2_io/               stage 2.4: the reactor, timers, the file helper pool, `blocking` extern functions, TCP and
                        UDP sockets, name resolution, and their stress tests
+  s3_bench/            stage 3: `bench` blocks, `black_box`, and `burdin bench` (spec/bench.md)
 ```
+
+Stage 3's driver and tooling work has no conformance folders beyond `s3_bench`: each tool's behavior is pinned by
+its own black-box script under `tests/` instead.
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
 Put it in the folder of the milestone it belongs to, and remove the directive once the question is settled.
@@ -67,6 +71,9 @@ Directives are line comments at any position in the root file.
 | `//@ burdin-test passed=N failed=M` | Run `burdin test` on the package. Counts must match. |
 | `//@ burdin-test passed=N failed=M ignored=I` | The same, with I tests marked `[ignore]`. |
 | `//@ failed-test: name` | That test must be reported as failed. May repeat. |
+| `//@ bench-compile-fail` | Like `compile-fail`, but the package is compiled in bench mode (`burdin bench`), so diagnostics inside `bench` items are reported (`spec/bench.md`). |
+| `//@ burdin-bench measured=N failed=M` | Run `burdin bench` on the package. Counts must match. |
+| `//@ failed-bench: name` | That bench must be reported as failed. May repeat. |
 | `//@ exit-code: N` | Expected exit code with `run`. |
 | `//@ args: a b` | Command-line arguments passed after the program name. |
 | `//@ stdin: text` | One line of standard input for a `run`/`run-abort` test, followed by `\n`. May repeat; the lines are joined in file order. `\n`, `\r`, and `\\` are escapes. |
