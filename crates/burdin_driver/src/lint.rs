@@ -408,7 +408,10 @@ fn fix(args: &LintArgs, options: &CompileOptions) -> ExitCode {
 /// The path in a diff header: relative to the current directory when the file is under it, with `/` separators, and
 /// never absolute, so `a/<path>` and `b/<path>` read like a `git diff`.
 fn diff_path(path: &Path) -> String {
-    let relative = std::env::current_dir().ok().and_then(|cwd| path.strip_prefix(cwd).ok().map(Path::to_path_buf));
+    // Both sides canonical: on Windows the working directory can be spelled with a short name (`RUNNER~1`) while the
+    // source path is the canonical long one.
+    let cwd = std::env::current_dir().ok().and_then(|cwd| cwd.canonicalize().ok());
+    let relative = cwd.and_then(|cwd| path.canonicalize().ok()?.strip_prefix(cwd).ok().map(Path::to_path_buf));
     let text = crate::source_path_text(relative.as_deref().unwrap_or(path)).replace('\\', "/");
     text.trim_start_matches("./").trim_start_matches('/').to_string()
 }
