@@ -1,14 +1,16 @@
-//! The `burdin` command: `build`, `run`, `test`, `fmt`, `lint`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
+//! The `burdin` command: `build`, `run`, `test`, `check`, `fmt`, `lint`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
 //! at the repository root (`The driver contract`) and summarized at the top of tests/run_tests.py.
 
 mod bindgen;
 mod build;
+mod check;
+mod doc;
 mod fmt;
 mod lint;
 mod new;
 mod test_runner;
 
-use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, SourceMap, Span};
+use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
 pub(crate) use burdin_query::package;
 pub(crate) use burdin_query::package::source_path_text;
 use std::ffi::OsString;
@@ -23,15 +25,19 @@ usage:
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
-              [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
-              [--comptime-steps <n>] [diagnostics]
+  burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+              [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
+              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
+              [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
               [--comptime-steps <n>] [diagnostics]
   burdin lint --list
   burdin lint --explain <lint>
+  burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
+             [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
@@ -46,14 +52,34 @@ lint options (the lint reference is docs/lints.md):
   -D, --deny <lint>    report it as an error      --deny-warnings     deny every lint that warns
   --fix                apply the safe fixes (checked, all or nothing); --dry-run prints the diff only
 
+doc options (the behavior is spec/doc.md):
+  -o, --out <path>     a directory for html (default: <package>/target/doc), a file for json (default: stdout)
+  --output-format <f>  html (default) writes a static site; json writes the documented API as JSON
+  --private            document `priv` items, fields, and methods too
+  --coverage           print how much of the public interface is documented, per module
+  --deny-warnings      exit with status 1 when a doc comment has a broken link
+
+check options (type-check only: the front end and every memory check, no code generation or linking):
+  --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
+
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
   -p <package>         run the tests of one package of the build; may repeat
   --workspace          run the tests of the entry package and every path dependency
-  --filter <text>      run only tests whose name contains text
+  <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
+                       is the same as a positional filter
+  --exact              filters and --skip patterns must equal the full path instead of being contained in it
+  --skip <pattern>     do not run tests whose full path contains pattern; may repeat
   --ignored            run only tests marked [ignore]
   --include-ignored    run ignored tests too
+  --failed             run only the tests that failed in the previous run (kept under <package>/target/burdin)
+  --shard <i>/<n>      run the i-th of n deterministic slices of the selected tests (1 <= i <= n)
   --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
+  --slow-threshold <ms>  list tests that ran at least this long (default: 5000; 0 disables it)
+  --list               print the selected tests and their attributes without running them
+  --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
+                       test per line)
+  --junit <file>       also write a JUnit XML report of the run
   -v, --verbose        print the output of passing tests too
 
 fmt options:
@@ -63,8 +89,10 @@ fmt options:
   --range <lo>:<hi>        with --stdin, format only the items that overlap these byte offsets
 
 diagnostics:
-  --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
-                                          diagnostic; json prints one JSON object per line
+  --diagnostic-format <human|short|json|sarif>
+                                          human (default) colors and wraps; short prints one plain line per
+                                          diagnostic; json prints one version 1 JSON object per line; sarif
+                                          prints one SARIF 2.1.0 log (docs/diagnostics.md)
   --color <auto|always|never>             color (default auto: only when stderr is a terminal)
   --no-color                              same as --color never
   --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
@@ -78,6 +106,7 @@ environment:
   BURDIN_VERSION       overrides the version printed by `--version` (nightly builds)
   LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
   COLUMNS              terminal width used when --width is not given
+  FORCE_HYPERLINK      1 links error codes to the error reference in colored output, 0 never does
   NO_COLOR             disables color unless --color=always or --color=never says otherwise";
 
 const EXPLAIN_USAGE: &str = "\
@@ -89,7 +118,7 @@ usage:
 /// `tests/check_error_docs.py` checks (issue #437).
 const ERROR_DOCS: &str = include_str!("../../../docs/error-codes.md");
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Args {
     pub(crate) command: String,
     pub(crate) target: PathBuf,
@@ -120,12 +149,37 @@ pub(crate) struct Args {
     pub(crate) workspace: bool,
     pub(crate) ignored_only: bool,
     pub(crate) include_ignored: bool,
-    pub(crate) filter: Option<String>,
+    /// The positional filters and every `--filter`: a test runs when its full path matches any of them.
+    pub(crate) filters: Vec<String>,
+    /// `--exact`: filters and skip patterns must equal the full path.
+    pub(crate) exact: bool,
+    /// `--skip`: a test whose full path matches any of these is left out.
+    pub(crate) skip: Vec<String>,
+    /// `--failed`: run only the tests that failed in the previous run.
+    pub(crate) failed: bool,
+    /// `--shard i/n`, with `i` counted from 1.
+    pub(crate) shard: Option<(usize, usize)>,
     /// Milliseconds; `Some(0)` disables the timeout. `None` keeps the default.
     pub(crate) timeout_ms: Option<u64>,
+    /// Milliseconds a test may run before the summary lists it as slow; `Some(0)` disables the list.
+    pub(crate) slow_ms: Option<u64>,
+    /// `--list`: print the selected tests instead of running them.
+    pub(crate) list: bool,
+    /// `--format`: the report format of `burdin test`.
+    pub(crate) format: TestFormat,
+    /// `--junit`: where to write the JUnit XML report.
+    pub(crate) junit: Option<PathBuf>,
 }
 
-#[derive(Debug, Default)]
+/// The report format of `burdin test` (`--format`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TestFormat {
+    #[default]
+    Human,
+    Json,
+}
+
+#[derive(Clone, Debug, Default)]
 pub(crate) struct DiagnosticOptions {
     format: DiagnosticFormat,
     color: ColorChoice,
@@ -168,31 +222,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     if !matches!(command.as_str(), "build" | "run" | "test") {
         return Err(format!("unknown command `{command}`"));
     }
-    let mut args = Args {
-        command,
-        target: PathBuf::new(),
-        release: false,
-        debug: false,
-        strip: false,
-        lto: false,
-        pgo_generate: false,
-        pgo_use: None,
-        output: None,
-        emit_ir: None,
-        link_libs: Vec::new(),
-        program_args: Vec::new(),
-        diagnostics: DiagnosticOptions::default(),
-        comptime_steps: None,
-        emit_deps: None,
-        jobs: None,
-        verbose: false,
-        packages: Vec::new(),
-        workspace: false,
-        ignored_only: false,
-        include_ignored: false,
-        filter: None,
-        timeout_ms: None,
-    };
+    let mut args = Args { command, ..Args::default() };
     let mut target = None;
     while let Some(raw) = it.next() {
         // Long options accept `--option value` and `--option=value`.
@@ -242,7 +272,21 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--workspace" => args.workspace = flag_without_value(a, inline)?,
             "--ignored" => args.ignored_only = flag_without_value(a, inline)?,
             "--include-ignored" => args.include_ignored = flag_without_value(a, inline)?,
-            "--filter" => args.filter = Some(option_value(&mut it, inline, a, "a text")?),
+            "--filter" => args.filters.push(option_value(&mut it, inline, a, "a text")?),
+            "--exact" => args.exact = flag_without_value(a, inline)?,
+            "--skip" => args.skip.push(option_value(&mut it, inline, a, "a pattern")?),
+            "--failed" => args.failed = flag_without_value(a, inline)?,
+            "--shard" => args.shard = Some(parse_shard(&option_value(&mut it, inline, a, "`<i>/<n>`")?)?),
+            "--list" => args.list = flag_without_value(a, inline)?,
+            "--format" => args.format = parse_test_format(&option_value(&mut it, inline, a, "a value")?)?,
+            "--junit" => args.junit = Some(option_value(&mut it, inline, a, "a path")?.into()),
+            "--slow-threshold" => {
+                let value = option_value(&mut it, inline, a, "a number of milliseconds")?;
+                let ms: u64 = value
+                    .parse()
+                    .map_err(|_| format!("`--slow-threshold` needs a number of milliseconds, got `{value}`"))?;
+                args.slow_ms = Some(ms);
+            }
             "--emit-deps" => args.emit_deps = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--comptime-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
@@ -264,6 +308,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ if target.is_none() => target = Some(PathBuf::from(a)),
+            // `burdin test <target> <filter>...`: the arguments after the target are name filters.
+            _ if args.command == "test" => args.filters.push(a.to_string()),
             _ => return Err(format!("unexpected argument `{a}`")),
         }
     }
@@ -287,12 +333,24 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         if args.ignored_only || args.include_ignored {
             return Err("`--ignored` and `--include-ignored` are only valid for `burdin test`".to_string());
         }
-        if args.filter.is_some() {
+        if !args.filters.is_empty() {
             return Err("`--filter` is only valid for `burdin test`".to_string());
         }
-        if args.timeout_ms.is_some() {
-            return Err("`--timeout` is only valid for `burdin test`".to_string());
+        if args.exact || !args.skip.is_empty() {
+            return Err("`--exact` and `--skip` are only valid for `burdin test`".to_string());
         }
+        if args.failed || args.shard.is_some() || args.list || args.junit.is_some() {
+            return Err("`--failed`, `--shard`, `--list`, and `--junit` are only valid for `burdin test`".to_string());
+        }
+        if args.format != TestFormat::Human {
+            return Err("`--format` is only valid for `burdin test`".to_string());
+        }
+        if args.timeout_ms.is_some() || args.slow_ms.is_some() {
+            return Err("`--timeout` and `--slow-threshold` are only valid for `burdin test`".to_string());
+        }
+    }
+    if args.list && args.junit.is_some() {
+        return Err("`--list` and `--junit` cannot be used together: a listing has no results".to_string());
     }
     if args.ignored_only && args.include_ignored {
         return Err("`--ignored` and `--include-ignored` cannot be used together".to_string());
@@ -301,6 +359,35 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         return Err("`-p` and `--workspace` cannot be used together".to_string());
     }
     Ok(args)
+}
+
+/// Handles one of the diagnostics options shared by every command (`--diagnostic-format`, `--color`, `--no-color`,
+/// `--width`, `--error-limit`). Returns whether `option` was one of them.
+pub(crate) fn parse_diagnostic_option(
+    it: &mut std::slice::Iter<'_, String>,
+    inline: Option<&str>,
+    option: &str,
+    diagnostics: &mut DiagnosticOptions,
+) -> Result<bool, String> {
+    match option {
+        "--diagnostic-format" => diagnostics.format = parse_format(&option_value(it, inline, option, "a value")?)?,
+        "--color" => diagnostics.color = parse_color(&option_value(it, inline, option, "a value")?)?,
+        "--no-color" => {
+            flag_without_value(option, inline)?;
+            diagnostics.color = ColorChoice::Never;
+        }
+        "--width" => {
+            let value = option_value(it, inline, option, "a number")?;
+            diagnostics.width = Some(parse_number(option, &value)?);
+        }
+        "--error-limit" => {
+            let value = option_value(it, inline, option, "a number")?;
+            let limit = parse_number(option, &value)?;
+            diagnostics.error_limit = (limit > 0).then_some(limit);
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 /// The value of an option: the part after `=` when written inline, otherwise the next argument.
@@ -329,8 +416,29 @@ fn parse_format(value: &str) -> Result<DiagnosticFormat, String> {
         "human" => Ok(DiagnosticFormat::Human),
         "short" => Ok(DiagnosticFormat::Short),
         "json" => Ok(DiagnosticFormat::Json),
-        _ => Err(format!("unknown diagnostic format `{value}` (expected human, short, or json)")),
+        "sarif" => Ok(DiagnosticFormat::Sarif),
+        _ => Err(format!("unknown diagnostic format `{value}` (expected human, short, json, or sarif)")),
     }
+}
+
+fn parse_test_format(value: &str) -> Result<TestFormat, String> {
+    match value {
+        "human" => Ok(TestFormat::Human),
+        "json" => Ok(TestFormat::Json),
+        _ => Err(format!("unknown test format `{value}` (expected human or json)")),
+    }
+}
+
+/// `--shard <i>/<n>`: the i-th of n slices, counted from 1.
+fn parse_shard(value: &str) -> Result<(usize, usize), String> {
+    let bad = || format!("`--shard` needs `<i>/<n>` with 1 <= i <= n, got `{value}`");
+    let (index, count) = value.split_once('/').ok_or_else(bad)?;
+    let index: usize = index.parse().map_err(|_| bad())?;
+    let count: usize = count.parse().map_err(|_| bad())?;
+    if index == 0 || count == 0 || index > count {
+        return Err(bad());
+    }
+    Ok((index, count))
 }
 
 fn parse_color(value: &str) -> Result<ColorChoice, String> {
@@ -369,6 +477,9 @@ fn driver_main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("fmt") {
         return fmt::run(&argv[1..]);
     }
+    if argv.first().map(String::as_str) == Some("check") {
+        return check::run(&argv[1..]);
+    }
     if argv.first().map(String::as_str) == Some("explain") {
         return explain(&argv[1..]);
     }
@@ -377,6 +488,9 @@ fn driver_main() -> ExitCode {
     }
     if argv.first().map(String::as_str) == Some("lint") {
         return lint::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("doc") {
+        return doc::run(&argv[1..]);
     }
     if argv.first().map(String::as_str) == Some("new") {
         return new::run(&argv[1..]);
@@ -401,6 +515,7 @@ fn driver_main() -> ExitCode {
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: args.emit_deps.as_deref(),
+        report_clean: args.command == "build",
         run_build_scripts: true,
     };
     match args.command.as_str() {
@@ -424,6 +539,9 @@ fn explain(args: &[String]) -> ExitCode {
         [code] => match explain_section(code) {
             Some(section) => {
                 println!("{section}");
+                if let Some(url) = burdin_diag::code_url(&code.to_ascii_uppercase()) {
+                    println!("\nOnline: {url}");
+                }
                 ExitCode::SUCCESS
             }
             None => {
@@ -540,6 +658,8 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) comptime_steps: Option<u64>,
     /// Where to list the files `embed` read; `None` writes nothing.
     pub(crate) emit_deps: Option<&'a Path>,
+    /// Write a SARIF log even when the build found nothing (`burdin build` only).
+    pub(crate) report_clean: bool,
     /// Run the package's `build.bd` (and its granted dependencies' scripts) before reading sources. A build
     /// script's own compilation passes `false`, so a script cannot run another script (BS3).
     pub(crate) run_build_scripts: bool,
@@ -550,7 +670,15 @@ pub(crate) struct CompileOptions<'a> {
 pub(crate) struct Compiled {
     pub(crate) exe: PathBuf,
     pub(crate) tests: Vec<burdin_tir::TestEntry>,
+    /// Where each test is declared, in the order of `tests`.
+    pub(crate) test_sites: Vec<TestSite>,
     pub(crate) build_inputs: Vec<String>,
+}
+
+/// The source file and line a `test` block is declared at.
+pub(crate) struct TestSite {
+    pub(crate) file: String,
+    pub(crate) line: u32,
 }
 
 /// Everything the front end produced: the loaded packages, the parsed files, the type-checked program, and the
@@ -655,28 +783,7 @@ pub(crate) fn compile(
     let FrontEnd { loaded, sources, program, diags, script_inputs, .. } =
         front_end(target, options, &SourceOverrides::new())?;
     if diags.has_errors() {
-        let options = render_options(options.diagnostics, std::io::stderr().is_terminal());
-        let rendered = diags.render_with(&sources, &options);
-        eprint!("{}", rendered.text);
-        let total = rendered.total;
-        let suffix = if total == 1 { "" } else { "s" };
-        match options.format {
-            DiagnosticFormat::Json => {
-                eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
-            }
-            _ => {
-                if rendered.shown < total {
-                    let hidden = total - rendered.shown;
-                    let plural = if hidden == 1 { "" } else { "s" };
-                    let limit = options.error_limit.unwrap_or(0);
-                    eprintln!("note: {hidden} more error{plural} not shown (--error-limit {limit})");
-                }
-                eprintln!("error: could not compile {} ({total} error{suffix})", target.display());
-                if options.format == DiagnosticFormat::Human {
-                    eprintln!("note: for an explanation of an error code, run `burdin explain <code>`");
-                }
-            }
-        }
+        report_errors("compile", target, &diags, &sources, options.diagnostics);
         return Err(ExitCode::from(1));
     }
     let mut program = program.expect("no errors means checking produced a program");
@@ -695,10 +802,7 @@ pub(crate) fn compile(
     }
     // Warnings do not stop compilation, but they are printed before the build goes on (`spec/extensions.md`,
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
-    if diags.has_warnings() {
-        let render = render_options(options.diagnostics, std::io::stderr().is_terminal());
-        eprint!("{}", diags.render_with(&sources, &render).text);
-    }
+    print_warnings(&diags, &sources, options.diagnostics, options.report_clean);
 
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -748,7 +852,66 @@ pub(crate) fn compile(
         pgo_generate: options.pgo_generate,
     };
     link(&object, &output, options.link_libs, &link_opts).map_err(fail)?;
-    Ok(Compiled { exe: output, tests: program.tests, build_inputs: program.build_inputs })
+    let test_sites = program
+        .tests
+        .iter()
+        .map(|test| {
+            let file = sources.get(test.span.file);
+            TestSite { file: file.path.clone(), line: file.line_col(test.span.lo).0 }
+        })
+        .collect();
+    Ok(Compiled { exe: output, tests: program.tests, test_sites, build_inputs: program.build_inputs })
+}
+
+/// Prints the errors of a failed front end and the closing line, `could not <verb> <target> (N errors)`: `compile`
+/// for `build`, `run`, and `test`, `check` for `burdin check`. Everything goes to standard error.
+pub(crate) fn report_errors(
+    verb: &str,
+    target: &Path,
+    diags: &Diagnostics,
+    sources: &SourceMap,
+    diagnostics: &DiagnosticOptions,
+) {
+    let options = render_options(diagnostics, std::io::stderr().is_terminal());
+    let rendered = diags.render_with(sources, &options);
+    eprint!("{}", rendered.text);
+    let total = rendered.total;
+    let suffix = if total == 1 { "" } else { "s" };
+    match options.format {
+        DiagnosticFormat::Json => {
+            eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
+        }
+        // A SARIF log is one document, so nothing may follow it.
+        DiagnosticFormat::Sarif => {}
+        _ => {
+            if rendered.shown < total {
+                let hidden = total - rendered.shown;
+                let plural = if hidden == 1 { "" } else { "s" };
+                let limit = options.error_limit.unwrap_or(0);
+                eprintln!("note: {hidden} more error{plural} not shown (--error-limit {limit})");
+            }
+            eprintln!("error: could not {verb} {} ({total} error{suffix})", target.display());
+            if options.format == DiagnosticFormat::Human {
+                eprintln!("note: for an explanation of an error code, run `burdin explain <code>`");
+            }
+        }
+    }
+}
+
+/// Prints the warnings of a front end that found no errors; nothing when there are none. With `report_clean`, a
+/// SARIF log is written even when there is nothing to report, so a CI job always has a file to upload
+/// (`spec/diagnostics.md`, DG11).
+pub(crate) fn print_warnings(
+    diags: &Diagnostics,
+    sources: &SourceMap,
+    diagnostics: &DiagnosticOptions,
+    report_clean: bool,
+) {
+    let render = render_options(diagnostics, std::io::stderr().is_terminal());
+    let clean_log = report_clean && render.format == DiagnosticFormat::Sarif;
+    if diags.has_warnings() || clean_log {
+        eprint!("{}", diags.render_with(sources, &render).text);
+    }
 }
 
 /// Reports a build-script failure at the entry package's first source line. The failure is about the package, not
@@ -772,11 +935,63 @@ fn report_build_failure(loaded: &package::Workspace, failure: build::Failure, op
 /// and whether stderr is a terminal, and the width from `--width`, then `COLUMNS`, then 80.
 fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
     let columns = std::env::var("COLUMNS").ok();
+    let color = color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal);
     RenderOptions {
         format: diagnostics.format,
-        color: color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal),
+        color,
         width: terminal_width(diagnostics.width, columns.as_deref()),
         error_limit: diagnostics.error_limit,
+        hyperlinks: color && hyperlinks_supported(&|name| std::env::var(name).ok()),
+        tool: if diagnostics.format == DiagnosticFormat::Sarif { sarif_tool() } else { Tool::default() },
+    }
+}
+
+/// Whether the terminal understands OSC 8 hyperlinks. `FORCE_HYPERLINK` decides when it is set (`0` is off, anything
+/// else is on); otherwise a `dumb` terminal and the multiplexers that swallow the sequence say no, and the terminals
+/// known to support it say yes. A terminal this list does not know gets plain text, which is always correct.
+fn hyperlinks_supported(env: &dyn Fn(&str) -> Option<String>) -> bool {
+    if let Some(force) = env("FORCE_HYPERLINK").filter(|value| !value.is_empty()) {
+        return force != "0";
+    }
+    let term = env("TERM").unwrap_or_default();
+    if term == "dumb" || term.starts_with("screen") || term.starts_with("tmux") || env("TMUX").is_some() {
+        return false;
+    }
+    if env("WT_SESSION").is_some() || env("KITTY_WINDOW_ID").is_some() || env("KONSOLE_VERSION").is_some() {
+        return true;
+    }
+    if env("VTE_VERSION").and_then(|version| version.parse::<u32>().ok()).is_some_and(|version| version >= 5000) {
+        return true;
+    }
+    if matches!(
+        env("TERM_PROGRAM").as_deref(),
+        Some("iTerm.app" | "WezTerm" | "vscode" | "ghostty" | "Hyper" | "Tabby" | "rio")
+    ) {
+        return true;
+    }
+    term.contains("kitty") || term.contains("alacritty") || term.contains("foot") || term.contains("ghostty")
+}
+
+/// The tool a SARIF log names: the compiler's version, and one rule for every error code of the reference and every
+/// lint, each with the link to its entry (`spec/diagnostics.md`, DG9).
+fn sarif_tool() -> Tool {
+    let mut rules = Vec::new();
+    for line in ERROR_DOCS.lines() {
+        if let Some(code) = heading_code(line) {
+            let name = line["## E0000: ".len()..].trim().to_string();
+            rules.push(Rule { id: code.to_string(), name, help_uri: burdin_diag::code_url(code) });
+        }
+    }
+    let lints = std::iter::once((lint::UNKNOWN_LINT_CODE, lint::UNKNOWN_LINT_NAME))
+        .chain(burdin_lint::Lint::ALL.iter().map(|lint| (lint.code(), lint.name())));
+    for (code, name) in lints {
+        rules.push(Rule { id: code.to_string(), name: name.to_string(), help_uri: burdin_diag::code_url(code) });
+    }
+    Tool {
+        name: "burdin".to_string(),
+        version: env!("BURDIN_VERSION").to_string(),
+        information_uri: burdin_diag::URL_BASE.to_string(),
+        rules,
     }
 }
 
@@ -807,7 +1022,10 @@ fn terminal_width(explicit: Option<usize>, columns: Option<&str>) -> usize {
 /// parse the human summary.
 fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
     let limit = limit.map_or_else(|| "null".to_string(), |limit| limit.to_string());
-    format!("{{\"type\":\"summary\",\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n")
+    format!(
+        "{{\"type\":\"summary\",\"version\":{},\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n",
+        burdin_diag::JSON_VERSION
+    )
 }
 
 /// Runs `--pgo-use`: merges the profile, applies `pgo-instr-use` with `opt`, and compiles the result with `llc`.
@@ -1366,9 +1584,75 @@ mod tests {
         assert_eq!(args.jobs, Some(3));
         assert!(args.verbose);
         assert_eq!(args.packages, ["lib"]);
-        assert_eq!(args.filter.as_deref(), Some("add"));
+        assert_eq!(args.filters, ["add"]);
         assert_eq!(args.timeout_ms, Some(250));
         assert!(args.ignored_only);
+    }
+
+    #[test]
+    fn positional_filters_follow_the_target() {
+        let args =
+            parse(&["test", "app", "geometry", "--filter", "area", "circle", "--exact", "--skip", "slow"]).unwrap();
+        assert_eq!(args.target, PathBuf::from("app"));
+        assert_eq!(args.filters, ["geometry", "area", "circle"]);
+        assert!(args.exact);
+        assert_eq!(args.skip, ["slow"]);
+        assert!(parse(&["build", "app", "extra"]).unwrap_err().contains("unexpected argument `extra`"));
+    }
+
+    #[test]
+    fn listing_report_and_selection_options_are_parsed() {
+        let args = parse(&[
+            "test",
+            "app",
+            "--list",
+            "--format",
+            "json",
+            "--failed",
+            "--shard",
+            "2/3",
+            "--slow-threshold",
+            "100",
+        ])
+        .unwrap();
+        assert!(args.list && args.failed);
+        assert_eq!(args.format, TestFormat::Json);
+        assert_eq!(args.shard, Some((2, 3)));
+        assert_eq!(args.slow_ms, Some(100));
+        assert_eq!(parse(&["test", "app", "--junit", "report.xml"]).unwrap().junit, Some(PathBuf::from("report.xml")));
+        assert_eq!(parse(&["test", "app", "--format=human"]).unwrap().format, TestFormat::Human);
+    }
+
+    #[test]
+    fn bad_shards_and_formats_are_rejected() {
+        for shard in ["0/3", "4/3", "1/0", "1", "a/b", "1/2/3", "-1/2"] {
+            assert!(parse(&["test", "app", "--shard", shard]).unwrap_err().contains("`--shard` needs"), "{shard}");
+        }
+        assert!(parse(&["test", "app", "--format", "xml"]).unwrap_err().contains("unknown test format"));
+        assert!(parse(&["test", "app", "--slow-threshold", "soon"]).unwrap_err().contains("milliseconds"));
+        assert!(parse(&["test", "app", "--list", "--junit", "r.xml"]).unwrap_err().contains("cannot be used together"));
+    }
+
+    #[test]
+    fn the_new_test_options_are_rejected_for_other_commands() {
+        for option in [
+            ["build", "app", "--list"],
+            ["build", "app", "--exact"],
+            ["run", "app", "--failed"],
+            ["build", "app", "--junit"],
+        ] {
+            let mut argv = option.to_vec();
+            if argv[2] == "--junit" {
+                argv.push("r.xml");
+            }
+            assert!(parse(&argv).unwrap_err().contains("only valid for `burdin test`"), "{argv:?}");
+        }
+        assert!(parse(&["build", "app", "--skip", "x"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["build", "app", "--shard", "1/2"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["build", "app", "--format", "json"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(
+            parse(&["build", "app", "--slow-threshold", "5"]).unwrap_err().contains("only valid for `burdin test`")
+        );
     }
 
     #[test]
@@ -1396,6 +1680,47 @@ mod tests {
         assert!(color_enabled(ColorChoice::Auto, false, true));
         assert!(!color_enabled(ColorChoice::Auto, true, true));
         assert!(!color_enabled(ColorChoice::Auto, false, false));
+    }
+
+    fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| pairs.iter().find(|(key, _)| *key == name).map(|(_, value)| value.to_string())
+    }
+
+    #[test]
+    fn hyperlinks_follow_force_hyperlink_then_the_terminal_that_is_running() {
+        assert!(!hyperlinks_supported(&env_of(&[])));
+        assert!(hyperlinks_supported(&env_of(&[("FORCE_HYPERLINK", "1")])));
+        assert!(!hyperlinks_supported(&env_of(&[("FORCE_HYPERLINK", "0"), ("WT_SESSION", "x")])));
+        assert!(hyperlinks_supported(&env_of(&[("FORCE_HYPERLINK", "1"), ("TERM", "dumb")])));
+        assert!(hyperlinks_supported(&env_of(&[("WT_SESSION", "abc")])));
+        assert!(hyperlinks_supported(&env_of(&[("TERM_PROGRAM", "iTerm.app")])));
+        assert!(hyperlinks_supported(&env_of(&[("VTE_VERSION", "6800")])));
+        assert!(!hyperlinks_supported(&env_of(&[("VTE_VERSION", "4000")])));
+        assert!(hyperlinks_supported(&env_of(&[("TERM", "xterm-kitty")])));
+        assert!(!hyperlinks_supported(&env_of(&[("TERM", "dumb"), ("WT_SESSION", "abc")])));
+        assert!(!hyperlinks_supported(&env_of(&[("TERM", "screen-256color"), ("TERM_PROGRAM", "vscode")])));
+        assert!(!hyperlinks_supported(&env_of(&[("TMUX", "/tmp/tmux-0/default,1,0"), ("TERM_PROGRAM", "vscode")])));
+    }
+
+    #[test]
+    fn the_sarif_tool_lists_every_error_code_and_lint_with_its_link() {
+        let tool = sarif_tool();
+        let first = &tool.rules[0];
+        assert_eq!(first.id, "E0001");
+        assert_eq!(first.name, "Syntax error");
+        assert_eq!(first.help_uri.as_deref(), Some("https://ricardomilos7.github.io/burdin/errors/E0001"));
+        assert!(tool.rules.iter().any(|rule| rule.id == "E0215"));
+        let lint = tool.rules.iter().find(|rule| rule.id == "L0007").expect("a rule for the lint");
+        assert_eq!(lint.name, "unused_variables");
+        assert_eq!(lint.help_uri.as_deref(), Some("https://ricardomilos7.github.io/burdin/lints/L0007"));
+        assert!(tool.rules.iter().any(|rule| rule.id == "L0000"));
+        assert!(tool.rules.iter().all(|rule| rule.id != "E9000"), "E9000 is not in the reference");
+    }
+
+    #[test]
+    fn sarif_is_a_diagnostic_format() {
+        assert_eq!(parse_format("sarif").unwrap(), DiagnosticFormat::Sarif);
+        assert!(parse_format("xml").unwrap_err().contains("human, short, json, or sarif"));
     }
 
     #[test]

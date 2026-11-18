@@ -1,0 +1,817 @@
+{
+  "format_version": 1,
+  "package": "geometry",
+  "private_items": false,
+  "modules": [
+    {
+      "name": "collections",
+      "segments": [
+        "collections"
+      ],
+      "file": "src/collections.bd",
+      "root": false,
+      "docs": "Containers.",
+      "links": [],
+      "items": [
+        {
+          "name": "Stack",
+          "path": "collections.Stack",
+          "kind": "struct",
+          "private": false,
+          "signature": "struct Stack<T>",
+          "docs": "A last-in, first-out stack.",
+          "links": [],
+          "span": {
+            "file": "src/collections.bd",
+            "line": 4,
+            "column": 8,
+            "end_line": 4,
+            "end_column": 13
+          },
+          "fields": [
+            {
+              "name": "items",
+              "display": "items",
+              "kind": "field",
+              "signature": "items: List<T>",
+              "private": false,
+              "docs": null,
+              "links": [],
+              "span": {
+                "file": "src/collections.bd",
+                "line": 5,
+                "column": 5,
+                "end_line": 5,
+                "end_column": 10
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
+          "variants": [],
+          "methods": [
+            {
+              "name": "new",
+              "display": "new",
+              "kind": "method",
+              "signature": "fn new(): Stack<T>",
+              "private": false,
+              "docs": "An empty stack.",
+              "links": [],
+              "span": {
+                "file": "src/collections.bd",
+                "line": 10,
+                "column": 8,
+                "end_line": 10,
+                "end_column": 11
+              },
+              "instance": null,
+              "origin": null
+            },
+            {
+              "name": "push",
+              "display": "push",
+              "kind": "method",
+              "signature": "fn push(mut self, own item: T)",
+              "private": false,
+              "docs": "Puts a value on top.",
+              "links": [],
+              "span": {
+                "file": "src/collections.bd",
+                "line": 15,
+                "column": 8,
+                "end_line": 15,
+                "end_column": 12
+              },
+              "instance": null,
+              "origin": null
+            },
+            {
+              "name": "total",
+              "display": "total",
+              "kind": "method",
+              "signature": "fn total(self): i32",
+              "private": false,
+              "docs": "The sum of the values, for a stack of integers.",
+              "links": [],
+              "span": {
+                "file": "src/collections.bd",
+                "line": 22,
+                "column": 8,
+                "end_line": 22,
+                "end_column": 13
+              },
+              "instance": "Stack<i32>",
+              "origin": null
+            }
+          ],
+          "implementations": [],
+          "operators": [],
+          "extensions": [],
+          "reexported_by": [
+            "geometry"
+          ]
+        }
+      ],
+      "extensions": [],
+      "reexports": []
+    },
+    {
+      "name": "extras",
+      "segments": [
+        "extras"
+      ],
+      "file": "src/extras.bd",
+      "root": false,
+      "docs": "Extension methods for the other modules' types.",
+      "links": [],
+      "items": [],
+      "extensions": [
+        {
+          "name": "diameter",
+          "display": "diameter",
+          "kind": "extension method",
+          "signature": "fn Circle.diameter(self): f64",
+          "private": false,
+          "docs": "The diameter of a circle.",
+          "links": [],
+          "span": {
+            "file": "src/extras.bd",
+            "line": 6,
+            "column": 11,
+            "end_line": 6,
+            "end_column": 19
+          },
+          "instance": null,
+          "origin": {
+            "module": "extras",
+            "import": "use extras.diameter"
+          }
+        },
+        {
+          "name": "shout",
+          "display": "shout",
+          "kind": "extension method",
+          "signature": "fn String.shout(self): String",
+          "private": false,
+          "docs": null,
+          "links": [],
+          "span": {
+            "file": "src/extras.bd",
+            "line": 10,
+            "column": 11,
+            "end_line": 10,
+            "end_column": 16
+          },
+          "instance": null,
+          "origin": {
+            "module": "extras",
+            "import": "use extras.shout"
+          }
+        }
+      ],
+      "reexports": []
+    },
+    {
+      "name": "geometry",
+      "segments": [
+        "lib"
+      ],
+      "file": "src/lib.bd",
+      "root": true,
+      "docs": "Geometry helpers.\n\nStart with [Circle] and [shapes.Shape]; the failures are in [GeometryError], and [`Circle.area`] is the one\nmethod most programs call. [Stack] holds values.",
+      "links": [
+        {
+          "text": "Circle",
+          "target": "Circle",
+          "status": "item",
+          "path": "shapes.Circle"
+        },
+        {
+          "text": "shapes.Shape",
+          "target": "shapes.Shape",
+          "status": "item",
+          "path": "shapes.Shape"
+        },
+        {
+          "text": "GeometryError",
+          "target": "GeometryError",
+          "status": "item",
+          "path": "shapes.GeometryError"
+        },
+        {
+          "text": "Circle.area",
+          "target": "Circle.area",
+          "status": "item",
+          "path": "shapes.Circle.area"
+        },
+        {
+          "text": "Stack",
+          "target": "Stack",
+          "status": "item",
+          "path": "collections.Stack"
+        }
+      ],
+      "items": [
+        {
+          "name": "PI",
+          "path": "lib.PI",
+          "kind": "constant",
+          "private": false,
+          "signature": "const PI: f64 = 3.14159",
+          "docs": "The ratio of a circle's circumference to its diameter.",
+          "links": [],
+          "span": {
+            "file": "src/lib.bd",
+            "line": 11,
+            "column": 7,
+            "end_line": 11,
+            "end_column": 9
+          },
+          "fields": [],
+          "variants": [],
+          "methods": [],
+          "implementations": [],
+          "operators": [],
+          "extensions": [],
+          "reexported_by": []
+        },
+        {
+          "name": "distance_squared",
+          "path": "lib.distance_squared",
+          "kind": "function",
+          "private": false,
+          "signature": "fn distance_squared(a: Point, b: Point): i32",
+          "docs": "Returns the squared distance between two points.\n\nThis is cheaper than a distance because it needs no square root.\n\n# Errors\n\nIt never fails. [Circle.new] is the call that can, with [GeometryError.NegativeRadius].\n\n```\nlet d = distance_squared(Point { x: 0, y: 0, tag: 0 }, Point { x: 3, y: 4, tag: 0 })\nassert_eq(d, 25)\n```",
+          "links": [
+            {
+              "text": "Circle.new",
+              "target": "Circle.new",
+              "status": "item",
+              "path": "shapes.Circle.new"
+            },
+            {
+              "text": "GeometryError.NegativeRadius",
+              "target": "GeometryError.NegativeRadius",
+              "status": "item",
+              "path": "shapes.GeometryError.NegativeRadius"
+            }
+          ],
+          "span": {
+            "file": "src/lib.bd",
+            "line": 25,
+            "column": 4,
+            "end_line": 25,
+            "end_column": 20
+          },
+          "fields": [],
+          "variants": [],
+          "methods": [],
+          "implementations": [],
+          "operators": [],
+          "extensions": [],
+          "reexported_by": []
+        },
+        {
+          "name": "undocumented",
+          "path": "lib.undocumented",
+          "kind": "function",
+          "private": false,
+          "signature": "fn undocumented()",
+          "docs": null,
+          "links": [],
+          "span": {
+            "file": "src/lib.bd",
+            "line": 31,
+            "column": 4,
+            "end_line": 31,
+            "end_column": 16
+          },
+          "fields": [],
+          "variants": [],
+          "methods": [],
+          "implementations": [],
+          "operators": [],
+          "extensions": [],
+          "reexported_by": []
+        }
+      ],
+      "extensions": [],
+      "reexports": [
+        {
+          "name": "Circle",
+          "path": "shapes.Circle",
+          "status": "item",
+          "target": "shapes.Circle",
+          "span": {
+            "file": "src/lib.bd",
+            "line": 6,
+            "column": 1,
+            "end_line": 6,
+            "end_column": 53
+          }
+        },
+        {
+          "name": "GeometryError",
+          "path": "shapes.GeometryError",
+          "status": "item",
+          "target": "shapes.GeometryError",
+          "span": {
+            "file": "src/lib.bd",
+            "line": 6,
+            "column": 1,
+            "end_line": 6,
+            "end_column": 53
+          }
+        },
+        {
+          "name": "Point",
+          "path": "shapes.Point",
+          "status": "item",
+          "target": "shapes.Point",
+          "span": {
+            "file": "src/lib.bd",
+            "line": 6,
+            "column": 1,
+            "end_line": 6,
+            "end_column": 53
+          }
+        },
+        {
+          "name": "Shape",
+          "path": "shapes.Shape",
+          "status": "item",
+          "target": "shapes.Shape",
+          "span": {
+            "file": "src/lib.bd",
+            "line": 6,
+            "column": 1,
+            "end_line": 6,
+            "end_column": 53
+          }
+        },
+        {
+          "name": "Stack",
+          "path": "collections.Stack",
+          "status": "item",
+          "target": "collections.Stack",
+          "span": {
+            "file": "src/lib.bd",
+            "line": 7,
+            "column": 1,
+            "end_line": 7,
+            "end_column": 26
+          }
+        },
+        {
+          "name": "shapes",
+          "path": "shapes",
+          "status": "module",
+          "target": "shapes",
+          "span": {
+            "file": "src/lib.bd",
+            "line": 8,
+            "column": 1,
+            "end_line": 8,
+            "end_column": 15
+          }
+        }
+      ]
+    },
+    {
+      "name": "shapes",
+      "segments": [
+        "shapes"
+      ],
+      "file": "src/shapes.bd",
+      "root": false,
+      "docs": "Shapes and what they can do.",
+      "links": [],
+      "items": [
+        {
+          "name": "Point",
+          "path": "shapes.Point",
+          "kind": "struct",
+          "private": false,
+          "signature": "struct Point derives (Copy, Eq, Debug)",
+          "docs": "A point in the plane.\n\nPoints add component by component: `a + b`.",
+          "links": [],
+          "span": {
+            "file": "src/shapes.bd",
+            "line": 6,
+            "column": 8,
+            "end_line": 6,
+            "end_column": 13
+          },
+          "fields": [
+            {
+              "name": "x",
+              "display": "x",
+              "kind": "field",
+              "signature": "x: i32",
+              "private": false,
+              "docs": "The horizontal position.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 8,
+                "column": 5,
+                "end_line": 8,
+                "end_column": 6
+              },
+              "instance": null,
+              "origin": null
+            },
+            {
+              "name": "y",
+              "display": "y",
+              "kind": "field",
+              "signature": "y: i32",
+              "private": false,
+              "docs": "The vertical position.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 10,
+                "column": 5,
+                "end_line": 10,
+                "end_column": 6
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
+          "variants": [],
+          "methods": [],
+          "implementations": [
+            {
+              "interface": "Copy",
+              "derived": true,
+              "instance": null,
+              "where": "",
+              "target": null,
+              "members": []
+            },
+            {
+              "interface": "Eq",
+              "derived": true,
+              "instance": null,
+              "where": "",
+              "target": null,
+              "members": []
+            },
+            {
+              "interface": "Debug",
+              "derived": true,
+              "instance": null,
+              "where": "",
+              "target": null,
+              "members": []
+            },
+            {
+              "interface": "Add",
+              "derived": false,
+              "instance": null,
+              "where": "",
+              "target": null,
+              "members": []
+            },
+            {
+              "interface": "Neg",
+              "derived": false,
+              "instance": null,
+              "where": "",
+              "target": null,
+              "members": []
+            }
+          ],
+          "operators": [
+            {
+              "name": "add",
+              "display": "a + b",
+              "kind": "operator",
+              "signature": "fn add(self, other: Point): Point",
+              "private": false,
+              "docs": "Adds the coordinates.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 61,
+                "column": 8,
+                "end_line": 61,
+                "end_column": 11
+              },
+              "instance": null,
+              "origin": null
+            },
+            {
+              "name": "neg",
+              "display": "-a",
+              "kind": "operator",
+              "signature": "fn neg(self): Point",
+              "private": false,
+              "docs": null,
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 67,
+                "column": 8,
+                "end_line": 67,
+                "end_column": 11
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
+          "extensions": [
+            {
+              "name": "doubled",
+              "display": "doubled",
+              "kind": "extension method",
+              "signature": "fn Point.doubled(self): Point",
+              "private": false,
+              "docs": "Doubles both coordinates.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 73,
+                "column": 10,
+                "end_line": 73,
+                "end_column": 17
+              },
+              "instance": null,
+              "origin": {
+                "module": "shapes",
+                "import": "use shapes.doubled"
+              }
+            }
+          ],
+          "reexported_by": [
+            "geometry"
+          ]
+        },
+        {
+          "name": "GeometryError",
+          "path": "shapes.GeometryError",
+          "kind": "error enum",
+          "private": false,
+          "signature": "error enum GeometryError",
+          "docs": "Why a shape could not be made.",
+          "links": [],
+          "span": {
+            "file": "src/shapes.bd",
+            "line": 15,
+            "column": 12,
+            "end_line": 15,
+            "end_column": 25
+          },
+          "fields": [],
+          "variants": [
+            {
+              "name": "NegativeRadius",
+              "display": "NegativeRadius",
+              "kind": "variant",
+              "signature": "NegativeRadius(f64) \"radius {0} must not be negative\"",
+              "private": false,
+              "docs": "The radius was below zero.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 17,
+                "column": 5,
+                "end_line": 17,
+                "end_column": 19
+              },
+              "instance": null,
+              "origin": null
+            },
+            {
+              "name": "NotANumber",
+              "display": "NotANumber",
+              "kind": "variant",
+              "signature": "NotANumber \"radius is not a number\"",
+              "private": false,
+              "docs": "The radius was not a number.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 19,
+                "column": 5,
+                "end_line": 19,
+                "end_column": 15
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
+          "methods": [],
+          "implementations": [],
+          "operators": [],
+          "extensions": [],
+          "reexported_by": [
+            "geometry"
+          ]
+        },
+        {
+          "name": "Shape",
+          "path": "shapes.Shape",
+          "kind": "interface",
+          "private": false,
+          "signature": "interface Shape",
+          "docs": "Something with an area.",
+          "links": [],
+          "span": {
+            "file": "src/shapes.bd",
+            "line": 23,
+            "column": 11,
+            "end_line": 23,
+            "end_column": 16
+          },
+          "fields": [],
+          "variants": [],
+          "methods": [
+            {
+              "name": "area",
+              "display": "area",
+              "kind": "required method",
+              "signature": "fn area(self): f64",
+              "private": false,
+              "docs": "The area of the shape.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 25,
+                "column": 8,
+                "end_line": 25,
+                "end_column": 12
+              },
+              "instance": null,
+              "origin": null
+            },
+            {
+              "name": "describe",
+              "display": "describe",
+              "kind": "provided method",
+              "signature": "fn describe(self): String",
+              "private": false,
+              "docs": "A short description, `shape` unless overridden.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 28,
+                "column": 8,
+                "end_line": 28,
+                "end_column": 16
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
+          "implementations": [],
+          "operators": [],
+          "extensions": [],
+          "reexported_by": [
+            "geometry"
+          ]
+        },
+        {
+          "name": "Circle",
+          "path": "shapes.Circle",
+          "kind": "struct",
+          "private": false,
+          "signature": "struct Circle",
+          "docs": "A circle.",
+          "links": [],
+          "span": {
+            "file": "src/shapes.bd",
+            "line": 34,
+            "column": 8,
+            "end_line": 34,
+            "end_column": 14
+          },
+          "fields": [
+            {
+              "name": "radius",
+              "display": "radius",
+              "kind": "field",
+              "signature": "radius: f64",
+              "private": false,
+              "docs": "The radius, never negative.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 36,
+                "column": 5,
+                "end_line": 36,
+                "end_column": 11
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
+          "variants": [],
+          "methods": [
+            {
+              "name": "new",
+              "display": "new",
+              "kind": "method",
+              "signature": "fn new(radius: f64): Result<Circle>",
+              "private": false,
+              "docs": "Makes a circle, or says why it cannot.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 41,
+                "column": 8,
+                "end_line": 41,
+                "end_column": 11
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
+          "implementations": [
+            {
+              "interface": "Shape",
+              "derived": false,
+              "instance": null,
+              "where": "",
+              "target": "shapes.Shape",
+              "members": [
+                {
+                  "name": "area",
+                  "display": "area",
+                  "kind": "method",
+                  "signature": "fn area(self): f64",
+                  "private": false,
+                  "docs": null,
+                  "links": [],
+                  "span": {
+                    "file": "src/shapes.bd",
+                    "line": 54,
+                    "column": 8,
+                    "end_line": 54,
+                    "end_column": 12
+                  },
+                  "instance": null,
+                  "origin": null
+                }
+              ]
+            }
+          ],
+          "operators": [],
+          "extensions": [
+            {
+              "name": "diameter",
+              "display": "diameter",
+              "kind": "extension method",
+              "signature": "fn Circle.diameter(self): f64",
+              "private": false,
+              "docs": "The diameter of a circle.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 6,
+                "column": 11,
+                "end_line": 6,
+                "end_column": 19
+              },
+              "instance": null,
+              "origin": {
+                "module": "extras",
+                "import": "use extras.diameter"
+              }
+            }
+          ],
+          "reexported_by": [
+            "geometry"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "name": "doubled",
+          "display": "doubled",
+          "kind": "extension method",
+          "signature": "fn Point.doubled(self): Point",
+          "private": false,
+          "docs": "Doubles both coordinates.",
+          "links": [],
+          "span": {
+            "file": "src/shapes.bd",
+            "line": 73,
+            "column": 10,
+            "end_line": 73,
+            "end_column": 17
+          },
+          "instance": null,
+          "origin": {
+            "module": "shapes",
+            "import": "use shapes.doubled"
+          }
+        }
+      ],
+      "reexports": []
+    }
+  ]
+}

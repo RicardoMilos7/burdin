@@ -29,12 +29,15 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
+| [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
+| [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Shipped milestones. |
 | [`crates/burdin_fuzz/`](crates/burdin_fuzz/) | The lexer/parser fuzzer and its committed corpus. |
 | [`crates/burdin_fmt/`](crates/burdin_fmt/) | The formatter behind `burdin fmt`, with its unit, corpus, and fuzz tests. |
+| [`crates/burdin_doc/`](crates/burdin_doc/) | The documentation generator behind `burdin doc`, with the fixtures it is checked against. |
 | [`std/README.md`](std/README.md) | The stage 0 standard library. |
 | [`Burdin Language Design.md`](Burdin%20Language%20Design.md) | The full language design, including features after stage 0. |
 
@@ -129,7 +132,8 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `fmt`, `explain`, `bindgen`, and `new`. This section is the
+The `burdin` command has the subcommands `build`, `run`, `test`, `check`, `fmt`, `doc`, `explain`, `bindgen`, and `new`.
+This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
@@ -139,11 +143,15 @@ usage:
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [--release] [-g] [-j <n>] [--verbose] [-p <package>]...
-              [--workspace] [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>]
-              [--comptime-steps <n>] [diagnostics]
+  burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+              [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
+              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
+              [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
+  burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
+             [--coverage] [--deny-warnings] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
@@ -153,14 +161,27 @@ compile options:
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
 
+check options (type-check only: the front end and every memory check, no code generation or linking):
+  --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
+
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
   -p <package>         run the tests of one package of the build; may repeat
   --workspace          run the tests of the entry package and every path dependency
-  --filter <text>      run only tests whose name contains text
+  <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
+                       is the same as a positional filter
+  --exact              filters and --skip patterns must equal the full path instead of being contained in it
+  --skip <pattern>     do not run tests whose full path contains pattern; may repeat
   --ignored            run only tests marked [ignore]
   --include-ignored    run ignored tests too
+  --failed             run only the tests that failed in the previous run (kept under <package>/target/burdin)
+  --shard <i>/<n>      run the i-th of n deterministic slices of the selected tests (1 <= i <= n)
   --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
+  --slow-threshold <ms>  list tests that ran at least this long (default: 5000; 0 disables it)
+  --list               print the selected tests and their attributes without running them
+  --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
+                       test per line)
+  --junit <file>       also write a JUnit XML report of the run
   -v, --verbose        print the output of passing tests too
 
 fmt options:
@@ -169,19 +190,39 @@ fmt options:
   --stdin-filepath <path>  the path standard input stands for (names it in diagnostics, finds its package)
   --range <lo>:<hi>        with --stdin, format only the items that overlap these byte offsets
 
+doc options:
+  -o, --out <path>         where to write: a directory for html (default: <package>/target/doc), a file for json
+                           (default: standard output)
+  --output-format <f>      html (default) writes a static site; json writes the documented API as JSON
+  --private                document `priv` items, fields, and methods too
+  --coverage               print how much of the public interface is documented, per module, and write nothing else
+  --deny-warnings          exit with status 1 when a doc comment has a broken link
+
 diagnostics:
-  --diagnostic-format <human|short|json>  human (default) colors and wraps; short prints one plain line per
-                                          diagnostic; json prints one JSON object per line
+  --diagnostic-format <human|short|json|sarif>
+                                          human (default) colors and wraps; short prints one plain line per
+                                          diagnostic; json prints one version 1 JSON object per line; sarif
+                                          prints one SARIF 2.1.0 log (docs/diagnostics.md)
   --color <auto|always|never>             color (default auto: only when stderr is a terminal)
   --no-color                              same as --color never
   --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
   --error-limit <n>                       print at most n errors after sorting (0 prints all)```
 
-Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `--filter`,
-`--ignored`/`--include-ignored`, `--timeout`, and `--verbose` are options of `burdin test`; any other command
+Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `--filter`, `--exact`, `--skip`,
+`--ignored`/`--include-ignored`, `--failed`, `--shard`, `--timeout`, `--slow-threshold`, `--list`, `--format`,
+`--junit`, and `--verbose` are options of `burdin test` (and so are the filters after the target); any other command
 rejects them.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
+
+`burdin check <target>` runs the front end of `burdin build` (build scripts, parsing, name resolution and type checking, the
+move and borrow checks, and compile-time evaluation) and stops before code generation: it needs no linker, writes no
+file, and prints the same diagnostics in the same formats as a build. A clean check prints nothing and exits 0; errors exit
+1 and end with `error: could not check <target> (N errors)`. `--tests` also checks the package's `test` blocks and accepts
+a library package without `src/main.bd`; `--release` checks as `build --release` does. It is meant for CI gates and editor
+feedback. [`spec/check.md`](spec/check.md) is the specification and `tests/check_check.py` checks it: the fixtures under
+`tests/check/`, and the whole conformance suite, whose `compile-fail` programs must report exactly their markers and
+whose other programs must be accepted.
 
 `burdin new <name>` creates the package directory `<name>` (a path; its last component is the package name, which must be
 an identifier that is not a reserved word or `std`) with a `burdin.toml`, a `src/main.bd` that prints a greeting, and a
@@ -313,8 +354,10 @@ $ ./target/debug/burdin run args.bd -- x y
 ### `burdin test`
 
 ```
-burdin test <target> [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
-            [--filter <text>] [--ignored | --include-ignored] [--timeout <ms>] [diagnostics]
+burdin test <target> [<filter>...] [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
+            [--exact] [--skip <pattern>]... [--ignored | --include-ignored] [--failed] [--shard <i>/<n>]
+            [--timeout <ms>] [--slow-threshold <ms>] [--list] [--format <human|json>] [--junit <file>]
+            [diagnostics]
 ```
 
 Builds the selected packages in test mode and runs every `test "name" [attrs] { ... }` block, each in its own
@@ -334,8 +377,18 @@ clean environment. Their output is captured and printed only when they fail; `--
 The report is deterministic: failures and the summary follow declaration order, not completion order.
 
 By default only the entry package's tests run. `-p <package>` selects a package of the build (it may repeat), and
-`--workspace` selects the entry package and every path dependency. `--filter <text>` keeps the tests whose name
-contains `text`. With more than one package, names are displayed as `<package>::<test>`.
+`--workspace` selects the entry package and every path dependency. With more than one package, names are displayed as
+`<package>::<test>`.
+
+Every test has a full path, `module.submodule.test name` (the module is the file's path inside `src`, empty for
+`src/main.bd`; with more than one package it starts with `<package>::`). The filters after the target keep the tests
+whose full path contains any of them (`--filter <text>` is the same thing), `--exact` requires an equal path, and
+`--skip <pattern>` leaves tests out. The summary says how many tests were filtered out. `--list` prints the selected
+tests and their attributes without running them (`--list --format json` is one JSON object per test, with file and
+line, for editors and CI). `--format json` streams one JSON event per line while the tests run, and `--junit <file>`
+writes a JUnit XML report. `--failed` reruns the tests that failed in the previous run (kept in
+`<package>/target/burdin`), `--shard <i>/<n>` runs one deterministic slice for CI parallelism, and tests that ran at
+least `--slow-threshold` milliseconds are listed before the summary.
 
 The output is one `---- test "name" stdout ----` / `stderr` section and `FAIL <test name>` line per failed test,
 followed by a summary line; a passing test prints nothing by default:
@@ -348,7 +401,8 @@ FAIL second one fails
 test result: 2 passed, 1 failed
 ```
 
-When tests are marked `[ignore]`, the summary ends with `, N ignored`. The exit status is 0 only when every run test
+When tests are marked `[ignore]`, the summary ends with `, N ignored`, and `, N filtered out` follows when the filters
+left tests out. The exit status is 0 only when every run test
 passes, 1 when a test fails or compilation fails, and 2 for a usage error (an unknown package, a bad `-j`,
 conflicting flags) or a driver failure after loading. `tests/run_tests.py` reads the `FAIL ` prefix and the
 `test result: N passed, M failed` summary; the full behavior, including isolation and discovery, is
@@ -466,18 +520,19 @@ then 80. Wrapping only inserts line breaks and indentation, and the first line a
 `path:LINE:COL: error[E0000]: message` shape.
 
 **Formats.** `--diagnostic-format short` prints exactly one plain line per diagnostic, with no notes,
-suggestions, color, or wrapping; it is the stable format the test scripts parse. `--diagnostic-format json` prints
-one JSON object per line, and the last line is a summary object:
+suggestions, link, color, or wrapping; it is the stable format the test scripts parse. `--diagnostic-format json`
+prints one version 1 JSON object per line (a diagnostic with its spans, labels, notes, help, children, related
+information, suggestions with edits, the link to its entry in the error reference, and the `rendered` human text),
+and the last line is a summary object. `--diagnostic-format sarif` prints one SARIF 2.1.0 log for the whole run, for
+code-scanning services; `burdin lint` supports it too, and `burdin build` writes a log even when it found nothing.
+JSON, SARIF, and short output are never colored or wrapped; `--color` and `--width` only affect `human`. The fields,
+the schema (`docs/diagnostic.schema.json`), and the SARIF mapping are in [`docs/diagnostics.md`](docs/diagnostics.md).
 
-```json
-{"type":"diagnostic","severity":"error","code":"E0114","span":{"file":"bad.bd","line":10,"column":9,"end_line":10,"end_column":10,"byte_start":140,"byte_end":141},"message":"this parameter of `bump` is `mut`; pass the argument as `mut ...`","notes":[],"suggestions":[{"message":"add `mut` before this argument","span":{"file":"bad.bd","line":10,"column":9,"end_line":10,"end_column":9,"byte_start":140,"byte_end":140},"replacement":"mut "}]}
-{"type":"summary","errors":1,"shown":1,"limit":null}
-```
-
-Each diagnostic carries its primary `span`, `notes` (a message and an optional span), and `suggestions` (a
-message, a span, and the replacement text). A suggestion with `byte_start == byte_end` inserts its replacement;
-an empty replacement deletes the span. Together they are what an editor turns into a diagnostic and a quick-fix
-code action. JSON and short output are never colored or wrapped. `--color` and `--width` only affect `human`.
+**Links.** Every diagnostic has a stable link to its entry in the hosted error reference,
+`https://ricardomilos7.github.io/burdin/errors/E0003` for E0003 (`/lints/L0007` for a lint). It is the `url` of the
+JSON format and the `helpUri` of the SARIF rule, and in colored `human` output the code is a terminal hyperlink
+(OSC 8) when the terminal supports it. `FORCE_HYPERLINK=1` turns the hyperlink on and `FORCE_HYPERLINK=0` turns it off;
+without color there is none.
 
 The error codes come from the registry in [`tests/README.md`](tests/README.md#error-codes). `E9000` is the temporary
 code for "not implemented in this compiler yet"; the conformance suite does not use it, and
@@ -496,6 +551,28 @@ burdin explain            list every code
 
 `burdin explain` writes to stdout and exits 0; an unknown code exits 2. The human diagnostics end with a note
 pointing at the command.
+
+### `burdin doc`
+
+`burdin doc` builds the documented interface of a package from its `///` comments and `//!` module comments and writes
+it as a static HTML site, as JSON, or as a coverage report. The site is self-contained: the stylesheet and the search
+script are compiled into the driver, so a page loads nothing from another server and the site works when opened from
+disk. Doc comments are Markdown (headings, lists, tables, quotes, fenced code) and may link to the API with `[Circle]`,
+`[shapes.Shape]`, or ``[`Circle.area`]`` (a Markdown link `[text]` with a target in parentheses works too); a link
+that resolves to nothing is warning `D0001`, and one
+that names a `priv` item is `D0002`. [`spec/doc.md`](spec/doc.md) is the specification.
+
+```
+burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
+           [--coverage] [--deny-warnings] [diagnostics]
+```
+
+The HTML site documents the public interface: by default `priv` items, fields, and methods are left out and `--private`
+shows them, marked. A type's page lists its fields and variants, its methods, the operators it implements written as
+they are written (`a + b`, `-a`), its extension methods with the `use` a caller needs, the interfaces it implements
+(derived ones marked), and the methods of impl blocks for a specific instance (`Stack<i32>`). The JSON output has a
+schema version (`format_version`), so other tools can read the API. `--coverage` prints the documented and undocumented
+items per module; they are the ones the `missing_docs` lint (`L0017`, off by default) reports.
 
 ### `burdin lint`
 
@@ -627,6 +704,7 @@ $ tests/check_build_flags.py    # --version, --strip's budget, --lto, and PGO
 $ tests/check_parallel.py       # parallel parsing and deterministic diagnostics
 $ tests/check_fmt.py            # burdin fmt: golden outputs, idempotence, --check, --stdin, --range, grouping
 $ tests/check_release.py        # release workflow, archives, checksums, installers, and version channels
+$ tests/check_doc.py            # burdin doc: the site and its goldens, links, JSON, coverage, output
 ```
 
 The release pipeline has three scripts of its own: `tests/build_release.py` builds and packages one target (and
@@ -634,16 +712,25 @@ The release pipeline has three scripts of its own: `tests/build_release.py` buil
 changelog section and checks its links, and `.github/workflows/release.yml` builds the six targets, verifies the
 checksums, and publishes only from a tag push or an explicit manual `publish`. See
 [`docs/releasing.md`](docs/releasing.md).
+`tests/check_check.py` covers `burdin check`: the fixtures under `tests/check/` with their golden outputs, the equivalence with
+`burdin build`, every conformance test (a `compile-fail` program reports exactly its markers, every other program is
+accepted), the absence of code generation and linking, and the command line. Every CI job runs it after the build.
 `tests/check_lint.py` covers `burdin lint`: every documented example, the fixtures under `tests/lint/` (each with the
 diagnostics its `//~` markers name), `--fix` and `--dry-run` against golden files, the all-or-nothing write, levels, the
-manifest `[lint]` table, and the output formats. Every CI job runs it after the build.
+manifest `[lint]` table, and the output formats. Every CI job runs it after the build. `tests/check_doc.py` covers `burdin doc`: the fixture package under `tests/doc/geometry` against the golden pages in
+`tests/doc/expect`, the integrity of every link in the site, the intra-doc link diagnostics of `tests/doc/links`, private
+items, the JSON schema, the coverage report and its agreement with `missing_docs`, and the output directory rules.
 
 Two checks cover the diagnostics themselves, and every CI job runs them after the build:
 
 - `tests/check_diagnostics.py` checks the default and short and JSON formats, color and `NO_COLOR`, wrapping and
-  `--width`, notes and suggestions, `--error-limit`, and deterministic ordering.
+  `--width`, notes and suggestions, `--error-limit`, and deterministic ordering. It also validates the JSON the driver
+  prints for every failing conformance test against [`docs/diagnostic.schema.json`](docs/diagnostic.schema.json), the
+  golden files in `tests/diagnostics/`, the SARIF log of `build` and `lint`, and the hyperlinks
+  ([`docs/diagnostics.md`](docs/diagnostics.md)).
 - `tests/check_error_docs.py` checks that [`docs/error-codes.md`](docs/error-codes.md) mirrors the registry, that
-  every snippet fails with exactly the marked diagnostics, and that `burdin explain` prints every entry.
+  every snippet fails with exactly the marked diagnostics, that every diagnostic links to its entry at the stable
+  address, and that `burdin explain` prints every entry.
 
 The dependency audit needs no built compiler: `tests/check_deps.py` reads `Cargo.lock`, the manifests, and
 [`tests/dependencies.txt`](tests/dependencies.txt), and re-verifies the licenses through `cargo metadata` when it can.

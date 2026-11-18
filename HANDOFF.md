@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the forty-fourth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the forty-seventh session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -229,6 +229,44 @@ only when a reachable body creates it (a closure in an unreachable function used
 scheduler into every program). The Linux x86-64 path is the only one run so far: the macOS, arm64, and Windows paths
 are written but untested (`docs/platform-support.md`).
 
+The forty-fourth session implemented stage 3's `burdin test` selection and reporting (issue #235, sub-issues #638-#641).
+`burdin test` takes positional name filters, `--exact`, and `--skip` over a test's full path
+(`module.submodule.test name`); `--list` prints the selected tests with their attributes (human or `--format json`);
+`--format json` streams events and `--junit <file>` writes JUnit XML; `--failed` reruns the previous failures from
+`<package>/target/burdin/<profile>/test-failed.txt`, `--shard <i>/<n>` takes a round-robin slice, and tests that ran at
+least `--slow-threshold` milliseconds are listed before the summary. The rules, the JSON schema (version 1), and the
+choices that are not obvious are in `spec/test-runner.md`; `tests/check_test_runner.py` proves them. The driver's test
+runner is now `test_runner.rs` plus `test_runner/select.rs` and `test_runner/report.rs`, and `Args` derives `Default`
+and `Clone`. Not done: the language server's test integration (issue #374), which consumes `--list --format json`.
+
+The forty-fifth session implemented stage 3's machine-readable diagnostics (issue #236, sub-issues #642-#644). One
+`Diagnostic` value (`crates/burdin_diag`) now feeds four formats. `json.rs` renders the version 1 object (a small
+ordered `Json` value, so the key order is in the code) and `sarif.rs` renders the SARIF 2.1.0 log; the driver builds the
+SARIF tool and its rules from the embedded `docs/error-codes.md` headings and the linter's table. The model gained
+`labels`, `help`, and `children`, and `Diagnostic::new`; no compiler diagnostic produces them yet (the human format
+prints `help` and children, not labels), so the fields exist for the schema and the next producers. The format is
+documented in `docs/diagnostics.md` and `spec/diagnostics.md` (DG1-DG14); `docs/diagnostic.schema.json` is closed on
+purpose. **The hosted error reference does not exist yet.** The link root, `https://ricardomilos7.github.io/burdin`
+(`URL_BASE`), is where the repository's GitHub Pages would serve `/errors/<code>` and `/lints/<code>`; the scheme is
+pinned by the tests but nothing publishes the pages, so the links 404 until someone does. Changing the root is one edit
+of `URL_BASE` plus the two scripts that pin it. SARIF columns are Unicode scalar values (`columnKind`
+`unicodeCodePoints`), and a relative path is `%SRCROOT%`-relative. Existing assertions changed only where the JSON
+summary gained `"version":1`.
+
+The forty-sixth session implemented stage 3's `burdin check` (issue #237): the type-check-only command. It is not a new
+pipeline: `check.rs` calls `front_end` (`main.rs`), the one function that `build`, `run`, `test`, and `lint` use to load
+a package, run its build script, parse it, check it, run the memory checks, and evaluate `comptime`, and stops there. The
+issue says to reuse the query-based library; that library does not exist yet (it is a later stage 3 item), so the
+command reuses `front_end`, and the query-based library will replace `front_end` for every command at once. The output
+is a build's (the failure text moved from `compile` into `report_errors`; a clean check prints nothing), and the exit
+statuses are a build's. Two choices came with it: `--tests` is how test blocks are checked and how a library package
+without `src/main.bd` is checked (it uses the test-mode front end, which does not look up `main`), and a build's
+output-only options are usage errors. The decisions are `spec/check.md` CK1-CK8. `tests/check_check.py` proves it,
+including by running `burdin check` over all 1053 runnable conformance tests and comparing with their markers (about a
+minute and a half with eight workers on a debug build; every CI job runs it). Not done: watch mode and an editor
+protocol (the language server is its own item), checking a workspace's members with one command, and `check` of a
+package with a `build.bd` without running the script (a generated module has to exist first).
+
 The forty-first session implemented stage 3's `burdin lint` (issue #230, sub-issues #231-#233, #464-#466, #661). The
 linter is the new crate `burdin_lint`, a side branch of the pipeline: it reads the syntax tree and the typed tree the
 compiler built, never changes them, and the driver (`crates/burdin_driver/src/lint.rs`) is the only caller. Syntax-tree
@@ -300,6 +338,21 @@ package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the packag
 anything. The `.gitignore` lists `/target/` and the executable `burdin build .` leaves in the package directory,
 because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
 CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
+
+The forty-fourth session implemented `burdin doc` (issue #234, sub-issues #467-#469, #656-#658): a documentation
+generator that reads `///` and `//!` comments from the syntax trees (`burdin_syntax::docs`, shared with the
+`missing_docs` lint so the two always agree), builds the documented API in the new crate `burdin_doc` (depending only
+on `burdin_diag` and `burdin_syntax`), and writes it as a self-contained HTML site, versioned JSON, or a coverage
+report. The site documents the public interface, with `--private` for `priv` items; a type's page lists its fields and
+variants, methods, operators written as `a + b`/`-a`, extension methods with the module and `use` they need, derived
+and implemented interfaces, and the methods of impl blocks for a specific instance (`Stack<i32>`). Intra-doc links
+(`[Type]`, `[module.fn]`, `[`Type::method`]`, and explicit targets) resolve from the comment's module and report `D0001`
+(nothing named) and `D0002` (a `priv` item) as warnings, which `--deny-warnings` turns into a failure; `--coverage`
+counts the same items `missing_docs` (`L0017`, allow by default) reports. The site embeds its stylesheet and search
+script and writes `search-index.js` as a script, so it works from disk; the output directory is refused unless it is
+empty or was written by `burdin doc` (`.burdin-doc` lists what a run wrote, and a later run removes what is gone).
+`spec/doc.md` is the specification (DC1-DC23), `tests/check_doc.py` runs the fixtures under `tests/doc/` against the
+golden pages in `tests/doc/expect/` in every CI job, and doc tests (issues #250, #650-#652) remain separate work.
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -398,9 +451,10 @@ tests cover the syntax.
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
 | Conformance tests | `tests/` | 1055 tests. All pass: m01 to m24 and s2_tasks, s2_channels, s2_shared, and s2_io (debug and release; the release run skips the debug-only and platform-specific tests) |
 | Comptime | `spec/comptime.md`, `crates/burdin_comptime/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CT13). Codes E0220-E0225; `--comptime-steps N`; tests in `tests/m20_comptime/` |
-| Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
-| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
+| Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md`, `docs/diagnostics.md`, `spec/diagnostics.md` | Four formats (`human`, `short`, a versioned `json` with `docs/diagnostic.schema.json`, and `sarif`), color and width control, hyperlinks to the error reference, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
+| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
+| Type-check command | `spec/check.md`, `crates/burdin_driver/src/check.rs`, `tests/check_check.py`, `tests/check/` | `burdin check`: `front_end` without code generation or linking, a build's diagnostics and exit statuses, `--tests` for `test` blocks and library packages, `--release`, `--comptime-steps`. The script runs fixtures with goldens and every conformance test, and every CI job runs it (issue #237) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
@@ -854,7 +908,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   `SetThreadStackGuarantee` for 64 KiB before it adds the filter, matching the Unix alternate signal stack; a
   runtime unit test pins the call and the size.
 
-## The forty-fourth session: the query-based compiler library (stage 3, issue #241)
+## The forty-seventh session: the query-based compiler library (stage 3, issue #241)
 
 The front end is now a library with a memo, `crates/burdin_query` (`spec/query.md`, QL1-QL9), and the command line
 runs on it. `burdin build`, `run`, `test`, and `lint` call `Db::from_workspace` and `Db::analyze` in
@@ -1508,7 +1562,7 @@ function, and there is no language server yet — the API is what it would call.
   in README.md). The twenty-second session added a `channel:` line, so a release build now prints six.
 - **Parsing is parallel by default; checking is not.** `BURDIN_JOBS` controls the workers (1 is sequential). Each
   worker keeps its own diagnostics and the driver merges them in file order, so output is byte-identical. The query
-  library (forty-fourth session) made checking incremental but not parallel: `Sema` is still one shared mutable state,
+  library (forty-seventh session) made checking incremental but not parallel: `Sema` is still one shared mutable state,
   and the memo is not shared between threads.
 
 ## Decided in the twentieth session
@@ -1824,7 +1878,7 @@ function, and there is no language server yet — the API is what it would call.
   the releaser; the lock state is under the scheduler's lock (SH9). A waiting writer blocks new readers (SH10).
 - **`Weak<T>`, condition variables, barriers, and `Once` are deferred.** Nothing in the tests needs them.
 
-## Decided in the forty-fourth session
+## Decided in the forty-seventh session
 
 - **The memo is in-house, not salsa (QL1, issue #645).** `burdin_tir::Program` and the checker's registries are
   `Rc`/`RefCell` graphs; salsa's storage wants `Send + Sync` values, and making every stage thread-safe to hold a
@@ -1842,6 +1896,29 @@ function, and there is no language server yet — the API is what it would call.
 - **The tool API returns plain data (QL7).** A tool depends on `burdin_query` and not on the typed tree; positions
   are byte offsets, and types are printed as source writes them. `spec/query.md` names each answer and the fixture
   golden that pins it.
+
+## Decided in the forty-fourth session (`burdin doc`, issue #234)
+
+- **The generator reads syntax trees, not the typed tree.** Documentation is a property of the source, and a package
+  that compiles is documented whether or not its types are monomorphized; this also keeps `burdin doc` free of the
+  compiler stages and lets `missing_docs` share the exact reading of the comments (`burdin_syntax::docs`).
+- **The site is one set of static files and needs no server.** The stylesheet and the search script are compiled into
+  the binary and copied into `static/`, and the index is `search-index.js` (`window.BURDIN_DOC_INDEX`) rather than a
+  JSON fetched at run time, because a `fetch` from `file://` is blocked in browsers. Pages load nothing from another
+  server.
+- **Links are Markdown links with Burdin paths, resolved like code.** One or two `.`- or `::`-separated segments are
+  looked up the way a path in the module would be; anything that leaves the package is `external` and not an error.
+  The warning codes are `D0001` (unresolved) and `D0002` (a `priv` item), registered in `tests/README.md`.
+- **The JSON schema is versioned (`format_version: 1`)** and is the API for tools that do not read HTML; a field is
+  removed or changes meaning only with a version bump. It carries spans, link resolutions, operator displays, member
+  origins, and instances.
+- **`--private` is the only switch over the public interface**, and the default never writes a `priv` item. The
+  coverage report and the `missing_docs` lint are one definition seen twice, so they cannot disagree.
+- **The output directory is guarded.** `burdin doc` writes a `.burdin-doc` marker listing its files, refuses a
+  directory that holds other files (status 2), and removes the pages of items that are gone; `-o .` cannot overwrite a
+  project.
+- **Not done, on purpose:** doc tests (#250, #650-#652), a `--document-private-items` alias, a theme switch beyond the
+  system setting, and wiring the JSON into an LSP symbol view (stage 3 tooling).
 
 ## What is left to do, in order
 
@@ -1888,7 +1965,7 @@ function, and there is no language server yet — the API is what it would call.
    and `macos-15-intel` images on this repository, then tag the first stable release. Follow-ups the pipeline does not
    cover yet: a package-manager formula (Homebrew/winget), code signing and provenance attestations, bundling the LLVM
    21 runtime so a prebuilt compiler is self-contained, and a PDB/CodeView path for Windows.
-8. The query-based compiler library is in (forty-fourth session, issue #241, `spec/query.md` QL1-QL9). Follow-ups it
+8. The query-based compiler library is in (forty-seventh session, issue #241, `spec/query.md` QL1-QL9). Follow-ups it
    leaves: parallel checking on top of it, per-function memory checks and compile-time evaluation, and the language
    server the tool API is for. The rest of stage 3's compiler item — a lockfile, multiple-package workspaces, cached
    object files — and its tooling (`doc`, `add`) have not started; `burdin fmt`, `burdin lint`, `burdin new`, and the

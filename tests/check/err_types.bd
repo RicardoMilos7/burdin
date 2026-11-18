@@ -1,0 +1,14 @@
+//% exit: 1
+
+// Every error in the file is reported, not just the first.
+
+fn double(n: i32): i32 {
+    n * 2
+}
+
+fn main() {
+    let a: i32 = "text" //~ E0003
+    let b = double(1, 2) //~ E0004
+    let c = missing + 1 //~ E0002
+    println(double("x").to_string()) //~ E0003
+}

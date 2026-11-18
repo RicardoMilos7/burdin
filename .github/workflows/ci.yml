@@ -203,6 +203,11 @@ jobs:
       - name: Check the linter
         run: python3 tests/check_lint.py
 
+      # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
+      # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
+      - name: Check burdin doc
+        run: python3 tests/check_doc.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
@@ -210,6 +215,11 @@ jobs:
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
         run: python3 tests/check_new.py
+
+      # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
+      # reject exactly as a build does, without code generation or a linker (issue #237).
+      - name: Check burdin check
+        run: python3 tests/check_check.py
 
       - name: Check host target
         run: python3 tests/check_platform.py
@@ -414,6 +424,11 @@ jobs:
       - name: Check the linter
         run: python3 tests/check_lint.py
 
+      # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
+      # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
+      - name: Check burdin doc
+        run: python3 tests/check_doc.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
@@ -421,6 +436,11 @@ jobs:
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
         run: python3 tests/check_new.py
+
+      # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
+      # reject exactly as a build does, without code generation or a linker (issue #237).
+      - name: Check burdin check
+        run: python3 tests/check_check.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -648,6 +668,9 @@ jobs:
       - name: Check the linter
         run: python tests/check_lint.py
 
+      - name: Check burdin doc
+        run: python tests/check_doc.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python tests/check_build_scripts.py
@@ -655,6 +678,11 @@ jobs:
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
         run: python tests/check_new.py
+
+      # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
+      # reject exactly as a build does, without code generation or a linker (issue #237).
+      - name: Check burdin check
+        run: python tests/check_check.py
 
       - name: Check host target
         run: python tests/check_platform.py

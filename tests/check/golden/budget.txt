@@ -1,0 +1,2 @@
+budget.bd:16:7: error[E0225]: compile-time evaluation ran for more than 1000 steps; raise the budget with `--comptime-steps` if the computation is meant to be this long
+error: could not check budget.bd (1 error)

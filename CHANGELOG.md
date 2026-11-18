@@ -35,6 +35,67 @@ close-out checklist in `AGENTS.md`).
 - Tests: `crates/burdin_query/tests/` (`incremental.rs`, `reparse.rs`, `equivalence.rs`, `api.rs` with
   `fixtures/api.golden`, `stress.rs`, `memory.rs` with a counting allocator), the driver's `parity.rs`, and the new
   unit tests of `db.rs` and `spans.rs`.
+### Machine-readable diagnostics (issue #236)
+
+- The JSON format is frozen as version 1 (issue #642, `spec/diagnostics.md` DG2-DG7). Every object carries
+  `"version": 1`. A diagnostic has its `code`, `severity`, `message`, `url`, primary `span`, `labels`, `notes`, `help`,
+  `related` (the notes that have a span, shaped like the Language Server Protocol's `relatedInformation`), `children`,
+  `suggestions` (each with `applicability` and a list of `edits`), and the `rendered` human text. A location has line
+  and column in Unicode scalar values, UTF-8 bytes, and UTF-16 code units, and byte offsets. The schema is
+  `docs/diagnostic.schema.json` (closed, so any change to the output changes it) and `docs/diagnostics.md` documents
+  the fields and the versioning rule. `tests/check_diagnostics.py` validates every line printed for every failing
+  conformance test against the schema, checks that mutated objects are rejected, and compares goldens in
+  `tests/diagnostics/`. The model gained `labels`, `help`, and `children`; the human format is unchanged.
+- `--diagnostic-format sarif` writes one SARIF 2.1.0 log (issue #643, DG8-DG11): the error-code registry and the lints
+  as rules with a link to each entry, results with locations, related locations, and fixes, and `invocations` saying
+  whether the run succeeded. `burdin build` and `burdin lint` write the log even when nothing was found; `run` and
+  `test` write one only when the compilation reported something; `burdin fmt` refuses the format. A subset schema in
+  `tests/diagnostics/sarif-subset.schema.json` and a golden result list prove the shape.
+- Every diagnostic links to its entry in the hosted error reference (issue #644, DG12-DG14):
+  `https://ricardomilos7.github.io/burdin/errors/E0003` (`/lints/L0007` for a lint), a scheme that ends in the code
+  and is pinned by `tests/check_error_docs.py`. It is the `url` of JSON, the `helpUri` of SARIF, a line printed by
+  `burdin explain`, and an OSC 8 hyperlink on the code in colored human output when the terminal supports it
+  (`FORCE_HYPERLINK=1` or `0` decides). The short format stays one plain line.
+
+### `burdin test` filters, `--list`, reports, reruns, and shards (issue #235)
+
+- **Filters (#638).** `burdin test <target> [<filter>...]` runs the tests whose full path (`module.submodule.test name`,
+  prefixed `<package>::` when several packages run) contains any filter; `--filter` is the same thing. `--exact`
+  requires an equal path, `--skip <pattern>` (repeatable) leaves tests out, and the summary appends
+  `, N filtered out`. `TestEntry` now carries the module path and the span of the test's name.
+- **Listing (#639).** `burdin test --list` prints each selected test with its attributes and a count, without running
+  anything; `--list --format json` prints one object per test with package, module, name, path, file, line, and
+  attributes, for editors and CI.
+- **Reports (#640).** `--format json` streams `suite_started`, `test_started`, `test_passed`/`test_failed` (with
+  duration, reason, and captured output), `test_ignored`, and `suite_finished` events, one JSON object per line, with a
+  versioned schema in `spec/test-runner.md`. `--junit <file>` writes a JUnit XML report. The human output does not
+  change.
+- **Reruns, shards, and slow tests (#641).** `--failed` reruns the tests that failed in the previous run, kept in
+  `<package>/target/burdin/<profile>/test-failed.txt`; `--shard <i>/<n>` runs a deterministic round-robin slice; tests
+  that ran at least `--slow-threshold` milliseconds (default 5000) are listed before the summary.
+- The runner is split into `test_runner.rs` (compile, execute), `test_runner/select.rs` (selection and the failed
+  record), and `test_runner/report.rs` (human, list, JSON, and JUnit output). `tests/check_test_runner.py` gains about
+  150 black-box checks over the fixtures `tests/runner/selection/` and `tests/runner/slow/`, and the driver has unit
+  tests for each rule.
+
+### Tooling: `burdin check` (issue #237)
+
+- `burdin check <file.bd | package directory>` type-checks without building: it runs the front end of `burdin build`
+  (build scripts, parsing, name resolution and type checking, the return-origin, move, and borrow checks, and
+  compile-time evaluation) and stops before code generation, so it needs no linker and writes no file. It is for fast CI
+  gates and editor feedback (`spec/check.md`, CK1-CK8).
+- The diagnostics, formats, and exit statuses are those of a build: a clean check prints nothing and exits 0, errors exit
+  1 and end with `error: could not check <target> (N errors)`, and a usage error exits 2. `--tests` also checks `test`
+  blocks and accepts a library package without `src/main.bd`; `--release` and `--comptime-steps` are as for a build;
+  the options that only matter for an output (`-o`, `--emit-ir`, `-g`, `--lto`, `--link-lib`, ...) are rejected.
+- `burdin check` reuses `front_end`, the shared front end that `build`, `run`, `test`, and `lint` also call; that
+  front end runs through the query-based compiler library (the entry above).
+- The error reporting of a failed compilation moved out of `compile` into `report_errors`, and the diagnostics options
+  of the command line into `parse_diagnostic_option`, so the commands share them.
+- `crates/burdin_driver/src/check.rs` has unit tests for the command line; `tests/check_check.py` black-boxes the
+  command: the fixtures and golden outputs under `tests/check/`, equality with `burdin build`'s diagnostics, every
+  conformance test (a `compile-fail` program must report exactly its markers, every other program must be accepted),
+  no linker needed and nothing written, and the command line. It runs in every CI job.
 
 ### Tooling: `burdin new` (issue #228)
 
@@ -78,7 +139,7 @@ close-out checklist in `AGENTS.md`).
 ### `burdin lint` (issue #230)
 
 - `burdin lint [path]` is a linter that is separate from the compiler (new crate `burdin_lint`, called only by the
-  driver). It checks the program the compiler already accepted and reports lints `L0001`-`L0016` (plus `L0000` for an
+  driver). It checks the program the compiler already accepted and reports lints `L0001`-`L0017` (plus `L0000` for an
   unknown lint name in a configuration or a suppression comment); `docs/lints.md` documents each one with an example
   that `tests/check_lint.py` runs, and `spec/lint.md` (LN1-LN32) is the behavior.
 - Naming conventions: `non_snake_case`, `non_pascal_case`, `non_screaming_case`, with the suggested name in a note
@@ -99,6 +160,37 @@ close-out checklist in `AGENTS.md`).
   `docs/lints.md` ships in the release archive.
 - Two small changes to the shared crates support it: a typed `Local` carries its source span, and a diagnostic's
   suggestion can be marked machine-applicable (`Diagnostic::suggest_safe`).
+
+### `burdin doc` (issues #234, #467-#469, #656-#658)
+
+- `burdin doc [path]` writes the documented interface of a package from its `///` comments and `//!` module comments
+  (new crate `burdin_doc`, called only by the driver): a self-contained static HTML site (default
+  `<package>/target/doc`), versioned JSON (`--output-format json`), or a per-module coverage report (`--coverage`).
+  `spec/doc.md` (DC1-DC23) is the behavior, and doc tests remain separate work (issues #250, #650-#652).
+- The site has an overview, a page per module, a page per item, a sidebar, cross-links from signatures and doc comments,
+  and client-side search. Its stylesheet and search script are compiled into the binary and copied under `static/`, and
+  the index is a script (`search-index.js`), so the site loads nothing from another server and works from disk
+  (issue #467).
+- Doc comments are a Markdown subset (headings, lists, tables, quotes, fenced code, emphasis, links). Text is always
+  escaped; a `javascript:` or other unsafe address is dropped. Intra-doc links `[Type]`, `[module.fn]`,
+  ``[`Type::method`]``, and the explicit `[text]`-with-a-target and `[text][path]` forms resolve like code paths from a
+  comment's module; an
+  unresolved link is `D0001` and a link to a `priv` item is `D0002`, both warnings that `--deny-warnings` turns into a
+  failure (issue #468).
+- `priv` items, fields, and methods are left out by default and shown, marked, with `--private`; `pub use` re-exports
+  are listed on the module page and "re-exported by" on the item (issue #469).
+- A type's page lists its methods, its operators written as they are written (`a + b`, `-a`), its extension methods
+  with the module that declares them and the `use` a caller needs, its derived and implemented interfaces, and the
+  methods of impl blocks for a specific instance (`Stack<i32>`) (issue #658).
+- The JSON output carries `format_version: 1`; the schema has modules, items, members, implementations, link
+  resolutions, spans, and member origins (issue #656).
+- `--coverage` prints documented and undocumented items per module, and the `missing_docs` lint (`L0017`, allow by
+  default) reports the same items from the same reading of the source (issue #657).
+- The output directory is guarded: `burdin doc` refuses a directory that holds files it did not write (status 2), keeps
+  a `.burdin-doc` marker, and removes the pages of items that are gone. A package that does not compile is reported and
+  not documented (status 1).
+- Unit tests in `burdin_syntax::docs` and `burdin_doc`, the fixtures in `tests/doc/` with golden pages in
+  `tests/doc/expect/`, and `tests/check_doc.py`, which every CI job runs.
 
 ## Unreleased — Stage 2
 

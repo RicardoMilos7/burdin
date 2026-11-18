@@ -103,13 +103,88 @@ The target is a `.bd` file or a package directory.
 - `--workspace` selects the entry package and every path dependency. In this stage a *workspace* is the build's
   package graph; a manifest-level workspace with independent members is stage 3 (`stage1-subset.md`), so
   `--workspace` is exactly those packages. `-p` and `--workspace` cannot be combined.
-- `--filter <text>` keeps the tests whose displayed name contains `text`, matched case-sensitively. A filter that
-  matches nothing is not an error: the run reports `0 passed, 0 failed`. `--ignored` and `--include-ignored`
-  apply after the filter.
 - When more than one package is selected, a test's displayed name is `<package>::<test name>` so two packages may
   use the same test name. A single selected package keeps the plain test name. `FAIL`, `PASS`, `IGNORED`, and the
   captured-output headings all use the displayed name.
 - A test in a package with no `src/main.bd` still runs: test mode does not require `main`.
+
+### The full path
+
+Every test has a *full path*, which is what filters match and what `--list` prints:
+
+```
+<package>::<module>.<submodule>.<test name>
+```
+
+The module part is the dotted path of the file inside the package's `src` directory (`geometry.shapes` for
+`src/geometry/shapes.bd`); it is empty, with its dot, for a test in the package's entry file (`src/main.bd` or
+`src/lib.bd`) and for a single-file target. The `<package>::` prefix is present only when more than one package is
+selected, like the displayed name. So `area of circle` in `src/geometry/shapes.bd` has the full path
+`geometry.shapes.area of circle` (or `app::geometry.shapes.area of circle` in a `--workspace` run), and a test in
+`src/main.bd` is just `alpha`. The displayed name in the report stays the plain test name. Tests are discovered
+package by package, in build order; inside a package, file by file in the order the driver reads the modules
+(alphabetical by path), and inside a file in declaration order.
+
+### Name filters
+
+`burdin test <target> [<filter>...]` runs the tests whose full path contains any filter. A filter is matched
+case-sensitively as a substring; no filter selects every test. Because the package and module names are part of the
+path, a filter can select a module (`geometry`) or a package (`util::`). `--filter <text>` is the older spelling of a
+positional filter and may repeat; the two are the same.
+
+- `--exact` makes every filter and every `--skip` pattern compare equal to the whole full path instead of being
+  contained in it. `--exact` with no filter and no `--skip` changes nothing.
+- `--skip <pattern>` (repeatable) removes the tests whose full path contains `pattern` (equals it, with `--exact`),
+  after the filters have selected: a test is run when some filter selects it and no `--skip` pattern does.
+- Filters apply after discovery, across every selected package, so `-p`, `--workspace`, and filters combine.
+- `--ignored` and `--include-ignored` apply after the name rules.
+- A filter that matches nothing is not an error: the exit status is 0, the summary reads
+  `test result: 0 passed, 0 failed, <n> filtered out`, and `note: no test matches the filters` goes to standard
+  error.
+
+The *filtered out* count in the summary is the number of discovered tests that the name filters, `--skip`,
+`--failed`, and `--shard` left out. `--ignored` drops the tests that are not ignored without counting them.
+
+### Selection order
+
+The steps run in this order: the name filters and `--skip`; `--failed`; the ignore mode (`--ignored`); then
+`--shard`, which numbers what is left. Tests that reach the end are run, or listed with `--list`.
+
+## Listing tests
+
+`burdin test --list` compiles the selected packages, discovers the tests, applies the selection rules, and prints
+them without running anything. The exit status is 0; compile errors and usage errors behave as in a run. A listing
+shows ignored tests (with their `ignore` attribute) unless `--ignored` is given, which keeps only them;
+`--include-ignored` has no effect. `--list` cannot be combined with `--junit`.
+
+The human format prints one line per selected test, its full path followed by its attributes in the source syntax
+and in a fixed order (`ignore`, `timeout(ms)`, `should_panic[("text")]`, `should_fail`, `differential`), then a
+count line:
+
+```
+geometry.area
+geometry.perimeter [should_fail]
+beta [ignore, timeout(500)]
+delta panics [should_panic("boom")]
+4 tests, 3 filtered out
+```
+
+The count is `<n> test` or `<n> tests`, with `, <k> filtered out` when the selection left tests out.
+
+`--list --format json` prints one JSON object per selected test, one per line, in the same order, with these fields
+(the schema is version 1, see [Machine-readable reports](#machine-readable-reports)):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `package` | string | the package the test belongs to |
+| `module` | string | the dotted module path, `""` for the entry file |
+| `name` | string | the name written in `test "name"` |
+| `path` | string | the full path, as a filter or `--exact` takes it |
+| `file` | string | the source file, spelled as diagnostics spell it |
+| `line` | number | the 1-based line of the test's name |
+| `attributes` | object | `ignore`, `timeout_ms` (number or `null`), `should_panic`, `should_panic_message` (string or `null`), `should_fail`, `differential` |
+
+The language server's test integration (issue #374) and CI sharding scripts read this form.
 
 ## Output and exit status
 
@@ -126,10 +201,74 @@ test result: 1 passed, 2 failed
 
 `IGNORED <name>` appears only with `--verbose`. The summary is always
 `test result: <passed> passed, <failed> failed`, with `, <ignored> ignored` appended when at least one test was
-skipped because of `[ignore]`. Timeouts count as failures.
+skipped because of `[ignore]` and `, <filtered out> filtered out` appended when the name filters, `--skip`,
+`--failed`, or `--shard` left tests out (in that order). A run with none of these prints exactly the summary it
+always has. Timeouts count as failures.
+
+When tests ran for at least the slow threshold (below), one `slow test: <name> (<ms> ms)` line per such test, in
+declaration order, comes just before the summary line, so the summary stays the last line.
 
 The exit status is 0 when every run test passed (and no test failed), 1 when a test failed or compilation failed,
 and 2 for a usage error (an unknown package, a bad `-j`, conflicting flags) or a driver failure after loading.
+
+## Machine-readable reports
+
+`burdin test --format json` replaces the human report with a stream of JSON objects, one per line on standard
+output, written as the run progresses. Compilation diagnostics still go to standard error, and a run that fails to
+compile or load prints no events. The exit status is the same as the human format's. `--junit <file>` writes a JUnit
+XML report in addition to either format.
+
+**Schema version 1.** The `version` field of `suite_started` is the version of every JSON line `burdin test` prints,
+both the `--list` objects and the events. A later version only adds fields; a field changes meaning or goes away only
+with a new version number. A reader ignores fields it does not know.
+
+Every event has an `event` field. The events about one test carry the test's identity fields (`package`, `module`,
+`name`, `path`, `file`, `line`, as in `--list`):
+
+| `event` | When | Fields besides the identity |
+| --- | --- | --- |
+| `suite_started` | once, first | `version`, `packages` (the selected package names), `test_count` (selected tests, ignored ones included), `ignored`, `filtered_out` |
+| `test_ignored` | once per ignored test, right after `suite_started` | |
+| `test_started` | when a test's process starts | |
+| `test_passed` | when it ends and passes | `duration_ms`; `stdout` and `stderr` only with `--verbose` |
+| `test_failed` | when it ends and fails | `duration_ms`, `reason` (the explanation the human report puts in the `---- test "name": <reason> ----` heading, or `null`), `stdout`, `stderr` |
+| `suite_finished` | once, last | `passed`, `failed`, `ignored`, `filtered_out`, `duration_ms`, `slow` (a list of `{"path", "duration_ms"}`, empty when none) |
+
+Output is text: bytes that are not UTF-8 are replaced, and control characters are escaped as JSON requires. With
+`-j 1` the events of different tests never overlap and follow declaration order; with more workers `test_started`
+and `test_passed`/`test_failed` events arrive in completion order, one whole line at a time, and `path` ties them
+together.
+
+**JUnit.** The XML has the usual shape: a `testsuites` element (`name="burdin test"`, `tests`, `failures`, `skipped`,
+`time` in seconds) holding one `testsuite` per package (`name`, `tests`, `failures`, `skipped`, `time`), each
+holding one `testcase` per selected test (`classname` is the package and the module path joined with dots, `name` is
+the test name, plus `file`, `line`, and `time`). A failed test (a timeout included) has a `failure` child whose
+`message` is the reason (or `test failed`) and whose text is the captured standard error, and `system-out` and
+`system-err` children with the captured output. An ignored test has a `skipped` child. Passing tests carry their
+output only with `--verbose`. Characters XML cannot hold are replaced with U+FFFD. A report that cannot be written is
+a driver failure: the message goes to standard error and the exit status is 2, whatever the tests did.
+
+## Reruns, shards, and slow tests
+
+- `--failed` runs only the tests that failed in the previous run of the same profile. The record is the file
+  `<package>/target/burdin/<debug|release>/test-failed.txt`, next to the build-script output, in the entry package's
+  directory (so `--failed` needs a package directory, not a single `.bd` file, and is a usage error otherwise).
+  Every `burdin test` run that runs tests updates it: a test that ran and passed leaves the record, a test that
+  failed enters it, a test that did not run keeps its status, and an entry whose test no longer exists is dropped
+  (entries of packages the run did not select stay). A run that fails to compile leaves it alone, a green run with
+  no record on disk writes nothing, and a `--list` run never writes. With `--failed` and no record at all, every
+  test is selected and `note: no record of a previous run was found; running every selected test` goes to standard
+  error; with a record that has no failures, nothing is selected and `note: the previous run had no failed tests`
+  says why. A test is identified by its package and its package-local path, so the record does not depend on which
+  packages a run selected. `--failed` combines with the name filters, `--skip`, and `--shard`.
+- `--shard <i>/<n>` runs the `i`-th of `n` slices, counting `i` from 1 (`1 <= i <= n`, anything else is a usage
+  error). The tests that survive the earlier selection steps are numbered from 0 in declaration order, and a test
+  belongs to shard `(number mod n) + 1`: the slices are disjoint, cover every selected test, and depend only on the
+  order of discovery, so each CI job computes its own slice with no coordination. Ignored tests are numbered too.
+  The tests in other slices count as filtered out.
+- `--slow-threshold <ms>` (default 5000, `0` disables) lists the tests whose run took at least that long: in the
+  human summary as described above and in the JSON `suite_finished` event. It is only a report. `--timeout` and
+  `timeout(ms)` still kill a hung test.
 
 ## Differential tests
 
@@ -172,3 +311,7 @@ produce the same outcome, so an interpreter/compiled divergence is caught automa
 | Output capture, `--verbose` | `tests/check_test_runner.py` |
 | Fresh working directory, clean environment, cleanup | `tests/check_test_runner.py` |
 | `-p`, `--workspace`, `--filter`, dependency tests | `tests/check_test_runner.py` |
+| The full path; positional filters, `--exact`, `--skip`, and the filtered-out count (#638) | `tests/check_test_runner.py` (`tests/runner/selection/`, `tests/runner/workspace/`), unit tests in `crates/burdin_driver/src/test_runner/select.rs` |
+| `--list`, human and JSON (#639) | `tests/check_test_runner.py` (golden listing, JSON fields), unit tests in `crates/burdin_driver/src/test_runner/report.rs` |
+| `--format json` events and `--junit` (#640) | `tests/check_test_runner.py` (event sequence, escaping, XML structure, an unwritable report), unit tests in `report.rs` |
+| `--failed`, `--shard`, `--slow-threshold` (#641) | `tests/check_test_runner.py` (`tests/runner/selection/`, `tests/runner/slow/`), unit tests in `select.rs` |

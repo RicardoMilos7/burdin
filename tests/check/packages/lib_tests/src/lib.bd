@@ -1,0 +1,9 @@
+// A library package: no `src/main.bd`. `burdin check` needs `--tests`; the tests are checked too.
+
+fn add(a: i32, b: i32): i32 {
+    a + b
+}
+
+test "add" {
+    assert_eq(add(1, 2), 3)?
+}

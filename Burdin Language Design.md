@@ -621,6 +621,7 @@ A single command-line tool, `burdin`, handles building, testing, formatting, and
 | `burdin new <name>` | Create a package |
 | `burdin build`, `burdin run` | Compile, and compile and run |
 | `burdin test` | Run `test` blocks |
+| `burdin check` | Type-check without building (the front end and every memory check, no code generation) |
 | `burdin fmt` | Format code (opinionated, no options) |
 | `burdin lint` | Run the built-in linter |
 | `burdin doc` | Generate documentation |

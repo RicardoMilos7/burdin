@@ -33,7 +33,7 @@ Tests: `check_lint.py` (`compile errors stop the linter`), every fixture.
 
 **LN2. Lints and levels.** A lint has a name (`unused_variables`) and a code (`L0007`), and one of three levels:
 `allow` (it does not run), `warn` (a finding is a warning), and `deny` (a finding is an error). Every lint is at `warn` by
-default. A command line option names a lint by name or by code, in any case. `all` names every lint; `warnings` names the
+default except `missing_docs`, which is at `allow` (LN33). A command line option names a lint by name or by code, in any case. `all` names every lint; `warnings` names the
 lints that are at `warn` when the option is read. An unknown name is a usage error (status 2).
 Tests: `config/deny_by_name.bd`, `config/deny_by_code.bd`, `config/allow_all.bd`, `config/allow_and_warn.bd`, the
 `registry.rs` unit tests.
@@ -52,9 +52,11 @@ allowed before it stays allowed. Warnings alone do not change the exit status.
 Tests: `config/deny_by_name.bd`, `config/deny_warnings.bd`, `check_lint.py` (`--deny-warnings`).
 
 **LN5. Output and status.** A diagnostic has the lint's code (`L0007`), a primary span, a message, and notes. The
-diagnostic formats and the color and width options are the compiler's (`--diagnostic-format human|short|json`). After
-the diagnostics the command prints `lint: N warnings, M errors`, or `lint: no warnings in <target>` when there is
-nothing to report; in `json` format the last line is `{"type":"lint-summary","warnings":N,"errors":M}`. The exit status
+diagnostic formats and the color and width options are the compiler's (`--diagnostic-format human|short|json|sarif`,
+`spec/diagnostics.md`). After the diagnostics the command prints `lint: N warnings, M errors`, or `lint: no warnings in
+<target>` when there is nothing to report; in `json` format the last line is
+`{"type":"lint-summary","version":1,"warnings":N,"errors":M}`, and in `sarif` format the whole output is one SARIF log
+(written even when nothing was found) with no line after it. The exit status
 is 0 when no error was reported, 1 for a lint at `deny` or a compile error (or a source file that cannot be read), and 2
 for a usage error, an invalid manifest `[lint]` table, or a failed write.
 Tests: `check_lint.py` (summary line, json output, usage errors, `a missing file`).
@@ -174,6 +176,16 @@ Tests: `ownership/loop_alloc.bd`.
 `.into_iter()`. No fix: the iterator type differs.
 Tests: `ownership/needless_to_list.bd`.
 
+**LN33. `missing_docs` (L0017).** A public item that has no `///` comment, at its name: a function, struct, enum, error
+enum, interface (and each method of it), type alias, constant, derive, `extern` function, extension method, or method of an
+inherent `impl` block. The list is `burdin_syntax::docs::public_items`, which `burdin doc --coverage` counts too
+(`spec/doc.md`, DC19), so the lint and the report agree. A `priv` item, a member of a `priv` type, generated code, `main`,
+a field, a variant, and a method that implements an interface are never reported. The default level is `allow`, the only
+lint with one, so it runs when the manifest or the command line turns it on; `-D warnings` leaves it alone, and `-D all` or
+`-W all` turns it on. No fix.
+Tests: `docs/missing_docs.bd`, `docs/missing_docs_default_off.bd`, `docs/missing_docs_suppress.bd`,
+`docs/missing_docs_file.bd`.
+
 **LN27. Generic functions.** A generic function is checked once per instance, and the instances give the same finding
 the same span. A finding is reported once, at its place in the source; a finding that depends on the type
 (`redundant_clone`, `borrow_could_own`, `unused_mut`) is reported only when every instance agrees.
@@ -222,7 +234,7 @@ tests.
   the conformance programs that compile (665 single-file programs); the findings were reviewed by lint, and each false
   positive that turned up (generated names, `test` bodies, writes inside closures, slices, `comptime` blocks) was fixed
   and now has a fixture.
-- **Lint codes are not error codes.** `L0000`-`L0016` are not in the `E` registry of `tests/README.md`, so
+- **Lint codes are not error codes.** `L0000`-`L0017` are not in the `E` registry of `tests/README.md`, so
   `tests/check_tests.py` and `docs/error-codes.md` do not know them; `docs/lints.md` is their registry.
-- **Not part of this issue.** `missing_docs` and `burdin doc --coverage` (issue #657) share the lint machinery but belong
-  to the documentation tooling, and editor integration of the suggestions (the LSP) is stage 3 work of its own.
+- **Not part of this issue.** Editor integration of the suggestions (the LSP) is stage 3 work of its own. `missing_docs`
+  (L0017, LN33) came with `burdin doc` (issue #657); it shares the machinery here.

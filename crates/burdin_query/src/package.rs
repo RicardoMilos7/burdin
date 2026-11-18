@@ -115,7 +115,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
                 return Err(format!(
                     "package `{}` has no entry point: expected {}",
                     package.name,
-                    dir.join("src/main.bd").display()
+                    crate::source_path_text(&dir.join("src/main.bd"))
                 ));
             }
             // A library package tested on its own starts from the module other packages import, or any module.
@@ -511,11 +511,11 @@ fn strip_comment(line: &str) -> &str {
 fn discover_modules(dir: &Path) -> Result<Vec<ModuleFile>, String> {
     let src = dir.join("src");
     if !src.is_dir() {
-        return Err(format!("package {} has no `src` directory", dir.display()));
+        return Err(format!("package {} has no `src` directory", crate::source_path_text(dir)));
     }
     let modules = discover_modules_under(&src)?;
     if modules.is_empty() {
-        return Err(format!("package {} has no `.bd` files under `src`", dir.display()));
+        return Err(format!("package {} has no `.bd` files under `src`", crate::source_path_text(dir)));
     }
     Ok(modules)
 }
@@ -572,6 +572,46 @@ pub fn is_ident(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    /// A temporary package directory, removed when the test ends.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> TempDir {
+            let path = std::env::temp_dir().join(format!(
+                "burdin-package-{}-{}-{}",
+                name,
+                std::process::id(),
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())
+            ));
+            fs::create_dir_all(&path).unwrap();
+            TempDir(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    // Windows canonical paths carry the `\\?\` verbatim prefix, which is an implementation detail. A message
+    // that names a path prints it the way diagnostics do (`source_path_text`), on every platform the same.
+    #[test]
+    fn the_entry_point_error_prints_the_path_without_the_verbatim_prefix() {
+        let temp = TempDir::new("entry");
+        fs::write(temp.0.join("burdin.toml"), "[package]\nname = \"app\"\n").unwrap();
+        fs::create_dir_all(temp.0.join("src")).unwrap();
+        fs::write(temp.0.join("src").join("lib.bd"), "fn nothing() {}\n").unwrap();
+        let dir = temp.0.canonicalize().unwrap();
+        let Err(error) = load_impl(&dir, true) else {
+            panic!("a package without `src/main.bd` must not load");
+        };
+        let expected = crate::source_path_text(&dir.join("src/main.bd"));
+        assert!(error.contains(&expected), "the error does not name {expected}: {error}");
+        assert!(!error.contains(r"\\?\"), "the error prints a verbatim path: {error}");
+    }
 
     fn manifest(text: &str) -> Result<Manifest, String> {
         parse_manifest_text(text, Path::new("burdin.toml"))

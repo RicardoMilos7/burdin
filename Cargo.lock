@@ -58,11 +58,20 @@ name = "burdin_diag"
 version = "0.1.0"
 
 [[package]]
+name = "burdin_doc"
+version = "0.1.0"
+dependencies = [
+ "burdin_diag",
+ "burdin_syntax",
+]
+
+[[package]]
 name = "burdin_driver"
 version = "0.1.0"
 dependencies = [
  "burdin_codegen",
  "burdin_diag",
+ "burdin_doc",
  "burdin_fmt",
  "burdin_lint",
  "burdin_query",

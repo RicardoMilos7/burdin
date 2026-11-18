@@ -1,0 +1,2 @@
+err_syntax.bd:6:9: error[E0001]: expected a pattern, found `=`
+error: could not check err_syntax.bd (1 error)

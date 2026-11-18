@@ -36,10 +36,14 @@ not updated and may disagree with the repository.
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
-   resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the minimal `bindgen`, and `spec/query.md` is the query-based compiler library: the memo,
-   its granularity, cancellation, the budget, the tool API, and the parity between the library and the command line.
-   `[lint]` table, suppression comments, and `--fix`.
+   resolution, and timers, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   modules, caching, and the minimal `bindgen`; `spec/lint.md` is `burdin lint` (the `[lint]` table, suppression
+   comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset, intra-doc links and
+   their diagnostics, the site and its search, the JSON schema, and the coverage report; `spec/check.md` is
+   `burdin check`, the type-check-only command (what it shares with a build, and `--tests`); `spec/diagnostics.md`
+   is the versioned JSON diagnostic format, the SARIF log, and the links to the error reference; and `spec/query.md`
+   is the query-based compiler library: the memo, its granularity, cancellation, the budget, the tool API, and the
+   parity between the library and the command line.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -83,9 +87,11 @@ python3 tests/check_diagnostics.py       check color, width, formats, error limi
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
 python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
+python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links, JSON, coverage, and the output rules
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
+python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
@@ -129,13 +135,17 @@ crates/
   burdin_fmt/               the formatter behind `burdin fmt`: its own lossless layout parser, the document printer,
                             comment and `use` handling, doc-comment code blocks, and the checks of its own output
                             (spec/fmt.md); it depends only on burdin_diag and burdin_syntax
+  burdin_doc/               the documentation generator behind `burdin doc`: doc comments and signatures from the syntax
+                            trees, intra-doc link resolution, the HTML site with search, the versioned JSON schema, and
+                            the coverage report (spec/doc.md); it depends only on burdin_diag and burdin_syntax
   burdin_query/             the query-based compiler library (spec/query.md): the database of file texts, the parse
                             memo and the body-only reparse, the check cache's orchestration, cancellation and the
                             budget, the tool API (syntax tree with trivia, resolve/type/signature/ownership at a
                             position), and the package loader (`package.rs`); the driver and a language server share
                             it, and it never links LLVM
-  burdin_driver/            the `burdin` binary: build, run, test, fmt, bindgen; it runs its front end through
-                            `burdin_query`, and keeps build scripts (`build.rs`) and the minimal C bindgen
+  burdin_driver/            the `burdin` binary: build, run, test, check, fmt, lint, doc, bindgen; it runs its front
+                            end through `burdin_query`, and keeps build scripts (`build.rs`) and the minimal C
+                            bindgen (`bindgen.rs`)
                             (`bindgen.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, code generation, and the query library's keystroke edits
@@ -143,7 +153,9 @@ crates/
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
-docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the lint
+docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the
+                          diagnostics-for-tools reference and the JSON schema (docs/diagnostics.md,
+                          docs/diagnostic.schema.json, checked by tests/check_diagnostics.py), the lint
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)

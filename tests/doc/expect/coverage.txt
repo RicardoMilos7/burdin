@@ -1,0 +1,11 @@
+documentation coverage of geometry
+module       documented   with examples
+collections  4/4 (100%)   0/4 (0%)
+extras       1/2 (50%)    0/2 (0%)
+geometry     2/3 (66%)    1/3 (33%)
+shapes       8/8 (100%)   0/8 (0%)
+total        15/17 (88%)  1/17 (5%)
+
+undocumented public items:
+  src/extras.bd:10  extension method String.shout
+  src/lib.bd:31  function undocumented

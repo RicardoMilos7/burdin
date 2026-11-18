@@ -1,0 +1,2 @@
+err_no_main.bd:1:1: error[E0002]: the program has no `main` function
+error: could not check err_no_main.bd (1 error)

@@ -1,0 +1,36 @@
+//! Links in doc comments (spec/doc.md DC10-DC11). The module docs link to [Target] and to [nothing_here]. //~ D0001
+
+/// A target.
+struct Target {
+    /// A field.
+    value: i32
+}
+
+Target {
+    /// A method.
+    fn make(): Target { Target { value: 1 } }
+}
+
+/// Good links: [Target], [Target.make], [`Target.value`], [Target::make], [the target](Target), [name][Target], and
+/// the standard library and primitives: [i32], [List], [String.push_str], [Result].
+fn good() {}
+
+/// Bad links: [Missing], [Target.nothing], [nowhere.Target]. //~ D0001 D0001 D0001
+fn bad_names() {}
+
+/// Not links: [ ] [1] [a b] `[Missing]` \[Missing\] and a [real file](docs/guide.md) and <https://example.org>.
+fn not_links() {}
+
+/// The second line of a comment reports at its own line.
+/// So does [this_one]. //~ D0001
+fn second_line() {}
+
+/// A list of links:
+///
+/// - [Target]
+/// - [Missing] //~ D0001
+fn list() {}
+
+fn main() {
+    good()
+}

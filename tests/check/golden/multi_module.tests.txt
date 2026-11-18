@@ -1,0 +1,2 @@
+packages/multi_module/src/shapes.bd:2:24: error[E0003]: expected `String`, found `i32`
+error: could not check packages/multi_module (1 error)

@@ -1,0 +1,10 @@
+// The error is inside a `test` block: a plain check does not look at tests, `--tests` does.
+
+fn main() {
+    println("ok")
+}
+
+test "wrong type" {
+    let n: i32 = "text" //~ E0003
+    assert_eq(n, 1)?
+}

@@ -54,7 +54,13 @@ fn parse_fmt_args(argv: &[String]) -> Result<FmtArgs, String> {
                 args.range = Some(parse_range(&value)?);
             }
             "--diagnostic-format" => {
-                args.diagnostics.format = parse_format(&option_value(&mut it, inline, a, "a value")?)?
+                let format = parse_format(&option_value(&mut it, inline, a, "a value")?)?;
+                if format == burdin_diag::DiagnosticFormat::Sarif {
+                    // `fmt` reports each file as it goes, and a SARIF log is one document for a whole run.
+                    return Err("`burdin fmt` does not support `--diagnostic-format sarif`; use human, short, or json"
+                        .to_string());
+                }
+                args.diagnostics.format = format;
             }
             "--color" => args.diagnostics.color = parse_color(&option_value(&mut it, inline, a, "a value")?)?,
             "--no-color" => {

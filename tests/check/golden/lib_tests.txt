@@ -1,0 +1,1 @@
+error: package `lib_tests` has no entry point: expected packages/lib_tests/src/main.bd
