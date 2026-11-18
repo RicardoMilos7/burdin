@@ -153,6 +153,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,
+        jobs: crate::jobs_or_default(args.jobs),
     };
     let mut compiled = Vec::new();
     for &index in &selected {

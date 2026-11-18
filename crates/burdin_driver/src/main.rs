@@ -21,24 +21,24 @@ use std::process::{Command, ExitCode};
 
 pub(crate) const USAGE: &str = "\
 usage:
-  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto]
+  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
-  burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
+  burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
-  burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
-  burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
-              [--comptime-steps <n>] [diagnostics]
+              [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lint --list
   burdin lint --explain <lint>
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
-             [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
+             [--coverage] [--deny-warnings] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
@@ -46,6 +46,8 @@ usage:
   burdin --version
 
 compile options:
+  -j, --jobs <n>       run at most n threads: parsing, code generation, and formatting (default: BURDIN_JOBS,
+                       then the number of CPUs); `burdin test` also runs at most n tests at once
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
 
@@ -65,7 +67,7 @@ check options (type-check only: the front end and every memory check, no code ge
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
 
 test options:
-  -j, --jobs <n>       tests to run at once (default: the number of CPUs)
+  -j, --jobs <n>       tests to run at once, and compilation threads (default: the number of CPUs)
   -p <package>         run the tests of one package of the build; may repeat
   --workspace          run the tests of the entry package and every path dependency
   <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
@@ -107,7 +109,8 @@ environment:
   BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
   BURDIN_CHANNEL       release channel printed by `--version` (dev, nightly, or stable; default: dev)
   BURDIN_COMMIT        overrides the git commit printed by `--version`
-  BURDIN_JOBS          parser threads (default: the machine's parallelism; 1 is sequential)
+  BURDIN_CODEGEN_UNITS split code generation into exactly this many units (default: by program size)
+  BURDIN_JOBS          the default of -j (default: the machine's parallelism; 1 is sequential)
   BURDIN_VERSION       overrides the version printed by `--version` (nightly builds)
   LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
   COLUMNS              terminal width used when --width is not given
@@ -147,8 +150,9 @@ pub(crate) struct Args {
     pub(crate) comptime_steps: Option<u64>,
     /// Where to list the files `embed` read (`--emit-deps`).
     pub(crate) emit_deps: Option<PathBuf>,
-    // `burdin test` only.
+    /// `-j`: the most threads (and, for `burdin test`, test processes) at once. `None` is the default.
     pub(crate) jobs: Option<usize>,
+    // `burdin test` only.
     pub(crate) verbose: bool,
     pub(crate) packages: Vec<String>,
     pub(crate) workspace: bool,
@@ -233,6 +237,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         // Long options accept `--option value` and `--option=value`.
         let (a, inline) = match raw.split_once('=') {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            // `-j4` is `-j 4`, as in cargo and make.
+            _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         match a {
@@ -264,14 +270,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 let limit = parse_number(a, &value)?;
                 args.diagnostics.error_limit = (limit > 0).then_some(limit);
             }
-            "-j" | "--jobs" => {
-                let value = option_value(&mut it, inline, a, "a number of tests")?;
-                let n: usize = value.parse().map_err(|_| format!("`-j` needs a number of tests, got `{value}`"))?;
-                if n == 0 {
-                    return Err("`-j` must be at least 1".to_string());
-                }
-                args.jobs = Some(n);
-            }
+            "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "-v" | "--verbose" => args.verbose = flag_without_value(a, inline)?,
             "-p" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
             "--workspace" => args.workspace = flag_without_value(a, inline)?,
@@ -326,9 +325,6 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     args.target = target.ok_or("missing target file")?;
     if args.command != "test" {
-        if args.jobs.is_some() {
-            return Err("`-j` is only valid for `burdin test`".to_string());
-        }
         if args.verbose {
             return Err("`--verbose` is only valid for `burdin test`".to_string());
         }
@@ -393,6 +389,31 @@ pub(crate) fn parse_diagnostic_option(
         _ => return Ok(false),
     }
     Ok(true)
+}
+
+/// `-j <n>`/`--jobs <n>`, shared by every command that compiles or formats: a positive number of threads.
+pub(crate) fn parse_jobs(
+    it: &mut std::slice::Iter<'_, String>,
+    inline: Option<&str>,
+    option: &str,
+) -> Result<usize, String> {
+    let value = option_value(it, inline, option, "a number of jobs")?;
+    let n: usize = value.parse().map_err(|_| format!("`-j` needs a number of jobs, got `{value}`"))?;
+    if n == 0 {
+        return Err("`-j` must be at least 1".to_string());
+    }
+    Ok(n)
+}
+
+/// The thread count a command runs with: `-j`, then `BURDIN_JOBS`, then 0 for the machine's parallelism.
+pub(crate) fn jobs_or_default(jobs: Option<usize>) -> usize {
+    jobs.or_else(burdin_query::env_jobs).unwrap_or(0)
+}
+
+/// `BURDIN_CODEGEN_UNITS`: split code generation into exactly this many units instead of choosing by size. The
+/// conformance suite runs with it set to check that a split program behaves like an unsplit one.
+fn env_codegen_units() -> Option<usize> {
+    std::env::var("BURDIN_CODEGEN_UNITS").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|n| *n > 0)
 }
 
 /// The value of an option: the part after `=` when written inline, otherwise the next argument.
@@ -537,6 +558,7 @@ fn driver_main() -> ExitCode {
         emit_deps: args.emit_deps.as_deref(),
         report_clean: args.command == "build",
         run_build_scripts: true,
+        jobs: jobs_or_default(args.jobs),
     };
     match args.command.as_str() {
         "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
@@ -683,6 +705,8 @@ pub(crate) struct CompileOptions<'a> {
     /// Run the package's `build.bd` (and its granted dependencies' scripts) before reading sources. A build
     /// script's own compilation passes `false`, so a script cannot run another script (BS3).
     pub(crate) run_build_scripts: bool,
+    /// The most threads parsing and code generation use (`-j`); 0 is the machine's parallelism.
+    pub(crate) jobs: usize,
 }
 
 /// What a successful compilation produced: the executable, its `test` blocks (empty for a normal build), and the
@@ -763,6 +787,7 @@ pub(crate) fn front_end(
         release: options.release,
         comptime_steps: options.comptime_steps,
         no_cache: true,
+        jobs: options.jobs,
     };
     let mut db = match burdin_query::Db::from_workspace(&loaded, overrides, query_options) {
         Ok(db) => db,
@@ -854,15 +879,18 @@ pub(crate) fn compile(
         debug: options.debug,
         bitcode: options.lto,
         instrument: options.pgo_generate,
+        jobs: options.jobs,
+        units: env_codegen_units(),
     };
-    burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
-    let object = match options.pgo_use {
+    // A large program is split into codegen units compiled on several threads, one object each (issue #334).
+    let objects = burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
+    let objects = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");
             pgo_object(&dir.path, &ir, profile, options.release).map_err(fail)?;
-            dir.path.join(if cfg!(windows) { "program.pgo.obj" } else { "program.pgo.o" })
+            vec![dir.path.join(if cfg!(windows) { "program.pgo.obj" } else { "program.pgo.o" })]
         }
-        None => object,
+        None => objects,
     };
     let link_opts = LinkOptions {
         export_dynamic: cfg!(target_os = "linux"),
@@ -871,7 +899,7 @@ pub(crate) fn compile(
         lto: options.lto,
         pgo_generate: options.pgo_generate,
     };
-    link(&object, &output, options.link_libs, &link_opts).map_err(fail)?;
+    link(&objects, &output, options.link_libs, &link_opts).map_err(fail)?;
     let test_sites = program
         .tests
         .iter()
@@ -1131,8 +1159,8 @@ struct LinkOptions {
     pgo_generate: bool,
 }
 
-/// Links the object file (which defines `main` and the runtime) with libc into the executable `output`.
-fn link(object: &Path, output: &Path, libs: &[String], opts: &LinkOptions) -> Result<(), String> {
+/// Links the object files (which define `main` and the runtime) with libc into the executable `output`.
+fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Result<(), String> {
     let cc = std::env::var("BURDIN_CC").unwrap_or_else(|_| if cfg!(windows) { "cl".into() } else { "cc".into() });
     if is_msvc_style(&cc) && (opts.lto || opts.pgo_generate) {
         return Err(format!(
@@ -1141,7 +1169,7 @@ fn link(object: &Path, output: &Path, libs: &[String], opts: &LinkOptions) -> Re
         ));
     }
     let mut cmd = Command::new(&cc);
-    cmd.args(link_args(&cc, object, output, libs, opts));
+    cmd.args(link_args(&cc, objects, output, libs, opts));
     let out = cmd.output().map_err(|e| linker_error(&cc, e))?;
     if !out.status.success() {
         let hint = if opts.lto || opts.pgo_generate {
@@ -1192,12 +1220,12 @@ fn linker_error(cc: &str, error: std::io::Error) -> String {
 }
 
 /// The linker command line. Split out so the MSVC branch, which cannot run on Linux CI, has unit tests.
-fn link_args(cc: &str, object: &Path, output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
+fn link_args(cc: &str, objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
     if is_msvc_style(cc) {
         // `LLVM-C.lib` lives in the LLVM installation, which is not in the linker's `LIB` path. `LLVM_SYS_211_PREFIX`
         // and `llvm-config` are how the rest of the build finds that installation.
         let llvm_libdir = libs.iter().any(|l| l == "LLVM-C").then(resolve_llvm_c_libdir).flatten();
-        let mut args = msvc_link_args(object, output, libs, llvm_libdir.as_deref());
+        let mut args = msvc_link_args(objects, output, libs, llvm_libdir.as_deref());
         if opts.strip {
             // Without `/DEBUG` link.exe writes no debug directory; `/OPT:REF` drops unreferenced sections.
             args.push("/OPT:REF".into());
@@ -1205,7 +1233,7 @@ fn link_args(cc: &str, object: &Path, output: &Path, libs: &[String], opts: &Lin
         }
         args
     } else {
-        unix_link_args(object, output, libs, opts)
+        unix_link_args(objects, output, libs, opts)
     }
 }
 
@@ -1219,22 +1247,25 @@ fn is_msvc_style(cc: &str) -> bool {
         || name.eq_ignore_ascii_case("clang-cl.exe")
 }
 
-fn msvc_link_args(object: &Path, output: &Path, libs: &[String], llvm_libdir: Option<&Path>) -> Vec<OsString> {
-    // MSVC: cl only calls link.exe. The object file names no C runtime, so name the static one.
-    let mut args: Vec<OsString> = vec![
-        "/nologo".into(),
-        object.into(),
-        format!("/Fe:{}", output.display()).into(),
-        "/link".into(),
-        "libcmt.lib".into(),
-        "libucrt.lib".into(),
-        "libvcruntime.lib".into(),
-        // The runtime calls `CaptureStackBackTrace` for panic backtraces and Winsock for sockets. An object
-        // emitted by LLVM carries no default-library directives, so name these explicitly; `cl` does not add them
-        // for a bare object.
-        "kernel32.lib".into(),
-        "ws2_32.lib".into(),
-    ];
+fn msvc_link_args(objects: &[PathBuf], output: &Path, libs: &[String], llvm_libdir: Option<&Path>) -> Vec<OsString> {
+    // MSVC: cl only calls link.exe. The object files name no C runtime, so name the static one.
+    let mut args: Vec<OsString> = vec!["/nologo".into()];
+    args.extend(objects.iter().map(OsString::from));
+    args.push(format!("/Fe:{}", output.display()).into());
+    args.extend(
+        [
+            "/link",
+            "libcmt.lib",
+            "libucrt.lib",
+            "libvcruntime.lib",
+            // The runtime calls `CaptureStackBackTrace` for panic backtraces and Winsock for sockets. An object
+            // emitted by LLVM carries no default-library directives, so name these explicitly; `cl` does not add
+            // them for a bare object.
+            "kernel32.lib",
+            "ws2_32.lib",
+        ]
+        .map(OsString::from),
+    );
     if let Some(dir) = llvm_libdir {
         args.push(format!("/LIBPATH:{}", dir.display()).into());
     }
@@ -1257,8 +1288,9 @@ fn is_library_path(lib: &str) -> bool {
         || [".a", ".o", ".obj", ".lib", ".so", ".dylib", ".dll"].iter().any(|extension| lower.ends_with(extension))
 }
 
-fn unix_link_args(object: &Path, output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
-    let mut args: Vec<OsString> = vec!["-o".into(), output.into(), object.into()];
+fn unix_link_args(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["-o".into(), output.into()];
+    args.extend(objects.iter().map(OsString::from));
     if opts.debug {
         // ld64 keeps debug sections only when the link names -g; GNU ld ignores the flag.
         args.push("-g".into());
@@ -1456,8 +1488,12 @@ mod tests {
 
     #[test]
     fn msvc_link_args_name_the_static_crt_and_map_libraries_to_lib_files() {
-        let args =
-            as_strings(msvc_link_args(Path::new("program.obj"), Path::new("out.exe"), &["LLVM-C".to_string()], None));
+        let args = as_strings(msvc_link_args(
+            &[PathBuf::from("program.obj")],
+            Path::new("out.exe"),
+            &["LLVM-C".to_string()],
+            None,
+        ));
         assert_eq!(args[0], "/nologo");
         assert!(args.contains(&"/link".to_string()));
         assert!(args.contains(&"libcmt.lib".to_string()));
@@ -1472,7 +1508,7 @@ mod tests {
     #[test]
     fn msvc_link_args_add_the_llvm_library_directory() {
         let args = as_strings(msvc_link_args(
-            Path::new("program.obj"),
+            &[PathBuf::from("program.obj")],
             Path::new("out.exe"),
             &["LLVM-C".to_string()],
             Some(Path::new(r"C:\llvm\lib")),
@@ -1515,7 +1551,7 @@ mod tests {
     #[test]
     fn unix_link_args_use_the_cc_command_line() {
         let args = as_strings(unix_link_args(
-            Path::new("program.o"),
+            &[PathBuf::from("program.o")],
             Path::new("out"),
             &["m".to_string()],
             &LinkOptions::default(),
@@ -1526,9 +1562,10 @@ mod tests {
     #[test]
     fn a_link_lib_that_names_a_file_is_linked_as_it_is() {
         let libs = ["build/wrappers.a".to_string(), "extra.o".to_string(), "z".to_string()];
-        let unix = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &libs, &LinkOptions::default()));
+        let unix =
+            as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &libs, &LinkOptions::default()));
         assert_eq!(unix, ["-o", "out", "program.o", "build/wrappers.a", "extra.o", "-lz", "-lm"]);
-        let msvc = as_strings(msvc_link_args(Path::new("program.obj"), Path::new("out.exe"), &libs, None));
+        let msvc = as_strings(msvc_link_args(&[PathBuf::from("program.obj")], Path::new("out.exe"), &libs, None));
         assert!(msvc.contains(&"build/wrappers.a".to_string()), "{msvc:?}");
         assert!(msvc.contains(&"extra.o".to_string()), "{msvc:?}");
         assert!(msvc.contains(&"z.lib".to_string()), "{msvc:?}");
@@ -1538,21 +1575,22 @@ mod tests {
     fn unix_link_args_link_the_math_library_once() {
         // The float functions call libm, so every Unix program links it; naming it again with `--link-lib m`
         // does not repeat the flag.
-        let args = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &[], &LinkOptions::default()));
+        let args =
+            as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &LinkOptions::default()));
         assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
     }
 
     #[test]
     fn unix_link_args_keep_debug_information() {
         let opts = LinkOptions { debug: true, ..Default::default() };
-        let args = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &[], &opts));
+        let args = as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &opts));
         assert!(args.contains(&"-g".to_string()), "{args:?}");
     }
 
     #[test]
     fn unix_link_args_export_symbols_for_backtraces() {
         let opts = LinkOptions { export_dynamic: true, ..Default::default() };
-        let args = as_strings(unix_link_args(Path::new("program.o"), Path::new("out"), &[], &opts));
+        let args = as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &opts));
         assert!(args.contains(&"-rdynamic".to_string()), "{args:?}");
     }
 
@@ -1705,9 +1743,29 @@ mod tests {
 
     #[test]
     fn test_options_are_rejected_for_other_commands() {
-        assert!(parse(&["build", "app", "-j", "2"]).unwrap_err().contains("only valid for `burdin test`"));
         assert!(parse(&["run", "app", "--verbose"]).unwrap_err().contains("only valid for `burdin test`"));
         assert!(parse(&["build", "app", "--workspace"]).unwrap_err().contains("only valid for `burdin test`"));
+    }
+
+    #[test]
+    fn jobs_apply_to_every_compiling_command() {
+        // `-j` limits the compiler's threads for `build` and `run` too, not only the tests `burdin test` runs.
+        assert_eq!(parse(&["build", "app", "-j", "2"]).unwrap().jobs, Some(2));
+        assert_eq!(parse(&["run", "app", "--jobs=3"]).unwrap().jobs, Some(3));
+        assert_eq!(parse(&["build", "app", "-j4"]).unwrap().jobs, Some(4));
+        assert!(parse(&["build", "app", "-j", "0"]).unwrap_err().contains("at least 1"));
+        assert!(parse(&["build", "app", "-j"]).unwrap_err().contains("needs a number of jobs"));
+        assert_eq!(jobs_or_default(Some(5)), 5);
+    }
+
+    #[test]
+    fn every_codegen_unit_is_linked_in_order() {
+        let objects = [PathBuf::from("program.o"), PathBuf::from("program.1.o"), PathBuf::from("program.2.o")];
+        let args = as_strings(unix_link_args(&objects, Path::new("out"), &[], &LinkOptions::default()));
+        assert_eq!(&args[2..5], ["program.o", "program.1.o", "program.2.o"]);
+        let objects = [PathBuf::from("program.obj"), PathBuf::from("program.1.obj")];
+        let args = as_strings(msvc_link_args(&objects, Path::new("out.exe"), &[], None));
+        assert_eq!(&args[..3], ["/nologo", "program.obj", "program.1.obj"]);
     }
 
     #[test]

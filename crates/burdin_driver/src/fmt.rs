@@ -4,7 +4,8 @@
 
 use crate::package;
 use crate::{
-    ColorChoice, DiagnosticOptions, flag_without_value, option_value, parse_color, parse_format, parse_number,
+    ColorChoice, DiagnosticOptions, flag_without_value, jobs_or_default, option_value, parse_color, parse_format,
+    parse_jobs, parse_number,
 };
 use crate::{render_options, source_path_text};
 use burdin_diag::SourceMap;
@@ -16,7 +17,7 @@ use std::process::ExitCode;
 
 pub(crate) const FMT_USAGE: &str = "\
 usage:
-  burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
+  burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
 
 fmt options:
@@ -24,7 +25,9 @@ fmt options:
   --stdin                    read one source from standard input and write the formatted source to standard output
   --stdin-filepath <path>    the path the standard input stands for: names it in diagnostics and finds the package
                              whose dependencies group the `use` declarations
-  --range <lo>:<hi>          with --stdin, format only the items that overlap these byte offsets";
+  --range <lo>:<hi>          with --stdin, format only the items that overlap these byte offsets
+  -j, --jobs <n>             format at most n files at once (default: BURDIN_JOBS, then the number of CPUs); the
+                             output and the exit status do not depend on it";
 
 /// What the command line asked for.
 #[derive(Debug, Default)]
@@ -34,6 +37,8 @@ struct FmtArgs {
     stdin: bool,
     stdin_filepath: Option<PathBuf>,
     range: Option<(usize, usize)>,
+    /// `-j`: the most files formatted at once.
+    jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
 }
 
@@ -43,11 +48,14 @@ fn parse_fmt_args(argv: &[String]) -> Result<FmtArgs, String> {
     while let Some(raw) = it.next() {
         let (a, inline) = match raw.split_once('=') {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            // `-j4` is `-j 4`, as in cargo and make.
+            _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         match a {
             "--check" => args.check = flag_without_value(a, inline)?,
             "--stdin" => args.stdin = flag_without_value(a, inline)?,
+            "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--stdin-filepath" => args.stdin_filepath = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--range" => {
                 let value = option_value(&mut it, inline, a, "a byte range such as 10:200")?;
@@ -155,6 +163,11 @@ fn format_one(name: &str, text: &str, options: &Options, range: Option<(usize, u
         Some((lo, hi)) => burdin_fmt::format_range(text, lo, hi, options),
         None => burdin_fmt::format_source(text, options),
     };
+    report(name, text, result, args)
+}
+
+/// Prints what went wrong with one source, if anything, and says what formatting it came to.
+fn report(name: &str, text: &str, result: Result<String, FormatError>, args: &FmtArgs) -> Outcome {
     match result {
         Ok(out) => Outcome::Formatted(out),
         Err(FormatError::Syntax(diags)) => {
@@ -171,6 +184,39 @@ fn format_one(name: &str, text: &str, options: &Options, range: Option<(usize, u
             Outcome::Failed
         }
     }
+}
+
+/// One file read and formatted by a worker, before anything about it is printed or written.
+type Formatted = Result<(String, Result<String, FormatError>), std::io::Error>;
+
+/// Reads and formats `files` on up to `jobs` threads (0 is the machine's parallelism). Each worker takes the next
+/// file from a shared counter; the results come back in the order of `files`, so what is printed and written next
+/// does not depend on the thread count (issue #773).
+fn format_all(files: &[(PathBuf, Options)], jobs: usize) -> Vec<Formatted> {
+    let format = |(file, options): &(PathBuf, Options)| -> Formatted {
+        let text = std::fs::read_to_string(file)?;
+        let result = burdin_fmt::format_source(&text, options);
+        Ok((text, result))
+    };
+    let workers = burdin_codegen::resolve_jobs(jobs).min(files.len());
+    if workers <= 1 {
+        return files.iter().map(format).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let slots: Vec<std::sync::Mutex<Option<Formatted>>> = files.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(file) = files.get(index) else { break };
+                    let result = format(file);
+                    *slots[index].lock().expect("a formatting thread panicked") = Some(result);
+                }
+            });
+        }
+    });
+    slots.into_iter().map(|slot| slot.into_inner().expect("a formatting thread panicked").expect("formatted")).collect()
 }
 
 fn run_stdin(args: &FmtArgs) -> ExitCode {
@@ -218,19 +264,20 @@ fn run_files(args: &FmtArgs) -> ExitCode {
     let mut seen = std::collections::HashSet::new();
     files.retain(|f| seen.insert(f.canonicalize().unwrap_or_else(|_| f.clone())));
     let mut grouping = Grouping::new();
+    let jobs: Vec<(PathBuf, Options)> = files.iter().map(|file| (file.clone(), grouping.options_for(file))).collect();
+    let results = format_all(&jobs, jobs_or_default(args.jobs));
     let (mut differing, mut failed) = (0usize, 0usize);
-    for file in &files {
-        let text = match std::fs::read_to_string(file) {
-            Ok(text) => text,
+    for (file, result) in files.iter().zip(results) {
+        let (text, result) = match result {
+            Ok(formatted) => formatted,
             Err(e) => {
                 eprintln!("error: cannot read {}: {e}", file.display());
                 failed += 1;
                 continue;
             }
         };
-        let options = grouping.options_for(file);
         let name = file.display().to_string();
-        match format_one(&name, &text, &options, None, args) {
+        match report(&name, &text, result, args) {
             Outcome::Formatted(out) if out == text => {}
             Outcome::Formatted(out) => {
                 differing += 1;
@@ -306,6 +353,13 @@ mod tests {
         assert!(parse(&["--stdin", "a.bd"]).unwrap_err().contains("does not take files"));
         let args = parse(&["--stdin", "--range=3:9", "--stdin-filepath", "x.bd"]).unwrap();
         assert_eq!(args.range, Some((3, 9)));
+    }
+
+    #[test]
+    fn jobs_take_a_positive_number() {
+        assert_eq!(parse(&["-j", "4"]).unwrap().jobs, Some(4));
+        assert_eq!(parse(&["--jobs=1", "src"]).unwrap().jobs, Some(1));
+        assert!(parse(&["-j", "0"]).unwrap_err().contains("at least 1"));
     }
 
     #[test]

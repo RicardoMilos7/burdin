@@ -4,19 +4,20 @@
 //! formats, and exits 0 exactly when `burdin build` would get as far as code generation.
 
 use crate::{
-    CompileOptions, DiagnosticOptions, SourceOverrides, flag_without_value, front_end, option_value,
-    parse_diagnostic_option, print_warnings, report_errors,
+    CompileOptions, DiagnosticOptions, SourceOverrides, flag_without_value, front_end, jobs_or_default, option_value,
+    parse_diagnostic_option, parse_jobs, print_warnings, report_errors,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 pub(crate) const CHECK_USAGE: &str = "\
 usage:
-  burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
 
 check options:
   --release            check the way `burdin build --release` does (integer overflow in compile-time code, error traces)
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
+  -j, --jobs <n>       parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
 
 Nothing is printed when the package has no errors and no warnings; the exit status is 0 then and 1 otherwise.";
@@ -27,6 +28,7 @@ struct CheckArgs {
     release: bool,
     tests: bool,
     comptime_steps: Option<u64>,
+    jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
 }
 
@@ -37,6 +39,8 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
     while let Some(raw) = it.next() {
         let (a, inline) = match raw.split_once('=') {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            // `-j4` is `-j 4`, as in cargo and make.
+            _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         if parse_diagnostic_option(&mut it, inline, a, &mut args.diagnostics)? {
@@ -45,6 +49,7 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
+            "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--comptime-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
                 let steps: u64 = value
@@ -91,6 +96,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         // A CI gate gets a log even when the package is clean, like `burdin build` (`spec/diagnostics.md`, DG11).
         report_clean: true,
         run_build_scripts: true,
+        jobs: jobs_or_default(args.jobs),
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {
         Ok(front) => front,

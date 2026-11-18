@@ -190,18 +190,20 @@ pub fn check_memory(program: &mut Program) -> Diagnostics {
     diags
 }
 
-/// Emits a native object file for a checked program. This is the debug-profile path of `burdin build` (LLVM
-/// optimization level `None`).
+/// Emits native object files for a checked program. This is the debug-profile path of `burdin build` (LLVM
+/// optimization level `None`), split into codegen units and compiled on every core exactly like a build.
+/// Only `object` is left behind: the objects of the other codegen units are removed again.
 pub fn emit(program: &Program, sources: &SourceMap, object: &std::path::Path) -> Result<(), String> {
-    let opts = burdin_codegen::Options {
-        release: false,
-        emit_ir: None,
-        pgo_ir: None,
-        debug: false,
-        bitcode: false,
-        instrument: false,
-    };
-    burdin_codegen::emit_object(program, sources, "bench", object, &opts)
+    let objects = burdin_codegen::emit_object(program, sources, "bench", object, &burdin_codegen::Options::default())?;
+    for extra in objects.iter().filter(|path| path.as_path() != object) {
+        let _ = std::fs::remove_file(extra);
+    }
+    Ok(())
+}
+
+/// Formats a generated program with `burdin fmt`'s formatter, which checks its own output, and returns the result.
+pub fn format(text: &str) -> String {
+    burdin_fmt::format_source(text, &burdin_fmt::Options::default()).expect("the generated program formats")
 }
 
 // --- Baselines ---------------------------------------------------------------------------------

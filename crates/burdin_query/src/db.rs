@@ -39,6 +39,8 @@ pub struct Options {
     /// Keep checked bodies between analyses. A language server or an editor wants this; a one-shot batch build
     /// (`burdin build`) turns it off, because it will never ask a second question.
     pub no_cache: bool,
+    /// The most threads the front end may use (`-j`); 0 means `BURDIN_JOBS`, then the machine's parallelism.
+    pub jobs: usize,
 }
 
 /// The analysis was cancelled before it finished (see [`CancelHandle`]). The database is intact; analyze again.
@@ -409,34 +411,36 @@ impl Db {
     }
 
     /// Parses every file whose memo is out of date, in parallel when there is more than one and more than one
-    /// worker (`BURDIN_JOBS` overrides the machine's parallelism; 1 keeps it sequential). The diagnostics come
-    /// back in file order, so a parallel run is identical to a sequential one.
+    /// worker (`Options::jobs`, then `BURDIN_JOBS`, then the machine's parallelism; 1 keeps it sequential). The
+    /// workers take the next unparsed file from a shared counter, so one long file does not hold up a fixed share
+    /// of the others. The diagnostics come back in file order, so a parallel run is identical to a sequential one.
     fn parse_all(&mut self) -> Result<Vec<Rc<Parsed>>, Cancelled> {
         // Files never parsed (a cold start) are independent and parsed together; a file that changed since it was
         // parsed is one editor edit, handled one at a time by `parse`, which tries the body-only reparse first.
         let stale: Vec<usize> = (0..self.files.len()).filter(|&slot| self.files[slot].parsed.is_none()).collect();
-        let jobs = job_count(stale.len());
+        let jobs = job_count(stale.len(), self.options.jobs);
         if jobs > 1 {
             let texts: Vec<(FileId, String)> =
                 stale.iter().map(|&slot| (FileId(slot as u32), self.files[slot].text.to_string())).collect();
-            let chunk = texts.len().div_ceil(jobs);
-            let results: Vec<(ast::File, Diagnostics)> = std::thread::scope(|scope| {
-                let handles: Vec<_> = texts
-                    .chunks(chunk)
-                    .map(|part| {
-                        scope.spawn(move || {
-                            part.iter()
-                                .map(|(id, text)| {
-                                    let mut diags = Diagnostics::default();
-                                    let ast = burdin_syntax::parse(*id, text, &mut diags);
-                                    (ast, diags)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                    })
-                    .collect();
-                handles.into_iter().flat_map(|h| h.join().expect("a parser thread panicked")).collect()
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let slots: Vec<std::sync::Mutex<Option<(ast::File, Diagnostics)>>> =
+                texts.iter().map(|_| std::sync::Mutex::new(None)).collect();
+            std::thread::scope(|scope| {
+                for _ in 0..jobs {
+                    scope.spawn(|| {
+                        loop {
+                            let index = next.fetch_add(1, Ordering::Relaxed);
+                            let Some((id, text)) = texts.get(index) else { break };
+                            let mut diags = Diagnostics::default();
+                            let ast = burdin_syntax::parse(*id, text, &mut diags);
+                            *slots[index].lock().expect("a parser thread panicked") = Some((ast, diags));
+                        }
+                    });
+                }
             });
+            let results = slots
+                .into_iter()
+                .map(|slot| slot.into_inner().expect("a parser thread panicked").expect("every file is parsed"));
             for (&slot, (ast, diags)) in stale.iter().zip(results) {
                 let file = &self.files[slot];
                 let parsed = Rc::new(Parsed { fp: file.fp, text: file.text.clone(), ast, diags: diags.into_vec() });
@@ -582,12 +586,18 @@ impl Db {
     }
 }
 
-/// How many workers to parse `files` files with: at most one per file, never zero. `BURDIN_JOBS` overrides the
-/// machine's parallelism, and 1 keeps the run sequential (useful for comparing output and for measuring).
-fn job_count(files: usize) -> usize {
+/// How many workers to parse `files` files with: at most one per file, never zero. `jobs` (from `-j`) wins, then
+/// `BURDIN_JOBS` overrides the machine's parallelism, and 1 keeps the run sequential (useful for comparing output
+/// and for measuring).
+fn job_count(files: usize, jobs: usize) -> usize {
     let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    let requested = std::env::var("BURDIN_JOBS").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    let requested = if jobs > 0 { jobs } else { env_jobs().unwrap_or(0) };
     workers(files, available, requested)
+}
+
+/// `BURDIN_JOBS`, when it is a number.
+pub fn env_jobs() -> Option<usize> {
+    std::env::var("BURDIN_JOBS").ok().and_then(|v| v.trim().parse::<usize>().ok())
 }
 
 /// The worker count for a run, from the file count, the machine, and the request (0 is "whatever the machine

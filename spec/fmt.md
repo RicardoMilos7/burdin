@@ -178,7 +178,7 @@ space between items, are unchanged, so formatting a range inside an already form
 ## FM12: the command
 
 ```
-burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
+burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
 burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
 ```
 
@@ -186,6 +186,9 @@ burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diag
   order, skipping directories that start with `.` and `target`; with no path it means the current directory. A file
   that is already formatted is not written (its modification time is unchanged). The path of every file the command
   changed is printed on standard output, one per line.
+- Files are read and formatted on up to `-j` threads (default: `BURDIN_JOBS`, then the number of CPUs). Reports,
+  writes, and the exit status follow the sorted file order whatever the thread count, so `-j 1` and `-j 8` print
+  the same bytes and leave the same files.
 - `--check` writes nothing. It prints the path of every file that is not formatted, one per line on standard output,
   prints a one-line summary on standard error, and exits with status 1 when there is at least one. It is meant for CI.
 - `--stdin` reads one source from standard input and writes the formatted source to standard output (nothing else is

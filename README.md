@@ -140,20 +140,20 @@ contract they implement; the conformance runner (`tests/run_tests.py`) and the d
 
 ```
 usage:
-  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto]
+  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
-  burdin run <file.bd | package directory> [--release] [-g] [--link-lib <name>]...
+  burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
-  burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
-  burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
-             [--coverage] [--deny-warnings] [diagnostics]
+             [--coverage] [--deny-warnings] [-j <n>] [diagnostics]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
                  [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
@@ -163,6 +163,8 @@ usage:
   burdin --version
 
 compile options:
+  -j, --jobs <n>       run at most n threads: parsing, code generation, and formatting (default: BURDIN_JOBS,
+                       then the number of CPUs); `burdin test` also runs at most n tests at once
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
 
@@ -170,7 +172,7 @@ check options (type-check only: the front end and every memory check, no code ge
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
 
 test options:
-  -j, --jobs <n>       tests to run at once (default: the number of CPUs)
+  -j, --jobs <n>       tests to run at once, and compilation threads (default: the number of CPUs)
   -p <package>         run the tests of one package of the build; may repeat
   --workspace          run the tests of the entry package and every path dependency
   <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
@@ -213,7 +215,9 @@ diagnostics:
   --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
   --error-limit <n>                       print at most n errors after sorting (0 prints all)```
 
-Long options also accept `--option=value`. `-j`/`--jobs`, `-p`, `--workspace`, `--filter`, `--exact`, `--skip`,
+Long options also accept `--option=value`, and `-j4` is `-j 4`. `-j`/`--jobs` is an option of every command that
+compiles or formats (`build`, `run`, `test`, `check`, `lint`, `doc`, and `fmt`): it bounds the threads the command
+uses, and the output never depends on it. `-p`, `--workspace`, `--filter`, `--exact`, `--skip`,
 `--ignored`/`--include-ignored`, `--failed`, `--shard`, `--timeout`, `--slow-threshold`, `--list`, `--format`,
 `--junit`, and `--verbose` are options of `burdin test` (and so are the filters after the target); any other command
 rejects them.
@@ -246,7 +250,8 @@ Environment:
 | `BURDIN_CC` | The C compiler driver used to link against libc (default `cc`, `cl` on Windows). |
 | `BURDIN_CHANNEL` | The release channel `--version` prints: `dev` (default), `nightly`, or `stable`. |
 | `BURDIN_COMMIT` | Overrides the git commit `--version` prints (for builds without a `.git` directory). |
-| `BURDIN_JOBS` | The number of parser threads; `1` is sequential. Default: the machine's parallelism. |
+| `BURDIN_CODEGEN_UNITS` | Split code generation into exactly this many units instead of choosing by program size (a testing aid; `tests/check_parallel.py` uses it). |
+| `BURDIN_JOBS` | The default of `-j`: the most threads parsing, code generation, and `fmt` use; `1` is sequential. Default: the machine's parallelism. |
 | `BURDIN_VERSION` | Overrides the version `--version` prints (nightly builds). |
 | `LLVM_SYS_211_PREFIX` | The LLVM 21 installation; its `bin/llvm-config` drives `--link-lib LLVM-C`. |
 
@@ -486,8 +491,14 @@ These properties are part of the generated runtime and are checked by the confor
   `tests/m02_basics/stack_overflow_aborts.bd` covers the recursion case.
 - **Parallel parsing.** Modules are independent, so `burdin build`/`run`/`test` parse them in parallel. Each worker
   keeps its own diagnostics and the driver merges them in file order, so the output is byte-identical to a
-  sequential run. `BURDIN_JOBS` sets the worker count (1 is sequential); `tests/check_parallel.py` compares the two
-  modes on a multi-module package, including its errors.
+  sequential run. `-j` (or `BURDIN_JOBS`) sets the worker count (1 is sequential); `tests/check_parallel.py` compares
+  the two modes on a multi-module package, including its errors.
+- **Parallel code generation.** The program is lowered to one LLVM module, unused runtime and glue functions are
+  dropped, and a program of more than about 8,000 instructions is split into codegen units (at most 16) that are
+  optimized and compiled to separate objects on up to `-j` threads and linked together. The number of units depends
+  only on the program, so `-j 1` and `-j 16` link the same executable. In a release build a small function stays
+  inlinable across units. `--lto`, `--pgo-generate`, and `--pgo-use` keep one unit. `tests/check_parallel.py` checks
+  the result and its determinism, and runs the code-generation-heavy milestones with the split forced.
 
 ### Diagnostics
 

@@ -21,6 +21,7 @@ dependencies = [
  "burdin_check",
  "burdin_codegen",
  "burdin_diag",
+ "burdin_fmt",
  "burdin_query",
  "burdin_sema",
  "burdin_syntax",
