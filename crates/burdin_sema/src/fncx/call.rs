@@ -686,7 +686,7 @@ impl FnCx<'_> {
                                 position,
                                 format!("this parameter of `{name}` is `mut`; pass the argument as `mut ...`"),
                             )
-                            .suggest(
+                            .suggest_safe(
                                 Span::new(position.file, position.lo, position.lo),
                                 "add `mut` before this argument",
                                 "mut ",
@@ -700,7 +700,7 @@ impl FnCx<'_> {
                         if let Some(mut_span) = a.mut_span {
                             // Delete the marker and the whitespace after it, so applying the edit leaves plain
                             // `name`.
-                            error.suggest(
+                            error.suggest_safe(
                                 Span::new(mut_span.file, mut_span.lo, a.expr.span.lo),
                                 "remove the `mut` marker",
                                 "",

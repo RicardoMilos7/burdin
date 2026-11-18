@@ -1,0 +1,16 @@
+// `to_list()` that is iterated right away (spec/lint.md LN26): the list is built only to be read once.
+
+fn main() {
+    let xs: List<i32> = [1, 2, 3].iter().to_list()
+    for v in xs.iter().to_list() { //~ L0016
+        println("{}", v)
+    }
+    let total = xs.iter().to_list().iter().count() //~ L0016
+    // A list that is kept, measured, or indexed is not needless.
+    let kept = xs.iter().to_list()
+    let measured = xs.iter().to_list().len()
+    for v in xs.iter() {
+        println("{}", v)
+    }
+    println("{} {} {}", total, kept.len(), measured)
+}

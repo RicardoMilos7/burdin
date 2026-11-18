@@ -1,0 +1,7 @@
+[package]
+name = "manifest_cli_override"
+version = "0.1.0"
+
+[lint]
+unused_variables = "deny"
+dead_code = "allow"

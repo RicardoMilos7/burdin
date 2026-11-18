@@ -111,6 +111,7 @@ impl FnCx<'_> {
                 mutable: mutable.get(i).copied().unwrap_or(false),
                 by_ref: false,
                 kind: LocalKind::OwnParam,
+                span: Span::new(span.file, span.lo, span.lo),
             });
             params.push(id);
             args.push(mk(tir::ExprKind::Local(id), ty.clone(), span));

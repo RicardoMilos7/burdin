@@ -1,0 +1,37 @@
+// Names that follow the conventions, including the forms that look unusual but are fine: a leading underscore, digits,
+// single letters, and acronyms written as one word. Nothing here is reported.
+
+struct Point2D {
+    x_pos: i32
+    y_pos: i32
+}
+
+enum Direction {
+    North
+    SouthWest
+}
+
+interface Shape {
+    fn area(self): i32
+}
+
+const MAX_POINTS: i32 = 4
+const LIMIT_2: i32 = 2
+
+fn make_point(x_pos: i32, _unused_hint: i32): Point2D {
+    Point2D { x_pos, y_pos: x_pos }
+}
+
+fn pick<T>(first: T, _second: T): T {
+    first
+}
+
+fn main() {
+    let p = make_point(MAX_POINTS, LIMIT_2)
+    let d = Direction.SouthWest
+    let double = |n: i32| n * 2
+    match d {
+        Direction.North => println("north")
+        Direction.SouthWest => println("{} {}", double(p.x_pos), pick(p.y_pos, 0))
+    }
+}

@@ -4,6 +4,31 @@ Burdin has no backward-compatibility promise (see `Burdin Language Design.md`). 
 GitHub milestones and the roadmap track the work in progress. A milestone closes with an entry here (see the
 close-out checklist in `AGENTS.md`).
 
+## Unreleased — Stage 3: `burdin lint` (issue #230)
+
+- `burdin lint [path]` is a linter that is separate from the compiler (new crate `burdin_lint`, called only by the
+  driver). It checks the program the compiler already accepted and reports lints `L0001`-`L0016` (plus `L0000` for an
+  unknown lint name in a configuration or a suppression comment); `docs/lints.md` documents each one with an example
+  that `tests/check_lint.py` runs, and `spec/lint.md` (LN1-LN32) is the behavior.
+- Naming conventions: `non_snake_case`, `non_pascal_case`, `non_screaming_case`, with the suggested name in a note
+  (issue #233). Syntax-tree lints: `else_hides_variant` (an `else`/`_` arm that hides a new variant of an enum of the
+  same package, with the explicit-variants form as the way to ignore it; issue #231), `unused_import`,
+  `unused_variable`, `unused_parameter`, `unreachable_code`, and `dead_code` for `priv` items (issue #465).
+- Typed-tree lints: `eager_chain` (a long chain of eager list methods that builds a list per step suggests `.iter()`;
+  issue #232), `redundant_clone`, `unused_mut`, `large_copy` in a loop, `borrow_could_own`, `loop_alloc`, and
+  `needless_to_list` (issue #661).
+- Levels are `allow`, `warn`, and `deny`, set per lint or for the `all` and `warnings` groups, in the manifest `[lint]`
+  table or on the command line, with `// lint: allow(...)` comments above an item, trailing on a line, or for the whole
+  file with `allow-file` (issue #464). A denied lint makes the exit code 1.
+- `burdin lint --fix` applies the machine-applicable suggestions in rounds, rechecks that the result still compiles,
+  previews the unified diff (`--dry-run` stops there), and writes every file or none (issue #466).
+- `tests/check_lint.py` runs the documented examples, the fixtures in `tests/lint/` (naming, `else`, eager chains,
+  unused code, configuration, ownership, generated code, generic instances, `--fix` before and after, and the
+  package fixtures), the all-or-nothing write, and the manifest and command-line checks; every CI job runs it, and
+  `docs/lints.md` ships in the release archive.
+- Two small changes to the shared crates support it: a typed `Local` carries its source span, and a diagnostic's
+  suggestion can be marked machine-applicable (`Diagnostic::suggest_safe`).
+
 ## Unreleased — Stage 2
 
 ### Milestone 2.3: shared state (issue #213)

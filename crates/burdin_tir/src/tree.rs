@@ -80,6 +80,9 @@ pub struct Local {
     /// A parameter passed by address (a `mut self` receiver): the local is the caller's place.
     pub by_ref: bool,
     pub kind: LocalKind,
+    /// The name where the binding is written (a `let`, a pattern, a parameter), for the linter's diagnostics. A
+    /// local the compiler made up has an empty span (`lo == hi`).
+    pub span: Span,
 }
 
 /// How a closure takes a captured variable (`spec/memory-rules.md` CL2-CL4).

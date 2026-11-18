@@ -196,7 +196,7 @@ impl FnCx<'_> {
         for item in items {
             self.scopes.push(HashMap::new());
             if let Some(name) = binding {
-                let local = self.declare(&name.name, item.ty.clone(), false, LocalKind::Owned);
+                let local = self.declare(&name.name, item.ty.clone(), false, LocalKind::Owned, name.span);
                 self.reflect.insert(local, item);
             }
             // `break` and `continue` cannot leave the unrolled body: it is not a loop in the generated code.

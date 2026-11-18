@@ -1,0 +1,8 @@
+use util.{add}
+
+fn shout(): i32 { 1 }
+fn whisper(): i32 { 2 }
+
+fn quiet() {
+    let unused_local = 1
+}

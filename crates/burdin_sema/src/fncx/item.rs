@@ -240,16 +240,18 @@ impl FnCx<'_> {
         let mut params = Vec::new();
         let mut sig_params = sig.params.iter();
         for p in &f.params {
-            let (name, mutable) = match &p.kind {
-                ast::ParamKind::Named { name, .. } => (name.name.as_str(), p.convention == ast::Convention::Mut),
+            let (name, mutable, name_span) = match &p.kind {
+                ast::ParamKind::Named { name, .. } => {
+                    (name.name.as_str(), p.convention == ast::Convention::Mut, name.span)
+                }
                 ast::ParamKind::SelfParam if sig.has_self && params.is_empty() => {
-                    ("self", p.convention == ast::Convention::Mut)
+                    ("self", p.convention == ast::Convention::Mut, p.span)
                 }
                 ast::ParamKind::SelfParam => continue,
             };
             let Some(ps) = sig_params.next() else { break };
             let kind = if ps.own { LocalKind::OwnParam } else { LocalKind::BorrowedParam };
-            let id = self.declare(name, ps.ty.clone(), mutable, kind);
+            let id = self.declare(name, ps.ty.clone(), mutable, kind, name_span);
             self.locals[id.0].by_ref = ps.by_ref;
             if ps.comptime {
                 self.comptime_known.push(id);

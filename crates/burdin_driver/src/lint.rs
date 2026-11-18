@@ -1,0 +1,438 @@
+//! `burdin lint`: the built-in linter (`spec/lint.md`). The command compiles the package the way `burdin test` does (so
+//! `test` blocks are checked too), runs the lints of `burdin_lint` on the typed program, and prints what they find with
+//! the same diagnostics machinery as the compiler. `--fix` applies the edits the lints and the compiler mark as safe,
+//! checks that the edited package still compiles, and writes every file or none.
+
+use crate::{
+    CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, flag_without_value, front_end, option_value,
+    parse_color, parse_format, parse_number, render_options,
+};
+use burdin_diag::{DiagnosticFormat, Diagnostics, FileId, Severity};
+use burdin_lint::{Config, Input, Level, Lint, Source};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+pub(crate) const LINT_USAGE: &str = "\
+usage:
+  burdin lint <file.bd | package directory> [-A <lint>]... [-W <lint>]... [-D <lint>]... [--deny-warnings]
+              [--fix [--dry-run]] [--comptime-steps <n>] [diagnostics]
+  burdin lint --list
+  burdin lint --explain <lint name | lint code>
+
+lint options:
+  -A, --allow <lint>   do not run the lint (`all` names every lint)
+  -W, --warn <lint>    report the lint as a warning
+  -D, --deny <lint>    report the lint as an error (`warnings` raises every lint that is a warning)
+  --deny-warnings      the same as `-D warnings`
+  --fix                apply the safe fixes, check that the package still compiles, and write the files
+  --dry-run            with --fix: print the diff and write nothing
+  --list               print every lint with its code and default level
+  --explain <lint>     print the reference entry for a lint
+
+Levels also come from the `[lint]` table of burdin.toml (`name = \"allow\" | \"warn\" | \"deny\"`); the command line
+wins. A comment `// lint: allow(name)` suppresses a lint at one item, statement, or line.";
+
+/// The lint reference, embedded so `burdin lint --explain` cannot disagree with the page `tests/check_lint.py` checks.
+const LINT_DOCS: &str = include_str!("../../../docs/lints.md");
+
+/// How many times `--fix` runs the front end: a fix can reveal another, so it repeats until nothing is left to fix.
+const MAX_FIX_ROUNDS: usize = 6;
+
+struct LintArgs {
+    target: PathBuf,
+    /// The level flags in command-line order: later flags win.
+    levels: Vec<(String, Level)>,
+    fix: bool,
+    dry_run: bool,
+    list: bool,
+    explain: Option<String>,
+    diagnostics: DiagnosticOptions,
+    comptime_steps: Option<u64>,
+}
+
+fn parse(argv: &[String]) -> Result<LintArgs, String> {
+    let mut args = LintArgs {
+        target: PathBuf::new(),
+        levels: Vec::new(),
+        fix: false,
+        dry_run: false,
+        list: false,
+        explain: None,
+        diagnostics: DiagnosticOptions::default(),
+        comptime_steps: None,
+    };
+    let mut target = None;
+    let mut it = argv.iter();
+    while let Some(raw) = it.next() {
+        let (a, inline) = match raw.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            _ => (raw.as_str(), None),
+        };
+        match a {
+            "-A" | "--allow" => args.levels.push((option_value(&mut it, inline, a, "a lint name")?, Level::Allow)),
+            "-W" | "--warn" => args.levels.push((option_value(&mut it, inline, a, "a lint name")?, Level::Warn)),
+            "-D" | "--deny" => args.levels.push((option_value(&mut it, inline, a, "a lint name")?, Level::Deny)),
+            "--deny-warnings" => {
+                flag_without_value(a, inline)?;
+                args.levels.push(("warnings".to_string(), Level::Deny));
+            }
+            "--fix" => args.fix = flag_without_value(a, inline)?,
+            "--dry-run" => args.dry_run = flag_without_value(a, inline)?,
+            "--list" => args.list = flag_without_value(a, inline)?,
+            "--explain" => args.explain = Some(option_value(&mut it, inline, a, "a lint name or code")?),
+            "--diagnostic-format" => {
+                args.diagnostics.format = parse_format(&option_value(&mut it, inline, a, "a value")?)?;
+            }
+            "--color" => args.diagnostics.color = parse_color(&option_value(&mut it, inline, a, "a value")?)?,
+            "--no-color" => {
+                flag_without_value(a, inline)?;
+                args.diagnostics.color = crate::ColorChoice::Never;
+            }
+            "--width" => {
+                let value = option_value(&mut it, inline, a, "a number")?;
+                args.diagnostics.width = Some(parse_number(a, &value)?);
+            }
+            "--error-limit" => {
+                let value = option_value(&mut it, inline, a, "a number")?;
+                let limit = parse_number(a, &value)?;
+                args.diagnostics.error_limit = (limit > 0).then_some(limit);
+            }
+            "--comptime-steps" => {
+                let value = option_value(&mut it, inline, a, "a number of steps")?;
+                let steps: u64 = value
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| format!("`--comptime-steps` needs a positive number of steps, got `{value}`"))?;
+                args.comptime_steps = Some(steps);
+            }
+            _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
+            _ if target.is_none() => target = Some(PathBuf::from(a)),
+            _ => return Err(format!("unexpected argument `{a}`")),
+        }
+    }
+    if args.list || args.explain.is_some() {
+        return Ok(args);
+    }
+    args.target = target.ok_or("missing target file")?;
+    if args.dry_run && !args.fix {
+        return Err("`--dry-run` is only valid with `--fix`".to_string());
+    }
+    Ok(args)
+}
+
+pub(crate) fn run(argv: &[String]) -> ExitCode {
+    let args = match parse(argv) {
+        Ok(a) => a,
+        Err(message) => {
+            eprintln!("error: {message}\n{LINT_USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    if args.list {
+        print_list();
+        return ExitCode::SUCCESS;
+    }
+    if let Some(name) = &args.explain {
+        return explain(name);
+    }
+    let options = CompileOptions {
+        release: false,
+        debug: false,
+        strip: false,
+        lto: false,
+        pgo_generate: false,
+        pgo_use: None,
+        emit_ir: None,
+        link_libs: &[],
+        // Test blocks are linted too, and a library package has no `main`.
+        test_mode: true,
+        diagnostics: &args.diagnostics,
+        comptime_steps: args.comptime_steps,
+        emit_deps: None,
+        run_build_scripts: true,
+    };
+    if args.fix { fix(&args, &options) } else { check(&args, &options) }
+}
+
+fn print_list() {
+    for lint in Lint::ALL {
+        println!("{}  {:<22} {:<5}  {}", lint.code(), lint.name(), lint.default_level().as_str(), lint.summary());
+    }
+    println!(
+        "{UNKNOWN_LINT_CODE}  {UNKNOWN_LINT_NAME:<22} warn   a suppression comment names a lint that does not exist (always reported)"
+    );
+}
+
+const UNKNOWN_LINT_NAME: &str = "unknown_lint";
+const UNKNOWN_LINT_CODE: &str = "L0000";
+
+fn explain(name: &str) -> ExitCode {
+    let lint = Lint::from_name(name).or_else(|| Lint::from_code(&name.to_ascii_uppercase()));
+    // `L0000` is not a lint that can be configured, so it is not in the registry, but it has a section.
+    let heading = match lint {
+        Some(l) => Some(format!("## {}: {}", l.code(), l.name())),
+        None if name == UNKNOWN_LINT_NAME || name.eq_ignore_ascii_case(UNKNOWN_LINT_CODE) => {
+            Some(format!("## {UNKNOWN_LINT_CODE}: {UNKNOWN_LINT_NAME}"))
+        }
+        None => None,
+    };
+    let section = heading.and_then(|heading| {
+        let start = LINT_DOCS.find(&heading)?;
+        let rest = &LINT_DOCS[start..];
+        let end = rest[3..].find("\n## ").map_or(rest.len(), |i| 3 + i);
+        Some(rest[..end].trim_end().to_string())
+    });
+    match section {
+        Some(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        None => {
+            eprintln!("error: unknown lint `{name}` (`burdin lint --list` shows every lint)");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// One run of the front end and the lints.
+struct Outcome {
+    front: FrontEnd,
+    /// The modules of the entry package that the lints read: `(file, module path)`.
+    entry: Vec<(FileId, Vec<String>)>,
+    /// What the lints found. Empty when the front end reported errors.
+    lints: Diagnostics,
+}
+
+impl Outcome {
+    /// The compiler's diagnostics and the lints' together, for printing and for fixes.
+    fn all(&self) -> Diagnostics {
+        let mut all = Diagnostics::default();
+        for d in self.front.diags.iter().chain(self.lints.iter()) {
+            all.push(d.clone());
+        }
+        all
+    }
+}
+
+fn lint_once(
+    target: &Path,
+    options: &CompileOptions,
+    overrides: &SourceOverrides,
+    levels: &[(String, Level)],
+) -> Result<Outcome, ExitCode> {
+    let front = front_end(target, options, overrides)?;
+    let config = match build_config(&front, levels) {
+        Ok(c) => c,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(ExitCode::from(2));
+        }
+    };
+    // The modules of the entry package, without the ones a build script generated under its `target` directory.
+    let mut entry = Vec::new();
+    let mut first = 0usize;
+    for (index, package) in front.loaded.packages.iter().enumerate() {
+        if index == front.loaded.entry_package {
+            let generated = package.dir.as_ref().map(|d| d.join("target"));
+            for (m, module) in package.modules.iter().enumerate() {
+                let outside = generated.as_ref().is_some_and(|g| module.file.starts_with(g));
+                if module.text.is_none() && !outside {
+                    entry.push((FileId((first + m) as u32), module.path.clone()));
+                }
+            }
+        }
+        first += package.modules.len();
+    }
+    let mut lints = Diagnostics::default();
+    if let Some(program) = front.program.as_ref().filter(|_| !front.diags.has_errors()) {
+        let files: Vec<Source> = entry
+            .iter()
+            .map(|(file, path)| Source { file: *file, module: path, ast: &front.parsed[file.0 as usize].1 })
+            .collect();
+        lints = burdin_lint::run(&Input { sources: &front.sources, files, program, config: &config });
+    }
+    Ok(Outcome { front, entry, lints })
+}
+
+/// The levels for this run: the defaults, the manifest's `[lint]` table, then the command line.
+fn build_config(front: &FrontEnd, levels: &[(String, Level)]) -> Result<Config, String> {
+    let mut config = Config::default();
+    let package = &front.loaded.packages[front.loaded.entry_package];
+    for (name, level, line) in &package.lint {
+        config.set_from_manifest(name, level).map_err(|e| {
+            let manifest = package
+                .dir
+                .as_ref()
+                .map_or_else(|| "burdin.toml".to_string(), |d| d.join("burdin.toml").display().to_string());
+            format!("{manifest}:{line}: {e}")
+        })?;
+    }
+    for (name, level) in levels {
+        config.set(name, *level)?;
+    }
+    Ok(config)
+}
+
+/// Prints the diagnostics and the summary line. Returns whether any of them is an error.
+fn report(outcome: &Outcome, args: &LintArgs) -> bool {
+    let all = outcome.all();
+    let render = render_options(&args.diagnostics, std::io::stderr().is_terminal());
+    let rendered = all.render_with(&outcome.front.sources, &render);
+    eprint!("{}", rendered.text);
+    let errors = all.iter().filter(|d| d.severity == Severity::Error).count();
+    let warnings = all.iter().filter(|d| d.severity == Severity::Warning).count();
+    match render.format {
+        DiagnosticFormat::Json => {
+            eprintln!("{{\"type\":\"lint-summary\",\"warnings\":{warnings},\"errors\":{errors}}}");
+        }
+        _ => {
+            if rendered.shown < rendered.total {
+                let hidden = rendered.total - rendered.shown;
+                let limit = render.error_limit.unwrap_or(0);
+                eprintln!("note: {hidden} more not shown (--error-limit {limit})");
+            }
+            if outcome.front.diags.has_errors() {
+                let s = if errors == 1 { "" } else { "s" };
+                eprintln!(
+                    "error: could not check {} ({errors} error{s}); fix them before linting",
+                    args.target.display()
+                );
+            } else if errors + warnings == 0 {
+                eprintln!("lint: no warnings in {}", args.target.display());
+            } else {
+                let (w, e) = (plural(warnings, "warning"), plural(errors, "error"));
+                eprintln!("lint: {w}, {e}");
+            }
+        }
+    }
+    errors > 0
+}
+
+fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
+fn check(args: &LintArgs, options: &CompileOptions) -> ExitCode {
+    match lint_once(&args.target, options, &SourceOverrides::new(), &args.levels) {
+        Ok(outcome) => {
+            if report(&outcome, args) {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(code) => code,
+    }
+}
+
+// ----- --fix ----------------------------------------------------------------------------------------------------
+
+/// The edits of the safe suggestions in `outcome`, by file, for the files of the entry package.
+fn edits_by_file(outcome: &Outcome) -> BTreeMap<PathBuf, Vec<(u32, u32, String)>> {
+    let in_package: HashSet<FileId> = outcome.entry.iter().map(|(f, _)| *f).collect();
+    let mut by_file: BTreeMap<PathBuf, Vec<(u32, u32, String)>> = BTreeMap::new();
+    for (span, replacement) in burdin_lint::applicable_edits(&outcome.all()) {
+        if in_package.contains(&span.file) {
+            let path = outcome.front.files[span.file.0 as usize].0.clone();
+            by_file.entry(path).or_default().push((span.lo, span.hi, replacement));
+        }
+    }
+    by_file
+}
+
+fn fix(args: &LintArgs, options: &CompileOptions) -> ExitCode {
+    let mut overrides = SourceOverrides::new();
+    let mut originals: HashMap<PathBuf, String> = HashMap::new();
+    let mut edit_count = 0usize;
+    let mut rounds = 0usize;
+    let outcome = loop {
+        let outcome = match lint_once(&args.target, options, &overrides, &args.levels) {
+            Ok(o) => o,
+            Err(code) => return code,
+        };
+        let mut changed = false;
+        for (path, edits) in edits_by_file(&outcome) {
+            let id = outcome.entry.iter().map(|(f, _)| *f).find(|f| outcome.front.files[f.0 as usize].0 == path);
+            let Some(id) = id else { continue };
+            let text = outcome.front.sources.get(id).text.clone();
+            let (new_text, conflicts) = burdin_lint::apply_edits(&text, &edits);
+            if new_text != text {
+                edit_count += edits.len().saturating_sub(conflicts.len());
+                originals.entry(path.clone()).or_insert(text);
+                overrides.insert(path, new_text);
+                changed = true;
+            }
+        }
+        rounds += 1;
+        if !changed || rounds >= MAX_FIX_ROUNDS {
+            break outcome;
+        }
+    };
+    // The package the fixes produce must compile: a fix that would break it is not applied at all.
+    if outcome.front.diags.has_errors() {
+        report(&outcome, args);
+        if !overrides.is_empty() {
+            eprintln!("error: the fixes would leave the package with errors; no files were changed");
+        }
+        return ExitCode::from(1);
+    }
+    let mut changes: Vec<(PathBuf, String, String)> = Vec::new();
+    for (path, new_text) in &overrides {
+        changes.push((path.clone(), originals[path].clone(), new_text.clone()));
+    }
+    changes.sort();
+    for (path, old, new) in &changes {
+        print!("{}", burdin_lint::unified_diff(&diff_path(path), old, new));
+    }
+    if !changes.is_empty()
+        && !args.dry_run
+        && let Err(message) = write_all_or_nothing(&changes)
+    {
+        eprintln!("error: {message}; no files were changed");
+        return ExitCode::from(2);
+    }
+    let failed = report(&outcome, args);
+    if changes.is_empty() {
+        eprintln!("fix: nothing to fix");
+    } else {
+        let (edits, files) = (plural(edit_count, "edit"), plural(changes.len(), "file"));
+        let verb = if args.dry_run { "would apply" } else { "applied" };
+        eprintln!("fix: {verb} {edits} to {files}");
+    }
+    if failed { ExitCode::from(1) } else { ExitCode::SUCCESS }
+}
+
+/// The path in a diff header: relative to the current directory when the file is under it, with `/` separators, and
+/// never absolute, so `a/<path>` and `b/<path>` read like a `git diff`.
+fn diff_path(path: &Path) -> String {
+    let relative = std::env::current_dir().ok().and_then(|cwd| path.strip_prefix(cwd).ok().map(Path::to_path_buf));
+    let text = crate::source_path_text(relative.as_deref().unwrap_or(path)).replace('\\', "/");
+    text.trim_start_matches("./").trim_start_matches('/').to_string()
+}
+
+/// Writes every file or none: each is written beside its target and renamed over it, and when one step fails the
+/// files already replaced get their old text back.
+fn write_all_or_nothing(changes: &[(PathBuf, String, String)]) -> Result<(), String> {
+    let mut done: Vec<usize> = Vec::new();
+    for (i, (path, _, new)) in changes.iter().enumerate() {
+        let mut temporary = path.clone().into_os_string();
+        temporary.push(".burdin-fix");
+        let temporary = PathBuf::from(temporary);
+        let step = std::fs::write(&temporary, new).and_then(|()| std::fs::rename(&temporary, path));
+        if let Err(e) = step {
+            let _ = std::fs::remove_file(&temporary);
+            let mut message = format!("cannot write {}: {e}", path.display());
+            for &j in &done {
+                if let Err(undo) = std::fs::write(&changes[j].0, &changes[j].1) {
+                    message.push_str(&format!("; and cannot restore {}: {undo}", changes[j].0.display()));
+                }
+            }
+            return Err(message);
+        }
+        done.push(i);
+    }
+    Ok(())
+}

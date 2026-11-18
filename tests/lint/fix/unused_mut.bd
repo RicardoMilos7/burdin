@@ -1,0 +1,9 @@
+// --fix removes a `mut` that nothing needs (spec/lint.md LN29) and keeps the ones that are needed.
+
+fn main() {
+    let mut never = 5
+    let mut pushed: List<i32> = List<i32>.new()
+    pushed.push(1)
+    let mut   spaced = 7
+    println("{} {} {}", never, pushed.len(), spaced)
+}

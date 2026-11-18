@@ -83,7 +83,8 @@ impl FnCx<'_> {
         // A moved capture lives in the closure's own record, so the body may write it; a borrowed one is as
         // mutable as the place it borrows.
         let mutable = if move_captures { true } else { mutable };
-        let id = self.declare(name, ty.clone(), mutable, kind);
+        // The capture is a compiler-made copy of the enclosing local, so it has no span of its own.
+        let id = self.declare(name, ty.clone(), mutable, kind, Span::new(span.file, span.lo, span.lo));
         self.locals[id.0].by_ref = !move_captures;
         let ctx = self.capture.as_mut().expect("a capture context is open");
         ctx.parents.push(parent);
@@ -231,7 +232,7 @@ impl FnCx<'_> {
             Some(CaptureCx { outer, captures: Vec::new(), parents: Vec::new(), move_captures, illegal_move: false });
         let mut param_ids = Vec::new();
         for (p, ty) in params.iter().zip(&param_tys) {
-            param_ids.push(child.declare(&p.name.name, ty.clone(), false, LocalKind::OwnParam));
+            param_ids.push(child.declare(&p.name.name, ty.clone(), false, LocalKind::OwnParam, p.name.span));
         }
 
         // An expected return type that still mentions a type parameter (`Option<U>` in `F: Fn(T): Option<U>`) is

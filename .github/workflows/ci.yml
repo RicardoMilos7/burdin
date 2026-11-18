@@ -193,6 +193,11 @@ jobs:
       - name: Check the test runner
         run: python3 tests/check_test_runner.py
 
+      # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
+      # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
+      - name: Check the linter
+        run: python3 tests/check_lint.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         run: python3 tests/check_build_scripts.py
@@ -378,6 +383,11 @@ jobs:
       # (issues #438-#443).
       - name: Check the test runner
         run: python3 tests/check_test_runner.py
+
+      # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
+      # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
+      - name: Check the linter
+        run: python3 tests/check_lint.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
@@ -596,6 +606,11 @@ jobs:
       # (issues #438-#443).
       - name: Check the test runner
         run: python tests/check_test_runner.py
+
+      # `burdin lint` (issues #230-#233, #464-#466, #661): every documented lint, the fixtures under tests/lint,
+      # `--fix` against golden files, levels, suppression comments, and the manifest `[lint]` table.
+      - name: Check the linter
+        run: python tests/check_lint.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts

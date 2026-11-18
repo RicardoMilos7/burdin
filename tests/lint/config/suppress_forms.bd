@@ -1,0 +1,40 @@
+// The forms of a suppression comment (spec/lint.md LN6, LN7): on its own line it covers the next item, statement, or
+// arm and everything inside; after code it covers that line; `all` names every lint.
+
+fn next_statement() {
+    // lint: allow(unused_variables)
+    let a = 1
+    let b = 2 //~ L0007
+    let c = 3 // lint: allow(unused_variables)
+}
+
+// lint: allow(unused_variables, unused_parameters)
+fn whole_function(x: i32) {
+    let y = 1
+}
+
+fn all_lints() {
+    // lint: allow(all)
+    let z = 1
+}
+
+fn match_arm(o: Option<i32>) {
+    match o {
+        // lint: allow(unused_variables)
+        Some(v) => println("some")
+        None => println("none")
+    }
+}
+
+fn other_lints_stay(x: i32) { //~ L0008
+    // lint: allow(unused_variables)
+    let w = 1
+}
+
+fn main() {
+    next_statement()
+    whole_function(1)
+    all_lints()
+    match_arm(Some(1))
+    other_lints_stay(1)
+}

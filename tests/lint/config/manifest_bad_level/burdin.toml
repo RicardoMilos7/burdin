@@ -1,0 +1,6 @@
+[package]
+name = "manifest_bad_level"
+version = "0.1.0"
+
+[lint]
+unused_variables = "loud"

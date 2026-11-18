@@ -1,0 +1,9 @@
+// --fix removes unused imports (spec/lint.md LN28): a name out of a list, a whole `use`, in every file of the package.
+use util.{add, sub, mul}
+use extras.{shout, whisper}
+use helpers.{unused_helper}
+
+fn main() {
+    println("{}", add(1, 2) + mul(2, 3))
+    println("{}", shout())
+}

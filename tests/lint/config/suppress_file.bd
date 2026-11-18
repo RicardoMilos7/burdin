@@ -1,0 +1,16 @@
+// lint: allow-file(non_snake_case, unused_variables)
+// `allow-file` covers the whole file, wherever it is written (spec/lint.md LN7). Other lints are still reported.
+
+fn camelCase() {
+    let never_read = 1
+}
+
+fn another_one() {
+    let mut not_mutated = 1 //~ L0013
+    println("{}", not_mutated)
+}
+
+fn main() {
+    camelCase()
+    another_one()
+}

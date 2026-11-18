@@ -1,0 +1,6 @@
+[package]
+name = "manifest_warnings_group"
+version = "0.1.0"
+
+[lint]
+warnings = "deny"

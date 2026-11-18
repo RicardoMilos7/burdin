@@ -1,0 +1,46 @@
+// Function parameters that are never read (spec/lint.md LN16). A leading underscore marks one as unused on purpose,
+// and the parameters of an interface method have no body to read them in.
+
+interface Shape {
+    fn area(self, scale: i32): i32
+}
+
+struct Square {
+    side: i32
+}
+
+Square: Shape {
+    fn area(self, scale: i32): i32 {
+        self.side * scale
+    }
+}
+
+fn second_ignored(a: i32, b: i32): i32 { //~ L0008
+    a
+}
+
+fn underscore_ok(a: i32, _b: i32): i32 {
+    a
+}
+
+fn used_in_closure(a: i32, b: i32): i32 {
+    let f = || b + 1
+    a + f()
+}
+
+fn named_arguments(width: i32, height: i32, unused_depth: i32): i32 { //~ L0008
+    width * height
+}
+
+Square {
+    fn grow(self, by: i32, extra: i32): i32 { //~ L0008
+        self.side + by
+    }
+}
+
+fn main() {
+    let s = Square { side: 2 }
+    println("{} {}", s.area(3), s.grow(1, 2))
+    println("{} {}", second_ignored(1, 2), underscore_ok(3, 4))
+    println("{} {}", used_in_closure(1, 2), named_arguments(1, 2, 3))
+}

@@ -1,0 +1,9 @@
+//% args: -D unused_variables
+//% exit: 1
+//% stderr: error[L0007]
+// A lint at `deny` is reported as an error and the command exits with status 1 (spec/lint.md LN2, LN4).
+
+fn main() {
+    let never_read = 1 //~ L0007
+    println("hello")
+}

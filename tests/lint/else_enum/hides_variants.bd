@@ -1,0 +1,39 @@
+// An `else` arm on a `match` over an enum of this package hides the variants nobody listed (spec/lint.md LN17).
+
+enum Shape {
+    Circle(i32)
+    Square(i32)
+    Triangle
+}
+
+enum Level {
+    Low
+    High
+}
+
+fn radius(s: Shape): i32 {
+    match s {
+        Shape.Circle(r) => r
+        else => 0 //~ L0004
+    }
+}
+
+fn is_high(l: Level): bool {
+    match l {
+        Level.High => true
+        else => false //~ L0004
+    }
+}
+
+fn describe(s: Shape): i32 {
+    let size = match s {
+        Shape.Square(n) => n
+        Shape.Triangle => 3
+        else => 0 //~ L0004
+    }
+    size
+}
+
+fn main() {
+    println("{} {} {}", radius(Shape.Square(1)), is_high(Level.Low), describe(Shape.Circle(2)))
+}

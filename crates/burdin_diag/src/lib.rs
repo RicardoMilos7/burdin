@@ -295,6 +295,9 @@ pub struct Suggestion {
     pub message: String,
     pub span: Span,
     pub replacement: String,
+    /// The edit is safe to apply without review (`burdin lint --fix`, `spec/lint.md`, LN12): it cannot change what
+    /// the program means, and the driver checks that the edited program still compiles before writing it.
+    pub machine_applicable: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -327,7 +330,28 @@ impl Diagnostic {
         message: impl Into<String>,
         replacement: impl Into<String>,
     ) -> &mut Diagnostic {
-        self.suggestions.push(Suggestion { message: message.into(), span, replacement: replacement.into() });
+        self.suggestions.push(Suggestion {
+            message: message.into(),
+            span,
+            replacement: replacement.into(),
+            machine_applicable: false,
+        });
+        self
+    }
+
+    /// Like [`Diagnostic::suggest`], for an edit `burdin lint --fix` may apply on its own.
+    pub fn suggest_safe(
+        &mut self,
+        span: Span,
+        message: impl Into<String>,
+        replacement: impl Into<String>,
+    ) -> &mut Diagnostic {
+        self.suggestions.push(Suggestion {
+            message: message.into(),
+            span,
+            replacement: replacement.into(),
+            machine_applicable: true,
+        });
         self
     }
 }
@@ -397,6 +421,17 @@ impl Diagnostics {
 
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
+    }
+
+    /// Adds a finished diagnostic. The linter builds its diagnostics first and filters them by configuration and
+    /// suppression comments before they join the list.
+    pub fn push(&mut self, diagnostic: Diagnostic) {
+        self.list.push(diagnostic);
+    }
+
+    /// The diagnostics, in the order they were recorded.
+    pub fn into_vec(self) -> Vec<Diagnostic> {
+        self.list
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Diagnostic> {
@@ -630,9 +665,10 @@ fn render_json(out: &mut String, d: &Diagnostic, sources: &SourceMap) {
         if i > 0 {
             out.push(',');
         }
+        let applicability = if suggestion.machine_applicable { ",\"applicability\":\"machine\"" } else { "" };
         let _ = write!(
             out,
-            "{{\"message\":\"{}\",\"span\":{},\"replacement\":\"{}\"}}",
+            "{{\"message\":\"{}\",\"span\":{},\"replacement\":\"{}\"{applicability}}}",
             json_escape(&suggestion.message),
             json_span(sources, suggestion.span),
             json_escape(&suggestion.replacement)

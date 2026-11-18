@@ -1,0 +1,57 @@
+// Locals that are never read (spec/lint.md LN15). Assigning does not read; a leading underscore says "on purpose".
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn plain() {
+    let never_read = 1 //~ L0007
+    let _on_purpose = 2
+    let used = 3
+    println("{}", used)
+}
+
+fn assigned_only() {
+    let mut counter = 0 //~ L0007
+    counter = 5
+}
+
+fn in_patterns(own p: Pair, o: Option<i32>) {
+    let Pair { left, right } = p //~ L0007
+    println("{}", left)
+    match o {
+        Some(v) => println("one") //~ L0007
+        None => println("none")
+    }
+    for i in 0..2 { //~ L0007
+        println("x")
+    }
+    for _j in 0..2 {
+        println("y")
+    }
+}
+
+fn read_in_places(a: i32, b: i32, c: i32) {
+    let in_format = a
+    let in_closure = b
+    let in_struct = c
+    let shadowed = 1
+    let shadowed = shadowed + 1
+    let f = || in_closure + 1
+    let p = Pair { left: in_struct, right: shadowed }
+    println("{in_format} {} {}", f(), p.left + p.right)
+}
+
+fn closure_params() {
+    let add = |x: i32, y: i32| x //~ L0007
+    println("{}", add(1, 2))
+}
+
+fn main() {
+    plain()
+    assigned_only()
+    in_patterns(Pair { left: 1, right: 2 }, Some(3))
+    read_in_places(1, 2, 3)
+    closure_params()
+}

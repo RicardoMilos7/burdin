@@ -1,0 +1,22 @@
+// A generic function is checked once per instance, but a finding is reported once, at its place in the source, and
+// only when every instance agrees (spec/lint.md LN27).
+
+// The same `mut` is unneeded in every instance: one finding, not one per type.
+fn twice<T: Clone>(own x: T): T {
+    let mut spare = 1 //~ L0013
+    println("{}", spare)
+    x
+}
+
+// The clone is redundant for a `List` (it can move) but not for an `i32` (a copy), so the instances disagree and
+// nothing is reported.
+fn pass_on<T: Clone>(x: T): T {
+    x.clone()
+}
+
+fn main() {
+    println("{} {}", twice(1), twice(String.from("a")))
+    let list: List<i32> = [1].iter().to_list()
+    let n = pass_on(5)
+    println("{} {}", n, pass_on(list).len())
+}

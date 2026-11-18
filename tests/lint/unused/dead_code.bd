@@ -1,0 +1,72 @@
+// `priv` items that nothing else in the package uses (spec/lint.md LN19). Public items, `main`, names with a leading
+// underscore, and items that are used (even only by another unused item's neighbor) are not reported.
+
+priv fn never_called(x: i32): i32 { //~ L0010
+    x
+}
+
+priv fn only_recursive(n: i32): i32 { //~ L0010
+    if n == 0 {
+        0
+    } else {
+        only_recursive(n - 1)
+    }
+}
+
+priv fn _kept_on_purpose(x: i32): i32 {
+    x
+}
+
+fn exported(x: i32): i32 {
+    x + helper(x)
+}
+
+priv fn helper(x: i32): i32 {
+    x * 2
+}
+
+priv struct Unused { //~ L0010
+    a: i32
+}
+
+priv struct Used {
+    a: i32
+}
+
+priv enum UnusedEnum { //~ L0010
+    A
+    B
+}
+
+priv const UNUSED_LIMIT: i32 = 1 //~ L0010
+
+priv const USED_LIMIT: i32 = 2
+
+// lint: allow(dead_code)
+priv fn allowed(x: i32): i32 {
+    x
+}
+
+struct Holder {
+    value: i32
+}
+
+Holder {
+    priv fn secret(self): i32 { //~ L0010
+        self.value
+    }
+
+    priv fn used_secret(self): i32 {
+        self.value + 1
+    }
+
+    fn visible(self): i32 {
+        self.used_secret()
+    }
+}
+
+fn main() {
+    let u = Used { a: USED_LIMIT }
+    let h = Holder { value: 1 }
+    println("{} {} {}", exported(1), u.a, h.visible())
+}

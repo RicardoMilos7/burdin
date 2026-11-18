@@ -1,0 +1,57 @@
+// What the `else` lint leaves alone (spec/lint.md LN17): every variant listed, matches on other types, enums that come
+// from the standard library, an `else` that is intended and says so, and `if let ... else`.
+
+enum Shape {
+    Circle(i32)
+    Square(i32)
+}
+
+fn all_listed(s: Shape): i32 {
+    match s {
+        Shape.Circle(r) => r
+        Shape.Square(n) => n
+    }
+}
+
+fn on_integers(n: i32): i32 {
+    match n {
+        1 => 10
+        2 => 20
+        else => 0
+    }
+}
+
+fn on_option(o: Option<i32>): i32 {
+    match o {
+        Some(v) => v
+        else => 0
+    }
+}
+
+fn on_result(r: Result<i32, str>): i32 {
+    match r {
+        Ok(v) => v
+        else => -1
+    }
+}
+
+fn intended(s: Shape): bool {
+    match s {
+        Shape.Circle(_) => true
+        // lint: allow(else_on_local_enum)
+        else => false
+    }
+}
+
+fn with_if_let(s: Shape): i32 {
+    if let Shape.Circle(r) = s {
+        r
+    } else {
+        0
+    }
+}
+
+fn main() {
+    println("{} {} {}", all_listed(Shape.Circle(1)), on_integers(2), on_option(Some(3)))
+    println("{} {} {}", on_result(Ok(4)), intended(Shape.Square(1)), with_if_let(Shape.Circle(5)))
+}

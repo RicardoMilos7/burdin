@@ -1,0 +1,2 @@
+args: -W unused_variables
+stderr: warning[L0007]

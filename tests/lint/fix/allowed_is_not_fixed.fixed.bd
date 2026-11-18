@@ -1,0 +1,7 @@
+// A finding that a suppression comment hides is not fixed either (spec/lint.md LN31); only the other one is.
+
+fn main() {
+    // lint: allow(unused_variables)
+    let hidden = 1
+    let _shown = 2
+}

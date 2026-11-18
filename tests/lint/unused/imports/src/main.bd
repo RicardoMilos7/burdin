@@ -1,0 +1,12 @@
+// Imports that nothing mentions (spec/lint.md LN14): a name of a list, a name that is never used, and an unused alias.
+use util.{add, sub, mul} //~ L0006 L0006
+use shapes.{Circle, Square} //~ L0006
+use shapes as geo //~ L0006
+use reexport
+
+fn main() {
+    println("{}", add(1, 2))
+    let c = Circle { r: 1 }
+    println("{}", c.r)
+    reexport.present()
+}

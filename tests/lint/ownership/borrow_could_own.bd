@@ -1,0 +1,40 @@
+// A `priv` function that clones a borrowed parameter although every caller is done with the argument
+// (spec/lint.md LN24). The callers could hand the value over if the parameter were `own`.
+
+priv fn total(items: List<i32>): usize { //~ L0014
+    let copy = items.clone()
+    copy.len()
+}
+
+// One caller still uses its argument afterwards, so the clone is needed.
+priv fn needed(items: List<i32>): usize {
+    let copy = items.clone()
+    copy.len()
+}
+
+// A public function: callers in other packages are unknown.
+fn exported(items: List<i32>): usize {
+    let copy = items.clone()
+    copy.len()
+}
+
+// The parameter is never cloned.
+priv fn reads_only(items: List<i32>): usize {
+    items.len()
+}
+
+// Already `own`: the clone is a redundant_clone instead.
+priv fn takes_own(own items: List<i32>): usize {
+    let copy = items.clone() //~ L0011
+    copy.len()
+}
+
+fn main() {
+    println("{}", total([1, 2].iter().to_list()))
+    let kept: List<i32> = [3].iter().to_list()
+    println("{} {}", needed(kept), kept.len())
+    println("{}", needed([4].iter().to_list()))
+    println("{}", exported([5].iter().to_list()))
+    println("{}", reads_only([6].iter().to_list()))
+    println("{}", takes_own([7].iter().to_list()))
+}

@@ -1,0 +1,59 @@
+// `.clone()` of a value that is not used again (spec/lint.md LN21). Moving it would do the same without the copy.
+
+struct Plain derives (Clone) {
+    items: List<i32>
+}
+
+struct Noisy derives (Clone) {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("drop {}", self.id)
+    }
+}
+
+fn consume(own xs: List<i32>): usize {
+    xs.len()
+}
+
+fn consume_noisy(own n: Noisy): i32 {
+    n.id
+}
+
+fn positives() {
+    let a: List<i32> = [1, 2].iter().to_list()
+    let n = consume(a.clone()) //~ L0011
+    let s = String.from("text")
+    let t = s.clone() //~ L0011
+    let p = Plain { items: [3].iter().to_list() }
+    let q = p.clone() //~ L0011
+    println("{} {} {}", n, t, q.items.len())
+}
+
+fn negatives(shared: List<i32>) {
+    // used again after the clone
+    let a: List<i32> = [1, 2].iter().to_list()
+    let n = consume(a.clone())
+    println("{} {}", n, a.len())
+    // a loop brings the same clone around again
+    let b: List<i32> = [1].iter().to_list()
+    for _k in 0..2 {
+        println("{}", consume(b.clone()))
+    }
+    // a Copy value has nothing to move
+    let c = 5
+    let d = c.clone()
+    println("{}", d)
+    // a type with a `Drop` impl: dropping the original is observable
+    let noisy = Noisy { id: 1 }
+    println("{}", consume_noisy(noisy.clone()))
+    // a borrowed parameter cannot be moved out
+    println("{}", consume(shared.clone()))
+}
+
+fn main() {
+    positives()
+    negatives([9].iter().to_list())
+}

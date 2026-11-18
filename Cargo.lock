@@ -64,6 +64,7 @@ dependencies = [
  "burdin_codegen",
  "burdin_comptime",
  "burdin_diag",
+ "burdin_lint",
  "burdin_sema",
  "burdin_syntax",
  "burdin_tir",
@@ -75,6 +76,15 @@ version = "0.1.0"
 dependencies = [
  "burdin_diag",
  "burdin_syntax",
+]
+
+[[package]]
+name = "burdin_lint"
+version = "0.1.0"
+dependencies = [
+ "burdin_diag",
+ "burdin_syntax",
+ "burdin_tir",
 ]
 
 [[package]]
