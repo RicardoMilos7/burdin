@@ -12,7 +12,16 @@ import re
 import sys
 from pathlib import Path
 
-KIND_WORDS = ("run", "run-abort", "compile-fail", "test-compile-fail", "burdin-test", "undecided")
+KIND_WORDS = (
+    "run",
+    "run-abort",
+    "compile-fail",
+    "test-compile-fail",
+    "burdin-test",
+    "bench-compile-fail",
+    "burdin-bench",
+    "undecided",
+)
 EXCEPTIONS_HEADING = "### Codes without a compile-fail test"
 BURDIN_TEST_REGEX = re.compile(r"^burdin-test passed=[0-9]+ failed=[0-9]+( ignored=[0-9]+)?$")
 MARKER_REGEX = re.compile(rb"//~ (E[0-9]{4})")
@@ -125,8 +134,17 @@ def main() -> int:
                 problems.append(f"{rel}:{number}: unknown error code {code}")
 
     print(f"Checked {total} tests:")
-    for kind in ("compile-fail", "test-compile-fail", "burdin-test", "run", "run-abort", "undecided"):
-        print(f"  {kind:<17} {counts[kind]}")
+    for kind in (
+        "compile-fail",
+        "test-compile-fail",
+        "bench-compile-fail",
+        "burdin-test",
+        "burdin-bench",
+        "run",
+        "run-abort",
+        "undecided",
+    ):
+        print(f"  {kind:<18} {counts[kind]}")
 
     # Every registered code needs a compile-fail marker (or a test-compile-fail one) or a documented reason. A code
     # with neither fails CI, so adding a diagnostic means adding a test (issue #445).

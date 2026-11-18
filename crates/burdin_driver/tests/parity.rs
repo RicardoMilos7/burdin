@@ -19,7 +19,8 @@ struct Case {
     /// The package directory or the single file, as the command line is given it.
     target: PathBuf,
     /// `burdin test` (the `test` items are checked) rather than `burdin build`.
-    test_mode: bool,
+    /// `test-compile-fail` checks the tests, `bench-compile-fail` the benches; a plain `compile-fail` builds.
+    mode: burdin_query::EntryMode,
 }
 
 /// An error diagnostic, as both sides report it: the file, the 1-based line, and the code.
@@ -66,11 +67,15 @@ fn cases(repo: &Path) -> Vec<Case> {
     for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else { continue };
         let directives: Vec<&str> = text.lines().map(str::trim_end).filter(|line| line.starts_with("//@ ")).collect();
-        let test_mode = directives.contains(&"//@ test-compile-fail");
-        let compile_fail = directives.contains(&"//@ compile-fail");
-        if !test_mode && !compile_fail {
+        let mode = if directives.contains(&"//@ test-compile-fail") {
+            burdin_query::EntryMode::Test
+        } else if directives.contains(&"//@ bench-compile-fail") {
+            burdin_query::EntryMode::Bench
+        } else if directives.contains(&"//@ compile-fail") {
+            burdin_query::EntryMode::Build
+        } else {
             continue;
-        }
+        };
         if directives.contains(&"//@ release-only") {
             continue;
         }
@@ -81,7 +86,7 @@ fn cases(repo: &Path) -> Vec<Case> {
             continue;
         }
         let target = target.canonicalize().unwrap_or(target);
-        cases.push(Case { target, test_mode });
+        cases.push(Case { target, mode });
     }
     cases
 }
@@ -161,9 +166,15 @@ fn the_library_reports_the_command_lines_errors() {
                     .spawn_scoped(scope, move || {
                         let mut failures = Vec::new();
                         for case in part {
-                            let mode = if case.test_mode { "test" } else { "build" };
+                            // The command the driver would run; a bench or test build that fails to compile runs
+                            // nothing, so the binary side is only compared on its diagnostics.
+                            let command = match case.mode {
+                                burdin_query::EntryMode::Build => "build",
+                                burdin_query::EntryMode::Test => "test",
+                                burdin_query::EntryMode::Bench => "bench",
+                            };
                             let output = Command::new(binary)
-                                .arg(mode)
+                                .arg(command)
                                 .arg(&case.target)
                                 .current_dir(std::env::temp_dir())
                                 .output()
@@ -171,11 +182,10 @@ fn the_library_reports_the_command_lines_errors() {
                             let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
                             text.push_str(&String::from_utf8_lossy(&output.stderr));
                             let cli = cli_errors(&text);
-                            let mut db =
-                                Db::open(&case.target, Options { test_mode: case.test_mode, ..Options::default() })
-                                    .unwrap_or_else(|error| {
-                                        panic!("the library cannot open {}: {error}", case.target.display())
-                                    });
+                            let mut db = Db::open(&case.target, Options { mode: case.mode, ..Options::default() })
+                                .unwrap_or_else(|error| {
+                                    panic!("the library cannot open {}: {error}", case.target.display())
+                                });
                             let analysis = db.analyze().expect("a batch analysis is not cancelled");
                             let library = library_errors(&db, &analysis);
                             if cli != library {
@@ -184,7 +194,7 @@ fn the_library_reports_the_command_lines_errors() {
   command line: {cli:?}
   library:      {library:?}",
                                     case.target.display(),
-                                    mode
+                                    command
                                 ));
                             }
                         }

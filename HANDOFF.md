@@ -4,13 +4,14 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the fiftieth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-first session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
-(`m24_stdlib`) is done, and stage 2 is complete through milestone 2.4 (asynchronous I/O)**: 1055 conformance tests;
-1052 pass in debug (three are skipped) and 1044 in release (the release run skips the debug-only and platform-specific
-tests).
+(`m24_stdlib`) is done, and stage 2 is complete through milestone 2.4 (asynchronous I/O)**: 1062 conformance tests;
+1059 pass in debug (three are skipped) and 1051 in release (the release run skips the debug-only and platform-specific
+tests). Stage 3's bench blocks (issue #251) are done: `bench` items, `black_box`, and `burdin bench` with statistics,
+baselines, filters, `--list`, and `--profile-time`.
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -1032,6 +1033,39 @@ What is left: sema and the memory checks are still sequential. The typed tree us
 names) and a sema whose shared state is read-only while bodies are checked. That is the next big win for small
 programs, whose time is mostly sema over the standard library. A `burdin test --workspace` still compiles its
 packages one after another. Build timing reports (#472) and cached objects (#243) remain open.
+
+## The fifty-first session: bench blocks and `burdin bench` (stage 3, issue #251)
+
+`bench "name" { ... }` is a module-scope item beside `test` (`spec/bench.md` BN1-BN14, sub-issues #653-#655): a
+contextual keyword followed by a string and a block, no attributes, kept out of every build but `burdin bench` the
+way tests are kept out of every build but `burdin test`. The body compiles as `__burdin_bench_N` with a unit tail
+appended (so `black_box(x)` can end a measurement), and one call of it is one iteration. `black_box(value)`
+(`spec/stdlib.md`, "The optimizer barrier") is a compiler-known call of any first-class type: the value is spilled
+to a stack slot whose address crosses an empty side-effecting inline-asm call, so the optimizer cannot delete,
+forward, or hoist the work; at compile time it is the identity, and a view argument is E0120. The checker, the
+memory checks, and the code generator see `tir::Builtin::BlackBox`, which moves its argument and returns it.
+
+`burdin bench` (new `crates/burdin_driver/src/bench_runner.rs`) mirrors the test runner's package selection,
+discovery, filters, and isolation, and compiles in the release profile by default (`--release` changes nothing).
+Each bench runs in its own process with the harness in `burdin_codegen/src/runtime.rs::define_bench_main`: a
+warmup until `--warmup` milliseconds pass, a growing-batch calibration (batches of 1, 4, 16, ... calls until one
+takes a millisecond, because timing a single call would be swamped by the clock's ~25 ns granularity), then
+`--sample-count` samples of about `--sample-time` milliseconds each, printed on one `burdin-bench-result:` line.
+The runner computes the median, the mean, a 95% normal confidence interval, the median absolute deviation, and
+the outliers beyond three deviations, and reports in the human format or as a version 1 JSON event stream;
+`--list` prints the selection. Benches run one at a time (`-j` bounds compilation only), a panicking bench is a
+failure with its captured output, and a hung one is killed at `--timeout` (default 600 s). `--save-baseline`
+stores statistics under `<package>/target/burdin/bench/<name>.json` keyed by package-local path; `--baseline`
+compares (beyond noise = medians differ by more than three times the larger spread) and `--fail-on-regression`
+fails CI on a slower bench that is also beyond noise; `--profile-time <seconds>` runs one bench unmeasured for a
+profiler. The syntax and semantics are `spec/bench.md`; `crates/burdin_syntax/src/parser/mod.rs`,
+`crates/burdin_driver/src/bench_runner.rs`, and `crates/burdin_driver/src/main.rs` carry the unit tests;
+`tests/s3_bench/` has seven conformance tests with two new directives (`bench-compile-fail`, `burdin-bench`), and
+`tests/check_bench.py` (every CI job) checks the command black-box.
+
+What is left: the language server has no bench integration (lenses or `--list` consumption; the issue's
+follow-up list already names it), there is no way to bench a debug build, and bench bodies cannot take setup or
+teardown code beyond what a `let` outside the loop can express.
 
 ## Decisions already made (do not reopen without a reason)
 

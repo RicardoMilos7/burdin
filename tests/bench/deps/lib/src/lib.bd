@@ -1,0 +1,4 @@
+// A dependency's benches are never measured by default, but `-p lib` and `--workspace` reach them.
+bench "lib bench" {
+    black_box(2)
+}

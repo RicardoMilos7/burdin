@@ -32,6 +32,8 @@ README.md at the repository root (`The driver contract`), and tests/check_docs.p
   burdin test <target> [--release]
       Prints "test result: N passed, M failed" (with ", I ignored" when any test is marked [ignore]) and
       one "FAIL <test name>" line per failed test.
+  burdin bench <target>
+      Prints "bench result: N measured, M failed" and one "FAIL <bench name>" line per failed bench.
 
 <target> is the test's .bd file, or the package directory (the nearest folder with a burdin.toml).
 --------------------------------------------------------------------------------
@@ -54,10 +56,21 @@ DIAGNOSTIC_REGEX = re.compile(rb":([0-9]+):[0-9]+: error\[(E[0-9]{4})\]")
 DIAGNOSTIC_LINE_REGEX = re.compile(rb"error\[E[0-9]{4}\]")
 TEST_SUMMARY_REGEX = re.compile(rb"test result: ([0-9]+) passed, ([0-9]+) failed(, ([0-9]+) ignored)?")
 BURDIN_TEST_DIRECTIVE_REGEX = re.compile(rb"^burdin-test passed=([0-9]+) failed=([0-9]+)( ignored=([0-9]+))?$")
+BENCH_SUMMARY_REGEX = re.compile(rb"bench result: ([0-9]+) measured, ([0-9]+) failed")
+BURDIN_BENCH_DIRECTIVE_REGEX = re.compile(rb"^burdin-bench measured=([0-9]+) failed=([0-9]+)$")
 MARKER_REGEX = re.compile(rb"//~ (E[0-9]{4})")
 FAILED_TEST_PREFIX = b"FAIL "
-KINDS = (b"run-abort", b"run", b"test-compile-fail", b"compile-fail", b"burdin-test")
-KIND_WORDS = {b"run", b"run-abort", b"compile-fail", b"test-compile-fail", b"burdin-test", b"undecided"}
+KINDS = (b"run-abort", b"run", b"test-compile-fail", b"compile-fail", b"burdin-test", b"bench-compile-fail", b"burdin-bench")
+KIND_WORDS = {
+    b"run",
+    b"run-abort",
+    b"compile-fail",
+    b"test-compile-fail",
+    b"burdin-test",
+    b"bench-compile-fail",
+    b"burdin-bench",
+    b"undecided",
+}
 DEFAULT_TIMEOUT = 30
 DEFAULT_JOBS = min(8, os.cpu_count() or 1)
 
@@ -406,6 +419,60 @@ def test_burdin_test(case: Case, burdin: str, release: bool, timeout: int):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def test_burdin_bench(case: Case, burdin: str, release: bool, timeout: int):
+    # A bench always compiles in the release profile (spec/bench.md, BN3), so the run is the same either way.
+    command = [burdin, "bench", str(case.target)]
+
+    directive = None
+    for value in case.directives:
+        match = BURDIN_BENCH_DIRECTIVE_REGEX.search(value)
+        if match:
+            directive = match
+            break
+    if directive is None:
+        return False, "burdin-bench directive is missing or malformed", ""
+
+    want_measured = directive.group(1).decode("ascii")
+    want_failed = directive.group(2).decode("ascii")
+
+    work = Path(tempfile.mkdtemp(prefix="burdin-bench-"))
+    try:
+        try:
+            proc = run_command(command, work, timeout, merge=True)
+        except subprocess.TimeoutExpired:
+            return False, f"timed out after {timeout}s", ""
+        except OSError as error:
+            return False, f"cannot run the compiler: {error}", ""
+
+        output = normalize(proc.stdout)
+        summary = None
+        for line in output.split(b"\n"):
+            match = BENCH_SUMMARY_REGEX.search(line)
+            if match:
+                summary = match
+        if summary is None:
+            return False, "no bench summary line in the output", head_bytes(output)
+
+        got_measured = summary.group(1).decode("ascii")
+        got_failed = summary.group(2).decode("ascii")
+        if (got_measured, got_failed) != (want_measured, want_failed):
+            return (
+                False,
+                f"got {got_measured} measured, {got_failed} failed; "
+                f"expected {want_measured} measured, {want_failed} failed",
+                head_bytes(output),
+            )
+
+        for value in directive_values(case.directives, b"failed-bench"):
+            if not value:
+                continue
+            if FAILED_TEST_PREFIX + value not in output:
+                return False, f"bench not reported as failed: {text(value)}", head_bytes(output)
+        return True, "", ""
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def run_case_repeated(case: Case, burdin: str, release: bool, timeout: int, repeat: int):
     """Runs the case `repeat` times and reports the first failing run."""
     result = (False, "no run", "")
@@ -426,8 +493,12 @@ def run_case(case: Case, burdin: str, release: bool, timeout: int):
             return test_compile_fail(case, burdin, release, timeout, "build")
         if case.kind == "test-compile-fail":
             return test_compile_fail(case, burdin, release, timeout, "test")
+        if case.kind == "bench-compile-fail":
+            return test_compile_fail(case, burdin, release, timeout, "bench")
         if case.kind == "burdin-test":
             return test_burdin_test(case, burdin, release, timeout)
+        if case.kind == "burdin-bench":
+            return test_burdin_bench(case, burdin, release, timeout)
         return False, "unknown test kind", ""
     except Exception:  # a runner bug must fail one test, not the whole run
         return False, "internal error in the test runner", traceback.format_exc()

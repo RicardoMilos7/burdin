@@ -4,8 +4,8 @@
 //! formats, and exits 0 exactly when `burdin build` would get as far as code generation.
 
 use crate::{
-    CompileOptions, DiagnosticOptions, SourceOverrides, flag_without_value, front_end, jobs_or_default, option_value,
-    parse_diagnostic_option, parse_jobs, print_warnings, report_errors,
+    CompileOptions, DiagnosticOptions, EntryMode, SourceOverrides, flag_without_value, front_end, jobs_or_default,
+    option_value, parse_diagnostic_option, parse_jobs, print_warnings, report_errors,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -89,7 +89,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         pgo_use: None,
         emit_ir: None,
         link_libs: &[],
-        test_mode: args.tests,
+        mode: if args.tests { EntryMode::Test } else { EntryMode::Build },
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,

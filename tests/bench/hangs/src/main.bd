@@ -1,0 +1,6 @@
+fn main() {}
+
+// A bench that never returns: the runner kills it at --timeout (spec/bench.md, BN12).
+bench "hangs" {
+    while true {}
+}

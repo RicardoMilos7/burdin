@@ -13,7 +13,7 @@ pub(super) fn pattern_matches(pattern: &str, path: &str, exact: bool) -> bool {
 }
 
 /// A test is selected by name when no filter was given or any filter matches, and no `--skip` pattern matches.
-pub(super) fn name_selected(args: &Args, path: &str) -> bool {
+pub(crate) fn name_selected(args: &Args, path: &str) -> bool {
     let wanted = args.filters.is_empty() || args.filters.iter().any(|filter| pattern_matches(filter, path, args.exact));
     wanted && !args.skip.iter().any(|pattern| pattern_matches(pattern, path, args.exact))
 }

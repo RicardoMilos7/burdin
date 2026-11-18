@@ -1,0 +1,10 @@
+//@ bench-compile-fail
+
+// Only `burdin bench` compiles bench bodies, so only it reports what is wrong inside one (`spec/bench.md`, BN1);
+// `burdin build` and `burdin check` strip the item without a word.
+fn main() {}
+
+bench "broken body" {
+    let x: i32 = "no" //~ E0003
+    let y = black_box("also no") //~ E0120
+}
