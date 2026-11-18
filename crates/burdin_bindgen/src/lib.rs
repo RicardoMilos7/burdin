@@ -48,7 +48,7 @@ pub enum Error {
 /// Reads `options.header` and generates its bindings.
 pub fn generate(options: &Options) -> Result<Output, Error> {
     let clang = clang::Clang::load().map_err(Error::Load)?;
-    let args = clang_args(options);
+    let args = clang_args(options, clang.resource_dir());
     let unit = clang.parse(&options.header, &args).map_err(Error::Clang)?;
     let errors: Vec<String> = unit.diagnostics().into_iter().filter(|d| d.is_error).map(|d| d.text).collect();
     if !errors.is_empty() {
@@ -77,8 +77,14 @@ pub fn generate(options: &Options) -> Result<Output, Error> {
 /// The command line the C front end is given: `-x c`, the caller's options, and on macOS the SDK's sysroot when the
 /// caller did not name one. A libclang from Homebrew has no sysroot of its own, and without it every system header
 /// (`<stddef.h>`, `<stdint.h>`, ...) is reported missing (BG2).
-fn clang_args(options: &Options) -> Vec<String> {
+fn clang_args(options: &Options, resource_dir: Option<&str>) -> Vec<String> {
     let mut args = vec!["-x".to_string(), "c".to_string()];
+    let names_a_resource_dir =
+        options.clang_args.iter().any(|arg| arg.starts_with("-resource-dir") || arg.starts_with("--resource-dir"));
+    if let Some(dir) = resource_dir.filter(|_| !names_a_resource_dir) {
+        args.push("-resource-dir".to_string());
+        args.push(dir.to_string());
+    }
     args.extend(options.clang_args.iter().cloned());
     let names_a_sysroot = args.iter().any(|arg| arg.starts_with("-isysroot") || arg.starts_with("--sysroot"));
     if cfg!(target_os = "macos")
@@ -114,6 +120,7 @@ fn macos_sdk() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clang::version_major;
 
     fn options(args: &[&str]) -> Options {
         Options {
@@ -125,7 +132,7 @@ mod tests {
 
     #[test]
     fn the_front_end_gets_c_and_the_callers_options() {
-        let args = clang_args(&options(&["-Iinc", "-DNAME=1"]));
+        let args = clang_args(&options(&["-Iinc", "-DNAME=1"]), None);
         assert_eq!(&args[..4], ["-x", "c", "-Iinc", "-DNAME=1"]);
         // On macOS the SDK may follow, since the caller named no sysroot.
         if cfg!(target_os = "macos") {
@@ -139,13 +146,30 @@ mod tests {
     #[test]
     fn off_macos_no_sysroot_is_added() {
         if !cfg!(target_os = "macos") {
-            assert_eq!(clang_args(&options(&[])), ["-x", "c"]);
+            assert_eq!(clang_args(&options(&[]), None), ["-x", "c"]);
         }
     }
 
     #[test]
     fn a_sysroot_from_the_caller_is_kept() {
-        let args = clang_args(&options(&["-isysroot", "/somewhere"]));
+        let args = clang_args(&options(&["-isysroot", "/somewhere"]), None);
         assert_eq!(args.iter().filter(|arg| *arg == "-isysroot").count(), 1);
+    }
+
+    #[test]
+    fn the_resource_directory_found_next_to_the_library_is_passed() {
+        let args = clang_args(&options(&["-Iinc"]), Some("/usr/lib/llvm-21/lib/clang/21"));
+        assert_eq!(&args[..4], ["-x", "c", "-resource-dir", "/usr/lib/llvm-21/lib/clang/21"]);
+        // A resource directory the caller named wins.
+        let args = clang_args(&options(&["-resource-dir", "/other"]), Some("/usr/lib/llvm-21/lib/clang/21"));
+        assert_eq!(args.iter().filter(|arg| *arg == "-resource-dir").count(), 1);
+        assert!(args.contains(&"/other".to_string()));
+    }
+
+    #[test]
+    fn the_major_version_comes_from_the_version_text() {
+        assert_eq!(version_major("Ubuntu clang version 21.1.8 (1ubuntu1)").as_deref(), Some("21"));
+        assert_eq!(version_major("Homebrew clang version 21.1.8").as_deref(), Some("21"));
+        assert_eq!(version_major("no version here").as_deref(), None);
     }
 }

@@ -309,6 +309,44 @@ fn llvm_config_libdir() -> Option<PathBuf> {
     if line.is_empty() { None } else { Some(PathBuf::from(line)) }
 }
 
+/// Where clang's built-in headers are, given the library that was loaded and its version. Every candidate must
+/// contain `include/stddef.h`, so a directory of some other compiler is never passed as this one's.
+fn resource_dir_for(library: &str, version: &str) -> Option<String> {
+    let major = version_major(version)?;
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let library = Path::new(library);
+    if let Some(dir) = library.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        // An LLVM tree keeps them under `lib/clang/<major>` next to the library; the Windows archive keeps the
+        // library in `bin`, so `lib` is one level up.
+        candidates.push(dir.join("clang").join(&major));
+        candidates.push(dir.join("..").join("lib").join("clang").join(&major));
+    }
+    if let Some(prefix) = std::env::var_os("LLVM_SYS_211_PREFIX").filter(|prefix| !prefix.is_empty()) {
+        candidates.push(PathBuf::from(prefix).join("lib").join("clang").join(&major));
+    }
+    candidates.push(PathBuf::from(format!("/usr/lib/llvm-{major}/lib/clang/{major}")));
+    for formula in [format!("/opt/homebrew/opt/llvm@{major}"), format!("/usr/local/opt/llvm@{major}")] {
+        candidates.push(PathBuf::from(formula).join("lib").join("clang").join(&major));
+    }
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("include").join("stddef.h").is_file())
+        .map(|dir| dir.display().to_string())
+}
+
+/// The major version of `clang version 21.1.8`, from the version text.
+pub(crate) fn version_major(version: &str) -> Option<String> {
+    version.split_whitespace().find_map(|word| {
+        let mut parts = word.split('.');
+        let major = parts.next()?;
+        parts.next()?;
+        if major.is_empty() || !major.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        Some(major.to_string())
+    })
+}
+
 // --- The safe layer ---------------------------------------------------------------------------------------------
 
 /// The loaded library. Cheap to clone; the library stays loaded for the life of the process.
@@ -316,6 +354,7 @@ fn llvm_config_libdir() -> Option<PathBuf> {
 pub struct Clang {
     api: Rc<Api>,
     version: String,
+    resource_dir: Option<String>,
 }
 
 impl Clang {
@@ -332,7 +371,8 @@ impl Clang {
                     let api = Rc::new(api);
                     // SAFETY: the table was just loaded from the library.
                     let version = unsafe { take_string(&api, (api.clang_getClangVersion)()) };
-                    return Ok(Clang { api, version });
+                    let resource_dir = resource_dir_for(path, &version);
+                    return Ok(Clang { api, version, resource_dir });
                 }
                 Err(message) => failures.push(format!("{path}: {message}")),
             }
@@ -357,6 +397,14 @@ impl Clang {
     /// The text `clang_getClangVersion` reports, such as `Ubuntu clang version 21.1.8`.
     pub fn version(&self) -> &str {
         &self.version
+    }
+
+    /// The directory of clang's built-in headers (`stddef.h`, `stdint.h`, ...), when it was found. The command
+    /// passes it as `-resource-dir`: libclang derives that directory from where its shared library sits, which is
+    /// wrong wherever a distribution keeps the library apart from the rest of the LLVM tree, as Ubuntu does with the
+    /// multiarch directory, and every `<stddef.h>` then goes missing (BG1, BG2).
+    pub fn resource_dir(&self) -> Option<&str> {
+        self.resource_dir.as_deref()
     }
 
     /// Parses `file` as a translation unit with `args` as the compiler's command line. The preprocessing record is

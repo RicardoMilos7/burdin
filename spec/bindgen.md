@@ -27,6 +27,12 @@ The loader looks in this order, and uses the first file that opens and has every
 6. Finally the dynamic loader's own search path: `libclang-21.so.1`, `libclang.so.1`, `libclang.so`,
    `libclang.dylib`, or `libclang.dll`.
 
+The command also passes `-resource-dir` with the directory of clang's built-in headers (`stddef.h`, `stdint.h`,
+...), which it finds next to the loaded library, under `$LLVM_SYS_211_PREFIX`, or in the LLVM tree. libclang derives
+that directory from where its shared library sits, and a distribution that keeps the library apart from the rest of
+the tree (Ubuntu's multiarch directory, for one) leaves libclang looking in a directory that does not exist, so
+`<stddef.h>` and every other built-in header would be reported missing. A `-resource-dir` the caller passes is kept.
+
 `libclang-cpp` is the C++ API and is never used. When no library is usable the command exits 2 and prints what it
 tried plus how to install libclang (`libclang-21-dev` on Debian and Ubuntu, `brew install llvm@21` on macOS, the
 LLVM release archive on Windows).

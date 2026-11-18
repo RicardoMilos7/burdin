@@ -89,7 +89,10 @@ close-out checklist in `AGENTS.md`).
 - Function pointers are `CPtr<CVoid>` with a note, since Burdin has no function-pointer type across the C ABI, and a
   variadic function keeps its `...` (issue #248). A parameter declared as an array is a pointer to its element. On
   macOS the SDK that `xcrun --show-sdk-path` reports is passed as `-isysroot` unless the caller gives one, because a
-  Homebrew libclang has no sysroot of its own and would not find the system headers.
+  Homebrew libclang has no sysroot of its own and would not find the system headers. The directory of clang's
+  built-in headers is passed as `-resource-dir`, because libclang derives it from where its shared library sits and
+  a distribution that splits the library out of the LLVM tree (Ubuntu's multiarch directory) otherwise loses
+  `<stddef.h>`.
 - Object-like macros whose body is a constant expression are evaluated with C's rules (suffixes, bases, character and
   string literals, casts, arithmetic, comparisons, `?:`, names resolved to other macros or enumerators) and become
   `const`s; one that is not a constant is skipped with a note, and function-like macros are counted in one note
