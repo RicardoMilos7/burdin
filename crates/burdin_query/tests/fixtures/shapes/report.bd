@@ -1,0 +1,4 @@
+fn describe(n: i32): String {
+    let label = "area"
+    "{label} {n}"
+}

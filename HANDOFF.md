@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the forty-fourth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the forty-eighth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -339,7 +339,7 @@ anything. The `.gitignore` lists `/target/` and the executable `burdin build .` 
 because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
 CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
 
-The forty-third session implemented stage 3's C bindgen (issue #244, sub-issues #245-#248, #475, #476, #663). The
+The forty-eighth session implemented stage 3's C bindgen (issue #244, sub-issues #245-#248, #475, #476, #663). The
 import side is a new crate, `crates/burdin_bindgen`, which knows nothing about the compiler: `clang.rs` finds and loads
 libclang at run time with hand-written C API bindings over `dlopen`/`dlsym` (no LLVM link, no new Rust dependency),
 `parse.rs` walks the header, `macros.rs` evaluates macro bodies with C's typing rules, and `model.rs` renders the
@@ -917,14 +917,47 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   machine's parallelism; 1 is sequential). Each worker keeps its own `Diagnostics`, and the driver merges them in
   file order, so a parallel run is byte-identical to a sequential one. `tests/check_parallel.py` builds a 24-module
   package with each job count and compares the diagnostics of a 12-module failing package between 1 and 8 workers.
-  **Checking is still sequential**: the issue conditions parallel checking on a query-based library, which does not
-  exist yet. Parsing is the phase that scales without one.
+  **Checking is still sequential**: the query library exists now (`spec/query.md`), but its memo is used from one
+  thread at a time and its stages are not parallel, so parsing is still the phase that scales with `BURDIN_JOBS`.
 - **Windows stack-overflow determinism.** The Windows vectored filter ran on the system's default stack guarantee,
   which left only a few kilobytes once the exception dispatcher had run; the handler's flush and write could then
   fault, so the process occasionally ended without `panic: stack overflow`
   (`m02_basics/stack_overflow_aborts` was flaky on the `windows` CI job). `burdin_rt_install_stack_guard` now calls
   `SetThreadStackGuarantee` for 64 KiB before it adds the filter, matching the Unix alternate signal stack; a
   runtime unit test pins the call and the size.
+
+## The forty-seventh session: the query-based compiler library (stage 3, issue #241)
+
+The front end is now a library with a memo, `crates/burdin_query` (`spec/query.md`, QL1-QL9), and the command line
+runs on it. `burdin build`, `run`, `test`, and `lint` call `Db::from_workspace` and `Db::analyze` in
+`front_end`; the driver keeps only the build phase (scripts, grants), code generation, and the tool commands, and
+its `burdin_sema`, `burdin_check`, and `burdin_comptime` dependencies are gone. `package.rs` moved from the driver to
+`burdin_query::package` so the library can open a package by itself.
+
+The engine is an in-house memo, not salsa (QL1): `burdin_tir::Program` and the checker's registries are `Rc`/`RefCell`
+graphs, salsa's storage wants `Send + Sync` values, and the repository takes no new external dependency without a
+decision. Parsing is memoized per file by its text, and a body edit inside one function reparses only that body
+(`burdin_syntax::parse_block_range`, `spans::map_spans`). Type checking is memoized per item in
+`burdin_sema::CheckCache`, keyed by the item's declaration-span text, a declaration fingerprint (every file's text
+with the parser-recorded body spans elided), and the pass chain; a hit replays the body's diagnostics, closures,
+instantiation requests, and registry changes with their spans moved to the new text. A declaration edit rechecks
+every body, because ids are baked into the typed tree; the memory checks and compile-time evaluation are
+whole-program passes on every analysis. Both limits are documented in `spec/query.md` QL2-QL3 and measured by the
+benchmark rather than hidden.
+
+What the tests pin: `crates/burdin_query/tests/incremental.rs` (counters: a body edit rechecks one body, a
+signature edit rechecks callers, a cached diagnostic follows its function), `reparse.rs` (the memoized tree equals a
+full parse after each edit, and the `main`/syntax-error/signature fallbacks), `equivalence.rs` (random edits over
+the conformance corpus against a fresh database; the CI release job runs a larger sweep),
+`api.rs` (the tool API against `fixtures/api.golden`), `stress.rs` (cancellation, budget eviction, a thousand
+keystroke edits), `memory.rs` (a counting allocator over a thousand edits), and `crates/burdin_driver/tests/parity.rs`
+(every conformance compile-fail test through the binary and through the library, same file, line, and code). The
+benchmark's query cases (`cargo bench -p burdin_bench -- query`) measure a keystroke edit and a cold analysis on a
+generated package of one, two, and four modules, and `--smoke` fails unless a keystroke rechecks exactly one body.
+
+What is left from the issue's spirit: checking is still sequential (the memo is used from one thread; the
+`BURDIN_JOBS` parallelism covers parsing only), the memory checks and compile-time evaluation are not yet per
+function, and there is no language server yet — the API is what it would call.
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -1546,9 +1579,9 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   in the registry format matters more than embedding a version; a bug report includes `burdin --version` (documented
   in README.md). The twenty-second session added a `channel:` line, so a release build now prints six.
 - **Parsing is parallel by default; checking is not.** `BURDIN_JOBS` controls the workers (1 is sequential). Each
-  worker keeps its own diagnostics and the driver merges them in file order, so output is byte-identical. Parallel
-  checking waits for the query-based library the issue names as its prerequisite; the current `Sema` is one shared
-  mutable state.
+  worker keeps its own diagnostics and the driver merges them in file order, so output is byte-identical. The query
+  library (forty-seventh session) made checking incremental but not parallel: `Sema` is still one shared mutable state,
+  and the memo is not shared between threads.
 
 ## Decided in the twentieth session
 
@@ -1863,6 +1896,25 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   the releaser; the lock state is under the scheduler's lock (SH9). A waiting writer blocks new readers (SH10).
 - **`Weak<T>`, condition variables, barriers, and `Once` are deferred.** Nothing in the tests needs them.
 
+## Decided in the forty-seventh session
+
+- **The memo is in-house, not salsa (QL1, issue #645).** `burdin_tir::Program` and the checker's registries are
+  `Rc`/`RefCell` graphs; salsa's storage wants `Send + Sync` values, and making every stage thread-safe to hold a
+  cache that is used from one thread at a time is not worth it. The memo is a table keyed by 128-bit fingerprints in
+  `burdin_sema::CheckCache` (bodies) and `burdin_query::Db` (parsing and the pipeline). No external dependency was
+  added.
+- **The unit of reuse is the function or constant body, and a declaration edit is global (QL2, QL3).** A body is
+  keyed by its declaration-span text, the declaration fingerprint (file texts with the parser-recorded bodies
+  elided), and the pass chain; a declaration edit rechecks every body because ids are baked into the typed tree.
+  The memory checks and compile-time evaluation run over the whole program on every analysis. Both are documented
+  limits, measured by the benchmark, not hidden behavior; making them per function is a later refinement.
+- **The body-only reparse is a narrow, checked shortcut (QL6).** It applies only when the edit is strictly inside
+  one body, the new text is exactly one block, the old file had no syntax errors, and the body is not `main`'s and
+  does not mention `select`; the result is compared with a full parse in `tests/reparse.rs` for every case.
+- **The tool API returns plain data (QL7).** A tool depends on `burdin_query` and not on the typed tree; positions
+  are byte offsets, and types are printed as source writes them. `spec/query.md` names each answer and the fixture
+  golden that pins it.
+
 ## Decided in the forty-fourth session (`burdin doc`, issue #234)
 
 - **The generator reads syntax trees, not the typed tree.** Documentation is a property of the source, and a package
@@ -1923,14 +1975,19 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
    their tests are in the suite. A new open question still gets an `//@ undecided` test until it is decided.
 6. The issue #421 work is done, with these follow-ups if they ever matter: a PDB/CodeView path for Windows so
    backtraces and debuggers get symbol names (the COFF object carries LLVM debug metadata today, but `cl` produces no
-   PDB); multi-object emission so LTO has something to combine; a query-based library to parallelize checking as
-   well as parsing; and a stable PGO benchmark where instrumented profiles show a measurable gain. The code-size
+   PDB); multi-object emission so LTO has something to combine; parallel checking on top of the query library (its
+   memo is single-threaded today); and a stable PGO benchmark where instrumented profiles show a measurable gain. The code-size
    budgets in `tests/check_build_flags.py` are the regression guard for the release binary.
 7. The release pipeline is implemented (issue #452, twenty-second session), but no release has been cut. Next: run the
    manual dry run from `docs/releasing.md` (it builds all six targets and creates no release), confirm the `windows-11-arm`
    and `macos-15-intel` images on this repository, then tag the first stable release. Follow-ups the pipeline does not
    cover yet: a package-manager formula (Homebrew/winget), code signing and provenance attestations, bundling the LLVM
    21 runtime so a prebuilt compiler is self-contained, and a PDB/CodeView path for Windows.
+8. The query-based compiler library is in (forty-seventh session, issue #241, `spec/query.md` QL1-QL9). Follow-ups it
+   leaves: parallel checking on top of it, per-function memory checks and compile-time evaluation, and the language
+   server the tool API is for. The rest of stage 3's compiler item — a lockfile, multiple-package workspaces, cached
+   object files — and its tooling (`doc`, `add`) have not started; `burdin fmt`, `burdin lint`, `burdin new`, and the
+   bindgen are done.
 
 ## Starting the next session
 

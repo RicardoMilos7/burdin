@@ -270,6 +270,12 @@ pub(crate) struct Globals {
     /// The concrete allocator types a container in the program stores (`spec/allocators.md`, AL4), collected as
     /// types are resolved; `finish` turns them into `Program::allocator_fns`.
     pub(crate) allocator_requests: RefCell<Vec<Ty>>,
+    /// Set while a body is checked when it reads a file from disk (`embed`): the body's result depends on a file
+    /// the body cache cannot see change, so it is not cached (`crate::cache`).
+    pub(crate) impure: std::cell::Cell<bool>,
+    /// Set while a body is checked when it records a source line or column (a trace frame or a typed
+    /// assertion): the body's result changes when lines are renumbered above it (`crate::cache`).
+    pub(crate) located: std::cell::Cell<bool>,
 }
 
 pub(crate) fn adt_key(ty: &Ty) -> Option<(bool, usize)> {

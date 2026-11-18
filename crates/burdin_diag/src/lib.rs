@@ -129,6 +129,22 @@ impl SourceMap {
         &self.files[id.0 as usize]
     }
 
+    /// Replaces the text of a file, keeping its id and path. The query library uses it when an editor changes a
+    /// file, so the ids the syntax trees carry stay valid.
+    pub fn set_text(&mut self, id: FileId, text: String) {
+        let file = &mut self.files[id.0 as usize];
+        *file = SourceFile::new(std::mem::take(&mut file.path), text);
+    }
+
+    /// How many files the map holds.
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
     /// Every source file with its id, in the order they were added.
     pub fn iter(&self) -> impl Iterator<Item = (FileId, &SourceFile)> {
         self.files.iter().enumerate().map(|(i, file)| (FileId(i as u32), file))

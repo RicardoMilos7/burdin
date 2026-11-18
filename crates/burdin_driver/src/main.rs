@@ -9,10 +9,11 @@ mod export;
 mod fmt;
 mod lint;
 mod new;
-mod package;
 mod test_runner;
 
 use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
+pub(crate) use burdin_query::package;
+pub(crate) use burdin_query::package::source_path_text;
 use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -528,76 +529,6 @@ fn driver_main() -> ExitCode {
     }
 }
 
-/// Parses every module, in parallel when there is more than one and more than one worker. A worker parses a
-/// contiguous chunk and keeps its own diagnostics; the caller merges them in file order, so the diagnostics of a
-/// parallel run are identical to a sequential one.
-fn parse_files(
-    files: &[(burdin_diag::FileId, std::path::PathBuf, String)],
-) -> Result<(Vec<(burdin_diag::FileId, burdin_syntax::ast::File)>, Diagnostics), String> {
-    let jobs = parse_jobs(files.len());
-    if jobs <= 1 {
-        let mut diags = Diagnostics::default();
-        let parsed =
-            files.iter().map(|(file, _, text)| (*file, burdin_syntax::parse(*file, text, &mut diags))).collect();
-        return Ok((parsed, diags));
-    }
-    let chunk = files.len().div_ceil(jobs);
-    let mut results: Vec<Option<((burdin_diag::FileId, burdin_syntax::ast::File), Diagnostics)>> =
-        (0..files.len()).map(|_| None).collect();
-    std::thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for chunk in files.chunks(chunk) {
-            let len = chunk.len();
-            handles.push((
-                len,
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(|(file, _, text)| {
-                            let mut diags = Diagnostics::default();
-                            let ast = burdin_syntax::parse(*file, text, &mut diags);
-                            ((*file, ast), diags)
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            ));
-        }
-        let mut start = 0usize;
-        for (len, handle) in handles {
-            let parsed = handle.join().map_err(|_| "internal error: a parser thread panicked".to_string())?;
-            for (offset, item) in parsed.into_iter().enumerate() {
-                results[start + offset] = Some(item);
-            }
-            start += len;
-        }
-        Ok::<(), String>(())
-    })?;
-    let mut diags = Diagnostics::default();
-    let mut parsed = Vec::with_capacity(files.len());
-    for (item, file_diags) in results.into_iter().map(|r| r.expect("every file parsed")) {
-        parsed.push(item);
-        diags.absorb(file_diags);
-    }
-    Ok((parsed, diags))
-}
-
-/// How many parser threads to use for `modules` files. `BURDIN_JOBS` overrides the machine's parallelism, and 1
-/// keeps the run sequential (useful for comparing output and for measuring).
-fn parse_jobs(modules: usize) -> usize {
-    let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    let requested = std::env::var("BURDIN_JOBS").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-    job_count(modules, available, requested)
-}
-
-/// The number of workers for a run: at most one per file, never zero.
-fn job_count(modules: usize, available: usize, requested: usize) -> usize {
-    if modules <= 1 {
-        return 1;
-    }
-    let workers = if requested == 0 { available } else { requested };
-    workers.max(1).min(modules)
-}
-
 /// `burdin explain`: prints the reference entry for one code, or lists the codes. The text comes from the same
 /// page `tests/check_error_docs.py` compiles examples from (issue #437).
 fn explain(args: &[String]) -> ExitCode {
@@ -771,6 +702,9 @@ pub(crate) type SourceOverrides = std::collections::HashMap<PathBuf, String>;
 
 /// Loads, parses, and checks `target` and returns what that produced, errors included. `Err` means the package could
 /// not be loaded or read at all (already reported). Nothing is printed for diagnostics: the caller decides.
+///
+/// The parsing and checking is the query library's (`burdin_query::Db`), the same code a language server runs, so
+/// the command line and a tool cannot disagree about a program (`spec/query.md`, QL4).
 pub(crate) fn front_end(
     target: &Path,
     options: &CompileOptions,
@@ -797,94 +731,45 @@ pub(crate) fn front_end(
         }
     }
 
-    // File ids are assigned in module order and kept through parsing; the source map is built from the same texts
-    // afterwards, so the ids it hands out match and no source text is copied.
-    let mut files: Vec<(burdin_diag::FileId, PathBuf, String)> = Vec::new();
+    // One file per module, in module order: the ids the source map hands out are the ids `files` indexes.
     let mut file_info: Vec<(PathBuf, bool)> = Vec::new();
     for package in &loaded.packages {
         for module in &package.modules {
-            let text = match (overrides.get(&module.file), module.text) {
-                (Some(text), _) => text.clone(),
-                (None, Some(text)) => text.to_string(),
-                (None, None) => match std::fs::read_to_string(&module.file) {
-                    Ok(text) => text,
-                    Err(e) => {
-                        eprintln!("error: cannot read {}: {e}", module.file.display());
-                        return Err(ExitCode::from(1));
-                    }
-                },
-            };
-            let file = burdin_diag::FileId(files.len() as u32);
             file_info.push((module.file.clone(), module.text.is_some()));
-            files.push((file, module.file.clone(), text));
         }
     }
-    // Parsing is per file and independent, so the modules are parsed in parallel. Diagnostics from each file are
-    // merged in file order, which keeps the output identical to a sequential run (issue #432).
-    let (parsed, mut diags) = match parse_files(&files) {
-        Ok(parsed) => parsed,
+    // A batch build asks once and exits, so it does not keep the checked bodies a language server would.
+    let query_options = burdin_query::Options {
+        test_mode,
+        release: options.release,
+        comptime_steps: options.comptime_steps,
+        no_cache: true,
+    };
+    let mut db = match burdin_query::Db::from_workspace(&loaded, overrides, query_options) {
+        Ok(db) => db,
         Err(message) => {
             eprintln!("error: {message}");
             return Err(ExitCode::from(1));
         }
     };
-    let mut sources = SourceMap::default();
-    for (file, path, text) in files {
-        let id = sources.add(source_path_text(&path), text);
-        debug_assert_eq!(id, file, "the source map must keep the ids assigned before parsing");
-    }
-    // Checking a tree with syntax errors would mostly report follow-on errors.
-    let program = (!diags.has_errors()).then(|| {
-        let mut module_files = parsed.iter();
-        let packages: Vec<burdin_sema::Package> = loaded
-            .packages
-            .iter()
-            .enumerate()
-            .map(|(id, package)| burdin_sema::Package {
-                name: package.name.clone(),
-                is_root: id == loaded.entry_package,
-                deps: package.deps.clone(),
-                root_module: package.root_module,
-                modules: package
-                    .modules
-                    .iter()
-                    .map(|module| {
-                        let (file, ast) = module_files.next().expect("one parsed file per module");
-                        burdin_sema::Module { file: *file, path: module.path.clone(), ast }
-                    })
-                    .collect(),
-            })
-            .collect();
-        // A debug build records error trace frames; `--release` records none (`spec/errors.md`, ERR7).
-        let mut program = burdin_sema::check(
-            &packages,
-            loaded.entry_package,
-            loaded.entry_module,
-            test_mode,
-            !options.release,
-            &sources,
-            &mut diags,
-        );
-        // The memory checks run even when type checking failed, to report every error in the program.
-        let mut memory = Diagnostics::default();
-        burdin_check::check(&mut program, &mut memory);
-        diags.absorb(memory);
-        // Compile-time evaluation runs only on a program every check accepted (`spec/comptime.md`, CT1).
-        if !diags.has_errors() {
-            let comptime = burdin_comptime::Options {
-                release: options.release,
-                steps: options.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
-            };
-            burdin_comptime::evaluate(&mut program, comptime, &mut diags);
-            // A `[differential]` test body is also run now, so the runner can compare it with the compiled test
-            // (`spec/test-runner.md`). It runs after the rewrite above, so it sees the program code generation will.
-            if !diags.has_errors() {
-                burdin_comptime::evaluate_differential_tests(&mut program, comptime, &mut diags);
-            }
+    // Nothing cancels a batch run, so the only failure here is a bug in the database itself.
+    let analysis = match db.analyze() {
+        Ok(analysis) => analysis,
+        Err(cancelled) => {
+            eprintln!("error: {cancelled}");
+            return Err(ExitCode::from(1));
         }
-        program
-    });
-    Ok(FrontEnd { loaded, files: file_info, parsed, sources, program, diags, script_inputs })
+    };
+    let (sources, parsed) = db.into_parts();
+    Ok(FrontEnd {
+        loaded,
+        files: file_info,
+        parsed,
+        sources,
+        program: analysis.program,
+        diags: analysis.diagnostics,
+        script_inputs,
+    })
 }
 
 /// Compiles `target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On failure
@@ -1027,25 +912,6 @@ pub(crate) fn print_warnings(
     let clean_log = report_clean && render.format == DiagnosticFormat::Sarif;
     if diags.has_warnings() || clean_log {
         eprint!("{}", diags.render_with(sources, &render).text);
-    }
-}
-
-/// A source path as diagnostics and recorded allocation sites spell it. On Windows, `fs::canonicalize` returns a
-/// verbatim path (`\\?\C:\...`); the prefix is an implementation detail, so it is removed (`\\?\UNC\server\share`
-/// becomes `\\server\share`). Every other platform keeps the path as it is.
-pub(crate) fn source_path_text(path: &Path) -> String {
-    let text = path.display().to_string();
-    if cfg!(windows) { strip_verbatim_prefix(&text) } else { text }
-}
-
-/// Removes the extended-length prefix Windows uses for canonical paths.
-fn strip_verbatim_prefix(text: &str) -> String {
-    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        return format!(r"\\{rest}");
-    }
-    match text.strip_prefix(r"\\?\") {
-        Some(rest) => rest.to_string(),
-        None => text.to_string(),
     }
 }
 
@@ -1546,23 +1412,12 @@ mod tests {
     }
 
     #[test]
-    fn job_count_respects_the_request_and_the_file_count() {
-        assert_eq!(job_count(0, 8, 0), 1);
-        assert_eq!(job_count(1, 8, 0), 1);
-        assert_eq!(job_count(4, 8, 0), 4);
-        assert_eq!(job_count(64, 8, 0), 8);
-        assert_eq!(job_count(64, 8, 1), 1, "BURDIN_JOBS=1 is sequential");
-        assert_eq!(job_count(64, 8, 3), 3);
-        assert_eq!(job_count(2, 8, 99), 2, "never more workers than files");
-    }
-
-    #[test]
     fn verbatim_windows_paths_are_spelled_without_the_prefix() {
         // `fs::canonicalize` returns `\\?\C:\...` on Windows; diagnostics and leak sites show the ordinary path.
-        assert_eq!(strip_verbatim_prefix(r"\\?\C:\a\b.bd"), r"C:\a\b.bd");
-        assert_eq!(strip_verbatim_prefix(r"\\?\UNC\server\share\a.bd"), r"\\server\share\a.bd");
-        assert_eq!(strip_verbatim_prefix(r"\\server\share\a.bd"), r"\\server\share\a.bd");
-        assert_eq!(strip_verbatim_prefix("/a/b.bd"), "/a/b.bd");
+        assert_eq!(package::strip_verbatim_prefix(r"\\?\C:\a\b.bd"), r"C:\a\b.bd");
+        assert_eq!(package::strip_verbatim_prefix(r"\\?\UNC\server\share\a.bd"), r"\\server\share\a.bd");
+        assert_eq!(package::strip_verbatim_prefix(r"\\server\share\a.bd"), r"\\server\share\a.bd");
+        assert_eq!(package::strip_verbatim_prefix("/a/b.bd"), "/a/b.bd");
     }
 
     #[test]

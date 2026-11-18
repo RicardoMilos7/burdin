@@ -128,6 +128,7 @@ pub(crate) struct GenericMethod {
     pub(crate) bounds: Vec<Vec<Bound>>,
 }
 
+#[derive(Clone, Debug)]
 pub(crate) enum Request {
     Adt(usize, Vec<Ty>),
     Func(usize, Vec<Ty>),
