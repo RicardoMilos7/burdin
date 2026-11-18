@@ -125,7 +125,15 @@ mod tests {
 
     #[test]
     fn the_front_end_gets_c_and_the_callers_options() {
-        assert_eq!(clang_args(&options(&["-Iinc", "-DNAME=1"])), ["-x", "c", "-Iinc", "-DNAME=1"]);
+        let args = clang_args(&options(&["-Iinc", "-DNAME=1"]));
+        assert_eq!(&args[..4], ["-x", "c", "-Iinc", "-DNAME=1"]);
+        // On macOS the SDK may follow, since the caller named no sysroot.
+        if cfg!(target_os = "macos") {
+            assert_eq!(args.len(), 6);
+            assert_eq!(args[4], "-isysroot");
+        } else {
+            assert_eq!(args.len(), 4);
+        }
     }
 
     #[test]
