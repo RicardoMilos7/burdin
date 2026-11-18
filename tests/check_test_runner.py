@@ -5,7 +5,7 @@ package discovery. Needs a built driver. Usage: tests/check_test_runner.py
 BURDIN selects the driver, like tests/run_tests.py. The fixtures under tests/runner/ are ordinary packages with
 no `//@` directives, so the conformance runner ignores them.
 
-What it checks (issues #438, #439, #440, #441, #442, #443, #444):
+What it checks (issues #438, #439, #440, #441, #442, #443, #444, #638, #639, #640, #641):
   * [ignore], [should_panic], [should_panic("text")], [should_fail], and [timeout(ms)] decide pass/fail;
     --ignored and --include-ignored select ignored tests and the summary counts what was skipped;
   * [differential] compares the comptime interpreter's Ok/Err outcome with the compiled run, and a divergent
@@ -15,11 +15,20 @@ What it checks (issues #438, #439, #440, #441, #442, #443, #444):
   * a test's stdout and stderr are captured and printed only when it fails, and --verbose always prints them;
   * every test runs in its own fresh working directory with a clean environment, and the runner removes every
     temporary directory it created;
-  * -p and --workspace select packages, --filter selects tests, and dependency tests do not run by default.
+  * -p and --workspace select packages, positional filters and --filter select tests by full path, --exact and
+    --skip refine them, and dependency tests do not run by default (#638);
+  * --list prints the selected tests and their attributes without running them, in the human and JSON formats (#639);
+  * --format json streams events and --junit writes a JUnit XML report, and the human output does not change (#640);
+  * --failed reruns the tests that failed before, --shard runs a deterministic slice, and --slow-threshold lists the
+    tests that took long (#641).
 """
 
+import json
 import os
+import shutil
 import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import harness
 
@@ -242,6 +251,427 @@ with harness.temporary_dir("burdin-runner-") as work:
     run_driver(burdin, "test", str(fixtures / "attributes"), "-p", "attributes", "--workspace")
     expect_status("job control (conflicting selection flags)", 2)
     expect_contains("job control (conflicting selection flags)", "cannot be used together", err)
+
+    # --- name filters, --exact, and --skip (issue #638) -----------------------------
+
+    selection = fixtures / "selection"
+    all_paths = [
+        "geometry.area",
+        "geometry.perimeter",
+        "geometry.shapes.area of circle",
+        "alpha",
+        "beta",
+        "gamma fails",
+        "delta panics",
+        'escapes <markup> & "quotes"',
+    ]
+    markup_name = 'escapes <markup> & "quotes"'
+
+    def expect_equal(description: str, actual, expected) -> None:
+        global checks
+        checks += 1
+        if actual != expected:
+            add_problem(f"{description}: got {actual!r}, expected {expected!r}")
+
+    def json_lines(text: str) -> list:
+        return [json.loads(line) for line in text.split("\n") if line]
+
+    def listed_paths() -> list:
+        """The test paths of a human `--list`: every line before the count."""
+        return out.split("\n")[:-1]
+
+    # The full path is `module.submodule.test name`, and a test in the entry file is just its name.
+    run_driver(burdin, "test", str(selection), "--list")
+    expect_status("selection (--list)", 0)
+    expect_equal(
+        "selection (--list)",
+        out,
+        "geometry.area\n"
+        "geometry.perimeter [should_fail]\n"
+        "geometry.shapes.area of circle\n"
+        "alpha\n"
+        "beta [ignore, timeout(500)]\n"
+        "gamma fails\n"
+        'delta panics [should_panic("boom")]\n'
+        'escapes <markup> & "quotes"\n'
+        "8 tests",
+    )
+
+    run_driver(burdin, "test", str(selection), "geometry", "-j", "2")
+    expect_status("selection (substring)", 0)
+    expect_equal("selection (substring)", out, "test result: 3 passed, 0 failed, 5 filtered out")
+
+    # A module name is part of the path, so a filter can select one submodule.
+    run_driver(burdin, "test", str(selection), "shapes", "-j", "2")
+    expect_equal("selection (submodule)", out, "test result: 1 passed, 0 failed, 7 filtered out")
+
+    # Several filters select the union; --filter is the same as a positional filter.
+    run_driver(burdin, "test", str(selection), "alpha", "--filter", "circle", "-j", "2")
+    expect_status("selection (two filters)", 0)
+    expect_equal("selection (two filters)", out, "test result: 2 passed, 0 failed, 6 filtered out")
+
+    run_driver(burdin, "test", str(selection), "--filter=alpha", "--list")
+    expect_equal("selection (--filter alias)", out, "alpha\n1 test, 7 filtered out")
+
+    # Matching is case-sensitive.
+    run_driver(burdin, "test", str(selection), "ALPHA", "--list")
+    expect_equal("selection (case)", out, "0 tests, 8 filtered out")
+
+    run_driver(burdin, "test", str(selection), "area", "--exact", "--list")
+    expect_equal("selection (--exact, partial)", out, "0 tests, 8 filtered out")
+
+    run_driver(burdin, "test", str(selection), "geometry.area", "--exact", "-j", "2")
+    expect_status("selection (--exact)", 0)
+    expect_equal("selection (--exact)", out, "test result: 1 passed, 0 failed, 7 filtered out")
+
+    run_driver(burdin, "test", str(selection), "geometry.shapes.area of circle", "gamma fails", "--exact", "--list")
+    expect_equal(
+        "selection (--exact, two paths)", out, "geometry.shapes.area of circle\ngamma fails\n2 tests, 6 filtered out"
+    )
+
+    run_driver(burdin, "test", str(selection), "--skip", "geometry", "--skip", "beta", "--list")
+    expect_equal(
+        "selection (--skip)",
+        out,
+        'alpha\ngamma fails\ndelta panics [should_panic("boom")]\nescapes <markup> & "quotes"\n4 tests, 4 filtered out',
+    )
+
+    run_driver(burdin, "test", str(selection), "area", "--skip", "circle", "--list")
+    expect_equal("selection (filter and --skip)", out, "geometry.area\n1 test, 7 filtered out")
+
+    # With --exact a --skip pattern must equal the path too, so a bare module name skips nothing.
+    run_driver(burdin, "test", str(selection), "--skip", "geometry", "--exact", "--list")
+    expect_equal("selection (--skip --exact)", out.split("\n")[-1], "8 tests")
+
+    # The failing test is the only failure; the summary reports what the filters left out.
+    run_driver(burdin, "test", str(selection), "--skip", "geometry", "-j", "2")
+    expect_status("selection (--skip run)", 1)
+    expect_contains("selection (--skip run)", "FAIL gamma fails", out)
+    expect_contains("selection (--skip run)", "test result: 3 passed, 1 failed, 1 ignored, 3 filtered out", out)
+
+    # A filter that matches nothing is not an error: status 0, a summary, and a note on stderr.
+    run_driver(burdin, "test", str(selection), "no such test", "-j", "2")
+    expect_status("selection (no match)", 0)
+    expect_equal("selection (no match)", out, "test result: 0 passed, 0 failed, 8 filtered out")
+    expect_contains("selection (no match)", "note: no test matches the filters", err)
+
+    # Filters apply after discovery across packages, so -p, --workspace, and filters combine; with more than one
+    # package the path starts with the package.
+    run_driver(burdin, "test", str(workspace), "--workspace", "--list")
+    expect_equal("workspace (--list)", out, "app::root one\napp::root two\nutil::lib one\n3 tests")
+
+    run_driver(burdin, "test", str(workspace), "--workspace", "util::", "--list")
+    expect_equal("workspace (package filter)", out, "util::lib one\n1 test, 2 filtered out")
+
+    run_driver(burdin, "test", str(workspace), "-p", "util", "lib", "-j", "2")
+    expect_status("workspace (-p and a filter)", 0)
+    expect_equal("workspace (-p and a filter)", out, "test result: 1 passed, 0 failed")
+
+    run_driver(burdin, "test", str(workspace), "--workspace", "app::root one", "--exact", "-j", "2")
+    expect_equal("workspace (--exact)", out, "test result: 1 passed, 0 failed, 2 filtered out")
+
+    run_driver(burdin, "test", str(workspace), "--workspace", "root", "--skip", "two", "--list")
+    expect_equal("workspace (filter and --skip)", out, "app::root one\n1 test, 2 filtered out")
+
+    # --- --list in the JSON format (issue #639) -------------------------------------
+
+    run_driver(burdin, "test", str(selection), "--list", "--format", "json")
+    expect_status("list json", 0)
+    listed = json_lines(out)
+    expect_equal("list json (paths)", [entry["path"] for entry in listed], all_paths)
+    expect_equal(
+        "list json (keys)", sorted(listed[0]), ["attributes", "file", "line", "module", "name", "package", "path"]
+    )
+    by_path = {entry["path"]: entry for entry in listed}
+    circle = by_path["geometry.shapes.area of circle"]
+    expect_equal(
+        "list json (location)",
+        (Path(circle["file"]).resolve(), circle["line"]),
+        ((selection / "src" / "geometry" / "shapes.bd").resolve(), 1),
+    )
+    expect_equal("list json (module)", (circle["module"], circle["name"]), ("geometry.shapes", "area of circle"))
+    expect_equal(
+        "list json (entry file)",
+        (by_path["gamma fails"]["module"], by_path["gamma fails"]["line"]),
+        ("", 13),
+    )
+    expect_equal("list json (package)", {entry["package"] for entry in listed}, {"selection"})
+    expect_equal(
+        "list json (attributes)",
+        by_path["delta panics"]["attributes"],
+        {
+            "ignore": False,
+            "timeout_ms": None,
+            "should_panic": True,
+            "should_panic_message": "boom",
+            "should_fail": False,
+            "differential": False,
+        },
+    )
+    expect_equal(
+        "list json (ignore and timeout)",
+        (by_path["beta"]["attributes"]["ignore"], by_path["beta"]["attributes"]["timeout_ms"]),
+        (True, 500),
+    )
+    expect_equal("list json (should_fail)", by_path["geometry.perimeter"]["attributes"]["should_fail"], True)
+    expect_not_contains("list json (nothing runs)", "test result", out)
+
+    run_driver(burdin, "test", str(selection), "geometry.", "--list", "--format=json")
+    expect_equal("list json (filter)", [entry["path"] for entry in json_lines(out)], all_paths[:3])
+
+    run_driver(burdin, "test", str(workspace), "--workspace", "--list", "--format", "json")
+    expect_equal(
+        "list json (workspace)",
+        [(entry["package"], entry["path"]) for entry in json_lines(out)],
+        [("app", "app::root one"), ("app", "app::root two"), ("util", "util::lib one")],
+    )
+
+    # --list shows an ignored test too; --ignored narrows the list the way it narrows a run.
+    run_driver(burdin, "test", str(selection), "--list", "--ignored")
+    expect_equal("list (--ignored)", out, "beta [ignore, timeout(500)]\n1 test")
+
+    # A list is nothing to run; an invalid package or a conflicting option is a usage error.
+    run_driver(burdin, "test", str(workspace), "-p", "missing", "--list")
+    expect_status("list (unknown package)", 2)
+    run_driver(burdin, "test", str(selection), "--list", "--junit", str(work / "never.xml"))
+    expect_status("list (--junit)", 2)
+    expect_contains("list (--junit)", "cannot be used together", err)
+
+    # --- the JSON event stream (issue #640) -----------------------------------------
+
+    run_driver(burdin, "test", str(selection), "--format", "json", "-j", "1")
+    expect_status("json events (status)", 1)
+    events = json_lines(out)
+    kinds = [event["event"] for event in events]
+    expect_equal("json events (every line is an event)", len(events), len(out.split("\n")))
+    expect_equal("json events (first)", (kinds[0], events[0]["version"]), ("suite_started", 1))
+    expect_equal(
+        "json events (suite_started)",
+        {key: events[0][key] for key in ("packages", "test_count", "ignored", "filtered_out")},
+        {"packages": ["selection"], "test_count": 8, "ignored": 1, "filtered_out": 0},
+    )
+    expect_equal("json events (last)", kinds[-1], "suite_finished")
+    expect_equal(
+        "json events (counts)",
+        [kinds.count(kind) for kind in ("test_started", "test_passed", "test_failed", "test_ignored")],
+        [7, 6, 1, 1],
+    )
+    # With -j 1 each test finishes before the next starts, in declaration order.
+    started = [event["path"] for event in events if event["event"] == "test_started"]
+    finished = [event["path"] for event in events if event["event"] in ("test_passed", "test_failed")]
+    expect_equal("json events (order)", started, finished)
+    expect_equal("json events (declaration order)", started, [path for path in all_paths if path != "beta"])
+    failed_event = next(event for event in events if event["event"] == "test_failed")
+    expect_equal(
+        "json events (failed test)", (failed_event["path"], failed_event["line"], failed_event["reason"]), ("gamma fails", 13, None)
+    )
+    expect_contains("json events (failed stderr)", "assertion failed: assert(false)", failed_event["stderr"])
+    expect_equal(
+        "json events (durations)",
+        all(isinstance(event["duration_ms"], int) for event in events if event["event"] in ("test_passed", "test_failed")),
+        True,
+    )
+    passed_event = next(event for event in events if event["event"] == "test_passed")
+    expect_equal("json events (a pass has no output by default)", "stdout" in passed_event, False)
+    expect_equal(
+        "json events (suite_finished)",
+        {key: events[-1][key] for key in ("passed", "failed", "ignored", "filtered_out", "slow")},
+        {"passed": 6, "failed": 1, "ignored": 1, "filtered_out": 0, "slow": []},
+    )
+    expect_not_contains("json events (no human report)", "test result", out)
+    expect_not_contains("json events (no human report)", "FAIL ", out)
+
+    run_driver(burdin, "test", str(selection), "--format", "json", "--verbose", "-j", "1", "markup")
+    expect_status("json events (--verbose)", 0)
+    markup_event = next(event for event in json_lines(out) if event["event"] == "test_passed")
+    expect_equal("json events (--verbose stdout)", markup_event["stdout"], "<b>&</b>\n")
+    expect_equal("json events (--verbose name)", markup_event["name"], markup_name)
+
+    run_driver(burdin, "test", str(fixtures / "timeout"), "--format", "json", "-j", "1")
+    expect_status("json events (timeout)", 1)
+    timed_out = next(event for event in json_lines(out) if event["event"] == "test_failed")
+    expect_equal("json events (timeout reason)", timed_out["reason"], "timed out after 100 ms")
+
+    # A target that cannot be loaded prints its error on stderr and no events.
+    run_driver(burdin, "test", str(fixtures / "does-not-exist"), "--format", "json")
+    expect_status("json events (load failure)", 1)
+    expect_equal("json events (load failure)", out, "")
+
+    run_driver(burdin, "test", str(selection), "--format", "xml")
+    expect_status("json events (unknown format)", 2)
+    expect_contains("json events (unknown format)", "unknown test format `xml`", err)
+
+    # --- JUnit XML (issue #640) -----------------------------------------------------
+
+    junit = work / "report.xml"
+    run_driver(burdin, "test", str(selection), "--junit", str(junit), "--verbose", "-j", "2")
+    expect_status("junit (status)", 1)
+    expect_contains("junit (human output is unchanged)", "FAIL gamma fails", out)
+    expect_contains("junit (human output is unchanged)", "test result: 6 passed, 1 failed, 1 ignored", out)
+    root = ET.parse(junit).getroot()
+    expect_equal("junit (root)", root.tag, "testsuites")
+    expect_equal(
+        "junit (totals)",
+        {key: root.get(key) for key in ("tests", "failures", "skipped")},
+        {"tests": "8", "failures": "1", "skipped": "1"},
+    )
+    suites = root.findall("testsuite")
+    expect_equal("junit (one suite per package)", [suite.get("name") for suite in suites], ["selection"])
+    cases = {case.get("name"): case for case in suites[0].findall("testcase")}
+    expect_equal(
+        "junit (testcases)",
+        sorted(cases),
+        sorted(["area", "perimeter", "area of circle", "alpha", "beta", "gamma fails", "delta panics", markup_name]),
+    )
+    expect_equal("junit (classname)", cases["area of circle"].get("classname"), "selection.geometry.shapes")
+    expect_equal("junit (entry classname)", cases["alpha"].get("classname"), "selection")
+    expect_equal("junit (line)", cases["gamma fails"].get("line"), "13")
+    expect_equal(
+        "junit (file)", Path(cases["gamma fails"].get("file")).resolve(), (selection / "src" / "main.bd").resolve()
+    )
+    expect_equal("junit (time)", float(cases["alpha"].get("time")) >= 0.0, True)
+    failure = cases["gamma fails"].find("failure")
+    checks += 1
+    if failure is None or "assertion failed: assert(false)" not in (failure.text or ""):
+        add_problem("junit (failure): the failed test has no failure element with its stderr")
+    expect_equal("junit (skipped)", cases["beta"].find("skipped") is not None, True)
+    expect_equal("junit (a pass has no failure)", cases["alpha"].find("failure"), None)
+    expect_equal("junit (--verbose system-out)", cases[markup_name].findtext("system-out"), "<b>&</b>\n")
+
+    # Without --verbose a passing test carries no output; the failed one still does.
+    run_driver(burdin, "test", str(selection), "--junit", str(junit), "-j", "2")
+    cases = {case.get("name"): case for case in ET.parse(junit).getroot().iter("testcase")}
+    expect_equal("junit (quiet pass)", cases[markup_name].find("system-out"), None)
+    expect_equal("junit (failure output)", cases["gamma fails"].find("system-err") is not None, True)
+
+    # A timeout is a failure with the reason as its message.
+    run_driver(burdin, "test", str(fixtures / "timeout"), "--junit", str(junit), "-j", "2")
+    expect_status("junit (timeout)", 1)
+    timeout_cases = {case.get("name"): case for case in ET.parse(junit).getroot().iter("testcase")}
+    expect_equal(
+        "junit (timeout message)", timeout_cases["hangs"].find("failure").get("message"), "timed out after 100 ms"
+    )
+
+    # The file is written next to the JSON stream, and only the selected tests are in it.
+    run_driver(burdin, "test", str(selection), "alpha", "--junit", str(junit), "--format", "json")
+    expect_status("junit (with json)", 0)
+    expect_equal("junit (with json)", ET.parse(junit).getroot().get("tests"), "1")
+
+    run_driver(burdin, "test", str(selection), "alpha", "--junit", str(work / "missing-dir" / "report.xml"))
+    expect_status("junit (unwritable)", 2)
+    expect_contains("junit (unwritable)", "cannot write", err)
+
+    # --- rerun failures (issue #641) ------------------------------------------------
+
+    rerun = work / "rerun"
+    shutil.copytree(selection, rerun, ignore=shutil.ignore_patterns("target"))
+    record = rerun / "target" / "burdin" / "debug" / "test-failed.txt"
+
+    # With no record there is nothing to narrow by: every test runs, and the failure is recorded.
+    run_driver(burdin, "test", str(rerun), "--failed", "-j", "2")
+    expect_status("failed (no record)", 1)
+    expect_contains("failed (no record)", "no record of a previous run", err)
+    expect_contains("failed (no record)", "test result: 6 passed, 1 failed, 1 ignored", out)
+    expect_equal("failed (record)", record.read_text().replace("\r", "").split("\n")[1:], ["selection\tgamma fails", ""])
+
+    run_driver(burdin, "test", str(rerun), "--failed", "--list")
+    expect_equal("failed (--list)", out, "gamma fails\n1 test, 7 filtered out")
+
+    run_driver(burdin, "test", str(rerun), "--failed", "-j", "2")
+    expect_status("failed (rerun)", 1)
+    expect_contains("failed (rerun)", "FAIL gamma fails", out)
+    expect_equal("failed (rerun)", out.split("\n")[-1], "test result: 0 passed, 1 failed, 7 filtered out")
+
+    # A run that does not touch the failed test keeps it in the record.
+    run_driver(burdin, "test", str(rerun), "alpha", "-j", "2")
+    expect_status("failed (unrelated run)", 0)
+    run_driver(burdin, "test", str(rerun), "--failed", "--list")
+    expect_equal("failed (an unrelated run keeps the record)", out, "gamma fails\n1 test, 7 filtered out")
+
+    # --failed combines with the name filters and --skip.
+    run_driver(burdin, "test", str(rerun), "--failed", "--skip", "gamma", "--list")
+    expect_equal("failed (--skip)", out, "0 tests, 8 filtered out")
+
+    # Fixing the test removes it from the record; a later --failed has nothing to rerun.
+    main_file = rerun / "src" / "main.bd"
+    main_file.write_text(main_file.read_text().replace("assert(false)?", "assert(true)?"))
+    run_driver(burdin, "test", str(rerun), "--failed", "-j", "2")
+    expect_status("failed (fixed)", 0)
+    expect_equal("failed (fixed)", out, "test result: 1 passed, 0 failed, 7 filtered out")
+    expect_equal("failed (fixed record)", record.read_text().replace("\r", ""), "burdin-test-failed 1\n")
+
+    run_driver(burdin, "test", str(rerun), "--failed", "-j", "2")
+    expect_status("failed (nothing failed)", 0)
+    expect_contains("failed (nothing failed)", "the previous run had no failed tests", err)
+    expect_equal("failed (nothing failed)", out, "test result: 0 passed, 0 failed, 8 filtered out")
+
+    # The record belongs to the profile that ran, and a single file has no package directory to keep one in.
+    expect_equal("failed (other profiles are untouched)", (rerun / "target" / "burdin" / "release").exists(), False)
+    run_driver(burdin, "test", str(harness.TESTS / "m10_test_runner" / "all_pass.bd"), "--failed")
+    expect_status("failed (single file)", 2)
+    expect_contains("failed (single file)", "needs a package directory", err)
+
+    # A green suite with no record leaves nothing behind.
+    clean = work / "clean"
+    shutil.copytree(fixtures / "parallel", clean, ignore=shutil.ignore_patterns("target"))
+    run_driver(burdin, "test", str(clean), "-j", "2")
+    expect_equal("failed (a green run writes nothing)", (clean / "target").exists(), False)
+
+    # --- shards (issue #641) --------------------------------------------------------
+
+    shard_paths = []
+    for index in (1, 2, 3):
+        run_driver(burdin, "test", str(selection), "--shard", f"{index}/3", "--list", "--format", "json")
+        expect_status(f"shard {index}/3", 0)
+        shard_paths.append([entry["path"] for entry in json_lines(out)])
+        run_driver(burdin, "test", str(selection), f"--shard={index}/3", "--list", "--format", "json")
+        expect_equal(f"shard {index}/3 (deterministic)", [entry["path"] for entry in json_lines(out)], shard_paths[-1])
+    expect_equal("shards (partition)", sorted(sum(shard_paths, [])), sorted(all_paths))
+    expect_equal("shards (round robin)", shard_paths[0], [all_paths[0], all_paths[3], all_paths[6]])
+
+    run_driver(burdin, "test", str(selection), "--shard", "2/2", "-j", "2")
+    expect_status("shard (run)", 1)
+    expect_equal("shard (run)", out.split("\n")[-1], "test result: 3 passed, 1 failed, 4 filtered out")
+
+    # A shard of one is the whole suite, and shards are taken after the name filters.
+    run_driver(burdin, "test", str(selection), "--shard", "1/1", "--list")
+    expect_equal("shard (1/1)", out.split("\n")[-1], "8 tests")
+    run_driver(burdin, "test", str(selection), "geometry", "--shard", "2/2", "--list")
+    expect_equal("shard (after filters)", out, "geometry.perimeter [should_fail]\n1 test, 7 filtered out")
+
+    for bad in ("0/2", "3/2", "1/0", "2", "x/y", "-1/2"):
+        run_driver(burdin, "test", str(selection), "--shard", bad)
+        expect_status(f"shard ({bad})", 2)
+        expect_contains(f"shard ({bad})", "`--shard` needs `<i>/<n>`", err)
+
+    # --- slow tests (issue #641) ----------------------------------------------------
+
+    slow = fixtures / "slow"
+    run_driver(burdin, "test", str(slow), "--slow-threshold", "100", "-j", "2")
+    expect_status("slow (threshold)", 0)
+    expect_contains("slow (threshold)", "slow test: sleeper (", out)
+    expect_not_contains("slow (threshold)", "slow test: quick", out)
+    expect_equal("slow (the summary stays last)", out.split("\n")[-1], "test result: 2 passed, 0 failed")
+
+    run_driver(burdin, "test", str(slow), "-j", "2")
+    expect_not_contains("slow (default threshold)", "slow test", out)
+
+    run_driver(burdin, "test", str(slow), "--slow-threshold", "0", "-j", "2")
+    expect_not_contains("slow (disabled)", "slow test", out)
+
+    run_driver(burdin, "test", str(slow), "--slow-threshold", "100", "--format", "json", "-j", "2")
+    slow_list = json_lines(out)[-1]["slow"]
+    expect_equal("slow (json)", [entry["path"] for entry in slow_list], ["sleeper"])
+    expect_equal("slow (json duration)", slow_list[0]["duration_ms"] >= 100, True)
+
+    run_driver(burdin, "test", str(slow), "--slow-threshold", "soon")
+    expect_status("slow (bad threshold)", 2)
+    expect_contains("slow (bad threshold)", "milliseconds", err)
+
+    # The new options belong to `burdin test`.
+    run_driver(burdin, "build", str(selection), "--list")
+    expect_status("options (--list on build)", 2)
+    expect_contains("options (--list on build)", "only valid for `burdin test`", err)
 
 print(f"Checked {checks} runner behaviors")
 if harness.report_problems(problems):

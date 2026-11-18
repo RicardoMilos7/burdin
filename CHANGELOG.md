@@ -6,6 +6,27 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### `burdin test` filters, `--list`, reports, reruns, and shards (issue #235)
+
+- **Filters (#638).** `burdin test <target> [<filter>...]` runs the tests whose full path (`module.submodule.test name`,
+  prefixed `<package>::` when several packages run) contains any filter; `--filter` is the same thing. `--exact`
+  requires an equal path, `--skip <pattern>` (repeatable) leaves tests out, and the summary appends
+  `, N filtered out`. `TestEntry` now carries the module path and the span of the test's name.
+- **Listing (#639).** `burdin test --list` prints each selected test with its attributes and a count, without running
+  anything; `--list --format json` prints one object per test with package, module, name, path, file, line, and
+  attributes, for editors and CI.
+- **Reports (#640).** `--format json` streams `suite_started`, `test_started`, `test_passed`/`test_failed` (with
+  duration, reason, and captured output), `test_ignored`, and `suite_finished` events, one JSON object per line, with a
+  versioned schema in `spec/test-runner.md`. `--junit <file>` writes a JUnit XML report. The human output does not
+  change.
+- **Reruns, shards, and slow tests (#641).** `--failed` reruns the tests that failed in the previous run, kept in
+  `<package>/target/burdin/<profile>/test-failed.txt`; `--shard <i>/<n>` runs a deterministic round-robin slice; tests
+  that ran at least `--slow-threshold` milliseconds (default 5000) are listed before the summary.
+- The runner is split into `test_runner.rs` (compile, execute), `test_runner/select.rs` (selection and the failed
+  record), and `test_runner/report.rs` (human, list, JSON, and JUnit output). `tests/check_test_runner.py` gains about
+  150 black-box checks over the fixtures `tests/runner/selection/` and `tests/runner/slow/`, and the driver has unit
+  tests for each rule.
+
 ### Tooling: `burdin new` (issue #228)
 
 - `burdin new <name>` creates the package directory `<name>` with `burdin.toml` (`[package]` with the name and version
