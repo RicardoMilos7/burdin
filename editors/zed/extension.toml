@@ -11,3 +11,10 @@ repository = "https://github.com/RicardoMilos7/burdin"
 [language_servers.burdin]
 name = "Burdin"
 languages = ["Burdin"]
+
+# The grammar is editors/tree-sitter-burdin in this repository, at the commit `rev`. Zed fetches it from Git, so after
+# changing the grammar, commit it and set `rev` to that commit (editors/README.md).
+[grammars.burdin]
+repository = "https://github.com/RicardoMilos7/burdin"
+rev = "da83300fcd46906e351fe55f6137412fc0a74953"
+path = "editors/tree-sitter-burdin"
