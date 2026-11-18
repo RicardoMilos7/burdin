@@ -127,6 +127,21 @@ const TCP_NODELAY: i32 = 0x0001;
 /// `ioctlsocket`'s "set non-blocking" request. Only Windows uses it; the value is defined everywhere so the
 /// same function body can name it.
 const FIONBIO: i32 = 0x8004_667e_u32 as i32;
+/// `fcntl`'s "get the file status flags" and "set them", and the non-blocking bit among them. `libc` exports
+/// these on Unix only, so a build on Windows (where the socket path uses `ioctlsocket`) still gets a value for the
+/// branch it never runs.
+#[cfg(unix)]
+const F_GETFL: i32 = libc::F_GETFL;
+#[cfg(unix)]
+const F_SETFL: i32 = libc::F_SETFL;
+#[cfg(unix)]
+const O_NONBLOCK: i32 = libc::O_NONBLOCK;
+#[cfg(windows)]
+const F_GETFL: i32 = 3;
+#[cfg(windows)]
+const F_SETFL: i32 = 4;
+#[cfg(windows)]
+const O_NONBLOCK: i32 = 0x800;
 /// The `errno` values that mean "try again": a non-blocking call would block, a connect is still in progress,
 /// or a signal interrupted the call.
 #[cfg(unix)]
@@ -7446,17 +7461,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let fcntl = libc(self.module, "fcntl", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], true));
             let small = self.b.build_int_truncate(fd, i32_ty, "fd32").map_err(llvm_err)?;
             let current = self
-                .call(fcntl, &[small.into(), i32_ty.const_int(libc::F_GETFL as u32 as u64, false).into()])?
+                .call(fcntl, &[small.into(), i32_ty.const_int(F_GETFL as u32 as u64, false).into()])?
                 .expect("fcntl returns flags")
                 .into_int_value();
-            let flags = self
-                .b
-                .build_or(current, i32_ty.const_int(libc::O_NONBLOCK as u32 as u64, false), "")
-                .map_err(llvm_err)?;
-            self.call(
-                fcntl,
-                &[small.into(), i32_ty.const_int(libc::F_SETFL as u32 as u64, false).into(), flags.into()],
-            )?;
+            let flags =
+                self.b.build_or(current, i32_ty.const_int(O_NONBLOCK as u32 as u64, false), "").map_err(llvm_err)?;
+            self.call(fcntl, &[small.into(), i32_ty.const_int(F_SETFL as u32 as u64, false).into(), flags.into()])?;
             // A TCP socket takes `SO_REUSEADDR`, so a quick restart can bind a port a test just used. Windows
             // gives the option a different meaning (it permits hijacking), so it is not set there.
             let one = self.b.build_alloca(i32_ty, "reuse").map_err(llvm_err)?;
@@ -7547,17 +7557,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let fcntl = libc(self.module, "fcntl", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], true));
             let small = self.b.build_int_truncate(out, i32_ty, "fd32").map_err(llvm_err)?;
             let current = self
-                .call(fcntl, &[small.into(), i32_ty.const_int(libc::F_GETFL as u32 as u64, false).into()])?
+                .call(fcntl, &[small.into(), i32_ty.const_int(F_GETFL as u32 as u64, false).into()])?
                 .expect("fcntl returns flags")
                 .into_int_value();
-            let flags = self
-                .b
-                .build_or(current, i32_ty.const_int(libc::O_NONBLOCK as u32 as u64, false), "")
-                .map_err(llvm_err)?;
-            self.call(
-                fcntl,
-                &[small.into(), i32_ty.const_int(libc::F_SETFL as u32 as u64, false).into(), flags.into()],
-            )?;
+            let flags =
+                self.b.build_or(current, i32_ty.const_int(O_NONBLOCK as u32 as u64, false), "").map_err(llvm_err)?;
+            self.call(fcntl, &[small.into(), i32_ty.const_int(F_SETFL as u32 as u64, false).into(), flags.into()])?;
         }
         self.b.build_return(Some(&out)).map_err(llvm_err)?;
 
