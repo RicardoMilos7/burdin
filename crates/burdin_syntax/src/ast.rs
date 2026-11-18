@@ -15,6 +15,10 @@ pub struct File {
     /// `test` items. They are kept apart from the other items: only `burdin test` declares and checks them, so a
     /// normal build strips them from the program.
     pub tests: Vec<TestDecl>,
+    /// The block of every function, method, and `test` body the file wrote, in source order. Code the compiler
+    /// generates (derives, `error` declarations) is not listed. The query library uses these to tell a body edit,
+    /// which only its own function can observe, from an edit to a declaration (`spec/query.md`, QL2).
+    pub bodies: Vec<Span>,
 }
 
 /// `test "name" [attrs] { ... }`: a test block. The checker compiles it as an ordinary function with no parameters

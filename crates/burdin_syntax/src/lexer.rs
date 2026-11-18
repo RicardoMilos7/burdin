@@ -19,6 +19,17 @@ pub fn lex(file: FileId, text: &str, diags: &mut Diagnostics) -> LexResult {
     LexResult { tokens: lexer.tokens, truncated }
 }
 
+/// Lexes only `text[lo..hi]`. The tokens' spans are offsets into the whole `text`, so what this returns is what
+/// [`lex`] returns for that stretch, and the final `Eof` sits at `hi`. The query library uses it to reparse one
+/// function body (`burdin_query`, `spec/query.md`, QL6).
+pub fn lex_range(file: FileId, text: &str, lo: usize, hi: usize, diags: &mut Diagnostics) -> LexResult {
+    let mut lexer = Lexer { file, src: &text.as_bytes()[..hi], pos: lo, diags, tokens: Vec::new(), nl_before: false };
+    let truncated = lexer.run();
+    let nl_before = lexer.nl_before;
+    lexer.tokens.push(Token { kind: TokenKind::Eof, span: Span::new(file, hi as u32, hi as u32), nl_before });
+    LexResult { tokens: lexer.tokens, truncated }
+}
+
 struct Lexer<'a> {
     file: FileId,
     src: &'a [u8],

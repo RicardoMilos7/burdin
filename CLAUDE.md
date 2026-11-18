@@ -36,8 +36,9 @@ not updated and may disagree with the repository.
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
-   resolution, and timers, and `spec/build-scripts.md` is `build.bd`, dependency grants, generated
-   modules, caching, and the minimal `bindgen`.
+   resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
+   modules, caching, and the minimal `bindgen`, and `spec/query.md` is the query-based compiler library: the memo,
+   its granularity, cancellation, the budget, the tool API, and the parity between the library and the command line.
    `[lint]` table, suppression comments, and `--fix`.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
@@ -90,6 +91,8 @@ python3 tests/build_release.py           build, smoke-test, and package one rele
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
 python3 tests/check_platform_support.py  check the platform support page against CI and binary-safe output (needs a built driver)
 python3 tests/fuzz.py                    long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
+cargo test --workspace                   the Rust unit and integration tests, including `burdin_query` and the
+                                         driver's parity test (`crates/burdin_driver/tests/parity.rs`)
 ```
 
 The test scripts are Python 3 and run unchanged on every platform (invoke them with `python3` on Unix and `python`
@@ -126,11 +129,16 @@ crates/
   burdin_fmt/               the formatter behind `burdin fmt`: its own lossless layout parser, the document printer,
                             comment and `use` handling, doc-comment code blocks, and the checks of its own output
                             (spec/fmt.md); it depends only on burdin_diag and burdin_syntax
-  burdin_driver/            the `burdin` binary: build, run, test, fmt, bindgen; package loading (`package.rs`: burdin.toml,
-                            modules, dependencies), build scripts (`build.rs`), and the minimal C bindgen
+  burdin_query/             the query-based compiler library (spec/query.md): the database of file texts, the parse
+                            memo and the body-only reparse, the check cache's orchestration, cancellation and the
+                            budget, the tool API (syntax tree with trivia, resolve/type/signature/ownership at a
+                            position), and the package loader (`package.rs`); the driver and a language server share
+                            it, and it never links LLVM
+  burdin_driver/            the `burdin` binary: build, run, test, fmt, bindgen; it runs its front end through
+                            `burdin_query`, and keeps build scripts (`build.rs`) and the minimal C bindgen
                             (`bindgen.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
-                            resolution and type checking, and code generation
+                            resolution and type checking, code generation, and the query library's keystroke edits
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
@@ -141,12 +149,14 @@ docs/                     the user-facing error-code reference (checked by tests
                           version/release policy (docs/releasing.md)
 .github/workflows/        ci.yml (every push) and release.yml (tag, nightly schedule, or manual dry run)
 spec/                     grammar, memory rules, standard-library surface, iteration protocol, derives, extension
-                          methods, test runner, stage 0 scope, stage 1 plan
+                          methods, test runner, the query library, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts
 ```
 
 Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_comptime` to `burdin_codegen`, with
-`burdin_tir` as the shared vocabulary and `burdin_diag` under everything. `burdin_lint` is a side branch: it reads the
+`burdin_tir` as the shared vocabulary and `burdin_diag` under everything. `burdin_query` sits beside the stages: it
+drives them for a whole package, memoizes what an edit cannot affect, and is the one front end the driver and a tool
+share. `burdin_lint` is a side branch: it reads the
 syntax tree and the typed tree the compiler built, depends on `burdin_syntax`, `burdin_tir`, and `burdin_diag` only, and
 is called from the driver, never from the compiler stages. `burdin_check`, `burdin_comptime`, and
 `burdin_codegen` depend only on `burdin_tir` (and `burdin_diag`), not on sema. Keep everything before codegen free of

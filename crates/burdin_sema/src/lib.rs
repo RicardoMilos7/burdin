@@ -18,6 +18,7 @@ mod aliases;
 mod any;
 mod bodies;
 mod builtins;
+mod cache;
 mod comptime;
 mod consteval;
 mod consts;
@@ -42,6 +43,8 @@ mod session;
 mod types;
 mod user_derives;
 mod validate;
+
+pub use cache::{CheckCache, CheckStats, Edit};
 
 use burdin_diag::{Diagnostics, FileId, SourceMap};
 use burdin_syntax::ast;
@@ -84,6 +87,29 @@ pub fn check<'a>(
     sources: &'a SourceMap,
     diags: &mut Diagnostics,
 ) -> Program {
+    let mut cache = CheckCache::disabled();
+    check_cached(packages, entry_package, entry_module, test_mode, traces, sources, diags, &mut cache)
+        .expect("a check with no cancel flag finishes")
+}
+
+/// [`check`] through a cache of checked bodies: a body whose text, declarations, and registry state are unchanged
+/// since a run the cache saw is not checked again. The result is the same program and the same diagnostics as
+/// [`check`] gives (`spec/query.md`, QL4). Returns `None` when the cache's cancel flag was set before the run
+/// finished; `diags` then holds nothing useful and the cache stays valid.
+#[allow(clippy::too_many_arguments)]
+pub fn check_cached<'a>(
+    packages: &'a [Package<'a>],
+    entry_package: usize,
+    entry_module: usize,
+    test_mode: bool,
+    traces: bool,
+    sources: &'a SourceMap,
+    diags: &mut Diagnostics,
+    cache: &mut CheckCache,
+) -> Option<Program> {
+    let declarations =
+        cache::declaration_fingerprint(packages, (entry_package, entry_module), test_mode, traces, sources);
+    cache.begin(declarations);
     let mut sema = Sema::new(packages, entry_package, entry_module, test_mode, traces, sources);
     sema.declare_types(diags);
     sema.declare_values(diags);
@@ -94,6 +120,7 @@ pub fn check<'a>(
     sema.register_user_derives(diags);
     sema.declare_identities(diags);
     sema.register_extensions(diags);
-    let (functions, consts, closures) = sema.settle(diags);
-    sema.finish(functions, consts, closures, diags)
+    let (functions, consts, closures) = sema.settle(diags, cache)?;
+    let r = sema.finish(functions, consts, closures, diags);
+    Some(r)
 }

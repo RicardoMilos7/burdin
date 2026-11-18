@@ -1,0 +1,24 @@
+struct Square {
+    side: i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Square {
+    fn area(self): i32 {
+        self.side * self.side
+    }
+}
+
+Rect {
+    fn new(w: i32, h: i32): Rect {
+        Rect { w, h }
+    }
+
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}

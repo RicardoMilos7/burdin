@@ -6,9 +6,15 @@
 //! machine. The parser case consumes a clone of the pre-lexed token stream, because the parser takes its tokens
 //! by value; that copy is small next to parsing and does not hide a parser regression.
 //!
+//! The query cases measure the incremental path a language server takes (`spec/query.md`, QL5): `query/SIZE` is
+//! one keystroke-sized edit inside a function body followed by a full analysis of a generated package, and
+//! `query-cold/SIZE` is the first analysis of the same package. The package has one module per file for the
+//! larger sizes, so the edit cannot be absorbed by a single small file.
+//!
 //! `cargo bench -p burdin_bench -- --smoke` runs one small generated input through every stage, checks that it
 //! compiles, and fails when a stage takes longer than a deliberately generous budget. That is the CI guard
-//! against catastrophic regressions (a hang or an accidental quadratic pass).
+//! against catastrophic regressions (a hang or an accidental quadratic pass). The smoke run also makes one
+//! keystroke edit and asserts that exactly one body was checked again.
 //!
 //! A run can also be recorded and compared with a stored baseline: `--save FILE` writes the medians of this
 //! run, and `--baseline FILE` compares this run with them and exits 1 when a case is more than `--threshold`
@@ -16,17 +22,18 @@
 //! keyed by the runner, the pinned toolchain, and `Cargo.lock` (issue #446).
 //!
 //! `cargo bench -p burdin_bench -- <filter>` measures only the cases whose name contains `filter`
-//! (`lex`, `sema`, `large`, ...).
+//! (`lex`, `sema`, `large`, `query`, ...).
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use burdin_bench::{
-    Comparison, Generated, Measurement, check, check_memory, compare, emit, parse_baseline, parse_generated,
-    render_baseline,
+    Comparison, Generated, Measurement, check, check_memory, compare, emit, generate_package, parse_baseline,
+    parse_generated, render_baseline,
 };
 use burdin_diag::Diagnostics;
+use burdin_query::{Db, Options};
 use burdin_syntax::lexer;
 use burdin_syntax::lexer::LexResult;
 use burdin_syntax::parser;
@@ -214,9 +221,81 @@ fn measure(filter: Option<&str>) -> Vec<Measurement> {
             report("codegen", size, stats);
             measurements.push(measurement("codegen", size, stats.median));
         }
+
+        let want_cold = enabled(filter, "query-cold", size);
+        let want_edit = enabled(filter, "query", size);
+        if want_cold || want_edit {
+            let package = generate_package(package_files(size), units.min(QUERY_CHUNKS));
+            let pairs: Vec<(&str, &str)> = package.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
+            let mut db = Db::from_files(&pairs, Options::default()).expect("the generated package opens");
+            if want_cold {
+                let cold = time(|| {
+                    let analysis = db.analyze().expect("the generated package analyzes");
+                    assert!(
+                        analysis.diagnostics.is_empty(),
+                        "the generated package has diagnostics:\n{}",
+                        analysis.diagnostics.render(db.sources())
+                    );
+                    black_box(analysis.revision);
+                });
+                println!(
+                    "{:<18} {:>12}          (one analysis from scratch)",
+                    format!("query-cold/{size}"),
+                    format_duration(cold)
+                );
+                measurements.push(measurement("query-cold", size, cold));
+            }
+            if want_edit {
+                // A keystroke inside one function body of a module: an extra space in an assignment.
+                let (path, text) = &package[package.len() - 1];
+                let edited = text.replacen("total = total + v.total()", "total = total +  v.total()", 1);
+                assert_ne!(&edited, text, "the keystroke edit changed nothing");
+                let mut toggled = false;
+                let stats = run_iterations(
+                    || {
+                        toggled = !toggled;
+                        db.set_file(path, if toggled { &edited } else { text });
+                        let analysis = db.analyze().expect("an edited package analyzes");
+                        assert!(
+                            analysis.diagnostics.is_empty(),
+                            "the keystroke edit broke the package:\n{}",
+                            analysis.diagnostics.render(db.sources())
+                        );
+                        black_box(analysis.revision);
+                    },
+                    2,
+                    500,
+                );
+                report("query", size, stats);
+                measurements.push(measurement("query", size, stats.median));
+                let checked: Vec<&str> = db
+                    .stats()
+                    .bodies_checked
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|name| !name.starts_with("std."))
+                    .collect();
+                println!("  query/{size}: {} body checked per keystroke ({})", checked.len(), checked.join(", "));
+            }
+        }
     }
     measurements
 }
+
+/// How many files the generated package for a size has: the larger inputs are split over modules, so one edit
+/// touches a small part of the package.
+fn package_files(size: &str) -> usize {
+    match size {
+        "large" => 4,
+        "medium" => 2,
+        _ => 1,
+    }
+}
+
+/// The most chunks each module of a query package holds. The checker stops at 4000 functions, types, and
+/// generic instances (`burdin_sema::instances`, MAX_ITEMS), and the standard library spends part of that budget,
+/// so the query packages stay below the limit while still being large enough that rechecking them all would show.
+const QUERY_CHUNKS: usize = 32;
 
 fn measurement(stage: &str, size: &str, median: Duration) -> Measurement {
     Measurement { case: format!("{stage}/{size}"), median }
@@ -344,6 +423,37 @@ fn smoke() -> i32 {
     });
     let _ = std::fs::remove_file(&object);
 
+    // The incremental path a language server takes: one cold analysis, then one keystroke, which must recheck
+    // exactly the body it touched.
+    let package = generate_package(2, SMOKE_UNITS);
+    let pairs: Vec<(&str, &str)> = package.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
+    let mut db = Db::from_files(&pairs, Options::default()).expect("the smoke package opens");
+    let query_cold_time = time(|| {
+        let analysis = db.analyze().expect("the smoke package analyzes");
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "the smoke package has diagnostics:\n{}",
+            analysis.diagnostics.render(db.sources())
+        );
+    });
+    let (path, text) = &package[1];
+    let edited = text.replacen("total = total + v.total()", "total = total +  v.total()", 1);
+    assert_ne!(&edited, text, "the keystroke edit changed nothing");
+    db.set_file(path, &edited);
+    let analysis = db.analyze().expect("the edited smoke package analyzes");
+    assert!(
+        analysis.diagnostics.is_empty(),
+        "the keystroke edit broke the smoke package:\n{}",
+        analysis.diagnostics.render(db.sources())
+    );
+    let rechecked: Vec<String> =
+        db.stats().bodies_checked.iter().filter(|name| !name.starts_with("std.")).cloned().collect();
+    assert_eq!(rechecked.len(), 1, "a keystroke rechecked {rechecked:?}, not one body");
+    let query_edit_time = time(|| {
+        db.set_file(path, text);
+        db.analyze().expect("the reverted smoke package analyzes");
+    });
+
     println!("bench smoke: {SMOKE_UNITS} generated chunks");
     // The measured times on the reference machine are ~0.3 ms, 2 ms, 1 ms, and 45 ms. These budgets are
     // hundreds of times those, so a slow or busy runner passes and only a hang or an accidental quadratic
@@ -353,6 +463,8 @@ fn smoke() -> i32 {
         ("parse", parse_time, Duration::from_secs(1)),
         ("sema", sema_time, Duration::from_secs(2)),
         ("codegen", codegen_time, Duration::from_secs(10)),
+        ("query-cold", query_cold_time, Duration::from_secs(30)),
+        ("query-edit", query_edit_time, Duration::from_secs(5)),
     ] {
         let verdict = if elapsed <= budget { "ok" } else { "OVER BUDGET" };
         println!("  {stage:<8} {:>10} (budget {:>6}) {verdict}", format_duration(elapsed), format_duration(budget));

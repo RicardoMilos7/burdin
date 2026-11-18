@@ -6,6 +6,7 @@ pub mod error_item;
 pub mod lexer;
 pub mod lookahead;
 pub mod parser;
+pub mod spans;
 pub mod token;
 
 use burdin_diag::{Diagnostics, FileId};
@@ -19,6 +20,19 @@ pub fn parse(file: FileId, text: &str, diags: &mut Diagnostics) -> ast::File {
     error_item::wrap_result_main(&mut parsed, file, diags);
     error_item::wrap_test_failures(&mut parsed, file, diags);
     parsed
+}
+
+/// Parses `text[lo..hi]` as one block, `{ ... }`, with spans relative to the whole `text`. `None` when that stretch
+/// is not exactly one well-formed block (any lexical or syntax error included), so the caller can fall back to
+/// [`parse`]. A block is parsed with no knowledge of its surroundings, which is exactly how the parser reads a
+/// function body inside a file.
+pub fn parse_block_range(file: FileId, text: &str, lo: usize, hi: usize) -> Option<ast::Block> {
+    let mut diags = Diagnostics::default();
+    let lexed = lexer::lex_range(file, text, lo, hi, &mut diags);
+    if diags.has_errors() {
+        return None;
+    }
+    parser::parse_block(file, lexed, &mut diags)
 }
 
 #[cfg(test)]

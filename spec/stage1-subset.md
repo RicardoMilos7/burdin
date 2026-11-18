@@ -378,6 +378,10 @@ overlapped per-operation Windows path are later refinements.
 | Ecosystem | The serialization framework (`Serialize`/`Deserialize` derives and format packages), JSON/TOML/CSV, HTTP client and server, TLS, WebSockets, regex, compression, images, math, database drivers |
 | Standard library | What `m24` did not ship: the serialization framework's foundation and anything the author's projects still need. `Set`, `Deque`, `PriorityHeap`, the Unicode helpers, `Path`, time, and `Random` are in `std` already |
 
+The query-based compiler library has landed (`spec/query.md`, issue #241): the command line runs its front end
+through it, and the memo, the tool API, cancellation, and the budget are in place. The lockfile, multiple-package
+workspaces, cached object files, and the language server are still open.
+
 ### When wanted
 
 `i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment, doc tests, `bench` blocks,

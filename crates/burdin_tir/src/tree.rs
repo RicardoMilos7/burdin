@@ -8,6 +8,7 @@ use burdin_diag::Span;
 /// A constant. Its initializer is evaluated by the comptime engine (`spec/comptime.md`, CT7), which replaces
 /// `value` with the materialized result; that value is expanded at every use, so it costs nothing at run time
 /// beyond the expression itself.
+#[derive(Clone, Debug)]
 pub struct Const {
     pub name: String,
     /// Where the constant was declared, for diagnostics about its evaluation.
@@ -17,6 +18,7 @@ pub struct Const {
     pub locals: Vec<Local>,
 }
 
+#[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
     /// Where the function was declared, for diagnostics about its signature.
@@ -72,7 +74,7 @@ pub enum LocalKind {
     Scrutinee,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Local {
     pub name: String,
     pub ty: Ty,
@@ -106,6 +108,7 @@ pub struct Capture {
 }
 
 /// A closure body and the capture record it takes.
+#[derive(Clone, Debug)]
 pub struct Closure {
     /// The internal function name, `burdin.closure.N`.
     pub name: String,
@@ -118,27 +121,27 @@ pub struct Closure {
     pub func: Function,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub tail: Option<Box<Expr>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Stmt {
     /// `let pattern = init`, with the `else` block of `let ... else` (which diverges).
     Let(Pat, Expr, Option<Block>),
     Expr(Expr),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Expr {
     pub kind: ExprKind,
     pub ty: Ty,
     pub span: Span,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     Unit,
     Bool(bool),
@@ -314,7 +317,7 @@ pub enum ExprKind {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Arm {
     pub pat: Pat,
     pub guard: Option<Expr>,
@@ -332,7 +335,7 @@ pub enum BindMode {
     View,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Pat {
     Wild,
     Binding(LocalId, BindMode),
