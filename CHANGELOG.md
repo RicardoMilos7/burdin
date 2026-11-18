@@ -11,11 +11,11 @@ close-out checklist in `AGENTS.md`).
   unknown lint name in a configuration or a suppression comment); `docs/lints.md` documents each one with an example
   that `tests/check_lint.py` runs, and `spec/lint.md` (LN1-LN32) is the behavior.
 - Naming conventions: `non_snake_case`, `non_pascal_case`, `non_screaming_case`, with the suggested name in a note
-  (issue #233). Syntax-tree lints: `else_hides_variant` (an `else`/`_` arm that hides a new variant of an enum of the
-  same package, with the explicit-variants form as the way to ignore it; issue #231), `unused_import`,
-  `unused_variable`, `unused_parameter`, `unreachable_code`, and `dead_code` for `priv` items (issue #465).
+  (issue #233). Syntax-tree lints: `else_on_local_enum` (an `else`/`_` arm that hides a new variant of an enum of the
+  same package, with the explicit-variants form as the way to ignore it; issue #231), `unused_imports`,
+  `unused_variables`, `unused_parameters`, `unreachable_code`, and `dead_code` for `priv` items (issue #465).
 - Typed-tree lints: `eager_chain` (a long chain of eager list methods that builds a list per step suggests `.iter()`;
-  issue #232), `redundant_clone`, `unused_mut`, `large_copy` in a loop, `borrow_could_own`, `loop_alloc`, and
+  issue #232), `redundant_clone`, `unused_mut`, `large_copy_in_loop`, `borrow_could_own`, `loop_invariant_alloc`, and
   `needless_to_list` (issue #661).
 - Levels are `allow`, `warn`, and `deny`, set per lint or for the `all` and `warnings` groups, in the manifest `[lint]`
   table or on the command line, with `// lint: allow(...)` comments above an item, trailing on a line, or for the whole
