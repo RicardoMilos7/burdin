@@ -77,12 +77,12 @@ name = "burdin_driver"
 version = "0.1.0"
 dependencies = [
  "burdin_bindgen",
- "burdin_check",
  "burdin_codegen",
  "burdin_diag",
  "burdin_doc",
  "burdin_fmt",
  "burdin_lint",
+ "burdin_lsp",
  "burdin_query",
  "burdin_syntax",
  "burdin_tir",
@@ -112,6 +112,17 @@ dependencies = [
  "burdin_diag",
  "burdin_syntax",
  "burdin_tir",
+]
+
+[[package]]
+name = "burdin_lsp"
+version = "0.1.0"
+dependencies = [
+ "burdin_diag",
+ "burdin_fmt",
+ "burdin_lint",
+ "burdin_query",
+ "burdin_syntax",
 ]
 
 [[package]]

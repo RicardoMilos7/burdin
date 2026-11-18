@@ -1,0 +1,25 @@
+use shapes.{Rect, Square}
+use math.add
+
+/// Adds two areas.
+fn total(a: i32, b: i32): i32 {
+    add(a, b)
+}
+
+fn main() {
+    let label = "área"
+    let sq = Square { side: 4 }
+    let r = Rect.new(2, 3)
+    let mut sum = total(sq.area(), r.area())
+    sum = add(sum, 1)
+    println("{label} 😀 {sum}")
+}
+
+test "total adds" {
+    assert_eq(total(1, 2), 3)?
+}
+
+test "square area" {
+    let s = Square { side: 3 }
+    assert_eq(s.area(), 9)?
+}

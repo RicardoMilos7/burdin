@@ -42,6 +42,7 @@ usage:
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
+  burdin lsp [--stdio]
   burdin --version
 
 compile options:
@@ -82,6 +83,9 @@ test options:
                        test per line)
   --junit <file>       also write a JUnit XML report of the run
   -v, --verbose        print the output of passing tests too
+
+lsp (the language server, spec/lsp.md):
+  speaks the Language Server Protocol on standard input and output; --stdio is accepted and changes nothing
 
 fmt options:
   --check                  change nothing; list the files that are not formatted and exit with status 1
@@ -469,6 +473,18 @@ fn main() -> ExitCode {
     }
 }
 
+/// `burdin lsp`: the language server on standard input and output (`spec/lsp.md`). The exit code is the protocol's:
+/// 0 after `shutdown` and `exit`, 1 when the client exits without shutting down or the input closes first.
+fn lsp(args: &[String]) -> ExitCode {
+    if let Some(other) = args.iter().find(|a| *a != "--stdio") {
+        eprintln!(
+            "error: unknown argument `{other}` for `burdin lsp` (it speaks LSP on standard input and output)\n{USAGE}"
+        );
+        return ExitCode::from(2);
+    }
+    ExitCode::from(burdin_lsp::serve_stdio() as u8)
+}
+
 fn driver_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if matches!(argv.as_slice(), [flag] if flag == "--version" || flag == "-V") {
@@ -495,6 +511,9 @@ fn driver_main() -> ExitCode {
     }
     if argv.first().map(String::as_str) == Some("new") {
         return new::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("lsp") {
+        return lsp(&argv[1..]);
     }
     let args = match parse_args(&argv) {
         Ok(a) => a,

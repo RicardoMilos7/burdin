@@ -1,0 +1,81 @@
+{
+  "name": "burdin",
+  "displayName": "Burdin",
+  "description": "Burdin language support: the burdin lsp language server, syntax highlighting, and test lenses.",
+  "version": "0.1.0",
+  "publisher": "burdin",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Formatters", "Linters"],
+  "main": "./extension.js",
+  "activationEvents": ["workspaceContains:**/burdin.toml"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "burdin",
+        "aliases": ["Burdin", "burdin"],
+        "extensions": [".bd"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "burdin",
+        "scopeName": "source.burdin",
+        "path": "./syntaxes/burdin.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      { "command": "burdin.restartServer", "title": "Burdin: Restart the language server" },
+      { "command": "burdin.run", "title": "Burdin: Run" },
+      { "command": "burdin.debug", "title": "Burdin: Debug" }
+    ],
+    "configuration": {
+      "title": "Burdin",
+      "properties": {
+        "burdin.path": {
+          "type": "string",
+          "default": "",
+          "description": "The burdin executable: the language server is `<path> lsp`, and the lenses run it. Empty means `burdin` on PATH."
+        },
+        "burdin.inlayHints.types": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the inferred type after a `let` name without one."
+        },
+        "burdin.inlayHints.parameterNames": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the parameter's name before a positional argument."
+        },
+        "burdin.diagnostics.lints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the diagnostics of `burdin lint` too."
+        },
+        "burdin.diagnostics.debounceMs": {
+          "type": "number",
+          "default": 200,
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Milliseconds of quiet after an edit before the package is checked again."
+        },
+        "burdin.formatting.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Format with `burdin fmt` when the editor asks."
+        },
+        "burdin.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the run and debug lenses above tests and `main`."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  }
+}

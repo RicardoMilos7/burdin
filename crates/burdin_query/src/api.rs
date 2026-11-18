@@ -451,12 +451,12 @@ impl Analysis {
 
 /// The text of a type as source writes it. The checker prints a struct or enum type with its module path
 /// (`geometry.shapes.Rect`); a tool shows the name the source uses (`Rect`).
-fn type_text(ty: &Ty) -> String {
+pub(crate) fn type_text(ty: &Ty) -> String {
     source_text(&ty.to_string())
 }
 
 /// Every dotted identifier in `text`, replaced by its last segment.
-fn source_text(text: &str) -> String {
+pub(crate) fn source_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
     let flush = |word: &mut String, out: &mut String| {
@@ -480,7 +480,7 @@ fn source_text(text: &str) -> String {
 }
 
 /// The parameters of a signature, as they are written at the call site.
-fn param_infos(sig: &burdin_tir::Signature) -> Vec<ParamInfo> {
+pub(crate) fn param_infos(sig: &burdin_tir::Signature) -> Vec<ParamInfo> {
     sig.params
         .iter()
         .enumerate()
@@ -504,7 +504,7 @@ fn param_infos(sig: &burdin_tir::Signature) -> Vec<ParamInfo> {
 }
 
 /// `fn add(a: i32, b: i32): i32`, from a name and a checked signature.
-fn signature_display(name: &str, sig: &burdin_tir::Signature) -> String {
+pub(crate) fn signature_display(name: &str, sig: &burdin_tir::Signature) -> String {
     let mut out = format!("fn {}(", source_text(name));
     for (index, param) in sig.params.iter().enumerate() {
         if index > 0 {

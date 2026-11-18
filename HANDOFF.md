@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the forty-eighth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the forty-ninth session (2026-11-18). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -957,7 +957,37 @@ generated package of one, two, and four modules, and `--smoke` fails unless a ke
 
 What is left from the issue's spirit: checking is still sequential (the memo is used from one thread; the
 `BURDIN_JOBS` parallelism covers parsing only), the memory checks and compile-time evaluation are not yet per
-function, and there is no language server yet — the API is what it would call.
+function, and the language server came in the forty-ninth session (below).
+
+## The forty-ninth session: the language server (stage 3, issue #242)
+
+`burdin lsp` is the language server (`spec/lsp.md`, LS1-LS20; sub-issues #309-#313, #365-#376, #470, #662), in a new
+crate, `crates/burdin_lsp`, that the driver calls. It answers everything from `burdin_query`: one `Db` per package root
+(loaded the way `burdin test` loads a package), edits applied to every database that contains the file, a debounced
+background analysis that an edit or `$/cancelRequest` stops through the library's `CancelHandle`, and the last
+analysis that had a program kept for answers while the file does not parse (positions mapped through the edit). The
+query library gained the questions a server needs and the tool API did not answer: `Analysis::occurrences` (every
+resolved name), `locals`, `calls` (with the argument written for each parameter), `functions`, `tests`, and
+`Db::modules`/`Db::packages` (`navigate.rs`). Name-based features (outline, folding, completion of scope and `use`)
+read a per-file index of the syntax tree and tokens (`index.rs`).
+
+What the tests pin: `crates/burdin_lsp/tests/` starts the crate's `burdin-lsp` binary (the server without LLVM) and
+speaks JSON-RPC to it, one file per area (lifecycle, diagnostics, navigation, editing, outline, actions, workspace),
+including a non-ASCII position in both encodings and a cancellation, with golden files for the capabilities,
+diagnostics, symbols, semantic tokens, inlay hints, lenses, and type hierarchy (`BURDIN_LSP_UPDATE=1` rewrites them).
+`tests/check_lsp.py` (every CI job) drives the driver's `burdin lsp`, runs a passing and a failing test through the
+lenses with the real `burdin test --format json`, and checks the editor files, including that the TextMate grammar's
+keywords are exactly the lexer's.
+
+Editors: `editors/vscode` (extension with `vscode-languageclient` pinned to 9.0.1, grammar, language configuration),
+and the Neovim and Helix setup in `editors/README.md`. Using them in an editor is the manual checklist in
+`spec/lsp.md` LS20; it was not run in this session (no editor here), so run it before calling the editor side done.
+
+Follow-ups, none started: `burdin dap` (#576), which the `Debug` lenses already target with a DAP `launch`
+configuration (the VS Code extension falls back to building with `-g` and CodeLLDB for a program); bench blocks
+(#251), which would get lenses like tests; a tree-sitter grammar for Helix and Neovim highlighting; publishing the
+VS Code extension; per-file instead of per-package analysis if large packages make the debounce feel slow; and the
+`burdin doc` JSON as a richer hover source.
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -1896,6 +1926,21 @@ function, and there is no language server yet — the API is what it would call.
   the releaser; the lock state is under the scheduler's lock (SH9). A waiting writer blocks new readers (SH10).
 - **`Weak<T>`, condition variables, barriers, and `Once` are deferred.** Nothing in the tests needs them.
 
+## Decided in the forty-ninth session (the language server, issue #242)
+
+- **Rust, no new dependency, stdio only (#365).** JSON-RPC needs a small JSON value and `Content-Length` framing,
+  which are under 600 lines with their tests; `lsp-server`/`lsp-types`/`serde` would be the first serialization stack in the compiler. Every
+  target editor starts servers as child processes, so there is no socket transport.
+- **One thread owns the databases.** `burdin_query::Db` is `Rc`/`RefCell`; the server answers in order on the main
+  thread, a reader thread records cancellations and stops the running analysis, and test runs are the only work on
+  other threads (their results come back as messages).
+- **One database per package root, not per workspace.** It matches `burdin test` and the query library's unit; a path
+  dependency is part of each dependent's database, and the memo is what keeps an edit cheap.
+- **The test lenses carry the exact command line** (`burdin test <root> --exact <path>`), and the server runs it with
+  `--format json`, so the editor, the terminal, and CI run the same thing. `burdin.run` and `burdin.debug` are client
+  commands; debugging targets `burdin dap` (#576) through a DAP `launch` configuration of type `burdin`.
+- **Formatting is the `burdin fmt` library**, refusing a file with syntax errors (`null`) instead of guessing.
+
 ## Decided in the forty-seventh session
 
 - **The memo is in-house, not salsa (QL1, issue #645).** `burdin_tir::Program` and the checker's registries are
@@ -1984,8 +2029,8 @@ function, and there is no language server yet — the API is what it would call.
    cover yet: a package-manager formula (Homebrew/winget), code signing and provenance attestations, bundling the LLVM
    21 runtime so a prebuilt compiler is self-contained, and a PDB/CodeView path for Windows.
 8. The query-based compiler library is in (forty-seventh session, issue #241, `spec/query.md` QL1-QL9). Follow-ups it
-   leaves: parallel checking on top of it, per-function memory checks and compile-time evaluation, and the language
-   server the tool API is for. The rest of stage 3's compiler item — a lockfile, multiple-package workspaces, cached
+   leaves: parallel checking on top of it and per-function memory checks and compile-time evaluation. The language
+   server is in (forty-ninth session, issue #242, `spec/lsp.md`); its follow-ups are in that session's section. The rest of stage 3's compiler item — a lockfile, multiple-package workspaces, cached
    object files — and its tooling (`doc`, `add`) have not started; `burdin fmt`, `burdin lint`, `burdin new`, and the
    bindgen are done.
 

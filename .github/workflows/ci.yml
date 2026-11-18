@@ -229,6 +229,11 @@ jobs:
       - name: Check burdin check
         run: python3 tests/check_check.py
 
+      # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
+      # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
+      - name: Check burdin lsp
+        run: python3 tests/check_lsp.py
+
       - name: Check host target
         run: python3 tests/check_platform.py
 
@@ -455,6 +460,11 @@ jobs:
       # reject exactly as a build does, without code generation or a linker (issue #237).
       - name: Check burdin check
         run: python3 tests/check_check.py
+
+      # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
+      # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
+      - name: Check burdin lsp
+        run: python3 tests/check_lsp.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -703,6 +713,11 @@ jobs:
       # reject exactly as a build does, without code generation or a linker (issue #237).
       - name: Check burdin check
         run: python tests/check_check.py
+
+      # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
+      # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
+      - name: Check burdin lsp
+        run: python tests/check_lsp.py
 
       - name: Check host target
         run: python tests/check_platform.py

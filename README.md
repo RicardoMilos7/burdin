@@ -133,7 +133,8 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `check`, `fmt`, `doc`, `explain`, `bindgen`, and `new`.
+The `burdin` command has the subcommands `build`, `run`, `test`, `check`, `fmt`, `doc`, `explain`, `bindgen`, `new`, and
+`lsp`.
 This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
@@ -158,6 +159,7 @@ usage:
                  [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
   burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]
   burdin new <name>
+  burdin lsp [--stdio]
   burdin --version
 
 compile options:
@@ -231,6 +233,11 @@ whose other programs must be accepted.
 an identifier that is not a reserved word or `std`) with a `burdin.toml`, a `src/main.bd` that prints a greeting, and a
 `.gitignore` for `target/` and the executable `burdin build .` leaves in the package directory. It refuses, with exit
 status 2, to touch a path that already exists. `tests/check_new.py` checks it.
+
+`burdin lsp` is the language server: it speaks the Language Server Protocol over standard input and output (`--stdio` is
+accepted and changes nothing) and exits 0 after `shutdown` and `exit`, 1 otherwise. Editors start it themselves;
+[`editors/`](editors/README.md) has the VS Code extension and the settings for Neovim and Helix, and
+[`spec/lsp.md`](spec/lsp.md) is the specification. `tests/check_lsp.py` drives it.
 
 Environment:
 

@@ -14,6 +14,7 @@
 pub mod api;
 mod db;
 mod memory;
+pub mod navigate;
 pub mod package;
 mod reparse;
 mod stats;
@@ -23,4 +24,5 @@ pub use api::{
     SyntaxTree, Trivia, TriviaKind, Typed,
 };
 pub use db::{Analysis, Budget, CancelHandle, Cancelled, Db, Options, Parsed};
+pub use navigate::{CallSite, FunctionInfo, LocalInfo, ModuleInfo, Occurrence, PackageInfo, TestInfo};
 pub use stats::{Counters, RevisionStats};

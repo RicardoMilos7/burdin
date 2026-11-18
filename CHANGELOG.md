@@ -6,6 +6,41 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### The language server (issue #242, sub-issues #309-#313, #365-#376, #470, #662)
+
+- `burdin lsp` is a Language Server Protocol 3.17 server over standard input and output (new crate `burdin_lsp`,
+  `spec/lsp.md` LS1-LS20), answered from the query-based library, so an editor sees the command line's diagnostics,
+  types, and names. Decision (#365): Rust, no new dependency (a small JSON value and `Content-Length` framing),
+  stdio only, one thread owning the databases plus a reader thread for cancellation and worker threads for test runs.
+  The crate's `burdin-lsp` binary is the same server without LLVM, for the integration tests.
+- Lifecycle and document sync (#309): initialize/shutdown/exit with the protocol's exit codes, incremental changes,
+  errors for requests out of order, malformed input survived. Positions in UTF-16 or, when the client offers it, UTF-8
+  (#373). `$/cancelRequest` answers `-32800` and stops the analysis a request waits on; `$/progress` for loading,
+  analyzing, and test runs.
+- Diagnostics (#310): debounced, published once for the latest version, never for an analysis an edit overtook; every
+  error of a file with its code, span, error-reference link, and related locations; `burdin lint` diagnostics with the
+  manifest's levels and the `Unnecessary` tag.
+- Navigation (#311, #370, #470): definition (into a materialized copy of the standard library too), references,
+  highlights with writes, rename across files with shorthand fields kept, go to implementation, call and type
+  hierarchies. Editing (#312, #313, #368, #369): hover with signatures and docs, member/scope/`use` completion (also on
+  a line that does not parse yet), signature help, inlay hints for `let` types and parameter names (each toggleable),
+  semantic tokens, and formatting through the `burdin fmt` library.
+- Outline (#367, #371): nested or flat document symbols, fuzzy workspace symbols, folding, selection ranges, and links
+  for `use` paths, URLs, and doc-comment `[name]` links. Code actions (#366): import an unknown name, make a binding
+  `mut`, add the `mut` marker, add an implementation's missing methods, write a `let`'s type, organize imports.
+- Lenses (#374, #662): run a test, a file's tests, or `main`, each carrying the exact `burdin test <root> --exact <path>`
+  or `burdin run` command line; test runs happen in the server with `--format json` and their results come back as
+  lenses; `Debug` lenses carry a DAP `launch` configuration for `burdin dap` (#576).
+- Workspaces (#372, #376): one database per package, multi-root folders added and removed, watched files, pushed and
+  pulled configuration; an edit re-checks only the bodies it can affect, so a dependency's bodies are reused.
+- Editors: `editors/vscode` (extension, TextMate grammar whose keywords are the lexer's, language configuration) and
+  the Neovim and Helix setup in `editors/README.md`, with the manual checklist in `spec/lsp.md`.
+- The query library gained `Analysis::occurrences`, `locals`, `calls`, `functions`, and `tests`, and `Db::modules` and
+  `Db::packages` (`crates/burdin_query/src/navigate.rs`, `spec/query.md`).
+- Tests: `crates/burdin_lsp/tests/` (lifecycle, diagnostics, navigation, editing, outline, actions, workspace; a
+  JSON-RPC client in `tests/common/mod.rs`, fixtures, and golden files), the crate's unit tests, and
+  `tests/check_lsp.py` (the driver's `burdin lsp`, a real test run through a lens, and the editor files).
+
 ### The query-based compiler library (issue #241, sub-issues #645-#649)
 
 - The front end is a library with a memo (new crate `burdin_query`, `spec/query.md`): file texts in, diagnostics and
