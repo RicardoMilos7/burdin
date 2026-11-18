@@ -373,7 +373,7 @@ overlapped per-operation Windows path are later refinements.
 
 | Area | Contents |
 | --- | --- |
-| Tooling | `burdin new`, `fmt` (opinionated, no options), `lint` (the design's warnings), `doc`, `add`, bindgen for C headers, Rust interop through generated C-ABI shims |
+| Tooling | `burdin new`, `fmt` (opinionated, no options), `lint` (landed: `spec/lint.md`), `doc`, `add`, bindgen for C headers, Rust interop through generated C-ABI shims |
 | Compiler | A query-based compiler library shared by the CLI and a language server; a lockfile; multiple-package workspaces; cached object files; a possibly faster debug backend |
 | Ecosystem | The serialization framework (`Serialize`/`Deserialize` derives and format packages), JSON/TOML/CSV, HTTP client and server, TLS, WebSockets, regex, compression, images, math, database drivers |
 | Standard library | What `m24` did not ship: the serialization framework's foundation and anything the author's projects still need. `Set`, `Deque`, `PriorityHeap`, the Unicode helpers, `Path`, time, and `Random` are in `std` already |

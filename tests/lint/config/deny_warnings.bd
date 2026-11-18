@@ -1,0 +1,13 @@
+//% args: --deny-warnings -A unused_variables
+//% exit: 1
+//% stderr: error[L0001]
+// `--deny-warnings` is `-D warnings`: every lint that warns at that point becomes an error. A lint allowed before it
+// stays allowed (spec/lint.md LN4).
+
+fn badName() { //~ L0001
+    let never_read = 1
+}
+
+fn main() {
+    badName()
+}

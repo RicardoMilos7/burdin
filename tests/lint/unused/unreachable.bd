@@ -1,0 +1,74 @@
+// A statement after one that never completes (spec/lint.md LN18). A statement that is merely last is fine.
+
+fn after_return(x: i32): i32 {
+    if x > 0 {
+        return 1
+        println("never") //~ L0009
+    }
+    2
+}
+
+fn after_panic() {
+    panic("stop")
+    println("never") //~ L0009
+}
+
+fn after_exit() {
+    process.exit(0)
+    println("never") //~ L0009
+}
+
+fn after_infinite_loop() {
+    loop {
+        println("again")
+    }
+    println("never") //~ L0009
+}
+
+fn after_all_branches(x: i32): i32 {
+    if x > 0 {
+        return 1
+    } else {
+        return 2
+    }
+    let dead = 3 //~ L0009
+    dead
+}
+
+fn after_continue() {
+    for i in 0..3 {
+        if i == 1 {
+            continue
+            println("never") //~ L0009
+        }
+        println("{}", i)
+    }
+}
+
+fn fine(x: i32): i32 {
+    if x > 0 {
+        return 1
+    }
+    let ok = 2
+    for i in 0..3 {
+        if i == 1 {
+            break
+        }
+    }
+    loop {
+        if ok > 1 {
+            break
+        }
+    }
+    ok
+}
+
+fn main() {
+    println("{} {} {}", after_return(1), after_all_branches(1), fine(1))
+    after_continue()
+    if false {
+        after_panic()
+        after_exit()
+        after_infinite_loop()
+    }
+}

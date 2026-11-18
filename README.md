@@ -14,6 +14,7 @@ conformance suite and the specs, not by this file; see the index below.
 | --- | --- |
 | [`tests/README.md`](tests/README.md) | The conformance suite: test format, error-code registry, and the settled language decisions. Read this first. |
 | [`docs/error-codes.md`](docs/error-codes.md) | The user-facing reference for every error code, with a checked example and a fix for each. `burdin explain <code>` prints one entry. |
+| [`docs/lints.md`](docs/lints.md) | The reference for every `burdin lint` lint, with a checked example and a fix for each. `burdin lint --explain <lint>` prints one entry. |
 | [`docs/dependencies.md`](docs/dependencies.md) | The dependency and license policy, the review of every crate, and how to add one. `tests/check_deps.py` enforces it. |
 | [`docs/platform-support.md`](docs/platform-support.md) | The tested OS/architecture pairs, the runtime features each CI job proves, and the known limitations. |
 | [`docs/releasing.md`](docs/releasing.md) | The version scheme, release channels, artifact and checksum protocol, reproducibility rules, and the rehearsal checklist. |
@@ -27,6 +28,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/tasks.md`](spec/tasks.md) | Tasks, the work-stealing scheduler, `yield`, scoped tasks that borrow, panics in tasks, and OS threads (stage 2.1). |
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
+| [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
@@ -495,6 +497,31 @@ burdin explain            list every code
 `burdin explain` writes to stdout and exits 0; an unknown code exits 2. The human diagnostics end with a note
 pointing at the command.
 
+### `burdin lint`
+
+`burdin lint` is the built-in linter. It checks a file or a package that already compiles for code that is legal but
+probably unintended: names that break the conventions, an `else` that hides new variants of a local enum, long eager
+`List` chains, unused imports, variables and parameters, unreachable and dead code, and clones, copies, `mut`s and
+allocations that cost for no reason. [`docs/lints.md`](docs/lints.md) has one entry per lint, each with a checked
+example; [`spec/lint.md`](spec/lint.md) is the specification.
+
+```
+burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
+burdin lint --list                 print every lint with its code and default level
+burdin lint --explain <lint>       print the reference entry of one lint, by name or by code
+```
+
+Every lint is `allow`, `warn` (the default), or `deny`. `-A`, `-W`, and `-D` set a level from the command line (`all`
+names every lint); a `[lint]` table in `burdin.toml` (`unused_imports = "deny"`) sets the levels of a package, and the
+command line wins. A finding is silenced by a comment above the code (`// lint: allow(dead_code)`) or for a whole file
+(`// lint: allow-file(non_snake_case)`). The diagnostics use the same formats as the compiler's (`--diagnostic-format`);
+a fix is attached to a diagnostic as a suggestion with `"applicability":"machine"` in the JSON.
+
+`--fix` applies the fixes that cannot change what the program does (an unused import, an unused variable's `_`, a
+needless `mut`, a clone of a value that is not used again). It prints a unified diff, checks that the fixed package
+still compiles, and writes every file or none; `--fix --dry-run` writes nothing. The exit status is 0 when no lint is at
+`deny`, 1 when one is reported (or the package has compile errors), and 2 for a usage error.
+
 ### Emitting LLVM IR
 
 `--emit-ir <file.ll>` also writes the textual LLVM IR, both for inspecting the backend and for debugging code
@@ -607,6 +634,10 @@ The release pipeline has three scripts of its own: `tests/build_release.py` buil
 changelog section and checks its links, and `.github/workflows/release.yml` builds the six targets, verifies the
 checksums, and publishes only from a tag push or an explicit manual `publish`. See
 [`docs/releasing.md`](docs/releasing.md).
+`tests/check_lint.py` covers `burdin lint`: every documented example, the fixtures under `tests/lint/` (each with the
+diagnostics its `//~` markers name), `--fix` and `--dry-run` against golden files, the all-or-nothing write, levels, the
+manifest `[lint]` table, and the output formats. Every CI job runs it after the build.
+
 Two checks cover the diagnostics themselves, and every CI job runs them after the build:
 
 - `tests/check_diagnostics.py` checks the default and short and JSON formats, color and `NO_COLOR`, wrapping and

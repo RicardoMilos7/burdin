@@ -1,0 +1,16 @@
+// --fix replaces `x.clone()` by `x` when `x` is not used again (spec/lint.md LN30), and only then.
+
+fn consume(own xs: List<i32>): usize {
+    xs.len()
+}
+
+fn main() {
+    let a: List<i32> = [1, 2].iter().to_list()
+    let b: List<i32> = [3].iter().to_list()
+    let n = consume(a)
+    let m = consume(b.clone())
+    println("{} {} {}", n, m, b.len())
+    let s = String.from("text")
+    let t = s
+    println("{}", t)
+}

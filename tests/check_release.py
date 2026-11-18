@@ -280,6 +280,7 @@ with harness.temporary_dir("burdin-release-") as work:
                 f"burdin-9.9.9-{target}/README.md",
                 f"burdin-9.9.9-{target}/CHANGELOG.md",
                 f"burdin-9.9.9-{target}/docs/error-codes.md",
+                f"burdin-9.9.9-{target}/docs/lints.md",
             ):
                 expect_contains("archive layout", entry, "\n".join(sorted(names)))
 

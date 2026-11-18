@@ -1,0 +1,46 @@
+// A large `Copy` value passed by value inside a loop (spec/lint.md LN22): 64 bytes or more.
+
+struct Big derives (Copy, Clone) {
+    a: i64
+    b: i64
+    c: i64
+    d: i64
+    e: i64
+    f: i64
+    g: i64
+    h: i64
+}
+
+struct Small derives (Copy, Clone) {
+    a: i64
+    b: i64
+}
+
+fn take_big(own b: Big): i64 {
+    b.a
+}
+
+fn borrow_big(b: Big): i64 {
+    b.h
+}
+
+fn take_small(own s: Small): i64 {
+    s.a
+}
+
+fn main() {
+    let big = Big { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 }
+    let small = Small { a: 1, b: 2 }
+    let mut total: i64 = take_big(big) // outside a loop: copied once
+    for _k in 0..3 {
+        total = total + take_big(big) //~ L0012
+        total = total + borrow_big(big)
+        total = total + take_small(small)
+    }
+    let mut n = 0
+    while n < 2 {
+        total = total + take_big(big) //~ L0012
+        n = n + 1
+    }
+    println("{}", total)
+}

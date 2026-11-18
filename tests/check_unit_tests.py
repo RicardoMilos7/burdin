@@ -38,7 +38,7 @@ def crate_has_unit_tests(crate: str) -> bool:
     return any(has_unit_tests(path) for path in sorted(source.rglob("*.rs")) if path.is_file())
 
 
-for crate in ("burdin_diag", "burdin_syntax", "burdin_tir", "burdin_sema", "burdin_check"):
+for crate in ("burdin_diag", "burdin_syntax", "burdin_tir", "burdin_sema", "burdin_check", "burdin_lint"):
     if not (harness.ROOT / "crates" / crate).is_dir():
         add_problem(f"crates/{crate}: missing")
     elif not crate_has_unit_tests(crate):

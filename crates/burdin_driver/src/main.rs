@@ -1,9 +1,10 @@
-//! The `burdin` command: `build`, `run`, `test`, `fmt`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
+//! The `burdin` command: `build`, `run`, `test`, `fmt`, `lint`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
 //! at the repository root (`The driver contract`) and summarized at the top of tests/run_tests.py.
 
 mod bindgen;
 mod build;
 mod fmt;
+mod lint;
 mod new;
 mod package;
 mod test_runner;
@@ -26,6 +27,10 @@ usage:
               [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
+  burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
+              [--comptime-steps <n>] [diagnostics]
+  burdin lint --list
+  burdin lint --explain <lint>
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
@@ -34,6 +39,11 @@ usage:
 compile options:
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
+
+lint options (the lint reference is docs/lints.md):
+  -A, --allow <lint>   do not run the lint        -W, --warn <lint>   report it as a warning
+  -D, --deny <lint>    report it as an error      --deny-warnings     deny every lint that warns
+  --fix                apply the safe fixes (checked, all or nothing); --dry-run prints the diff only
 
 test options:
   -j, --jobs <n>       tests to run at once (default: the number of CPUs)
@@ -364,6 +374,9 @@ fn driver_main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("bindgen") {
         return bindgen::run(&argv[1..]);
     }
+    if argv.first().map(String::as_str) == Some("lint") {
+        return lint::run(&argv[1..]);
+    }
     if argv.first().map(String::as_str) == Some("new") {
         return new::run(&argv[1..]);
     }
@@ -609,15 +622,31 @@ pub(crate) struct Compiled {
     pub(crate) build_inputs: Vec<String>,
 }
 
-/// Compiles `target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On failure
-/// the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead of its
-/// `main`.
-pub(crate) fn compile(
+/// Everything the front end produced: the loaded packages, the parsed files, the type-checked program, and the
+/// diagnostics (errors and warnings) of parsing, checking, and compile-time evaluation.
+pub(crate) struct FrontEnd {
+    pub(crate) loaded: package::Workspace,
+    /// One entry per source file, indexed by `FileId`: the file's path and whether it is embedded in the driver.
+    pub(crate) files: Vec<(PathBuf, bool)>,
+    /// The parsed files, in `FileId` order.
+    pub(crate) parsed: Vec<(burdin_diag::FileId, burdin_syntax::ast::File)>,
+    pub(crate) sources: SourceMap,
+    /// `None` when parsing failed: checking a tree with syntax errors would mostly report follow-on errors.
+    pub(crate) program: Option<burdin_tir::Program>,
+    pub(crate) diags: Diagnostics,
+    pub(crate) script_inputs: Vec<String>,
+}
+
+/// Replacement texts for source files, by path: `burdin lint --fix` checks the program it is about to write.
+pub(crate) type SourceOverrides = std::collections::HashMap<PathBuf, String>;
+
+/// Loads, parses, and checks `target` and returns what that produced, errors included. `Err` means the package could
+/// not be loaded or read at all (already reported). Nothing is printed for diagnostics: the caller decides.
+pub(crate) fn front_end(
     target: &Path,
-    output_dir: &Path,
-    output: Option<&Path>,
     options: &CompileOptions,
-) -> Result<Compiled, ExitCode> {
+    overrides: &SourceOverrides,
+) -> Result<FrontEnd, ExitCode> {
     let test_mode = options.test_mode;
     let mut loaded = match if test_mode { package::load_for_tests(target) } else { package::load(target) } {
         Ok(loaded) => loaded,
@@ -642,11 +671,13 @@ pub(crate) fn compile(
     // File ids are assigned in module order and kept through parsing; the source map is built from the same texts
     // afterwards, so the ids it hands out match and no source text is copied.
     let mut files: Vec<(burdin_diag::FileId, PathBuf, String)> = Vec::new();
+    let mut file_info: Vec<(PathBuf, bool)> = Vec::new();
     for package in &loaded.packages {
         for module in &package.modules {
-            let text = match module.text {
-                Some(text) => text.to_string(),
-                None => match std::fs::read_to_string(&module.file) {
+            let text = match (overrides.get(&module.file), module.text) {
+                (Some(text), _) => text.clone(),
+                (None, Some(text)) => text.to_string(),
+                (None, None) => match std::fs::read_to_string(&module.file) {
                     Ok(text) => text,
                     Err(e) => {
                         eprintln!("error: cannot read {}: {e}", module.file.display());
@@ -655,6 +686,7 @@ pub(crate) fn compile(
                 },
             };
             let file = burdin_diag::FileId(files.len() as u32);
+            file_info.push((module.file.clone(), module.text.is_some()));
             files.push((file, module.file.clone(), text));
         }
     }
@@ -723,6 +755,20 @@ pub(crate) fn compile(
         }
         program
     });
+    Ok(FrontEnd { loaded, files: file_info, parsed, sources, program, diags, script_inputs })
+}
+
+/// Compiles `target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On failure
+/// the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead of its
+/// `main`.
+pub(crate) fn compile(
+    target: &Path,
+    output_dir: &Path,
+    output: Option<&Path>,
+    options: &CompileOptions,
+) -> Result<Compiled, ExitCode> {
+    let FrontEnd { loaded, sources, program, diags, script_inputs, .. } =
+        front_end(target, options, &SourceOverrides::new())?;
     if diags.has_errors() {
         let options = render_options(options.diagnostics, std::io::stderr().is_terminal());
         let rendered = diags.render_with(&sources, &options);

@@ -349,9 +349,9 @@ impl<'a> FnCx<'a> {
         self.lookup(name).is_none() && self.globals.value(self.module, name).is_none()
     }
 
-    fn declare(&mut self, name: &str, ty: Ty, mutable: bool, kind: LocalKind) -> LocalId {
+    fn declare(&mut self, name: &str, ty: Ty, mutable: bool, kind: LocalKind, span: Span) -> LocalId {
         let id = LocalId(self.locals.len());
-        self.locals.push(tir::Local { name: name.to_string(), ty, mutable, by_ref: false, kind });
+        self.locals.push(tir::Local { name: name.to_string(), ty, mutable, by_ref: false, kind, span });
         self.scopes.last_mut().expect("a scope is open").insert(name.to_string(), id);
         id
     }

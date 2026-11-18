@@ -91,6 +91,7 @@ burdin-<version>-<target>/
   README.md
   CHANGELOG.md
   docs/error-codes.md
+  docs/lints.md
 ```
 
 **Runtime requirement.** The compiler links LLVM 21 as a shared library (the static Windows archives crash in the

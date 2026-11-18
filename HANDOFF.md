@@ -229,6 +229,21 @@ only when a reachable body creates it (a closure in an unreachable function used
 scheduler into every program). The Linux x86-64 path is the only one run so far: the macOS, arm64, and Windows paths
 are written but untested (`docs/platform-support.md`).
 
+The forty-first session implemented stage 3's `burdin lint` (issue #230, sub-issues #231-#233, #464-#466, #661). The
+linter is the new crate `burdin_lint`, a side branch of the pipeline: it reads the syntax tree and the typed tree the
+compiler built, never changes them, and the driver (`crates/burdin_driver/src/lint.rs`) is the only caller. Syntax-tree
+lints (names, imports, unused variables and parameters, unreachable code, dead `priv` items, `else` over a local enum)
+and typed-tree lints (eager chains, redundant clones, `mut` never written, large `Copy` in a loop, borrow parameters
+every caller consumes, allocation in a loop, `to_list()` iterated at once) are `L0001`-`L0016`; `L0000` is an unknown
+lint name. Generic functions are checked per instance and a finding is kept only when every instance agrees; generated
+code (single-token spans) is skipped. Closure capture modes in the typed tree are unreliable (an `IndexMut` write leaves
+a capture as a borrow), so `unused_mut` analyzes closure bodies to a fixed point. `--fix` applies rounds of
+machine-applicable edits, rechecks that the file still compiles, and writes all files or none. Levels, the manifest
+`[lint]` table, and the suppression comments are in `docs/lints.md`; the decisions, including the ones that are not
+obvious, are `spec/lint.md` LN1-LN32; `tests/check_lint.py` and `tests/lint/` prove them and every CI job runs the
+script. Scanning the 665 conformance programs for false positives drove most of the rules in "Choices that are not
+obvious" in the spec. Not done: `missing_docs` and `burdin doc --coverage` (issue #657) are not sub-issues of #230.
+
 The thirty-ninth session implemented milestone 2.2, channels and `select` (issue #207, sub-issues #208-#212).
 `Channel<T>` (`std/src/channel.bd`) is a cloneable handle to a bounded or unbounded multi-producer, multi-consumer
 queue: `send` (returns the value back when the channel is closed), `recv` (`None` when closed and empty), `try_send`,
@@ -385,6 +400,7 @@ tests cover the syntax.
 | Comptime | `spec/comptime.md`, `crates/burdin_comptime/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CT13). Codes E0220-E0225; `--comptime-steps N`; tests in `tests/m20_comptime/` |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md` | Three formats (`human`, `short`, `json`), color and width control, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
+| Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |

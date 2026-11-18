@@ -1,0 +1,4 @@
+// A `pub use` re-exports its names, so it is part of the module's interface even when nothing here uses them.
+pub use util.{sub}
+
+fn present() {}

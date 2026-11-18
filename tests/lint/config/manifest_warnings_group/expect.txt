@@ -1,0 +1,2 @@
+exit: 2
+stderr: `warnings` is a command-line group

@@ -1,0 +1,8 @@
+// The [lint] table of burdin.toml sets the levels of the package (spec/lint.md LN3).
+
+priv fn dead() {}
+
+fn main() {
+    let never_read = 1 //~ L0007
+    println("hello")
+}

@@ -1,0 +1,6 @@
+[package]
+name = "manifest_bad_name"
+version = "0.1.0"
+
+[lint]
+no_such_lint = "deny"

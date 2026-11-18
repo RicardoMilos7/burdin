@@ -1,0 +1,11 @@
+//% args: -D unused_variables -A unused_variables -D non_snake_case -W non_snake_case
+// The last flag for a lint wins (spec/lint.md LN3): unused_variables ends at allow and non_snake_case at warn, so
+// nothing makes the exit status 1.
+
+fn badName() { //~ L0001
+    let never_read = 1
+}
+
+fn main() {
+    badName()
+}

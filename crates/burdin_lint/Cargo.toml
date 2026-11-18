@@ -1,0 +1,10 @@
+[package]
+name = "burdin_lint"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+burdin_diag.workspace = true
+burdin_syntax.workspace = true
+burdin_tir.workspace = true

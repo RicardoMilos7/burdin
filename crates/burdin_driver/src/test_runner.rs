@@ -492,6 +492,7 @@ mod tests {
             modules: Vec::new(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            lint: Vec::new(),
             root_module: None,
         }
     }

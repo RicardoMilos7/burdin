@@ -1,0 +1,30 @@
+// A suppression comment covers the next item or statement (LN6-LN8). Only the names without one are reported.
+
+// lint: allow(non_snake_case)
+fn firstName(x: i32): i32 {
+    let innerValue = x + 1
+    innerValue
+}
+
+fn secondName(x: i32): i32 { // lint: allow(non_snake_case)
+    x + 2
+}
+
+fn thirdName(x: i32): i32 { //~ L0001
+    x + 3
+}
+
+// lint: allow(non_snake_case, non_screaming_case)
+const maxLimit: i32 = 5
+
+// lint: allow(non_pascal_case)
+struct lower_type {
+    value: i32
+}
+
+const anotherLimit: i32 = 6 //~ L0003
+
+fn main() {
+    let t = lower_type { value: maxLimit + anotherLimit }
+    println("{} {} {} {}", firstName(1), secondName(2), thirdName(3), t.value)
+}

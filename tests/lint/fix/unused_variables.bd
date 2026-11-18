@@ -1,0 +1,16 @@
+// --fix prefixes an unused variable with `_` (spec/lint.md LN28). Variables that are used are left alone.
+
+fn work(flag: bool) {
+    let never_read = 1
+    let used = 2
+    let (first, second) = (3, 4)
+    for index in 0..2 {
+        println("{}", used)
+    }
+    let closure = |left: i32, right: i32| left + used
+    println("{} {} {}", first, closure(1, 2), flag)
+}
+
+fn main() {
+    work(true)
+}

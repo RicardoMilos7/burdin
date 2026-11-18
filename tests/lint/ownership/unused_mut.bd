@@ -1,0 +1,63 @@
+// A `mut` binding that nothing mutates (spec/lint.md LN23). Every way of mutating counts, so the negatives are the
+// cases to watch: assignment, a mutating method, a `mut` argument, a write inside a closure, and a slice.
+
+struct Counter {
+    n: i32
+}
+
+Counter {
+    fn bump(mut self) {
+        self.n = self.n + 1
+    }
+
+    fn peek(self): i32 {
+        self.n
+    }
+}
+
+fn add_one(mut v: List<i32>) {
+    v.push(1)
+}
+
+fn positives() {
+    let mut never = 5 //~ L0013
+    let mut c = Counter { n: 0 } //~ L0013
+    println("{} {}", never, c.peek())
+}
+
+fn negatives() {
+    let mut assigned = 1
+    assigned = 2
+    let mut pushed: List<i32> = List<i32>.new()
+    pushed.push(1)
+    let mut counter = Counter { n: 0 }
+    counter.bump()
+    let mut passed: List<i32> = List<i32>.new()
+    add_one(mut passed)
+    let mut written = 0
+    let mut inc = || {
+        written = written + 1
+    }
+    inc()
+    let mut arr = [1, 2, 3]
+    let mut view = arr[0..3]
+    view.swap(0, 1)
+    let mut m: Map<i32, i32> = Map<i32, i32>.new()
+    m.insert(1, 2)
+    // The `mut`s inside a `comptime` block are used when the block runs at compile time.
+    let table = comptime {
+        let mut t = [0 as u64; 3]
+        let mut i: usize = 0
+        while i < 3 {
+            t[i] = (i + 1) as u64
+            i = i + 1
+        }
+        t
+    }
+    println("{} {} {} {} {} {} {}", assigned, pushed.len(), counter.peek(), passed.len(), written, m.len(), table[2])
+}
+
+fn main() {
+    positives()
+    negatives()
+}

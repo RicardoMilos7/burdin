@@ -1,0 +1,16 @@
+// A suppression comment must name real lints (spec/lint.md LN8). A name that is not one is reported as L0000, and it
+// suppresses nothing: the finding it was meant to hide is still reported. The real lints in the same comment apply.
+
+// lint: allow(no_such_lint, unused_variables) //~ L0000
+fn typo() {
+    let never_read = 1
+}
+
+fn another() {
+    let never_read = 1 // lint: allow(unused_variable) //~ L0000 L0007
+}
+
+fn main() {
+    typo()
+    another()
+}
