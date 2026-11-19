@@ -1,5 +1,6 @@
 //! The Markdown of doc comments (`spec/doc.md`, DC5-DC6): a small, fixed subset that renders to HTML without raw HTML
-//! and without any dependency.
+//! and without any dependency. The hidden `# ` setup lines of a Burdin code block are handled here too, so `burdin doc`
+//! (which hides them) and the driver's doc tests (which compile them) read the same block text.
 //!
 //! Blocks: paragraphs, `#` headings, fenced code blocks (``` or ~~~ with an info string), block quotes, bullet and
 //! ordered lists (nested by indentation), tables, and `---` rules. Inlines: `code`, `*emphasis*`, `**strong**`,
@@ -13,13 +14,88 @@ use std::fmt::Write;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
-    Heading { level: u8, inlines: Vec<Inline> },
+    Heading {
+        level: u8,
+        inlines: Vec<Inline>,
+    },
     Paragraph(Vec<Inline>),
-    Code { info: String, text: String },
+    /// A fenced code block. `line` is the 0-based line of the opening fence in the doc text, so a tool can map the
+    /// block back to its source line; `text` keeps every line, hidden ones included (DC6).
+    Code {
+        info: String,
+        text: String,
+        line: usize,
+    },
     Quote(Vec<Block>),
-    List { ordered: bool, start: u32, items: Vec<Vec<Block>> },
-    Table { header: Vec<Vec<Inline>>, rows: Vec<Vec<Vec<Inline>>> },
+    List {
+        ordered: bool,
+        start: u32,
+        items: Vec<Vec<Block>>,
+    },
+    Table {
+        header: Vec<Vec<Inline>>,
+        rows: Vec<Vec<Vec<Inline>>>,
+    },
     Rule,
+}
+
+/// One line of a Burdin code block: the line as the block holds it, and how many bytes a hidden-line marker adds
+/// back when a diagnostic is mapped to the doc comment (`# ` is two bytes, `#` is one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockLine {
+    pub text: String,
+    /// The marker a hidden line carries (`"# "` or `"#"`), or `""` for a visible line.
+    pub hidden: &'static str,
+}
+
+impl BlockLine {
+    /// The line as the compiler reads it: the marker removed, the indentation kept.
+    pub fn compiled(&self) -> &str {
+        &self.text
+    }
+
+    /// Whether the line is hidden setup (DC6).
+    pub fn is_hidden(&self) -> bool {
+        !self.hidden.is_empty()
+    }
+}
+
+/// Splits a code block into its lines with their hidden markers (`# ` or `#`, DC6). A hidden line is compiled by a
+/// doc test and not shown by the rendered documentation; `text` holds the line with its marker already removed, and
+/// `hidden` is the marker (whose length maps a column of the compiled line back to the doc comment).
+pub fn block_lines(text: &str) -> Vec<BlockLine> {
+    text.lines()
+        .map(|line| {
+            let indent = line.len() - line.trim_start().len();
+            let rest = &line[indent..];
+            if rest == "#" {
+                BlockLine { text: line[..indent].to_string(), hidden: "#" }
+            } else if let Some(after) = rest.strip_prefix("# ") {
+                BlockLine { text: format!("{}{}", &line[..indent], after), hidden: "# " }
+            } else {
+                BlockLine { text: line.to_string(), hidden: "" }
+            }
+        })
+        .collect()
+}
+
+/// The text of a Burdin code block as the rendered documentation shows it: the hidden lines removed. `None` when
+/// the block has lines and every one of them is hidden, so the renderer writes no code block at all; an empty block
+/// keeps the empty one it always rendered.
+pub fn visible_code(text: &str) -> Option<String> {
+    let lines = block_lines(text);
+    if !lines.is_empty() && lines.iter().all(BlockLine::is_hidden) {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    for line in lines {
+        if line.is_hidden() {
+            continue;
+        }
+        out.push_str(&line.text);
+        out.push('\n');
+    }
+    Some(out)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -272,7 +348,7 @@ fn parse_blocks(lines: &[(usize, &str)]) -> Vec<Block> {
             if !body.is_empty() {
                 text.push('\n');
             }
-            blocks.push(Block::Code { info, text });
+            blocks.push(Block::Code { info, text, line: no });
         } else if let Some((level, content)) = heading(line) {
             blocks.push(Block::Heading { level, inlines: parse_inlines(content, no) });
             i += 1;
@@ -715,10 +791,14 @@ fn render_block(block: &Block, links: &mut dyn LinkRender, out: &mut String) {
         Block::Paragraph(inlines) => {
             let _ = writeln!(out, "<p>{}</p>", render_inlines(inlines, links));
         }
-        Block::Code { info, text } => {
+        Block::Code { info, text, .. } => {
             let lang = info.split(|c: char| c == ',' || c.is_whitespace()).next().unwrap_or("");
             let class = if lang.is_empty() { "burdin" } else { lang };
-            let _ = writeln!(out, "<pre><code class=\"language-{}\">{}</code></pre>", escape(class), escape(text));
+            // A Burdin block hides its `# ` setup lines; a block that is entirely hidden shows nothing (DC6).
+            let Some(text) = (if is_burdin_info(info) { visible_code(text) } else { Some(text.clone()) }) else {
+                return;
+            };
+            let _ = writeln!(out, "<pre><code class=\"language-{}\">{}</code></pre>", escape(class), escape(&text));
         }
         Block::Quote(inner) => {
             let _ = writeln!(out, "<blockquote>\n{}</blockquote>", render_blocks(inner, links));
@@ -934,6 +1014,52 @@ mod tests {
     fn examples_are_burdin_blocks() {
         let blocks = parse("```\na\n```\n\n```burdin,no_run\nb\n```\n\n```text\nc\n```\n\n```rust\nd\n```\n");
         assert_eq!(example_count(&blocks), 2);
+    }
+
+    #[test]
+    fn a_code_block_remembers_its_fence_line() {
+        fn code_lines(blocks: &[Block], out: &mut Vec<usize>) {
+            for b in blocks {
+                match b {
+                    Block::Code { line, .. } => out.push(*line),
+                    Block::Quote(inner) => code_lines(inner, out),
+                    Block::List { items, .. } => items.iter().for_each(|i| code_lines(i, out)),
+                    _ => {}
+                }
+            }
+        }
+        let blocks = parse("one\n\n```\nlet x = 1\n```\n\n> quoted\n>\n> ```\n> y\n> ```\n");
+        let mut lines = Vec::new();
+        code_lines(&blocks, &mut lines);
+        assert_eq!(lines, [2, 8]);
+    }
+
+    #[test]
+    fn hidden_lines_are_marked_and_stripped_in_place() {
+        let lines = block_lines("# use app.{Point}\nlet p = Point.new()\n#\n    # nested setup()\n");
+        assert_eq!(lines[0].hidden, "# ");
+        assert_eq!(lines[0].compiled(), "use app.{Point}");
+        assert_eq!(lines[1].hidden, "");
+        assert_eq!(lines[1].compiled(), "let p = Point.new()");
+        // A bare `#` hides an empty line; an indented marker keeps the indentation of what follows it.
+        assert_eq!(lines[2].hidden, "#");
+        assert_eq!(lines[2].compiled(), "");
+        assert_eq!(lines[3].hidden, "# ");
+        assert_eq!(lines[3].compiled(), "    nested setup()");
+    }
+
+    #[test]
+    fn rendered_burdin_blocks_hide_setup_lines() {
+        // The marker works untagged and tagged, keeps the visible lines, and leaves other languages alone.
+        assert_eq!(
+            html("```\n# use app.{Point}\nlet p = Point.new()\n```\n~~~text\n# not hidden\n~~~\n"),
+            "<pre><code class=\"language-burdin\">let p = Point.new()\n</code></pre>\n\
+             <pre><code class=\"language-text\"># not hidden\n</code></pre>\n"
+        );
+        // A block whose every line is hidden shows nothing at all.
+        assert_eq!(html("before\n\n```\n# hidden\n# all of it\n```\n\nafter\n"), "<p>before</p>\n<p>after</p>\n");
+        // A block with no lines keeps the empty block it always rendered.
+        assert_eq!(html("```\n```\n"), "<pre><code class=\"language-burdin\"></code></pre>\n");
     }
 
     #[test]

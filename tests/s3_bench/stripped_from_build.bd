@@ -1,0 +1,15 @@
+//@ run
+
+// A bench item is kept out of a normal build: `burdin build` and `burdin run` never see it (`spec/bench.md`, BN1),
+// so a body that would panic is not even compiled. `bench` also stays an ordinary identifier everywhere except
+// at an item start before a string.
+fn main() {
+    let bench = 3
+    let kept = black_box(bench + black_box(4))
+    println("{}", kept)
+}
+
+bench "never built" {
+    panic("a normal build never runs this")
+}
+//> 7

@@ -22,7 +22,8 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
-| [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, parallelism, output capture, isolation, and discovery. |
+| [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, the doc tests of doc comments, parallelism, output capture, isolation, and discovery. |
+| [`spec/bench.md`](spec/bench.md) | The behavior of `burdin bench`: bench items, warmup and calibration, statistics, baselines, and the profiler hook. |
 | [`spec/fmt.md`](spec/fmt.md) | The behavior of `burdin fmt`: the one style (4-space indentation, 120 columns), comments, blank lines, the magic trailing comma, `use` sorting and grouping, doc-comment code blocks, range formatting, and the command line. |
 | [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the `bindgen` a script may invoke. |
 | [`spec/bindgen.md`](spec/bindgen.md) | `burdin bindgen`: C headers to Burdin declarations through libclang, the layout check, wrappers for `static inline` functions, and `--export` for a C header of what a package exports. |
@@ -133,8 +134,8 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `check`, `fmt`, `doc`, `explain`, `bindgen`, `new`,
-`repl`, and `lsp`.
+The `burdin` command has the subcommands `build`, `run`, `test`, `bench`, `check`, `fmt`, `doc`, `explain`,
+`bindgen`, `new`, `repl`, and `lsp`.
 This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
@@ -149,6 +150,11 @@ usage:
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+  burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
+               [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
+               [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
+               [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
   burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
@@ -192,6 +198,30 @@ test options:
   --junit <file>       also write a JUnit XML report of the run
   -v, --verbose        print the output of passing tests too
 
+bench options (the behavior is spec/bench.md; benchmarks build in the release profile, so --release is the
+default and changes nothing):
+  -j, --jobs <n>       compilation threads only: benches are measured one at a time
+  -p <package>         measure the benches of one package of the build; may repeat
+  --workspace          measure the entry package and every path dependency
+  <filter>...          measure only benches whose full path contains any filter; --filter <text> is the same as a
+                       positional filter
+  --exact              filters and --skip patterns must equal the full path instead of being contained in it
+  --skip <pattern>     do not measure benches whose full path contains pattern; may repeat
+  --timeout <ms>       per-bench timeout (default: 600000; 0 disables it)
+  --warmup <ms>       how long the warmup of each bench runs (default: 100)
+  --sample-count <n>   how many samples each bench takes (default: 20)
+  --sample-time <ms>  the target duration of one sample (default: 5)
+  --list               print the selected benches without measuring them
+  --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
+                       bench per line)
+  --save-baseline <name>  store the measurements under <package>/target/burdin/bench/<name>.json
+  --baseline <name>    compare each measurement with the named baseline and report what changed beyond noise
+  --fail-on-regression <percent>  with --baseline, fail when a bench is this much slower and the change is
+                       beyond noise
+  --profile-time <seconds>  run one selected bench in a loop for this long without measuring, for an external
+                       profiler
+  -v, --verbose        print the output of passing benches too
+
 fmt options:
   --check                  change nothing; list the files that are not formatted and exit with status 1
   --stdin                  format standard input to standard output
@@ -218,10 +248,11 @@ diagnostics:
 
 Long options also accept `--option=value`, and `-j4` is `-j 4`. `-j`/`--jobs` is an option of every command that
 compiles or formats (`build`, `run`, `test`, `check`, `lint`, `doc`, and `fmt`): it bounds the threads the command
-uses, and the output never depends on it. `-p`, `--workspace`, `--filter`, `--exact`, `--skip`,
-`--ignored`/`--include-ignored`, `--failed`, `--shard`, `--timeout`, `--slow-threshold`, `--list`, `--format`,
-`--junit`, and `--verbose` are options of `burdin test` (and so are the filters after the target); any other command
-rejects them.
+uses, and the output never depends on it. ``-p`, `--workspace`, `--filter`, `--exact`, `--skip`, `--timeout`, `--list`, `--format`,
+and `--verbose` are options of `burdin test` and `burdin bench` (and so are the filters after the target);
+`--ignored`/`--include-ignored`, `--failed`, `--shard`, `--slow-threshold`, and `--junit` are options of `burdin test`
+only, and `--save-baseline`, `--baseline`, `--fail-on-regression`, `--profile-time`, `--warmup`, `--sample-count`,
+and `--sample-time` are options of `burdin bench` only; any other command rejects them.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
 
@@ -376,7 +407,7 @@ $ ./target/debug/burdin run args.bd -- x y
 ```
 burdin test <target> [<filter>...] [--release] [-j <n>] [--verbose] [-p <package>]... [--workspace]
             [--exact] [--skip <pattern>]... [--ignored | --include-ignored] [--failed] [--shard <i>/<n>]
-            [--timeout <ms>] [--slow-threshold <ms>] [--list] [--format <human|json>] [--junit <file>]
+            [--timeout <ms>] [--slow-threshold <ms>] [--list] [--doc] [--format <human|json>] [--junit <file>]
             [diagnostics]
 ```
 
@@ -399,6 +430,15 @@ The report is deterministic: failures and the summary follow declaration order, 
 By default only the entry package's tests run. `-p <package>` selects a package of the build (it may repeat), and
 `--workspace` selects the entry package and every path dependency. With more than one package, names are displayed as
 `<package>::<test>`.
+
+Doc tests run with the `test` blocks: every Burdin code block in a `///` or `//!` comment of the selected packages
+is built as its own program against the package as a dependency (its public API only) and run like a `test` block;
+`--doc` runs only them. A doc test's name is `<owner> (line N)` — the documented item (or the file, for module
+documentation) and the line of the block's opening fence — and a failure is reported at the doc comment's file and
+line, with the compile's diagnostics moved from the generated program back to the comment. The block's fence takes
+attributes (`ignore`, `no_run`, `should_panic`, `compile_fail`, `compile_fail E0123`); an unknown attribute warns.
+A line the marker `# ` starts is setup: compiled and hidden from the rendered documentation (`burdin doc` hides it).
+The full behavior is [`spec/test-runner.md`](spec/test-runner.md), "Doc tests".
 
 Every test has a full path, `module.submodule.test name` (the module is the file's path inside `src`, empty for
 `src/main.bd`; with more than one package it starts with `<package>::`). The filters after the target keep the tests
@@ -428,6 +468,49 @@ conflicting flags) or a driver failure after loading. `tests/run_tests.py` reads
 `test result: N passed, M failed` summary; the full behavior, including isolation and discovery, is
 [`spec/test-runner.md`](spec/test-runner.md), and `tests/check_test_runner.py` checks it black-box.
 
+### `burdin bench`
+
+```
+$ cat src/main.bd
+fn main() { println("hello") }
+
+bench "sum a range" {
+    let mut total = 0
+    for i in 0..100 {
+        total = total + black_box(i)
+    }
+    black_box(total)
+}
+
+$ ./target/debug/burdin bench .
+sum a range: 12.40 ns (mean 12.51 ns, ci 95% 12.44 ns to 12.58 ns, mad 0.21 ns, 2/20 outliers)
+bench result: 1 measured, 0 failed
+```
+
+A `bench "name" { ... }` block is measured work: `burdin bench` compiles it in the release profile (that is the
+default; `--release` changes nothing), warms it up, times growing batches to choose how many iterations one sample
+holds, takes `--sample-count` samples of about `--sample-time` milliseconds each, and reports the median, the mean,
+a 95% confidence interval, the median absolute deviation, and the outliers. One call of the bench body is one
+iteration, so anything the body does is measured; `black_box(value)` hands the value back through a barrier the
+optimizer cannot see through, so the work cannot be deleted or hoisted. Every other command strips bench blocks
+from the program, the way they strip `test` blocks.
+
+```
+sum a range: 12.40 ns (mean ..., 2/20 outliers)
+  baseline nightly: -3.1% faster (beyond noise)
+bench result: 1 measured, 0 failed
+```
+
+`--save-baseline <name>` stores the statistics under `<package>/target/burdin/bench/<name>.json`, `--baseline
+<name>` compares each measurement with them and reports `unchanged (within noise)`, `N% slower/faster (beyond
+noise)`, or `new`; `--fail-on-regression <percent>` makes a bench that is slower by more than that percent, beyond
+noise, fail the run for CI. `--profile-time <seconds>` runs exactly one selected bench in a loop, unmeasured, for a
+profiler to attach to. Filters, `--exact`, `--skip`, `-p`, `--workspace`, `--list`, and `--format json` behave as
+they do for `burdin test`, and a bench is always measured alone. The exit status is 0 when every bench was
+measured, 1 when one failed or regressed past the gate, and 2 for a usage error. The full behavior, including the
+harness protocol and the statistics' definitions, is [`spec/bench.md`](spec/bench.md), and
+`tests/check_bench.py` checks it black-box.
+
 ### `burdin fmt`
 
 ```
@@ -441,7 +524,8 @@ skipped); with no path it formats the current directory. The path of every file 
 already formatted is not written, and the result is always a fixed point: running `burdin fmt` again changes nothing.
 Comments and blank lines are kept, lines are at most 120 columns, a list with a trailing comma stays one element
 per line, `use` declarations are sorted and grouped (the standard library, the dependencies in `burdin.toml`, then the
-package), and the code in the fenced blocks of doc comments is formatted too. The formatter checks its own output
+package), and the code in the fenced blocks of doc comments is formatted too (a block with hidden `# ` setup lines
+keeps the shape its author gave it). The formatter checks its own output
 with the compiler's parser: the formatted program must be the same program with the same comments, or the file is
 left alone and the failure is reported as a bug.
 

@@ -15,6 +15,9 @@ pub struct File {
     /// `test` items. They are kept apart from the other items: only `burdin test` declares and checks them, so a
     /// normal build strips them from the program.
     pub tests: Vec<TestDecl>,
+    /// `bench` items, kept apart for the same reason: only `burdin bench` declares and checks them
+    /// (`spec/bench.md`, BN1).
+    pub benches: Vec<BenchDecl>,
     /// The block of every function, method, and `test` body the file wrote, in source order. Code the compiler
     /// generates (derives, `error` declarations) is not listed. The query library uses these to tell a body edit,
     /// which only its own function can observe, from an edit to a declaration (`spec/query.md`, QL2).
@@ -45,6 +48,18 @@ pub struct TestDecl {
 pub struct TestAttr {
     pub name: Ident,
     pub value: Option<TestAttrValue>,
+}
+
+/// `bench "name" { ... }`: one benchmark block, compiled as an ordinary function with no parameters that returns
+/// nothing (`spec/bench.md`, BN1). A benchmark has no attributes in this stage.
+#[derive(Debug, Clone)]
+pub struct BenchDecl {
+    /// The text of the string after `bench`.
+    pub name: String,
+    pub name_span: Span,
+    /// The function the benchmark is compiled as: `__burdin_bench_N`.
+    pub func: FnDecl,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

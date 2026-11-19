@@ -15,8 +15,9 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
    `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md` — the standard-library
    surface, the exact derived members, formatting, error handling, default and named arguments, extension methods,
    operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, the query-based compiler library, and the language server.
-4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`, and
-   `spec/test-runner.md` describe the iteration protocol, `any`/`impl`, and `burdin test`.
+4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`,
+   `spec/test-runner.md`, and `spec/bench.md` describe the iteration protocol, `any`/`impl`, `burdin test`, and
+   `burdin bench`.
 5. `spec/stage0-subset.md` (complete) and `HANDOFF.md` for the current state; `Burdin Language Design.md` for the
    full rationale.
 6. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
@@ -52,6 +53,7 @@ python3 tests/check_build_scripts.py     check build-script caching, declared in
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
+python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
 python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache

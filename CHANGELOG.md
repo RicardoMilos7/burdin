@@ -6,6 +6,54 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Bench blocks and `burdin bench` (issue #251, sub-issues #653-#655)
+
+- `bench "name" { ... }` is a module-scope item beside `test` (`spec/bench.md` BN1, `spec/grammar.md`): a contextual
+  keyword, no attributes, stripped from every build but `burdin bench`. One call of the body is one iteration,
+  and `black_box(value)` (`spec/stdlib.md`) hands a value back through an opaque barrier so measured work cannot be
+  optimized away; at compile time it is the identity, and a view argument is E0120.
+- `burdin bench` (new `crates/burdin_driver/src/bench_runner.rs`, the harness in
+  `burdin_codegen/src/runtime.rs::define_bench_main`) compiles the selected packages in the release profile and
+  measures each bench in its own process: a warmup, a growing-batch calibration so the clock's granularity cannot
+  swamp the estimate, then `--sample-count` samples of about `--sample-time` milliseconds each.
+- The report gives the median, the mean, a 95% confidence interval, the median absolute deviation, and the
+  outliers; `--format json` streams a version 1 event schema, and `--list` prints the selected benches. The filters,
+  `--exact`, `--skip`, `-p`, `--workspace`, and the full-path rules are the test runner's; `-j` bounds compilation
+  only, because benches are measured one at a time.
+- Baselines (#654): `--save-baseline <name>` stores the statistics under `<package>/target/burdin/bench/`, and
+  `--baseline <name>` compares against them, calling a change beyond noise when the medians differ by more than
+  three times the larger spread; `--fail-on-regression <percent>` fails the run for benches that regressed that
+  far, for CI.
+- Profiler hook (#655): `--profile-time <seconds>` runs one selected bench in a loop, with no clock, for an
+  external profiler.
+- `burdin fmt` lays out bench items, `tests/s3_bench/` adds seven conformance tests with the `bench-compile-fail`
+  and `burdin-bench` directives, `tests/check_bench.py` checks the command black-box in every CI job, and the
+  driver, runner, and parser unit tests cover the statistics, the baseline files, the result line, and the parser.
+
+### Doc tests (issues #250, #650-#652)
+
+- `burdin test` runs the `///` and `//!` code blocks of the selected packages' doc comments with the `test` blocks;
+  `burdin test --doc` runs only them (#650). Every Burdin fenced block — untagged, or tagged `burdin` or `bd` — is
+  built as its own one-file package that depends on the documented package, so an example sees its public API only.
+  An example without `fn main` is wrapped in one, its leading declarations (the longest prefix that parses as items)
+  are hoisted above the wrapper, and padding comment lines put every line on the line of its doc comment, so a panic
+  reports the line a reader sees. A failure is reported at the doc comment's file and line: the compile's
+  diagnostics are rewritten from the generated program to the original file before they are shown, and the headings
+  read `---- doc test "<owner> (line N)" at <file>:<line>: <reason> ----`. The doc tests selected run in parallel
+  under `-j`; a one-file target is copied into a package so its examples can import it, and a package with no
+  importable root module gets one note and still runs its examples.
+- The fence's info string carries the block's attributes (#651): `ignore` (not built), `no_run` (compiled, not run),
+  `should_panic`, and `compile_fail` / `compile_fail E0123` (must not compile, with that code when named); an unknown
+  word warns at the fence's line and the block still runs. `--list` prints them in source syntax, and the JSON
+  listing and event stream carry `ignore`, `should_panic`, `no_run`, `compile_fail`, and `compile_fail_code`.
+- A line that begins with `# ` (or is only `#`) inside a Burdin block is setup (#652): `burdin test` compiles it with
+  the marker removed, and `burdin doc` does not show it (a block that is entirely hidden shows nothing). The marker
+  is in `spec/doc.md` DC6; `burdin fmt` leaves a block with hidden lines as written and now recognizes attribute
+  fences (`burdin,no_run`) as Burdin.
+- The `tests/doc/geometry` fixture's example now runs: it hides its `use` line and constructs points with the new
+  `Point.new`. `tests/check_test_runner.py` covers the fixtures in `tests/runner/doctests/`,
+  `tests/runner/doctests-bin/`, and `tests/runner/doctest_one.bd`; `spec/test-runner.md` has the "Doc tests" section.
+
 ### The REPL (issue #578, sub-issues #580, #582, #584)
 
 - `burdin repl` (new crate `burdin_repl`, `spec/repl.md` RP1-RP15) is a session built on the comptime interpreter

@@ -1,0 +1,9 @@
+//@ burdin-bench measured=0 failed=1
+//@ failed-bench: panics on purpose
+
+// A panic aborts the process and fails the bench, with the captured output in the report (`spec/bench.md`, BN12).
+fn main() {}
+
+bench "panics on purpose" {
+    panic("bench panic")
+}

@@ -18,7 +18,7 @@ use burdin_diag::{Code, Diagnostics, FileId};
 use burdin_syntax::ast;
 use burdin_tir::{ExprKind, FloatTy, IntTy, Program, Ty};
 
-use crate::{CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, front_end, render_options};
+use crate::{CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, front_end, render_options};
 
 pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &DiagnosticOptions) -> ExitCode {
     let options = CompileOptions {
@@ -31,7 +31,7 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &
         emit_ir: None,
         link_libs: &[],
         // A library package has no `main`, and the checks are the same.
-        test_mode: true,
+        mode: EntryMode::Test,
         diagnostics,
         comptime_steps: None,
         emit_deps: None,

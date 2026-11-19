@@ -1,9 +1,8 @@
 //! What `burdin test` prints and writes: the human report, `--list`, the JSON event stream, and the JUnit XML file
 //! (`spec/test-runner.md`, "Output and exit status", "Listing tests", and "Machine-readable reports").
 
-use super::{Outcome, Plan, Planned, TestCase};
+use super::{Attrs, Outcome, Plan, Planned, TestCase};
 use burdin_diag::json_escape;
-use burdin_tir::TestAttrs;
 use std::path::Path;
 use std::time::Duration;
 
@@ -53,7 +52,11 @@ pub(super) fn summarize(plan: &Plan, outcomes: &[Option<Outcome>], slow_ms: u64,
 /// the summary line. It runs after every test has finished, so the output is deterministic.
 pub(super) fn print_human(plan: &Plan, outcomes: &[Option<Outcome>], summary: &Summary, verbose: bool) {
     for (index, planned) in plan.tests.iter().enumerate() {
-        let display = &planned.case.display;
+        let case = &planned.case;
+        let display = &case.display;
+        // A doc test reports the doc comment it came from: the file and the line its block starts at.
+        let label = if case.attrs.doc { "doc test" } else { "test" };
+        let at = case.attrs.doc.then(|| format!("{}:{}", case.file, case.line));
         if planned.ignored {
             if verbose {
                 println!("IGNORED {display}");
@@ -63,11 +66,11 @@ pub(super) fn print_human(plan: &Plan, outcomes: &[Option<Outcome>], summary: &S
         let outcome = outcomes[index].as_ref().expect("every runnable test has an outcome");
         if outcome.passed {
             if verbose {
-                print_output(display, outcome);
+                print_output(label, display, outcome, at.as_deref());
                 println!("PASS {display}");
             }
         } else {
-            print_failure(display, outcome);
+            print_failure(label, display, outcome, at.as_deref());
             println!("FAIL {display}");
         }
     }
@@ -88,25 +91,32 @@ fn summary_line(summary: &Summary) -> String {
     line
 }
 
-fn print_failure(display: &str, outcome: &Outcome) {
-    if let Some(note) = &outcome.note
-        && !note.is_empty()
-    {
-        println!("---- test \"{display}\": {note} ----");
+fn print_failure(label: &str, display: &str, outcome: &Outcome, at: Option<&str>) {
+    let reason = outcome.note.as_deref().filter(|note| !note.is_empty());
+    // A doc test's heading carries its location; either heading carries its reason when it has one.
+    match (at, reason) {
+        (Some(at), Some(reason)) => println!("---- {label} \"{display}\" at {at}: {reason} ----"),
+        (Some(at), None) => println!("---- {label} \"{display}\" at {at} ----"),
+        (None, Some(reason)) => println!("---- {label} \"{display}\": {reason} ----"),
+        (None, None) => {}
     }
-    print_output(display, outcome);
+    print_output(label, display, outcome, at);
 }
 
-fn print_output(display: &str, outcome: &Outcome) {
-    print_stream(display, "stdout", &outcome.stdout);
-    print_stream(display, "stderr", &outcome.stderr);
+fn print_output(label: &str, display: &str, outcome: &Outcome, at: Option<&str>) {
+    print_stream(label, display, "stdout", &outcome.stdout, at);
+    print_stream(label, display, "stderr", &outcome.stderr, at);
 }
 
-fn print_stream(display: &str, stream: &str, bytes: &[u8]) {
+fn print_stream(label: &str, display: &str, stream: &str, bytes: &[u8], at: Option<&str>) {
     if bytes.is_empty() {
         return;
     }
-    println!("---- test \"{display}\" {stream} ----");
+    // A captured stream of a doc test is identified the same way its failure heading is.
+    match at {
+        Some(at) => println!("---- {label} \"{display}\" at {at} {stream} ----"),
+        None => println!("---- {label} \"{display}\" {stream} ----"),
+    }
     print!("{}", String::from_utf8_lossy(bytes));
     if !bytes.ends_with(b"\n") {
         println!();
@@ -116,28 +126,48 @@ fn print_stream(display: &str, stream: &str, bytes: &[u8]) {
 // --- --list -------------------------------------------------------------------------------------------------------
 
 /// The attributes of a test as they are written in the source, in a fixed order (`[ignore, timeout(500)]`); empty
-/// when the test has none.
-pub(super) fn attribute_text(attrs: &TestAttrs) -> String {
-    let mut parts = Vec::new();
-    if attrs.ignore {
-        parts.push("ignore".to_string());
-    }
-    if let Some(ms) = attrs.timeout_ms {
-        parts.push(format!("timeout({ms})"));
-    }
-    if attrs.should_panic {
-        match &attrs.should_panic_message {
-            Some(message) => parts.push(format!("should_panic(\"{}\")", json_escape(message))),
-            None => parts.push("should_panic".to_string()),
+/// when the test has none. A doc test lists the attributes of its doc block (`[no_run]`).
+pub(super) fn attribute_text(attrs: &Attrs) -> String {
+    if attrs.doc {
+        let mut parts = Vec::new();
+        if attrs.ignore {
+            parts.push("ignore".to_string());
         }
+        if attrs.no_run {
+            parts.push("no_run".to_string());
+        }
+        if attrs.should_panic {
+            parts.push("should_panic".to_string());
+        }
+        if attrs.compile_fail {
+            match &attrs.compile_fail_code {
+                Some(code) => parts.push(format!("compile_fail {code}")),
+                None => parts.push("compile_fail".to_string()),
+            }
+        }
+        if parts.is_empty() { String::new() } else { format!("[{}]", parts.join(", ")) }
+    } else {
+        let mut parts = Vec::new();
+        if attrs.ignore {
+            parts.push("ignore".to_string());
+        }
+        if let Some(ms) = attrs.timeout_ms {
+            parts.push(format!("timeout({ms})"));
+        }
+        if attrs.should_panic {
+            match &attrs.should_panic_message {
+                Some(message) => parts.push(format!("should_panic(\"{}\")", json_escape(message))),
+                None => parts.push("should_panic".to_string()),
+            }
+        }
+        if attrs.should_fail {
+            parts.push("should_fail".to_string());
+        }
+        if attrs.differential {
+            parts.push("differential".to_string());
+        }
+        if parts.is_empty() { String::new() } else { format!("[{}]", parts.join(", ")) }
     }
-    if attrs.should_fail {
-        parts.push("should_fail".to_string());
-    }
-    if attrs.differential {
-        parts.push("differential".to_string());
-    }
-    if parts.is_empty() { String::new() } else { format!("[{}]", parts.join(", ")) }
 }
 
 /// `--list`: one line per selected test (its full path and attributes) and a count.
@@ -183,7 +213,15 @@ fn identity_json(case: &TestCase) -> String {
     )
 }
 
-fn attributes_json(attrs: &TestAttrs) -> String {
+fn attributes_json(attrs: &Attrs) -> String {
+    if attrs.doc {
+        // The attributes of a doc block; the `test`-block fields do not apply to one.
+        let code = attrs.compile_fail_code.as_deref().map_or("null".to_string(), quoted);
+        return format!(
+            "{{\"ignore\":{},\"should_panic\":{},\"no_run\":{},\"compile_fail\":{},\"compile_fail_code\":{code}}}",
+            attrs.ignore, attrs.should_panic, attrs.no_run, attrs.compile_fail
+        );
+    }
     let timeout = attrs.timeout_ms.map_or("null".to_string(), |ms| ms.to_string());
     let message = attrs.should_panic_message.as_deref().map_or("null".to_string(), quoted);
     format!(
@@ -384,9 +422,10 @@ pub(super) fn write_junit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_runner::Run;
     use std::path::PathBuf;
 
-    fn planned(package: &str, module: &str, name: &str, attrs: TestAttrs, ignored: bool) -> Planned {
+    fn planned(package: &str, module: &str, name: &str, attrs: Attrs, ignored: bool) -> Planned {
         let local = if module.is_empty() { name.to_string() } else { format!("{module}.{name}") };
         Planned {
             case: TestCase {
@@ -398,10 +437,8 @@ mod tests {
                 path: local,
                 file: "src/main.bd".to_string(),
                 line: 7,
-                exe: PathBuf::from("bin"),
-                index: 0,
+                run: Run::Block { exe: PathBuf::from("bin"), index: 0, comptime: None },
                 attrs,
-                comptime: None,
             },
             ignored,
             timeout: None,
@@ -420,26 +457,42 @@ mod tests {
 
     #[test]
     fn attributes_print_in_source_form() {
-        assert_eq!(attribute_text(&TestAttrs::default()), "");
-        let attrs = TestAttrs {
+        assert_eq!(attribute_text(&Attrs::default()), "");
+        let attrs = Attrs {
             ignore: true,
             timeout_ms: Some(500),
             should_panic: true,
             should_panic_message: Some("boom \"x\"".to_string()),
-            ..TestAttrs::default()
+            ..Attrs::default()
         };
         assert_eq!(attribute_text(&attrs), "[ignore, timeout(500), should_panic(\"boom \\\"x\\\"\")]");
-        let attrs = TestAttrs { should_fail: true, differential: false, ..TestAttrs::default() };
+        let attrs = Attrs { should_fail: true, ..Attrs::default() };
         assert_eq!(attribute_text(&attrs), "[should_fail]");
+        // A doc block lists its own attributes, in the order they are written in the spec.
+        let attrs = Attrs { doc: true, ignore: true, no_run: true, ..Attrs::default() };
+        assert_eq!(attribute_text(&attrs), "[ignore, no_run]");
+        let attrs = Attrs {
+            doc: true,
+            should_panic: true,
+            compile_fail: true,
+            compile_fail_code: Some("E0123".to_string()),
+            ..Attrs::default()
+        };
+        assert_eq!(attribute_text(&attrs), "[should_panic, compile_fail E0123]");
     }
 
     #[test]
     fn attributes_json_lists_every_attribute() {
-        let attrs = TestAttrs { timeout_ms: Some(0), should_fail: true, ..TestAttrs::default() };
+        let attrs = Attrs { timeout_ms: Some(0), should_fail: true, ..Attrs::default() };
         assert_eq!(
             attributes_json(&attrs),
             "{\"ignore\":false,\"timeout_ms\":0,\"should_panic\":false,\"should_panic_message\":null,\
              \"should_fail\":true,\"differential\":false}"
+        );
+        let attrs = Attrs { doc: true, no_run: true, compile_fail: true, ..Attrs::default() };
+        assert_eq!(
+            attributes_json(&attrs),
+            "{\"ignore\":false,\"should_panic\":false,\"no_run\":true,\"compile_fail\":true,\"compile_fail_code\":null}"
         );
     }
 
@@ -464,8 +517,8 @@ mod tests {
     fn slow_tests_are_listed_from_the_threshold() {
         let plan = Plan {
             tests: vec![
-                planned("app", "", "quick", TestAttrs::default(), false),
-                planned("app", "", "slow", TestAttrs::default(), false),
+                planned("app", "", "quick", Attrs::default(), false),
+                planned("app", "", "slow", Attrs::default(), false),
             ],
             ignored: 0,
             filtered_out: 0,
@@ -481,9 +534,9 @@ mod tests {
     fn junit_groups_by_package_and_marks_failures_and_skips() {
         let plan = Plan {
             tests: vec![
-                planned("app", "geometry", "area", TestAttrs::default(), false),
-                planned("app", "", "boom", TestAttrs::default(), false),
-                planned("lib", "", "later", TestAttrs { ignore: true, ..TestAttrs::default() }, true),
+                planned("app", "geometry", "area", Attrs::default(), false),
+                planned("app", "", "boom", Attrs::default(), false),
+                planned("lib", "", "later", Attrs { ignore: true, ..Attrs::default() }, true),
             ],
             ignored: 1,
             filtered_out: 0,

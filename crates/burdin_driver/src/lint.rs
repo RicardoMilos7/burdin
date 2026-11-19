@@ -4,8 +4,8 @@
 //! checks that the edited package still compiles, and writes every file or none.
 
 use crate::{
-    CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, flag_without_value, front_end, jobs_or_default,
-    option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
+    CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, flag_without_value, front_end,
+    jobs_or_default, option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
 };
 use burdin_diag::{DiagnosticFormat, Diagnostics, FileId, Severity};
 use burdin_lint::{Config, Input, Level, Lint, Source};
@@ -155,7 +155,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         emit_ir: None,
         link_libs: &[],
         // Test blocks are linted too, and a library package has no `main`.
-        test_mode: true,
+        mode: EntryMode::Test,
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,

@@ -13,7 +13,7 @@ pub(super) fn pattern_matches(pattern: &str, path: &str, exact: bool) -> bool {
 }
 
 /// A test is selected by name when no filter was given or any filter matches, and no `--skip` pattern matches.
-pub(super) fn name_selected(args: &Args, path: &str) -> bool {
+pub(crate) fn name_selected(args: &Args, path: &str) -> bool {
     let wanted = args.filters.is_empty() || args.filters.iter().any(|filter| pattern_matches(filter, path, args.exact));
     wanted && !args.skip.iter().any(|pattern| pattern_matches(pattern, path, args.exact))
 }
@@ -187,7 +187,7 @@ fn unescape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burdin_tir::TestAttrs;
+    use crate::test_runner::{Attrs, Run};
     use std::path::PathBuf;
 
     fn case(package: &str, module: &str, name: &str, ignore: bool) -> TestCase {
@@ -201,10 +201,8 @@ mod tests {
             path: local,
             file: "src/main.bd".to_string(),
             line: 1,
-            exe: PathBuf::from("bin"),
-            index: 0,
-            attrs: TestAttrs { ignore, ..TestAttrs::default() },
-            comptime: None,
+            run: Run::Block { exe: PathBuf::from("bin"), index: 0, comptime: None },
+            attrs: Attrs { ignore, ..Attrs::default() },
         }
     }
 

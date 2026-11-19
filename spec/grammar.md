@@ -40,12 +40,14 @@ immediately after a `.` in a member position, where it is a member name: that is
 `impl` now that both are keywords.
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
-by a string), `derives` (after a struct or enum name), `requires` (after an interface name), `repr` (after a struct
+by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1), `derives` (after a struct or enum name),
+`requires` (after an interface name), `repr` (after a struct
 name), `from` (after an error variant's payload), `pub` (immediately before `use`), `select` (an expression start,
 followed by `{` on the same line, `channels.md` CH6), `default` (the head of a `select` arm), and `Fn`/`FnMut`/`FnOnce` (a
 closure type when followed by `(`). The attribute names of a test item (`ignore`, `timeout`, `should_panic`,
 `should_fail`, `differential`) are contextual only inside the `[...]` after the test name; the checker rejects an
-unknown name with E0170 ([`test-runner.md`](test-runner.md)).
+unknown name with E0170 ([`test-runner.md`](test-runner.md)). A bench item takes no attributes in this stage, so
+anything after its name is a syntax error.
 
 **Integer literals**: decimal `123`, hex `0xFF`, octal `0o17`, binary `0b1010`, with `_` allowed between digits. No suffixes;
 the type comes from context, or from the other operand when the literal is on the left of a binary operator, and
@@ -101,7 +103,7 @@ foo()
 ```
 File          = { Item } ;
 
-Item          = TestItem | UseItem | ImplBlock | ComptimeAssert
+Item          = TestItem | BenchItem | UseItem | ImplBlock | ComptimeAssert
               | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | DeriveItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
@@ -163,6 +165,9 @@ ExternParams  = Param { "," Param } [ "," [ "..." ] ] ;   (* `...` only in a dec
 TestItem      = "test" STRING [ TestAttrs ] Block ;
 TestAttrs     = "[" TestAttr { "," TestAttr } [ "," ] "]" ;
 TestAttr      = IDENT [ "(" ( INT | STRING ) ")" ] ;   (* ignore, timeout(ms), should_panic[(message)], should_fail, differential *)
+
+(* `bench.md`, BN1. Only `burdin bench` declares and checks these; every other build strips them. *)
+BenchItem     = "bench" STRING Block ;
 
 Sep           = "," | NL ;
 ```

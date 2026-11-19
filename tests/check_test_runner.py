@@ -20,7 +20,11 @@ What it checks (issues #438, #439, #440, #441, #442, #443, #444, #638, #639, #64
   * --list prints the selected tests and their attributes without running them, in the human and JSON formats (#639);
   * --format json streams events and --junit writes a JUnit XML report, and the human output does not change (#640);
   * --failed reruns the tests that failed before, --shard runs a deterministic slice, and --slow-threshold lists the
-    tests that took long (#641).
+    tests that took long (#641);
+  * the doc tests of `///` and `//!` comments run with the `test` blocks, `--doc` runs only them, and a failure
+    reports the doc comment's file and line, not the generated program; the attributes (`ignore`, `no_run`,
+    `should_panic`, `compile_fail`) decide one, hidden `# ` setup lines are compiled, and a one-file target or a
+    package without an importable root module still runs its examples (#250, #650, #651, #652).
 """
 
 import json
@@ -668,10 +672,153 @@ with harness.temporary_dir("burdin-runner-") as work:
     expect_status("slow (bad threshold)", 2)
     expect_contains("slow (bad threshold)", "milliseconds", err)
 
+    # --- doc tests (issues #250, #650, #651, #652) -----------------------------------
+
+    doctests = fixtures / "doctests"
+    # The report names the file exactly as the target was given: the fixture's own path.
+    lib = str(doctests / "src" / "lib.bd")
+
+    # The fixture's `test` block runs with its doc tests, and the summary counts both.
+    run_driver(burdin, "test", str(doctests), "-j", "4")
+    expect_status("doc tests (run)", 1)
+    expect_contains("doc tests (run)", "test result: 12 passed, 3 failed, 1 ignored", out)
+    expect_contains("doc tests (run)", "FAIL failing (line 25)", out)
+    expect_contains("doc tests (run)", "FAIL not_compiling (line 33)", out)
+    expect_contains("doc tests (run)", "FAIL wrong_code (line 72)", out)
+    expect_not_contains("doc tests (run)", "FAIL block runs too", out)
+    # An unknown attribute warns on standard error, and the example still runs.
+    expect_contains("doc tests (unknown attribute)", f"warning: {lib}:94: unknown code-block attribute `mystery`", err)
+
+    # A failure reports the doc comment's file and line, never the generated program. A run-time failure's own
+    # backtrace still names the binary it came from; the report's locations do not.
+    run_driver(burdin, "test", str(doctests), "--doc", "--filter", "not_compiling", "-j", "4")
+    expect_status("doc tests (one example)", 1)
+    expect_contains("doc tests (a compile failure's location)", f'at {lib}:33: did not compile ----', out)
+    expect_contains("doc tests (a compile failure's location)", f"{lib}:35:20: error[E0003]", out)
+    expect_not_contains("doc tests (a compile failure's location)", "doctest-", out)
+    # An example that names a code it does not fail with says so in its reason.
+    run_driver(burdin, "test", str(doctests), "--doc", "--filter", "wrong_code", "-j", "4")
+    expect_status("doc tests (one example, wrong code)", 1)
+    expect_contains(
+        "doc tests (the wrong code)", f"at {lib}:72: expected the example to fail with E0002, but it failed with E0003 ----", out
+    )
+
+    # `--doc` runs only the doc tests: the package's `test` block is neither compiled nor run.
+    run_driver(burdin, "test", str(doctests), "--doc", "-j", "4")
+    expect_status("doc tests (--doc)", 1)
+    expect_contains("doc tests (--doc)", "test result: 11 passed, 3 failed, 1 ignored", out)
+    run_driver(burdin, "test", str(doctests), "--doc", "--filter", "bad", "--list")
+    expect_equal(
+        "doc tests (a filter selects by path)",
+        out,
+        "bad (line 56) [compile_fail]\nbad_with_code (line 64) [compile_fail E0003]\n2 tests, 13 filtered out",
+    )
+    # The attributes decide an example without running it.
+    run_driver(burdin, "test", str(doctests), "--doc", "--filter", "bad", "-j", "4")
+    expect_status("doc tests (compile_fail passes)", 0)
+    expect_contains("doc tests (compile_fail passes)", "test result: 2 passed, 0 failed", out)
+
+    # The human listing names every doc test with its owner and the line of its block.
+    run_driver(burdin, "test", str(doctests), "--doc", "--list")
+    expect_equal(
+        "doc tests (--doc --list)",
+        out,
+        "\n".join(
+            [
+                "extra.extra (line 3)",
+                "extra.extra_double (line 10)",
+                "lib (line 5)",
+                "double (line 14)",
+                "failing (line 25)",
+                "not_compiling (line 33)",
+                "checked_only (line 41) [no_run]",
+                "panicking (line 49) [should_panic]",
+                "bad (line 56) [compile_fail]",
+                "bad_with_code (line 64) [compile_fail E0003]",
+                "wrong_code (line 72) [compile_fail E0002]",
+                "skipped (line 80) [ignore]",
+                "unknown_attr (line 94)",
+                "with_helper (line 101)",
+                "whole_program (line 110)",
+                "15 tests",
+            ]
+        ),
+    )
+    # Without --doc the listing holds the `test` blocks too, first in the package.
+    run_driver(burdin, "test", str(doctests), "--list")
+    expect_equal("doc tests (blocks come first)", out.split("\n")[0], "block runs too")
+    expect_equal("doc tests (the count)", out.split("\n")[-1], "16 tests")
+
+    # The JSON listing carries the doc attributes and the original file and line.
+    run_driver(burdin, "test", str(doctests), "--doc", "--list", "--format", "json")
+    entries = json_lines(out)
+    expect_equal("doc tests (json identity)", [entry["name"] for entry in entries[:2]], ["extra (line 3)", "extra_double (line 10)"])
+    expect_equal("doc tests (json module)", entries[0]["module"], "extra")
+    expect_equal("doc tests (json line)", entries[2]["line"], 5)
+    no_run = next(entry for entry in entries if entry["name"] == "checked_only (line 41)")
+    expect_equal("doc tests (json no_run)", no_run["attributes"], {
+        "ignore": False, "should_panic": False, "no_run": True, "compile_fail": False, "compile_fail_code": None
+    })
+    with_code = next(entry for entry in entries if entry["name"] == "bad_with_code (line 64)")
+    expect_equal("doc tests (json compile_fail)", with_code["attributes"], {
+        "ignore": False, "should_panic": False, "no_run": False, "compile_fail": True, "compile_fail_code": "E0003"
+    })
+
+    # The event stream decides a doc test without a process: the compile's diagnostics are its captured output.
+    run_driver(burdin, "test", str(doctests), "--doc", "--filter", "wrong_code", "--format", "json")
+    expect_status("doc tests (json decided)", 1)
+    events = json_lines(out)
+    expect_equal("doc tests (json events)", [event["event"] for event in events],
+                 ["suite_started", "test_started", "test_failed", "suite_finished"])
+    failed = next((event for event in events if event["event"] == "test_failed"), {})
+    expect_equal(
+        "doc tests (json reason)",
+        failed.get("reason"),
+        "expected the example to fail with E0002, but it failed with E0003",
+    )
+    # The paths in a diagnostic use the platform's separator; compare with forward slashes everywhere.
+    expect_contains(
+        "doc tests (json mapped diagnostics)",
+        "src/lib.bd:74:20: error[E0003]",
+        failed.get("stderr", "").replace("\\", "/"),
+    )
+    if failed.get("reason") is None:
+        add_problem(f"doc tests (json events): standard output was {out!r}, standard error was {err!r}")
+
+    # Passing tests print their `PASS` line only with --verbose, like a `test` block.
+    run_driver(burdin, "test", str(doctests), "--doc", "--filter", "whole_program", "-v")
+    expect_status("doc tests (--verbose)", 0)
+    expect_contains("doc tests (--verbose)", "PASS whole_program (line 110)", out)
+
+    # A one-file target is a package of one module: an example imports it by its own stem.
+    one = fixtures / "doctest_one.bd"
+    run_driver(burdin, "test", str(one), "--doc", "-j", "2")
+    expect_status("doc tests (one file)", 0)
+    expect_contains("doc tests (one file)", "test result: 2 passed, 0 failed", out)
+
+    # A package without an importable root module still runs its examples, and says they cannot import it.
+    binder = fixtures / "doctests-bin"
+    run_driver(burdin, "test", str(binder), "--doc", "-j", "2")
+    expect_status("doc tests (no root module)", 0)
+    expect_contains("doc tests (no root module)", "test result: 1 passed, 0 failed", out)
+    expect_contains(
+        "doc tests (no root module)",
+        "note: package `binder` has no importable root module (`src/binder.bd` or `src/lib.bd`); its doc tests cannot import it",
+        err,
+    )
+
+    # The examples of the `burdin doc` fixture package pass: the site shows what really runs.
+    run_driver(burdin, "test", str(harness.TESTS / "doc" / "geometry"), "--doc", "-j", "4")
+    expect_status("doc tests (the documentation fixture)", 0)
+    expect_contains("doc tests (the documentation fixture)", "test result: 1 passed, 0 failed", out)
+
     # The new options belong to `burdin test`.
     run_driver(burdin, "build", str(selection), "--list")
     expect_status("options (--list on build)", 2)
     expect_contains("options (--list on build)", "only valid for `burdin test`", err)
+    run_driver(burdin, "build", str(selection), "--doc")
+    expect_status("options (--doc on build)", 2)
+    expect_contains("options (--doc on build)", "only valid for `burdin test`", err)
 
 print(f"Checked {checks} runner behaviors")
 if harness.report_problems(problems):

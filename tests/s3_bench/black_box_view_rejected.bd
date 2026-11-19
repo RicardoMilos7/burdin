@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// The barrier hands back a fresh value with no storage a view could point into, so a view argument is E0120
+// (`spec/bench.md`, BN9).
+fn main() {
+    let text = "hello"
+    let kept = black_box(text) //~ E0120
+}

@@ -1,0 +1,17 @@
+//! Doc tests of a one-file target: the file is copied into a package of its own, so an example reaches it as
+//! `use doctest_one`.
+//!
+//! ```
+//! # use doctest_one.{double}
+//! assert_eq(double(2), 4)
+//! ```
+
+/// Doubles an integer.
+///
+/// ```
+/// # use doctest_one.{double}
+/// assert_eq(double(0), 0)
+/// ```
+fn double(x: i32): i32 {
+    2 * x
+}

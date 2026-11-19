@@ -3,8 +3,8 @@
 //! syntax trees with `burdin_doc`, and writes a static HTML site, a JSON document, or a coverage report.
 
 use crate::{
-    CompileOptions, DiagnosticOptions, FrontEnd, SourceOverrides, flag_without_value, front_end, jobs_or_default,
-    option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
+    CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, flag_without_value, front_end,
+    jobs_or_default, option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
 };
 use burdin_diag::{DiagnosticFormat, Severity};
 use std::collections::BTreeSet;
@@ -138,7 +138,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         emit_ir: None,
         link_libs: &[],
         // A library package has no `main`, and the `test` blocks are not part of the documented interface.
-        test_mode: true,
+        mode: EntryMode::Test,
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,

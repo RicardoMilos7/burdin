@@ -1,0 +1,7 @@
+fn main() {}
+
+// Only the entry package's benches run by default; `-p lib` selects the dependency's instead
+// (spec/bench.md, BN2).
+bench "app bench" {
+    black_box(1)
+}

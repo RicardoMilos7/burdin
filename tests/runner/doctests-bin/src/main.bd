@@ -1,0 +1,17 @@
+//! A binary-only package: no `src/binder.bd` and no `src/lib.bd`, so an example cannot import it and the runner
+//! says so.
+
+/// Says hello.
+///
+/// The example stands alone: nothing of this package can be named from outside it.
+///
+/// ```
+/// println("no package needed")
+/// ```
+fn hello() {
+    println("hello")
+}
+
+fn main() {
+    hello()
+}

@@ -84,7 +84,7 @@ impl Sema<'_> {
             self.globals.debug_assert_fn = func(&self.globals, "debug_assert");
             self.globals.debug_assert_eq_gen = generic(&self.globals, "debug_assert_eq");
             self.globals.debug_assert_ne_gen = generic(&self.globals, "debug_assert_ne");
-            if self.test_mode {
+            if self.mode == crate::EntryMode::Test {
                 self.globals.test_assert = func(&self.globals, "__test_assert");
                 self.globals.test_assert_eq = generic(&self.globals, "__test_assert_eq");
                 self.globals.test_assert_ne = generic(&self.globals, "__test_assert_ne");
@@ -166,7 +166,7 @@ impl Sema<'_> {
                 }
             }
         }
-        if self.test_mode {
+        if self.mode == crate::EntryMode::Test {
             self.install_test_assertions(std_modules.as_slice());
         }
     }

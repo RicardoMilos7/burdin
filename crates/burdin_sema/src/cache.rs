@@ -482,12 +482,12 @@ impl visit::VisitMut for SpanWalker<'_> {
 pub(crate) fn declaration_fingerprint(
     packages: &[crate::Package<'_>],
     entry: (usize, usize),
-    test_mode: bool,
+    mode: crate::EntryMode,
     traces: bool,
     sources: &SourceMap,
 ) -> Fp {
     let mut h = Fingerprinter::new();
-    (entry, test_mode, traces).hash(&mut h);
+    (entry, mode, traces).hash(&mut h);
     for package in packages {
         (&package.name, package.is_root, &package.deps, package.root_module).hash(&mut h);
         for module in &package.modules {

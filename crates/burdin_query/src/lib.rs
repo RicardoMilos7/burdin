@@ -23,6 +23,7 @@ pub use api::{
     Convention, DefinitionKind, ExprFacts, ItemSignature, LocalUse, Location, Member, MoveEvent, OwnedLocal, Ownership,
     ParamInfo, Resolution, StmtInfo, StmtKind, SyntaxTree, Trivia, TriviaKind, Typed,
 };
+pub use burdin_sema::EntryMode;
 pub use db::{Analysis, Budget, CancelHandle, Cancelled, Db, Options, Parsed, env_jobs};
 pub use navigate::{CallSite, FunctionInfo, LocalInfo, ModuleInfo, Occurrence, PackageInfo, TestInfo};
 pub use stats::{Counters, RevisionStats};

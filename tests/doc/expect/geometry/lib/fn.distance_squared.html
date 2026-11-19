@@ -28,14 +28,14 @@
 <div id="search-results" hidden></div>
 <div id="content">
 <h1><span class="kind">function</span> <span class="name">distance_squared</span></h1>
-<p class="source">in <a href="../lib/index.html">geometry</a> &middot; src/lib.bd:25</p>
+<p class="source">in <a href="../lib/index.html">geometry</a> &middot; src/lib.bd:26</p>
 <pre class="signature"><code>fn distance_squared(a: <a href="../shapes/struct.Point.html">Point</a>, b: <a href="../shapes/struct.Point.html">Point</a>): i32</code></pre>
 <div class="docs">
 <p>Returns the squared distance between two points.</p>
 <p>This is cheaper than a distance because it needs no square root.</p>
 <h3 id="doc-errors">Errors</h3>
 <p>It never fails. <a href="../shapes/struct.Circle.html#method.new">Circle.new</a> is the call that can, with <a href="../shapes/error.GeometryError.html#variant.NegativeRadius">GeometryError.NegativeRadius</a>.</p>
-<pre><code class="language-burdin">let d = distance_squared(Point { x: 0, y: 0, tag: 0 }, Point { x: 3, y: 4, tag: 0 })
+<pre><code class="language-burdin">let d = distance_squared(Point.new(0, 0), Point.new(3, 4))
 assert_eq(d, 25)
 </code></pre>
 </div>

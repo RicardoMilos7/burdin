@@ -373,6 +373,8 @@ impl<'a> Checker<'a> {
                     self.expr(&args[1], Mode::Move);
                 }
                 tir::Builtin::ClosureOwn => self.expr(&args[0], Mode::Move),
+                // The barrier takes the value and hands it back (`spec/bench.md`, BN9).
+                tir::Builtin::BlackBox => self.expr(&args[0], Mode::Move),
                 tir::Builtin::Rt(op) if op.takes_closure() => {
                     for (i, arg) in args.iter().enumerate() {
                         self.expr(arg, if i + 1 == args.len() { Mode::Move } else { Mode::Use });

@@ -72,7 +72,7 @@ fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path
         link_libs: &[],
         // The session's `test` items are checked by the interpreter's analysis; a native build is an ordinary
         // program, so they are stripped as in every build.
-        test_mode: false,
+        mode: crate::EntryMode::Build,
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,

@@ -136,10 +136,12 @@ pub(crate) struct Sema<'t> {
     pub(crate) generic_fn_bounds: Vec<(usize, &'t ast::FnDecl, usize)>,
     /// Every `Drop::drop` method and where it was declared, to check its signature once all are known.
     pub(crate) drop_checks: Vec<(FuncId, Span)>,
-    /// Declare and check the `test` items of the entry package (what `burdin test` builds).
-    pub(crate) test_mode: bool,
+    /// Declare and check the entry package's `test` or `bench` items: what `burdin test` and `burdin bench` build.
+    pub(crate) mode: crate::EntryMode,
     /// The `test` blocks that were declared, in declaration order.
     pub(crate) tests: Vec<tir::TestEntry>,
+    /// The `bench` blocks that were declared, in declaration order (`spec/bench.md`).
+    pub(crate) benches: Vec<tir::BenchEntry>,
     /// Record the source locations of dynamic-error conversions (a debug build; `spec/errors.md`, ERR7).
     pub(crate) traces: bool,
     /// Where the paths, lines, and columns of trace frames come from.
@@ -153,7 +155,7 @@ impl<'t> Sema<'t> {
         packages: &'t [crate::Package<'t>],
         entry_package: usize,
         entry_module: usize,
-        test_mode: bool,
+        mode: crate::EntryMode,
         traces: bool,
         sources: &'t SourceMap,
     ) -> Self {
@@ -216,8 +218,9 @@ impl<'t> Sema<'t> {
             export_srcs: Vec::new(),
             generic_fn_bounds: Vec::new(),
             drop_checks: Vec::new(),
-            test_mode,
+            mode,
             tests: Vec::new(),
+            benches: Vec::new(),
             traces,
             sources,
         }
@@ -302,9 +305,9 @@ impl<'t> Sema<'t> {
         closures: Vec<tir::Closure>,
         diags: &mut Diagnostics,
     ) -> tir::Program {
-        // A test build replaces the program's entry point with the test dispatcher: the user's `main` is not run,
-        // and a package whose tests all live in other files needs none.
-        let main = if self.test_mode { None } else { self.find_main(diags) };
+        // A test or bench build replaces the program's entry point with its dispatcher: the user's `main` is not
+        // run, and a package whose items all live in other files needs none.
+        let main = if self.mode.wants_main() { self.find_main(diags) } else { None };
         check_const_cycles(&consts, &self.const_decls.iter().map(|c| c.decl).collect::<Vec<_>>(), diags);
         let mut checks = Diagnostics::default();
         self.check_drop_signatures(&mut checks);
@@ -336,6 +339,7 @@ impl<'t> Sema<'t> {
             externs,
             main,
             tests: self.tests,
+            benches: self.benches,
             any_ifaces,
             any_vtables,
             any_type_ids,

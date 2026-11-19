@@ -148,7 +148,7 @@ struct Repl<'a, 'n> {
 impl<'a, 'n> Repl<'a, 'n> {
     fn new(config: &'a mut Config<'n>) -> Repl<'a, 'n> {
         let options = burdin_query::Options {
-            test_mode: true,
+            mode: burdin_query::EntryMode::Test,
             release: config.release,
             comptime_steps: config.steps,
             no_cache: false,

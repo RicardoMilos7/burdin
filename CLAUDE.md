@@ -32,7 +32,8 @@ not updated and may disagree with the repository.
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
    `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
    default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
-   is the behavior of `burdin test`, `spec/fmt.md` is the behavior of `burdin fmt` (the one style, comments, `use`
+   is the behavior of `burdin test`, `spec/bench.md` is the behavior of `burdin bench` (bench items, the harness,
+   statistics, baselines, `black_box`, and the profiler hook), `spec/fmt.md` is the behavior of `burdin fmt` (the one style, comments, `use`
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
@@ -97,6 +98,7 @@ python3 tests/check_build_scripts.py     check build-script caching, declared in
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
+python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
 python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
@@ -165,9 +167,10 @@ crates/
                             (`complete.rs`), the raw terminal (`terminal.rs`), the line editor with history
                             (`editor.rs`), and the highlighter (`highlight.rs`); it never links LLVM, and the driver
                             hands it `:compile` and `:ir`
-  burdin_driver/            the `burdin` binary: build, run, test, check, fmt, lint, doc, bindgen, lsp; it runs its front
-                            end through `burdin_query`, and keeps build scripts (`build.rs`), the bindgen command
-                            line (`bindgen.rs`), and the export header built from the checked program (`export.rs`)
+  burdin_driver/            the `burdin` binary: build, run, test, bench, check, fmt, lint, doc, bindgen, repl, lsp; it runs its
+                            front end through `burdin_query`, and keeps build scripts (`build.rs`), the bench runner
+                            (`bench_runner.rs`), the bindgen command line (`bindgen.rs`), and the export header built
+                            from the checked program (`export.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, code generation, and the query library's keystroke edits
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
