@@ -65,6 +65,9 @@ jobs:
       - name: Install LLVM 21
         run: |
           cache=~/.cache/burdin/llvm-21
+          # The runner image's package index can be older than the mirror, and a mirror can answer 503 for minutes:
+          # apt retries each download, and retry.sh retries whole apt and llvm.sh commands with a growing pause.
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
           if [ "${{ steps.cache-llvm.outputs.cache-hit }}" = "true" ]; then
             sudo rm -rf /usr/lib/llvm-21
             sudo cp -a "$cache/llvm-21" /usr/lib/llvm-21
@@ -72,13 +75,14 @@ jobs:
               sudo cp -a "$cache/root/." /
             fi
             # The runner image's package index can be older than the mirror (gdb's libc6-dbg 404s without this).
-            sudo apt-get update
-            sudo apt-get install -y libzstd-dev zlib1g-dev gdb
+            bash .github/scripts/retry.sh sudo apt-get update
+            bash .github/scripts/retry.sh sudo apt-get install -y libzstd-dev zlib1g-dev gdb
           else
+            bash .github/scripts/retry.sh sudo apt-get update
             wget -q https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
-            sudo ./llvm.sh 21
-            sudo apt-get install -y llvm-21-dev libclang-21-dev libpolly-21-dev libzstd-dev zlib1g-dev gdb
+            bash .github/scripts/retry.sh sudo ./llvm.sh 21
+            bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libclang-21-dev libpolly-21-dev libzstd-dev zlib1g-dev gdb
             mkdir -p "$cache/root"
             sudo cp -a /usr/lib/llvm-21 "$cache/llvm-21"
             # Ubuntu splits the headers and libLLVM out of the tree: the in-tree symlinks
