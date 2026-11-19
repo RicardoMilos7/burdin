@@ -1,0 +1,4 @@
+/// Twice the number.
+fn twice(a: i32): i32 {
+    a * 2
+}

@@ -10,6 +10,25 @@ close-out checklist in `AGENTS.md`).
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
 
+### Language server: completion, snippets, and the built-ins (issues #819-#824)
+
+`spec/lsp.md` (LS8, LS12, LS13) is the specification; `crates/burdin_lsp/tests/completion.rs` checks it.
+
+- **Built-ins without source.** `println`, `format`, `panic`, the built-in types, and their compiler-provided methods
+  (`String.new`, `str.len`, `i32.to_string`, `List.push`, ...) are declared in a generated, read-only `builtins.bd`
+  beside the materialized standard library: go to definition lands there, and hover and signature help show the
+  declaration (`fn println(fmt: str, ...)`, with the variadic part as the active parameter after `fmt`).
+- **Members.** After a type name its associated functions (`String.`, `i32.`, `f64.parse`); after a literal or a
+  primitive value its built-in methods, the prelude's extension methods, and what an implementation or derive provides
+  (`to_string`, `clone`, `cmp`); after a prelude-bound standard module (`mem.`, `fs.`) its items. An empty statement
+  offers the whole prelude and the standard modules.
+- **Contexts.** `self`, `mut self`, and `own self` only as a method's first parameter; `derives` after `struct Name` or
+  `enum Name`, and inside `derives (...)` the seven built-in derives and the user `derive` declarations in scope.
+- **Snippets and calls.** With the client's `snippetSupport`: item snippets at the top level (`main`, `fn`, `struct`,
+  `enum`, `error enum`, `interface`, impl blocks, `test`, `bench`), a method snippet in an impl block, and statement
+  snippets in a body (`if`, `match`, `for`, `while`); a completed function inserts `name($0)` (opening signature help)
+  or `name()$0`, but not before an existing `(` or in a `use` path.
+
 ### Dependencies: `burdin add` and `burdin.lock` (issues #238, #239)
 
 `spec/packages.md` (PKG1-PKG14) is the specification; `tests/check_packages.py` checks it and every CI job runs it.

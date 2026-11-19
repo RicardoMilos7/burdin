@@ -118,6 +118,8 @@ pub struct ClientCaps {
     pub hierarchical_symbols: bool,
     pub code_lens_refresh: bool,
     pub inlay_hint_refresh: bool,
+    /// `textDocument.completion.completionItem.snippetSupport`: completion may insert snippets (LS12).
+    pub snippets: bool,
 }
 
 /// An open document.
@@ -537,6 +539,7 @@ impl Server {
             hierarchical_symbols: flag(&["textDocument", "documentSymbol", "hierarchicalDocumentSymbolSupport"]),
             code_lens_refresh: flag(&["workspace", "codeLens", "refreshSupport"]),
             inlay_hint_refresh: flag(&["workspace", "inlayHint", "refreshSupport"]),
+            snippets: flag(&["textDocument", "completion", "completionItem", "snippetSupport"]),
         };
         self.config = self.config.apply(params.get("initializationOptions"));
         let mut folders: Vec<PathBuf> = params
@@ -709,6 +712,9 @@ impl Server {
 
     /// The package that owns a file, loading it when needed (`spec/lsp.md`, LS4).
     pub fn owner(&mut self, path: &str) -> Option<usize> {
+        if path == crate::builtins::PATH {
+            return (!self.packages.is_empty()).then_some(0);
+        }
         if path.starts_with("<std>/") {
             return self.packages.iter().position(|p| p.has_file(path));
         }
