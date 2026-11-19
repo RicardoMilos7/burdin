@@ -407,6 +407,8 @@ with harness.temporary_dir("burdin-release-") as work:
     # HOME and never touch the real one.
     (work / "home").mkdir()
     installer_env["HOME"] = str(work / "home")
+    # fish's startup file follows XDG_CONFIG_HOME, which CI runners set to the real one.
+    installer_env.pop("XDG_CONFIG_HOME", None)
 
     linux_archive = dist_a / "burdin-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
     if INSTALL_SH.is_file() and linux_archive.is_file():
@@ -459,36 +461,46 @@ with harness.temporary_dir("burdin-release-") as work:
         def profile_lines(path):
             return path.read_text().split("\n") if path.is_file() else []
 
-        bash_home = work / "path-home-bash"
-        bash_home.mkdir()
-        bash_dir = work / "install-path-bash"
-        bash_line = f'export PATH="{bash_dir}:$PATH"'
-        for run_number in (1, 2):
-            check()
-            outcome = run_installer(bash_home, bash_dir, "/bin/bash")
-            if outcome.returncode != 0:
-                add_problem(
-                    f"install.sh PATH run {run_number} (bash): {harness.text(outcome.stdout).rstrip(chr(10))}"
-                )
-                break
-            check()
-            count = profile_lines(bash_home / ".bashrc").count(bash_line)
-            if count != 1:
-                add_problem(
-                    f"install.sh PATH run {run_number} (bash): {count} PATH lines in .bashrc, expected 1"
-                )
-
-        zsh_home = work / "path-home-zsh"
-        zsh_home.mkdir()
-        zsh_dir = work / "install-path-zsh"
-        check()
-        outcome = run_installer(zsh_home, zsh_dir, "/bin/zsh")
-        if outcome.returncode != 0:
-            add_problem(f"install.sh PATH (zsh): {harness.text(outcome.stdout).rstrip(chr(10))}")
-        else:
-            check()
-            if profile_lines(zsh_home / ".zshrc").count(f'export PATH="{zsh_dir}:$PATH"') != 1:
-                add_problem("install.sh PATH (zsh): the install directory is not in .zshrc once")
+        # On Windows, Git Bash is handed a C:\ path, and a backslash cannot go safely into a startup file, so every shell
+        # gets the hint there and no file is written. bash reads ~/.bash_profile on macOS and ~/.bashrc elsewhere.
+        writes_profiles = harness.PLATFORM != "windows"
+        bash_profile = ".bash_profile" if harness.PLATFORM == "macos" else ".bashrc"
+        export_line = 'export PATH="{dir}:$PATH"'
+        path_cases = (
+            ("bash", "/bin/bash", bash_profile, export_line),
+            ("zsh", "/bin/zsh", ".zshrc", export_line),
+            (
+                "fish",
+                "/usr/bin/fish",
+                ".config/fish/config.fish",
+                'contains -- "{dir}" $PATH; or set -gx PATH "{dir}" $PATH',
+            ),
+        )
+        for name, shell, profile_name, template in path_cases:
+            home = work / f"path-home-{name}"
+            home.mkdir()
+            install_dir = work / f"install-path-{name}"
+            line = template.format(dir=install_dir)
+            for run_number in (1, 2):
+                check()
+                outcome = run_installer(home, install_dir, shell)
+                output = harness.text(outcome.stdout)
+                if outcome.returncode != 0:
+                    add_problem(f"install.sh PATH run {run_number} ({name}): {output.rstrip(chr(10))}")
+                    break
+                check()
+                if writes_profiles:
+                    count = profile_lines(home / profile_name).count(line)
+                    if count != 1:
+                        add_problem(
+                            f"install.sh PATH run {run_number} ({name}): "
+                            f"{count} PATH lines in {profile_name}, expected 1"
+                        )
+                elif any(home.iterdir()) or f"add {install_dir} to PATH" not in output:
+                    add_problem(
+                        f"install.sh PATH run {run_number} ({name}): a Windows path must get the hint "
+                        "and no startup file"
+                    )
 
         off_home = work / "path-home-off"
         off_home.mkdir()
@@ -497,28 +509,8 @@ with harness.temporary_dir("burdin-release-") as work:
         check()
         if outcome.returncode != 0:
             add_problem(f"install.sh PATH (off): {harness.text(outcome.stdout).rstrip(chr(10))}")
-        elif (off_home / ".bashrc").exists():
-            add_problem("install.sh changed .bashrc with BURDIN_NO_MODIFY_PATH set")
-
-        fish_home = work / "path-home-fish"
-        fish_home.mkdir()
-        fish_dir = work / "install-path-fish"
-        fish_line = f'contains -- "{fish_dir}" $PATH; or set -gx PATH "{fish_dir}" $PATH'
-        fish_config = fish_home / ".config" / "fish" / "config.fish"
-        for run_number in (1, 2):
-            check()
-            outcome = run_installer(fish_home, fish_dir, "/usr/bin/fish")
-            if outcome.returncode != 0:
-                add_problem(
-                    f"install.sh PATH run {run_number} (fish): {harness.text(outcome.stdout).rstrip(chr(10))}"
-                )
-                break
-            check()
-            count = profile_lines(fish_config).count(fish_line)
-            if count != 1:
-                add_problem(
-                    f"install.sh PATH run {run_number} (fish): {count} PATH lines in config.fish, expected 1"
-                )
+        elif any(off_home.iterdir()):
+            add_problem("install.sh wrote a startup file with BURDIN_NO_MODIFY_PATH set")
 
         csh_home = work / "path-home-csh"
         csh_home.mkdir()
