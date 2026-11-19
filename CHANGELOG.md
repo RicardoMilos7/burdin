@@ -6,7 +6,9 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
-- Nothing yet.
+- `install.ps1` adds the install directory to the user's `PATH` (`HKCU\Environment`, once; a second run changes nothing),
+  so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
+  `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
 
 ## 0.1.0 — 2026-11-19
 

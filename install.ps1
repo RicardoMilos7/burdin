@@ -10,17 +10,20 @@
 #   BURDIN_TARGET        target triple override (default: detected from the OS architecture)
 #   BURDIN_BASE_URL      directory that holds the archive and SHA256SUMS
 #   BURDIN_RELEASE_DIR   local directory to install from, instead of the network (a rehearsal)
+#   BURDIN_NO_MODIFY_PATH  set to any value to leave the user's PATH alone (-NoModifyPath)
 #
 # Every download is verified against the release's SHA256SUMS before it is unpacked. The compiler needs LLVM-C.dll at
 # run time; the archive carries it and this script installs it beside burdin.exe. It warns when the installed compiler
-# cannot start anyway (docs/releasing.md).
+# cannot start anyway (docs/releasing.md). Unless told not to, it appends the install directory to the user's PATH
+# (HKCU\Environment), so new terminals find burdin; the current session is updated too.
 param(
     [string]$Version = $env:BURDIN_VERSION,
     [string]$Channel = $(if ($env:BURDIN_CHANNEL) { $env:BURDIN_CHANNEL } else { 'stable' }),
     [string]$InstallDir = $env:BURDIN_INSTALL_DIR,
     [string]$Target = $env:BURDIN_TARGET,
     [string]$BaseUrl = $env:BURDIN_BASE_URL,
-    [string]$ReleaseDir = $env:BURDIN_RELEASE_DIR
+    [string]$ReleaseDir = $env:BURDIN_RELEASE_DIR,
+    [switch]$NoModifyPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +32,25 @@ $Repo = 'RicardoMilos7/burdin'
 function Say([string]$Message) { Write-Host $Message }
 function Warn([string]$Message) { Write-Warning $Message }
 function Fail([string]$Message) { throw $Message }
+
+# Appends $Directory to the user's PATH unless an entry already names it. The value is read and written as the raw
+# registry string, so entries such as %LOCALAPPDATA% stay unexpanded. Returns $true when it changed the PATH.
+function Add-ToUserPath([string]$Directory) {
+    $wanted = $Directory.TrimEnd('\')
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try {
+        $current = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $entries = @($current -split ';' | Where-Object { $_ -ne '' })
+        foreach ($entry in $entries) {
+            if ($entry.TrimEnd('\') -ieq $wanted) { return $false }
+        }
+        $updated = (@($entries) + $Directory) -join ';'
+        $key.SetValue('Path', $updated, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+        return $true
+    } finally {
+        $key.Close()
+    }
+}
 
 if ($Channel -notin @('stable', 'nightly')) {
     Fail "the channel must be stable or nightly, not: $Channel"
@@ -148,7 +170,17 @@ try {
         Warn "$destination did not start. Burdin needs LLVM-C.dll at run time; put it on PATH or beside burdin.exe."
     }
     $onPath = ($env:PATH -split ';') -contains $InstallDir
-    if (-not $onPath) { Say "add $InstallDir to PATH to run burdin from anywhere" }
+    $modifyPath = -not ($NoModifyPath -or $env:BURDIN_NO_MODIFY_PATH)
+    if ($modifyPath) {
+        if (Add-ToUserPath $InstallDir) {
+            Say "added $InstallDir to your user PATH; open a new terminal to run burdin from anywhere"
+        } else {
+            Say "$InstallDir is already on your user PATH"
+        }
+        if (-not $onPath) { $env:PATH = $env:PATH.TrimEnd(';') + ';' + $InstallDir }
+    } elseif (-not $onPath) {
+        Say "add $InstallDir to PATH to run burdin from anywhere"
+    }
 } finally {
     Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
 }

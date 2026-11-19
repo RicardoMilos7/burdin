@@ -11,10 +11,13 @@
 #   BURDIN_TARGET        target triple override (default: detected from uname)
 #   BURDIN_BASE_URL      directory that holds the archive and SHA256SUMS
 #   BURDIN_RELEASE_DIR   local directory to install from, instead of the network (a rehearsal)
+#   BURDIN_NO_MODIFY_PATH  set to any value to leave the shell startup file alone
 #
 # Every download is verified against the release's SHA256SUMS before it is unpacked. The compiler needs the LLVM 21
 # shared library at run time (libLLVM-21.so on Linux, libLLVM.dylib on macOS, LLVM-C.dll on Windows); this script
-# warns when the installed compiler cannot start (docs/releasing.md).
+# warns when the installed compiler cannot start (docs/releasing.md). Unless told not to, it adds the install directory
+# to PATH in the startup file of zsh, bash, or fish (~/.zshrc; ~/.bashrc on Linux, ~/.bash_profile on macOS;
+# ~/.config/fish/config.fish). Other shells get a hint instead. A running shell keeps its PATH, so open a new one afterwards.
 
 set -eu
 
@@ -191,7 +194,54 @@ else
     warn "  macOS: brew install llvm@21"
     warn "  Windows: put LLVM-C.dll on PATH or beside burdin.exe"
 fi
+
+# --- PATH --------------------------------------------------------------------------------------------------------------
+
+# Prints the startup file that the user's shell reads for PATH; fails for shells this script does not know.
+startup_file() {
+    case "${SHELL:-}" in
+        */zsh) printf '%s\n' "$HOME/.zshrc" ;;
+        */bash)
+            case "$os" in
+                Darwin*) printf '%s\n' "$HOME/.bash_profile" ;;
+                *) printf '%s\n' "$HOME/.bashrc" ;;
+            esac
+            ;;
+        */fish) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Prints the startup-file line that puts $1 on PATH. fish has no `export`; its line skips $1 when PATH already has it.
+startup_line() {
+    case "${SHELL:-}" in
+        */fish) printf '%s\n' "contains -- \"$1\" \$PATH; or set -gx PATH \"$1\" \$PATH" ;;
+        *) printf '%s\n' "export PATH=\"$1:\$PATH\"" ;;
+    esac
+}
+
+# Appends the PATH line for $1 to the startup file, once. Fails when the shell is unknown or the file is not writable.
+add_to_startup_file() {
+    profile=$(startup_file) || return 1
+    line=$(startup_line "$1")
+    if [ -f "$profile" ] && grep -Fqx -- "$line" "$profile"; then
+        say "$profile already puts $1 on PATH"
+        return 0
+    fi
+    mkdir -p "$(dirname "$profile")" 2>/dev/null || return 1
+    printf '\n%s\n' "$line" >> "$profile" || return 1
+    say "added $1 to PATH in $profile; open a new shell to run burdin from anywhere"
+}
+
 case ":${PATH:-}:" in
-    *":$dir:"*) ;;
-    *) say "add $dir to PATH to run burdin from anywhere" ;;
+    *":$dir:"*) on_path=1 ;;
+    *) on_path=0 ;;
 esac
+# A directory with a quote, a dollar sign, a backquote, or a backslash cannot be written safely into a startup file.
+case "$dir" in
+    *[\"\$\`\\]*) safe_for_profile=0 ;;
+    *) safe_for_profile=1 ;;
+esac
+if [ -n "${BURDIN_NO_MODIFY_PATH:-}" ] || [ "$safe_for_profile" = 0 ] || ! add_to_startup_file "$dir"; then
+    [ "$on_path" = 1 ] || say "add $dir to PATH to run burdin from anywhere"
+fi
