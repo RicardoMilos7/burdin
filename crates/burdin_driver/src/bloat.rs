@@ -11,18 +11,6 @@ use burdin_inspect::instances::{generic_name, is_instance};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub(crate) const BLOAT_USAGE: &str = "\
-usage:
-  burdin bloat <file.bd | package directory> [--debug] [--top <n>] [--format <human|json>] [-j <n>]
-               [--comptime-steps <n>] [diagnostics]
-
-bloat options:
-  --debug              measure the debug profile (the default is the release profile)
-  --top <n>            list the n largest functions and the n largest generics (default: 20)
-  --format <human|json>  a table (default) or one JSON object
-  -j, --jobs <n>       compile on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
-  --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)";
-
 #[derive(Debug)]
 struct BloatArgs {
     target: PathBuf,
@@ -92,16 +80,9 @@ fn parse(argv: &[String]) -> Result<BloatArgs, String> {
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
-    if matches!(argv, [flag] if flag == "-h" || flag == "--help") {
-        println!("{BLOAT_USAGE}");
-        return ExitCode::SUCCESS;
-    }
     let args = match parse(argv) {
         Ok(a) => a,
-        Err(message) => {
-            eprintln!("error: {message}\n{BLOAT_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("bloat", &message),
     };
     // One codegen unit, so there is one object file to read.
     let emit = Emit { kinds: vec![EmitKind::Obj], ..Emit::default() };

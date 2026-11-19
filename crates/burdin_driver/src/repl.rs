@@ -11,15 +11,6 @@ use std::io::IsTerminal as _;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-pub(crate) const REPL_USAGE: &str = "\
-usage:
-  burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
-
-The session is one growing program: inputs are items, statements, or expressions, each one checked by the real
-front end and evaluated by the comptime interpreter; an expression's value prints with Debug. Standard input not
-being a terminal disables the interactive editing, so a scripted session is deterministic. The meta-commands
-(:help lists them) include :type, :ownership, :explain, :load, :ir, :compile, and :reset.";
-
 #[derive(Debug, Default)]
 struct ReplArgs {
     release: bool,
@@ -86,16 +77,9 @@ fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
-    if matches!(argv, [flag] if flag == "-h" || flag == "--help") {
-        println!("{REPL_USAGE}");
-        return ExitCode::SUCCESS;
-    }
     let args = match parse(argv) {
         Ok(a) => a,
-        Err(message) => {
-            eprintln!("error: {message}\n{REPL_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("repl", &message),
     };
     let jobs = jobs_or_default(args.jobs);
     let native = burdin_repl::Native {

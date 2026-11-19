@@ -14,27 +14,6 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub(crate) const LINT_USAGE: &str = "\
-usage:
-  burdin lint <file.bd | package directory> [-A <lint>]... [-W <lint>]... [-D <lint>]... [--deny-warnings]
-              [--fix [--dry-run]] [-j <n>] [--comptime-steps <n>] [diagnostics]
-  burdin lint --list
-  burdin lint --explain <lint name | lint code>
-
-lint options:
-  -A, --allow <lint>   do not run the lint (`all` names every lint)
-  -W, --warn <lint>    report the lint as a warning
-  -D, --deny <lint>    report the lint as an error (`warnings` raises every lint that is a warning)
-  --deny-warnings      the same as `-D warnings`
-  --fix                apply the safe fixes, check that the package still compiles, and write the files
-  --dry-run            with --fix: print the diff and write nothing
-  -j, --jobs <n>       parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
-  --list               print every lint with its code and default level
-  --explain <lint>     print the reference entry for a lint
-
-Levels also come from the `[lint]` table of burdin.toml (`name = \"allow\" | \"warn\" | \"deny\"`); the command line
-wins. A comment `// lint: allow(name)` suppresses a lint at one item, statement, or line.";
-
 /// The lint reference, embedded so `burdin lint --explain` cannot disagree with the page `tests/check_lint.py` checks.
 const LINT_DOCS: &str = include_str!("../../../docs/lints.md");
 
@@ -133,10 +112,7 @@ fn parse(argv: &[String]) -> Result<LintArgs, String> {
 pub(crate) fn run(argv: &[String]) -> ExitCode {
     let args = match parse(argv) {
         Ok(a) => a,
-        Err(message) => {
-            eprintln!("error: {message}\n{LINT_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("lint", &message),
     };
     if args.list {
         print_list();

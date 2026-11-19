@@ -15,20 +15,6 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub(crate) const FMT_USAGE: &str = "\
-usage:
-  burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
-  burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
-
-fmt options:
-  --check                    change nothing; list the files that are not formatted and exit with status 1
-  --stdin                    read one source from standard input and write the formatted source to standard output
-  --stdin-filepath <path>    the path the standard input stands for: names it in diagnostics and finds the package
-                             whose dependencies group the `use` declarations
-  --range <lo>:<hi>          with --stdin, format only the items that overlap these byte offsets
-  -j, --jobs <n>             format at most n files at once (default: BURDIN_JOBS, then the number of CPUs); the
-                             output and the exit status do not depend on it";
-
 /// What the command line asked for.
 #[derive(Debug, Default)]
 struct FmtArgs {
@@ -120,10 +106,7 @@ fn parse_range(value: &str) -> Result<(usize, usize), String> {
 pub(crate) fn run(argv: &[String]) -> ExitCode {
     let args = match parse_fmt_args(argv) {
         Ok(args) => args,
-        Err(message) => {
-            eprintln!("error: {message}\n{FMT_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("fmt", &message),
     };
     if args.stdin { run_stdin(&args) } else { run_files(&args) }
 }

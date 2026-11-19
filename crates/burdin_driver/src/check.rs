@@ -18,31 +18,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub(crate) const CHECK_USAGE: &str = "\
-usage:
-  burdin check <file.bd | package directory> [--release] [--tests] [--print-instances [--format <human|json>]]
-               [--locked] [-j <n>] [--comptime-steps <n>] [diagnostics]
-               [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain]
-
-check options:
-  --release            check the way `burdin build --release` does (integer overflow in compile-time code, error traces)
-  --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
-  --print-instances    print every generic instance the program created and why (spec/inspect.md, INS12-INS15)
-  --locked             fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)
-  -j, --jobs <n>       parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
-  --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
-
-ownership options (issue #587):
-  --explain-ownership  print each function's source with margin annotations for its moves, copies, borrows,
-                       drops, drop flags, argument conventions, and derived clones
-  --fn <name>          only the function with this name (or qualified name); with --explain-ownership
-  --format <fmt>       with --print-instances: `human` (default) or `json`; with --explain-ownership:
-                       annotated source, `text` (default), or JSON events with spans
-  --explain            print the path that leads to each memory error, with its rule ID and the suggested fix
-
-Nothing is printed when the package has no errors and no warnings; the exit status is 0 then and 1 otherwise.
-With --print-instances the report goes to standard output.";
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OwnershipFormat {
     #[default]
@@ -125,16 +100,9 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
-    if matches!(argv, [flag] if flag == "-h" || flag == "--help") {
-        println!("{CHECK_USAGE}");
-        return ExitCode::SUCCESS;
-    }
     let args = match parse(argv) {
         Ok(a) => a,
-        Err(message) => {
-            eprintln!("error: {message}\n{CHECK_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("check", &message),
     };
     let options = CompileOptions {
         release: args.release,
