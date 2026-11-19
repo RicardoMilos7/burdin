@@ -321,7 +321,7 @@ with harness.temporary_dir("burdin-dbg-") as work:
                 check_lifetimes("gdb", gdb_read, "<optimized out>")
             else:
                 print("skip: gdb is not installed; the moved-local checks were not run", file=sys.stderr)
-            lldb = harness.find_llvm_tool("lldb")
+            lldb = harness.find_working_llvm_tool("lldb")
             if lldb:
 
                 def lldb_read(line: int, variable: str) -> str:
@@ -344,7 +344,7 @@ with harness.temporary_dir("burdin-dbg-") as work:
 
                 check_lifetimes("lldb", lldb_read, "<variable not available>")
             else:
-                print("skip: lldb is not installed; the moved-local checks were not run", file=sys.stderr)
+                print("skip: lldb is not installed or does not start; the moved-local checks were not run", file=sys.stderr)
 
 print(f"Checked debug information ({checks} checks)")
 

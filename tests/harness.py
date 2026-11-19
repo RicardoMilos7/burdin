@@ -128,6 +128,19 @@ def find_llvm_tool(name: str):
     return None
 
 
+def find_working_llvm_tool(name: str):
+    """Like `find_llvm_tool`, but only a tool that starts: an LLVM install can carry `lldb` without the shared
+    library it needs (`liblldb-21.so`), and a check should skip it instead of reporting that as a bug."""
+    tool = find_llvm_tool(name)
+    if not tool:
+        return None
+    try:
+        started = subprocess.run([tool, "--version"], capture_output=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return tool if started.returncode == 0 else None
+
+
 def executable_in(directory, stem: str) -> Path:
     """The executable a build produced: `stem`, or `stem.exe` on Windows."""
     for name in (stem, stem + ".exe"):

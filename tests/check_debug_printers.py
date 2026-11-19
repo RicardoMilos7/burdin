@@ -188,7 +188,7 @@ def gdb_batch(commands, exe, cwd):
 def lldb_batch(commands, exe, cwd):
     """Runs lldb once with the given `-o` commands."""
     return harness.run(
-        [harness.find_llvm_tool("lldb"), "-b"]
+        [harness.find_working_llvm_tool("lldb"), "-b"]
         + sum((["-o", c] for c in commands), [])
         + [exe],
         cwd=cwd,
@@ -318,7 +318,7 @@ with harness.temporary_dir("burdin-dbgp-") as work:
                     add_problem(f"gdb: `{name}` did not print as `{prefix}`:\n{transcript}")
 
         # DBG5/DBG7: the lldb formatters, loaded by hand as `burdin debug` does.
-        lldb = None if windows_host else harness.find_llvm_tool("lldb")
+        lldb = None if windows_host else harness.find_working_llvm_tool("lldb")
         if lldb is None:
             skip("lldb is not installed; the lldb formatters were not checked")
         else:

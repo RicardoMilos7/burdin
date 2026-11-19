@@ -1492,12 +1492,15 @@ fn msvc_link_args(objects: &[PathBuf], output: &Path, libs: &[String], llvm_libd
 
 /// The MSVC link arguments a `-g` build adds: `/DEBUG` writes the PDB, and `/NATVIS:` embeds the Burdin
 /// visualizers in it so Visual Studio and WinDbg show a `List` as its elements (`spec/debug.md`, DBG8).
+/// `/INCREMENTAL:NO` is what `/DEBUG` otherwise turns off: an incremental link makes a function's address a jump
+/// thunk, which is not where its return addresses are, so the panic backtrace's frame table would name the wrong
+/// functions.
 fn msvc_debug_args(output: &Path, opts: &LinkOptions) -> Vec<OsString> {
     if !opts.debug {
         return Vec::new();
     }
     let natvis = natvis_path(output);
-    vec!["/DEBUG".into(), format!("/NATVIS:{}", natvis.display()).into()]
+    vec!["/DEBUG".into(), "/INCREMENTAL:NO".into(), format!("/NATVIS:{}", natvis.display()).into()]
 }
 
 /// Whether a `--link-lib` value names a file (a path, or a library or object file name) rather than a library to look
@@ -1745,6 +1748,7 @@ mod tests {
         let opts = LinkOptions { debug: true, ..Default::default() };
         let args = as_strings(link_args("cl", &[PathBuf::from("program.obj")], Path::new("out.exe"), &[], &opts));
         assert!(args.contains(&"/DEBUG".to_string()), "{args:?}");
+        assert!(args.contains(&"/INCREMENTAL:NO".to_string()), "{args:?}");
         assert!(args.contains(&"/NATVIS:out.exe.natvis".to_string()), "{args:?}");
         // The visualizers are the repository file, embedded in the driver.
         assert!(NATVIS.contains("<AutoVisualizer"), "the embedded natvis is empty");

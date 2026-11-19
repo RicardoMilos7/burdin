@@ -124,7 +124,9 @@ same file by hand; `burdin debug` is the supported way.
 PDB the debuggers can read (until now the COFF object carried the CodeView metadata but no PDB was produced),
 and `/NATVIS:<file>` with the embedded `debuggers/windows/burdin.natvis`, so the visualizers travel inside the
 PDB and no file has to be installed. The natvis rules are the DWARF rules of DBG5 spelled in the debugger's own
-syntax, including `CustomListItems` for `List` and `Map`.
+syntax, including `CustomListItems` for `List` and `Map`. The driver also passes `/INCREMENTAL:NO`: an
+incremental link (the default with `/DEBUG`) makes a function's address a jump thunk, and the frame table of DBG2
+matches return addresses against real function addresses.
 
 ## `burdin debug` (issue #574)
 
