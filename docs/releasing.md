@@ -95,14 +95,16 @@ burdin-<version>-<target>/
   docs/lints.md
 ```
 
-**Runtime requirement.** The compiler links LLVM 21 as a shared library (the static Windows archives crash in the
-dynamic-CRT Rust binary), so a prebuilt `burdin` needs the matching LLVM runtime: `libLLVM-21.so` on Linux,
-`libLLVM.dylib` on macOS (`brew install llvm@21`), or `LLVM-C.dll` on Windows. The Linux and macOS archives do not
-bundle LLVM; the installers print the fix when the installed compiler cannot start. The Windows archives carry the
-`LLVM-C.dll` from the LLVM 21 release the build linked against (found through `LLVM_SYS_211_PREFIX`, or `--llvm-dll`;
-`build_release.py` refuses to package a Windows build without it), and `install.ps1` installs it beside `burdin.exe`.
-Linking programs still needs the MSVC `cl` on the user's machine. Bundling the runtime on Linux and macOS is a later
-change.
+**Runtime requirement.** Development builds link LLVM 21 as a shared library (the static Windows archives crash in a
+dynamic-CRT Rust binary). Release builds on Linux and macOS link it statically: `tests/build_release.py` sets
+`BURDIN_STATIC_LLVM=1`, `crates/burdin_codegen/build.rs` links `llvm-config --link-static --libs` and the C++
+runtime, and the script fails the build if `ldd` or `otool -L` still lists an LLVM library. The binary is about 70 MB
+and needs only the system C and C++ libraries (`libz`, `libzstd`, `libstdc++` on Linux), plus the `cc` that linking
+programs needs anyway; the archive stays under 30 MB. The Windows archives carry the `LLVM-C.dll` from the LLVM 21
+release the build linked against (found through `LLVM_SYS_211_PREFIX`, or `--llvm-dll`; `build_release.py` refuses to
+package a Windows build without it), and `install.ps1` installs it beside `burdin.exe`. Linking programs on Windows
+still needs the MSVC `cl`. A static Windows build is wired but unproven: `BURDIN_STATIC_LLVM=1` there builds with
+`-C target-feature=+crt-static` and links the `LLVM*.lib` archives, so try it in a dry-run release before relying on it.
 
 ## Checksums
 

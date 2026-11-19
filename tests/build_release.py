@@ -16,7 +16,10 @@ Usage: tests/build_release.py [options]
 
 The archive is `burdin-<version>-<target>.tar.gz`; its root directory is `burdin-<version>-<target>/` and holds the
 compiler, README.md, CHANGELOG.md, docs/error-codes.md, and docs/lints.md; a Windows archive also holds
-LLVM-C.dll beside burdin.exe, because the compiler links LLVM as a shared library. Next to it the script writes
+LLVM-C.dll beside burdin.exe, because that build links LLVM as a shared library. Linux and macOS builds link LLVM
+statically (BURDIN_STATIC_LLVM=1, set by this script) and the script checks that the binary needs no LLVM shared
+library. BURDIN_STATIC_LLVM=1 in the environment on Windows links LLVM statically there too, with the static CRT, and
+the archive then has no DLL; BURDIN_STATIC_LLVM=0 on Linux or macOS links the shared library. Next to it the script writes
 `<archive>.sha256` and `SHA256SUMS.<target>`, both in the `sha256sum -c` format. The release workflow aggregates the
 per-target files into one `SHA256SUMS` (docs/releasing.md).
 
@@ -161,6 +164,27 @@ def check_binary_version(binary, version: str, channel: str, target: str) -> Non
             die(f"{binary} --version does not report {expected}: {output}")
 
 
+def uses_static_llvm(target: str) -> bool:
+    """Linux and macOS release builds link LLVM into the compiler. Windows ships LLVM-C.dll beside it unless
+    BURDIN_STATIC_LLVM=1 asks for the static link there too (it needs the static CRT; see build.rs)."""
+    setting = os.environ.get("BURDIN_STATIC_LLVM")
+    if setting is not None:
+        return setting not in ("", "0")
+    return not target.endswith("-pc-windows-msvc")
+
+
+def check_no_llvm_library(binary: Path) -> None:
+    """A statically linked compiler has no LLVM shared library among its dependencies."""
+    tool = ["otool", "-L"] if harness.PLATFORM == "macos" else ["ldd"]
+    result = harness.run([*tool, binary], merge=True)
+    listing = harness.text(result.stdout)
+    if result.returncode != 0:
+        die(f"{tool[0]} {binary} failed: {listing}")
+    for line in listing.splitlines():
+        if "libLLVM" in line or "LLVM-C" in line:
+            die(f"{binary} still depends on an LLVM shared library: {line.strip()}")
+
+
 def build_binary(source_root: Path, target_dir: Path, version: str, channel: str, target: str) -> Path:
     if not target_dir.is_absolute():
         target_dir = source_root / target_dir
@@ -168,6 +192,8 @@ def build_binary(source_root: Path, target_dir: Path, version: str, channel: str
         f"--remap-path-prefix={source_root}=/burdin "
         f"--remap-path-prefix={target_dir}=/burdin/target"
     )
+    if target.endswith("-pc-windows-msvc") and uses_static_llvm(target):
+        flags += " -C target-feature=+crt-static"
     if os.environ.get("RUSTFLAGS"):
         flags = os.environ["RUSTFLAGS"] + " " + flags
     print(f"building {version} ({channel}) for {target} from {source_root}", file=sys.stderr)
@@ -179,6 +205,8 @@ def build_binary(source_root: Path, target_dir: Path, version: str, channel: str
         "BURDIN_VERSION": version,
         "BURDIN_CHANNEL": channel,
     }
+    if uses_static_llvm(target):
+        env["BURDIN_STATIC_LLVM"] = "1"
     result = harness.run(
         ["cargo", "build", "--release", "--locked", "-p", "burdin_driver"],
         cwd=source_root,
@@ -191,6 +219,8 @@ def build_binary(source_root: Path, target_dir: Path, version: str, channel: str
     binary = target_dir / "release" / f"burdin{exe_suffix(target)}"
     if not binary.is_file():
         die(f"cargo did not produce {binary}")
+    if uses_static_llvm(target) and not target.endswith("-pc-windows-msvc"):
+        check_no_llvm_library(binary)
     return binary
 
 
@@ -348,7 +378,7 @@ def main(arguments) -> int:
     # A Windows build needs LLVM-C.dll at run time and the archive does not bundle LLVM any other way, so a build
     # without one would publish an archive whose compiler cannot start (docs/releasing.md).
     llvm_dll = options.llvm_dll
-    if not llvm_dll and target.endswith("-pc-windows-msvc"):
+    if not llvm_dll and target.endswith("-pc-windows-msvc") and not uses_static_llvm(target):
         llvm_dll = find_llvm_dll()
         if not llvm_dll:
             die("LLVM-C.dll not found; set LLVM_SYS_211_PREFIX to the LLVM 21 install or pass --llvm-dll")

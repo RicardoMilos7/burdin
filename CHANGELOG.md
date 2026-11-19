@@ -6,11 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
-### Windows release archives bundle `LLVM-C.dll`
+### Release builds link LLVM statically
 
-- A Windows archive carries the `LLVM-C.dll` the compiler was linked against beside `burdin.exe`, and `install.ps1`
-  installs it with the compiler, so a fresh install starts without LLVM on `PATH`. `tests/build_release.py` refuses to
-  package a Windows build without the DLL and takes `--llvm-dll`; `tests/check_release.py` covers both.
+- Linux and macOS release archives hold a compiler with LLVM linked in: no `libLLVM` is needed at run time.
+  `BURDIN_STATIC_LLVM=1` selects it in `crates/burdin_codegen/build.rs`; development builds stay shared.
+  `tests/build_release.py` sets it, checks the binary with `ldd`/`otool -L`, and the reproducibility check covers it.
+- Windows archives carry `LLVM-C.dll` beside `burdin.exe`, and `install.ps1` installs it with the compiler, so a fresh
+  install starts without LLVM on `PATH`. `build_release.py` refuses to package a Windows build without the DLL and
+  takes `--llvm-dll`. A static Windows build (`BURDIN_STATIC_LLVM=1`, static CRT) is wired but not yet proven.
 
 ### Debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
