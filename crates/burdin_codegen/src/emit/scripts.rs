@@ -14,8 +14,15 @@ use inkwell::module::Linkage;
 const PRINTERS: &str = include_str!("../../../../debuggers/gdb/burdin_printers.py");
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
-    /// Emits the `.debug_gdb_scripts` section for a `-g` build.
+    /// Emits the `.debug_gdb_scripts` section for a `-g` build. Mach-O has no such section (its section names are
+    /// `segment,section` pairs, which LLVM rejects for this one) and macOS debugs with lldb, so a Darwin build
+    /// carries no gdb script (`spec/debug.md`, DBG6).
     pub(super) fn emit_debug_scripts(&mut self) -> GenResult<()> {
+        let triple = self.module.get_triple();
+        let triple = triple.as_str().to_string_lossy();
+        if triple.contains("darwin") || triple.contains("apple") {
+            return Ok(());
+        }
         let mut bytes: Vec<u8> = Vec::with_capacity(PRINTERS.len() + 32);
         bytes.push(4); // SECTION_SCRIPT_ID_PYTHON_TEXT
         bytes.extend_from_slice(b"burdin_printers.py\n");

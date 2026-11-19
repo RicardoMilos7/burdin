@@ -111,7 +111,8 @@ into the object, holding one embedded script entry: the type byte `4` (inline Py
 terminating NUL. There is no version byte. gdb auto-loads the section when it opens the program, so no
 installation or configuration is needed; a site policy that restricts auto-loading is lifted with
 `set auto-load safe-path /`. The script is the repository file `debuggers/gdb/burdin_printers.py`, embedded by
-`burdin_codegen` — the compiler and the printers ship together. Without `-g` there is no section.
+`burdin_codegen` — the compiler and the printers ship together. Without `-g` there is no section, and a macOS build never has one: Mach-O has no section by that name and
+macOS debugs with lldb (DBG7).
 
 **DBG7 — lldb formatters are written beside the session.** lldb has no equivalent of the section, so the
 driver writes `debuggers/lldb/burdin_formatters.py` (embedded in the binary like `std/`) to the temporary
