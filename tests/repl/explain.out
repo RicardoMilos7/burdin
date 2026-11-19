@@ -1,0 +1,24 @@
+## E0100: Use of a moved value
+
+The value was moved earlier, so this use would read storage that no longer owns anything. The diagnostic carries
+a note pointing at the move, and the same code covers a value that is only possibly moved after a branch and one
+that is partially moved.
+
+```burdin
+struct Thing {
+    id: i32
+}
+
+fn take(own t: Thing) {}
+
+fn main() {
+    let t = Thing { id: 1 }
+    take(t)
+    let u = t //~ E0100
+}
+```
+
+**How to fix:** do not use the value after moving it. Pass it by reference (a read-only or `mut` parameter) if the
+callee only needs to look at it, clone it first, or reorder the statements so the move is the last use.
+
+Online: https://ricardomilos7.github.io/burdin/errors/E0100

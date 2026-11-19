@@ -8,7 +8,7 @@
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
-pub(crate) enum Value {
+pub enum Value {
     Unit,
     Bool(bool),
     /// Every integer type, kept in range for its type.
@@ -54,20 +54,20 @@ pub(crate) enum Value {
 
 /// Where a value lives: a local or a temporary of a frame, then a path into it.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Place {
+pub struct Place {
     pub frame: usize,
     pub root: Root,
     pub path: Vec<Step>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Root {
+pub enum Root {
     Local(usize),
     Temp(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Step {
+pub enum Step {
     /// A field of a tuple, struct, or enum variant.
     Field(usize),
     /// An element of an array, a `List`, or a slice.
@@ -81,11 +81,11 @@ pub(crate) enum Step {
 }
 
 impl Value {
-    pub(crate) fn str(s: &str) -> Value {
+    pub fn str(s: &str) -> Value {
         Value::Str(Rc::from(s.as_bytes()))
     }
 
-    pub(crate) fn int(&self) -> i128 {
+    pub fn int(&self) -> i128 {
         match self {
             Value::Int(v) => *v,
             Value::Bool(b) => i128::from(*b),
@@ -95,7 +95,7 @@ impl Value {
         }
     }
 
-    pub(crate) fn bool(&self) -> bool {
+    pub fn bool(&self) -> bool {
         match self {
             Value::Bool(b) => *b,
             Value::Borrow(v) => v.bool(),
@@ -103,7 +103,7 @@ impl Value {
         }
     }
 
-    pub(crate) fn float(&self) -> f64 {
+    pub fn float(&self) -> f64 {
         match self {
             Value::Float(f) => *f,
             Value::Borrow(v) => v.float(),
@@ -111,7 +111,7 @@ impl Value {
         }
     }
 
-    pub(crate) fn char(&self) -> char {
+    pub fn char(&self) -> char {
         match self {
             Value::Char(c) => *c,
             Value::Borrow(v) => v.char(),
@@ -120,7 +120,7 @@ impl Value {
     }
 
     /// The bytes of a `str` or `String` (or a reference to one).
-    pub(crate) fn bytes(&self) -> &[u8] {
+    pub fn bytes(&self) -> &[u8] {
         match self {
             Value::Str(b) => b,
             Value::String(b) => b,
@@ -130,7 +130,7 @@ impl Value {
     }
 
     /// The elements of an array, `List`, or slice (or a reference to one).
-    pub(crate) fn elems(&self) -> &[Value] {
+    pub fn elems(&self) -> &[Value] {
         match self {
             Value::Array(v) | Value::List(v) => v,
             Value::Slice(v, lo, hi) => &v[*lo..*hi],
@@ -140,14 +140,14 @@ impl Value {
     }
 
     /// The referent of a shared reference, or the value itself.
-    pub(crate) fn deref(self) -> Value {
+    pub fn deref(self) -> Value {
         match self {
             Value::Borrow(v) => v.deref(),
             other => other,
         }
     }
 
-    pub(crate) fn is_moved(&self) -> bool {
+    pub fn is_moved(&self) -> bool {
         matches!(self, Value::Moved)
     }
 }

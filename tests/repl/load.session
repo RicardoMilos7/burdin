@@ -1,0 +1,4 @@
+:load helpers.bd
+helper(3)
+:load not-there.bd
+:quit

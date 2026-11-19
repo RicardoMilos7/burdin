@@ -1,0 +1,7 @@
+let s = String.from("hi")
+:ownership s.len()
+:ownership s
+struct Inner { text: String }
+let b = Inner { text: String.from("x") }
+:ownership b.text
+:quit

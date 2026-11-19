@@ -1,0 +1,5 @@
+// A shebang is only the first line.
+#!/usr/bin/env burdin run //~ E0300
+//@ compile-fail
+
+fn main() {}

@@ -85,6 +85,7 @@ dependencies = [
  "burdin_lint",
  "burdin_lsp",
  "burdin_query",
+ "burdin_repl",
  "burdin_syntax",
  "burdin_tir",
 ]
@@ -136,6 +137,17 @@ dependencies = [
  "burdin_sema",
  "burdin_syntax",
  "burdin_tir",
+]
+
+[[package]]
+name = "burdin_repl"
+version = "0.1.0"
+dependencies = [
+ "burdin_comptime",
+ "burdin_diag",
+ "burdin_query",
+ "burdin_syntax",
+ "libc",
 ]
 
 [[package]]

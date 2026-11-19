@@ -1811,3 +1811,20 @@ fn main() {}
 **How to fix:** write a helper with an ordinary body when the call does not block, or declare the C function inside
 an `extern "C" { ... }` block and mark the declaration there. A variadic declaration cannot be `blocking`, because
 the thunk marshals a fixed argument list, and every declaration of one C symbol must agree about the marker.
+
+## E0300: Misplaced shebang line
+
+A `#!` line makes a `.bd` file a script: the first line `#!/usr/bin/env burdin run` tells the operating system which
+program runs the file, and the compiler skips it (`spec/scripts.md`, SC2). The line is recognized only as the
+file's very first line, byte zero, so a file that starts with anything else and later holds `#!` is E0300.
+
+<!-- error-example: E0300 -->
+```burdin
+//! A helper with a stray shebang.
+#!/usr/bin/env burdin run //~ E0300
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** move the `#!` line to the very top of the file, or delete it. Burdin has no other use for `#`, so
+the line is never a comment: a shebang below the first line is almost always a paste that landed one line too low.

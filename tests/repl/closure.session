@@ -1,0 +1,5 @@
+let f = |x: i32| x * 3
+f(4)
+fn other(): i32 { 1 }
+f(5)
+:quit

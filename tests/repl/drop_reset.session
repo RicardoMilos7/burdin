@@ -1,0 +1,11 @@
+struct Guard { name: String }
+Guard: Drop {
+    fn drop(mut self) {
+        println("dropping {self.name}")
+    }
+}
+let g = Guard { name: String.from("first") }
+let h = Guard { name: String.from("second") }
+:reset
+1 + 1
+:quit

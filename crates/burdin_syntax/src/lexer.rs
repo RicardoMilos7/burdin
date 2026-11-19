@@ -96,6 +96,26 @@ impl Lexer<'_> {
                     self.pos += 1;
                 }
                 b' ' | b'\t' | b'\r' => self.pos += 1,
+                b'#' if self.peek(1) == b'!' && self.pos == 0 => {
+                    // A script's interpreter line (`spec/scripts.md`, SC2): `#!...` at byte 0 is skipped like a
+                    // comment, so `#!/usr/bin/env burdin run` is not part of the program.
+                    while self.pos < self.src.len() && self.src[self.pos] != b'\n' {
+                        self.pos += 1;
+                    }
+                }
+                b'#' if self.peek(1) == b'!' => {
+                    // Anywhere but the first line, a shebang is a mistake worth its own explanation.
+                    let lo = self.pos;
+                    self.diags.error(
+                        Code::SHEBANG_PLACEMENT,
+                        Span::new(self.file, lo as u32, (lo + 2) as u32),
+                        "a `#!` shebang line is only allowed as the first line of a file \
+                         (spec/scripts.md, SC2)",
+                    );
+                    while self.pos < self.src.len() && self.src[self.pos] != b'\n' {
+                        self.pos += 1;
+                    }
+                }
                 b'/' if self.peek(1) == b'/' => {
                     while self.pos < self.src.len() && self.src[self.pos] != b'\n' {
                         self.pos += 1;

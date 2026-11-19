@@ -21,6 +21,10 @@ Source files are UTF-8. Line endings may be `\n` or `\r\n`.
 **Comments** are ignored: `// ...` to the end of the line (including `///` and the test directives `//@`, `//>`, `//~`),
 and `/* ... */` (block comments do not nest).
 
+**Shebang.** A file whose first two bytes are `#!` is a script: the whole first line is skipped like a comment, so
+`#!/usr/bin/env burdin run` is not part of the program (`spec/scripts.md`, SC1). `#!` anywhere else is E0300
+(SC2); `#` is not otherwise part of the language.
+
 **Identifiers**: `[A-Za-z_][A-Za-z0-9_]*`, ASCII only. The single underscore `_` is the wildcard token, not an identifier.
 
 **Keywords** (reserved):

@@ -205,14 +205,18 @@ def matches_filter(rel: str, filters) -> bool:
 
 def run_command(args, cwd: Path, timeout: int, merge: bool = False, input_data=None):
     """Run a command. `input_data` is the bytes it reads on standard input; without it, standard input is closed,
-    so a test never waits for input it did not declare."""
+    so a test never waits for input it did not declare. The Burdin home points into the test's scratch directory,
+    so a script's binary cache never touches the user's own (`spec/scripts.md`, SC6)."""
     if input_data is None:
         kwargs = {"stdin": subprocess.DEVNULL}
     else:
         kwargs = {"input": input_data}
+    env = dict(os.environ)
+    env["BURDIN_HOME"] = str(Path(cwd) / ".burdin-home")
     return subprocess.run(
         args,
         cwd=str(cwd),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT if merge else subprocess.PIPE,
         timeout=timeout,

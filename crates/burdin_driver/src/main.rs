@@ -11,6 +11,8 @@ mod export;
 mod fmt;
 mod lint;
 mod new;
+mod repl;
+mod scripts;
 mod test_runner;
 
 use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
@@ -50,6 +52,7 @@ usage:
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
+  burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lsp [--stdio]
   burdin --version
 
@@ -119,6 +122,12 @@ default and changes nothing):
                        profiler
   -v, --verbose        print the captured output of passing benches too
 
+repl (the interactive session, spec/repl.md):
+  reads items, statements, and expressions from standard input; each input is checked by the real front end
+  and evaluated by the comptime interpreter, an expression's value prints with Debug, and the meta-commands
+  (:help lists them) include :type, :ownership, :explain, :load, :ir, :compile, and :reset; a standard input
+  that is not a terminal disables the interactive editing, so scripted sessions are deterministic
+
 lsp (the language server, spec/lsp.md):
   speaks the Language Server Protocol on standard input and output; --stdio is accepted and changes nothing
 
@@ -154,10 +163,6 @@ const EXPLAIN_USAGE: &str = "\
 usage:
   burdin explain           list the error codes
   burdin explain <code>    print the reference entry for an error code (for example E0003)";
-
-/// The user-facing error-code reference, embedded so `burdin explain` cannot disagree with the page that
-/// `tests/check_error_docs.py` checks (issue #437).
-const ERROR_DOCS: &str = include_str!("../../../docs/error-codes.md");
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Args {
@@ -671,6 +676,9 @@ fn driver_main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("lsp") {
         return lsp(&argv[1..]);
     }
+    if argv.first().map(String::as_str) == Some("repl") {
+        return repl::run(&argv[1..]);
+    }
     let args = match parse_args(&argv) {
         Ok(a) => a,
         Err(msg) => {
@@ -734,47 +742,22 @@ fn explain(args: &[String]) -> ExitCode {
     }
 }
 
-/// The section of the error reference for `code`, without the HTML comments the check uses to delimit examples.
+/// The section of the error reference for `code`, as `burdin explain` prints it: the page
+/// `tests/check_error_docs.py` checks, read through `burdin_diag` so the REPL's `:explain` prints the same text.
 fn explain_section(code: &str) -> Option<String> {
-    let code = code.to_ascii_uppercase();
-    let heading = format!("## {code}:");
-    let start = ERROR_DOCS.find(&heading)?;
-    let rest = &ERROR_DOCS[start..];
-    let end = rest[3..].find("\n## ").map_or(rest.len(), |i| 3 + i);
-    Some(
-        rest[..end]
-            .trim_end()
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("<!--"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
+    burdin_diag::explain_section(code)
 }
 
 /// Every heading in the reference, one per line, as `E0001: Syntax error`.
 fn code_list() -> String {
-    let mut out = String::new();
-    for line in ERROR_DOCS.lines() {
-        if heading_code(line).is_some() {
-            out.push_str(line.trim_start_matches("## "));
-            out.push('\n');
-        }
-    }
-    out
-}
-
-/// The code a reference heading names, if the line is one.
-fn heading_code(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("## ")?;
-    let bytes = rest.as_bytes();
-    if bytes.len() >= 6 && bytes[0] == b'E' && bytes[1..5].iter().all(u8::is_ascii_digit) && bytes[5] == b':' {
-        Some(&rest[..5])
-    } else {
-        None
-    }
+    burdin_diag::code_list()
 }
 
 fn run(args: &Args, options: &CompileOptions) -> ExitCode {
+    // A one-file target that makes itself a script runs from a content-addressed cache (`spec/scripts.md`, SC5).
+    if let Some(code) = scripts::run_script(args, options) {
+        return code;
+    }
     let dir = match TempDir::new() {
         Ok(d) => d,
         Err(e) => {
@@ -796,7 +779,7 @@ fn run(args: &Args, options: &CompileOptions) -> ExitCode {
     ExitCode::from(exit_code_of(status))
 }
 
-fn exit_code_of(status: std::process::ExitStatus) -> u8 {
+pub(crate) fn exit_code_of(status: std::process::ExitStatus) -> u8 {
     if let Some(code) = status.code() {
         // Windows exit codes are 32-bit; keep a failure a failure when truncating.
         let low = (code & 0xff) as u8;
@@ -1184,10 +1167,16 @@ fn hyperlinks_supported(env: &dyn Fn(&str) -> Option<String>) -> bool {
 /// lint, each with the link to its entry (`spec/diagnostics.md`, DG9).
 fn sarif_tool() -> Tool {
     let mut rules = Vec::new();
-    for line in ERROR_DOCS.lines() {
-        if let Some(code) = heading_code(line) {
-            let name = line["## E0000: ".len()..].trim().to_string();
-            rules.push(Rule { id: code.to_string(), name, help_uri: burdin_diag::code_url(code) });
+    // `code_list` prints one `CODE: Name` line per registry code.
+    for line in burdin_diag::code_list().lines() {
+        let Some((code, name)) = line.split_once(':') else { continue };
+        let bytes = code.as_bytes();
+        if bytes.len() == 5 && bytes[0] == b'E' && bytes[1..].iter().all(u8::is_ascii_digit) {
+            rules.push(Rule {
+                id: code.to_string(),
+                name: name.trim().to_string(),
+                help_uri: burdin_diag::code_url(code),
+            });
         }
     }
     let lints = std::iter::once((lint::UNKNOWN_LINT_CODE, lint::UNKNOWN_LINT_NAME))
@@ -1617,6 +1606,9 @@ impl Drop for TempDir {
 mod tests {
     use super::*;
     use std::fs;
+
+    /// The page `burdin_diag` embeds, read here directly so the checks below see the same text a release ships.
+    const ERROR_DOCS: &str = include_str!("../../../docs/error-codes.md");
 
     fn as_strings(args: Vec<OsString>) -> Vec<String> {
         args.into_iter().map(|arg| arg.to_string_lossy().into_owned()).collect()
