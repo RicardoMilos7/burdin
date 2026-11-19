@@ -11,12 +11,6 @@ use std::process::ExitCode;
 
 use crate::DiagnosticOptions;
 
-const USAGE: &str =
-    "usage: burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
-                     [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
-       burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]
-       burdin bindgen --rust <crate> --out <file> --shim <dir> [--rust-toolchain <version>] [--rustdoc-json <file>]";
-
 /// What the command line asked for.
 struct Request {
     header: Option<String>,
@@ -38,8 +32,7 @@ struct Request {
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     let request = match parse(args) {
-        Ok(Some(request)) => request,
-        Ok(None) => return ExitCode::SUCCESS,
+        Ok(request) => request,
         Err(message) => return usage_error(&message),
     };
     let Some(out) = request.out.clone() else {
@@ -192,8 +185,8 @@ pub(crate) fn write_file(path: &str, text: &str) -> Result<(), ExitCode> {
     Ok(())
 }
 
-/// Reads the arguments. `Ok(None)` means `--help` was printed.
-fn parse(args: &[String]) -> Result<Option<Request>, String> {
+/// Reads the arguments; `burdin bindgen --help` is printed from the command tree (`cli.rs`).
+fn parse(args: &[String]) -> Result<Request, String> {
     let mut request = Request {
         header: None,
         export: None,
@@ -238,22 +231,17 @@ fn parse(args: &[String]) -> Result<Option<Request>, String> {
             "--clang-arg" => request.clang_args.push(value("--clang-arg")?),
             "-I" => request.clang_args.push(format!("-I{}", value("-I")?)),
             "-D" => request.clang_args.push(format!("-D{}", value("-D")?)),
-            "-h" | "--help" => {
-                println!("{USAGE}");
-                return Ok(None);
-            }
             _ if option.starts_with("-I") || option.starts_with("-D") => request.clang_args.push(raw.clone()),
             _ if option.starts_with('-') => return Err(format!("unknown option `{option}`")),
             _ if request.header.is_none() => request.header = Some(raw.clone()),
             _ => return Err(format!("unexpected argument `{option}`")),
         }
     }
-    Ok(Some(request))
+    Ok(request)
 }
 
 fn usage_error(message: &str) -> ExitCode {
-    eprintln!("error: {message}\n{USAGE}");
-    ExitCode::from(2)
+    crate::cli::usage_error("bindgen", message)
 }
 
 #[cfg(test)]
@@ -266,7 +254,7 @@ mod tests {
 
     #[test]
     fn a_header_and_an_output_are_read() {
-        let request = parse(&args(&["a.h", "--out", "a.bd"])).unwrap().unwrap();
+        let request = parse(&args(&["a.h", "--out", "a.bd"])).unwrap();
         assert_eq!(request.header.as_deref(), Some("a.h"));
         assert_eq!(request.out.as_deref(), Some("a.bd"));
     }
@@ -274,7 +262,6 @@ mod tests {
     #[test]
     fn c_compiler_options_are_collected_in_order() {
         let request = parse(&args(&["a.h", "-I", "inc", "-Dx=1", "-I=ignored", "--clang-arg=-std=c99"])).unwrap();
-        let request = request.unwrap();
         assert_eq!(request.clang_args, ["-Iinc", "-Dx=1", "-I=ignored", "-std=c99"]);
     }
 
@@ -291,7 +278,6 @@ mod tests {
             "--rustdoc-json",
             "doc.json",
         ]))
-        .unwrap()
         .unwrap();
         assert_eq!(request.rust.as_deref(), Some("crates/geometry"));
         assert_eq!(request.shim.as_deref(), Some("shim"));
@@ -301,10 +287,10 @@ mod tests {
 
     #[test]
     fn export_and_wrapper_options_are_read() {
-        let request = parse(&args(&["--export", "pkg", "--out", "pkg.h", "--guard=PKG_H"])).unwrap().unwrap();
+        let request = parse(&args(&["--export", "pkg", "--out", "pkg.h", "--guard=PKG_H"])).unwrap();
         assert_eq!(request.export.as_deref(), Some("pkg"));
         assert_eq!(request.guard.as_deref(), Some("PKG_H"));
-        let request = parse(&args(&["a.h", "--wrappers", "w.c", "--wrapper-include", "a.h"])).unwrap().unwrap();
+        let request = parse(&args(&["a.h", "--wrappers", "w.c", "--wrapper-include", "a.h"])).unwrap();
         assert_eq!(request.wrappers.as_deref(), Some("w.c"));
         assert_eq!(request.wrapper_include.as_deref(), Some("a.h"));
     }
@@ -312,10 +298,8 @@ mod tests {
     #[test]
     fn the_diagnostic_options_are_the_same_group_as_every_other_command() {
         let request = parse(&args(&["--export", "pkg", "--out", "pkg.h", "--diagnostic-format=json"])).unwrap();
-        let request = request.unwrap();
         assert_eq!(request.diagnostics.format, crate::DiagnosticFormat::Json);
         let request = parse(&args(&["--export", "pkg", "--out", "pkg.h", "--no-color", "--width", "100"])).unwrap();
-        let request = request.unwrap();
         assert_eq!(request.diagnostics.color, crate::ColorChoice::Never);
         assert_eq!(request.diagnostics.width, Some(100));
         assert!(parse(&args(&["--export", "pkg", "--out", "pkg.h", "--diagnostic-format=xml"])).is_err());
@@ -326,6 +310,7 @@ mod tests {
         assert!(parse(&args(&["a.h", "--bogus"])).is_err());
         assert!(parse(&args(&["a.h", "b.h"])).is_err());
         assert!(parse(&args(&["a.h", "--out"])).is_err());
-        assert!(parse(&args(&["--help"])).unwrap().is_none());
+        // `--help` never reaches this parser: the command tree answers it first.
+        assert!(parse(&args(&["--help"])).is_err());
     }
 }

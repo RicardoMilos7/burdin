@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The `burdin` help is now cargo-style and built with clap (`crates/burdin_driver/src/cli.rs`): `burdin` or
+  `burdin --help` lists the commands with a one-line summary each, and `burdin <command> --help` or
+  `burdin help <command>` prints that command's usage, arguments, grouped options, and notes. A mistyped command gets
+  a suggestion. A usage error prints its message, the command's usage line, and a pointer to its `--help`, instead of
+  the usage of every command. Each command still reads its own options, so their error messages are unchanged.
+
 - `install.ps1` adds the install directory to the user's `PATH` (`HKCU\Environment`, once; a second run changes nothing),
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.

@@ -10,22 +10,6 @@ use burdin_inspect::expand::{Options, SourceFile};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub(crate) const EXPAND_USAGE: &str = "\
-usage:
-  burdin expand <file.bd | package directory> [--item <path>] [--instances] [--no-format]
-                [-j <n>] [--comptime-steps <n>] [diagnostics]
-
-expand options:
-  --item <path>        print only this item: a function, type, constant, or method (`area`, `Circle.area`,
-                       `shapes.area`); a method a derive generated is `Type.method`
-  --instances          after the source, print each monomorphized instance of a generic function, expanded for its
-                       type arguments (for reading: the declaration keeps its type parameters)
-  --no-format          print the expansion as it was built, without running the formatter over it
-  -j, --jobs <n>       compile on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
-  --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
-
-The output is Burdin source: `burdin check` accepts it wherever it accepted the input.";
-
 #[derive(Debug, Default)]
 struct ExpandArgs {
     target: PathBuf,
@@ -77,16 +61,9 @@ fn parse(argv: &[String]) -> Result<ExpandArgs, String> {
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
-    if matches!(argv, [flag] if flag == "-h" || flag == "--help") {
-        println!("{EXPAND_USAGE}");
-        return ExitCode::SUCCESS;
-    }
     let args = match parse(argv) {
         Ok(a) => a,
-        Err(message) => {
-            eprintln!("error: {message}\n{EXPAND_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("expand", &message),
     };
     let options = CompileOptions {
         release: false,

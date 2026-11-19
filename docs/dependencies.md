@@ -6,7 +6,8 @@ and [`tests/check_deps.py`](../tests/check_deps.py) enforces it in every CI job 
 
 ## Policy
 
-- **Two direct external dependencies, both reviewed.** `inkwell` wraps LLVM 21, and `libc` supplies
+- **Three direct external dependencies, all reviewed.** `inkwell` wraps LLVM 21, `clap` declares the
+  `burdin` command tree and renders its help, and `libc` supplies
   the host's C type layouts: `burdin_codegen` reads `struct stat` and `struct dirent` through it for
   the directory and metadata operations (issue #411). Every other external crate is a transitive
   dependency of one of them, and adding a direct dependency is a deliberate change reviewed like any
@@ -38,6 +39,7 @@ The crate families, from [`tests/dependencies.txt`](../tests/dependencies.txt):
 | `llvm-sys` | MIT | The raw LLVM C API under `inkwell`; its build script finds `llvm-config` and probes the toolchain. |
 | `anyhow`, `cc`, `find-msvc-tools`, `lazy_static`, `regex-lite`, `semver`, `shlex` | MIT OR Apache-2.0 | Build-time support for `llvm-sys`: error types, the C toolchain probe, process-wide configuration, `llvm-config` parsing, version comparison, and flag quoting. None of it is linked into the compiler. |
 | `bitflags`, `libc`, `thiserror`, `thiserror-impl` | MIT OR Apache-2.0 | Runtime support inside `inkwell` and `llvm-sys`: attribute flags, C types, and error types. `libc` is also a direct dependency of `burdin_codegen`, which reads the host's `struct stat` and `struct dirent` layouts from it so metadata and directory listings use the exact C offsets, of `burdin_bindgen`, which opens libclang with `dlopen`/`dlsym` (`LoadLibraryA`/`GetProcAddress` on Windows) so no libclang is linked into the compiler, and a dev-dependency of `burdin_tir`, whose tests check the I/O error tables against the host's `errno` constants. |
+| `clap`, `clap_builder`, `clap_lex`, `anstyle`, `strsim` | MIT OR Apache-2.0; `strsim` MIT | The `burdin` command tree in `burdin_driver` (`src/cli.rs`): the command list, each command's `--help`, and the suggestion for a mistyped command. Only the builder API is enabled, without the `color`, `wrap_help`, and `derive` features, so no terminal or proc-macro crates come with it. |
 | `proc-macro2`, `quote`, `syn`, `unicode-ident` | (MIT OR Apache-2.0), the identifier tables also Unicode-3.0 | Macro plumbing of the two derive crates. Compile-time only. |
 
 LLVM itself, which is not a Rust crate and is not in `Cargo.lock`, is distributed under

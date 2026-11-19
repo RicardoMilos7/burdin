@@ -11,7 +11,7 @@
 
 use crate::test_runner::select::name_selected;
 use crate::test_runner::{isolation_env, package_target, select_packages};
-use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, USAGE, compile};
+use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, compile};
 use burdin_diag::json_escape;
 use burdin_tir::BenchEntry;
 use std::collections::HashMap;
@@ -162,8 +162,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     let selected = match select_packages(args, &workspace) {
         Ok(selected) => selected,
         Err(message) => {
-            eprintln!("error: {message}\n{USAGE}");
-            return ExitCode::from(2);
+            return crate::cli::usage_error("bench", &message);
         }
     };
     // Baselines live under the entry package's target directory, so they need a package on disk.
@@ -172,10 +171,10 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         .as_ref()
         .map(|dir| dir.join("target").join("burdin").join("bench"));
     if package_dir.is_none() && (args.baseline.is_some() || args.save_baseline.is_some()) {
-        eprintln!(
-            "error: `--baseline` and `--save-baseline` need a package directory to keep their file in, not a single file\n{USAGE}"
+        return crate::cli::usage_error(
+            "bench",
+            "`--baseline` and `--save-baseline` need a package directory to keep their file in, not a single file",
         );
-        return ExitCode::from(2);
     }
     let baseline = match (args.baseline.as_deref(), package_dir.as_deref()) {
         (Some(name), Some(dir)) => match load_baseline(dir, name) {
@@ -252,8 +251,10 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     if let Some(seconds) = args.profile_time {
         if chosen.len() != 1 {
             let how_many = if chosen.is_empty() { "no bench" } else { "several benches" };
-            eprintln!("error: `--profile-time` runs one bench, but {how_many} match the filters\n{USAGE}");
-            return ExitCode::from(2);
+            return crate::cli::usage_error(
+                "bench",
+                &format!("`--profile-time` runs one bench, but {how_many} match the filters"),
+            );
         }
         return profile(&chosen[0], seconds);
     }

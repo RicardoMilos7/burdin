@@ -13,22 +13,6 @@ use burdin_tir::Program;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub(crate) const ASM_USAGE: &str = "\
-usage:
-  burdin asm <file.bd | package directory> [<function>] [--debug] [--intel | --att] [--llvm] [--no-source]
-             [-j <n>] [--comptime-steps <n>] [diagnostics]
-
-asm options:
-  <function>           the function to print, as `module.name`, `Type.method`, or an instance such as
-                       `largest<i32>` (`::` is accepted for `.`); a generic function without its type arguments
-                       lists the instances available, and no function lists every function that has code
-  --debug              build the debug profile (the default is the release profile)
-  --intel, --att       the x86 assembly dialect (default: the target's, AT&T on x86)
-  --llvm               print the function's LLVM IR, after optimization, instead of assembly
-  --no-source          leave out the interleaved source lines
-  -j, --jobs <n>       compile on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
-  --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)";
-
 #[derive(Debug, Default)]
 struct AsmArgs {
     target: PathBuf,
@@ -144,16 +128,9 @@ pub(crate) fn select(program: &Program, reached: &[bool], query: &str) -> Select
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
-    if matches!(argv, [flag] if flag == "-h" || flag == "--help") {
-        println!("{ASM_USAGE}");
-        return ExitCode::SUCCESS;
-    }
     let args = match parse(argv) {
         Ok(a) => a,
-        Err(message) => {
-            eprintln!("error: {message}\n{ASM_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("asm", &message),
     };
     let kind = if args.llvm { EmitKind::LlvmIrOpt } else { EmitKind::Asm };
     let emit = Emit { kinds: vec![kind], asm_syntax: args.syntax, skip_link: true };
