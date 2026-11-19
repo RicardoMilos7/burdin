@@ -1298,6 +1298,24 @@ commands, checksum tampering, and every failure leaving both files unchanged), `
 What is left: a registry and version requirements, `burdin update`, git packages in a subdirectory of their
 repository, `--offline`, and doc tests reading the documented package's lockfile (each example resolves its own).
 
+## The fifty-sixth session: the toolchain manager (stage 3, issue #624, sub-issues #626, #628, #630, #631)
+
+The name is `burdin toolchain`, not `burdinup` (`spec/toolchain.md`). `crates/burdin_toolchain` builds
+`burdin-toolchain`: one executable that is the manager and, copied into the install directory as `burdin` and
+`burdin-lsp`, the proxy that selects a toolchain per command (TC7: `+t`, `BURDIN_TOOLCHAIN`, `burdin-toolchain.toml`,
+the default) and execs that toolchain's binary. Toolchains live under `<burdin home>/toolchains/<name>`; downloads go
+through `curl` (resumable, `-C -`) and are verified against `SHA256SUMS` before a staging directory is moved into place;
+archives are unpacked with the system `tar`. It never links the compiler or LLVM; SHA-256 moved to
+`crates/burdin_sha256`. Components (`debuggers`, `docs`, `lsp`, `std-src`) are per-target archives that
+`tests/build_release.py` now writes beside the compiler archive (which now holds `burdin-toolchain`); the release job
+requires all of them. The LSP opens std files from the toolchain's `lib/std/src` when they match. The installers
+bootstrap through `burdin-toolchain toolchain self install` when the archive carries the manager, and record their PATH
+change for `self uninstall`; an archive without it installs the compiler alone, as before.
+`BURDIN_DIST_ROOT` points the manager at another distribution root (`channels/<channel>`, `v<version>/<file>`), which
+is how `tests/check_toolchain.py` tests it. Gaps: no target components until cross-compilation (#282); `self update`
+follows the stable channel only; the GitHub API path and the Windows user-PATH removal are on the manual checklist in
+`spec/toolchain.md`.
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

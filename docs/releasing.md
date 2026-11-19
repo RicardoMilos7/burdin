@@ -77,10 +77,11 @@ Six native targets are built, each on a hosted runner of the same architecture (
 
 Each job runs `tests/build_release.py --target <triple> --out dist`, which
 
-1. builds with `cargo build --release --locked -p burdin_driver` and the pinned toolchain;
+1. builds the compiler, the toolchain manager, and `burdin-lsp` with `cargo build --release --locked -p burdin_driver
+   -p burdin_toolchain -p burdin_lsp` and the pinned toolchain;
 2. checks that the binary's `--version` reports the planned version, channel, and target;
 3. smoke-tests `burdin build`, `burdin run`, and `burdin test` on a small program;
-4. writes `burdin-<version>-<target>.tar.gz` and its SHA-256 checksum.
+4. writes `burdin-<version>-<target>.tar.gz`, one archive per optional component, and their SHA-256 checksums.
 
 The archive is uniform across platforms (`.tar.gz`, not `.zip`) so one packaging path and one installer shape cover
 all six. Its layout is:
@@ -88,12 +89,17 @@ all six. Its layout is:
 ```
 burdin-<version>-<target>/
   burdin            (burdin.exe on Windows)
+  burdin-toolchain  the toolchain manager, installed as the burdin proxy (spec/toolchain.md)
   LLVM-C.dll        (Windows only, beside burdin.exe)
   README.md
   CHANGELOG.md
   docs/error-codes.md
   docs/lints.md
 ```
+
+Each target also gets the optional components of `spec/toolchain.md` (TC10) as separate archives,
+`burdin-<component>-<version>-<target>.tar.gz` for `debuggers`, `docs`, `lsp`, and `std-src`, listed in the same
+`SHA256SUMS`. The release job requires all six compiler archives and every component archive.
 
 **Runtime requirement.** Development builds link LLVM 21 as a shared library (the static Windows archives crash in a
 dynamic-CRT Rust binary). Release builds on Linux and macOS link it statically: `tests/build_release.py` sets
@@ -166,6 +172,10 @@ Both installers:
   `install.sh` appends a PATH line to the startup file of zsh (`~/.zshrc`), bash (`~/.bashrc` on Linux,
   `~/.bash_profile` on macOS), or fish (`~/.config/fish/config.fish`). Other shells get a hint instead. `BURDIN_NO_MODIFY_PATH` (or `install.ps1 -NoModifyPath`)
   leaves `PATH` and the startup files alone.
+
+When the archive carries the toolchain manager, both installers install through it (`spec/toolchain.md` TC13): the
+release becomes a toolchain under the Burdin home and the default, the install directory gets the `burdin` and
+`burdin-lsp` proxies, and the PATH change is recorded so `burdin toolchain self uninstall` can undo exactly that.
 
 `BURDIN_BASE_URL` points the download at another mirror, and `BURDIN_RELEASE_DIR` installs from a local directory —
 the rehearsal path used by `tests/check_release.py` and the release job. A package-manager formula is a later work

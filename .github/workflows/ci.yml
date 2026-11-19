@@ -292,6 +292,14 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toolchain.py
+
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
       - name: Check burdin check
@@ -626,6 +634,14 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
@@ -981,6 +997,14 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).

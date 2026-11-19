@@ -561,6 +561,15 @@ fn dap(args: &[String]) -> ExitCode {
 
 fn driver_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // The toolchain manager's proxy handles `toolchain` and `+toolchain` before it runs a compiler, so reaching here
+    // means this compiler was run directly (`spec/toolchain.md` TC9).
+    if let Some(first) = argv.first().filter(|a| *a == "toolchain" || a.starts_with('+')) {
+        eprintln!(
+            "error: `burdin {first}` belongs to the toolchain manager, and this burdin is a compiler run directly, not \
+             the manager's proxy; install Burdin with install.sh or install.ps1 to manage toolchains"
+        );
+        return ExitCode::from(2);
+    }
     let command = match cli::route(&argv) {
         cli::Route::Exit(code) => return code,
         cli::Route::Command(command) => command,
