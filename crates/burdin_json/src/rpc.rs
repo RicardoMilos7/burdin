@@ -1,5 +1,5 @@
-//! JSON-RPC 2.0 framing over a byte stream (`spec/lsp.md`, LS1): each message is a `Content-Length` header, an empty
-//! line, and that many bytes of UTF-8 JSON.
+//! JSON-RPC 2.0 framing over a byte stream (`spec/lsp.md`, LS1; the DAP server uses the same framing, `spec/debug.md`,
+//! DBG11): each message is a `Content-Length` header, an empty line, and that many bytes of UTF-8 JSON.
 
 use crate::json::Json;
 use std::io::{BufRead, Write};

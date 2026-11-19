@@ -30,6 +30,11 @@ pub struct Function {
     /// Every place read in a move context, as a local and a field path from it. The code generator
     /// allocates a runtime drop flag for each of them.
     pub moved: Vec<MovedPlace>,
+    /// Where a whole local is unconditionally moved out or dropped, so the debug information can end its
+    /// location there (`spec/debug.md`, DBG4). A move the checker cannot prove unconditional — one inside a
+    /// conditional branch, or inside a loop over a local that was already in scope there — is not listed, and
+    /// the local keeps showing its (stale) bytes, which the drop flag is the honest answer for.
+    pub debug_kills: Vec<DebugKill>,
     /// The parameters a second-class return value derives from (memory-rules.md, RT1, RT3a). Empty when the
     /// result is static (or the return type is not second-class). The borrow checker uses them to keep the
     /// arguments borrowed until the last use of the result (RF5).
@@ -39,6 +44,14 @@ pub struct Function {
     pub symbolic: bool,
     /// An `extern "C" fn`: the function is exported under its plain name with the C ABI (issue #489).
     pub exported: bool,
+}
+
+/// A whole local whose location the debug information ends after `span`: the statement that moved it out
+/// (`spec/debug.md`, DBG4). A debugger then shows `<optimized out>` instead of the stale bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebugKill {
+    pub local: LocalId,
+    pub span: Span,
 }
 
 /// A path step that walks through the allocation of a `Heap<T>`: `(*h).field` is `[MOVED_DEREF, field]`.

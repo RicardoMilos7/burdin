@@ -40,6 +40,8 @@ python3 tests/check_platform.py          check the host triple and 64-bit isize/
 python3 tests/check_platform_support.py  check the platform support page against CI and binary-safe output (needs a built driver)
 python3 tests/check_docs.py              check documentation links and the driver contract (needs a built driver)
 python3 tests/check_debug_info.py        check -g's DWARF, line table, and a gdb breakpoint (needs a built driver)
+python3 tests/check_debug_printers.py    check the panic hook, the symbolized frames, the gdb/lldb printers, the Natvis file, and `burdin debug`
+python3 tests/check_dap.py               check `burdin dap`, the debug adapter, against a stub backend
 python3 tests/check_codegen_opt.py       check drop-flag elimination, bounds-check elision, and shared glue
 python3 tests/check_build_flags.py       check --version, --strip's size budget, --lto, and PGO
 python3 tests/check_parallel.py          check parallel parsing and deterministic diagnostics
@@ -64,6 +66,7 @@ cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
 cargo test -p burdin_lsp           the language server's JSON-RPC integration tests (no LLVM)
+cargo test -p burdin_dap           the debug adapter's scripted-peer tests (no LLVM, no debugger)
 cargo bench -p burdin_bench        compiler benchmarks (lex, parse, sema, codegen)
 cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs
 cargo bench -p burdin_bench -- --save FILE       record a benchmark baseline
@@ -168,9 +171,13 @@ crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_lint (the linter), burdin_doc (the documentation generator),
                           burdin_query (the query-based compiler library),
                           burdin_lsp (the language server behind `burdin lsp`),
+                          burdin_json (the JSON value and framing both protocol servers share),
+                          burdin_dap (the debug adapter behind `burdin dap`),
                           burdin_repl (the REPL behind `burdin repl`),
                           burdin_bench (generated inputs and `cargo bench` targets),
                           burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin
 editors/                  the VS Code extension and the Neovim and Helix setup for `burdin lsp`
+debuggers/                the pretty-printers: gdb (`gdb/`, embedded in a `-g` binary, `spec/debug.md` DBG6), lldb
+                          (`lldb/`, written beside the session, DBG7), and the Windows Natvis file (`windows/`, DBG8)
 ```

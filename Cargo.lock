@@ -62,6 +62,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "burdin_dap"
+version = "0.1.0"
+dependencies = [
+ "burdin_json",
+]
+
+[[package]]
 name = "burdin_diag"
 version = "0.1.0"
 
@@ -79,6 +86,7 @@ version = "0.1.0"
 dependencies = [
  "burdin_bindgen",
  "burdin_codegen",
+ "burdin_dap",
  "burdin_diag",
  "burdin_doc",
  "burdin_fmt",
@@ -108,6 +116,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "burdin_json"
+version = "0.1.0"
+
+[[package]]
 name = "burdin_lint"
 version = "0.1.0"
 dependencies = [
@@ -122,6 +134,7 @@ version = "0.1.0"
 dependencies = [
  "burdin_diag",
  "burdin_fmt",
+ "burdin_json",
  "burdin_lint",
  "burdin_query",
  "burdin_syntax",

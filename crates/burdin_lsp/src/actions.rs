@@ -302,7 +302,7 @@ pub fn code_lenses(server: &mut Server, params: &Json) -> Reply {
             .with("type", "burdin")
             .with("request", "launch")
             .with("name", format!("Debug test {}", t.path))
-            .with("program", root_text.as_str())
+            .with("target", root_text.as_str())
             .with("test", t.path.as_str())
             .with("cwd", cwd.as_str());
         lenses.push(lens(server, &path, lo, hi, "Debug", "burdin.debug", Some(debug)));
@@ -340,7 +340,7 @@ pub fn code_lenses(server: &mut Server, params: &Json) -> Reply {
             .with("type", "burdin")
             .with("request", "launch")
             .with("name", format!("Debug {}", server.packages[i].name))
-            .with("program", root_text.as_str())
+            .with("target", root_text.as_str())
             .with("cwd", cwd.as_str());
         lenses.push(lens(server, &path, lo, hi, "Debug", "burdin.debug", Some(debug)));
     }

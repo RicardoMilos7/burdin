@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Burdin visualizers for Visual Studio and WinDbg (`spec/debug.md`, DBG5 and DBG8).
+
+  The debug types the compiler emits (`emit/debug.rs`) are the one description of the built-in layouts these
+  entries read, so they name members and never hard-code an offset. The facts the DWARF and CodeView cannot carry
+  are the ones written in `spec/debug.md`, DBG5, and mirrored in `debuggers/gdb/burdin_printers.py` and
+  `debuggers/lldb/burdin_formatters.py`:
+
+    * a `Map` buffer holds `cap` (a power of two) slots of `(key, value, u64 hash)`; a zero hash is an empty slot,
+      and there are no tombstones;
+    * a `Shared` cell is `{ count: usize, value }` and the `Shared<T>` value points at it;
+    * an `any I` box is `{ data, vtable }`, and the vtable is
+      `{ i64 type_id, ptr drop, ptr name, usize name_len, ptr method_0, ... }`.
+
+  `burdin build -g` writes this file next to the executable and passes `/NATVIS:` to the linker, which embeds it
+  in the PDB, so the entries apply to every Burdin program built with `-g` on Windows.
+
+  Natvis has no catch-all: an entry matches a type name, so an enum (`{ tag, payload }`) is shown as the debug info
+  lays it out, one union member per variant, and a closure (`Fn(...)`) as its `code`, `env`, and `drop` words.
+-->
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="String">
+    <DisplayString>{(char*)ptr,[len]s}</DisplayString>
+    <Expand>
+      <Item Name="[len]">len</Item>
+      <Item Name="[cap]">cap</Item>
+    </Expand>
+  </Type>
+  <Type Name="str">
+    <DisplayString>{(char*)ptr,[len]s}</DisplayString>
+    <Expand>
+      <Item Name="[len]">len</Item>
+    </Expand>
+  </Type>
+  <Type Name="List&lt;*&gt;">
+    <DisplayString>{{ len = {len} }}</DisplayString>
+    <Expand>
+      <ArrayItems>
+        <Size>len</Size>
+        <ValuePointer>ptr</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+  <Type Name="Map&lt;*&gt;">
+    <DisplayString>{{ len = {len} }}</DisplayString>
+    <Expand>
+      <CustomListItems>
+        <Variable Name="i" InitialValue="0" />
+        <Size>len</Size>
+        <Loop>
+          <Break Condition="i &gt;= cap" />
+          <Item Condition="ptr[i].hash != 0">ptr[i]</Item>
+          <Exec>i = i + 1</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+  <Type Name="Option&lt;*&gt;">
+    <DisplayString Condition="is_some">Some({value})</DisplayString>
+    <DisplayString Condition="!is_some">None</DisplayString>
+    <Expand>
+      <Item Condition="is_some" Name="[value]">value</Item>
+    </Expand>
+  </Type>
+  <Type Name="Result&lt;*&gt;">
+    <DisplayString Condition="is_ok">Ok({ok})</DisplayString>
+    <DisplayString Condition="!is_ok">Err({err})</DisplayString>
+    <Expand>
+      <Item Condition="is_ok" Name="[ok]">ok</Item>
+      <Item Condition="!is_ok" Name="[err]">err</Item>
+    </Expand>
+  </Type>
+  <Type Name="Heap&lt;*&gt;">
+    <DisplayString Condition="value == 0">Heap(null)</DisplayString>
+    <DisplayString>Heap({*value})</DisplayString>
+    <Expand>
+      <Item Condition="value != 0" Name="[value]">*value</Item>
+    </Expand>
+  </Type>
+  <Type Name="Shared&lt;*&gt;">
+    <DisplayString Condition="cell == 0">Shared(null)</DisplayString>
+    <DisplayString>Shared({cell-&gt;value}) (strong {cell-&gt;count})</DisplayString>
+    <Expand>
+      <Item Condition="cell != 0" Name="[strong count]">cell-&gt;count</Item>
+      <Item Condition="cell != 0" Name="[value]">cell-&gt;value</Item>
+    </Expand>
+  </Type>
+  <Type Name="any *">
+    <DisplayString>any {*(char**)((char*)vtable + 16),s}</DisplayString>
+    <Expand>
+      <Item Name="[type]">{*(char**)((char*)vtable + 16),s}</Item>
+      <Item Name="[box]">data</Item>
+    </Expand>
+  </Type>
+  <Type Name="Range&lt;*&gt;">
+    <DisplayString>{lo}..{hi}</DisplayString>
+  </Type>
+  <Type Name="RangeInclusive&lt;*&gt;">
+    <DisplayString>{lo}..={hi}</DisplayString>
+  </Type>
+</AutoVisualizer>

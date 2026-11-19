@@ -33,6 +33,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
+| [`spec/debug.md`](spec/debug.md) | Debugging: the panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file, `burdin debug`, and the `burdin dap` debug adapter (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
 | [`HANDOFF.md`](HANDOFF.md) | The current state, open decisions, and what is next. |
@@ -134,14 +135,14 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 
 ## The driver contract
 
-The `burdin` command has the subcommands `build`, `run`, `test`, `bench`, `check`, `fmt`, `doc`, `explain`,
-`bindgen`, `new`, `repl`, and `lsp`.
+The `burdin` command has the subcommands `build`, `run`, `test`, `bench`, `check`, `fmt`, `doc`, `debug`, `explain`,
+`bindgen`, `new`, `repl`, `lsp`, and `dap`.
 This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
 ```
 usage:
-  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [-j <n>]
+  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
@@ -160,6 +161,8 @@ usage:
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
              [--coverage] [--deny-warnings] [-j <n>] [diagnostics]
+  burdin debug <file.bd | package directory> [--debugger <name | path>] [--test <name | index>]
+               [--break-on-panic] [--release] [-j <n>] [diagnostics] [-- <program arguments>...]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
                  [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
@@ -167,6 +170,7 @@ usage:
   burdin new <name>
   burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lsp [--stdio]
+  burdin dap [--stdio]
   burdin --version
 
 compile options:
@@ -174,6 +178,8 @@ compile options:
                        then the number of CPUs); `burdin test` also runs at most n tests at once
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
+  --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,
+                       as `burdin test` does, without running anything (the debug adapter builds a test this way)
 
 check options (type-check only: the front end and every memory check, no code generation or linking):
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
@@ -274,6 +280,20 @@ status 2, to touch a path that already exists. `tests/check_new.py` checks it.
 accepted and changes nothing) and exits 0 after `shutdown` and `exit`, 1 otherwise. Editors start it themselves;
 [`editors/`](editors/README.md) has the VS Code extension and the settings for Neovim and Helix, and
 [`spec/lsp.md`](spec/lsp.md) is the specification. `tests/check_lsp.py` drives it.
+
+`burdin debug <target> [-- args]` builds the target with `-g` in a temporary directory and starts the platform debugger on
+it: gdb when it is installed, lldb otherwise (lldb on macOS; cdb on Windows), or whatever `--debugger` names. The
+pretty-printers load with the program (the gdb ones are embedded in a `-g` binary, the lldb ones are written beside the
+session), `--break-on-panic` starts stopped on `burdin_panic_begin` before the panic prints anything, and `--test <name |
+index>` debugs one `test` block. The debugger is interactive and its exit status passes through. `tests/check_debug_printers.py`
+checks the command line with a stub debugger.
+
+`burdin dap` is the Debug Adapter Protocol server: it speaks DAP on standard input and output and forwards to `lldb-dap`,
+adding the Burdin behavior on top — a `launch` request may name a `target` (and a `test`) that the adapter builds with
+`-g`, the "Burdin panic" exception filter breaks on the panic hook, and steps that stop in generated code are skipped.
+Editors register the `burdin` debug type against it. `spec/debug.md` (DBG11-DBG12) is the specification,
+[`editors/`](editors/README.md) the editor configuration, and `tests/check_dap.py` plus
+`crates/burdin_dap/tests/protocol.rs` drive it with a stub backend.
 
 Environment:
 

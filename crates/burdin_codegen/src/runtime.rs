@@ -13,10 +13,14 @@
 //! the caller asked for are both handled. `burdin_rt_is_terminal` answers `isatty` for the stream handles.
 //!
 //! **Panics.** A panic prints `path:LINE:COL: panic: message` and then a symbolized `stack backtrace:` section, so
-//! the message line keeps its stage 0 format. The runtime frames above the panicking function are skipped. On Unix
-//! the trace uses libc's `backtrace`/`backtrace_symbols_fd` and needs the `.eh_frame` unwind tables the code
-//! generator adds to every function; on Windows it uses `RtlCaptureStackBackTrace` (addresses only, because symbolizing
-//! needs a PDB the driver does not produce).
+//! the message line keeps its stage 0 format. Every panic path first calls `burdin_panic_begin`, the stable,
+//! externally visible breakpoint symbol (`spec/debug.md`, DBG1), with the stack still intact. The runtime frames
+//! above the panicking function are skipped. On Unix the trace uses libc's `backtrace`/`backtrace_symbols_fd` and
+//! needs the `.eh_frame` unwind tables the code generator adds to every function; on Windows it uses
+//! `RtlCaptureStackBackTrace`. When the program was built with `-g`, the code generator also defines
+//! `burdin_rt_frame_info` over a table of one entry per emitted function (`spec/debug.md`, DBG2), and the backtrace
+//! prints `  #N  at <file>:<line> in <Burdin path>` for every frame the table names and `  #N  0x<address>` for the
+//! rest; without it the frames print as `backtrace_symbols_fd` does on Unix and as addresses on Windows.
 //!
 //! **Stack overflow.** The main thread gets an alternate signal stack and a `SIGSEGV` handler on Unix (an
 //! `AddVectoredExceptionHandler` filter for `EXCEPTION_STACK_OVERFLOW` on Windows, with a 64 KiB stack guarantee so
@@ -986,6 +990,7 @@ struct Helpers<'ctx> {
     alloc_string: FunctionValue<'ctx>,
     panic_start: FunctionValue<'ctx>,
     print_backtrace: FunctionValue<'ctx>,
+    panic_begin: FunctionValue<'ctx>,
 }
 
 /// The helpers that exist before the allocator, which they report an out-of-memory panic through.
@@ -997,6 +1002,7 @@ struct BaseHelpers<'ctx> {
     digits: FunctionValue<'ctx>,
     panic_start: FunctionValue<'ctx>,
     print_backtrace: FunctionValue<'ctx>,
+    panic_begin: FunctionValue<'ctx>,
 }
 
 impl<'ctx> BaseHelpers<'ctx> {
@@ -1010,6 +1016,7 @@ impl<'ctx> BaseHelpers<'ctx> {
             alloc_string,
             panic_start: self.panic_start,
             print_backtrace: self.print_backtrace,
+            panic_begin: self.panic_begin,
         }
     }
 }
@@ -1255,14 +1262,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let _ = locked;
         let _out_write = self.out_write(flush, globals)?;
         let die = self.die(flush)?;
-        self.install_stack_guard(flush)?;
+        let panic_begin = self.panic_begin()?;
+        self.install_stack_guard(flush, panic_begin)?;
         let digits = self.digits()?;
         let write_u64 = self.write_u64(write_all, digits)?;
         let hex_digits = self.hex_digits()?;
         self.write_hex(write_all, hex_digits)?;
         let print_backtrace = self.print_backtrace()?;
         let panic_start = self.panic_start(write_all, write_u64, flush)?;
-        Ok(BaseHelpers { write_all, flush, die, write_u64, digits, panic_start, print_backtrace })
+        Ok(BaseHelpers { write_all, flush, die, write_u64, digits, panic_start, print_backtrace, panic_begin })
     }
 
     /// The globals behind the standard-output buffer, created on first use.
@@ -2072,6 +2080,23 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
+    /// `burdin_panic_begin()`: the stable entry symbol every panic path calls before it prints or aborts
+    /// (`spec/debug.md`, DBG1), so `break burdin_panic_begin` stops with the full stack. It is externally visible
+    /// (the linker and `globaldce` keep it even in a program that cannot panic) and empty: it is a breakpoint, not
+    /// code, and `noinline` keeps it from being folded into the caller.
+    fn panic_begin(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let f = self.module.add_function(
+            "burdin_panic_begin",
+            self.cx.void_type().fn_type(&[], false),
+            Some(Linkage::External),
+        );
+        let noinline = self.cx.create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0);
+        f.add_attribute(AttributeLoc::Function, noinline);
+        self.b.position_at_end(self.cx.append_basic_block(f, "entry"));
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
     /// `panic_start(file, file_len: usize, line: i32, col: i32)`: flushes standard output, then writes
     /// `path:LINE:COL: panic: ` to stderr.
     fn panic_start(
@@ -2116,6 +2141,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let params = [&[self.ptr_ty.into(), self.usize_ty.into()][..], &self.location_params()[..]].concat();
         let f = self.function("burdin_rt_panic", self.cx.void_type().fn_type(&params, false));
         self.mark_noreturn(f);
+        self.call(h.panic_begin, &[])?;
         self.start_panic(h, f)?;
         let stderr = self.i32().const_int(2, false);
         self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 0).into(), Self::int_param(f, 1).into()])?;
@@ -2131,6 +2157,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let params = [&[self.i64().into(), self.i64().into()][..], &self.location_params()[..]].concat();
         let f = self.function("burdin_rt_panic_bounds", self.cx.void_type().fn_type(&params, false));
         self.mark_noreturn(f);
+        self.call(h.panic_begin, &[])?;
         self.start_panic(h, f)?;
         let stderr = self.i32().const_int(2, false);
         self.write_const(h.write_all, 2, b"index out of bounds: the index is ")?;
@@ -2146,8 +2173,30 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
     // ----- backtraces and the stack guard ----------------------------------------------
 
+    /// The frame table entry the code generator emits with `-g` (`spec/debug.md`, DBG2): the function's address,
+    /// its name and its source file as pointer-and-length pairs, the declaration line, and whether the backtrace
+    /// stops after this frame (the process entry point, above which only the C runtime and libc are left, whose
+    /// addresses the table would misattribute). `emit/frames.rs` builds the same struct; the two definitions must
+    /// stay in sync.
+    fn frame_entry_ty(&self) -> StructType<'ctx> {
+        let (ptr_ty, usize_ty, i32_ty, i1_ty) = (self.ptr_ty, self.usize_ty, self.i32(), self.cx.bool_type());
+        self.cx.struct_type(
+            &[
+                ptr_ty.into(),
+                ptr_ty.into(),
+                usize_ty.into(),
+                ptr_ty.into(),
+                usize_ty.into(),
+                i32_ty.into(),
+                i1_ty.into(),
+            ],
+            false,
+        )
+    }
+
     /// `print_backtrace()`: writes `stack backtrace:` and the frames above the panic runtime to stderr. The first
-    /// two frames (this function and `burdin_rt_panic`) are hidden.
+    /// two frames (this function and `burdin_rt_panic`) are hidden, on Windows by the capture's skip count. A frame the
+    /// `-g` table names prints `  #N  at <file>:<line> in <name>`; every other frame prints its raw address.
     fn print_backtrace(&mut self) -> GenResult<FunctionValue<'ctx>> {
         let void = self.cx.void_type();
         let f = self.function("burdin_rt_print_backtrace", void.fn_type(&[], false));
@@ -2159,6 +2208,77 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
+    /// One line of the backtrace: `  #index` and then either the symbolized entry or the raw address. The entry
+    /// point's own frame (marked `stop`) is not printed: it is the C wrapper above the program's `main`, and the
+    /// trace ends after the frame before it.
+    fn print_frame_at(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        info: PointerValue<'ctx>,
+        index: IntValue<'ctx>,
+        addr: IntValue<'ctx>,
+        continue_bb: BasicBlock<'ctx>,
+        stop_bb: BasicBlock<'ctx>,
+    ) -> GenResult<()> {
+        let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
+        let write_u64 = self.module.get_function("burdin_rt_write_u64").expect("write_u64 exists");
+        let write_hex = self.module.get_function("burdin_rt_write_hex").expect("write_hex exists");
+        let (i64_ty, i32_ty) = (self.i64(), self.i32());
+        let entry = self.frame_entry_ty();
+        let stderr = i32_ty.const_int(2, false);
+        // A frame the table does not know (every frame without `-g`) answers `null`: it prints its raw address and
+        // has no `stop` flag to read. The entry point is not printed; it ends the trace.
+        let info_i = self.b.build_ptr_to_int(info, i64_ty, "").map_err(llvm_err)?;
+        let known =
+            self.b.build_int_compare(IntPredicate::NE, info_i, i64_ty.const_zero(), "known").map_err(llvm_err)?;
+        let check_stop = self.block(f, "frame.check.stop");
+        let line_bb = self.block(f, "frame.line");
+        self.b.build_conditional_branch(known, check_stop, line_bb).map_err(llvm_err)?;
+        self.b.position_at_end(check_stop);
+        let stop_ptr = self.b.build_struct_gep(entry, info, 6, "stop").map_err(llvm_err)?;
+        let stop = self.b.build_load(self.cx.bool_type(), stop_ptr, "").map_err(llvm_err)?.into_int_value();
+        let is_stop = self
+            .b
+            .build_int_compare(IntPredicate::NE, stop, self.cx.bool_type().const_zero(), "is.stop")
+            .map_err(llvm_err)?;
+        self.b.build_conditional_branch(is_stop, stop_bb, line_bb).map_err(llvm_err)?;
+        self.b.position_at_end(line_bb);
+        self.write_const(write_all, 2, b"  #")?;
+        let index64 = self.b.build_int_z_extend(index, i64_ty, "").map_err(llvm_err)?;
+        self.call(write_u64, &[stderr.into(), index64.into()])?;
+        let sym = self.block(f, "frame.sym");
+        let raw = self.block(f, "frame.raw");
+        let done = self.block(f, "frame.done");
+        self.b.build_conditional_branch(known, sym, raw).map_err(llvm_err)?;
+        self.b.position_at_end(sym);
+        let name_ptr = self.b.build_struct_gep(entry, info, 1, "name").map_err(llvm_err)?;
+        let name = self.b.build_load(self.ptr_ty, name_ptr, "").map_err(llvm_err)?.into_pointer_value();
+        let name_len = self.b.build_struct_gep(entry, info, 2, "name.len").map_err(llvm_err)?;
+        let name_len = self.b.build_load(self.usize_ty, name_len, "").map_err(llvm_err)?.into_int_value();
+        let file_ptr = self.b.build_struct_gep(entry, info, 3, "file").map_err(llvm_err)?;
+        let file = self.b.build_load(self.ptr_ty, file_ptr, "").map_err(llvm_err)?.into_pointer_value();
+        let file_len = self.b.build_struct_gep(entry, info, 4, "file.len").map_err(llvm_err)?;
+        let file_len = self.b.build_load(self.usize_ty, file_len, "").map_err(llvm_err)?.into_int_value();
+        let line_ptr = self.b.build_struct_gep(entry, info, 5, "line").map_err(llvm_err)?;
+        let line = self.b.build_load(i32_ty, line_ptr, "").map_err(llvm_err)?.into_int_value();
+        self.write_const(write_all, 2, b"  at ")?;
+        self.call(write_all, &[stderr.into(), file.into(), file_len.into()])?;
+        self.write_const(write_all, 2, b":")?;
+        let line64 = self.b.build_int_z_extend(line, i64_ty, "").map_err(llvm_err)?;
+        self.call(write_u64, &[stderr.into(), line64.into()])?;
+        self.write_const(write_all, 2, b" in ")?;
+        self.call(write_all, &[stderr.into(), name.into(), name_len.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(raw);
+        self.write_const(write_all, 2, b"  0x")?;
+        self.call(write_hex, &[stderr.into(), addr.into()])?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.b.position_at_end(done);
+        self.write_const(write_all, 2, b"\n")?;
+        self.b.build_unconditional_branch(continue_bb).map_err(llvm_err)?;
+        Ok(())
+    }
+
     fn print_backtrace_unix(&mut self, f: FunctionValue<'ctx>) -> GenResult<()> {
         let (i32_ty, ptr_ty) = (self.i32(), self.ptr_ty);
         let backtrace = libc(self.module, "backtrace", i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into()], false));
@@ -2167,6 +2287,14 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             "backtrace_symbols_fd",
             self.cx.void_type().fn_type(&[ptr_ty.into(), i32_ty.into(), i32_ty.into()], false),
         );
+        // The frame table lookup the code generator defines (`spec/debug.md`, DBG2): `null` when the binary was
+        // built without `-g`, which is what keeps the trace below byte-identical to the pre-table format.
+        let frame_info = self.module.add_function(
+            "burdin_rt_frame_info",
+            self.ptr_ty.fn_type(&[self.i64().into()], false),
+            Some(Linkage::External),
+        );
+        let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
         let buf = self.b.build_alloca(ptr_ty.array_type(BACKTRACE_FRAMES), "frames").map_err(llvm_err)?;
         let n = self
             .call(backtrace, &[buf.into(), i32_ty.const_int(u64::from(BACKTRACE_FRAMES), false).into()])?
@@ -2175,14 +2303,45 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let hidden = i32_ty.const_int(2, false);
         let enough = self.b.build_int_compare(IntPredicate::SGT, n, hidden, "enough").map_err(llvm_err)?;
         let show = self.block(f, "show");
+        let table = self.block(f, "table");
+        let legacy = self.block(f, "legacy");
         let done = self.block(f, "done");
         self.b.build_conditional_branch(enough, show, done).map_err(llvm_err)?;
         self.b.position_at_end(show);
-        self.write_const(
-            self.module.get_function("burdin_rt_write_all").expect("write_all exists"),
-            2,
-            b"stack backtrace:\n",
-        )?;
+        self.write_const(write_all, 2, b"stack backtrace:\n")?;
+        // Probe the first visible frame: when the table names it, every frame goes through the same printer.
+        let first = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[hidden], "first") }.map_err(llvm_err)?;
+        let first = self.b.build_load(ptr_ty, first, "").map_err(llvm_err)?.into_pointer_value();
+        let first = self.b.build_ptr_to_int(first, self.i64(), "first").map_err(llvm_err)?;
+        let info = self.call(frame_info, &[first.into()])?.expect("the lookup returns an entry pointer");
+        let info_i = self.b.build_ptr_to_int(info.into_pointer_value(), self.i64(), "").map_err(llvm_err)?;
+        let has =
+            self.b.build_int_compare(IntPredicate::NE, info_i, self.i64().const_zero(), "known").map_err(llvm_err)?;
+        self.b.build_conditional_branch(has, table, legacy).map_err(llvm_err)?;
+        self.b.position_at_end(table);
+        let index = self.b.build_alloca(i32_ty, "i").map_err(llvm_err)?;
+        self.b.build_store(index, hidden).map_err(llvm_err)?;
+        let header = self.block(f, "frame.header");
+        let body = self.block(f, "frame.body");
+        let latch = self.block(f, "frame.next");
+        self.b.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.b.position_at_end(header);
+        let i = self.b.build_load(i32_ty, index, "i").map_err(llvm_err)?.into_int_value();
+        let more = self.b.build_int_compare(IntPredicate::SLT, i, n, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, body, done).map_err(llvm_err)?;
+        self.b.position_at_end(body);
+        let frame = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[i], "frame") }.map_err(llvm_err)?;
+        let frame = self.b.build_load(ptr_ty, frame, "").map_err(llvm_err)?.into_pointer_value();
+        let addr = self.b.build_ptr_to_int(frame, self.i64(), "addr").map_err(llvm_err)?;
+        let info = self.call(frame_info, &[addr.into()])?.expect("the lookup returns an entry pointer");
+        let shown = self.b.build_int_sub(i, hidden, "").map_err(llvm_err)?;
+        self.print_frame_at(f, info.into_pointer_value(), shown, addr, latch, done)?;
+        self.b.position_at_end(latch);
+        let next = self.b.build_int_add(i, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.b.build_store(index, next).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.b.position_at_end(legacy);
+        // No frame table (no `-g`): exactly the stage 0 trace.
         let start = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[hidden], "start") }.map_err(llvm_err)?;
         let count = self.b.build_int_sub(n, hidden, "count").map_err(llvm_err)?;
         self.call(symbols, &[start.into(), count.into(), i32_ty.const_int(2, false).into()])?;
@@ -2199,11 +2358,16 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             "RtlCaptureStackBackTrace",
             self.cx.i16_type().fn_type(&[i32_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false),
         );
+        let frame_info = self.module.add_function(
+            "burdin_rt_frame_info",
+            self.ptr_ty.fn_type(&[self.i64().into()], false),
+            Some(Linkage::External),
+        );
         let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
         let buf = self.b.build_alloca(ptr_ty.array_type(BACKTRACE_FRAMES), "frames").map_err(llvm_err)?;
-        // Skip `RtlCaptureStackBackTrace`, this function, and `burdin_rt_panic`; the runtime frames are hidden
-        // like on Unix.
-        let hidden = i32_ty.const_int(3, false);
+        // Skip this function and `burdin_rt_panic`, like the two frames hidden on Unix: the capture does not count
+        // `RtlCaptureStackBackTrace` itself, so skipping three would drop the panicking function.
+        let hidden = i32_ty.const_int(2, false);
         let n = self
             .call(
                 capture,
@@ -2223,27 +2387,26 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_conditional_branch(enough, show, done).map_err(llvm_err)?;
         self.b.position_at_end(show);
         self.write_const(write_all, 2, b"stack backtrace:\n")?;
+        // Without `-g` the lookup answers `null` and every frame falls to its raw address, which is the stage 0
+        // Windows trace; there is nothing else to preserve.
+        let zero = i32_ty.const_zero();
         let index = self.b.build_alloca(i32_ty, "index").map_err(llvm_err)?;
-        self.b.build_store(index, i32_ty.const_zero()).map_err(llvm_err)?;
+        self.b.build_store(index, zero).map_err(llvm_err)?;
         let header = self.block(f, "frame.header");
         let body = self.block(f, "frame.body");
+        let latch = self.block(f, "frame.next");
         self.b.build_unconditional_branch(header).map_err(llvm_err)?;
         self.b.position_at_end(header);
         let i = self.b.build_load(i32_ty, index, "i").map_err(llvm_err)?.into_int_value();
         let more = self.b.build_int_compare(IntPredicate::SLT, i, n, "").map_err(llvm_err)?;
         self.b.build_conditional_branch(more, body, done).map_err(llvm_err)?;
         self.b.position_at_end(body);
-        let address = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[i], "frame") }.map_err(llvm_err)?;
-        let address = self.b.build_load(ptr_ty, address, "").map_err(llvm_err)?.into_pointer_value();
-        let address = self.b.build_ptr_to_int(address, i64_ty, "address").map_err(llvm_err)?;
-        self.write_const(write_all, 2, b"  #")?;
-        let i64_i = self.b.build_int_s_extend(i, i64_ty, "").map_err(llvm_err)?;
-        let write_u64 = self.module.get_function("burdin_rt_write_u64").expect("write_u64 exists");
-        self.call(write_u64, &[i32_ty.const_int(2, false).into(), i64_i.into()])?;
-        self.write_const(write_all, 2, b" 0x")?;
-        let write_hex = self.module.get_function("burdin_rt_write_hex").expect("write_hex exists");
-        self.call(write_hex, &[i32_ty.const_int(2, false).into(), address.into()])?;
-        self.write_const(write_all, 2, b"\n")?;
+        let frame = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[i], "frame") }.map_err(llvm_err)?;
+        let frame = self.b.build_load(ptr_ty, frame, "").map_err(llvm_err)?.into_pointer_value();
+        let addr = self.b.build_ptr_to_int(frame, i64_ty, "addr").map_err(llvm_err)?;
+        let info = self.call(frame_info, &[addr.into()])?.expect("the lookup returns an entry pointer");
+        self.print_frame_at(f, info.into_pointer_value(), i, addr, latch, done)?;
+        self.b.position_at_end(latch);
         let next = self.b.build_int_add(i, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
         self.b.build_store(index, next).map_err(llvm_err)?;
         self.b.build_unconditional_branch(header).map_err(llvm_err)?;
@@ -2253,7 +2416,11 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
     }
 
     /// `install_stack_guard()`: makes the main thread's stack overflow a clear panic instead of a raw fault.
-    fn install_stack_guard(&mut self, flush: FunctionValue<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+    fn install_stack_guard(
+        &mut self,
+        flush: FunctionValue<'ctx>,
+        panic_begin: FunctionValue<'ctx>,
+    ) -> GenResult<FunctionValue<'ctx>> {
         let void = self.cx.void_type();
         let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
         let in_handler = self.module.add_global(self.i32(), None, "burdin_rt_in_handler");
@@ -2349,6 +2516,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 let other = self.block(handler, "other");
                 self.b.build_conditional_branch(overflow, check, other).map_err(llvm_err)?;
                 self.b.position_at_end(other);
+                self.call(panic_begin, &[])?;
                 self.call(flush, &[])?;
                 self.write_const(write_all, 2, b"panic: invalid memory access\n")?;
                 self.call(exit, &[self.i32().const_int(134, false).into()])?;
@@ -2367,6 +2535,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_conditional_branch(again, nested, first).map_err(llvm_err)?;
         self.b.position_at_end(first);
         self.b.build_store(guard, self.i32().const_int(1, false)).map_err(llvm_err)?;
+        self.call(panic_begin, &[])?;
         self.call(flush, &[])?;
         self.write_const(write_all, 2, b"panic: stack overflow\n")?;
         self.call(exit, &[self.i32().const_int(134, false).into()])?;

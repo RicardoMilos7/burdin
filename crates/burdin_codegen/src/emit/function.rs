@@ -110,6 +110,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 crate::runtime::define_test_main(self.cx, self.module, &tests, self.rt.leak_check, self.windows)?
             }
         }
+        // Last, when every body exists: the frame table the panic backtrace reads with `-g`
+        // (`spec/debug.md`, DBG2), or the stub lookup that keeps the non-`-g` trace unchanged, and the embedded
+        // debugger scripts (DBG6).
+        self.emit_frame_table(&reach)?;
+        if self.debug.is_some() {
+            self.emit_debug_scripts()?;
+        }
         Ok(())
     }
 
@@ -173,6 +180,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         self.debug_entry = Some(entry);
         self.debug_function(value, f);
+        // A parameter is initialized by the stores above, so its debug location starts here; `set_initialized`
+        // never runs for one (`spec/debug.md`, DBG4).
+        for p in &f.params {
+            self.debug_reopen(*p);
+        }
         // A function with no expressions (a generic stub, for instance) would otherwise inherit the previous
         // function's location for its return.
         self.debug_at(f.span);

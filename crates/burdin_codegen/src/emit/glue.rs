@@ -165,6 +165,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             debug_scope: self.debug.as_ref().and_then(|db| db.scope),
             debug_file: self.debug.as_ref().and_then(|db| db.file),
             debug_entry: self.debug_entry,
+            debug_fn_location: self.debug.as_ref().and_then(|db| db.fn_location),
+            debug_vars: self.debug.as_mut().map_or(Vec::new(), |db| std::mem::take(&mut db.vars)),
+            debug_kills: self.debug.as_mut().map_or(Vec::new(), |db| std::mem::take(&mut db.kills)),
             dead_locals: std::mem::take(&mut self.dead_locals),
             bounds_facts: std::mem::take(&mut self.bounds_facts),
             return_env: self.return_env.take(),
@@ -178,6 +181,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if let Some(db) = self.debug.as_mut() {
             db.scope = None;
             db.file = None;
+            db.fn_location = None;
         }
         self.debug_entry = None;
         self.builder.unset_current_debug_location();
@@ -210,6 +214,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if let Some(db) = self.debug.as_mut() {
             db.scope = ctx.debug_scope;
             db.file = ctx.debug_file;
+            db.fn_location = ctx.debug_fn_location;
+            db.vars = ctx.debug_vars;
+            db.kills = ctx.debug_kills;
         }
         self.debug_entry = ctx.debug_entry;
         self.dead_locals = ctx.dead_locals;

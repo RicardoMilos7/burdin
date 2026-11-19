@@ -12,6 +12,7 @@ mod collections;
 mod control;
 mod debug;
 mod expr;
+mod frames;
 mod function;
 mod glue;
 mod iterate;
@@ -23,6 +24,7 @@ mod place;
 mod reach;
 mod results;
 mod scope;
+mod scripts;
 mod slices;
 mod strings;
 mod structural;
@@ -78,6 +80,11 @@ struct SavedContext<'ctx, 'a> {
     debug_scope: Option<inkwell::debug_info::DISubprogram<'ctx>>,
     debug_file: Option<inkwell::debug_info::DIFile<'ctx>>,
     debug_entry: Option<BasicBlock<'ctx>>,
+    /// The per-function debug state of the function the glue interrupts: its location record, the debug variables
+    /// of its locals, and its kill sites (`spec/debug.md`, DBG4). Glue has no variables of its own.
+    debug_fn_location: Option<inkwell::debug_info::DILocation<'ctx>>,
+    debug_vars: Vec<Option<inkwell::debug_info::DILocalVariable<'ctx>>>,
+    debug_kills: Vec<(burdin_tir::LocalId, Span)>,
     dead_locals: HashSet<tir::LocalId>,
     bounds_facts: Vec<(tir::LocalId, tir::LocalId)>,
     /// The capture record a `FnOnce` body owns and must free on an early `return` too.
@@ -154,6 +161,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     triple: String,
     /// The task runtime (`taskrt.rs`) has been linked into the module.
     tasks_linked: bool,
+    /// The functions the task runtime's IR defined, for the `-g` frame table (`spec/debug.md`, DBG2).
+    taskrt_fns: Vec<FunctionValue<'ctx>>,
     /// The operating system whose I/O error codes the program reports (`spec/errors.md`, ERR11).
     platform: tir::ioerror::Platform,
     /// The span of the expression being generated, for the allocation site a leak report names.
@@ -236,6 +245,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             windows,
             triple,
             tasks_linked: false,
+            taskrt_fns: Vec::new(),
             blocking_thunks: vec![None; program.externs.len()],
             platform,
             current_span: None,

@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the fifty-second session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-third session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -1054,6 +1054,48 @@ What is left: sema and the memory checks are still sequential. The typed tree us
 names) and a sema whose shared state is read-only while bodies are checked. That is the next big win for small
 programs, whose time is mostly sema over the standard library. A `burdin test --workspace` still compiles its
 packages one after another. Build timing reports (#472) and cached objects (#243) remain open.
+
+## The fifty-third session: debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
+
+`spec/debug.md` (DBG1-DBG12) holds the twelve decisions this session settled; the checks are
+`tests/check_debug_info.py` (variable lifetimes), `tests/check_debug_printers.py` (the panic hook, the symbolized
+frames, both printer sets, the Natvis file, and `burdin debug`), `tests/check_dap.py`, and
+`crates/burdin_dap/tests/protocol.rs`.
+
+- **Symbolized frames (#572).** `burdin_panic_begin` is an empty external function every panic path calls first, and
+  a `-g` module carries a frame table plus `burdin_rt_frame_info(pc)`; the backtrace prints
+  `  #N  at file:line in path` for program functions, and the non-`-g` path is unchanged. `TraceFrame` carries the
+  function, `Display` is `at {func} ({file}:{line}:{col})`, and `Error.print_trace()` prints the frames (the generated
+  wrappers call it; a `for` over `self.frames` inside them tripped E0111, so the loop moved into `std`).
+- **Variable lifetimes (#571).** `dbg.declare` pins an alloca for the whole function and LLVM then drops every later
+  `dbg.value`, so the design is `dbg.value`-only: parameters and captures reopen their slot after the store, moves
+  and scope ends kill the location, and the kill list travels from `burdin_check::moves` to codegen in
+  `tir::Function::debug_kills`. Conditional moves and early exits keep the location; both gaps are in DBG4.
+- **Printers (#567).** gdb's script is embedded in `.debug_gdb_scripts` (type byte `4`, the name and a newline, the
+  text, a NUL; there is no version byte, and gdb needs `set auto-load safe-path /`). lldb has no such section, so
+  `burdin debug` and `burdin dap` write the formatter file beside the session. Facts that cost time: lldb 21 has no
+  Python API for type categories (drive `type category` commands), lldb applies the *last* matching summary (so the
+  catch-all enum summary is registered first), an lldb summary cannot decline a type (returning `None` prints
+  `None`; returning `""` falls back to the fields), synthetic children shadow the value's own members
+  (`GetNonSyntheticValue()`), `SBType.GetFieldsArray` is not a method, and a bare pointer enumerates no children
+  (make element values with `SBValue.CreateValueFromAddress`). On the gdb side gdb prints `to_string = {children}`
+  for a printer that has both, and a summary needs `display_hint`.
+- **`any` and named types.** The vtable now holds the concrete type's name at byte 16 with its length at 24, and the
+  concrete type is kept in the debug info by an artificial `any.value` variable (`dbg.value` + `DW_OP_deref` over
+  the box), because a type DIE only referenced from a subprogram is still emitted but is not findable by name: named
+  aggregate types are now built at compile-unit scope, which is what makes `type lookup Block` work.
+- **Windows (#569).** `/DEBUG` and `/NATVIS:<output>.natvis` under `-g` with MSVC, with the Natvis text embedded in
+  the driver; natvis has no catch-all, so enums and closures show their raw members (documented in the file).
+- **`burdin debug` (#574).** A temp-dir `-g` build and the platform debugger with the right command line per
+  debugger; `--test` reuses the whole test build (`burdin build --tests`, new) and resolves names like the runner.
+- **`burdin dap` (#576).** `burdin_json` (the JSON value and framing, moved out of `burdin_lsp`, which re-exports
+  it) and `burdin_dap`: an lldb-dap child, the four augmentations, and a `Peer` trait so
+  `crates/burdin_dap/tests/protocol.rs` drives the adapter against a scripted backend. The VS Code extension
+  registers the `burdin` debug type, and the lenses now send `target` (not `program`) in their launch configuration.
+
+What is left: the Natvis file is checked as XML and by the linker arguments, not by a Windows debugger (cdb is not in
+CI); the DAP adapter is checked against a stub backend, not against lldb-dap; and `--test` resolution runs
+`burdin test --list` before the build, so it compiles twice.
 
 ## The fifty-first session: bench blocks and `burdin bench` (stage 3, issue #251)
 

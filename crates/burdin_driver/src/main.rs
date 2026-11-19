@@ -6,6 +6,7 @@ mod bench_runner;
 mod bindgen;
 mod build;
 mod check;
+mod debug;
 mod doc;
 mod export;
 mod fmt;
@@ -26,7 +27,7 @@ use std::process::{Command, ExitCode};
 
 pub(crate) const USAGE: &str = "\
 usage:
-  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [-j <n>]
+  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
@@ -49,11 +50,14 @@ usage:
   burdin lint --explain <lint>
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
              [--coverage] [--deny-warnings] [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin debug <file.bd | package directory> [--debugger <name | path>] [--test <name | index>]
+               [--break-on-panic] [--release] [-j <n>] [diagnostics] [-- <program arguments>...]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
   burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lsp [--stdio]
+  burdin dap [--stdio]
   burdin --version
 
 compile options:
@@ -61,6 +65,8 @@ compile options:
                        then the number of CPUs); `burdin test` also runs at most n tests at once
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
+  --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,
+                       as `burdin test` does, without running anything (the debug adapter builds a test this way)
 
 lint options (the lint reference is docs/lints.md):
   -A, --allow <lint>   do not run the lint        -W, --warn <lint>   report it as a warning
@@ -131,6 +137,15 @@ repl (the interactive session, spec/repl.md):
 lsp (the language server, spec/lsp.md):
   speaks the Language Server Protocol on standard input and output; --stdio is accepted and changes nothing
 
+debug (the behavior is spec/debug.md):
+  builds the target with `-g` in a temporary directory and starts the platform debugger on it: lldb on macOS,
+  gdb (or lldb) on Linux, cdb on Windows. The pretty-printers load with the program, and `--break-on-panic`
+  starts stopped on `burdin_panic_begin`, before the panic prints anything. Program arguments go after `--`.
+  --debugger <name | path>  gdb, lldb, cdb, or a program to start instead
+  --test <name | index>     debug one `test` block, resolved like `burdin test`'s filters
+  --break-on-panic          start with a breakpoint on the panic hook
+  --release                 debug an optimized build
+
 fmt options:
   --check                  change nothing; list the files that are not formatted and exit with status 1
   --stdin                  format standard input to standard output
@@ -177,6 +192,10 @@ pub(crate) struct Args {
     pub(crate) lto: bool,
     /// Instrument the program for profile-guided optimization.
     pub(crate) pgo_generate: bool,
+    /// `burdin build --tests`: compile the package's `test` blocks and the test dispatcher instead of `main`, the
+    /// way `burdin test` builds a test binary (`spec/test-runner.md`). The debug adapter uses it to launch a single
+    /// test (`spec/debug.md`, DBG11).
+    pub(crate) tests: bool,
     /// Use a profile (`*.profraw` or `*.profdata`) for profile-guided optimization.
     pub(crate) pgo_use: Option<PathBuf>,
     pub(crate) output: Option<PathBuf>,
@@ -302,6 +321,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "-g" | "--debug-info" => args.debug = flag_without_value(a, inline)?,
             "--strip" => args.strip = flag_without_value(a, inline)?,
             "--lto" => args.lto = flag_without_value(a, inline)?,
+            "--tests" => args.tests = flag_without_value(a, inline)?,
             "--pgo-generate" => args.pgo_generate = flag_without_value(a, inline)?,
             "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
             "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
@@ -646,6 +666,20 @@ fn lsp(args: &[String]) -> ExitCode {
     ExitCode::from(burdin_lsp::serve_stdio() as u8)
 }
 
+/// `burdin dap`: the Debug Adapter Protocol server on standard input and output (`spec/debug.md`, DBG11). It
+/// forwards to lldb-dap and builds a launch request's `target` with this very executable.
+fn dap(args: &[String]) -> ExitCode {
+    if let Some(other) = args.iter().find(|a| *a != "--stdio") {
+        eprintln!(
+            "error: unknown argument `{other}` for `burdin dap` (it speaks DAP on standard input and output)
+{USAGE}"
+        );
+        return ExitCode::from(2);
+    }
+    let driver = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("burdin"));
+    ExitCode::from(burdin_dap::serve_stdio_with_driver(driver) as u8)
+}
+
 fn driver_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if matches!(argv.as_slice(), [flag] if flag == "--version" || flag == "-V") {
@@ -670,11 +704,17 @@ fn driver_main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("doc") {
         return doc::run(&argv[1..]);
     }
+    if argv.first().map(String::as_str) == Some("debug") {
+        return debug::run(&argv[1..]);
+    }
     if argv.first().map(String::as_str) == Some("new") {
         return new::run(&argv[1..]);
     }
     if argv.first().map(String::as_str) == Some("lsp") {
         return lsp(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("dap") {
+        return dap(&argv[1..]);
     }
     if argv.first().map(String::as_str) == Some("repl") {
         return repl::run(&argv[1..]);
@@ -695,7 +735,7 @@ fn driver_main() -> ExitCode {
         pgo_use: args.pgo_use.as_deref(),
         emit_ir: args.emit_ir.as_deref(),
         link_libs: &args.link_libs,
-        mode: EntryMode::Build,
+        mode: if args.tests { EntryMode::Test } else { EntryMode::Build },
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: args.emit_deps.as_deref(),
@@ -1317,6 +1357,11 @@ fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions)
              set BURDIN_CC to clang or clang-cl"
         ));
     }
+    if opts.debug && is_msvc_style(&cc) {
+        // `link.exe` embeds the file in the PDB with `/NATVIS:`; it has to exist before the link runs
+        // (`spec/debug.md`, DBG8).
+        write_natvis(output)?;
+    }
     let mut cmd = Command::new(&cc);
     cmd.args(link_args(&cc, objects, output, libs, opts));
     let out = cmd.output().map_err(|e| linker_error(&cc, e))?;
@@ -1336,6 +1381,22 @@ fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions)
         write_dsym(output)?;
     }
     Ok(())
+}
+
+/// The Windows visualizers, embedded at compile time (`spec/debug.md`, DBG8). `-g` writes them beside the
+/// executable and hands them to the linker, which embeds them in the PDB.
+const NATVIS: &str = include_str!("../../../debuggers/windows/burdin.natvis");
+
+/// Where `link` writes the Natvis file: `<output>.natvis`, next to the executable.
+fn natvis_path(output: &Path) -> PathBuf {
+    let mut path = output.as_os_str().to_os_string();
+    path.push(".natvis");
+    PathBuf::from(path)
+}
+
+fn write_natvis(output: &Path) -> Result<(), String> {
+    let path = natvis_path(output);
+    std::fs::write(&path, NATVIS).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// ld64 keeps DWARF out of the executable and writes a debug map instead; `dsymutil` combines the object's DWARF
@@ -1375,6 +1436,7 @@ fn link_args(cc: &str, objects: &[PathBuf], output: &Path, libs: &[String], opts
         // and `llvm-config` are how the rest of the build finds that installation.
         let llvm_libdir = libs.iter().any(|l| l == "LLVM-C").then(resolve_llvm_c_libdir).flatten();
         let mut args = msvc_link_args(objects, output, libs, llvm_libdir.as_deref());
+        args.extend(msvc_debug_args(output, opts));
         if opts.strip {
             // Without `/DEBUG` link.exe writes no debug directory; `/OPT:REF` drops unreferenced sections.
             args.push("/OPT:REF".into());
@@ -1426,6 +1488,19 @@ fn msvc_link_args(objects: &[PathBuf], output: &Path, libs: &[String], llvm_libd
         }
     }
     args
+}
+
+/// The MSVC link arguments a `-g` build adds: `/DEBUG` writes the PDB, and `/NATVIS:` embeds the Burdin
+/// visualizers in it so Visual Studio and WinDbg show a `List` as its elements (`spec/debug.md`, DBG8).
+/// `/INCREMENTAL:NO` is what `/DEBUG` otherwise turns off: an incremental link makes a function's address a jump
+/// thunk, which is not where its return addresses are, so the panic backtrace's frame table would name the wrong
+/// functions.
+fn msvc_debug_args(output: &Path, opts: &LinkOptions) -> Vec<OsString> {
+    if !opts.debug {
+        return Vec::new();
+    }
+    let natvis = natvis_path(output);
+    vec!["/DEBUG".into(), "/INCREMENTAL:NO".into(), format!("/NATVIS:{}", natvis.display()).into()]
 }
 
 /// Whether a `--link-lib` value names a file (a path, or a library or object file name) rather than a library to look
@@ -1666,6 +1741,25 @@ mod tests {
             Some(Path::new(r"C:\llvm\lib")),
         ));
         assert!(args.contains(&r"/LIBPATH:C:\llvm\lib".to_string()));
+    }
+
+    #[test]
+    fn msvc_debug_builds_write_the_pdb_and_embed_the_natvis() {
+        let opts = LinkOptions { debug: true, ..Default::default() };
+        let args = as_strings(link_args("cl", &[PathBuf::from("program.obj")], Path::new("out.exe"), &[], &opts));
+        assert!(args.contains(&"/DEBUG".to_string()), "{args:?}");
+        assert!(args.contains(&"/INCREMENTAL:NO".to_string()), "{args:?}");
+        assert!(args.contains(&"/NATVIS:out.exe.natvis".to_string()), "{args:?}");
+        // The visualizers are the repository file, embedded in the driver.
+        assert!(NATVIS.contains("<AutoVisualizer"), "the embedded natvis is empty");
+        let plain = as_strings(link_args(
+            "cl",
+            &[PathBuf::from("program.obj")],
+            Path::new("out.exe"),
+            &[],
+            &LinkOptions::default(),
+        ));
+        assert!(!plain.iter().any(|arg| arg == "/DEBUG" || arg.starts_with("/NATVIS:")), "{plain:?}");
     }
 
     #[test]

@@ -6,6 +6,49 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
+
+`spec/debug.md` (DBG1-DBG12) is the specification; `tests/check_debug_info.py` and `tests/check_debug_printers.py`
+check it with gdb and lldb, `tests/check_dap.py` and `crates/burdin_dap/tests/protocol.rs` check the adapter, and
+every CI job runs them.
+
+- **A stable panic hook (#572).** The runtime defines `burdin_panic_begin`, an empty external function every panic
+  path calls before it prints anything, so a breakpoint there stops with the whole stack intact. With `-g` the
+  generated module carries a frame table — `{ addr, name, name_len, file, file_len, line }` per emitted function —
+  and `burdin_rt_frame_info(pc)` reads it, so a panic backtrace prints `  #0  at src/app.bd:12 in app.main` for the
+  program's functions and raw addresses for everything else. Without `-g` the backtrace is exactly what it was.
+  Error traces carry the function too: `TraceFrame` gains `func`, `Display` is `at {func} ({file}:{line}:{col})`,
+  and `Error.print_trace()` prints a trace's frames.
+- **Locals that tell the truth (#571).** With `-g`, a local's DWARF location starts at its initialization, ends
+  where the move checker proved it moved or dropped, and at its scope end, so a debugger shows `<optimized out>`
+  instead of stale bytes. The kill sites travel in `tir::Function::debug_kills` from `burdin_check::moves` to
+  codegen; the mechanism is `dbg.value` alone (a `dbg.declare` would pin the slot and drop later changes). Early
+  exits and partial moves keep their location, documented as the linear-range gaps they are.
+- **Pretty-printers (#567).** `debuggers/gdb/burdin_printers.py` renders `String`/`str`, `List`, `Map`,
+  `Option`, `Result`, enums, `Heap`, `Shared` with its strong count, `any I` with the concrete type name from the
+  vtable, closures, and ranges; a `-g` binary embeds the script in a `.debug_gdb_scripts` entry, so gdb loads it
+  with the program and nothing has to be installed. `debuggers/lldb/burdin_formatters.py` does the same for lldb;
+  `burdin debug` and `burdin dap` write it beside the session and import it. The debug types the compiler emits are
+  the layout contract (`emit/debug.rs`): typed element pointers, a `Map` slot struct, a `Shared` cell, and the
+  vtable header — the printers read members by name, never by offset. A boxed `any I` now names its concrete type
+  as an artificial variable so the type is in the debug info even when no local has it.
+- **Windows visualizers (#569).** `debuggers/windows/burdin.natvis` mirrors the same layouts, and a `-g` build on
+  MSVC writes it beside the executable and links with `/DEBUG` and `/NATVIS:`, so Visual Studio and WinDbg read it
+  from the PDB.
+- **`burdin debug` (#574).** Builds the target with `-g` in a temporary directory and starts the platform debugger
+  on it (gdb, lldb, cdb, or `--debugger <name | path>`), with the printers loaded and its exit status passed
+  through. `--break-on-panic` starts stopped on the panic hook, `--test <name | index>` debugs one `test` block
+  (resolved like the runner's filters), and program arguments follow `--`. `burdin build --tests` is the same test
+  build without a runner.
+- **`burdin dap` (#576).** A Debug Adapter Protocol server that forwards to `lldb-dap` and adds Burdin behavior at
+  four points: a `launch`/`attach` request may name a `target` (and a `test`) that the adapter builds with `-g` and
+  whose formatters it imports; the "Burdin panic" exception filter sets a function breakpoint on the panic hook,
+  merged with the client's own; steps that stop in generated code are stepped out of and never reported; and
+  everything else is forwarded unchanged with the client's ids restored. New crates: `burdin_json` (the JSON value
+  and `Content-Length` framing, shared with the language server) and `burdin_dap` (the adapter, with a
+  `burdin-dap` binary without LLVM). The VS Code extension registers the `burdin` debug type against it, and
+  `editors/README.md` has the Neovim and Helix DAP setup.
+
 ### Bench blocks and `burdin bench` (issue #251, sub-issues #653-#655)
 
 - `bench "name" { ... }` is a module-scope item beside `test` (`spec/bench.md` BN1, `spec/grammar.md`): a contextual

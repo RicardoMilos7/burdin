@@ -47,8 +47,10 @@ not updated and may disagree with the repository.
    reference; `spec/query.md` is the query-based compiler library: the memo, its granularity, cancellation, the
    budget, the tool API, and the parity between the library and the command line; and `spec/lsp.md` is `burdin lsp`,
    the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests,
-   `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, and `spec/scripts.md` is
-   single-file scripts, the shebang, the inline manifest, and the binary cache.
+   `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, `spec/scripts.md` is
+   single-file scripts, the shebang, the inline manifest, and the binary cache, and `spec/debug.md` is debugging: the
+   panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
+   `burdin debug`, and the `burdin dap` debug adapter.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -85,6 +87,8 @@ python3 tests/check_unit_tests.py        check the front-end unit tests and thei
 python3 tests/check_deps.py              audit the dependency pins and licenses (no compiler needed)
 python3 tests/check_docs.py              check documentation links and the driver contract (needs a built driver)
 python3 tests/check_debug_info.py        check -g, the line table, and a gdb breakpoint (needs a built driver)
+python3 tests/check_debug_printers.py    check the panic hook, symbolized frames, the gdb/lldb printers, the Natvis file, and `burdin debug`
+python3 tests/check_dap.py               check `burdin dap` against a stub backend
 python3 tests/check_codegen_opt.py       check drop-flag elimination, bounds-check elision, and shared glue
 python3 tests/check_build_flags.py       check --version, --strip's size budget, --lto, and PGO
 python3 tests/check_parallel.py          check parallel parsing and deterministic diagnostics
@@ -110,6 +114,7 @@ python3 tests/fuzz.py                    long lexer/parser fuzzing session; the 
 cargo test --workspace                   the Rust unit and integration tests, including `burdin_query` and the
                                          driver's parity test (`crates/burdin_driver/tests/parity.rs`)
 cargo test -p burdin_lsp                 the language server's JSON-RPC integration tests, against `burdin-lsp` (no LLVM)
+cargo test -p burdin_dap                 the debug adapter's scripted-peer tests (no LLVM, no debugger)
 ```
 
 The test scripts are Python 3 and run unchanged on every platform (invoke them with `python3` on Unix and `python`
@@ -157,8 +162,13 @@ crates/
                             budget, the tool API (syntax tree with trivia, resolve/type/signature/ownership at a
                             position), and the package loader (`package.rs`); the driver and a language server share
                             it, and it never links LLVM
-  burdin_lsp/               the language server behind `burdin lsp` (spec/lsp.md): JSON and the framing (`json.rs`,
-                            `rpc.rs`), positions and URIs (`text.rs`), one query database per package (`project.rs`),
+  burdin_json/              the JSON value, its parser, and the `Content-Length` framing: shared by the language
+                            server and the debug adapter
+  burdin_dap/               the debug adapter behind `burdin dap` (spec/debug.md, DBG11): the lldb-dap child
+                            (`backend.rs`), the `target` build and formatter import (`launch.rs`), and the four
+                            augmentations (`adapter.rs`); its `burdin-dap` binary is the same server without LLVM
+  burdin_lsp/               the language server behind `burdin lsp` (spec/lsp.md): positions and URIs
+                            (`text.rs`), one query database per package (`project.rs`),
                             the loop, lifecycle, cancellation, and progress (`server.rs`), and the features (`diagnostics.rs`,
                             `nav.rs`, `edit.rs`, `outline.rs`, `actions.rs`); its `burdin-lsp` binary is the same server
                             without LLVM, which the integration tests in `tests/` drive over JSON-RPC
@@ -177,6 +187,8 @@ crates/
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
 editors/                  the VS Code extension (vscode/) and the Neovim and Helix setup for `burdin lsp`
+debuggers/                the printers and visualizers (spec/debug.md, DBG6-DBG8): gdb (embedded in a `-g` binary),
+                          lldb (written beside the session), and the Windows Natvis file
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
 docs/                     the user-facing error-code reference (checked by tests/check_error_docs.py), the
                           diagnostics-for-tools reference and the JSON schema (docs/diagnostics.md,

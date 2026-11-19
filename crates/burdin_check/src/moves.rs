@@ -3,6 +3,13 @@
 //! every point where a scope can end, and marks a whole-local move `always_dead` when every observation saw it moved;
 //! the code generator then omits its flag and its drop (issue #427).
 //!
+//! It also records the whole-local moves it can prove unconditional as debug kill sites (`spec/debug.md`, DBG4),
+//! which the code generator uses to end a local's DWARF location after the moving statement. A kill is sound only
+//! where the moving statement dominates everything after it in the instruction stream, so a move inside a
+//! conditional branch (an `if` or `match` arm, a `let ... else` block) is not recorded, and neither is a move
+//! inside a loop of a local that was already in scope when the loop started — a path that runs the loop zero
+//! times keeps that local alive.
+//!
 //! The analysis walks the typed tree in source order and keeps an initialization state for every local, as a
 //! map from field paths to [`Status`]. A path with no entry of its own inherits its parent's state. `if`,
 //! `match`, and loops merge the states of their branches; a place that is moved on some paths becomes
@@ -130,6 +137,11 @@ struct Checker<'a> {
     scopes: Vec<Vec<LocalId>>,
     loops: Vec<LoopInfo>,
     moved: Vec<tir::MovedPlace>,
+    /// The whole-local moves that end a local's debug location after them (`spec/debug.md`, DBG4).
+    debug_kills: Vec<tir::DebugKill>,
+    /// How many conditional constructs (an `if` branch, a `match` arm, a `let ... else` block) enclose the
+    /// statement being checked. A move at depth zero happens on every path that reaches the code after it.
+    conditional: usize,
     /// Which locals have been initialized at least once (parameters start declared).
     declared: Vec<bool>,
     /// For every declared local: whether every observation at a drop site saw it moved. `None` before the first
@@ -137,8 +149,13 @@ struct Checker<'a> {
     dead_at_exits: Vec<Option<bool>>,
 }
 
-/// Checks the body of `f` and returns the places it moves.
-pub(crate) fn check_function(f: &tir::Function, env: Env, diags: &mut Diagnostics) -> Vec<tir::MovedPlace> {
+/// Checks the body of `f` and returns the places it moves and the whole-local moves whose statement is the
+/// last one the local is alive at.
+pub(crate) fn check_function(
+    f: &tir::Function,
+    env: Env,
+    diags: &mut Diagnostics,
+) -> (Vec<tir::MovedPlace>, Vec<tir::DebugKill>) {
     let mut cx = Checker {
         env,
         locals: &f.locals,
@@ -147,6 +164,8 @@ pub(crate) fn check_function(f: &tir::Function, env: Env, diags: &mut Diagnostic
         scopes: vec![Vec::new()],
         loops: Vec::new(),
         moved: Vec::new(),
+        debug_kills: Vec::new(),
+        conditional: 0,
         declared: f.locals.iter().map(|local| matches!(local.kind, LocalKind::OwnParam)).collect(),
         dead_at_exits: vec![None; f.locals.len()],
     };
@@ -155,7 +174,7 @@ pub(crate) fn check_function(f: &tir::Function, env: Env, diags: &mut Diagnostic
     for place in &mut cx.moved {
         place.always_dead = place.path.is_empty() && cx.dead_at_exits[place.local.0] == Some(true);
     }
-    cx.moved
+    (cx.moved, cx.debug_kills)
 }
 
 impl<'a> Checker<'a> {
@@ -267,6 +286,15 @@ impl<'a> Checker<'a> {
         self.check_partial_move(&local.ty.clone(), path, span);
         self.states[root.0].move_out(path, span);
         self.record_move(root, path, span);
+        // A whole-local move at conditional depth zero, not inside a loop over a local already in scope when
+        // the loop started, is the last statement the local is alive at: its debug location ends here (DBG4).
+        if path.is_empty()
+            && self.conditional == 0
+            && !self.loops.iter().any(|lp| lp.outer.contains(&root))
+            && !self.debug_kills.iter().any(|k| k.local == root && k.span == span)
+        {
+            self.debug_kills.push(tir::DebugKill { local: root, span });
+        }
     }
 
     /// A field move out of a type that implements `Drop` is E0103.
@@ -685,6 +713,8 @@ impl<'a> Checker<'a> {
                 let mut reported = false;
                 let mut result: Option<Vec<LocalState>> = None;
                 for arm in arms {
+                    // Only one arm runs, so its moves are conditional (DBG4).
+                    self.conditional += 1;
                     let moves = pattern_moves(&arm.pat);
                     if moves && crossing && !reported {
                         let (code, what) = if is_view_place(scrutinee) {
@@ -728,6 +758,7 @@ impl<'a> Checker<'a> {
                             None => result = Some(self.states.clone()),
                         }
                     }
+                    self.conditional -= 1;
                 }
                 self.states = result.unwrap_or(entry);
             }
@@ -856,6 +887,7 @@ impl<'a> Checker<'a> {
     fn if_expr(&mut self, cond: &tir::Expr, then: &tir::Block, other: Option<&tir::Expr>, mode: Mode) {
         self.expr(cond, Mode::Use);
         let entry = self.states.clone();
+        self.conditional += 1;
         let then_falls = self.block(then, mode);
         let then_state = self.states.clone();
         self.states = entry.clone();
@@ -866,6 +898,7 @@ impl<'a> Checker<'a> {
             }
             None => true,
         };
+        self.conditional -= 1;
         // Only the branches that can reach the code after the `if` contribute to its state.
         self.states = match (then_falls, else_falls) {
             (true, true) => {
@@ -942,8 +975,11 @@ impl<'a> Checker<'a> {
                         break;
                     }
                     if let Some(else_block) = else_block {
+                        // The block runs only when the pattern fails, so its moves are conditional (DBG4).
                         let after_init = self.states.clone();
+                        self.conditional += 1;
                         self.block(else_block, Mode::Use);
+                        self.conditional -= 1;
                         self.states = after_init;
                     }
                     let ty = init.ty.clone();

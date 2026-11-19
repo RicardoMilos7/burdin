@@ -1,5 +1,7 @@
 //! A small JSON value with a parser and a printer: what JSON-RPC needs and nothing more (`spec/lsp.md`, LS1). Objects
-//! keep their keys in insertion order, so the server's output is deterministic and the tests can compare it as text.
+//! keep their keys in insertion order, so a server's output is deterministic and the tests can compare it as text.
+//! Both protocol servers share it: the language server and the Debug Adapter Protocol server (`spec/debug.md`,
+//! DBG11).
 
 use std::fmt::Write as _;
 
@@ -45,9 +47,37 @@ impl Json {
         }
     }
 
+    /// Drops a key of an object, if it has one. The DAP server uses it to take the fields it interprets out of a
+    /// request before forwarding it (`spec/debug.md`, DBG11).
+    pub fn remove(&mut self, key: &str) {
+        if let Json::Obj(fields) = self {
+            fields.retain(|(k, _)| k != key);
+        }
+    }
+
     /// A value down a path of keys.
     pub fn at(&self, path: &[&str]) -> &Json {
         path.iter().fold(self, |v, key| v.get(key))
+    }
+
+    /// Sets `value` down a path of keys, creating the objects on the way. The DAP server uses it to rewrite a
+    /// request's arguments in place (`spec/debug.md`, DBG11).
+    pub fn set_at(&mut self, path: &[&str], value: impl Into<Json>) {
+        let value = value.into();
+        match path {
+            [] => *self = value,
+            [key] => self.set(key, value),
+            [key, rest @ ..] => {
+                if !matches!(self.get(key), Json::Obj(_)) {
+                    self.set(key, Json::obj());
+                }
+                if let Json::Obj(fields) = self
+                    && let Some(slot) = fields.iter_mut().find(|(k, _)| k == key)
+                {
+                    slot.1.set_at(rest, value);
+                }
+            }
+        }
     }
 
     pub fn is_null(&self) -> bool {

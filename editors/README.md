@@ -35,9 +35,23 @@ To install it, package it with `npx @vscode/vsce package` and install the `.vsix
 `code --install-extension burdin-0.1.0.vsix`. `burdin` must be on `PATH`, or `burdin.path` must name it.
 
 The `▶ Run test` lenses run in the server and show their result as a lens; `▶ Run` opens a terminal with the same
-command line. `Debug` starts a session of type `burdin` once `burdin dap` exists (issue #576); until then a program is
-built with `-g` and started under [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
-when it is installed.
+command line. `Debug` starts a session of type `burdin`: the extension registers that type against `burdin dap`
+(`spec/debug.md`, DBG12), so the lenses, the Run and Debug view, and a `launch.json` configuration all use the
+same adapter, and no debugger extension has to be installed. A `launch.json` entry names a `target` (a `.bd` file or
+package directory, built with `-g` by the adapter) and optionally `test`:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "type": "burdin", "request": "launch", "name": "Burdin", "target": "${workspaceFolder}" },
+    { "type": "burdin", "request": "launch", "name": "Burdin test", "target": "${workspaceFolder}", "test": "loads" }
+  ]
+}
+```
+
+`burdin dap` needs `lldb-dap` (it ships with LLVM 21, whose `bin` directory is on `PATH` when `burdin` builds) and,
+for a `target`, the same `burdin` that runs the adapter.
 
 ## Zed
 
@@ -127,6 +141,34 @@ Inlay hints are off by default in Neovim; `vim.lsp.inlay_hint.enable(true)` turn
 `vim.lsp.codelens.run()` runs the one under the cursor); `burdin.run` and `burdin.debug` are editor commands that
 Neovim does not have.
 
+To debug from Neovim, point the built-in DAP client at `burdin dap` (`spec/debug.md`, DBG11-DBG12). A launch
+configuration names the package as `target`, and `test` selects one test block:
+
+```lua
+require("dap").configurations.burdin = {
+  {
+    type = "executable",
+    command = "burdin",
+    args = { "dap" },
+    name = "Burdin",
+    request = "launch",
+    target = vim.fn.getcwd(),
+  },
+  {
+    type = "executable",
+    command = "burdin",
+    args = { "dap" },
+    name = "Burdin (test)",
+    request = "launch",
+    target = vim.fn.getcwd(),
+    test = "loads",
+  },
+}
+```
+
+`burdin dap` builds the `target` with `-g`, imports its lldb formatters, and breaks on `burdin_panic_begin` when the
+session's "Burdin panic" exception filter is on.
+
 ## Helix
 
 In `languages.toml` (Helix 24.03 and later):
@@ -153,3 +195,27 @@ language-servers = ["burdin"]
 Helix highlights with tree-sitter grammars; `tree-sitter-burdin` is not set up for Helix yet (its query captures follow
 Zed's), so files are not highlighted; the
 server's other features work. Code lenses are not shown in Helix.
+
+Helix debugs through its DAP client and a debugger adapter command, `burdin dap` (`spec/debug.md`, DBG12). In
+`languages.toml`, next to the language above:
+
+```toml
+[language.debugger]
+name = "burdin"
+transport = "stdio"
+command = "burdin"
+args = ["dap"]
+```
+
+and in `languages.toml`'s `[[language]]` entry for `burdin`, name it: `debugger = { name = "burdin", transport =
+"stdio" }`. A launch template (`:debug-remote`/`b` in Helix's debug prompt) then names the package:
+
+```toml
+[[language.debugger.templates]]
+name = "launch"
+request = "launch"
+completion = [{ name = "target", completion = "filename" }]
+args = { target = "{0}" }
+```
+
+`test = "<name>"` in `args` debugs one test block instead of `main`.

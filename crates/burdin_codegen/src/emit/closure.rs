@@ -174,6 +174,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.scopes.push(owned);
         self.debug_entry = Some(entry);
         self.debug_function(value, &clos.func);
+        // The captures and the parameters were stored above, so their debug locations start here (DBG4).
+        for c in &clos.captures {
+            self.debug_reopen(c.local);
+        }
+        for p in &clos.func.params {
+            self.debug_reopen(*p);
+        }
         self.debug_at(clos.func.span);
         let result = self.block(&clos.func.body, Mode::Move)?;
         self.free_temps_from(0)?;

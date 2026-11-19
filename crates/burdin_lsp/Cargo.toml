@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 burdin_diag.workspace = true
+burdin_json.workspace = true
 burdin_syntax.workspace = true
 burdin_query.workspace = true
 burdin_fmt.workspace = true

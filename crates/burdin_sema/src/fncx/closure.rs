@@ -224,6 +224,7 @@ impl FnCx<'_> {
             self.symbolic,
             closures,
             self.sources,
+            self.fn_name.clone(),
             self.traces,
         );
         child.subst = subst;
@@ -371,6 +372,7 @@ impl FnCx<'_> {
             locals: child.locals,
             body: block,
             moved: Vec::new(),
+            debug_kills: Vec::new(),
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,

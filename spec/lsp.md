@@ -229,8 +229,9 @@ reports progress, and answers with each test's path, status, duration, and failu
 result (`✓ passed (N ms)` or `✗ failed: reason`). An argument that is not a `burdin test` command line is `-32602`, and a
 `burdin` that cannot run is `-32803` with a message to the user. `burdin.run` and `burdin.debug` are client commands:
 the editor runs the program in a terminal, and starts a debug session with the lens's DAP-style `launch`
-configuration (`type: "burdin"`, the program or test) once `burdin dap` exists (issue #576); until then the VS Code
-extension builds with `-g` and starts a native debugger when one is installed.
+configuration — `type: "burdin"`, the package root as `target`, and `test` for a test — which `burdin dap` answers
+(`spec/debug.md`, DBG11-DBG12). The editor registers the `burdin` debug type against `burdin dap`, so no adapter has to
+be installed or configured.
 Tests: `lenses_run_and_debug_tests_and_main_with_exact_command_lines` (`code-lenses.json`),
 `the_test_command_reports_a_missing_compiler_and_rejects_other_commands`; `tests/check_lsp.py` runs a test through a
 lens with the real driver and checks the result lens.
@@ -239,7 +240,8 @@ lens with the real driver and checks the result lens.
 
 **LS20. Editor packaging.** `editors/vscode` is a VS Code extension: it starts `burdin lsp` (the `burdin.path` setting,
 else `burdin` on `PATH`), passes the `burdin` settings, registers the `burdin` language for `.bd` files with a TextMate
-grammar and a language configuration (comments, brackets, indentation), and implements the client commands of LS19.
+grammar and a language configuration (comments, brackets, indentation), implements the client commands of LS19, and
+registers the `burdin` debug type against `burdin dap` (`spec/debug.md`, DBG12).
 `editors/zed` is a Zed extension: it registers the `Burdin` language for `.bd` files, highlighted by the tree-sitter
 grammar in `editors/tree-sitter-burdin`, and starts `burdin lsp` (`lsp.burdin.binary.path`, else `burdin` on `PATH`)
 with the `lsp.burdin.settings` object as the `burdin` settings. `editors/README.md` gives the Neovim and Helix

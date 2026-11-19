@@ -20,8 +20,10 @@ struct Error {
     context: String
 }
 
-/// One recorded error site: the source file, line, and column.
+/// One recorded error site: the function the error passed through and the source file, line, and column
+/// (`spec/debug.md`, DBG3). A release build records no frames at all.
 struct TraceFrame {
+    func: String
     file: String
     line: i32
     col: i32
@@ -65,11 +67,24 @@ Error {
     fn downcast<T: Error>(own self): Option<T> {
         self.value.downcast<T>()
     }
+
+    /// Prints the recorded trace frames, one per line, to standard error (`spec/debug.md`, DBG3): each frame's
+    /// `at <func> (<file>:<line>:<col>)` form. Nothing prints when there are no frames, which is every release
+    /// build. The wrappers of `fn main(): Result<T>` and of a failing test call it after the message.
+    fn print_trace(self) {
+        for frame in self.frames {
+            eprintln("{frame}")
+        }
+    }
 }
 
 TraceFrame: Display {
     fn fmt(self, mut f: Formatter) {
-        f.write_str("{self.file}:{self.line}:{self.col}")
+        f.write_str("at ")
+        f.write_str(self.func)
+        f.write_str(" (")
+        f.write_str(self.file)
+        f.write_str(":{self.line}:{self.col})")
     }
 }
 
@@ -79,16 +94,16 @@ priv fn __error_plain(own value: any Error): Error {
 }
 
 /// A dynamic error with a creation frame (a debug build).
-priv fn __error_at(own value: any Error, file: str, line: i32, col: i32): Error {
+priv fn __error_at(own value: any Error, func: str, file: str, line: i32, col: i32): Error {
     let mut frames = List<TraceFrame>.new()
-    frames.push(TraceFrame { file: file.to_string(), line, col })
+    frames.push(TraceFrame { func: func.to_string(), file: file.to_string(), line, col })
     Error { value, frames, context: String.new() }
 }
 
 /// A dynamic error with one more propagation frame (a debug build).
-priv fn __error_frame(own e: Error, file: str, line: i32, col: i32): Error {
+priv fn __error_frame(own e: Error, func: str, file: str, line: i32, col: i32): Error {
     let mut e = e
-    e.frames.push(TraceFrame { file: file.to_string(), line, col })
+    e.frames.push(TraceFrame { func: func.to_string(), file: file.to_string(), line, col })
     e
 }
 

@@ -13,6 +13,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.scopes.push(Vec::new());
         for s in &b.stmts {
             self.temps.push(Vec::new());
+            let stmt_span = match s {
+                tir::Stmt::Let(.., init, _) => init.span,
+                tir::Stmt::Expr(e) => e.span,
+            };
             match s {
                 tir::Stmt::Let(Pat::Binding(local, _), init, None) => {
                     let v = self.expr_mode(init, Mode::Move)?;
@@ -62,6 +66,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let depth = self.temps.len() - 1;
             self.free_temps_from(depth)?;
             self.temps.pop();
+            // A local the move checker proved this statement moves out whole stops being readable here: the
+            // debug location ends after the statement (DBG4).
+            for id in self.debug_kills_in(stmt_span) {
+                self.debug_kill(id);
+            }
         }
         // The tail expression's temporaries drop when it finishes, before the block's locals (DR5).
         self.temps.push(Vec::new());
@@ -74,6 +83,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.temps.pop();
         let index = self.scopes.len() - 1;
         self.drop_scope(index)?;
+        // The block's locals are out of scope on every path that leaves it through here, so their debug
+        // locations end too — moved, dropped, or plain out of scope (DBG4). Early exits keep their locations:
+        // a kill on one exit path's layout would hide the local on another's.
+        for id in self.scopes[index].clone() {
+            if matches!(self.locals[id.0].kind, LocalKind::Owned | LocalKind::Scrutinee) {
+                self.debug_kill(id);
+            }
+        }
         self.scopes.pop();
         Ok(result)
     }

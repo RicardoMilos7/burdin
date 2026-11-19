@@ -32,6 +32,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         for f in flags {
             self.builder.build_store(f, one).map_err(llvm_err).expect("storing a flag cannot fail");
         }
+        // The whole local just became readable again, so its debug location starts here too (DBG4).
+        if path.is_empty() {
+            self.debug_reopen(id);
+        }
     }
 
     /// The address of `local` plus a field path: struct and tuple fields, `Option` payloads (`[0]`), and enum

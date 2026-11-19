@@ -66,6 +66,8 @@ struct FnCx<'a> {
     capture: Option<closure::CaptureCx>,
     /// Where the paths, lines, and columns of trace frames and typed assertions come from.
     sources: &'a SourceMap,
+    /// The name of the function being checked, as a trace frame records it (`spec/debug.md`, DBG3).
+    fn_name: String,
     /// Record the source location of a dynamic-error conversion (a debug build; `spec/errors.md`, ERR7).
     traces: bool,
     /// Set while checking a place that will be written: the left side of `=`, the operand of `&mut`, and the
@@ -110,6 +112,7 @@ impl<'a> FnCx<'a> {
         symbolic: bool,
         closures: Rc<RefCell<Vec<tir::Closure>>>,
         sources: &'a SourceMap,
+        fn_name: String,
         traces: bool,
     ) -> Self {
         FnCx {
@@ -129,6 +132,7 @@ impl<'a> FnCx<'a> {
             closures,
             capture: None,
             sources,
+            fn_name,
             traces,
             write_place: false,
             comptime_known: Vec::new(),
@@ -552,6 +556,7 @@ impl<'a> FnCx<'a> {
             let (path, line, col) = self.location(span);
             vec![
                 boxed,
+                mk(tir::ExprKind::Str(self.fn_name.clone()), Ty::Str, span),
                 mk(tir::ExprKind::Str(path), Ty::Str, span),
                 mk(tir::ExprKind::Int(i128::from(line)), Ty::Int(IntTy::I32), span),
                 mk(tir::ExprKind::Int(i128::from(col)), Ty::Int(IntTy::I32), span),
