@@ -17,7 +17,7 @@ links. When a platform, a check, or a gap changes, update this page in the same 
 | --- | --- | --- | --- | --- |
 | Linux | x86-64 | `x86_64-unknown-linux-gnu` | Tested | `linux` job on `ubuntu-24.04`: m01-m24 and s2_tasks, s2_channels, s2_shared, and s2_io in the debug and release profiles, every check script, LLVM 21 from apt.llvm.org, and `cc` (gcc and glibc) linking |
 | macOS | arm64 | `aarch64-apple-darwin` | Tested | `macos` job on `macos-latest` (Apple Silicon): the same suite and scripts, Homebrew `llvm@21`, and Apple `cc` (clang and libSystem) linking |
-| Windows | x86-64 | `x86_64-pc-windows-msvc` | Tested | `windows` job on `windows-latest` (MSVC): the same suite and scripts, LLVM 21 from the official archive, MSVC `cl` linking, and a `BURDIN_CC=cl` rerun of m01 and m11 |
+| Windows | x86-64 | `x86_64-pc-windows-msvc` | Tested | `windows` job on `windows-latest` (MSVC): the same suite and scripts, LLVM 21 from the official archive, MSVC `cl` linking, a `BURDIN_CC=cl` rerun of m01 and m11, and a hello world linked with `LIB` and `INCLUDE` cleared |
 | Linux | arm64 | `aarch64-unknown-linux-gnu` | Untested | The compiler uses the host triple and `tests/check_platform.py` recognizes the host, but no CI job runs the suite there |
 | macOS | x86-64 | `x86_64-apple-darwin` | Untested | Same: the `macos` job runs on Apple Silicon, and no job runs the suite on Intel |
 | Windows | arm64 | `aarch64-pc-windows-msvc` | Untested | Same; the official LLVM 21 Windows archive that CI uses is x86-64, so a native arm64 LLVM build would come first |
@@ -61,6 +61,12 @@ stops being a CI step, or when a milestone it names leaves the workflow's confor
 
 ### Windows
 
+- **Linking needs the MSVC build tools and a Windows SDK.** Install Build Tools for Visual Studio with the
+  "Desktop development with C++" workload, which includes both. A Developer Command Prompt is not needed: when `LIB`
+  is not set, the driver finds the installation through `VCINSTALLDIR` or `vswhere.exe`, takes its default MSVC tools
+  version and the newest Windows SDK (or the ones `WindowsSDKVersion` names), passes their `libd` (or `librm64`)
+  directories to the linker as `/LIBPATH:`, and runs that installation's `cl.exe` unless `BURDIN_CC` names a linker.
+  Without an installation, the link fails with an error that says what is missing and how to install it (issue #826).
 - **No source-level debugging and no symbolized backtraces.** `-g` emits LLVM debug metadata, but MSVC's `link.exe`
   keeps no DWARF sections in the image and the driver produces no PDB, so a debugger has no source lines and a
   panic backtrace prints bare addresses. `tests/check_debug_info.py` skips its DWARF-section and gdb checks on

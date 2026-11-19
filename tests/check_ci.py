@@ -298,6 +298,9 @@ if "C:\\llvm\\bin" not in windows:
     add_problem("ci.yml: windows job: does not put LLVM's DLL directory on PATH")
 if "BURDIN_CC=cl" not in windows:
     add_problem("ci.yml: windows job: does not exercise the BURDIN_CC=cl path")
+# A shell without the Visual Studio environment: the driver must find the MSVC libraries itself (issue #826).
+if "env -u LIB -u INCLUDE" not in windows:
+    add_problem("ci.yml: windows job: never links a program with LIB and INCLUDE cleared")
 # Git for Windows ships a coreutils `link.exe`; rustc must be pointed at MSVC's linker explicitly.
 if "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" not in windows:
     add_problem("ci.yml: windows job: does not pin the MSVC linker (Git's link.exe can shadow it)")

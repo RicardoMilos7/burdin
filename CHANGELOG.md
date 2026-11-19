@@ -6,6 +6,11 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- On Windows, linking works from an ordinary terminal (issue #826). When `LIB` is not set, the driver finds the
+  Visual Studio installation (`VCINSTALLDIR` or `vswhere.exe`), its default MSVC tools version, and the newest Windows
+  SDK, passes their library directories to `link.exe` as `/LIBPATH:`, and runs that installation's `cl.exe` unless
+  `BURDIN_CC` names a linker. Without the build tools it says what is missing and how to install it, instead of
+  `LNK1181: cannot open input file 'libcmt.lib'`. The installers and `docs/platform-support.md` state the requirement.
 - `install.ps1` adds the install directory to the user's `PATH` (`HKCU\Environment`, once; a second run changes nothing),
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.

@@ -810,7 +810,10 @@ how to call WSL from PowerShell.
   `llvm-config`, which it finds through `LLVM_SYS_211_PREFIX` and then `PATH`; it accepts Linux's `libLLVM-C.so` /
   `libLLVM-21.so` and Homebrew's `libLLVM-C.dylib` / `libLLVM.dylib`, and adds `-L` plus an rpath. On MSVC it passes
   `LLVM-C.lib` and adds `/LIBPATH:<LLVM_SYS_211_PREFIX>/lib` when that import library is there. A missing `cl` is
-  reported with the fix (a Developer Command Prompt, or `BURDIN_CC`).
+  reported with the fix (a Developer Command Prompt, or `BURDIN_CC`). Since issue #826, when `cl` links and `LIB` is
+  not set, `crates/burdin_driver/src/msvc.rs` finds the Visual Studio installation (`VCINSTALLDIR`, then
+  `vswhere.exe`) and the Windows SDK, adds their library directories as `/LIBPATH:`, and runs that installation's
+  `cl.exe` when `BURDIN_CC` is unset; with no installation it reports what is missing and how to install it.
 - Issue #21 settled the decisions and closed four small gaps: `check_drop_signatures` (`burdin_sema/src/session.rs`)
   now requires an exclusive `mut self` receiver, `CPtr.null` (`burdin_sema/src/fncx/call.rs`) rejects arguments with
   E0004, `<`/`<=`/`>`/`>=` on `str` and `String` go through `cmp_at` instead of the integer path

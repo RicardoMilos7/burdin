@@ -16,6 +16,7 @@ mod expand;
 mod export;
 mod fmt;
 mod lint;
+mod msvc;
 mod new;
 mod repl;
 mod rust_build;
@@ -1506,7 +1507,21 @@ struct LinkOptions {
 
 /// Links the object files (which define `main` and the runtime) with libc into the executable `output`.
 fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Result<(), String> {
-    let cc = std::env::var("BURDIN_CC").unwrap_or_else(|_| if cfg!(windows) { "cl".into() } else { "cc".into() });
+    let named = std::env::var("BURDIN_CC").ok();
+    let mut cc = named.clone().unwrap_or_else(|| if cfg!(windows) { "cl".into() } else { "cc".into() });
+    // Outside a Developer Command Prompt `LIB` is not set and link.exe cannot find the C runtime, so find the
+    // installation and name its library directories (issue #826). clang-cl finds them itself.
+    let toolchain = if cfg!(windows) && is_cl(&cc) && !msvc::lib_env_is_set() {
+        Some(msvc::discover(&msvc::Probe::from_env())?)
+    } else {
+        None
+    };
+    if let Some(toolchain) = &toolchain
+        && named.is_none()
+    {
+        // The default `cl` comes from the same installation as the libraries, so it need not be on PATH.
+        cc = toolchain.cl.display().to_string();
+    }
     if is_msvc_style(&cc) && (opts.lto || opts.pgo_generate) {
         return Err(format!(
             "`--lto` and `--pgo-generate` need an LLVM compiler driver, and `{cc}` is not one; \
@@ -1520,6 +1535,13 @@ fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions)
     }
     let mut cmd = Command::new(&cc);
     cmd.args(link_args(&cc, objects, output, libs, opts));
+    if let Some(toolchain) = &toolchain {
+        cmd.args(toolchain.libpath_args());
+        if named.is_none() {
+            // `cl.exe` starts `link.exe` from PATH; put the installation's own first.
+            cmd.env("PATH", path_with(toolchain.cl.parent().unwrap_or(Path::new("."))));
+        }
+    }
     let out = cmd.output().map_err(|e| linker_error(&cc, e))?;
     if !out.status.success() {
         let hint = if opts.lto || opts.pgo_generate {
@@ -1602,6 +1624,18 @@ fn link_args(cc: &str, objects: &[PathBuf], output: &Path, libs: &[String], opts
     } else {
         unix_link_args(objects, output, libs, opts)
     }
+}
+
+/// `PATH` with `dir` in front.
+fn path_with(dir: &Path) -> OsString {
+    let rest = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&rest))).unwrap_or(rest)
+}
+
+/// MSVC's own `cl` or `cl.exe`, bare or as a path (not clang-cl, which finds the libraries itself).
+fn is_cl(cc: &str) -> bool {
+    let name = cc.rsplit(['/', '\\']).next().unwrap_or(cc);
+    name.eq_ignore_ascii_case("cl") || name.eq_ignore_ascii_case("cl.exe")
 }
 
 /// `cl` and `cl.exe`, bare or as a path; `clang-cl` accepts the same flags. Both separators are recognized so the
@@ -1926,6 +1960,23 @@ mod tests {
         for cc in ["cc", "cc.exe", "gcc", "clang"] {
             assert!(!is_msvc_style(cc), "{cc} should not use the MSVC command line");
         }
+    }
+
+    #[test]
+    fn only_msvc_cl_needs_the_library_discovery() {
+        for cc in ["cl", "CL.EXE", r"C:\VS\bin\Hostx64\x64\cl.exe"] {
+            assert!(is_cl(cc), "{cc} is MSVC's cl");
+        }
+        for cc in ["clang-cl", "clang-cl.exe", "cc", "clang"] {
+            assert!(!is_cl(cc), "{cc} finds its libraries itself");
+        }
+    }
+
+    #[test]
+    fn the_installation_directory_goes_first_on_path() {
+        let dir = Path::new("toolchain-bin");
+        let path = path_with(dir);
+        assert_eq!(std::env::split_paths(&path).next().as_deref(), Some(dir));
     }
 
     /// An empty directory removed when dropped; each test gets its own.

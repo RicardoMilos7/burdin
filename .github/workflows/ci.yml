@@ -1057,6 +1057,18 @@ jobs:
         if: matrix.part == 'debug'
         run: BURDIN_CC=cl python tests/run_tests.py m01_hello m11_llvm
 
+      # An ordinary terminal has none of the variables a Developer Command Prompt sets, so the driver finds the
+      # MSVC installation and the Windows SDK itself (issue #826). Clearing them here makes it use `vswhere.exe`.
+      - name: Hello world without the MSVC environment
+        if: matrix.part == 'debug'
+        run: |
+          dir=$(mktemp -d)
+          printf 'fn main() {\n    let a = "Hello world"\n    println(a)\n}\n' > "$dir/main.bd"
+          out=$(env -u LIB -u INCLUDE -u LIBPATH -u VCINSTALLDIR -u VCToolsInstallDir -u WindowsSdkDir \
+            -u WindowsSDKVersion target/debug/burdin.exe run "$dir/main.bd")
+          echo "$out"
+          test "$out" = "Hello world"
+
   # Continuous fuzzing (issue #447). Every job replays the committed corpus through
   # `cargo test --workspace`, so a reintroduced panic fails a pull request. This job adds the longer
   # deterministic session, which is too slow for every push; it runs on the weekly schedule or by hand.
