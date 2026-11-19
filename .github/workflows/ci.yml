@@ -71,6 +71,8 @@ jobs:
             if [ -d "$cache/root" ]; then
               sudo cp -a "$cache/root/." /
             fi
+            # The runner image's package index can be older than the mirror (gdb's libc6-dbg 404s without this).
+            sudo apt-get update
             sudo apt-get install -y libzstd-dev zlib1g-dev gdb
           else
             wget -q https://apt.llvm.org/llvm.sh
