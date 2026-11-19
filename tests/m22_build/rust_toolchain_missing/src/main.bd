@@ -1,0 +1,7 @@
+//~ E0264
+//@ compile-fail
+
+// The pinned toolchain must be the one that runs: a version that is not installed is reported, not replaced by the
+// default one (spec/rust-interop.md, RI7).
+
+fn main() {}

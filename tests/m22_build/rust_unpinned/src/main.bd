@@ -1,0 +1,7 @@
+//~ E0264
+//@ compile-fail
+
+// A package that binds a Rust crate must pin the Rust toolchain: the version decides which rustdoc JSON format and
+// which layouts the shim is checked against (spec/rust-interop.md, RI7).
+
+fn main() {}

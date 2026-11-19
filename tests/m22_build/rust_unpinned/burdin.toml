@@ -1,0 +1,6 @@
+[package]
+name = "rust_unpinned"
+version = "0.1.0"
+
+[rust.crates]
+geometry = { path = "../../rust/geometry" }

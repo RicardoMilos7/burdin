@@ -6,6 +6,19 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Rust interop through C-ABI shims (issue #249, sub-issue #477)
+
+`spec/rust-interop.md` (RI1-RI11) is the specification; `tests/check_rust_interop.py` checks it, and the packages
+`tests/m22_build/rust_*` are conformance tests. `burdin bindgen --rust <crate> --out <file> --shim <dir>` reads a
+crate's rustdoc JSON (format 61, Rust 1.100.0 pinned) and writes a C-ABI shim crate plus a Burdin module: `repr(C)`
+structs by value with size, alignment, and offset checks on both sides, other types as opaque handles with generated
+`_free` functions, fieldless enums as integers, `&str`/`String`/slices as pointer and length, `#[no_mangle]`
+functions declared directly, and every item it cannot represent skipped with a `// bindgen:` note. A package binds a
+crate with `[rust] toolchain` and `[rust.crates]` in `burdin.toml`: `build`, `run`, and `test` generate the shim when
+the crate's sources changed, build it with cargo under the pinned toolchain, and link the static library and the
+system libraries `rustc` reports. A failure is the new E0264; a dependency's crates need a `[build] allow` grant
+(E0260). New crate `burdin_rustgen`; the macOS and Windows paths are written but not run.
+
 ### Debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
 `spec/debug.md` (DBG1-DBG12) is the specification; `tests/check_debug_info.py` and `tests/check_debug_printers.py`

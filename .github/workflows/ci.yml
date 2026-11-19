@@ -270,6 +270,13 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_bindgen.py
 
+      # Rust interop (issues #249, #477): `burdin bindgen --rust` on a fixture crate against its golden shim and
+      # module, the shim built with the pinned toolchain and its layout checks, and a package with
+      # `[rust.crates]` built, cached, and run.
+      - name: Check Rust interop
+        if: matrix.part == 'tools'
+        run: python3 tests/check_rust_interop.py
+
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
         if: matrix.part == 'tools'
@@ -578,6 +585,13 @@ jobs:
       - name: Check bindgen
         if: matrix.part == 'tools'
         run: python3 tests/check_bindgen.py
+
+      # Rust interop (issues #249, #477): `burdin bindgen --rust` on a fixture crate against its golden shim and
+      # module, the shim built with the pinned toolchain and its layout checks, and a package with
+      # `[rust.crates]` built, cached, and run.
+      - name: Check Rust interop
+        if: matrix.part == 'tools'
+        run: python3 tests/check_rust_interop.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
@@ -907,6 +921,13 @@ jobs:
       - name: Check bindgen
         if: matrix.part == 'tools'
         run: python tests/check_bindgen.py
+
+      # Rust interop (issues #249, #477): `burdin bindgen --rust` on a fixture crate against its golden shim and
+      # module, the shim built with the pinned toolchain and its layout checks, and a package with
+      # `[rust.crates]` built, cached, and run.
+      - name: Check Rust interop
+        if: matrix.part == 'tools'
+        run: python tests/check_rust_interop.py
 
       # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
       - name: Check burdin new
