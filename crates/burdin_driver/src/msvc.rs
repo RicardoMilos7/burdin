@@ -188,6 +188,11 @@ mod tests {
             Layout(dir)
         }
 
+        /// `relative` under the layout, with the platform's separators.
+        fn path(&self, relative: &str) -> PathBuf {
+            relative.split('/').fold(self.0.clone(), |path, part| path.join(part))
+        }
+
         fn touch(&self, relative: &str) {
             let path = self.0.join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -225,8 +230,9 @@ mod tests {
         layout.touch("Kits/Lib/10.0.9999.0/um/x64/kernel32.lib");
 
         let toolchain = discover(&layout.probe("x64")).unwrap();
-        let msvc = layout.0.join("VS/VC/Tools/MSVC/14.44.35207");
-        let sdk = layout.0.join("Kits/Lib/10.0.26100.0");
+        // Built one component at a time: the arguments are strings, so the separators must be the platform's.
+        let msvc = layout.path("VS/VC/Tools/MSVC/14.44.35207");
+        let sdk = layout.path("Kits/Lib/10.0.26100.0");
         assert_eq!(toolchain.cl, msvc.join("bin").join("Hostx64").join("x64").join("cl.exe"));
         assert_eq!(
             toolchain.libpath_args(),
