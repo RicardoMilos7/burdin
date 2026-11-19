@@ -260,6 +260,9 @@ pub(crate) fn build_shim(
         .ok_or_else(|| {
             format!("building the shim crate left no static library in {}", target.join(profile).display())
         })?;
+    // The package directory can be a verbatim path (`\\?\C:\...`) on Windows, which `link.exe` does not read: it
+    // reports the file as `\\name.lib`. The linker is given the plain spelling.
+    let archive = plain_path(&archive);
     // When cargo finds the library up to date it does not run rustc, so the note is missing; the last run's answer
     // is kept beside the library.
     let stored = shim_dir.join("native-libs.txt");
@@ -336,6 +339,16 @@ mod tests {
         assert!(!is_exact_version("stable"));
         assert!(!is_exact_version("1.100.0-nightly"));
         assert!(!is_exact_version("1..0"));
+    }
+
+    #[test]
+    fn a_verbatim_prefix_is_removed_but_a_unc_share_is_kept() {
+        assert_eq!(plain_path(Path::new(r"\\?\C:\work\shim.lib")), PathBuf::from(r"C:\work\shim.lib"));
+        assert_eq!(
+            plain_path(Path::new(r"\\?\UNC\host\share\shim.lib")),
+            PathBuf::from(r"\\?\UNC\host\share\shim.lib")
+        );
+        assert_eq!(plain_path(Path::new("/tmp/shim.a")), PathBuf::from("/tmp/shim.a"));
     }
 
     #[test]
