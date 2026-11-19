@@ -342,6 +342,14 @@ with harness.temporary_dir("burdin-release-") as work:
             ).returncode == 0:
                 add_problem("build_release.py accepted an unknown channel")
             check()
+            fake_dll_arg = work / "LLVM-C.dll"
+            fake_dll_arg.write_bytes(b"x")
+            if run_release(
+                "--binary", str(fake), "--target", target, "--version", "9.9.9",
+                "--channel", "stable", "--llvm-dll", str(fake_dll_arg), "--out", str(work / "dist-bad"),
+            ).returncode == 0:
+                add_problem("build_release.py accepted --llvm-dll for a non-Windows target")
+            check()
             if run_release(
                 "--binary", str(fake), "--target", "riscv64-unknown-linux-gnu",
                 "--version", "9.9.9", "--channel", "stable", "--out", str(work / "dist-bad"),
@@ -536,10 +544,12 @@ with harness.temporary_dir("burdin-release-") as work:
             fake_windows.chmod(0o755)
             win_target = "x86_64-pc-windows-msvc"
             win_archive = f"burdin-9.9.9-{win_target}.tar.gz"
+            fake_dll = work / "LLVM-C.dll"
+            fake_dll.write_bytes(b"not a real dll")
             check()
             packaged = run_release(
                 "--binary", str(fake_windows), "--target", win_target, "--version", "9.9.9",
-                "--channel", "stable", "--out", str(work / "dist-win"),
+                "--channel", "stable", "--llvm-dll", str(fake_dll), "--out", str(work / "dist-win"),
             )
             if packaged.returncode != 0:
                 add_problem(
@@ -581,6 +591,9 @@ with harness.temporary_dir("burdin-release-") as work:
                     check()
                     if not (work / "install-win" / "burdin.exe").is_file():
                         add_problem("install.ps1 did not install burdin.exe")
+                    check()
+                    if not (work / "install-win" / "LLVM-C.dll").is_file():
+                        add_problem("install.ps1 did not install LLVM-C.dll beside burdin.exe")
 
     # --- Release notes (issue #456) ------------------------------------------------------
 
