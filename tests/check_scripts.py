@@ -121,7 +121,7 @@ with harness.temporary_dir("burdin-scripts-") as work:
     # `build` and `check` resolve the fragment too: the script is an ordinary one-file target.
     built = burdin_run(["build", "script.bd", "-o", "script-out"], work, home)
     check(built.returncode == 0, f"`burdin build script.bd` failed: {harness.text(built.stderr)[:400]}")
-    check((work / "script-out").is_file(), "`burdin build script.bd` wrote no executable")
+    check(harness.executable_in(work, "script-out").is_file(), "`burdin build script.bd` wrote no executable")
     checked = burdin_run(["check", "script.bd"], work, home)
     check(checked.returncode == 0, f"`burdin check script.bd` failed: {harness.text(checked.stderr)[:400]}")
 

@@ -3,8 +3,6 @@
 //! termios on Unix, the console API on Windows — so the REPL adds no external dependency. Everything restores the
 //! terminal when it is dropped, including when the REPL panics.
 
-use std::io;
-
 /// One keypress, as far as the editor cares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Key {
@@ -23,7 +21,9 @@ pub(crate) enum Key {
     Interrupt,
     /// Ctrl-D.
     Eof,
-    /// A key the editor has no use for (an unrecognized escape sequence, a function key).
+    /// A key the editor has no use for (an unrecognized escape sequence, a function key). Only the Unix escape
+    /// parser produces it; the Windows console maps every key event to a named key or drops it.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Ignored,
 }
 
@@ -116,7 +116,7 @@ impl Drop for Terminal {
 
 #[cfg(unix)]
 fn read_key_unix() -> Option<Key> {
-    use std::io::Read;
+    use std::io::{self, Read};
     let mut stdin = io::stdin().lock();
     loop {
         let mut byte = [0u8; 1];

@@ -87,10 +87,13 @@ Tests: `tests/check_scripts.py` (the cache hit with a broken linker, the content
 dependency change, `touch`, and the plain-file negative).
 
 **SC6. Where, and how it is published.** Entries live at `<burdin home>/cache/scripts/<key>/script[.exe]`
-(`spec/repl.md`, RP14, fixes the home). A build goes into a staging directory beside the entry and is published
-with one rename, so an interrupted build never leaves a binary a later run would trust; a build that fails leaves
-nothing. A Burdin home that cannot be written is not a failure of the script: the build is made in a temporary
-directory and run, uncached. Any extra files beside a staged binary stay in the entry for inspection.
+(`spec/repl.md`, RP14, fixes the home). A build goes into a staging directory beside the entry, and only the
+finished binary is published, by one file rename (retried briefly, then a copy renamed into place), so an
+interrupted build never leaves a binary a later run would trust; a build that fails leaves nothing. The file is
+renamed, not the staging directory, because Windows refuses to rename a directory while anything inside it is open,
+and a freshly linked executable is often held for a moment by a virus scanner. The staging directory is removed
+afterwards, so an entry holds the binary and nothing else. A Burdin home that cannot be written is not a failure of
+the script: the build is made in a temporary directory and run, uncached.
 Tests: `tests/check_scripts.py`.
 
 **SC7. Running.** The cached binary is started with the arguments after `--`, its exit status passed through as

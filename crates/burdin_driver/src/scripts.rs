@@ -48,8 +48,10 @@ fn run_cached(target: &Path, text: &str, args: &Args, options: &CompileOptions) 
     if exe.is_file() {
         return run_exe(&exe, args);
     }
-    // Build into a staging directory and publish it with one rename, so a crash mid-build never leaves a
-    // half-written binary where a later run would trust it.
+    // Build into a staging directory, then publish the finished binary with one file rename, so a crash mid-build
+    // never leaves a half-written binary where a later run would trust it. The file is renamed, not the staging
+    // directory: Windows refuses to rename a directory while anything inside it is open, and a freshly linked
+    // executable is often held for a moment by a virus scanner.
     let staging = cache.with_extension(format!("tmp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
     if let Err(e) = std::fs::create_dir_all(&staging) {
@@ -61,17 +63,30 @@ fn run_cached(target: &Path, text: &str, args: &Args, options: &CompileOptions) 
     let code = build_and_run(target, &staging, &staged_exe, args, options);
     // The linker writes the binary only when the build succeeded; the program's own exit status is its own.
     if staged_exe.is_file() {
-        if let Some(parent) = cache.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::remove_dir_all(&cache);
-        if std::fs::rename(&staging, &cache).is_err() {
-            let _ = std::fs::remove_dir_all(&staging);
-        }
-    } else {
-        let _ = std::fs::remove_dir_all(&staging);
+        let _ = publish(&staged_exe, &cache, &exe);
     }
+    let _ = std::fs::remove_dir_all(&staging);
     code
+}
+
+/// Moves a built binary to its cache entry. The rename is retried briefly, and falls back to a copy that is itself
+/// renamed into place, so the entry either holds a whole binary or no binary at all (SC6).
+fn publish(staged: &Path, cache: &Path, exe: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(cache)?;
+    let mut last = None;
+    for attempt in 0..5u64 {
+        match std::fs::rename(staged, exe) {
+            Ok(()) => return Ok(()),
+            Err(e) => last = Some(e),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+    }
+    let partial = exe.with_extension(format!("part-{}", std::process::id()));
+    let copied = std::fs::copy(staged, &partial).and_then(|_| std::fs::rename(&partial, exe));
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    copied.map_err(|_| last.expect("the loop ran"))
 }
 
 /// Builds without a cache, for a Burdin home that cannot hold one.
