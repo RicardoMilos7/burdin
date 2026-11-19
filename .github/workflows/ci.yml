@@ -75,6 +75,10 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y libzstd-dev zlib1g-dev gdb
           else
+            # The runner image's package index can be older than the mirror, and a mirror can answer 503 for one package:
+            # refresh the index and let apt retry downloads before llvm.sh installs anything.
+            echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
+            sudo apt-get update
             wget -q https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
             sudo ./llvm.sh 21
