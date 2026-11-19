@@ -159,11 +159,11 @@ jobs:
           # The runner image's package index can be older than the mirror, and a mirror can answer 503 for one package:
           # refresh the index and let apt retry downloads before llvm.sh installs anything.
           echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
-          sudo apt-get update
+          bash .github/scripts/retry.sh sudo apt-get update
           wget -q https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 21
-          sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
+          bash .github/scripts/retry.sh sudo ./llvm.sh 21
+          bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> "$GITHUB_ENV"
 
       - name: Install LLVM 21 (macOS)
@@ -244,11 +244,11 @@ jobs:
           # The runner image's package index can be older than the mirror, and a mirror can answer 503 for one package:
           # refresh the index and let apt retry downloads before llvm.sh installs anything.
           echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
-          sudo apt-get update
+          bash .github/scripts/retry.sh sudo apt-get update
           wget -q https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 21
-          sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
+          bash .github/scripts/retry.sh sudo ./llvm.sh 21
+          bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> "$GITHUB_ENV"
 
       - name: Install Rust (pinned in rust-toolchain.toml)
@@ -288,11 +288,11 @@ jobs:
           # The runner image's package index can be older than the mirror, and a mirror can answer 503 for one package:
           # refresh the index and let apt retry downloads before llvm.sh installs anything.
           echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
-          sudo apt-get update
+          bash .github/scripts/retry.sh sudo apt-get update
           wget -q https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 21
-          sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
+          bash .github/scripts/retry.sh sudo ./llvm.sh 21
+          bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
 
       - name: Download the artifacts
         uses: actions/download-artifact@v4
