@@ -502,8 +502,6 @@ impl<'a, 'n> Repl<'a, 'n> {
     /// Analyzes the session with one extra statement appended, for `:type` and `:ownership`: nothing of the
     /// probe reaches the session, and the next analysis sets the file's text again.
     fn probe(&mut self, expr: &str) -> Probe {
-        // The moves of the session as it stands, so the probe can tell which ones the expression adds.
-        let before = self.analyze().ownership_of(SESSION_FILE, 0).map(|o| o.moves).unwrap_or_default();
         let chunk = self.session.len();
         self.session.push_body(expr);
         let analysis = self.analyze();
@@ -525,13 +523,35 @@ impl<'a, 'n> Repl<'a, 'n> {
             _ => String::new(),
         });
         let facts = tail.as_ref().and_then(|t| analysis.expr_facts(SESSION_FILE, t.at.lo, t.at.hi));
-        let moves = tail
+        // `:ownership` renders the checker's event list (`spec/check.md`, CK10), restricted to the probed
+        // expression, so it shows the same facts as `burdin check --explain-ownership`.
+        let (moves, borrows) = tail
             .as_ref()
-            .and_then(|t| analysis.ownership_of(SESSION_FILE, t.at.lo).map(|o| o.moves))
-            .map(|after: Vec<MoveEvent>| after.iter().filter(|m| !before.contains(m)).cloned().collect())
+            .and_then(|t| analysis.ownership_at(SESSION_FILE, t.at.lo).map(|function| (t, function)))
+            .map(|(t, function)| {
+                let mut moves = Vec::new();
+                let mut borrows = Vec::new();
+                for event in &function.events {
+                    if event.at.lo < t.at.lo || event.at.hi > t.at.hi {
+                        continue;
+                    }
+                    let Some(local) = &event.local else { continue };
+                    match &event.kind {
+                        burdin_query::OwnershipEventKind::Move { .. } => moves.push(MoveEvent {
+                            local: local.clone(),
+                            path: event.path.clone(),
+                            always_moved: false,
+                        }),
+                        burdin_query::OwnershipEventKind::BorrowRead => borrows.push(local.clone()),
+                        burdin_query::OwnershipEventKind::BorrowMut => borrows.push(format!("mut {local}")),
+                        _ => {}
+                    }
+                }
+                (moves, borrows)
+            })
             .unwrap_or_default();
         self.session.pop();
-        Probe { failed, ty, facts, moves }
+        Probe { failed, ty, facts, moves, borrows }
     }
 }
 
@@ -541,8 +561,10 @@ struct Probe {
     /// The type of the probed expression.
     ty: Option<String>,
     facts: Option<burdin_query::ExprFacts>,
-    /// The places the expression moves that the session did not already move.
+    /// The places the expression moves, from the checker's event list.
     moves: Vec<MoveEvent>,
+    /// What the expression borrows (`mut x` for an exclusive borrow), from the same list.
+    borrows: Vec<String>,
 }
 
 impl Probe {
@@ -565,12 +587,7 @@ impl Probe {
                 }
             })
             .collect();
-        let borrows: Vec<String> = facts
-            .locals
-            .iter()
-            .filter(|l| l.borrowed || l.borrowed_mut)
-            .map(|l| if l.borrowed_mut { format!("mut {}", l.name) } else { l.name.clone() })
-            .collect();
+        let borrows = self.borrows.clone();
         let reads: Vec<String> = facts
             .locals
             .iter()

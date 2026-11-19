@@ -1,0 +1,15 @@
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+fn main() {
+    let mut p = Pair { a: 1, b: 2 }
+    let r = first_of(p)
+    p.a = 5 //~ E0111
+    println((*r).to_string())
+}

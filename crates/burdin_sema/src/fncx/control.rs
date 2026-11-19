@@ -567,7 +567,7 @@ impl FnCx<'_> {
         let Some((id, value)) = owned_temp else { return matched };
         let ty = matched.ty.clone();
         let stmt = tir::Stmt::Let(Pat::Binding(id, tir::BindMode::Move), value, None);
-        let block = tir::Block { stmts: vec![stmt], tail: Some(Box::new(matched)) };
+        let block = tir::Block { stmts: vec![stmt], tail: Some(Box::new(matched)), close: span };
         mk(tir::ExprKind::Block(block), ty, span)
     }
 }

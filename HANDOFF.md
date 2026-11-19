@@ -1103,6 +1103,34 @@ What is left: the Natvis file is checked as XML and by the linker arguments, not
 CI); the DAP adapter is checked against a stub backend, not against lldb-dap; and `--test` resolution runs
 `burdin test --list` before the build, so it compiles twice.
 
+## The fifty-fourth session: the ownership and drop visualizer (issue #587, sub-issues #589, #591, #593)
+
+`spec/check.md` (CK10-CK11), `spec/lsp.md` (LS5, LS11, LS13), and `spec/query.md` (QL7) hold the behavior; the
+checks are `tests/check_check.py` (the ownership and explain fixtures and their goldens), the LSP editing test
+`the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`, and the updated `tests/diagnostics/` goldens.
+
+- **One stable event list.** The move and borrow checks now record every declaration, move, copy, shared or exclusive
+  borrow, drop, drop flag, call-argument convention, and derived clone in `tir::Function::events`; nothing is a new
+  analysis, the events are the facts the checks already computed. `burdin_query` exposes them as
+  `Analysis::ownership_events` (and `ownership_at`, and the free `function_ownership`), so the command line, the
+  language server, and the REPL read the same list.
+- **`burdin check --explain-ownership` (#589).** Each source function of the entry package with margin annotations
+  (`move a -> b`, `copy`, `borrow (read)`/`borrow (mut)`, `drop a`, `drop flag`, `call arg`: convention, `clone`
+  derived or not), `--fn <name>` for one function, and `--format json` for the same events with spans. Generated
+  code (an interpolated string's formatter, desugared loop counters) is left out. `tir::Block` gained the span of
+  its closing brace, which is where a scope drops its values.
+- **The ownership lens (#591).** `inlayHints.ownership` (off by default) adds `move`, `drop`, and `drop flag` hints;
+  a hover on a local or parameter lists its moves, copies, borrows, drops, and clones. The server renders
+  `ownership_events`; it recomputes nothing.
+- **`burdin check --explain` (#593).** For E0100, E0101, E0103, E0104, E0110, E0111, E0121, E0122, and E0123, a
+  trace from the value's declaration through every move or borrow to the failing use, with the rule ID and the
+  reference's `**How to fix:**` paragraph. Memory diagnostics carry a one-line `help` pointer, and their notes (the
+  JSON `related` list) now include the declaration and the borrow or move sites.
+
+What is left: `--explain-ownership` prints functions in file order, not the order the user wrote their modules;
+temporaries that are only call arguments are not annotated (a statement or `let _` temporary is). The REPL's
+`:ownership` still uses `expr_facts` and `ownership_of`; showing the event list there is a small follow-up.
+
 ## The fifty-first session: bench blocks and `burdin bench` (stage 3, issue #251)
 
 `bench "name" { ... }` is a module-scope item beside `test` (`spec/bench.md` BN1-BN14, sub-issues #653-#655): a

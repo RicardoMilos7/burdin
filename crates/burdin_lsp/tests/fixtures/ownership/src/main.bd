@@ -1,0 +1,22 @@
+struct Pair {
+    a: i32
+    b: i32
+}
+
+fn consume(own s: String) {}
+
+fn first_of(p: Pair): &i32 {
+    &p.a
+}
+
+fn main() {
+    let s = String.from("x")
+    let t = s
+    consume(t)
+    let mut u = String.from("a")
+    u = String.from("b")
+    println(u)
+    let p = Pair { a: 1, b: 2 }
+    let r = first_of(p)
+    println((*r).to_string())
+}

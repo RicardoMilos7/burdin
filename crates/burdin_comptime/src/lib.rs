@@ -11,7 +11,7 @@ mod reify;
 mod session;
 mod value;
 
-use burdin_diag::{Code, Diagnostics, Span};
+use burdin_diag::{Code, Diagnostics, FileId, Span};
 use burdin_tir::visit::{Visit, VisitMut, walk_expr, walk_expr_mut};
 use burdin_tir::{
     BindMode, Block, Expr, ExprKind as K, FuncId, Function, Local, LocalId, LocalKind, Pat, Program, Signature, Stmt,
@@ -79,7 +79,10 @@ pub fn evaluate(program: &mut Program, opts: Options, diags: &mut Diagnostics) {
     let mut done = 0;
     while done < rw.new_funcs.len() {
         let (env, locals) = (rw.new_funcs[done].env.clone(), rw.new_funcs[done].func.locals.clone());
-        let mut body = std::mem::replace(&mut rw.new_funcs[done].func.body, Block { stmts: Vec::new(), tail: None });
+        let mut body = std::mem::replace(
+            &mut rw.new_funcs[done].func.body,
+            Block { stmts: Vec::new(), tail: None, close: Span::new(FileId(0), 0, 0) },
+        );
         rw.rewrite_block(&locals, &env, &mut body);
         rw.new_funcs[done].func.body = body;
         done += 1;
@@ -341,6 +344,7 @@ impl Rewriter<'_> {
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
+            events: t.events.clone(),
         };
         let mut new_sig =
             Signature { params: Vec::new(), ret: sig.ret.clone(), has_self: sig.has_self, ret_origins: Vec::new() };
@@ -426,7 +430,7 @@ impl BodyCx<'_, '_, '_> {
             let ty = copy.tail.as_ref().map_or(Ty::Unit, |t| t.ty.clone());
             copies.push(Stmt::Expr(Expr { kind: K::Block(copy), ty, span }));
         }
-        Some(Expr { kind: K::Block(Block { stmts: copies, tail: None }), ty: Ty::Unit, span })
+        Some(Expr { kind: K::Block(Block { stmts: copies, tail: None, close: span }), ty: Ty::Unit, span })
     }
 }
 
@@ -444,7 +448,10 @@ impl VisitMut for BodyCx<'_, '_, '_> {
                 let Some(v) = self.eval(c) else { return };
                 // Only the selected branch is kept, and only it is rewritten (CT5).
                 if v.bool() {
-                    let then = std::mem::replace(then, Block { stmts: Vec::new(), tail: None });
+                    let then = std::mem::replace(
+                        then,
+                        Block { stmts: Vec::new(), tail: None, close: Span::new(FileId(0), 0, 0) },
+                    );
                     e.kind = K::Block(then);
                 } else {
                     match other.take() {

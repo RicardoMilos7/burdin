@@ -102,7 +102,7 @@ pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], dia
         if functions[i].ret.is_second_class() && !aggregate && origin.params.len() > 1 {
             let f = &functions[i];
             let names: Vec<String> = origin.params.iter().map(|p| f.locals[f.params[*p].0].name.clone()).collect();
-            diags.error(
+            let error = diags.error(
                 Code::RETURN_MULTIPLE_ORIGINS,
                 functions[i].span,
                 format!(
@@ -111,6 +111,13 @@ pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], dia
                     names.join("`, `")
                 ),
             );
+            for p in &origin.params {
+                let local = &f.locals[f.params[*p].0];
+                if local.span.lo < local.span.hi {
+                    error.note(local.span, format!("`{}` is one of the sources of this result", local.name));
+                }
+            }
+            error.help(crate::moves::TRACE_HELP);
         }
     }
 }
@@ -209,12 +216,31 @@ impl<'a> Analyzer<'a> {
         if !self.f.ret.is_second_class() || !origin.escapes() {
             return;
         }
+        let notes: Vec<(Span, String)> = origin
+            .locals
+            .iter()
+            .filter_map(|id| {
+                let local = self.f.locals.get(*id)?;
+                (local.span.lo < local.span.hi)
+                    .then(|| (local.span, format!("`{}` is dropped when the function returns", local.name)))
+            })
+            .collect();
+        let temporary = origin.temp;
         if let Some(diags) = self.report.as_deref_mut() {
-            diags.error(
+            let error = diags.error(
                 Code::RETURN_LOCAL_ORIGIN,
                 span,
                 "this view borrows from a local or an owned parameter, which does not live past the return",
             );
+            for (span, message) in notes {
+                error.note(span, message);
+            }
+            if temporary {
+                error.note_without_span(
+                    "the value comes from a temporary, which is dropped at the end of its statement",
+                );
+            }
+            error.help(crate::moves::TRACE_HELP);
         }
     }
 
@@ -243,8 +269,22 @@ impl<'a> Analyzer<'a> {
         if !local_dies_early && !temporary_dies_early {
             return;
         }
+        let notes: Vec<(Span, String)> = origin
+            .locals
+            .iter()
+            .filter_map(|id| {
+                let local = self.f.locals.get(*id)?;
+                (local.span.lo < local.span.hi && !self.outlives(LocalId(*id), target_block)).then(|| {
+                    (
+                        local.span,
+                        format!("`{}` is declared in an inner block and dropped before the binding", local.name),
+                    )
+                })
+            })
+            .collect();
+        let from_temporary = temporary_dies_early;
         if let Some(diags) = self.report.as_deref_mut() {
-            diags.error(
+            let error = diags.error(
                 Code::VIEW_OUTLIVES_SOURCE,
                 span,
                 if local_dies_early {
@@ -253,6 +293,13 @@ impl<'a> Analyzer<'a> {
                     "this view borrows from a temporary, which is dropped at the end of this statement"
                 },
             );
+            for (span, message) in notes {
+                error.note(span, message);
+            }
+            if from_temporary {
+                error.note_without_span("the source is a temporary, dropped at the end of the statement that made it");
+            }
+            error.help(crate::moves::TRACE_HELP);
         }
     }
 

@@ -1,0 +1,8 @@
+explain/E0110.bd:11:5: error[E0110]: another argument of this call touches the same value as a `mut` argument
+error: could not check explain/E0110.bd (1 error)
+
+trace for explain/E0110.bd:11:5: error[E0110]: another argument of this call touches the same value as a `mut` argument
+  rule: spec/memory-rules.md EX1
+  note at explain/E0110.bd:11:19: this argument touches the same place
+  fails here: explain/E0110.bd:11:5
+  fix: pass distinct places. Compute the overlapping value into a local before the call, or split the receiver so one argument uses a field the other does not mention.

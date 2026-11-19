@@ -330,6 +330,7 @@ mod tests {
         let block = Block {
             stmts: vec![Stmt::Let(Pat::Binding(LocalId(0), BindMode::Copy), e(ExprKind::Local(LocalId(1))), None)],
             tail: Some(Box::new(e(ExprKind::Local(LocalId(0))))),
+            close: Span::new(FileId(0), 0, 0),
         };
         let free: Vec<LocalId> = free_locals(&e(ExprKind::Block(block))).into_iter().map(|(l, _)| l).collect();
         assert_eq!(free, vec![LocalId(1)]);

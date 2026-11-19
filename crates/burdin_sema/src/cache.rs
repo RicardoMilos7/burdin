@@ -474,6 +474,11 @@ impl visit::VisitMut for SpanWalker<'_> {
         (self.f)(&mut e.span);
         visit::walk_expr_mut(self, e);
     }
+    fn block(&mut self, b: &mut tir::Block) {
+        // The closing brace is where the scope's values drop (`spec/check.md`, CK10).
+        (self.f)(&mut b.close);
+        visit::walk_block_mut(self, b);
+    }
 }
 
 /// The fingerprint of everything in the program but the function bodies: the package layout, the file paths, the

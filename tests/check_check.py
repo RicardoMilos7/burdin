@@ -197,6 +197,79 @@ for name, modes in sorted(PACKAGES.items()):
         if want_exit == 0:
             check(output == "", f"{label}: a clean check printed output:\n{output}")
 
+# ----- ownership annotations and step-by-step explanations (issue #587) -----------------------------------------
+
+OWNERSHIP = CHECK / "ownership"
+EXPLAIN = CHECK / "explain"
+
+
+def check_ownership_fixture(path: Path) -> None:
+    """`--explain-ownership` prints the fixture's functions with their move, copy, borrow, drop, drop-flag, call
+    convention, and clone annotations; the golden holds the whole output."""
+    name = path.stem
+    output, status = driver(
+        "check", [*COMMON, "--explain-ownership", path.relative_to(CHECK).as_posix()], CHECK
+    )
+    check(status == 0, f"ownership/{name}: exit {status}, expected 0\n{output}")
+    compare_golden("ownership_" + name, output)
+
+
+ownership_fixtures = sorted(OWNERSHIP.glob("*.bd"))
+check(len(ownership_fixtures) >= 5, f"tests/check/ownership has only {len(ownership_fixtures)} fixtures")
+for path in ownership_fixtures:
+    check_ownership_fixture(path)
+
+# `--fn` names one function; the annotated source has that function only.
+output, status = driver(
+    "check", [*COMMON, "--explain-ownership", "--fn", "main", "ownership/moves.bd"], CHECK
+)
+check(status == 0, f"`--fn main`: exit {status}, expected 0\n{output}")
+headers = [line for line in output.splitlines() if line.startswith("fn ")]
+check(len(headers) == 1, f"--fn main printed {len(headers)} functions, expected one")
+compare_golden("ownership_fn_main", output)
+
+# `--format json` lists the events with their spans for other tools.
+output, status = driver("check", ["--explain-ownership", "--format", "json", "ownership/drops.bd"], CHECK)
+check(status == 0, f"`--format json`: exit {status}, expected 0\n{output}")
+try:
+    functions = json.loads(output)
+except json.JSONDecodeError:
+    functions = None
+    check(False, f"`--format json` is not one JSON document: {output[:400]}")
+if functions is not None:
+    check(isinstance(functions, list) and functions, "`--format json` lists no functions")
+    kinds = {event.get("kind") for function in functions for event in function.get("events", [])}
+    check({"move", "drop", "drop_flag"} <= kinds, f"the JSON events miss kinds: {sorted(kinds)}")
+    check(
+        all(isinstance(event.get("span", {}).get("byte_start"), int) for f in functions for event in f.get("events", [])),
+        "a JSON event has no span offsets",
+    )
+compare_golden("ownership_drops_json", output)
+
+# Every memory error code carries a `--explain` trace with its rule ID and the suggested fix.
+explain_fixtures = sorted(EXPLAIN.glob("*.bd"))
+check(len(explain_fixtures) >= 9, f"tests/check/explain has only {len(explain_fixtures)} fixtures")
+for path in explain_fixtures:
+    code = path.stem
+    output, status = driver("check", [*COMMON, "--explain", path.relative_to(CHECK).as_posix()], CHECK)
+    check(status == 1, f"explain/{code}: exit {status}, expected 1\n{output}")
+    # The trace header repeats the location and code; it is not a second diagnostic.
+    found = {diagnostic for diagnostic in diagnostics(output) if not diagnostic[0].startswith("trace")}
+    check(found == markers(path), f"explain/{code}: diagnostics differ from the //~ markers\n{output}")
+    check(f"trace for " in output, f"explain/{code}: no trace")
+    check(f"rule: spec/memory-rules.md " in output, f"explain/{code}: no rule ID")
+    check("fix: " in output, f"explain/{code}: no suggested fix")
+    compare_golden("explain_" + code, output)
+
+# The human diagnostic itself carries the one-line pointer (the short format does not).
+output, status = driver("check", ["--no-color", "explain/E0100.bd"], CHECK)
+check(status == 1 and "run `burdin check --explain`" in output, f"the human diagnostic has no explanation note\n{output}")
+
+# Ownership options need their command, and the usage says so.
+for bad in (["--fn", "main", "ok_program.bd"], ["--format", "json", "ok_program.bd"], ["--format", "x", "--explain-ownership", "ok_program.bd"]):
+    output, status = driver("check", bad, CHECK)
+    check(status == 2 and "usage:" in output, f"`burdin check {' '.join(bad)}` exited {status}, expected 2")
+
 # ----- the same front end as a build: the conformance suite -----------------------------------------------------
 
 TESTS = harness.TESTS
@@ -334,7 +407,13 @@ for bad, reason in [
 output, status = driver("check", ["--help"], CHECK)
 check(status == 0 and "burdin check <file.bd | package directory>" in output, "`burdin check --help` is wrong")
 
-fixture_count = len(sources) + 1 + sum(len(modes) for modes in PACKAGES.values())
+fixture_count = (
+    len(sources)
+    + 1
+    + sum(len(modes) for modes in PACKAGES.values())
+    + len(ownership_fixtures)
+    + len(explain_fixtures)
+)
 print(f"Checked `burdin check` ({checks} checks, {fixture_count} fixtures, {len(cases)} conformance tests)")
 
 if BLESS:

@@ -109,7 +109,10 @@ On Windows PowerShell:
 
 The installers verify the release's `SHA256SUMS` before unpacking, install into `$HOME/.local/bin`
 (`%LOCALAPPDATA%\Programs\burdin\bin` on Windows), and accept `BURDIN_VERSION` to pin a version,
-`BURDIN_CHANNEL=nightly` for a nightly, and `BURDIN_INSTALL_DIR` to change the destination. A prebuilt compiler needs
+`BURDIN_CHANNEL=nightly` for a nightly, and `BURDIN_INSTALL_DIR` to change the destination. `install.ps1` adds that
+directory to your user `PATH`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
+`~/.config/fish/config.fish`; other shells get a hint. Set `BURDIN_NO_MODIFY_PATH` (or pass `-NoModifyPath` to `install.ps1`) to skip the PATH
+step. A prebuilt compiler needs
 the LLVM 21 shared library at run time (`libLLVM-21.so`, `libLLVM.dylib`, or `LLVM-C.dll`); it is not bundled. The
 artifact names, checksums, reproducibility rules, and release steps are in [`docs/releasing.md`](docs/releasing.md).
 
@@ -158,7 +161,8 @@ usage:
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
-  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>]
+               [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
@@ -186,6 +190,11 @@ compile options:
 
 check options (type-check only: the front end and every memory check, no code generation or linking):
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
+  --explain-ownership  print each function's source with margin annotations: its moves, copies, borrows, drops,
+                       drop flags, argument conventions, and derived clones (issue #587)
+  --fn <name>          with --explain-ownership: print only this function (or qualified name)
+  --format <text|json> with --explain-ownership: annotated source (default) or JSON events with spans
+  --explain            print the path that leads to each memory error, with its rule ID and the suggested fix
 
 test options:
   -j, --jobs <n>       tests to run at once, and compilation threads (default: the number of CPUs)
@@ -270,10 +279,14 @@ move and borrow checks, and compile-time evaluation) and stops before code gener
 file, and prints the same diagnostics in the same formats as a build. A clean check prints nothing and exits 0; errors exit
 1 and end with `error: could not check <target> (N errors)`. `--tests` also checks the package's `test` blocks and accepts
 a library package without `src/main.bd`; `--release` checks as `build --release` does. It is meant for CI gates and editor
-feedback. [`spec/check.md`](spec/check.md) is the specification and `tests/check_check.py` checks it: the fixtures under
-`tests/check/`, and the whole conformance suite, whose `compile-fail` programs must report exactly their markers and
-whose other programs must be accepted. `burdin check <target> --print-instances [--format json]` also prints every generic
-instance the program created and the call that required it ([`spec/inspect.md`](spec/inspect.md), INS12-INS15).
+feedback. `--explain-ownership` prints each function's source with margin annotations for the moves, copies, borrows,
+drops, drop flags, argument conventions, and derived clones the checks recorded (`--fn` selects one function and
+`--format json` lists the events with spans), and `--explain` traces each memory error from the value's declaration to
+the failing use, with its rule ID and suggested fix. `burdin check <target> --print-instances [--format json]` also
+prints every generic instance the program created and the call that required it
+([`spec/inspect.md`](spec/inspect.md), INS12-INS15). [`spec/check.md`](spec/check.md) is the specification and
+`tests/check_check.py` checks it: the fixtures under `tests/check/`, and the whole conformance suite, whose
+`compile-fail` programs must report exactly their markers and whose other programs must be accepted.
 
 `burdin expand <target> [--item <path>] [--instances]` prints Burdin source for the program after compile-time evaluation,
 `comptime if` and `comptime for` unrolling, user derives, default and named arguments, and operators: the text of each

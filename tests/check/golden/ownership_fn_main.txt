@@ -1,0 +1,20 @@
+fn main (ownership/moves.bd:12):
+  12 | fn main() {
+  13 |     let a = Point { x: 1, y: 2 }
+  14 |     let b = a
+     | move a -> b
+  15 |     take(b)
+     | call arg `p`: own
+     | move b
+  16 |     let n = 7
+  17 |     let m = n
+     | copy n
+  18 |     let p = Point { x: 3, y: 4 }
+  19 |     let q = p.clone()
+     | call arg `self`: read
+     | clone p (derived)
+  20 |     println("{} {}", total(p, q), m)
+     | call arg `s`: read
+     | call arg `a`: read
+     | call arg `b`: read
+  21 | }

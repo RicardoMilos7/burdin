@@ -1,0 +1,19 @@
+struct Inner {
+    n: i32
+}
+
+struct Pair {
+    first: Inner
+    second: Inner
+}
+
+fn consume(own n: Inner) {}
+
+fn main() {
+    let p = Pair { first: Inner { n: 1 }, second: Inner { n: 2 } }
+    consume(p.first)
+    println(p.second.n.to_string())
+    let mut h = Heap.new(Inner { n: 3 })
+    let inner = *h
+    println(inner.n.to_string())
+}

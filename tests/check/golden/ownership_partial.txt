@@ -1,0 +1,20 @@
+fn consume (ownership/partial.bd:10):
+  10 | fn consume(own n: Inner) {}
+
+fn main (ownership/partial.bd:12):
+  12 | fn main() {
+  13 |     let p = Pair { first: Inner { n: 1 }, second: Inner { n: 2 } }
+  14 |     consume(p.first)
+     | call arg `n`: own
+     | move p.0
+     | drop flag p.0
+  15 |     println(p.second.n.to_string())
+     | call arg `self`: read
+  16 |     let mut h = Heap.new(Inner { n: 3 })
+  17 |     let inner = *h
+     | move h.* -> inner
+     | drop flag h.*
+  18 |     println(inner.n.to_string())
+     | call arg `self`: read
+  19 | }
+     | drop h (conditional)

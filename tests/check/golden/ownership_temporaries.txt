@@ -1,0 +1,22 @@
+fn make (ownership/temporaries.bd:1):
+   1 | fn make(): String {
+   2 |     String.from("value")
+   3 | }
+
+fn read (ownership/temporaries.bd:5):
+   5 | fn read(s: String): usize {
+   6 |     s.len()
+     | call arg `self`: read
+   7 | }
+
+fn main (ownership/temporaries.bd:9):
+   9 | fn main() {
+  10 |     let _ = make()
+     | drop temporary
+  11 |     make()
+     | drop temporary
+  12 |     let n = read(String.from("temporary"))
+     | call arg `s`: read
+  13 |     println(n.to_string())
+     | call arg `self`: read
+  14 | }

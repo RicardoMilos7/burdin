@@ -269,9 +269,11 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
 
     drive("build", "note.bd", "--diagnostic-format=json")
     expect_status("json note", 1)
+    # The move note is part of the value's path: its declaration, then the move itself (issue #593).
     expect_contains(
-        "json note", '"notes":[{"message":"value moved here","span":{"file":"note.bd"', stderr
+        "json note", '"message":"value moved here","span":{"file":"note.bd"', stderr
     )
+    expect_contains("json note", '"message":"`t` is declared here"', stderr)
 
     drive("build", "note.bd", "--no-color")
     expect_contains("human note", "= note: note.bd:", stderr)
@@ -446,7 +448,7 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
     else:
         moved, mut_marker, mismatch, _summary = multi
         check()
-        if not (moved["code"] == "E0100" and len(moved["notes"]) == 1 and len(moved["related"]) == 1):
+        if not (moved["code"] == "E0100" and len(moved["notes"]) >= 2 and len(moved["related"]) >= 2):
             add_problem("multi.bd json: the move error has no note with a span")
         check()
         if not (
@@ -585,7 +587,7 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
             add_problem(f"sarif multi.bd: results are {[r['ruleId'] for r in results]}")
         else:
             check()
-            if len(results[0].get("relatedLocations", [])) != 1:
+            if len(results[0].get("relatedLocations", [])) < 2:
                 add_problem("sarif multi.bd: the move error's note is not a related location")
             fix_text = results[1].get("fixes", [{}])[0]
             replacement = fix_text.get("artifactChanges", [{}])[0].get("replacements", [{}])[0]

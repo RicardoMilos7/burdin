@@ -124,12 +124,13 @@ impl FnCx<'_> {
             params,
             ret,
             locals,
-            body: tir::Block { stmts: Vec::new(), tail: Some(Box::new(body)) },
+            body: tir::Block { stmts: Vec::new(), tail: Some(Box::new(body)), close: span },
             moved: Vec::new(),
             debug_kills: Vec::new(),
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
+            events: Vec::new(),
         };
         let closure = tir::Closure {
             name: func.name.clone(),

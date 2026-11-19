@@ -15,6 +15,7 @@ output of every failing fixture. The Rust unit tests in `crates/burdin_driver/sr
 
 ```
 burdin check <file.bd | package directory> [--release] [--tests] [--comptime-steps <n>] [diagnostics]
+      [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain]
 ```
 
 `diagnostics` is the group of options every command shares (`--diagnostic-format`, `--color`, `--no-color`, `--width`,
@@ -79,6 +80,69 @@ Tests: the exit status of every fixture, the missing target, the usage-error che
 INS12-INS15) to standard output; `--format json` makes it one JSON object. A check with errors prints the diagnostics and
 no report, and `--format` without `--print-instances` is a usage error.
 Tests: `tests/check_inspect.py` (`check_print_instances`).
+
+## Ownership events and annotations
+
+**CK10. `--explain-ownership`: the ownership lens on the command line.** The memory checks already record every move,
+copy, borrow, drop, drop flag, argument convention, and derived clone of a body. `burdin check --explain-ownership`
+adds a stable event list to that output (no new analysis) and prints each source function of the entry package with
+margin annotations, in source order:
+
+```
+fn main (ownership/moves.bd:12):
+  12 | fn main() {
+  13 |     let a = Point { x: 1, y: 2 }
+  14 |     let b = a
+     | move a -> b
+  15 |     take(b)
+     | call arg `p`: own
+     | move b
+  19 |     let q = p.clone()
+     | call arg `self`: read
+     | clone p (derived)
+     | drop q
+  21 | }
+```
+
+The event kinds (`burdin_tir::OwnershipEvent`, exposed as `burdin_query::OwnershipEventInfo`) are `declare`, `move`
+(with the destination when there is one), `copy`, `borrow` (shared or mutable), `drop` (with whether a runtime flag
+guards it), `drop_flag`, `call_arg` (the parameter's name and `read`/`mut`/`own` convention), and `clone` (with
+whether `Clone` is derived). A drop is anchored at the closing brace of the scope that drops it; a move or borrow, at
+the expression that performs it. A move whose value is left behind as a statement temporary is a `drop temporary`.
+The compiler's own generated code — an interpolated string's hidden formatter, a desugared loop counter — is left out
+of the list, because it is not source the user wrote.
+
+`--fn <name>` prints only the function with that name, its qualified name (`geometry.Rect.area`), or its last
+component (`area`). `--format json` prints the same functions and events as one JSON array, one function per line,
+each with the event's `kind`, its span in the JSON location shape of `spec/diagnostics.md` (DG2), and the kind's
+fields (`local`, `path`, `target`, `mutable`, `conditional`, `parameter`, `convention`, `derived`). The generic
+standard library, generic instantiations, and compiler-generated items are not printed. The command prints the
+annotations on standard output; diagnostics still go to standard error, and the exit status is the usual one. The
+`--fn` and `--format` options need `--explain-ownership`; anything else is a usage error (exit 2).
+Tests: `tests/check/ownership/` (one fixture per rule family: moves and copies, borrows, drops and reassignment,
+partial moves and `Heap`, temporaries), `ownership_*` goldens, and the `--fn`/`--format json` checks in
+`tests/check_check.py`.
+
+**CK11. `--explain`: the path to a memory error.** For each diagnostic of a memory code (E0100, E0101, E0103, E0104,
+E0110, E0111, E0121, E0122, E0123), the command prints a trace after the diagnostics, on standard error:
+
+```
+trace for explain/E0111.bd:13:5: error[E0111]: this access conflicts with a borrow that is still live
+  rule: spec/memory-rules.md RF3
+  note at explain/E0111.bd:12:22: the borrow is created here
+  fails here: explain/E0111.bd:13:5
+  fix: finish using the reference before changing the place, ...
+```
+
+The steps are the events for the value the diagnostic names (from its backticked name, or from the event at the
+failing span), in source order: `created`, `moved`, `copied`, `borrowed`, or `cloned`, each with its location. The
+rule ID is the one from `spec/memory-rules.md`. The suggested fix is the reference's `**How to fix:**` paragraph
+(`burdin_diag::explain_fix`). Every memory diagnostic also carries one `help` line pointing at the mode, and its
+`notes` (which the JSON format publishes as `related` information) point at the declaration and each move or borrow
+on the way. The plain diagnostic line — and therefore every conformance test's `//~` markers and the short format —
+does not change.
+Tests: `tests/check/explain/` (one fixture per code) and its goldens, the JSON/SARIF goldens in
+`tests/diagnostics/`, and `tests/check_check.py`.
 
 ## Choices that are not obvious
 

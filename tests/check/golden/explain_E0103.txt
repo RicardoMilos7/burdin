@@ -1,0 +1,7 @@
+explain/E0103.bd:15:13: error[E0103]: cannot move a field out of a type that implements `Drop`
+error: could not check explain/E0103.bd (1 error)
+
+trace for explain/E0103.bd:15:13: error[E0103]: cannot move a field out of a type that implements `Drop`
+  rule: spec/memory-rules.md MV5
+  fails here: explain/E0103.bd:15:13
+  fix: move the whole value, or restructure so the field that must move out is not stored in a type with a destructor.

@@ -21,8 +21,9 @@ mod reparse;
 mod stats;
 
 pub use api::{
-    Convention, DefinitionKind, ExprFacts, ItemSignature, LocalUse, Location, Member, MoveEvent, OwnedLocal, Ownership,
-    ParamInfo, Resolution, StmtInfo, StmtKind, SyntaxTree, Trivia, TriviaKind, Typed,
+    Convention, DefinitionKind, ExprFacts, FunctionOwnership, ItemSignature, LocalUse, Location, Member, MoveEvent,
+    OwnedLocal, Ownership, OwnershipEventInfo, OwnershipEventKind, ParamInfo, Resolution, StmtInfo, StmtKind,
+    SyntaxTree, Trivia, TriviaKind, Typed, function_ownership,
 };
 pub use burdin_sema::EntryMode;
 pub use db::{Analysis, Budget, CancelHandle, Cancelled, Db, Options, Parsed, env_jobs};

@@ -62,6 +62,8 @@ pub type Reply = Result<Json, ReqError>;
 pub struct Config {
     pub inlay_types: bool,
     pub inlay_parameters: bool,
+    /// Show moves and implicit drops in the ownership lens (`spec/lsp.md`, LS13; issue #591). Off by default.
+    pub inlay_ownership: bool,
     pub lints: bool,
     pub debounce_ms: u64,
     pub formatting: bool,
@@ -76,6 +78,7 @@ impl Default for Config {
         Config {
             inlay_types: true,
             inlay_parameters: true,
+            inlay_ownership: false,
             lints: true,
             debounce_ms: 200,
             formatting: true,
@@ -92,6 +95,7 @@ impl Config {
         let flag = |v: &Json, old: bool| v.as_bool().unwrap_or(old);
         c.inlay_types = flag(value.at(&["inlayHints", "types"]), c.inlay_types);
         c.inlay_parameters = flag(value.at(&["inlayHints", "parameterNames"]), c.inlay_parameters);
+        c.inlay_ownership = flag(value.at(&["inlayHints", "ownership"]), c.inlay_ownership);
         c.lints = flag(value.at(&["diagnostics", "lints"]), c.lints);
         if let Some(ms) = value.at(&["diagnostics", "debounceMs"]).as_u32() {
             c.debounce_ms = ms.min(10_000) as u64;

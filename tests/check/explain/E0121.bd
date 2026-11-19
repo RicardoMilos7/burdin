@@ -1,0 +1,13 @@
+fn pick(a: &i32, b: &i32, first: bool): &i32 { //~ E0121
+    if first {
+        a
+    } else {
+        b
+    }
+}
+
+fn main() {
+    let x = 1
+    let y = 2
+    println((*pick(&x, &y, true)).to_string())
+}
