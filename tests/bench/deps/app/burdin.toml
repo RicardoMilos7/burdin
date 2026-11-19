@@ -1,0 +1,5 @@
+[package]
+name = "benchapp"
+
+[dependencies]
+lib = { path = "../lib" }

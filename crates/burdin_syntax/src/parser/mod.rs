@@ -31,6 +31,7 @@ pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> Fi
         nl_stack: Vec::new(),
         truncated: lexed.truncated,
         test_count: 0,
+        bench_count: 0,
         comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
@@ -53,6 +54,7 @@ pub fn parse_block(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> O
         nl_stack: Vec::new(),
         truncated: false,
         test_count: 0,
+        bench_count: 0,
         comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
@@ -73,6 +75,8 @@ pub(super) struct Parser<'a> {
     truncated: bool,
     /// How many `test` items this file has parsed, for their generated function names.
     test_count: usize,
+    /// How many `bench` items this file has parsed, for their generated function names.
+    bench_count: usize,
     /// How many module-scope `comptime assert` items this file has parsed, for their constant names.
     comptime_asserts: usize,
     /// How many `select` expressions this file has parsed, for the names of their generated variables.
@@ -225,11 +229,11 @@ impl Parser<'_> {
         let start = self.pos;
         while !self.at_eof() {
             let t = self.tok();
-            // `test` is contextual, so it only starts an item when a string follows it.
-            let test_item = matches!(&t.kind, TokenKind::Ident(name) if name == "test")
+            // `test` and `bench` are contextual, so they only start an item when a string follows them.
+            let contextual_item = matches!(&t.kind, TokenKind::Ident(name) if name == "test" || name == "bench")
                 && self.toks.get(self.pos + 1).is_some_and(|next| matches!(next.kind, TokenKind::Str(_)));
             let item_start =
-                Self::starts_item_only(&t.kind) || (depth == 0 && t.kind == TokenKind::Unsafe) || test_item;
+                Self::starts_item_only(&t.kind) || (depth == 0 && t.kind == TokenKind::Unsafe) || contextual_item;
             if self.pos > start && t.nl_before && item_start {
                 break;
             }
@@ -595,6 +599,41 @@ mod tests {
     }
 
     #[test]
+    fn bench_items_parse_and_stay_contextual() {
+        // A bench item is `bench`, a string, and a block; it becomes `__burdin_bench_N` and is kept out of the
+        // ordinary items, like a test (`spec/bench.md`, BN1).
+        let (file, out) = render("bench \"one\" { let mut x = 0\nx = x + 1 }\nbench \"two\" { }\nfn good() {}\n");
+        assert_eq!(out, "");
+        assert_eq!(fn_names(&file), ["good"]);
+        assert_eq!(file.benches.len(), 2);
+        assert_eq!(file.benches[0].name, "one");
+        assert_eq!(file.benches[1].func.name.name, "__burdin_bench_1");
+        assert!(file.benches[0].func.ret.is_none());
+        assert!(file.benches[0].func.is_priv);
+
+        // `bench` stays an ordinary identifier everywhere else, so this is not a bench item.
+        let (file, out) = render("fn f() { let bench = 1\nbench }\n");
+        assert_eq!(out, "");
+        assert!(file.benches.is_empty());
+        assert_eq!(fn_names(&file), ["f"]);
+
+        // A bench takes no attributes in this stage; the block must follow the name.
+        for src in ["bench \"a\" [ignore] { }\n", "bench [ignore] { }\n"] {
+            let (_, out) = render(src);
+            assert!(out.contains("E0001"), "{src}: {out}");
+        }
+    }
+
+    #[test]
+    fn bench_items_survive_recovery() {
+        let (file, out) = render("fn broken( { }\nbench \"one\" { assert(true) }\nfn good() {}\n");
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert_eq!(fn_names(&file), ["good"]);
+        assert_eq!(file.benches.len(), 1);
+        assert_eq!(file.benches[0].name, "one");
+    }
+
+    #[test]
     fn malformed_input_never_panics() {
         let snippets = [
             "",
@@ -618,6 +657,8 @@ mod tests {
             "fn f() { 1 +",
             "test",
             "test \"a\"",
+            "bench",
+            "bench \"a\"",
             "use",
             "use a.",
             "impl",

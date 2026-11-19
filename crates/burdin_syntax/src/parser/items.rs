@@ -25,6 +25,13 @@ impl Parser<'_> {
                 }
                 continue;
             }
+            if self.at_bench_item() {
+                match self.bench_decl() {
+                    Ok(bench) => file.benches.push(bench),
+                    Err(Reported) => self.recover_item(),
+                }
+                continue;
+            }
             match self.item() {
                 Ok(Some(item)) => file.items.push(item),
                 Ok(None) => {}
@@ -44,6 +51,12 @@ impl Parser<'_> {
     /// is not an ordinary identifier.
     fn at_test_item(&self) -> bool {
         matches!(self.kind(), TokenKind::Ident(name) if name == "test") && matches!(self.nth_kind(1), TokenKind::Str(_))
+    }
+
+    /// A `bench` item: like `test`, the contextual keyword followed by a string (`spec/bench.md`, BN1).
+    fn at_bench_item(&self) -> bool {
+        matches!(self.kind(), TokenKind::Ident(name) if name == "bench")
+            && matches!(self.nth_kind(1), TokenKind::Str(_))
     }
 
     /// The contextual `blocking` marker: `blocking fn` or `blocking unsafe fn`. It is a marker only there, so a
@@ -528,6 +541,48 @@ impl Parser<'_> {
         }
         self.close(&TokenKind::RBracket)?;
         Ok(attrs)
+    }
+
+    /// `bench "name" { ... }` (`spec/bench.md`, BN1). The bench is compiled as a private function with no parameters
+    /// that returns nothing; one call of that function is one iteration of the measurement. Benchmarks take no
+    /// attributes in this stage, so the block must follow the name directly. Like a test, a bench is kept out of
+    /// `File.items` and only `burdin bench` declares and checks it.
+    pub(super) fn bench_decl(&mut self) -> PResult<BenchDecl> {
+        let start = self.span();
+        self.bump(); // `bench`
+        let name = match self.kind().clone() {
+            TokenKind::Str(name) => {
+                self.bump();
+                name
+            }
+            _ => return Err(self.unexpected("a bench name string")),
+        };
+        let name_span = self.prev_span();
+        let body = self.block()?;
+        let body_span = body.span;
+        self.bodies.push(body_span);
+        let index = self.bench_count;
+        self.bench_count += 1;
+        let span = start.to(body_span);
+        // The function returns nothing, so a unit tail is appended: the body's last expression statement may be
+        // any value (the natural place for `black_box(x)` to end a measurement), and the block still returns `()`
+        // the way a test's block returns `Ok(())`.
+        let mut stmts = body.stmts;
+        stmts.push(Stmt::Expr(Expr { kind: ExprKind::Unit, span: body_span }));
+        let func = FnDecl {
+            is_priv: true,
+            is_unsafe: false,
+            is_blocking: false,
+            name: Ident { name: format!("__burdin_bench_{index}"), span: name_span },
+            generics: Vec::new(),
+            params: Vec::new(),
+            is_vararg: false,
+            ret: None,
+            where_clause: Vec::new(),
+            body: Block { stmts, span: body_span },
+            span,
+        };
+        Ok(BenchDecl { name, name_span, func, span })
     }
 
     pub(super) fn interface_decl(&mut self, is_priv: bool, start: Span) -> PResult<InterfaceDecl> {

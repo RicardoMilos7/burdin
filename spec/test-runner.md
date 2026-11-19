@@ -1,6 +1,7 @@
 # The Burdin test runner
 
-This file is the behavior of `burdin test` and of the attributes on a `test` item. The syntax is in
+This file is the behavior of `burdin test`: the `test` items of a package, their attributes, and the doc tests of
+the code blocks in its doc comments. The syntax is in
 [`grammar.md`](grammar.md) (`TestItem`); the driver contract is summarized in
 [`README.md`](../README.md#burdin-test), and the black-box checks are in
 [`tests/check_test_runner.py`](../tests/check_test_runner.py) with the conformance tests in
@@ -114,6 +115,8 @@ The target is a `.bd` file or a package directory.
   use the same test name. A single selected package keeps the plain test name. `FAIL`, `PASS`, `IGNORED`, and the
   captured-output headings all use the displayed name.
 - A test in a package with no `src/main.bd` still runs: test mode does not require `main`.
+- `--doc` drops the `test` blocks instead of adding anything: only the doc tests are selected, listed, and run, and
+  no `test` block is compiled. Every other option applies to the doc tests like any other test.
 
 ### The full path
 
@@ -303,6 +306,110 @@ produce the same outcome, so an interpreter/compiled divergence is caught automa
 - One test binary is still built per package and each test still runs in its own process; the differential
   comparison uses the `Ok`/`Err` exit status the dispatcher already produces.
 
+## Doc tests
+
+The Burdin code blocks of a package's doc comments are tests too (issues #250, #650, #651, #652): every fenced
+block that holds Burdin code in a `///` or `//!` comment of a selected package is extracted, built as its own
+program, and run with the `test` blocks. `burdin test --doc` runs only them; a plain `burdin test` runs both.
+The doc-comment reading is the one `burdin doc` uses ([`doc.md`](doc.md), DC1-DC4) and the Markdown is the one it
+renders with (DC5-DC6), so a block a reader sees and the test the runner builds cannot disagree about where the
+block starts or what its fence says.
+
+### Which blocks are doc tests
+
+- A fenced block whose info string's first word is empty, `burdin`, or `bd` (DC6): an untagged block, or one tagged
+  with the attributes below after the word. A block tagged with any other word (`text`, `console`, `rust`, ...) is
+  not a doc test, and neither is an empty block. The words after the language word — comma or space separated —
+  are the block's attributes. An untagged block writes them after a comma: <code>```,ignore</code>. Blocks nested
+  in a quote or a list are doc tests like any other.
+- Every doc comment of the package's source files holds doc tests: module documentation (`//!`), items, fields,
+  variants, methods, interface methods, extension methods, and `priv` items and `main` included. A comment the
+  parser generated an item from (a `derives` clause, an `error enum`'s impls) has none.
+- A doc test's name is `<owner> (line N)`, where `N` is the 1-based line of the block's opening fence and the owner
+  is the documented item's name as a report shows it (`Point.new`, `Shape.Circle`, `Iterator.next`), or the file's
+  stem for module documentation. Its module is the file's dotted path inside `src`, empty for the package's entry
+  file (`src/main.bd`, or the root module a library package starts from), exactly as a `test` block's is. Its full
+  path is `<module>.<owner> (line N)`, prefixed with `<package>::` when more than one package runs, and its
+  `file` and `line` are the doc comment's: the original source file and the fence's line, never a generated one.
+- Doc tests are discovered package by package in build order, file by file in the order the driver reads the
+  modules, and within a file in source order; a package's `test` blocks come before its doc tests in the report.
+  Name filters, `--exact`, `--skip`, `--failed`, `--shard`, `--ignored`, `--list`, `--format`, `--junit`, and
+  `--timeout` apply to them like any other test, and so does the `--failed` record.
+
+### Doc-test attributes
+
+| Attribute | Meaning |
+| --- | --- |
+| `ignore` | The block is not built and not run. It counts as *ignored*; `--ignored` and `--include-ignored` select it. |
+| `no_run` | The block is compiled (the front end and the memory checks) but not run. Passing the compile is the whole test. |
+| `should_panic` | The compiled example must end in a panic abort. |
+| `compile_fail` | The example must not compile. `compile_fail E0123` must fail with that code; the failure note names the code it did fail with. |
+| `text` | The fence's language word, not an attribute: a block tagged `text` is not Burdin and not a doc test. |
+
+A word that is none of these warns on standard error, once per block, at the fence's line
+(`warning: <file>:<line>: unknown code-block attribute `word``), and the block still runs. `compile_fail` takes the
+error code that follows it (`compile_fail E0123`, space or comma separated); a code that is not `E` and four digits
+warns and is ignored. The attributes are not exclusive; when more than one applies, `ignore` wins, then
+`compile_fail` (a block that compiles fails the test before anything runs), then `no_run` (the example never runs,
+so `should_panic` is never checked). There is no `timeout` attribute and no `should_fail` for a doc block: an
+example is an ordinary program with no dispatcher to return an error.
+
+### Building one doc test
+
+- Each doc test becomes a one-file package of the build directory: a `burdin.toml` whose only dependency is the
+  documented package, and a `src/main.bd` that holds the example. The dependency is what makes the example see the
+  package's public API only: a `priv` item, field, or method cannot be named from an example, which is exactly what
+  the doc tests are for. A package with no importable root module (`src/<name>.bd` or `src/lib.bd`) cannot be
+  imported by its examples; the runner says so once on standard error and the examples still run, standing alone. A
+  one-file target is a package of one module: it is copied into a package of the build directory (when its stem is
+  an identifier), so an example imports it by its own stem.
+- The example's lines are the block's lines with a hidden `# ` marker removed (`# use geometry.{Point}` compiles as
+  `use geometry.{Point}`; DC6 says what `burdin doc` does with them). The example is the whole program when one of
+  its lines declares `fn main`; otherwise its leading declarations — the longest prefix of its lines that parses as
+  module items — are hoisted above a generated `fn main() { ... }` wrapper that holds the remaining statements, so
+  an example may declare a helper and then call it. Lines after the first statement that are declarations do not
+  parse in the wrapper and are reported as such.
+- The generated program is padded with comment lines so the example lands on the line of its doc comment: a panic
+  the compiled example raises reports the line a reader sees. The compiler's diagnostics are moved the same way,
+  from the generated file to the original one, before they are shown; a diagnostic on a generated line (the wrapper,
+  the padding) points at the fence. A failure reports the doc comment's file and line, never a generated path —
+  except the raw backtrace of a run-time panic, which names the binary the process ran, while the report's headings
+  carry the true location.
+- The doc tests selected (and not ignored) are built in parallel: `-j` bounds how many build at once, and one build
+  alone uses the machine's parallelism. A build whose front end fails decides the test without a process; one whose
+  example is runnable is linked once and run once. Building never re-runs the documented package's build script
+  (the generated manifest grants no `[build] allow`), so a module its script generates is not part of what an
+  example can import.
+
+### Running and reporting
+
+- A doc test runs exactly like a `test` block: its own process, a fresh working directory, a clean environment with
+  `BURDIN_TEST` set to its display name, captured output, and the `--timeout` default (it has no `timeout(ms)` of
+  its own). The difference is the argument: a doc test's process takes no test index, because the program is the
+  test. The checking allocator of a `test`-block build does not apply: an example is a normal program with `main`.
+- A failing doc test is reported with its location in the headings, before its captured output and its `FAIL` line:
+
+  ```
+  ---- doc test "Point.new (line 12)" at src/shapes.bd:12: did not compile ----
+  ---- doc test "Point.new (line 12)" at src/shapes.bd:12 stderr ----
+  src/shapes.bd:13:5: error[E0002]: unknown name `distance_squared`
+  FAIL Point.new (line 12)
+  ```
+
+  The reason rides in the first heading when there is one (`did not compile`, `expected the example to fail with
+  E0123, but it failed with E0003`, `timed out after 250 ms`); the compile's diagnostics are the captured stderr.
+  `PASS`, `IGNORED`, and the summary lines are the same as a `test` block's, so the counts hold both kinds.
+- `--list` prints a doc test's full path and the attributes of its block in the fixed order `ignore`, `no_run`,
+  `should_panic`, `compile_fail` (with its code when it has one). The JSON listing carries the same identity
+  fields as a `test` block's — `file` and `line` are the doc comment's — and an `attributes` object of its own:
+  `ignore`, `should_panic`, `no_run`, `compile_fail`, and `compile_fail_code` (string or `null`).
+- The JSON event stream decides a doc test without a process at its build: a `no_run` or `compile_fail` example,
+  or one that failed to compile, emits its `test_started` and `test_passed`/`test_failed` pair when the build
+  finishes; one that will run emits `test_started` when the runner starts its process, like a `test` block.
+- The exit statuses are a plain run's: 0 when every built and run example passed, 1 when one failed, 2 for a usage
+  error. `--doc` with a package whose `test` blocks do not compile never compiles them: the doc tests are judged on
+  their own.
+
 ## Tests
 
 | Behavior | Test |
@@ -322,3 +429,9 @@ produce the same outcome, so an interpreter/compiled divergence is caught automa
 | `--list`, human and JSON (#639) | `tests/check_test_runner.py` (golden listing, JSON fields), unit tests in `crates/burdin_driver/src/test_runner/report.rs` |
 | `--format json` events and `--junit` (#640) | `tests/check_test_runner.py` (event sequence, escaping, XML structure, an unwritable report), unit tests in `report.rs` |
 | `--failed`, `--shard`, `--slow-threshold` (#641) | `tests/check_test_runner.py` (`tests/runner/selection/`, `tests/runner/slow/`), unit tests in `select.rs` |
+| Doc tests: extraction, wrapping, hoisting, and the line-true padding | `tests/runner/doctests/`, unit tests in `crates/burdin_driver/src/test_runner/doc_tests.rs` |
+| Doc tests: a failure reports the doc comment's file and line (#650) | `tests/check_test_runner.py` (`tests/runner/doctests/`) |
+| Doc-test attributes: `ignore`, `no_run`, `should_panic`, `compile_fail`, `compile_fail E0003`, unknown warns (#651) | `tests/runner/doctests/`, unit tests in `doc_tests.rs` |
+| Hidden `# ` setup lines are compiled and hidden (#652) | `crates/burdin_doc/src/markdown.rs` (unit tests), `tests/doc/geometry`, `tests/check_doc.py`, `tests/check_test_runner.py` |
+| Doc tests: `--doc`, one-file targets, a package without an importable root | `tests/runner/doctest_one.bd`, `tests/runner/doctests-bin/`, `tests/check_test_runner.py` |
+| The `burdin doc` fixture's example runs green | `tests/check_test_runner.py` (the `tests/doc/geometry` doc test) |

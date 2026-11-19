@@ -47,10 +47,18 @@ impl Fmt<'_> {
         self.at_word("test") && matches!(self.nth(1), TokenKind::Str(_))
     }
 
+    fn at_bench_item(&self) -> bool {
+        self.at_word("bench") && matches!(self.nth(1), TokenKind::Str(_))
+    }
+
     fn item(&mut self) -> R<D> {
         let lead = self.start_of_line();
         if self.at_test_item() {
             let body = self.test_item()?;
+            return Ok(concat(vec![lead, body]));
+        }
+        if self.at_bench_item() {
+            let body = self.bench_item()?;
             return Ok(concat(vec![lead, body]));
         }
         let mut parts = vec![lead];
@@ -465,5 +473,14 @@ impl Fmt<'_> {
         let block = self.block_parts()?;
         parts.push(self.block_doc(block, false));
         Ok(concat(parts))
+    }
+
+    /// `bench "name" { ... }` (`spec/bench.md`, BN1): the keyword, the name, and the block. A benchmark takes no
+    /// attributes in this stage.
+    fn bench_item(&mut self) -> R<D> {
+        let kw = self.tok_doc();
+        let name = self.tok_doc();
+        let block = self.block_parts()?;
+        Ok(concat(vec![kw, space(), name, space(), self.block_doc(block, false)]))
     }
 }

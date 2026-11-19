@@ -71,24 +71,47 @@ pub struct Package<'a> {
     pub modules: Vec<Module<'a>>,
 }
 
+/// What the entry point of this build is: the program's `main`, its `test` items, or its `bench` items. `burdin
+/// build` and `burdin run` check a program; `burdin test` checks the entry package's tests and needs no `main`;
+/// `burdin bench` checks its benches the same way (`spec/bench.md`, BN2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum EntryMode {
+    /// The program's `main` function.
+    #[default]
+    Build,
+    /// The `test` items of the entry package (`burdin test`).
+    Test,
+    /// The `bench` items of the entry package (`burdin bench`).
+    Bench,
+}
+
+impl EntryMode {
+    /// Whether `main` is required and called. Test and bench builds replace the entry point with their own
+    /// dispatcher, so a package whose items all live in other files needs none.
+    pub fn wants_main(self) -> bool {
+        self == EntryMode::Build
+    }
+}
+
 /// Type-checks a parsed program. `entry_package` and `entry_module` name the module whose `main` is the program's
-/// entry point (the module index is relative to that package). With `test_mode`, the `test` items of the entry
-/// package are declared and checked too, and `main` is not required; that is what `burdin test` builds. `traces`
-/// turns on the source locations the dynamic `Error` records in a debug build (`spec/errors.md`, ERR7), and
-/// `sources` is the map those locations (and the typed test assertions) are read from.
+/// entry point (the module index is relative to that package). With [`EntryMode::Test`], the `test` items of the
+/// entry package are declared and checked too, and `main` is not required; that is what `burdin test` builds
+/// ([`EntryMode::Bench`] is `burdin bench` over `bench` items, `spec/bench.md`). `traces` turns on the source
+/// locations the dynamic `Error` records in a debug build (`spec/errors.md`, ERR7), and `sources` is the map those
+/// locations (and the typed test assertions) are read from.
 /// Errors go to `diags`; the program is returned either way, because the memory checks still run on it to report
 /// every error in the file. Do not generate code when `diags` has errors.
 pub fn check<'a>(
     packages: &'a [Package<'a>],
     entry_package: usize,
     entry_module: usize,
-    test_mode: bool,
+    mode: EntryMode,
     traces: bool,
     sources: &'a SourceMap,
     diags: &mut Diagnostics,
 ) -> Program {
     let mut cache = CheckCache::disabled();
-    check_cached(packages, entry_package, entry_module, test_mode, traces, sources, diags, &mut cache)
+    check_cached(packages, entry_package, entry_module, mode, traces, sources, diags, &mut cache)
         .expect("a check with no cancel flag finishes")
 }
 
@@ -101,16 +124,15 @@ pub fn check_cached<'a>(
     packages: &'a [Package<'a>],
     entry_package: usize,
     entry_module: usize,
-    test_mode: bool,
+    mode: EntryMode,
     traces: bool,
     sources: &'a SourceMap,
     diags: &mut Diagnostics,
     cache: &mut CheckCache,
 ) -> Option<Program> {
-    let declarations =
-        cache::declaration_fingerprint(packages, (entry_package, entry_module), test_mode, traces, sources);
+    let declarations = cache::declaration_fingerprint(packages, (entry_package, entry_module), mode, traces, sources);
     cache.begin(declarations);
-    let mut sema = Sema::new(packages, entry_package, entry_module, test_mode, traces, sources);
+    let mut sema = Sema::new(packages, entry_package, entry_module, mode, traces, sources);
     sema.declare_types(diags);
     sema.declare_values(diags);
     sema.resolve_imports(diags);

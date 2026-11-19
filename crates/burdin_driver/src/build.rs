@@ -6,8 +6,8 @@
 //! modules of the package (BS4), and the script runs again only when its own source, the manifest, or one of its
 //! declared inputs changed, keyed per package and profile (BS5).
 
-use crate::CompileOptions;
 use crate::package::{self, PackageFiles, Workspace};
+use crate::{CompileOptions, EntryMode};
 use burdin_diag::Code;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -206,7 +206,7 @@ fn run_script(
         pgo_use: None,
         emit_ir: None,
         link_libs: &[],
-        test_mode: false,
+        mode: EntryMode::Build,
         diagnostics: options.diagnostics,
         comptime_steps: options.comptime_steps,
         emit_deps: None,

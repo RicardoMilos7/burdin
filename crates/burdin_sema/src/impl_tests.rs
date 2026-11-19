@@ -18,7 +18,7 @@ fn codes(source: &str) -> Vec<String> {
         root_module: None,
         modules: vec![Module { file, path: Vec::new(), ast: &ast }],
     }];
-    check(&packages, 0, 0, false, false, &sources, &mut diags);
+    check(&packages, 0, 0, crate::EntryMode::Build, false, &sources, &mut diags);
     diags.iter().filter(|d| d.severity == burdin_diag::Severity::Error).map(|d| d.code.0.to_string()).collect()
 }
 

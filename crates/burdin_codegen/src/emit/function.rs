@@ -98,6 +98,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         match program.main {
             Some(main) => crate::runtime::define_main(self.cx, self.module, self.functions[main.0], self.windows)?,
+            // A bench build: the entry point selects one bench by its index and runs the measurement harness
+            // (`spec/bench.md`, BN4).
+            None if !program.benches.is_empty() => {
+                let benches: Vec<_> = program.benches.iter().map(|b| self.functions[b.func.0]).collect();
+                crate::runtime::define_bench_main(self.cx, self.module, &benches, &self.rt, self.windows)?
+            }
             // A test build: the entry point dispatches to one `test` block by its index on the command line.
             None => {
                 let tests: Vec<_> = program.tests.iter().map(|t| self.functions[t.func.0]).collect();

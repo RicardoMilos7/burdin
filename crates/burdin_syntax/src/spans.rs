@@ -23,6 +23,11 @@ pub fn map_spans(file: &mut File, f: &mut dyn FnMut(&mut Span)) {
         m.fn_decl(&mut t.body_func);
         (m.f)(&mut t.span);
     }
+    for b in &mut file.benches {
+        (m.f)(&mut b.name_span);
+        m.fn_decl(&mut b.func);
+        (m.f)(&mut b.span);
+    }
     file.bodies.iter_mut().for_each(|s| (m.f)(s));
 }
 

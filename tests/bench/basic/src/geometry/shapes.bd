@@ -1,0 +1,6 @@
+// A bench in a module: its full path is the dotted module path plus the name, `geometry.shapes.area` (spec/bench.md, BN8).
+bench "area" {
+    let w = black_box(4)
+    let h = black_box(5)
+    black_box(w * h)
+}

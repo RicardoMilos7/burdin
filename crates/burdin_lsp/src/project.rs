@@ -4,6 +4,7 @@
 //! also part of every package that depends on it, so an edit reaches every database that reads the file.
 
 use crate::index::FileIndex;
+use burdin_query::EntryMode;
 use burdin_query::package;
 use burdin_query::{Analysis, Cancelled, Db, ModuleInfo, Options, PackageInfo, Parsed};
 use std::collections::HashMap;
@@ -79,7 +80,7 @@ impl Package {
         }
         let name = workspace.packages[workspace.entry_package].name.clone();
         let lint = workspace.packages[workspace.entry_package].lint.clone();
-        let db = Db::from_workspace(&workspace, &overrides, Options { test_mode: true, ..Options::default() })?;
+        let db = Db::from_workspace(&workspace, &overrides, Options { mode: EntryMode::Test, ..Options::default() })?;
         Ok(Package::new(root, name, db, lint))
     }
 

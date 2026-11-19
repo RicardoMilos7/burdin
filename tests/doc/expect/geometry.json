@@ -242,7 +242,7 @@
           "kind": "function",
           "private": false,
           "signature": "fn distance_squared(a: Point, b: Point): i32",
-          "docs": "Returns the squared distance between two points.\n\nThis is cheaper than a distance because it needs no square root.\n\n# Errors\n\nIt never fails. [Circle.new] is the call that can, with [GeometryError.NegativeRadius].\n\n```\nlet d = distance_squared(Point { x: 0, y: 0, tag: 0 }, Point { x: 3, y: 4, tag: 0 })\nassert_eq(d, 25)\n```",
+          "docs": "Returns the squared distance between two points.\n\nThis is cheaper than a distance because it needs no square root.\n\n# Errors\n\nIt never fails. [Circle.new] is the call that can, with [GeometryError.NegativeRadius].\n\n```\n# use geometry.{Point, distance_squared}\nlet d = distance_squared(Point.new(0, 0), Point.new(3, 4))\nassert_eq(d, 25)\n```",
           "links": [
             {
               "text": "Circle.new",
@@ -259,9 +259,9 @@
           ],
           "span": {
             "file": "src/lib.bd",
-            "line": 25,
+            "line": 26,
             "column": 4,
-            "end_line": 25,
+            "end_line": 26,
             "end_column": 20
           },
           "fields": [],
@@ -282,9 +282,9 @@
           "links": [],
           "span": {
             "file": "src/lib.bd",
-            "line": 31,
+            "line": 32,
             "column": 4,
-            "end_line": 31,
+            "end_line": 32,
             "end_column": 16
           },
           "fields": [],
@@ -442,7 +442,26 @@
             }
           ],
           "variants": [],
-          "methods": [],
+          "methods": [
+            {
+              "name": "new",
+              "display": "new",
+              "kind": "method",
+              "signature": "fn new(x: i32, y: i32): Point",
+              "private": false,
+              "docs": "Makes a point, the `priv` tag left at zero.",
+              "links": [],
+              "span": {
+                "file": "src/shapes.bd",
+                "line": 41,
+                "column": 8,
+                "end_line": 41,
+                "end_column": 11
+              },
+              "instance": null,
+              "origin": null
+            }
+          ],
           "implementations": [
             {
               "interface": "Copy",
@@ -496,9 +515,9 @@
               "links": [],
               "span": {
                 "file": "src/shapes.bd",
-                "line": 61,
+                "line": 68,
                 "column": 8,
-                "end_line": 61,
+                "end_line": 68,
                 "end_column": 11
               },
               "instance": null,
@@ -514,9 +533,9 @@
               "links": [],
               "span": {
                 "file": "src/shapes.bd",
-                "line": 67,
+                "line": 74,
                 "column": 8,
-                "end_line": 67,
+                "end_line": 74,
                 "end_column": 11
               },
               "instance": null,
@@ -534,9 +553,9 @@
               "links": [],
               "span": {
                 "file": "src/shapes.bd",
-                "line": 73,
+                "line": 80,
                 "column": 10,
-                "end_line": 73,
+                "end_line": 80,
                 "end_column": 17
               },
               "instance": null,
@@ -721,9 +740,9 @@
               "links": [],
               "span": {
                 "file": "src/shapes.bd",
-                "line": 41,
+                "line": 48,
                 "column": 8,
-                "end_line": 41,
+                "end_line": 48,
                 "end_column": 11
               },
               "instance": null,
@@ -748,9 +767,9 @@
                   "links": [],
                   "span": {
                     "file": "src/shapes.bd",
-                    "line": 54,
+                    "line": 61,
                     "column": 8,
-                    "end_line": 54,
+                    "end_line": 61,
                     "end_column": 12
                   },
                   "instance": null,
@@ -799,9 +818,9 @@
           "links": [],
           "span": {
             "file": "src/shapes.bd",
-            "line": 73,
+            "line": 80,
             "column": 10,
-            "end_line": 73,
+            "end_line": 80,
             "end_column": 17
           },
           "instance": null,

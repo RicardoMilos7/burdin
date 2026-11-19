@@ -181,6 +181,9 @@ pub(crate) struct Codegen<'ctx, 'a> {
     return_env: Option<PointerValue<'ctx>>,
     /// The capture record of the `Fn`/`FnMut` closure body being generated, destroyed when a call consumes it.
     return_consume: Option<(PointerValue<'ctx>, FunctionValue<'ctx>, IntValue<'ctx>)>,
+    /// The opaque inline-asm call `black_box` passes a value's stack slot through (`spec/bench.md`, BN9), created
+    /// on first use.
+    blackbox_asm: Option<PointerValue<'ctx>>,
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -203,7 +206,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let windows = triple.contains("windows");
         let darwin = triple.contains("darwin") || triple.contains("apple");
         let platform = tir::ioerror::platform(windows, darwin);
-        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, program.main.is_none())?;
+        // The checking allocator is a `burdin test` build's (`spec/allocators.md`, AL9): a bench build measures the
+        // plain C heap, so its numbers are not the allocator's bookkeeping.
+        let checking = program.main.is_none() && program.benches.is_empty();
+        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, checking)?;
         Ok(Codegen {
             cx,
             module,
@@ -249,6 +255,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             bounds_facts: Vec::new(),
             return_env: None,
             return_consume: None,
+            blackbox_asm: None,
         })
     }
 }

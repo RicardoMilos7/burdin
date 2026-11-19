@@ -1,6 +1,8 @@
-//! The `burdin` command: `build`, `run`, `test`, `check`, `fmt`, `lint`, `explain`, `bindgen`, and `new`. The contract is documented in `README.md`
-//! at the repository root (`The driver contract`) and summarized at the top of tests/run_tests.py.
+//! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `fmt`, `lint`, `explain`, `bindgen`, and `new`.
+//! The contract is documented in `README.md` at the repository root (`The driver contract`) and summarized at the
+//! top of tests/run_tests.py.
 
+mod bench_runner;
 mod bindgen;
 mod build;
 mod check;
@@ -13,6 +15,7 @@ mod new;
 mod test_runner;
 
 use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
+pub(crate) use burdin_query::EntryMode;
 pub(crate) use burdin_query::package;
 pub(crate) use burdin_query::package::source_path_text;
 use std::ffi::OsString;
@@ -29,8 +32,13 @@ usage:
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
-              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
+              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list] [--doc]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+  burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
+               [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
+               [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
+               [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
   burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
@@ -87,10 +95,35 @@ test options:
   --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
   --slow-threshold <ms>  list tests that ran at least this long (default: 5000; 0 disables it)
   --list               print the selected tests and their attributes without running them
+  --doc                run only the doc tests: the Burdin code blocks of doc comments (spec/test-runner.md)
   --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
                        test per line)
   --junit <file>       also write a JUnit XML report of the run
   -v, --verbose        print the output of passing tests too
+
+bench options (the behavior is spec/bench.md; benchmarks build in the release profile, so --release is the
+default and changes nothing):
+  -j, --jobs <n>       compilation threads only: benches are measured one at a time
+  -p <package>         measure the benches of one package of the build; may repeat
+  --workspace          measure the entry package and every path dependency
+  <filter>...          measure only benches whose full path contains any filter; --filter <text> is the same as
+                       a positional filter
+  --exact              filters and --skip patterns must equal the full path instead of being contained in it
+  --skip <pattern>     do not measure benches whose full path contains pattern; may repeat
+  --timeout <ms>       per-bench timeout (default: 600000; 0 disables it)
+  --warmup <ms>       how long the warmup of each bench runs (default: 100)
+  --sample-count <n>   how many samples each bench takes (default: 20)
+  --sample-time <ms>  the target duration of one sample (default: 5)
+  --list               print the selected benches without measuring them
+  --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
+                       bench per line)
+  --save-baseline <name>  store the measurements under <package>/target/burdin/bench/<name>.json
+  --baseline <name>    compare each measurement with the named baseline and report what changed beyond noise
+  --fail-on-regression <percent>  with --baseline, fail when a bench is this much slower and the change is
+                       beyond noise
+  --profile-time <seconds>  run one selected bench in a loop for this long without measuring, for an external
+                       profiler
+  -v, --verbose        print the captured output of passing benches too
 
 lsp (the language server, spec/lsp.md):
   speaks the Language Server Protocol on standard input and output; --stdio is accepted and changes nothing
@@ -193,10 +226,28 @@ pub(crate) struct Args {
     pub(crate) slow_ms: Option<u64>,
     /// `--list`: print the selected tests instead of running them.
     pub(crate) list: bool,
+    /// `--doc`: run only the doc tests, the Burdin code blocks of doc comments (`spec/test-runner.md`).
+    pub(crate) doc_only: bool,
     /// `--format`: the report format of `burdin test`.
     pub(crate) format: TestFormat,
     /// `--junit`: where to write the JUnit XML report.
     pub(crate) junit: Option<PathBuf>,
+    // `burdin bench` only.
+    /// `--save-baseline <name>`: store the measurements under the package's target directory.
+    pub(crate) save_baseline: Option<String>,
+    /// `--baseline <name>`: compare each measurement with the named saved baseline.
+    pub(crate) baseline: Option<String>,
+    /// `--fail-on-regression <percent>`: with `--baseline`, a bench this much slower than its baseline, beyond
+    /// noise, fails the run.
+    pub(crate) fail_on_regression: Option<f64>,
+    /// `--profile-time <seconds>`: run one selected bench in a loop for this long without measuring.
+    pub(crate) profile_time: Option<f64>,
+    /// `--warmup <ms>`: how long the warmup of each bench runs.
+    pub(crate) warmup_ms: Option<u64>,
+    /// `--sample-count <n>`: how many samples each bench takes.
+    pub(crate) sample_count: Option<u32>,
+    /// `--sample-time <ms>`: the target duration of one sample.
+    pub(crate) sample_time_ms: Option<u64>,
 }
 
 /// The report format of `burdin test` (`--format`).
@@ -247,7 +298,7 @@ profile: {}",
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut it = argv.iter();
     let command = it.next().ok_or("missing command")?.clone();
-    if !matches!(command.as_str(), "build" | "run" | "test") {
+    if !matches!(command.as_str(), "build" | "run" | "test" | "bench") {
         return Err(format!("unknown command `{command}`"));
     }
     let mut args = Args { command, ..Args::default() };
@@ -302,6 +353,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--failed" => args.failed = flag_without_value(a, inline)?,
             "--shard" => args.shard = Some(parse_shard(&option_value(&mut it, inline, a, "`<i>/<n>`")?)?),
             "--list" => args.list = flag_without_value(a, inline)?,
+            "--doc" => args.doc_only = flag_without_value(a, inline)?,
             "--format" => args.format = parse_test_format(&option_value(&mut it, inline, a, "a value")?)?,
             "--junit" => args.junit = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--slow-threshold" => {
@@ -330,10 +382,55 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--" => {
                 args.program_args.extend(it.by_ref().cloned());
             }
+            "--save-baseline" => {
+                args.save_baseline = Some(option_value(&mut it, inline, a, "a name")?);
+            }
+            "--baseline" => args.baseline = Some(option_value(&mut it, inline, a, "a name")?),
+            "--fail-on-regression" => {
+                let value = option_value(&mut it, inline, a, "a percentage")?;
+                let percent: f64 =
+                    value.parse().map_err(|_| format!("`--fail-on-regression` needs a percentage, got `{value}`"))?;
+                if !(percent.is_finite() && percent >= 0.0) {
+                    return Err(format!("`--fail-on-regression` needs a non-negative percentage, got `{value}`"));
+                }
+                args.fail_on_regression = Some(percent);
+            }
+            "--profile-time" => {
+                let value = option_value(&mut it, inline, a, "a number of seconds")?;
+                let seconds: f64 =
+                    value.parse().map_err(|_| format!("`--profile-time` needs a number of seconds, got `{value}`"))?;
+                if !(seconds.is_finite() && seconds > 0.0) {
+                    return Err(format!("`--profile-time` needs a positive number of seconds, got `{value}`"));
+                }
+                args.profile_time = Some(seconds);
+            }
+            "--warmup" => {
+                let value = option_value(&mut it, inline, a, "a number of milliseconds")?;
+                let ms: u64 =
+                    value.parse().map_err(|_| format!("`--warmup` needs a number of milliseconds, got `{value}`"))?;
+                args.warmup_ms = Some(ms);
+            }
+            "--sample-count" => {
+                let value = option_value(&mut it, inline, a, "a number of samples")?;
+                let n: u32 =
+                    value.parse().map_err(|_| format!("`--sample-count` needs a number of samples, got `{value}`"))?;
+                if n == 0 {
+                    return Err("`--sample-count` must be at least 1".to_string());
+                }
+                args.sample_count = Some(n);
+            }
+            "--sample-time" => {
+                let value = option_value(&mut it, inline, a, "a number of milliseconds")?;
+                let ms: u64 = value
+                    .parse()
+                    .map_err(|_| format!("`--sample-time` needs a number of milliseconds, got `{value}`"))?;
+                args.sample_time_ms = Some(ms);
+            }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ if target.is_none() => target = Some(PathBuf::from(a)),
-            // `burdin test <target> <filter>...`: the arguments after the target are name filters.
-            _ if args.command == "test" => args.filters.push(a.to_string()),
+            // `burdin test <target> <filter>...`: the arguments after the target are name filters. `burdin bench`
+            // takes the same positional filters.
+            _ if args.command == "test" || args.command == "bench" => args.filters.push(a.to_string()),
             _ => return Err(format!("unexpected argument `{a}`")),
         }
     }
@@ -344,34 +441,72 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         return Err("`--lto` cannot be combined with profile-guided optimization".to_string());
     }
     args.target = target.ok_or("missing target file")?;
-    if args.command != "test" {
+    let tests = args.command == "test";
+    let benches = args.command == "bench";
+    if !tests && !benches {
         if args.verbose {
-            return Err("`--verbose` is only valid for `burdin test`".to_string());
+            return Err("`--verbose` is only valid for `burdin test` and `burdin bench`".to_string());
         }
         if !args.packages.is_empty() || args.workspace {
-            return Err("`-p` and `--workspace` are only valid for `burdin test`".to_string());
+            return Err("`-p` and `--workspace` are only valid for `burdin test` and `burdin bench`".to_string());
         }
+        if !args.filters.is_empty() {
+            return Err("`--filter` is only valid for `burdin test` and `burdin bench`".to_string());
+        }
+        if args.exact || !args.skip.is_empty() {
+            return Err("`--exact` and `--skip` are only valid for `burdin test` and `burdin bench`".to_string());
+        }
+        if args.list {
+            return Err("`--list` is only valid for `burdin test` and `burdin bench`".to_string());
+        }
+        if args.format != TestFormat::Human {
+            return Err("`--format` is only valid for `burdin test` and `burdin bench`".to_string());
+        }
+        if args.timeout_ms.is_some() {
+            return Err("`--timeout` is only valid for `burdin test` and `burdin bench`".to_string());
+        }
+    }
+    if !tests {
         if args.ignored_only || args.include_ignored {
             return Err("`--ignored` and `--include-ignored` are only valid for `burdin test`".to_string());
         }
-        if !args.filters.is_empty() {
-            return Err("`--filter` is only valid for `burdin test`".to_string());
+        if args.failed || args.shard.is_some() || args.junit.is_some() {
+            return Err("`--failed`, `--shard`, and `--junit` are only valid for `burdin test`".to_string());
         }
-        if args.exact || !args.skip.is_empty() {
-            return Err("`--exact` and `--skip` are only valid for `burdin test`".to_string());
+        if args.slow_ms.is_some() {
+            return Err("`--slow-threshold` is only valid for `burdin test`".to_string());
         }
-        if args.failed || args.shard.is_some() || args.list || args.junit.is_some() {
-            return Err("`--failed`, `--shard`, `--list`, and `--junit` are only valid for `burdin test`".to_string());
+        if args.doc_only {
+            return Err("`--doc` is only valid for `burdin test`".to_string());
         }
-        if args.format != TestFormat::Human {
-            return Err("`--format` is only valid for `burdin test`".to_string());
+    }
+    if !benches {
+        if args.save_baseline.is_some()
+            || args.baseline.is_some()
+            || args.fail_on_regression.is_some()
+            || args.profile_time.is_some()
+            || args.warmup_ms.is_some()
+            || args.sample_count.is_some()
+            || args.sample_time_ms.is_some()
+        {
+            return Err("`--save-baseline`, `--baseline`, `--fail-on-regression`, `--profile-time`, `--warmup`, \
+                 `--sample-count`, and `--sample-time` are only valid for `burdin bench`"
+                .to_string());
         }
-        if args.timeout_ms.is_some() || args.slow_ms.is_some() {
-            return Err("`--timeout` and `--slow-threshold` are only valid for `burdin test`".to_string());
-        }
+    } else if !args.program_args.is_empty() {
+        return Err("`burdin bench` takes no program arguments: the runner starts the measured program".to_string());
     }
     if args.list && args.junit.is_some() {
         return Err("`--list` and `--junit` cannot be used together: a listing has no results".to_string());
+    }
+    if args.fail_on_regression.is_some() && args.baseline.is_none() {
+        return Err("`--fail-on-regression` needs `--baseline <name>` to compare with".to_string());
+    }
+    if args.profile_time.is_some() && (args.list || args.save_baseline.is_some() || args.baseline.is_some()) {
+        return Err(
+            "`--profile-time` runs one bench for a profiler and produces no measurements; it cannot be combined with `--list`, `--save-baseline`, or `--baseline`"
+                .to_string(),
+        );
     }
     if args.ignored_only && args.include_ignored {
         return Err("`--ignored` and `--include-ignored` cannot be used together".to_string());
@@ -592,7 +727,7 @@ fn driver_main() -> ExitCode {
         pgo_use: args.pgo_use.as_deref(),
         emit_ir: args.emit_ir.as_deref(),
         link_libs: &args.link_libs,
-        test_mode: args.tests,
+        mode: if args.tests { EntryMode::Test } else { EntryMode::Build },
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: args.emit_deps.as_deref(),
@@ -606,6 +741,7 @@ fn driver_main() -> ExitCode {
             Err(code) => code,
         },
         "run" => run(&args, &options),
+        "bench" => bench_runner::run(&args),
         _ => test_runner::run(&args),
     }
 }
@@ -732,8 +868,8 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) emit_ir: Option<&'a Path>,
     pub(crate) link_libs: &'a [String],
     /// `burdin test`: declare and check the package's `test` blocks, and emit the test dispatcher instead of
-    /// `main`.
-    pub(crate) test_mode: bool,
+    /// `main`. `burdin bench` does the same for `bench` blocks (`EntryMode::Bench`).
+    pub(crate) mode: EntryMode,
     /// How diagnostics are rendered (format, color, width, and limit).
     pub(crate) diagnostics: &'a DiagnosticOptions,
     /// The step budget of each compile-time evaluation; `None` is the default (`spec/comptime.md`, CT11).
@@ -749,18 +885,22 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) jobs: usize,
 }
 
-/// What a successful compilation produced: the executable, its `test` blocks (empty for a normal build), and the
-/// files a build script declared as its inputs (empty when there was no script).
+/// What a successful compilation produced: the executable, its `test` blocks and `bench` blocks (empty for a
+/// normal build), and the files a build script declared as its inputs (empty when there was no script).
 pub(crate) struct Compiled {
     pub(crate) exe: PathBuf,
     pub(crate) tests: Vec<burdin_tir::TestEntry>,
     /// Where each test is declared, in the order of `tests`.
-    pub(crate) test_sites: Vec<TestSite>,
+    pub(crate) test_sites: Vec<Site>,
+    /// The `bench` blocks of a bench build, empty for every other build.
+    pub(crate) benches: Vec<burdin_tir::BenchEntry>,
+    /// Where each bench is declared, in the order of `benches`.
+    pub(crate) bench_sites: Vec<Site>,
     pub(crate) build_inputs: Vec<String>,
 }
 
-/// The source file and line a `test` block is declared at.
-pub(crate) struct TestSite {
+/// The source file and line a `test` or `bench` block is declared at.
+pub(crate) struct Site {
     pub(crate) file: String,
     pub(crate) line: u32,
 }
@@ -793,8 +933,8 @@ pub(crate) fn front_end(
     options: &CompileOptions,
     overrides: &SourceOverrides,
 ) -> Result<FrontEnd, ExitCode> {
-    let test_mode = options.test_mode;
-    let mut loaded = match if test_mode { package::load_for_tests(target) } else { package::load(target) } {
+    let mode = options.mode;
+    let mut loaded = match if mode.wants_main() { package::load(target) } else { package::load_for_tests(target) } {
         Ok(loaded) => loaded,
         Err(message) => {
             eprintln!("error: {message}");
@@ -823,7 +963,7 @@ pub(crate) fn front_end(
     }
     // A batch build asks once and exits, so it does not keep the checked bodies a language server would.
     let query_options = burdin_query::Options {
-        test_mode,
+        mode,
         release: options.release,
         comptime_steps: options.comptime_steps,
         no_cache: true,
@@ -857,8 +997,8 @@ pub(crate) fn front_end(
 }
 
 /// Compiles `target` into an executable: `output` when given, otherwise `<output_dir>/<package name>`. On failure
-/// the diagnostics are already printed. With `test_mode`, the package's `test` blocks are compiled instead of its
-/// `main`.
+/// the diagnostics are already printed. With [`EntryMode::Test`] or [`EntryMode::Bench`], the package's `test` or
+/// `bench` blocks are compiled instead of its `main`.
 pub(crate) fn compile(
     target: &Path,
     output_dir: &Path,
@@ -889,10 +1029,6 @@ pub(crate) fn compile(
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
     print_warnings(&diags, &sources, options.diagnostics, options.report_clean);
 
-    let fail = |msg: String| {
-        eprintln!("error: {msg}");
-        ExitCode::from(2)
-    };
     let output = match output {
         Some(path) => path.to_path_buf(),
         None => output_dir.join(&loaded.stem).with_extension(std::env::consts::EXE_EXTENSION),
@@ -900,8 +1036,40 @@ pub(crate) fn compile(
     // `burdin build app` from the package's parent directory would otherwise ask the linker to replace the package
     // directory with a file.
     if output.is_dir() {
-        return Err(fail(format!("the output path `{}` is a directory; pass `-o <file>`", output.display())));
+        eprintln!("error: the output path `{}` is a directory; pass `-o <file>`", output.display());
+        return Err(ExitCode::from(2));
     }
+    emit_program(&program, &sources, &loaded.stem, &output, options)?;
+    let site = |span: burdin_diag::Span| {
+        let file = sources.get(span.file);
+        Site { file: file.path.clone(), line: file.line_col(span.lo).0 }
+    };
+    let test_sites = program.tests.iter().map(|test| site(test.span)).collect();
+    let bench_sites = program.benches.iter().map(|bench| site(bench.span)).collect();
+    Ok(Compiled {
+        exe: output,
+        tests: program.tests,
+        test_sites,
+        benches: program.benches,
+        bench_sites,
+        build_inputs: program.build_inputs,
+    })
+}
+
+/// Emits the object files of the checked `program` and links them into `output`. This is the half of `compile` after
+/// the front end; the doc-test builds (`test_runner/doc_tests.rs`) share it, rendering a failed build themselves
+/// instead of printing it here.
+pub(crate) fn emit_program(
+    program: &burdin_tir::Program,
+    sources: &SourceMap,
+    stem: &str,
+    output: &Path,
+    options: &CompileOptions,
+) -> Result<(), ExitCode> {
+    let fail = |msg: String| {
+        eprintln!("error: {msg}");
+        ExitCode::from(2)
+    };
     let dir = TempDir::new().map_err(|e| fail(format!("cannot create a temporary directory: {e}")))?;
     let extension = if options.lto {
         "bc"
@@ -923,7 +1091,7 @@ pub(crate) fn compile(
         units: env_codegen_units(),
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
-    let objects = burdin_codegen::emit_object(&program, &sources, &loaded.stem, &object, &opts).map_err(fail)?;
+    let objects = burdin_codegen::emit_object(program, sources, stem, &object, &opts).map_err(fail)?;
     let objects = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");
@@ -939,16 +1107,8 @@ pub(crate) fn compile(
         lto: options.lto,
         pgo_generate: options.pgo_generate,
     };
-    link(&objects, &output, options.link_libs, &link_opts).map_err(fail)?;
-    let test_sites = program
-        .tests
-        .iter()
-        .map(|test| {
-            let file = sources.get(test.span.file);
-            TestSite { file: file.path.clone(), line: file.line_col(test.span.lo).0 }
-        })
-        .collect();
-    Ok(Compiled { exe: output, tests: program.tests, test_sites, build_inputs: program.build_inputs })
+    link(&objects, output, options.link_libs, &link_opts).map_err(fail)?;
+    Ok(())
 }
 
 /// Prints the errors of a failed front end and the closing line, `could not <verb> <target> (N errors)`: `compile`
@@ -1021,7 +1181,7 @@ fn report_build_failure(loaded: &package::Workspace, failure: build::Failure, op
 
 /// The rendering choices for this run: the format from the command line, color from the choice, the environment,
 /// and whether stderr is a terminal, and the width from `--width`, then `COLUMNS`, then 80.
-fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
+pub(crate) fn render_options(diagnostics: &DiagnosticOptions, stderr_is_terminal: bool) -> RenderOptions {
     let columns = std::env::var("COLUMNS").ok();
     let color = color_enabled(diagnostics.color, no_color_requested(), stderr_is_terminal);
     RenderOptions {

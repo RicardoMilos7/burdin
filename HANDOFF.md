@@ -1,16 +1,17 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, and thirty-ninth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, and fiftieth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
-Updated at the end of the fifty-first session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-second session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
-(`m24_stdlib`) is done, and stage 2 is complete through milestone 2.4 (asynchronous I/O)**: 1055 conformance tests;
-1052 pass in debug (three are skipped) and 1044 in release (the release run skips the debug-only and platform-specific
-tests).
+(`m24_stdlib`) is done, and stage 2 is complete through milestone 2.4 (asynchronous I/O)**: 1062 conformance tests;
+1059 pass in debug (three are skipped) and 1051 in release (the release run skips the debug-only and platform-specific
+tests). Stage 3's bench blocks (issue #251) are done: `bench` items, `black_box`, and `burdin bench` with statistics,
+baselines, filters, `--list`, and `--profile-time`.
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -370,7 +371,7 @@ counts the same items `missing_docs` (`L0017`, allow by default) reports. The si
 script and writes `search-index.js` as a script, so it works from disk; the output directory is refused unless it is
 empty or was written by `burdin doc` (`.burdin-doc` lists what a run wrote, and a later run removes what is gone).
 `spec/doc.md` is the specification (DC1-DC23), `tests/check_doc.py` runs the fixtures under `tests/doc/` against the
-golden pages in `tests/doc/expect/` in every CI job, and doc tests (issues #250, #650-#652) remain separate work.
+golden pages in `tests/doc/expect/` in every CI job; the doc tests are in the fifty-first session's paragraph below.
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
 decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
@@ -450,6 +451,27 @@ Arguments and defaults are evaluated left to right in parameter order. The parse
 default) and E0214 (invalid named argument). The tests are `tests/m17_arguments/` with 25 tests, and parser unit
 tests cover the syntax.
 
+The fifty-first session implemented stage 3's doc tests (issue #250, sub-issues #650-#652). `burdin test` runs the
+Burdin code blocks of the selected packages' `///` and `//!` comments with the `test` blocks, and `burdin test --doc`
+runs only them: every untagged (or `burdin`/`bd`-tagged) fenced block becomes a one-file package whose only
+dependency is the documented package, so an example sees its public API only. An example with no `fn main` is
+wrapped in one, its leading declarations (the longest prefix that parses as module items) are hoisted above the
+wrapper, and padding comment lines put each example line on the line of its doc comment — so a panic reports the line
+a reader sees. A compile failure's diagnostics are rewritten from the generated file to the original one (the query
+library's source map is rebuilt with the doc comment's file in the generated file's place) before they are shown;
+the headings read `---- doc test "<owner> (line N)" at <file>:<line>: <reason> ----`. The 13 new driver tests and
+the extraction/generation/mapping tests in `test_runner/doc_tests.rs` cover the pieces; `tests/check_test_runner.py`
+gains about 30 checks over the fixtures `tests/runner/doctests/`, `tests/runner/doctests-bin/`, and
+`tests/runner/doctest_one.bd`. The block attributes (#651) are `ignore`, `no_run`, `should_panic`, `compile_fail`,
+and `compile_fail E0123` (the note names the code it did fail with); an unknown attribute warns at the fence's line
+and the block still runs. A hidden `# ` (or bare `#`) line (#652) is compiled by the doc test and never shown by
+`burdin doc` — `burdin_doc::markdown::block_lines`/`visible_code` are the one reader of the marker, and the
+`tests/doc/geometry` example now hides its `use` line and runs green (it constructs points with a new `Point.new`).
+`Block::Code` gained the fence's line so a tool can map a block back to its source line, `burdin fmt` leaves a block
+with hidden lines as written and now treats `burdin,no_run` as Burdin, and `spec/test-runner.md` documents the whole
+behavior in its "Doc tests" section (`spec/doc.md` DC6, `spec/fmt.md` FM10). Every check script passes, and the
+conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
+
 | What | Where | Status |
 | --- | --- | --- |
 | Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`/`explain`, diagnostics and their formats, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The nineteenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior; the twenty-second added `BURDIN_VERSION`/`BURDIN_CHANNEL`, the `channel:` line, the installers, and `docs/releasing.md`. `tests/check_docs.py` checks the links and the documented behavior, and every CI job runs it and the other check scripts |
@@ -470,7 +492,7 @@ tests cover the syntax.
 | Conformance tests | `tests/` | 1055 tests. All pass: m01 to m24 and s2_tasks, s2_channels, s2_shared, and s2_io (debug and release; the release run skips the debug-only and platform-specific tests) |
 | Comptime | `spec/comptime.md`, `crates/burdin_comptime/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CT13). Codes E0220-E0225; `--comptime-steps N`; tests in `tests/m20_comptime/` |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md`, `docs/diagnostics.md`, `spec/diagnostics.md` | Four formats (`human`, `short`, a versioned `json` with `docs/diagnostic.schema.json`, and `sarif`), color and width control, hyperlinks to the error reference, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
-| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
+| Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report,doc_tests}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The doc tests of the doc comments run with the blocks (or alone with `--doc`): each Burdin block becomes a one-file package depending on the documented package, wrapped in `fn main` when it has none, with its attributes (`ignore`, `no_run`, `should_panic`, `compile_fail`) and its hidden `# ` setup lines; a failure reports the doc comment's file and line (issues #250, #650-#652). The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
 | Type-check command | `spec/check.md`, `crates/burdin_driver/src/check.rs`, `tests/check_check.py`, `tests/check/` | `burdin check`: `front_end` without code generation or linking, a build's diagnostics and exit statuses, `--tests` for `test` blocks and library packages, `--release`, `--comptime-steps`. The script runs fixtures with goldens and every conformance test, and every CI job runs it (issue #237) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
@@ -1033,7 +1055,7 @@ names) and a sema whose shared state is read-only while bodies are checked. That
 programs, whose time is mostly sema over the standard library. A `burdin test --workspace` still compiles its
 packages one after another. Build timing reports (#472) and cached objects (#243) remain open.
 
-## The fifty-first session: debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
+## The fifty-second session: debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
 `spec/debug.md` (DBG1-DBG12) holds the twelve decisions this session settled; the checks are
 `tests/check_debug_info.py` (variable lifetimes), `tests/check_debug_printers.py` (the panic hook, the symbolized
@@ -1074,6 +1096,39 @@ frames, both printer sets, the Natvis file, and `burdin debug`), `tests/check_da
 What is left: the Natvis file is checked as XML and by the linker arguments, not by a Windows debugger (cdb is not in
 CI); the DAP adapter is checked against a stub backend, not against lldb-dap; and `--test` resolution runs
 `burdin test --list` before the build, so it compiles twice.
+
+## The fifty-first session: bench blocks and `burdin bench` (stage 3, issue #251)
+
+`bench "name" { ... }` is a module-scope item beside `test` (`spec/bench.md` BN1-BN14, sub-issues #653-#655): a
+contextual keyword followed by a string and a block, no attributes, kept out of every build but `burdin bench` the
+way tests are kept out of every build but `burdin test`. The body compiles as `__burdin_bench_N` with a unit tail
+appended (so `black_box(x)` can end a measurement), and one call of it is one iteration. `black_box(value)`
+(`spec/stdlib.md`, "The optimizer barrier") is a compiler-known call of any first-class type: the value is spilled
+to a stack slot whose address crosses an empty side-effecting inline-asm call, so the optimizer cannot delete,
+forward, or hoist the work; at compile time it is the identity, and a view argument is E0120. The checker, the
+memory checks, and the code generator see `tir::Builtin::BlackBox`, which moves its argument and returns it.
+
+`burdin bench` (new `crates/burdin_driver/src/bench_runner.rs`) mirrors the test runner's package selection,
+discovery, filters, and isolation, and compiles in the release profile by default (`--release` changes nothing).
+Each bench runs in its own process with the harness in `burdin_codegen/src/runtime.rs::define_bench_main`: a
+warmup until `--warmup` milliseconds pass, a growing-batch calibration (batches of 1, 4, 16, ... calls until one
+takes a millisecond, because timing a single call would be swamped by the clock's ~25 ns granularity), then
+`--sample-count` samples of about `--sample-time` milliseconds each, printed on one `burdin-bench-result:` line.
+The runner computes the median, the mean, a 95% normal confidence interval, the median absolute deviation, and
+the outliers beyond three deviations, and reports in the human format or as a version 1 JSON event stream;
+`--list` prints the selection. Benches run one at a time (`-j` bounds compilation only), a panicking bench is a
+failure with its captured output, and a hung one is killed at `--timeout` (default 600 s). `--save-baseline`
+stores statistics under `<package>/target/burdin/bench/<name>.json` keyed by package-local path; `--baseline`
+compares (beyond noise = medians differ by more than three times the larger spread) and `--fail-on-regression`
+fails CI on a slower bench that is also beyond noise; `--profile-time <seconds>` runs one bench unmeasured for a
+profiler. The syntax and semantics are `spec/bench.md`; `crates/burdin_syntax/src/parser/mod.rs`,
+`crates/burdin_driver/src/bench_runner.rs`, and `crates/burdin_driver/src/main.rs` carry the unit tests;
+`tests/s3_bench/` has seven conformance tests with two new directives (`bench-compile-fail`, `burdin-bench`), and
+`tests/check_bench.py` (every CI job) checks the command black-box.
+
+What is left: the language server has no bench integration (lenses or `--list` consumption; the issue's
+follow-up list already names it), there is no way to bench a debug build, and bench bodies cannot take setup or
+teardown code beyond what a `let` outside the loop can express.
 
 ## Decisions already made (do not reopen without a reason)
 

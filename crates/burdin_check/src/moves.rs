@@ -485,6 +485,8 @@ impl<'a> Checker<'a> {
             }
             K::Builtin(b, args) => match b {
                 tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
+                // The barrier takes the value and hands it back (`spec/bench.md`, BN9).
+                tir::Builtin::BlackBox => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
                 // `with_capacity_in(n, alloc)` stores the allocator value.
                 tir::Builtin::ListWithCapacityIn => {

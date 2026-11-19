@@ -1,0 +1,14 @@
+//! The second module of the fixture: its examples carry the module in their path.
+//!
+//! ```
+//! # use docs.{double}
+//! assert_eq(double(0), 0)
+//! ```
+
+/// One more example, in a module.
+///
+/// ```
+/// # use docs.{double}
+/// assert_eq(double(-1), -2)
+/// ```
+fn extra_double() {}

@@ -1,8 +1,9 @@
 //! Code blocks in doc comments (spec/fmt.md, FM10). A fenced block in a run of `///` lines whose fence is empty or
-//! says `burdin` or `bd` holds Burdin code, and the formatter formats it like the rest of the file: as a list of
-//! items when it parses as one, otherwise as the statements of a function body. A block it cannot parse, or one
-//! whose formatted form is not the same program, stays as written, and so does a block tagged with any other word
-//! (`text`, `console`, ...).
+//! says `burdin` or `bd` (attributes may follow: `burdin,no_run`) holds Burdin code, and the formatter formats it
+//! like the rest of the file: as a list of items when it parses as one, otherwise as the statements of a function
+//! body. A block it cannot parse, one whose formatted form is not the same program, and one with a hidden `# `
+//! setup line (the marker is not Burdin text, and the line it starts belongs to the reader's setup, not to the
+//! formatter) stay as written, and so does a block tagged with any other word (`text`, `console`, ...).
 
 use crate::cursor::Fmt;
 use crate::trivia::Comment;
@@ -70,9 +71,17 @@ fn body(c: &Comment) -> &str {
     rest.strip_prefix(' ').unwrap_or(rest)
 }
 
-/// Whether a fence's info string says the block is Burdin code.
+/// Whether a fence's info string says the block is Burdin code: the first word is empty, `burdin`, or `bd`, the
+/// same word `burdin doc` and the doc tests read (`spec/doc.md` DC6). Attributes may follow it (`burdin,no_run`).
 fn is_burdin_fence(info: &str) -> bool {
-    matches!(info, "" | "burdin" | "bd")
+    let word = info.split([',', ' ', '\t']).next().unwrap_or("");
+    matches!(word, "" | "burdin" | "bd")
+}
+
+/// Whether a line of a block is a hidden setup line (`# ` or a bare `#`, DC6): the formatter does not touch it.
+fn is_hidden_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed == "#" || trimmed.starts_with("# ")
 }
 
 /// A fenced block of a run: the indices of its two fence lines, and whether it holds Burdin code.
@@ -120,14 +129,8 @@ fn reformat_run(run: &[Comment], width: usize) -> Vec<Comment> {
     for block in blocks_in(run) {
         out.extend(run[next..=block.open].iter().cloned());
         let code: Vec<&str> = run[block.open + 1..block.close].iter().map(body).collect();
-        let formatted = if block.burdin {
-            format_code(
-                &code.join(
-                    "
-",
-                ),
-                width,
-            )
+        let formatted = if block.burdin && !code.iter().any(|line| is_hidden_line(line)) {
+            format_code(&code.join("\n"), width)
         } else {
             None
         };
@@ -242,5 +245,59 @@ mod tests {
     fn blank_lines_inside_a_block_stay() {
         let out = format_code("let a=1\n\nlet b=2", 100).expect("formats");
         assert_eq!(out, "let a = 1\n\nlet b = 2");
+    }
+
+    #[test]
+    fn attributes_after_the_language_still_name_burdin() {
+        assert!(is_burdin_fence(""));
+        assert!(is_burdin_fence("burdin"));
+        assert!(is_burdin_fence("bd"));
+        assert!(is_burdin_fence(" burdin "));
+        assert!(is_burdin_fence("burdin,no_run"));
+        assert!(is_burdin_fence("burdin compile_fail E0003"));
+        assert!(!is_burdin_fence("no_run"));
+        assert!(!is_burdin_fence("text"));
+        assert!(!is_burdin_fence("console"));
+    }
+
+    #[test]
+    fn hidden_setup_lines_are_recognized() {
+        assert!(is_hidden_line("# use app.{Point}"));
+        assert!(is_hidden_line("#"));
+        assert!(is_hidden_line("    # nested setup"));
+        assert!(!is_hidden_line("let x = 1"));
+        assert!(!is_hidden_line("#not hidden"));
+        assert!(!is_hidden_line(""));
+    }
+
+    #[test]
+    fn a_block_with_hidden_lines_is_left_as_written() {
+        // The `# ` marker is not Burdin text, so the formatter cannot check the block it starts against the
+        // formatted program; the whole block keeps the shape its author gave it.
+        let comments = |text: &str| -> Vec<Comment> {
+            text.lines()
+                .map(|line| Comment {
+                    text: format!("///{line}"),
+                    line: true,
+                    lo: 0,
+                    hi: 0,
+                    nl_before: 1,
+                    nl_after: 1,
+                    space_after: false,
+                })
+                .collect()
+        };
+        let before = comments("\n Doc.\n ```\n # use app.{f}\n assert_eq( f( 3 ) , 6 )\n ```");
+        let after = reformat(before, 100);
+        let texts: Vec<&str> = after.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            ["///", "/// Doc.", "/// ```", "/// # use app.{f}", "/// assert_eq( f( 3 ) , 6 )", "/// ```"]
+        );
+        // Without a hidden line the same block is formatted.
+        let before = comments("\n Doc.\n ```\n assert_eq( f( 3 ) , 6 )\n ```");
+        let after = reformat(before, 100);
+        let texts: Vec<&str> = after.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["///", "/// Doc.", "/// ```", "/// assert_eq(f(3), 6)", "/// ```"]);
     }
 }

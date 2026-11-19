@@ -36,6 +36,13 @@ struct Circle {
     radius: f64
 }
 
+Point {
+    /// Makes a point, the `priv` tag left at zero.
+    fn new(x: i32, y: i32): Point {
+        Point { x, y, tag: 0 }
+    }
+}
+
 Circle {
     /// Makes a circle, or says why it cannot.
     fn new(radius: f64): Result<Circle> {

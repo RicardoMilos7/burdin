@@ -17,6 +17,7 @@ window.BURDIN_DOC_INDEX = [
 {"n":"Point","p":"shapes.Point","k":"struct","u":"shapes/struct.Point.html","d":"A point in the plane."},
 {"n":"x","p":"shapes.Point.x","k":"field","u":"shapes/struct.Point.html#field.x","d":"The horizontal position."},
 {"n":"y","p":"shapes.Point.y","k":"field","u":"shapes/struct.Point.html#field.y","d":"The vertical position."},
+{"n":"new","p":"shapes.Point.new","k":"method","u":"shapes/struct.Point.html#method.new","d":"Makes a point, the priv tag left at zero."},
 {"n":"add","p":"shapes.Point.add","k":"operator","u":"shapes/struct.Point.html#operator.add","d":"Adds the coordinates."},
 {"n":"neg","p":"shapes.Point.neg","k":"operator","u":"shapes/struct.Point.html#operator.neg","d":""},
 {"n":"doubled","p":"shapes.Point.doubled","k":"extension method","u":"shapes/struct.Point.html#extension.doubled","d":"Doubles both coordinates."},

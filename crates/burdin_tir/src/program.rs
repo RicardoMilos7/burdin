@@ -24,6 +24,9 @@ pub struct Program {
     /// The program's `test` blocks, in declaration order. Only `burdin test` fills this in; a normal build has
     /// none, because test items are stripped before checking.
     pub tests: Vec<TestEntry>,
+    /// The program's `bench` blocks, in declaration order. Only `burdin bench` fills this in; every other build
+    /// has none, because bench items are stripped before checking (`spec/bench.md`, BN1).
+    pub benches: Vec<BenchEntry>,
     /// The interface instances an `any` type names, indexed by [`AnyRef::id`].
     pub any_ifaces: Vec<AnyIface>,
     /// One vtable per (concrete type, interface instance) the program boxes, indexed by `ExprKind::BoxAny`.
@@ -109,6 +112,20 @@ pub struct TestEntry {
 pub enum TestOutcome {
     Ok,
     Err,
+}
+
+/// One `bench "name" { ... }` block, compiled as the function `func` (`spec/bench.md`, BN1). One call of `func`
+/// is one iteration of the measurement.
+#[derive(Debug)]
+pub struct BenchEntry {
+    pub name: String,
+    /// The dotted path of the module the bench is declared in, relative to its package, like a test's
+    /// (`spec/test-runner.md`, "The full path").
+    pub module: String,
+    /// Where the bench is declared: the span of its name, for `burdin bench --list` and the reports.
+    pub span: Span,
+    /// The function the harness calls: the bench body, with no parameters and no result.
+    pub func: FuncId,
 }
 
 /// The runner-visible attributes of a test item. `burdin_sema` validates them; the driver reads them.

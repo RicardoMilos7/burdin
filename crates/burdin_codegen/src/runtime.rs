@@ -47,6 +47,12 @@ const OUT_BUF: u32 = 8192;
 const IN_BUF: u32 = 4096;
 /// The number of frames a panic backtrace captures.
 const BACKTRACE_FRAMES: u32 = 64;
+/// How long a calibration batch must run before its timing decides the iterations per sample (`define_bench_main`):
+/// a millisecond is far above the clock's granularity, so a fast bench is not estimated as one clock tick per call.
+const CALIBRATION_NS: u64 = 1_000_000;
+/// The calibration batch stops growing here; a bench whose batch never reaches [`CALIBRATION_NS`] measures one
+/// iteration per sample instead of looping forever.
+const BATCH_MAX: u64 = 1 << 30;
 /// The size of the alternate signal stack, so a `SIGSEGV` handler still runs after the main stack is gone.
 const ALT_STACK: u32 = 64 * 1024;
 /// The stack guarantee the Windows guard reserves, so the vectored filter still has room after the main stack is
@@ -515,6 +521,379 @@ pub(crate) fn define_test_main<'ctx>(
         b.position_at_end(next);
     }
     b.build_return(Some(&i32_ty.const_int(3, false))).map_err(llvm_err)?;
+    Ok(())
+}
+
+/// The process entry point of a `burdin bench` binary (`spec/bench.md`, BN4). The runner starts it once per
+/// measured bench with the bench's index and a mode:
+///
+/// * `<index> measure <warmup-ms> <sample-count> <sample-ms>`: warms the bench up for the given milliseconds,
+///   times one call to choose how many iterations one sample holds, collects that many samples, and prints one
+///   machine-readable line with the iteration count and each sample's total nanoseconds.
+/// * `<index> profile`: calls the bench in a loop with no timing at all, so an external profiler can attach
+///   (`spec/bench.md`, BN10); the runner stops the process when the requested time is up.
+///
+/// The result line is `burdin-bench-result: <iters> <sample-1> <sample-2> ...`, written through the buffered
+/// standard output (`burdin_rt_print`) and flushed by the runtime's `atexit`. The runner reads the last such line,
+/// so a bench that prints is tolerated, even though it should not. A missing argument returns 2, an unknown index
+/// 3, an unknown mode 4.
+pub(crate) fn define_bench_main<'ctx>(
+    cx: &'ctx Context,
+    module: &Module<'ctx>,
+    benches: &[FunctionValue<'ctx>],
+    rt: &Runtime<'ctx>,
+    windows: bool,
+) -> GenResult<()> {
+    let (i32_ty, i64_ty, ptr_ty, void_ty) =
+        (cx.i32_type(), cx.i64_type(), cx.ptr_type(AddressSpace::default()), cx.void_type());
+    let run_for = bench_run_for(cx, module, rt.clock)?;
+    let sample = bench_sample(cx, module, rt.clock)?;
+    let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
+    let b = cx.create_builder();
+    b.position_at_end(cx.append_basic_block(f, "entry"));
+    prepare_main(&b, module, f, windows)?;
+    let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
+    let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
+    let has_mode =
+        b.build_int_compare(IntPredicate::SGT, argc, i32_ty.const_int(2, false), "has.mode").map_err(llvm_err)?;
+    let parse = cx.append_basic_block(f, "parse");
+    let missing = cx.append_basic_block(f, "missing");
+    b.build_conditional_branch(has_mode, parse, missing).map_err(llvm_err)?;
+    b.position_at_end(missing);
+    b.build_return(Some(&i32_ty.const_int(2, false))).map_err(llvm_err)?;
+
+    b.position_at_end(parse);
+    let slot =
+        unsafe { b.build_in_bounds_gep(ptr_ty, argv, &[i32_ty.const_int(1, false)], "arg") }.map_err(llvm_err)?;
+    let arg = b.build_load(ptr_ty, slot, "index.arg").map_err(llvm_err)?.into_pointer_value();
+    // `atoi` returns `int` on every CRT, so the index does not depend on the size of C's `long`.
+    let atoi = libc(module, "atoi", i32_ty.fn_type(&[ptr_ty.into()], false));
+    let index = b
+        .build_call(atoi, &[arg.into()], "index")
+        .map_err(llvm_err)?
+        .try_as_basic_value()
+        .basic()
+        .expect("atoi returns an int")
+        .into_int_value();
+    let mode_slot =
+        unsafe { b.build_in_bounds_gep(ptr_ty, argv, &[i32_ty.const_int(2, false)], "arg") }.map_err(llvm_err)?;
+    let mode = b.build_load(ptr_ty, mode_slot, "mode.arg").map_err(llvm_err)?.into_pointer_value();
+
+    let bad_mode = cx.append_basic_block(f, "bad.mode");
+    let missing_args = cx.append_basic_block(f, "missing.args");
+    for (i, bench) in benches.iter().enumerate() {
+        let bench_ptr = bench.as_global_value().as_pointer_value();
+        let case = cx.append_basic_block(f, &format!("bench.{i}"));
+        let next = cx.append_basic_block(f, &format!("next.{i}"));
+        let is =
+            b.build_int_compare(IntPredicate::EQ, index, i32_ty.const_int(i as u64, false), "").map_err(llvm_err)?;
+        b.build_conditional_branch(is, case, next).map_err(llvm_err)?;
+        b.position_at_end(case);
+        // The mode is spelled by the runner; its first letter is enough to tell the two apart.
+        let first = b.build_load(cx.i8_type(), mode, "mode.0").map_err(llvm_err)?.into_int_value();
+        let is_profile = b
+            .build_int_compare(IntPredicate::EQ, first, cx.i8_type().const_int(b'p' as u64, false), "")
+            .map_err(llvm_err)?;
+        let is_measure = b
+            .build_int_compare(IntPredicate::EQ, first, cx.i8_type().const_int(b'm' as u64, false), "")
+            .map_err(llvm_err)?;
+        let profile = cx.append_basic_block(f, &format!("profile.{i}"));
+        let maybe_measure = cx.append_basic_block(f, &format!("mode.{i}"));
+        let measure = cx.append_basic_block(f, &format!("measure.{i}"));
+        b.build_conditional_branch(is_profile, profile, maybe_measure).map_err(llvm_err)?;
+        b.position_at_end(maybe_measure);
+        b.build_conditional_branch(is_measure, measure, bad_mode).map_err(llvm_err)?;
+
+        // Profiling: call the bench forever, with no clock in the loop at all.
+        b.position_at_end(profile);
+        let bench_ty = void_ty.fn_type(&[], false);
+        b.build_indirect_call(bench_ty, bench_ptr, &[], "").map_err(llvm_err)?;
+        b.build_unconditional_branch(profile).map_err(llvm_err)?;
+
+        b.position_at_end(measure);
+        let has_args =
+            b.build_int_compare(IntPredicate::SGT, argc, i32_ty.const_int(5, false), "has.args").map_err(llvm_err)?;
+        let args = cx.append_basic_block(f, &format!("args.{i}"));
+        b.build_conditional_branch(has_args, args, missing_args).map_err(llvm_err)?;
+        b.position_at_end(args);
+        let read_int = |n: u64, name: &str| -> GenResult<IntValue<'ctx>> {
+            let slot = unsafe { b.build_in_bounds_gep(ptr_ty, argv, &[i32_ty.const_int(n, false)], name) }
+                .map_err(llvm_err)?;
+            let arg = b.build_load(ptr_ty, slot, name).map_err(llvm_err)?.into_pointer_value();
+            let value = b
+                .build_call(atoi, &[arg.into()], name)
+                .map_err(llvm_err)?
+                .try_as_basic_value()
+                .basic()
+                .expect("atoi returns an int")
+                .into_int_value();
+            b.build_int_cast_sign_flag(value, i64_ty, true, name).map_err(llvm_err)
+        };
+        let warmup = read_int(3, "warmup")?;
+        let samples = read_int(4, "samples")?;
+        let sample_ms = read_int(5, "sample.ms")?;
+        let nanos_per_ms = i64_ty.const_int(1_000_000, false);
+        let warmup_ns = b.build_int_mul(warmup, nanos_per_ms, "warmup.ns").map_err(llvm_err)?;
+        let target_ns = b.build_int_mul(sample_ms, nanos_per_ms, "target.ns").map_err(llvm_err)?;
+        // Warm up (at least one call), then time growing batches until one takes a millisecond, so the clock's
+        // granularity cannot swamp the estimate: a call measured alone would look ~25 ns however fast it is.
+        b.build_call(run_for, &[bench_ptr.into(), warmup_ns.into()], "").map_err(llvm_err)?;
+        let batch_at = b.build_alloca(i64_ty, "batch").map_err(llvm_err)?;
+        b.build_store(batch_at, i64_ty.const_int(1, false)).map_err(llvm_err)?;
+        let taken_at = b.build_alloca(i64_ty, "taken").map_err(llvm_err)?;
+        b.build_store(taken_at, i64_ty.const_zero()).map_err(llvm_err)?;
+        let cal_head = cx.append_basic_block(f, &format!("calibrate.{i}"));
+        let cal_grow = cx.append_basic_block(f, &format!("calibrate.grow.{i}"));
+        let cal_done = cx.append_basic_block(f, &format!("calibrated.{i}"));
+        b.build_unconditional_branch(cal_head).map_err(llvm_err)?;
+        b.position_at_end(cal_head);
+        let batch = b.build_load(i64_ty, batch_at, "batch").map_err(llvm_err)?.into_int_value();
+        let taken = b
+            .build_call(sample, &[bench_ptr.into(), batch.into()], "cal")
+            .map_err(llvm_err)?
+            .try_as_basic_value()
+            .basic()
+            .expect("sample returns i64")
+            .into_int_value();
+        b.build_store(taken_at, taken).map_err(llvm_err)?;
+        let long_enough = b
+            .build_int_compare(IntPredicate::SGE, taken, i64_ty.const_int(CALIBRATION_NS, false), "")
+            .map_err(llvm_err)?;
+        let too_many =
+            b.build_int_compare(IntPredicate::SGE, batch, i64_ty.const_int(BATCH_MAX, false), "").map_err(llvm_err)?;
+        let ready = b.build_or(long_enough, too_many, "").map_err(llvm_err)?;
+        b.build_conditional_branch(ready, cal_done, cal_grow).map_err(llvm_err)?;
+        b.position_at_end(cal_grow);
+        let grown = b.build_int_mul(batch, i64_ty.const_int(4, false), "").map_err(llvm_err)?;
+        b.build_store(batch_at, grown).map_err(llvm_err)?;
+        b.build_unconditional_branch(cal_head).map_err(llvm_err)?;
+        b.position_at_end(cal_done);
+        let batch = b.build_load(i64_ty, batch_at, "batch").map_err(llvm_err)?.into_int_value();
+        let taken = b.build_load(i64_ty, taken_at, "taken").map_err(llvm_err)?.into_int_value();
+        // A clock that read no time at all (the coarsest timers) must not divide by zero.
+        let idle = b.build_int_compare(IntPredicate::SLT, taken, i64_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let taken =
+            b.build_select(idle, i64_ty.const_int(1, false), taken, "taken").map_err(llvm_err)?.into_int_value();
+        // `iters = target_ns * batch / taken`, split so the product cannot overflow: the batches that stop the
+        // loop take at least a millisecond, so `target_ns / taken` is at most about a million.
+        let whole = b.build_int_unsigned_div(target_ns, taken, "").map_err(llvm_err)?;
+        let rest = b.build_int_unsigned_rem(target_ns, taken, "").map_err(llvm_err)?;
+        let scaled = b.build_int_mul(rest, batch, "").map_err(llvm_err)?;
+        let part = b.build_int_unsigned_div(scaled, taken, "").map_err(llvm_err)?;
+        let whole_batch = b.build_int_mul(whole, batch, "").map_err(llvm_err)?;
+        let iters = b.build_int_add(whole_batch, part, "iters").map_err(llvm_err)?;
+        let none = b.build_int_compare(IntPredicate::SLT, iters, i64_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let iters =
+            b.build_select(none, i64_ty.const_int(1, false), iters, "iters").map_err(llvm_err)?.into_int_value();
+        // Collect one total per sample, then print the result line.
+        let buf = b.build_array_alloca(i64_ty, samples, "sample.buf").map_err(llvm_err)?;
+        let at = b.build_alloca(i64_ty, "i").map_err(llvm_err)?;
+        b.build_store(at, i64_ty.const_zero()).map_err(llvm_err)?;
+        let head = cx.append_basic_block(f, &format!("sample.{i}"));
+        let body = cx.append_basic_block(f, &format!("sample.body.{i}"));
+        let report = cx.append_basic_block(f, &format!("report.{i}"));
+        b.build_unconditional_branch(head).map_err(llvm_err)?;
+        b.position_at_end(head);
+        let i = b.build_load(i64_ty, at, "i").map_err(llvm_err)?.into_int_value();
+        let done = b.build_int_compare(IntPredicate::SGE, i, samples, "").map_err(llvm_err)?;
+        b.build_conditional_branch(done, report, body).map_err(llvm_err)?;
+        b.position_at_end(body);
+        let total = b
+            .build_call(sample, &[bench_ptr.into(), iters.into()], "total")
+            .map_err(llvm_err)?
+            .try_as_basic_value()
+            .basic()
+            .expect("sample returns i64")
+            .into_int_value();
+        let slot = unsafe { b.build_in_bounds_gep(i64_ty, buf, &[i], "slot") }.map_err(llvm_err)?;
+        b.build_store(slot, total).map_err(llvm_err)?;
+        b.build_store(at, b.build_int_add(i, i64_ty.const_int(1, false), "").map_err(llvm_err)?).map_err(llvm_err)?;
+        b.build_unconditional_branch(head).map_err(llvm_err)?;
+
+        b.position_at_end(report);
+        let marker = bench_bytes(cx, module, "burdin.bench.marker", b"burdin-bench-result: ");
+        bench_print_str(&b, rt.print, marker, b"burdin-bench-result: ".len(), false)?;
+        bench_print_num(cx, &b, rt, iters)?;
+        let j_at = b.build_alloca(i64_ty, "j").map_err(llvm_err)?;
+        b.build_store(j_at, i64_ty.const_zero()).map_err(llvm_err)?;
+        let num_head = cx.append_basic_block(f, &format!("nums.{i}"));
+        let num_body = cx.append_basic_block(f, &format!("nums.body.{i}"));
+        let finish = cx.append_basic_block(f, &format!("finish.{i}"));
+        b.build_unconditional_branch(num_head).map_err(llvm_err)?;
+        b.position_at_end(num_head);
+        let j = b.build_load(i64_ty, j_at, "j").map_err(llvm_err)?.into_int_value();
+        let printed = b.build_int_compare(IntPredicate::SGE, j, samples, "").map_err(llvm_err)?;
+        b.build_conditional_branch(printed, finish, num_body).map_err(llvm_err)?;
+        b.position_at_end(num_body);
+        let space = bench_bytes(cx, module, "burdin.bench.space", b" ");
+        bench_print_str(&b, rt.print, space, 1, false)?;
+        let slot = unsafe { b.build_in_bounds_gep(i64_ty, buf, &[j], "value") }.map_err(llvm_err)?;
+        let value = b.build_load(i64_ty, slot, "sample").map_err(llvm_err)?.into_int_value();
+        bench_print_num(cx, &b, rt, value)?;
+        b.build_store(j_at, b.build_int_add(j, i64_ty.const_int(1, false), "").map_err(llvm_err)?).map_err(llvm_err)?;
+        b.build_unconditional_branch(num_head).map_err(llvm_err)?;
+        b.position_at_end(finish);
+        // The trailing newline completes the line; the runtime's `atexit` flush flushes the buffer.
+        b.build_call(
+            rt.print,
+            &[
+                i32_ty.const_int(1, false).into(),
+                marker.into(),
+                i64_ty.const_int(0, false).into(),
+                i32_ty.const_int(1, false).into(),
+            ],
+            "",
+        )
+        .map_err(llvm_err)?;
+        b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        b.position_at_end(next);
+    }
+    // After the last bench's dispatch chain: an unknown index. The shared mode-failure blocks end here too, so
+    // each is terminated once however many benches there are.
+    b.build_return(Some(&i32_ty.const_int(3, false))).map_err(llvm_err)?;
+    b.position_at_end(missing_args);
+    b.build_return(Some(&i32_ty.const_int(2, false))).map_err(llvm_err)?;
+    b.position_at_end(bad_mode);
+    b.build_return(Some(&i32_ty.const_int(4, false))).map_err(llvm_err)?;
+    Ok(())
+}
+
+/// Keeps the timing loops out of `main`: inlined there, the optimizer sees which bench the pointer names, inlines
+/// it, and deletes the loop of an empty bench, which then measures no time at all.
+fn mark_noinline<'ctx>(cx: &'ctx Context, f: FunctionValue<'ctx>) {
+    f.add_attribute(AttributeLoc::Function, cx.create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0));
+}
+
+/// `burdin_bench_run_for(bench: ptr, nanos: i64)`: calls the bench until `nanos` of the monotonic clock have
+/// passed, always at least once, so a zero warmup still primes the code once (`spec/bench.md`, BN4).
+fn bench_run_for<'ctx>(
+    cx: &'ctx Context,
+    module: &Module<'ctx>,
+    clock: FunctionValue<'ctx>,
+) -> GenResult<FunctionValue<'ctx>> {
+    let (i64_ty, ptr_ty, void_ty) = (cx.i64_type(), cx.ptr_type(AddressSpace::default()), cx.void_type());
+    let f = module.add_function("burdin_bench_run_for", void_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false), None);
+    mark_noinline(cx, f);
+    let bench = f.get_nth_param(0).expect("the bench pointer").into_pointer_value();
+    let nanos = f.get_nth_param(1).expect("the nanosecond budget").into_int_value();
+    let b = cx.create_builder();
+    b.position_at_end(cx.append_basic_block(f, "entry"));
+    let start = clock_now(&b, clock, "start")?;
+    let head = cx.append_basic_block(f, "loop");
+    let done = cx.append_basic_block(f, "done");
+    b.build_unconditional_branch(head).map_err(llvm_err)?;
+    b.position_at_end(head);
+    b.build_indirect_call(void_ty.fn_type(&[], false), bench, &[], "").map_err(llvm_err)?;
+    let now = clock_now(&b, clock, "now")?;
+    let elapsed = b.build_int_sub(now, start, "elapsed").map_err(llvm_err)?;
+    let over = b.build_int_compare(IntPredicate::SGE, elapsed, nanos, "").map_err(llvm_err)?;
+    b.build_conditional_branch(over, done, head).map_err(llvm_err)?;
+    b.position_at_end(done);
+    b.build_return(None).map_err(llvm_err)?;
+    Ok(f)
+}
+
+/// `burdin_bench_sample(bench: ptr, iters: i64) -> i64`: one timed sample — `iters` calls of the bench and the
+/// total nanoseconds they took (`spec/bench.md`, BN4).
+fn bench_sample<'ctx>(
+    cx: &'ctx Context,
+    module: &Module<'ctx>,
+    clock: FunctionValue<'ctx>,
+) -> GenResult<FunctionValue<'ctx>> {
+    let (i64_ty, ptr_ty, void_ty) = (cx.i64_type(), cx.ptr_type(AddressSpace::default()), cx.void_type());
+    let f = module.add_function("burdin_bench_sample", i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false), None);
+    mark_noinline(cx, f);
+    let bench = f.get_nth_param(0).expect("the bench pointer").into_pointer_value();
+    let iters = f.get_nth_param(1).expect("the iteration count").into_int_value();
+    let b = cx.create_builder();
+    b.position_at_end(cx.append_basic_block(f, "entry"));
+    let start = clock_now(&b, clock, "start")?;
+    let at = b.build_alloca(i64_ty, "count").map_err(llvm_err)?;
+    b.build_store(at, i64_ty.const_zero()).map_err(llvm_err)?;
+    let head = cx.append_basic_block(f, "loop");
+    let body = cx.append_basic_block(f, "body");
+    let done = cx.append_basic_block(f, "done");
+    b.build_unconditional_branch(head).map_err(llvm_err)?;
+    b.position_at_end(head);
+    let count = b.build_load(i64_ty, at, "count").map_err(llvm_err)?.into_int_value();
+    let over = b.build_int_compare(IntPredicate::SGE, count, iters, "").map_err(llvm_err)?;
+    b.build_conditional_branch(over, done, body).map_err(llvm_err)?;
+    b.position_at_end(body);
+    b.build_indirect_call(void_ty.fn_type(&[], false), bench, &[], "").map_err(llvm_err)?;
+    b.build_store(at, b.build_int_add(count, i64_ty.const_int(1, false), "").map_err(llvm_err)?).map_err(llvm_err)?;
+    b.build_unconditional_branch(head).map_err(llvm_err)?;
+    b.position_at_end(done);
+    let now = clock_now(&b, clock, "now")?;
+    b.build_return(Some(&b.build_int_sub(now, start, "total").map_err(llvm_err)?)).map_err(llvm_err)?;
+    Ok(f)
+}
+
+/// The monotonic clock's current nanoseconds.
+fn clock_now<'ctx>(b: &Builder<'ctx>, clock: FunctionValue<'ctx>, name: &str) -> GenResult<IntValue<'ctx>> {
+    let i32_ty = b.get_insert_block().expect("positioned").get_context().i32_type();
+    let now = b.build_call(clock, &[i32_ty.const_int(1, false).into()], name).map_err(llvm_err)?;
+    Ok(now.try_as_basic_value().basic().expect("the clock returns i64").into_int_value())
+}
+
+/// A private constant global holding `bytes`, named so the module's IR stays readable.
+fn bench_bytes<'ctx>(cx: &'ctx Context, module: &Module<'ctx>, name: &str, bytes: &[u8]) -> PointerValue<'ctx> {
+    let data = cx.const_string(bytes, false);
+    let global = module.add_global(data.get_type(), None, name);
+    global.set_initializer(&data);
+    global.set_constant(true);
+    global.set_linkage(Linkage::Private);
+    global.set_unnamed_addr(true);
+    global.as_pointer_value()
+}
+
+/// Writes `bytes` to the buffered standard output through `print` (`burdin_rt_print`), with a trailing newline
+/// when `newline` is set.
+fn bench_print_str<'ctx>(
+    b: &Builder<'ctx>,
+    print: FunctionValue<'ctx>,
+    ptr: PointerValue<'ctx>,
+    len: usize,
+    newline: bool,
+) -> GenResult<()> {
+    let cx = b.get_insert_block().expect("positioned").get_context();
+    let (i32_ty, i64_ty) = (cx.i32_type(), cx.i64_type());
+    b.build_call(
+        print,
+        &[
+            i32_ty.const_int(1, false).into(),
+            ptr.into(),
+            i64_ty.const_int(len as u64, false).into(),
+            i32_ty.const_int(u64::from(newline), false).into(),
+        ],
+        "",
+    )
+    .map_err(llvm_err)?;
+    Ok(())
+}
+
+/// Writes `value` as decimal text to the buffered standard output: `i64_to_string` into a fresh `String`, its
+/// bytes through `print`, then the string's buffer freed.
+fn bench_print_num<'ctx>(
+    cx: &'ctx Context,
+    b: &Builder<'ctx>,
+    rt: &Runtime<'ctx>,
+    value: IntValue<'ctx>,
+) -> GenResult<()> {
+    let (i32_ty, i64_ty, ptr_ty) = (cx.i32_type(), cx.i64_type(), cx.ptr_type(AddressSpace::default()));
+    let string_ty = cx.struct_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false);
+    let out = b.build_alloca(string_ty, "num").map_err(llvm_err)?;
+    b.build_call(rt.i64_to_string, &[value.into(), out.into()], "").map_err(llvm_err)?;
+    let s = b.build_load(string_ty, out, "num").map_err(llvm_err)?.into_struct_value();
+    let ptr = b.build_extract_value(s, 0, "ptr").map_err(llvm_err)?;
+    let len = b.build_extract_value(s, 1, "len").map_err(llvm_err)?;
+    let cap = b.build_extract_value(s, 2, "cap").map_err(llvm_err)?;
+    b.build_call(
+        rt.print,
+        &[i32_ty.const_int(1, false).into(), ptr.into(), len.into(), i32_ty.const_int(0, false).into()],
+        "",
+    )
+    .map_err(llvm_err)?;
+    b.build_call(rt.string_free, &[ptr.into(), cap.into()], "").map_err(llvm_err)?;
     Ok(())
 }
 

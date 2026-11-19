@@ -664,6 +664,8 @@ impl<'p> Interp<'p, '_> {
                 Value::Float(v)
             }
             Builtin::HeapNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
+            // The barrier exists for the optimizer; at compile time it is the identity (`spec/bench.md`, BN9).
+            Builtin::BlackBox => self.eval(&args[0], Mode::Move)?,
             // The unchecked bytes-to-text cast keeps the bytes: the interpreter has already checked them when
             // `std` calls it through `str.from_utf8`.
             Builtin::ViewAsText => {
@@ -1750,6 +1752,7 @@ mod tests {
             externs: vec![],
             main: None,
             tests: vec![],
+            benches: vec![],
             any_ifaces: vec![],
             any_vtables: vec![],
             any_type_ids: vec![],
@@ -1775,6 +1778,7 @@ mod tests {
             externs: vec![],
             main: None,
             tests: vec![],
+            benches: vec![],
             any_ifaces: vec![],
             any_vtables: vec![],
             any_type_ids: vec![],
