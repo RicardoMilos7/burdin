@@ -1,0 +1,134 @@
+//@ run
+//> 64
+//> 2.5
+//> geometry
+//> -7
+//> 16
+//> 40
+//> 5
+//> 5
+//> 11
+//> 12
+//> 18
+//> 18
+//> 18
+//> 12
+//> 20
+//> 200
+//> 6
+//> 10
+//> 10
+//> 8
+//> 3
+//> 0
+//> 1
+//> 1
+//> hello, Burdin
+//> c1
+//> 2
+//> 4
+//> 1.5
+//> 7
+//> 4
+//> 6
+//> 12
+
+// A package binds a Rust crate through `[rust.crates]`: the driver generates a C-ABI shim and its Burdin module,
+// builds the shim with the pinned toolchain, and links it (spec/rust-interop.md, RI7).
+
+use geometry.{KIND_LINE, MAX_SHAPES, NAME, OFFSET, SCALE, Segment, Vec2}
+
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn main() {
+    println("{}", MAX_SHAPES)
+    println("{}", SCALE)
+    println(NAME)
+    println("{}", OFFSET)
+    println("{}", Vec2.size())
+    println("{}", Segment.size())
+    unsafe {
+        // A `repr(C)` struct is read through a pointer, and a `#[no_mangle]` function is called as it is.
+        let mut v = Vec2 { x: 3.0, y: 4.0 }
+        println("{}", geometry.geometry_length(&mut v as CPtr<Vec2>))
+        println("{}", geometry.geometry_native_add(2, 3))
+
+        // An opaque handle: created, used through its methods, consumed by the method that takes `self`.
+        let counter = geometry.geometry_counter_new(10)
+        println("{}", geometry.geometry_counter_inc(counter))
+        println("{}", geometry.geometry_counter_inc(counter))
+        let values = malloc(12) as CPtr<u32>
+        *values = 1
+        *(values + 1) = 2
+        *(values + 2) = 3
+        geometry.geometry_counter_add_all(counter, values, 3)
+        free(values as CPtr<CVoid>)
+        println("{}", geometry.geometry_counter_get(counter))
+        println("{}", *geometry.geometry_counter_peek(counter))
+        println("{}", geometry.geometry_counter_into_total(counter))
+
+        // A handle returned by a free function, whose type is re-exported from a private module.
+        let rect = geometry.geometry_make_rect(3, 4)
+        println("{}", geometry.geometry_rect_area(rect))
+        geometry.geometry_rect_grow(rect, 1)
+        println("{}", geometry.geometry_rect_area(rect))
+        geometry.geometry_rect_free(rect)
+
+        // An enumeration is its integer; a function in a nested module is prefixed with the module.
+        println("{}", geometry.geometry_describe(KIND_LINE))
+        println("{}", geometry.geometry_kind_of(3))
+        println("{}", geometry.geometry_util_clamp(15, 0, 10))
+
+        // A slice is a pointer and a length, in both directions of mutation.
+        let numbers = malloc(16) as CPtr<i32>
+        *numbers = 1
+        *(numbers + 1) = 2
+        *(numbers + 2) = 3
+        *(numbers + 3) = 4
+        println("{}", geometry.geometry_sum(numbers, 4))
+        geometry.geometry_double_all(numbers, 4)
+        println("{}", *(numbers + 3))
+        geometry.geometry_fill(numbers as CPtr<u8>, 4, 3)
+        println("{}", *(numbers as CPtr<u8>))
+        println("{}", *(numbers as CPtr<u8>) - 3)
+        free(numbers as CPtr<CVoid>)
+
+        // A `bool` is a byte, a `&str` is a pointer and a length, and a returned `String` is a C string that the shim frees.
+        println("{}", geometry.geometry_is_even(10))
+        println("{}", geometry.geometry_not(0))
+        let who = CString.from("Burdin")
+        let text = geometry.geometry_greeting(who.as_ptr() as CPtr<u8>, 6)
+        println(CStr.to_string(text))
+        geometry.geometry_string_free(text)
+
+        // A handle that holds a `Vec` and a `String`; a struct by value goes in through a pointer and comes out through one.
+        let label = CString.from("c1")
+        let canvas = geometry.geometry_canvas_new(label.as_ptr() as CPtr<u8>, 2)
+        let mut segment = Segment { a: Vec2 { x: 0.0, y: 0.0 }, b: Vec2 { x: 1.0, y: 1.0 }, tag: 7, weight: 1.5 }
+        geometry.geometry_canvas_push(canvas, &mut segment as CPtr<Segment>)
+        segment.weight = 2.5
+        geometry.geometry_canvas_push(canvas, &mut segment as CPtr<Segment>)
+        let name = geometry.geometry_canvas_name(canvas)
+        println(CStr.to_string(name))
+        geometry.geometry_string_free(name)
+        println("{}", geometry.geometry_canvas_len(canvas))
+        println("{}", geometry.geometry_canvas_total_weight(canvas))
+        let mut first = Segment { a: Vec2 { x: 9.0, y: 9.0 }, b: Vec2 { x: 9.0, y: 9.0 }, tag: 0, weight: 0.0 }
+        geometry.geometry_canvas_first(canvas, &mut first as CPtr<Segment>)
+        println("{}", first.weight)
+        println("{}", first.tag)
+        geometry.geometry_canvas_free(canvas)
+
+        let mut a = Vec2 { x: 1.0, y: 2.0 }
+        let mut b = Vec2 { x: 3.0, y: 4.0 }
+        let mut sum = Vec2 { x: 0.0, y: 0.0 }
+        geometry.geometry_add(&mut a as CPtr<Vec2>, &mut b as CPtr<Vec2>, &mut sum as CPtr<Vec2>)
+        println("{}", sum.x)
+        println("{}", sum.y)
+        geometry.geometry_scale(&mut sum as CPtr<Vec2>, 2.0)
+        println("{}", sum.y)
+    }
+}

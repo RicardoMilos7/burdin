@@ -1,0 +1,6 @@
+//~ E0264
+//@ compile-fail
+
+// A channel name is not a pin: the toolchain is an exact `major.minor.patch` version (spec/rust-interop.md, RI7).
+
+fn main() {}

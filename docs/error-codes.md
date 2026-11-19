@@ -1686,6 +1686,38 @@ fn main() {}
 package), use a concrete struct instead of a generic one, mark a struct that C holds by value `repr(C)`, and rename
 any field that is not a C identifier.
 
+## E0264: Rust interop failed
+
+A package binds a Rust crate through `[rust.crates]`: the driver reads the crate's API from rustdoc JSON, generates a
+C-ABI shim and its Burdin module, builds the shim with the Rust toolchain the manifest pins, and links it. The step
+stops with this error when the `[rust]` table is invalid (no `toolchain`, or one that is not an exact version), a
+crate path holds no `Cargo.toml`, the installed toolchain is not the pinned one, `cargo` or rustdoc fails on the
+crate, or the shim does not build. A shim also fails to build when the size, alignment, or field offset of an
+exposed `repr(C)` type differs from the one the Burdin module declares, so a layout mismatch is an error and never
+undefined behavior. The message names the crate and carries the tool's output. `spec/rust-interop.md` RI5-RI9.
+
+<!-- error-example: E0264 target=. -->
+```burdin
+// --- burdin.toml ---
+[package]
+name = "app"
+
+[rust]
+toolchain = "1.100.0"
+
+[rust.crates]
+nowhere = { path = "no_such_crate" }
+
+// --- src/main.bd ---
+fn main() {} //~ E0264
+```
+<!-- /error-example -->
+
+**How to fix:** point the crate's `path` at a directory with a `Cargo.toml`, pin an exact toolchain such as
+`toolchain = "1.100.0"` and install it with `rustup toolchain install`, and fix the crate so `cargo doc` and
+`cargo build` succeed. A layout failure means the crate changed a `repr(C)` type: rebuild so the module is generated
+again.
+
 ## E0270: Not an allocator
 
 The last type argument of `List<T, A>`, `Map<K, V, A>`, and `Heap<T, A>` is the allocator the container

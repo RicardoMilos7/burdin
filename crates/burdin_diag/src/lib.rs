@@ -299,6 +299,10 @@ impl Code {
     /// `burdin bindgen --export` cannot write a C declaration for an exported function: a type with no C spelling,
     /// a name that is not a C identifier, or two exports that share a C name (`spec/bindgen.md`, BG11).
     pub const EXPORT_HEADER: Code = Code("E0263");
+    /// A Rust crate in `[rust.crates]` could not be bound: an invalid `[rust]` table, a toolchain that is not the
+    /// pinned one, a crate that rustdoc or cargo could not build, or a shim whose layout checks failed
+    /// (`spec/rust-interop.md`, RI7-RI9).
+    pub const RUST_INTEROP: Code = Code("E0264");
     /// A type argument of an allocator-aware container that does not implement `Allocator`
     /// (`spec/allocators.md`, AL3).
     pub const NOT_AN_ALLOCATOR: Code = Code("E0270");

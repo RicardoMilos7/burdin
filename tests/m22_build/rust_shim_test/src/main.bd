@@ -1,0 +1,17 @@
+//@ burdin-test passed=2 failed=0
+
+// `burdin test` binds and links the Rust crate too, so a test block can call the shim (spec/rust-interop.md, RI7).
+
+fn main() {}
+
+test "a Rust function is called through its shim" {
+    assert_eq(unsafe { geometry.geometry_native_add(40, 2) }, 42)
+}
+
+test "a Rust handle is created, used, and freed" {
+    unsafe {
+        let counter = geometry.geometry_counter_new(1)
+        geometry.geometry_counter_inc(counter)
+        assert_eq(geometry.geometry_counter_into_total(counter), 2)
+    }
+}

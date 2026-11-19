@@ -13,6 +13,8 @@ mod fmt;
 mod lint;
 mod new;
 mod repl;
+mod rust_build;
+mod rust_interop;
 mod scripts;
 mod test_runner;
 
@@ -901,6 +903,8 @@ pub(crate) struct FrontEnd {
     pub(crate) program: Option<burdin_tir::Program>,
     pub(crate) diags: Diagnostics,
     pub(crate) script_inputs: Vec<String>,
+    /// The shim libraries of the bound Rust crates, which the program links after `--link-lib`'s.
+    pub(crate) rust_libs: Vec<String>,
 }
 
 /// Replacement texts for source files, by path: `burdin lint --fix` checks the program it is about to write.
@@ -927,9 +931,13 @@ pub(crate) fn front_end(
     // Build scripts run first: a generated module must exist before the modules are read (`spec/build-scripts.md`,
     // BS3-BS4). A script's own compilation sets this flag to false, so there is no recursion.
     let mut script_inputs: Vec<String> = Vec::new();
+    let mut rust_libs: Vec<String> = Vec::new();
     if options.run_build_scripts {
         match build::run(&mut loaded, options.release, options) {
-            Ok(inputs) => script_inputs = inputs,
+            Ok(outcome) => {
+                script_inputs = outcome.inputs;
+                rust_libs = outcome.link_libs;
+            }
             Err(failure) => {
                 report_build_failure(&loaded, failure, options);
                 return Err(ExitCode::from(1));
@@ -976,6 +984,7 @@ pub(crate) fn front_end(
         program: analysis.program,
         diags: analysis.diagnostics,
         script_inputs,
+        rust_libs,
     })
 }
 
@@ -988,7 +997,7 @@ pub(crate) fn compile(
     output: Option<&Path>,
     options: &CompileOptions,
 ) -> Result<Compiled, ExitCode> {
-    let FrontEnd { loaded, sources, program, diags, script_inputs, .. } =
+    let FrontEnd { loaded, sources, program, diags, script_inputs, rust_libs, .. } =
         front_end(target, options, &SourceOverrides::new())?;
     if diags.has_errors() {
         report_errors("compile", target, &diags, &sources, options.diagnostics);
@@ -1022,7 +1031,7 @@ pub(crate) fn compile(
         eprintln!("error: the output path `{}` is a directory; pass `-o <file>`", output.display());
         return Err(ExitCode::from(2));
     }
-    emit_program(&program, &sources, &loaded.stem, &output, options)?;
+    emit_program(&program, &sources, &loaded.stem, &output, options, &rust_libs)?;
     let site = |span: burdin_diag::Span| {
         let file = sources.get(span.file);
         Site { file: file.path.clone(), line: file.line_col(span.lo).0 }
@@ -1048,6 +1057,7 @@ pub(crate) fn emit_program(
     stem: &str,
     output: &Path,
     options: &CompileOptions,
+    rust_libs: &[String],
 ) -> Result<(), ExitCode> {
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -1090,7 +1100,8 @@ pub(crate) fn emit_program(
         lto: options.lto,
         pgo_generate: options.pgo_generate,
     };
-    link(&objects, output, options.link_libs, &link_opts).map_err(fail)?;
+    let libs: Vec<String> = options.link_libs.iter().chain(rust_libs).cloned().collect();
+    link(&objects, output, &libs, &link_opts).map_err(fail)?;
     Ok(())
 }
 

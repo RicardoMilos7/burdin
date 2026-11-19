@@ -1,0 +1,9 @@
+[package]
+name = "rust_toolchain_missing"
+version = "0.1.0"
+
+[rust]
+toolchain = "0.0.1"
+
+[rust.crates]
+geometry = { path = "../../rust/geometry" }

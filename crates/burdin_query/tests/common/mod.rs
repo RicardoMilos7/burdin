@@ -41,6 +41,7 @@ pub fn standalone(files: &[(&str, &str)]) -> Db {
             build_allow: Vec::new(),
             root_module: Some(entry),
             lint: Vec::new(),
+            rust: Default::default(),
         }],
         entry_package: 0,
         entry_module: entry,
