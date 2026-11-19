@@ -308,7 +308,7 @@ jobs:
         run: |
           set -eu
           BURDIN_RELEASE_DIR="$PWD/dist" BURDIN_VERSION="$VERSION" \
-            BURDIN_TARGET=x86_64-unknown-linux-gnu BURDIN_INSTALL_DIR="$PWD/installed" \
+            BURDIN_TARGET=x86_64-unknown-linux-gnu BURDIN_INSTALL_DIR="$PWD/installed/bin" \
             sh install.sh
           installed/bin/burdin --version
           printf 'fn main() {\n    println("installed release")\n}\n' > installed-smoke.bd
