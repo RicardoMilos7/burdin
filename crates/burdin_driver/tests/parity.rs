@@ -6,7 +6,8 @@
 //! is `burdin_query::Db::open` on the same target, so this checks the whole path a tool takes, not a shortcut.
 //!
 //! Skipped: packages whose build script fails, because the build phase is the driver's and runs before the
-//! library sees any source (`tests/check_build_scripts.py` covers those), and tests marked `release-only`, which
+//! library sees any source (`tests/check_build_scripts.py` covers those), packages that bind Rust crates (the same
+//! phase; `tests/check_rust_interop.py` and the conformance runner cover those), and tests marked `release-only`, which
 //! `cargo test` runs in debug.
 
 use burdin_query::{Db, Options};
@@ -101,7 +102,8 @@ fn has_build_phase(directory: &Path, seen: &mut std::collections::HashSet<PathBu
         return true;
     }
     let Ok(text) = std::fs::read_to_string(directory.join("burdin.toml")) else { return false };
-    if text.lines().any(|line| line.trim() == "[build]") {
+    // `[rust.crates]` binds Rust crates in the same phase (`spec/rust-interop.md`, RI7): its errors are E0264 and E0260.
+    if text.lines().any(|line| matches!(line.trim(), "[build]" | "[rust]" | "[rust.crates]")) {
         return true;
     }
     // A dependency line with a path, as the manifests in `tests/` write it: `lib = { path = "../lib" }`.

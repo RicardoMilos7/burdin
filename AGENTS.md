@@ -12,7 +12,7 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md`, `spec/arguments.md`,
-   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md` — the standard-library
+   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/rust-interop.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md` — the standard-library
    surface, the exact derived members, formatting, error handling, default and named arguments, extension methods,
    operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, the query-based compiler library, and the language server.
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`,
@@ -53,6 +53,7 @@ python3 tests/check_doc.py               check `burdin doc`: the site and its go
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
+python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`

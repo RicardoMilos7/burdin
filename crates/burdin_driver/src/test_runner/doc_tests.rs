@@ -627,7 +627,7 @@ fn build_one(
     }
     let checked = checked.expect("no errors means checking produced a program");
     let exe = dir.join("program").with_extension(std::env::consts::EXE_EXTENSION);
-    emit_program(&checked, &sources, name, &exe, &doc_options)?;
+    emit_program(&checked, &sources, name, &exe, &doc_options, &[])?;
     Ok(Built::Exe(exe))
 }
 

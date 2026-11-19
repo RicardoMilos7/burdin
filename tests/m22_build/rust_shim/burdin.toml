@@ -1,0 +1,9 @@
+[package]
+name = "rust_shim"
+version = "0.1.0"
+
+[rust]
+toolchain = "1.100.0"
+
+[rust.crates]
+geometry = { path = "../../rust/geometry" }

@@ -27,6 +27,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/fmt.md`](spec/fmt.md) | The behavior of `burdin fmt`: the one style (4-space indentation, 120 columns), comments, blank lines, the magic trailing comma, `use` sorting and grouping, doc-comment code blocks, range formatting, and the command line. |
 | [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the `bindgen` a script may invoke. |
 | [`spec/bindgen.md`](spec/bindgen.md) | `burdin bindgen`: C headers to Burdin declarations through libclang, the layout check, wrappers for `static inline` functions, and `--export` for a C header of what a package exports. |
+| [`spec/rust-interop.md`](spec/rust-interop.md) | Rust interop: `burdin bindgen --rust` reads a crate's rustdoc JSON and writes a C-ABI shim and its Burdin module; `[rust.crates]` builds and links the shim with a pinned toolchain; layout checks on both sides. |
 | [`spec/tasks.md`](spec/tasks.md) | Tasks, the work-stealing scheduler, `yield`, scoped tasks that borrow, panics in tasks, and OS threads (stage 2.1). |
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
@@ -168,6 +169,7 @@ usage:
   burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
                  [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
   burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]
+  burdin bindgen --rust <crate> --out <file> --shim <dir> [--rust-toolchain <version>] [--rustdoc-json <file>]
   burdin new <name>
   burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lsp [--stdio]
@@ -747,6 +749,7 @@ still compiles, and writes every file or none; `--fix --dry-run` writes nothing.
 burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
                [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
 burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]
+burdin bindgen --rust <crate> --out <file> --shim <dir> [--rust-toolchain <version>] [--rustdoc-json <file>]
 ```
 
 The first form reads a C header through libclang and writes a Burdin module of raw declarations. libclang is loaded
@@ -767,6 +770,16 @@ a libclang that cannot be loaded.
 `--export <target> --out <header.h>` writes the other direction: a C header with a prototype for every
 `extern "C" fn` the package exports, the `repr(C)` structs they use, and their public constants, inside an include
 guard and an `extern "C"` block for C++. A declaration a C header cannot spell is E0263, and no header is written.
+
+`--rust <crate>` binds a Rust crate. It reads the crate's public API from rustdoc JSON (which needs the exact Rust
+toolchain the manifest or `--rust-toolchain` pins, because the format is unstable) and writes a **shim**, a small
+crate of `extern "C"` functions that you build as a static library, and a Burdin module of declarations for it.
+`repr(C)` structs with public fields are bound by value with size, alignment, and offset checks on both sides; every
+other struct or enum is an opaque handle with a generated `_free`; fieldless enums are their integer; `&str`, `String`,
+and slices are a pointer and a length; generics, traits, `async`, and `Result` are skipped and named in a
+`// bindgen:` note. A package gets the shim without the command: `[rust] toolchain = "1.100.0"` and
+`[rust.crates] geometry = { path = "../geometry" }` in `burdin.toml` make `build`, `run`, and `test` generate, build, and
+link it (a failure is E0264). [`spec/rust-interop.md`](spec/rust-interop.md) is the exact rule.
 
 ```console
 $ ./target/debug/burdin bindgen c/strings.h --out src/bindings.bd

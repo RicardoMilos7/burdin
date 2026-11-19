@@ -39,7 +39,8 @@ not updated and may disagree with the repository.
    the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
    resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
    modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
-   import rules, layout checks, wrappers, and `--export`; `spec/lint.md` is `burdin lint` (the `[lint]` table,
+   import rules, layout checks, wrappers, and `--export`; `spec/rust-interop.md` is Rust interop: rustdoc JSON, the C-ABI
+   shim, `[rust.crates]`, the pinned toolchain, and the layout checks; `spec/lint.md` is `burdin lint` (the `[lint]` table,
    suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
    intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report;
    `spec/check.md` is `burdin check`, the type-check-only command (what it shares with a build, and `--tests`);
@@ -102,6 +103,7 @@ python3 tests/check_doc.py               check `burdin doc`: the site and its go
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
+python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
@@ -157,6 +159,10 @@ crates/
   burdin_bindgen/           `burdin bindgen` (spec/bindgen.md): libclang loaded at run time (`clang.rs`), the C
                             header walk (`parse.rs`), macro evaluation (`macros.rs`), the module's rendering
                             (`model.rs`), and C's spelling of an exported type (`export.rs`); depends only on libc
+  burdin_rustgen/           the generator behind `burdin bindgen --rust` (spec/rust-interop.md): rustdoc JSON parsing
+                            (`rustdoc.rs`), the exposed API and its classification (`api.rs`), and the Burdin module and shim
+                            source (`render.rs`); it depends only on burdin_json and runs no tool, so the driver runs cargo
+                            around it (`rust_interop.rs`, `rust_build.rs`)
   burdin_doc/               the documentation generator behind `burdin doc`: doc comments and signatures from the syntax
                             trees, intra-doc link resolution, the HTML site with search, the versioned JSON schema, and
                             the coverage report (spec/doc.md); it depends only on burdin_diag and burdin_syntax

@@ -8,8 +8,8 @@ Updated at the end of the fifty-fourth session (2026-11-19). **Milestones 1 to 1
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
-(`m24_stdlib`) is done, and stage 2 is complete through milestone 2.4 (asynchronous I/O)**: 1062 conformance tests;
-1059 pass in debug (three are skipped) and 1051 in release (the release run skips the debug-only and platform-specific
+(`m24_stdlib`) is done, and stage 2 is complete through milestone 2.4 (asynchronous I/O)**: 1073 conformance tests;
+1070 pass in debug (three are skipped) and 1061 in release (the release run skips the debug-only and platform-specific
 tests). Stage 3's bench blocks (issue #251) are done: `bench` items, `black_box`, and `burdin bench` with statistics,
 baselines, filters, `--list`, and `--profile-time`.
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
@@ -512,7 +512,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Release pipeline | `.github/workflows/release.yml`, `tests/build_release.py`, `tests/release_notes.py`, `tests/check_release.py` | Implemented, no release cut (issue #452, sub-issues #453-#456). The workflow builds the six supported targets on native runners, smoke-tests each, writes `burdin-<version>-<target>.tar.gz` plus SHA-256 checksums, verifies Linux reproducibility from two checkout paths, and publishes only from a tag or an explicit manual `publish`; the schedule and a plain manual run are dry runs. `tests/build_release.py` also packages an existing binary (`--binary`) for the check, and its archive is deterministic (sorted entries, fixed mtimes, uid/gid 0, `gzip -n`). `tests/check_release.py` runs in every CI job |
 | Installers | `install.sh`, `install.ps1`, `docs/releasing.md` | One-line installers for Unix and Windows. Both verify `SHA256SUMS` before unpacking, install to a user directory, run `--version` and warn when the LLVM 21 runtime is missing, and support `BURDIN_VERSION`, `BURDIN_CHANNEL`, `BURDIN_INSTALL_DIR`, `BURDIN_BASE_URL`, and `BURDIN_RELEASE_DIR` (the local rehearsal path). A package-manager formula is not written yet |
 | Version and release policy | `docs/releasing.md`, `Cargo.toml`, `crates/burdin_driver/build.rs` | SemVer for the compiler (`0.1.0`), language editions versioned separately, channels `dev`/`nightly`/`stable`, and the breaking-change rule for packages. `burdin --version` prints `burdin <version>`, `channel:`, `target:`, `llvm:`, `commit:`, and `profile:`; `BURDIN_VERSION` and `BURDIN_CHANNEL` override the version and channel and are checked by `tests/check_build_flags.py`, `tests/check_docs.py`, and `tests/check_release.py` |
-| LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH`. Release builds on Linux and macOS set `BURDIN_STATIC_LLVM=1` and link LLVM statically (no `libLLVM` at run time); Windows release archives bundle `LLVM-C.dll`, and a static Windows build (`BURDIN_STATIC_LLVM=1` plus the static CRT) is wired in `build.rs` but unproven (`docs/releasing.md`) |
+| LLVM | WSL: `/usr/lib/llvm-21`; macOS: Homebrew `llvm@21`; Windows: `C:\llvm` | LLVM 21.1.8. Linked as a shared library on every platform by `crates/burdin_codegen/build.rs` (`llvm21-1-no-llvm-linking`): the static Windows archives crash in a binary that uses the dynamic CRT, so MSVC links `LLVM-C.lib` and needs `LLVM-C.dll` on `PATH`. Release builds on Linux and macOS set `BURDIN_STATIC_LLVM=1` and link LLVM statically (no `libLLVM` at run time); Windows release archives bundle `LLVM-C.dll`, and a static Windows build (`BURDIN_STATIC_LLVM=1` plus the static CRT) is wired in `crates/burdin_driver/build.rs` (the static archives are link arguments of the `burdin` binary, after every crate; the helpers are in `crates/burdin_codegen/llvm_link.rs`) but unproven (`docs/releasing.md`) |
 
 Dev environment: WSL Ubuntu 26.04, Rust 1.100.0 pinned by `rust-toolchain.toml` through rustup, LLVM 21; the macOS and
 Windows jobs are the reference for native setups. See the Toolchain section of `CLAUDE.md` for the exact packages and
@@ -1195,6 +1195,35 @@ What is left: the interactive editor on Windows and macOS (untested consoles), c
 expressions that are not bare bindings and for `use` paths, re-running `burdin test` over a session (#583's idea
 became `:compile`), the REPL's `--history`-style options and prompt customization (deliberately none), and
 per-function memory checks and comptime evaluation (the same open item the query library records).
+
+## The fifty-fourth session: Rust interop through C-ABI shims (stage 3, issue #249, sub-issue #477)
+
+`spec/rust-interop.md` (RI1-RI11) is the design; this is what is worth remembering about how it landed. The generator
+is a new crate, `crates/burdin_rustgen`, that is pure text-to-text (rustdoc JSON in, Burdin module and shim source
+out) and depends only on `burdin_json`; every tool run (`cargo doc`, `cargo rustc`, `rustc -vV`) is in the driver's
+`rust_interop.rs`, and the manifest step is `rust_build.rs`. Rustdoc JSON is unstable, so the tool reads exactly
+`format_version` 61 and the toolchain is pinned to an exact `x.y.z` (the manifest's `[rust] toolchain`, or the
+repository's own pin for the bare command); the JSON is produced on stable with `RUSTC_BOOTSTRAP=1` and
+`-Z unstable-options --output-format json`. A type is a **value** only when it is `#[repr(C)]`, all fields are public
+and C-compatible, and it has no `Drop`; everything else is an opaque boxed **handle**. Layouts are asserted on both
+sides: `comptime assert` in the Burdin module (E0223 when wrong) and `const _` asserts with `offset_of!` in the shim
+(rustc E0080, reported as E0264). Panics abort because the shim functions are `extern "C"`. Generation is keyed on
+the crate's `.rs`, `Cargo.toml`, and `Cargo.lock` contents plus the compiler fingerprint, profile, and toolchain; the
+cargo build always runs (cargo knows when it is fresh), and `rustc --print native-static-libs` supplies the system
+libraries, saved in `native-libs.txt` for the runs where cargo prints nothing. `build::run` now returns an `Outcome`
+(inputs and link libs), and `emit_program` appends the Rust libraries after `--link-lib`.
+
+What the tests pin: `tests/check_rust_interop.py` (golden module and shim for `tests/rust/geometry`, determinism,
+`--rustdoc-json` refusals, a real shim build, both layout checks failing on a corrupted size, usage errors, a fake
+`rustc` of another version, and the build-step cache, `--emit-deps`, `--release`, and E0264 on a broken crate);
+the `tests/m22_build/rust_*` packages (a program that runs through the shim, `burdin test`, and five failures); the
+unit tests of `burdin_rustgen`, `rust_interop.rs`, `rust_build.rs`, and the manifest tables in `burdin_query`.
+
+What is left: the Windows and macOS paths of the build step (system libraries, `crt-static` on MSVC) were written
+from the Linux design and never run; a fallible API needs a non-`Result` function in the crate because `Result`,
+`Option`, tuples, generics, traits, closures, and `async` are skipped (the mapping of errors is the next design
+decision); a crate's own dependencies on other bound crates are not modeled; and two shims in one program each carry
+their own Rust runtime.
 
 ## Decisions already made (do not reopen without a reason)
 

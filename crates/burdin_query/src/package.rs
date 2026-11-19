@@ -34,6 +34,19 @@ pub struct PackageFiles {
     /// The `[lint]` table of the manifest: `(lint name, level, line)` in file order (`spec/lint.md`, LN3). The
     /// linter checks the names and levels, so a manifest from a newer compiler still loads.
     pub lint: Vec<(String, String, usize)>,
+    /// The `[rust]` and `[rust.crates]` tables: Rust crates this package binds through generated C-ABI shims
+    /// (`spec/rust-interop.md`, RI7).
+    pub rust: RustConfig,
+}
+
+/// A package's Rust interop configuration. The manifest parser only reads it; the driver validates it and reports
+/// E0264, so a manifest from a newer compiler still loads.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RustConfig {
+    /// `[rust] toolchain`: the exact Rust version the shims are built and verified with.
+    pub toolchain: Option<String>,
+    /// `[rust.crates]`: `(module name, path relative to the manifest)` in file order.
+    pub crates: Vec<(String, String)>,
 }
 
 pub struct Workspace {
@@ -70,6 +83,7 @@ pub fn in_memory<'a>(paths: impl IntoIterator<Item = &'a str>) -> Workspace {
         build_allow: Vec::new(),
         root_module: Some(entry_module),
         lint: Vec::new(),
+        rust: Default::default(),
     };
     let mut packages = vec![package];
     attach_std(&mut packages);
@@ -219,6 +233,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
             build_allow: Vec::new(),
             root_module: Some(0),
             lint: Vec::new(),
+            rust: Default::default(),
         };
         let mut packages = vec![package];
         if let Some(manifest) = manifest {
@@ -311,6 +326,7 @@ fn std_package() -> PackageFiles {
         build_allow: Vec::new(),
         root_module,
         lint: Vec::new(),
+        rust: Default::default(),
     }
 }
 
@@ -397,6 +413,7 @@ impl Loader {
             build_allow: manifest.build_allow,
             root_module,
             lint: manifest.lint,
+            rust: manifest.rust,
         });
         self.loaded.insert(dir.to_path_buf(), id);
         self.loading.push(dir.to_path_buf());
@@ -428,6 +445,7 @@ pub struct Manifest {
     pub build_allow: Vec<String>,
     /// The `[lint]` entries: `(name, level, line)`.
     pub lint: Vec<(String, String, usize)>,
+    pub rust: RustConfig,
 }
 
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."`, `[dependencies]` entries with a
@@ -444,6 +462,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut deps: Vec<(String, String)> = Vec::new();
     let mut build_allow: Vec<String> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
+    let mut rust = RustConfig::default();
     for (index, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
@@ -478,6 +497,16 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                 let level = parse_string(value).map_err(|e| format!("{}: {e}", where_()))?;
                 lint.push((key.to_string(), level, index + 1));
             }
+            "rust" if key == "toolchain" => {
+                rust.toolchain = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
+            }
+            "rust.crates" => {
+                if !is_ident(key) {
+                    return Err(format!("{}: `{key}` is not a valid module name for a Rust crate", where_()));
+                }
+                let path = parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))?;
+                rust.crates.push((key.to_string(), path));
+            }
             "build" if key == "allow" => {
                 let names = parse_string_array(value).map_err(|e| format!("{}: {e}", where_()))?;
                 for allowed in names {
@@ -501,7 +530,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    Ok(Manifest { name, deps, build_allow, lint })
+    Ok(Manifest { name, deps, build_allow, lint, rust })
 }
 
 /// A `["a", "b"]` array of quoted strings, also accepting a single `"a"`.
@@ -744,6 +773,44 @@ mod tests {
         assert_eq!(
             m.deps,
             vec![("lib".to_string(), "../lib".to_string()), ("other".to_string(), "../other".to_string())]
+        );
+    }
+
+    #[test]
+    fn the_rust_tables_are_parsed() {
+        let text = "[package]
+name = \"app\"
+[rust]
+toolchain = \"1.100.0\"
+[rust.crates]
+geometry = { path = \"../geometry\" }
+other = \"../other\"
+";
+        let m = manifest(text).unwrap();
+        assert_eq!(m.rust.toolchain.as_deref(), Some("1.100.0"));
+        assert_eq!(
+            m.rust.crates,
+            vec![("geometry".to_string(), "../geometry".to_string()), ("other".to_string(), "../other".to_string())]
+        );
+        assert!(
+            manifest(
+                "[package]
+name = \"app\"
+[rust.crates]
+bad-name = \"x\"
+"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            manifest(
+                "[package]
+name = \"app\"
+"
+            )
+            .unwrap()
+            .rust,
+            RustConfig::default()
         );
     }
 

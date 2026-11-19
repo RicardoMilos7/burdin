@@ -28,10 +28,24 @@ new crate `burdin_inspect` holds the logic and reads what the compiler built; th
   call that required it (the chain is derived from the call graph, so sema is unchanged), and the instances nothing
   reaches counted apart.
 
+### Rust interop through C-ABI shims (issue #249, sub-issue #477)
+
+`spec/rust-interop.md` (RI1-RI11) is the specification; `tests/check_rust_interop.py` checks it, and the packages
+`tests/m22_build/rust_*` are conformance tests. `burdin bindgen --rust <crate> --out <file> --shim <dir>` reads a
+crate's rustdoc JSON (format 61, Rust 1.100.0 pinned) and writes a C-ABI shim crate plus a Burdin module: `repr(C)`
+structs by value with size, alignment, and offset checks on both sides, other types as opaque handles with generated
+`_free` functions, fieldless enums as integers, `&str`/`String`/slices as pointer and length, `#[no_mangle]`
+functions declared directly, and every item it cannot represent skipped with a `// bindgen:` note. A package binds a
+crate with `[rust] toolchain` and `[rust.crates]` in `burdin.toml`: `build`, `run`, and `test` generate the shim when
+the crate's sources changed, build it with cargo under the pinned toolchain, and link the static library and the
+system libraries `rustc` reports. A failure is the new E0264; a dependency's crates need a `[build] allow` grant
+(E0260). New crate `burdin_rustgen`; the macOS and Windows paths are written but not run.
+
 ### Release builds link LLVM statically
 
 - Linux and macOS release archives hold a compiler with LLVM linked in: no `libLLVM` is needed at run time.
-  `BURDIN_STATIC_LLVM=1` selects it in `crates/burdin_codegen/build.rs`; development builds stay shared.
+  `BURDIN_STATIC_LLVM=1` selects it in `crates/burdin_driver/build.rs`, which passes the archives as link arguments of the
+  binary so they follow every crate on the link line; development builds stay shared.
   `tests/build_release.py` sets it, checks the binary with `ldd`/`otool -L`, and the reproducibility check covers it.
 - Windows archives carry `LLVM-C.dll` beside `burdin.exe`, and `install.ps1` installs it with the compiler, so a fresh
   install starts without LLVM on `PATH`. `build_release.py` refuses to package a Windows build without the DLL and

@@ -29,38 +29,61 @@ pub(crate) struct Failure {
 }
 
 impl Failure {
-    fn new(code: Code, message: impl Into<String>) -> Failure {
+    pub(crate) fn new(code: Code, message: impl Into<String>) -> Failure {
         Failure { code, message: message.into(), note: None }
     }
 
-    fn with_note(mut self, note: impl Into<String>) -> Failure {
+    pub(crate) fn with_note(mut self, note: impl Into<String>) -> Failure {
         self.note = Some(note.into());
         self
     }
 }
 
-/// Runs the build scripts of the loaded packages, then adds each package's generated modules. Returns every input
-/// the scripts declared (including the files their `embed` calls read), in first-seen order.
-pub(crate) fn run(workspace: &mut Workspace, release: bool, options: &CompileOptions) -> Result<Vec<String>, Failure> {
+/// What running the build steps added to the build.
+#[derive(Default)]
+pub(crate) struct Outcome {
+    /// Every input the scripts declared (including the files their `embed` calls read) and every source of a bound
+    /// Rust crate, in first-seen order.
+    pub(crate) inputs: Vec<String>,
+    /// The static libraries and system libraries of the bound Rust crates' shims, which the program links.
+    pub(crate) link_libs: Vec<String>,
+}
+
+/// Binds the Rust crates of the loaded packages (`spec/rust-interop.md`), runs their build scripts, then adds each
+/// package's generated modules.
+pub(crate) fn run(workspace: &mut Workspace, release: bool, options: &CompileOptions) -> Result<Outcome, Failure> {
     check_grants(workspace)?;
     let profile = if release { "release" } else { "debug" };
     let fingerprint = compiler_fingerprint();
-    let mut inputs = Vec::new();
+    let mut outcome = Outcome::default();
     // Dependencies first, like a package manager building a graph: a package's generated modules are ready before
-    // the package that depends on it is loaded. The scripts are independent either way.
+    // the package that depends on it is loaded. The steps are independent either way.
     for index in (0..workspace.packages.len()).rev() {
-        if !has_script(&workspace.packages[index]) {
+        let package = &mut workspace.packages[index];
+        if crate::rust_build::has_crates(package) {
+            let bound = crate::rust_build::run_package(package, profile, &fingerprint)?;
+            for input in bound.inputs {
+                if !outcome.inputs.contains(&input) {
+                    outcome.inputs.push(input);
+                }
+            }
+            for lib in bound.link_libs {
+                if !outcome.link_libs.contains(&lib) {
+                    outcome.link_libs.push(lib);
+                }
+            }
+        }
+        if !has_script(package) {
             continue;
         }
-        let package = &mut workspace.packages[index];
         let declared = run_package(package, profile, &fingerprint, options)?;
         for input in declared {
-            if !inputs.contains(&input) {
-                inputs.push(input);
+            if !outcome.inputs.contains(&input) {
+                outcome.inputs.push(input);
             }
         }
     }
-    Ok(inputs)
+    Ok(outcome)
 }
 
 /// Whether the package has a `build.bd` next to its manifest. A one-file target and the embedded standard
@@ -74,13 +97,15 @@ fn has_script(package: &PackageFiles) -> bool {
 fn check_grants(workspace: &Workspace) -> Result<(), Failure> {
     let entry = &workspace.packages[workspace.entry_package];
     for (index, package) in workspace.packages.iter().enumerate() {
-        if index == workspace.entry_package || !has_script(package) {
+        let has_crates = crate::rust_build::has_crates(package);
+        if index == workspace.entry_package || !(has_script(package) || has_crates) {
             continue;
         }
         if !entry.build_allow.contains(&package.name) {
+            let what = if has_script(package) { "build script" } else { "Rust crates" };
             return Err(Failure::new(
                 Code::BUILD_CONFIG,
-                format!("the build script of dependency `{}` is not allowed by this package's manifest", package.name),
+                format!("the {what} of dependency `{}` is not allowed by this package's manifest", package.name),
             )
             .with_note(format!(
                 "add `{}` to `[build] allow = [\"...\"]` in the package's `burdin.toml`",
@@ -408,7 +433,7 @@ fn walk_files(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) -> st
 
 /// Adds `<out>/src/**.bd` to the package's modules under their own paths (BS4). A generated module that repeats a
 /// source module's path is an error, not an override.
-fn merge_generated(package: &mut PackageFiles, out_src: &Path) -> Result<(), Failure> {
+pub(crate) fn merge_generated(package: &mut PackageFiles, out_src: &Path) -> Result<(), Failure> {
     if !out_src.is_dir() {
         return Ok(());
     }
@@ -472,7 +497,7 @@ fn hash_file(path: &Path) -> Option<u64> {
 }
 
 /// FNV-1a, 64-bit. The key records content, not modification times, so a touched file does not rerun the script.
-fn hash_bytes(bytes: &[u8]) -> u64 {
+pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for &byte in bytes {
         hash ^= byte as u64;
@@ -625,6 +650,7 @@ mod tests {
             deps: Vec::new(),
             build_allow: Vec::new(),
             lint: Vec::new(),
+            rust: Default::default(),
             root_module: None,
         };
         let mut package = package_with(vec!["main"]);
@@ -653,6 +679,7 @@ mod tests {
             deps: Vec::new(),
             build_allow: Vec::new(),
             lint: Vec::new(),
+            rust: Default::default(),
             root_module: None,
         }
     }

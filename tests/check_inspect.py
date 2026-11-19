@@ -303,7 +303,8 @@ def check_emit() -> None:
         if files["llvm-ir-opt"].is_file():
             check("define" in harness.read_text(files["llvm-ir-opt"]), "--emit llvm-ir-opt holds the optimized definitions")
         if files["llvm-bc"].is_file():
-            check(harness.read_bytes(files["llvm-bc"])[:4] == b"BC\xc0\xde", "--emit llvm-bc is LLVM bitcode")
+            # LLVM wraps the bitcode in a header (magic 0x0B17C0DE) when the target is Darwin.
+            check(harness.read_bytes(files["llvm-bc"])[:4] in (b"BC\xc0\xde", b"\xde\xc0\x17\x0b"), "--emit llvm-bc is LLVM bitcode")
         if files["asm"].is_file():
             check("largest<i32>" in harness.read_text(files["asm"]), "--emit asm holds the function labels")
         if files["obj"].is_file():

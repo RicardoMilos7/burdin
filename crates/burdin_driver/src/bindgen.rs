@@ -1,8 +1,10 @@
-//! `burdin bindgen`: C headers to Burdin declarations, and Burdin exports to a C header (`spec/bindgen.md`).
+//! `burdin bindgen`: C headers to Burdin declarations, Burdin exports to a C header (`spec/bindgen.md`), and a Rust
+//! crate to a C-ABI shim plus Burdin declarations (`spec/rust-interop.md`).
 //!
 //! `burdin bindgen <header> --out <file>` reads a C header through libclang (the `burdin_bindgen` crate) and writes a
 //! Burdin module of raw declarations. `burdin bindgen --export <target> --out <header.h>` goes the other way
-//! (`export.rs`). This file is the command line: the options, the exit codes, and the files written.
+//! (`export.rs`), and `burdin bindgen --rust <crate> --out <file> --shim <dir>` reads a Rust crate's rustdoc JSON
+//! (`rust_interop.rs`). This file is the command line: the options, the exit codes, and the files written.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -12,12 +14,19 @@ use crate::DiagnosticOptions;
 const USAGE: &str =
     "usage: burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
                      [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
-       burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]";
+       burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]
+       burdin bindgen --rust <crate> --out <file> --shim <dir> [--rust-toolchain <version>] [--rustdoc-json <file>]";
 
 /// What the command line asked for.
 struct Request {
     header: Option<String>,
     export: Option<String>,
+    /// `--rust`: a Rust crate directory or `Cargo.toml`.
+    rust: Option<String>,
+    /// `--shim`: where the shim crate is written.
+    shim: Option<String>,
+    rust_toolchain: Option<String>,
+    rustdoc_json: Option<String>,
     out: Option<String>,
     guard: Option<String>,
     clang_args: Vec<String>,
@@ -36,6 +45,21 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     let Some(out) = request.out.clone() else {
         return usage_error("missing `--out <file>`");
     };
+    if let Some(krate) = &request.rust {
+        if request.header.is_some() || request.export.is_some() {
+            return usage_error("`--rust` takes a crate, not a header or `--export`");
+        }
+        if !request.clang_args.is_empty() || request.wrappers.is_some() || request.wrapper_include.is_some() {
+            return usage_error("`--rust` takes no C compiler options and no wrapper options");
+        }
+        let Some(shim) = request.shim.clone() else {
+            return usage_error("`--rust` needs `--shim <dir>`, where the shim crate is written");
+        };
+        return rust(&request, krate, &out, &shim);
+    }
+    if request.shim.is_some() || request.rust_toolchain.is_some() || request.rustdoc_json.is_some() {
+        return usage_error("`--shim`, `--rust-toolchain`, and `--rustdoc-json` only apply to `--rust`");
+    }
     if let Some(target) = &request.export {
         if request.header.is_some() {
             return usage_error("`--export` takes a package or file, not a header");
@@ -52,6 +76,65 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         return usage_error("missing the header path");
     };
     import(&request, &header, &out)
+}
+
+/// `burdin bindgen --rust <crate>`: rustdoc's JSON for the crate (run here, or read from `--rustdoc-json`), then the
+/// Burdin module and the shim crate. Exit 1 when the crate or its JSON cannot be read, 2 for a usage or I/O error.
+fn rust(request: &Request, krate: &str, out: &str, shim: &str) -> ExitCode {
+    let info = match crate::rust_interop::locate(Path::new(krate)) {
+        Ok(info) => info,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let pinned = request.rust_toolchain.as_deref();
+    if let Some(version) = pinned
+        && !crate::rust_interop::is_exact_version(version)
+    {
+        return usage_error("`--rust-toolchain` takes an exact version such as `1.100.0`");
+    }
+    let toolchain = match crate::rust_interop::verify_toolchain(pinned) {
+        Ok(version) => version,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let json = match &request.rustdoc_json {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("error: cannot read {path}: {e}");
+                return ExitCode::from(2);
+            }
+        },
+        None => match crate::rust_interop::rustdoc_json(&info, pinned) {
+            Ok(text) => text,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(1);
+            }
+        },
+    };
+    let generated = match crate::rust_interop::generate(&info, &toolchain, &json, Path::new(shim)) {
+        Ok(generated) => generated,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(1);
+        }
+    };
+    for note in &generated.notes {
+        eprintln!("warning: {note}");
+    }
+    if let Err(code) = write_file(out, &generated.module) {
+        return code;
+    }
+    if let Err(message) = crate::rust_interop::write_shim(Path::new(shim), &generated) {
+        eprintln!("error: {message}");
+        return ExitCode::from(2);
+    }
+    ExitCode::SUCCESS
 }
 
 fn import(request: &Request, header: &str, out: &str) -> ExitCode {
@@ -114,6 +197,10 @@ fn parse(args: &[String]) -> Result<Option<Request>, String> {
     let mut request = Request {
         header: None,
         export: None,
+        rust: None,
+        shim: None,
+        rust_toolchain: None,
+        rustdoc_json: None,
         out: None,
         guard: None,
         clang_args: Vec::new(),
@@ -141,6 +228,10 @@ fn parse(args: &[String]) -> Result<Option<Request>, String> {
         match option {
             "--out" | "-o" => request.out = Some(value("--out")?),
             "--export" => request.export = Some(value("--export")?),
+            "--rust" => request.rust = Some(value("--rust")?),
+            "--shim" => request.shim = Some(value("--shim")?),
+            "--rust-toolchain" => request.rust_toolchain = Some(value("--rust-toolchain")?),
+            "--rustdoc-json" => request.rustdoc_json = Some(value("--rustdoc-json")?),
             "--guard" => request.guard = Some(value("--guard")?),
             "--wrappers" => request.wrappers = Some(value("--wrappers")?),
             "--wrapper-include" => request.wrapper_include = Some(value("--wrapper-include")?),
@@ -185,6 +276,27 @@ mod tests {
         let request = parse(&args(&["a.h", "-I", "inc", "-Dx=1", "-I=ignored", "--clang-arg=-std=c99"])).unwrap();
         let request = request.unwrap();
         assert_eq!(request.clang_args, ["-Iinc", "-Dx=1", "-I=ignored", "-std=c99"]);
+    }
+
+    #[test]
+    fn the_rust_options_are_read() {
+        let request = parse(&args(&[
+            "--rust",
+            "crates/geometry",
+            "--out",
+            "geometry.bd",
+            "--shim=shim",
+            "--rust-toolchain",
+            "1.100.0",
+            "--rustdoc-json",
+            "doc.json",
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(request.rust.as_deref(), Some("crates/geometry"));
+        assert_eq!(request.shim.as_deref(), Some("shim"));
+        assert_eq!(request.rust_toolchain.as_deref(), Some("1.100.0"));
+        assert_eq!(request.rustdoc_json.as_deref(), Some("doc.json"));
     }
 
     #[test]

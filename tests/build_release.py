@@ -166,7 +166,7 @@ def check_binary_version(binary, version: str, channel: str, target: str) -> Non
 
 def uses_static_llvm(target: str) -> bool:
     """Linux and macOS release builds link LLVM into the compiler. Windows ships LLVM-C.dll beside it unless
-    BURDIN_STATIC_LLVM=1 asks for the static link there too (it needs the static CRT; see build.rs)."""
+    BURDIN_STATIC_LLVM=1 asks for the static link there too (it needs the static CRT; see crates/burdin_driver/build.rs)."""
     setting = os.environ.get("BURDIN_STATIC_LLVM")
     if setting is not None:
         return setting not in ("", "0")

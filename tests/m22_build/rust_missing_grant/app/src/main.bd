@@ -1,0 +1,7 @@
+//~ E0260
+//@ compile-fail
+
+// A dependency binds a Rust crate, which runs the crate's own `build.rs` and procedural macros, so the entry package must
+// grant it in `[build] allow` like a build script (spec/rust-interop.md, RI7; spec/build-scripts.md, BS2).
+
+fn main() {}

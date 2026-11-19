@@ -1,0 +1,6 @@
+//~ E0264
+//@ compile-fail
+
+// A `[rust.crates]` path with no `Cargo.toml` stops the build before any tool runs (spec/rust-interop.md, RI7).
+
+fn main() {}

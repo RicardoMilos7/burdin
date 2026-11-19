@@ -1,0 +1,9 @@
+[package]
+name = "rust_toolchain_inexact"
+version = "0.1.0"
+
+[rust]
+toolchain = "stable"
+
+[rust.crates]
+geometry = { path = "../../rust/geometry" }

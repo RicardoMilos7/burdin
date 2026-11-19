@@ -97,8 +97,10 @@ burdin-<version>-<target>/
 
 **Runtime requirement.** Development builds link LLVM 21 as a shared library (the static Windows archives crash in a
 dynamic-CRT Rust binary). Release builds on Linux and macOS link it statically: `tests/build_release.py` sets
-`BURDIN_STATIC_LLVM=1`, `crates/burdin_codegen/build.rs` links `llvm-config --link-static --libs` and the C++
-runtime, and the script fails the build if `ldd` or `otool -L` still lists an LLVM library. The binary is about 70 MB
+`BURDIN_STATIC_LLVM=1`, `crates/burdin_driver/build.rs` passes the archives `llvm-config --link-static --libs` names
+and the C++ runtime as link arguments of the `burdin` binary (they must come after `inkwell` and `llvm-sys` on the
+link line; a native library declared by `burdin_codegen` comes before them and leaves symbols unresolved on arm64
+Linux), and the script fails the build if `ldd` or `otool -L` still lists an LLVM library. The binary is about 70 MB
 and needs only the system C and C++ libraries (`libz`, `libzstd`, `libstdc++` on Linux), plus the `cc` that linking
 programs needs anyway; the archive stays under 30 MB. The Windows archives carry the `LLVM-C.dll` from the LLVM 21
 release the build linked against (found through `LLVM_SYS_211_PREFIX`, or `--llvm-dll`; `build_release.py` refuses to

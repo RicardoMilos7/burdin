@@ -695,6 +695,7 @@ mod tests {
             deps: Vec::new(),
             build_allow: Vec::new(),
             lint: Vec::new(),
+            rust: Default::default(),
             root_module: None,
         }
     }

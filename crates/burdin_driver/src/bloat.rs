@@ -123,7 +123,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         run_build_scripts: true,
         jobs: jobs_or_default(args.jobs),
     };
-    let FrontEnd { loaded, sources, program, diags, .. } =
+    let FrontEnd { loaded, sources, program, diags, rust_libs, .. } =
         match front_end(&args.target, &options, &SourceOverrides::new()) {
             Ok(front) => front,
             Err(code) => return code,
@@ -143,7 +143,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         }
     };
     let output = dir.path.join(&loaded.stem).with_extension(std::env::consts::EXE_EXTENSION);
-    if let Err(code) = emit_program(&program, &sources, &loaded.stem, &output, &options) {
+    if let Err(code) = emit_program(&program, &sources, &loaded.stem, &output, &options, &rust_libs) {
         return code;
     }
     let object = artifact_path(&output, EmitKind::Obj);
