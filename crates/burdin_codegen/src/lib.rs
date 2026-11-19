@@ -61,8 +61,28 @@ pub struct Options {
     /// How many threads compile codegen units at once; 0 uses the machine's parallelism (`-j`).
     pub jobs: usize,
     /// Split into exactly this many codegen units instead of choosing by size (`BURDIN_CODEGEN_UNITS`). Bitcode,
-    /// instrumentation, and the `--pgo-use` IR always use one unit.
+    /// instrumentation, the `--pgo-use` IR, and every inspection output below always use one unit.
     pub units: Option<usize>,
+    /// Also write the LLVM IR the backend sees, after the profile's optimization pipeline, as text
+    /// (`--emit=llvm-ir-opt`, `burdin asm --llvm`).
+    pub emit_opt_ir: Option<PathBuf>,
+    /// Also write the optimized module as LLVM bitcode (`--emit=llvm-bc`).
+    pub emit_bitcode: Option<PathBuf>,
+    /// Also write the program's assembly (`--emit=asm`, `burdin asm`). With debug information the text carries
+    /// the `.loc` line table, which `burdin asm` uses to interleave source lines.
+    pub emit_asm: Option<PathBuf>,
+    /// The assembly dialect of `emit_asm`. Only x86 has two; asking for either on another processor is an error.
+    pub asm_syntax: AsmSyntax,
+}
+
+/// The assembly dialect `--emit=asm` and `burdin asm` print.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AsmSyntax {
+    /// The target's own default (AT&T on x86).
+    #[default]
+    Default,
+    Intel,
+    Att,
 }
 
 /// The version of the LLVM library the compiler was linked against, as `major.minor.patch`.
@@ -102,6 +122,8 @@ pub fn emit_object(
     object: &Path,
     opts: &Options,
 ) -> Result<Vec<PathBuf>, String> {
+    // The dialect is read when the target machine builds its assembly printer, so it is set first.
+    set_asm_syntax(opts.asm_syntax)?;
     let machine = target_machine(opts.release)?;
     let triple = TargetMachine::get_default_triple();
 
@@ -136,7 +158,12 @@ pub fn emit_object(
     module
         .run_passes("globaldce", &machine, inkwell::passes::PassBuilderOptions::create())
         .map_err(|e| e.to_string_lossy().to_string())?;
-    let single = opts.bitcode || opts.instrument || opts.pgo_ir.is_some();
+    let single = opts.bitcode
+        || opts.instrument
+        || opts.pgo_ir.is_some()
+        || opts.emit_opt_ir.is_some()
+        || opts.emit_bitcode.is_some()
+        || opts.emit_asm.is_some();
     let units = if single {
         1
     } else {
@@ -158,6 +185,17 @@ pub fn emit_object(
             .run_passes("pgo-instr-gen,instrprof", &machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
+    if let Some(path) = &opts.emit_opt_ir {
+        module.print_to_file(path).map_err(|e| e.to_string())?;
+    }
+    if let Some(path) = &opts.emit_bitcode
+        && !module.write_bitcode_to_path(path)
+    {
+        return Err(format!("cannot write LLVM bitcode to {}", path.display()));
+    }
+    if let Some(path) = &opts.emit_asm {
+        machine.write_to_file(&module, FileType::Assembly, path).map_err(|e| e.to_string_lossy().to_string())?;
+    }
     if opts.bitcode {
         // Link-time optimization consumes bitcode; the driver links it with an LLVM compiler driver.
         if !module.write_bitcode_to_path(object) {
@@ -167,6 +205,27 @@ pub fn emit_object(
         machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
     }
     Ok(vec![object.to_path_buf()])
+}
+
+/// Selects the x86 assembly dialect through LLVM's own command-line option, which the x86 assembly printer reads
+/// when the target machine is created. The option is process-wide, so it is set once, before the machine exists.
+fn set_asm_syntax(syntax: AsmSyntax) -> Result<(), String> {
+    let flag = match syntax {
+        AsmSyntax::Default => return Ok(()),
+        AsmSyntax::Intel => "-x86-asm-syntax=intel",
+        AsmSyntax::Att => "-x86-asm-syntax=att",
+    };
+    if cfg!(not(target_arch = "x86_64")) {
+        return Err("`--intel` and `--att` choose between the two x86 assembly dialects; this processor has only one"
+            .to_string());
+    }
+    let program = std::ffi::CString::new("burdin").expect("no NUL in a literal");
+    let option = std::ffi::CString::new(flag).expect("no NUL in a literal");
+    let argv = [program.as_ptr(), option.as_ptr()];
+    // SAFETY: `argv` holds two NUL-terminated strings that outlive the call, and the overview is a null pointer,
+    // which LLVM accepts.
+    unsafe { inkwell::llvm_sys::support::LLVMParseCommandLineOptions(2, argv.as_ptr(), std::ptr::null()) };
+    Ok(())
 }
 
 /// Marks every defined function `uwtable`: without it LLVM emits no `.eh_frame` entry for a generated function, and

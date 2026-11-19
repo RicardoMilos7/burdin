@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the fifty-third session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-fourth session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -494,6 +494,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md`, `docs/diagnostics.md`, `spec/diagnostics.md` | Four formats (`human`, `short`, a versioned `json` with `docs/diagnostic.schema.json`, and `sarif`), color and width control, hyperlinks to the error reference, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report,doc_tests}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The doc tests of the doc comments run with the blocks (or alone with `--doc`): each Burdin block becomes a one-file package depending on the documented package, wrapped in `fn main` when it has none, with its attributes (`ignore`, `no_run`, `should_panic`, `compile_fail`) and its hidden `# ` setup lines; a failure reports the doc comment's file and line (issues #250, #650-#652). The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
+| Inspection commands | `spec/inspect.md`, `crates/burdin_inspect/`, `crates/burdin_driver/src/{expand,asm,bloat,emit}.rs`, `tests/check_inspect.py`, `tests/inspect/` | `burdin expand`, `build --emit`, `burdin asm`, `burdin bloat`, and `check --print-instances` (issue #595; INS1-INS19). Every command reads what the compiler built; the expander patches each file's text from the typed tree. Every CI job runs the script |
 | Type-check command | `spec/check.md`, `crates/burdin_driver/src/check.rs`, `tests/check_check.py`, `tests/check/` | `burdin check`: `front_end` without code generation or linking, a build's diagnostics and exit statuses, `--tests` for `test` blocks and library packages, `--release`, `--comptime-steps`. The script runs fixtures with goldens and every conformance test, and every CI job runs it (issue #237) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
@@ -1129,6 +1130,28 @@ profiler. The syntax and semantics are `spec/bench.md`; `crates/burdin_syntax/sr
 What is left: the language server has no bench integration (lenses or `--list` consumption; the issue's
 follow-up list already names it), there is no way to bench a debug build, and bench bodies cannot take setup or
 teardown code beyond what a `let` outside the loop can express.
+
+## The fifty-fourth session: inspecting what the compiler generated (stage 3, issue #595, sub-issues #597, #598, #600, #602)
+
+A new crate, `crates/burdin_inspect` (`spec/inspect.md`, INS1-INS19), holds the logic of five tools that the driver
+calls: `burdin expand`, `build --emit`, `burdin asm`, `burdin bloat`, and `check --print-instances`. None of them adds a
+pass to the compiler, and the front end is the one every command shares.
+
+`expand` is the one with a design decision. The issue says it is "a printer over the rewritten typed tree"; that would
+be a second pretty-printer for the whole language (the tree has no layout or comments, spells `println` as calls to
+the formatter, and cannot name what is only in scope elsewhere) that must also pass the checker. It patches the text
+instead: the typed tree records the span of every expression, so a syntax node whose typed counterpart at the same span
+differs has been rewritten (a `comptime` became a literal, an operator a call, a call lost its named arguments). The
+rewrites that have no source form are skipped, so the output re-checks; `tests/check_inspect.py` proves that over
+every program of m17, m19, m20, and m21 and compares what the original and the expansion print. Two deviations from
+the issue, both in `spec/inspect.md`: an extension call stays a method call (EX1 says an extension is not a value, so
+no function form exists), and the built-in derives keep their `derives (...)` clause with a comment, because a
+hand-written impl of a built-in interface is E9000 (#402). `--instances` prints each instance of a generic function
+as its declaration with that instance's tree; it is for reading and is not part of the re-check guarantee.
+
+What is left: a user derive on a generic type is not expanded (its impl is per instance); a number outside `i32`'s
+range written under `comptime` where nothing fixes its type stays as written (the language has no literal suffixes);
+the COFF and Mach-O symbol readers of `bloat` are tested on synthetic files and run only on their own platforms in CI.
 
 ## The fifty-second session: the REPL and single-file scripts (stage 3, issue #578, sub-issues #580, #582, #584, #586)
 

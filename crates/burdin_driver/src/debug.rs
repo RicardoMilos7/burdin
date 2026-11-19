@@ -280,6 +280,7 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
         pgo_generate: false,
         pgo_use: None,
         emit_ir: None,
+        emit: None,
         link_libs: &[],
         mode: if args.test.is_some() { crate::EntryMode::Test } else { crate::EntryMode::Build },
         diagnostics: &args.diagnostics,

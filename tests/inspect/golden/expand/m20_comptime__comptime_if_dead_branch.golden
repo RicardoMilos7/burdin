@@ -1,0 +1,15 @@
+//@ run
+//> fine
+
+// The branch that is not selected is type-checked but never evaluated: its panic, failed assertion, and comptime
+// expressions have no effect (spec/comptime.md, CT5).
+
+fn boom(): i32 {
+    panic("never evaluated")
+}
+
+const DEBUG: bool = false
+
+fn main() {
+    { println("fine") }
+}

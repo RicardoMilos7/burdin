@@ -1,0 +1,5 @@
+use shapes.area
+
+fn main() {
+    println(area(3).to_string())
+}

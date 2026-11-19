@@ -69,6 +69,7 @@ fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path
         pgo_generate: false,
         pgo_use: None,
         emit_ir,
+        emit: None,
         link_libs: &[],
         // The session's `test` items are checked by the interpreter's analysis; a native build is an ordinary
         // program, so they are stripped as in every build.

@@ -205,6 +205,7 @@ fn run_script(
         pgo_generate: false,
         pgo_use: None,
         emit_ir: None,
+        emit: None,
         link_libs: &[],
         mode: EntryMode::Build,
         diagnostics: options.diagnostics,

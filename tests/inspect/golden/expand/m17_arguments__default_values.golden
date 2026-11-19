@@ -1,0 +1,51 @@
+//@ run
+//> 15
+//> 12
+//> 43
+//> 1
+//> 11
+//> 14
+//> hello world
+
+// A parameter written `name: Type = expr` may be omitted at the call site; the value is checked once at the
+// declaration (spec/arguments.md, AG1-AG3). Every omission inserts that value.
+
+const BASE: i32 = 40
+
+fn add(a: i32, b: i32 = 10): i32 {
+    a + b
+}
+
+fn finish(n: i32, extra: i32 = BASE + 2): i32 {
+    n + extra
+}
+
+fn twice(own n: i32 = 7): i32 {
+    n * 2
+}
+
+fn greet(name: str = "world") {
+    println("hello {name}")
+}
+
+struct Counter {
+    value: i32,
+}
+
+Counter {
+    fn bump(mut self, by: i32 = 1): i32 {
+        self.value = self.value + by
+        self.value
+    }
+}
+
+fn main() {
+    println("{}", add(5, 10))
+    println("{}", add(5, 7))
+    println("{}", finish(1))
+    let mut c = Counter { value: 0 }
+    println("{}", c.bump(1))
+    println("{}", c.bump(10))
+    println("{}", twice(7))
+    greet("world")
+}

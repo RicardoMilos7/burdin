@@ -580,6 +580,7 @@ fn build_one(
         pgo_generate: options.pgo_generate,
         pgo_use: options.pgo_use,
         emit_ir: None,
+        emit: None,
         link_libs: options.link_libs,
         mode: EntryMode::Build,
         diagnostics: options.diagnostics,

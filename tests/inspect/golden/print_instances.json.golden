@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "function_instances": 4,
+  "type_instances": 2,
+  "unreachable_function_instances": 0,
+  "unreachable_type_instances": 0,
+  "functions": [
+    {
+      "generic": "twice",
+      "count": 2,
+      "instances": [
+        {
+          "name": "twice<i32>",
+          "declared": "generics.bd:10",
+          "std": false,
+          "required_by": [
+            {
+              "function": "main",
+              "at": "generics.bd:21:19"
+            }
+          ]
+        },
+        {
+          "name": "twice<i64>",
+          "declared": "generics.bd:10",
+          "std": false,
+          "required_by": [
+            {
+              "function": "main",
+              "at": "generics.bd:22:19"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "generic": "largest",
+      "count": 2,
+      "instances": [
+        {
+          "name": "largest<i32>",
+          "declared": "generics.bd:6",
+          "std": false,
+          "required_by": [
+            {
+              "function": "twice<i32>",
+              "at": "generics.bd:11:5"
+            },
+            {
+              "function": "main",
+              "at": "generics.bd:21:19"
+            }
+          ]
+        },
+        {
+          "name": "largest<i64>",
+          "declared": "generics.bd:6",
+          "std": false,
+          "required_by": [
+            {
+              "function": "twice<i64>",
+              "at": "generics.bd:11:5"
+            },
+            {
+              "function": "main",
+              "at": "generics.bd:22:19"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "types": [
+    {
+      "generic": "Pair",
+      "count": 2,
+      "instances": [
+        {
+          "name": "Pair<i32>",
+          "kind": "struct",
+          "first_use": {
+            "function": "main",
+            "at": "generics.bd:14:1"
+          }
+        },
+        {
+          "name": "Pair<i64>",
+          "kind": "struct",
+          "first_use": {
+            "function": "main",
+            "at": "generics.bd:14:1"
+          }
+        }
+      ]
+    }
+  ]
+}

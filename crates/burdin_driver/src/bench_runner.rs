@@ -209,6 +209,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         pgo_generate: args.pgo_generate,
         pgo_use: args.pgo_use.as_deref(),
         emit_ir: args.emit_ir.as_deref(),
+        emit: None,
         link_libs: &args.link_libs,
         mode: EntryMode::Bench,
         diagnostics: &args.diagnostics,

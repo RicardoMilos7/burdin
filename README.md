@@ -33,6 +33,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
+| [`spec/inspect.md`](spec/inspect.md) | Inspecting what the compiler generated: `burdin expand`, `--emit`, `burdin asm`, `burdin bloat`, and `burdin check --print-instances` (stage 3). |
 | [`spec/debug.md`](spec/debug.md) | Debugging: the panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file, `burdin debug`, and the `burdin dap` debug adapter (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
 | [`CLAUDE.md`](CLAUDE.md) | The Claude-specific entry point and working rules. |
@@ -269,7 +270,18 @@ file, and prints the same diagnostics in the same formats as a build. A clean ch
 a library package without `src/main.bd`; `--release` checks as `build --release` does. It is meant for CI gates and editor
 feedback. [`spec/check.md`](spec/check.md) is the specification and `tests/check_check.py` checks it: the fixtures under
 `tests/check/`, and the whole conformance suite, whose `compile-fail` programs must report exactly their markers and
-whose other programs must be accepted.
+whose other programs must be accepted. `burdin check <target> --print-instances [--format json]` also prints every generic
+instance the program created and the call that required it ([`spec/inspect.md`](spec/inspect.md), INS12-INS15).
+
+`burdin expand <target> [--item <path>] [--instances]` prints Burdin source for the program after compile-time evaluation,
+`comptime if` and `comptime for` unrolling, user derives, default and named arguments, and operators: the text of each
+file with only the rewritten parts replaced, through `burdin fmt`. The output is a program: `burdin check` accepts it
+wherever it accepted the input. `--item` prints one function, type, constant, or method, and `--instances` adds each
+instance of a generic function. `burdin build --emit <kinds>` writes `tir`, `llvm-ir`, `llvm-ir-opt`, `llvm-bc`, `asm`,
+`obj`, and `deps` files next to the output (`--intel` and `--att` choose the dialect of `asm`), `burdin asm <target>
+[<function>]` prints one function's assembly (or LLVM IR with `--llvm`) with the source lines interleaved, and `burdin
+bloat <target>` reports the size of each function, module, package, and generic in the release build. The behavior is
+[`spec/inspect.md`](spec/inspect.md) and `tests/check_inspect.py` checks it.
 
 `burdin new <name>` creates the package directory `<name>` (a path; its last component is the package name, which must be
 an identifier that is not a reserved word or `std`) with a `burdin.toml`, a `src/main.bd` that prints a greeting, and a
@@ -880,6 +892,10 @@ checksums, and publishes only from a tag push or an explicit manual `publish`. S
 `tests/check_check.py` covers `burdin check`: the fixtures under `tests/check/` with their golden outputs, the equivalence with
 `burdin build`, every conformance test (a `compile-fail` program reports exactly its markers, every other program is
 accepted), the absence of code generation and linking, and the command line. Every CI job runs it after the build.
+`tests/check_inspect.py` covers the inspection commands: the golden expansion of fixtures from `m17_arguments`, `m19_operators`,
+`m20_comptime`, and `m21_reflect`, the expansion of every program of those folders going back through `burdin check` and
+printing what the original prints, `--emit`, `burdin asm`, `burdin bloat`, and the instance report. Every CI job runs it
+after the build.
 `tests/check_lint.py` covers `burdin lint`: every documented example, the fixtures under `tests/lint/` (each with the
 diagnostics its `//~` markers name), `--fix` and `--dry-run` against golden files, the all-or-nothing write, levels, the
 manifest `[lint]` table, and the output formats. Every CI job runs it after the build. `tests/check_doc.py` covers `burdin doc`: the fixture package under `tests/doc/geometry` against the golden pages in

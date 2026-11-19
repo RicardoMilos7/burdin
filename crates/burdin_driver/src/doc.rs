@@ -136,6 +136,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         pgo_generate: false,
         pgo_use: None,
         emit_ir: None,
+        emit: None,
         link_libs: &[],
         // A library package has no `main`, and the `test` blocks are not part of the documented interface.
         mode: EntryMode::Test,

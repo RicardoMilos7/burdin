@@ -1,13 +1,17 @@
-//! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `fmt`, `lint`, `explain`, `bindgen`, and `new`.
+//! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `expand`, `asm`, `bloat`, `fmt`, `lint`, `explain`, `bindgen`, and `new`.
 //! The contract is documented in `README.md` at the repository root (`The driver contract`) and summarized at the
 //! top of tests/run_tests.py.
 
+mod asm;
 mod bench_runner;
 mod bindgen;
+mod bloat;
 mod build;
 mod check;
 mod debug;
 mod doc;
+mod emit;
+mod expand;
 mod export;
 mod fmt;
 mod lint;
@@ -29,6 +33,7 @@ pub(crate) const USAGE: &str = "\
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
+               [--emit <kinds>] [--intel | --att]
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
@@ -41,7 +46,14 @@ usage:
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
-  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [--print-instances [--format <human|json>]]
+               [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin asm <file.bd | package directory> [<function>] [--debug] [--intel | --att] [--llvm] [--no-source]
+             [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin bloat <file.bd | package directory> [--debug] [--top <n>] [--format <human|json>] [-j <n>]
+               [--comptime-steps <n>] [diagnostics]
+  burdin expand <file.bd | package directory> [--item <path>] [--instances] [--no-format] [-j <n>]
+                [--comptime-steps <n>] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
@@ -65,6 +77,11 @@ compile options:
                        then the number of CPUs); `burdin test` also runs at most n tests at once
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
+  --emit <kinds>       also write build artifacts next to the output, one file per kind, named after its stem
+                       (`-o app` gives `app.s`, `app.ll`, ...): tir (the typed tree), llvm-ir (as generated),
+                       llvm-ir-opt (after optimization), llvm-bc (bitcode), asm, obj (one codegen unit), and
+                       deps (the same list as --emit-deps); kinds are separated by commas (spec/inspect.md)
+  --intel, --att       with `--emit asm`: the x86 assembly dialect (default: the target's, AT&T on x86)
   --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,
                        as `burdin test` does, without running anything (the debug adapter builds a test this way)
 
@@ -82,6 +99,20 @@ doc options (the behavior is spec/doc.md):
 
 check options (type-check only: the front end and every memory check, no code generation or linking):
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
+  --print-instances    print every generic instance the program created and why (spec/inspect.md)
+  --format <human|json>  the format of --print-instances (default: human)
+
+asm options (one function's assembly, with the source interleaved; the behavior is spec/inspect.md):
+  <function>           `module.name`, `Type.method`, or an instance such as `largest<i32>`; without it, the
+                       functions that have code are listed
+  --debug              build the debug profile (the default is release)    --llvm   print the LLVM IR instead
+  --intel, --att       the x86 assembly dialect                            --no-source   leave out source lines
+
+expand options (the program's source after comptime, derives, default and named arguments, and operators; the
+behavior is spec/inspect.md):
+  --item <path>        print only this function, type, constant, or method (`area`, `Circle.area`, `shapes.area`)
+  --instances          after the source, print each monomorphized instance of a generic function
+  --no-format          print the expansion without running the formatter over it
 
 test options:
   -j, --jobs <n>       tests to run at once, and compilation threads (default: the number of CPUs)
@@ -146,6 +177,10 @@ debug (the behavior is spec/debug.md):
   --break-on-panic          start with a breakpoint on the panic hook
   --release                 debug an optimized build
 
+bloat options (the size of each function, module, package, and generic in the release build; spec/inspect.md):
+  --debug              measure the debug profile        --top <n>   the n largest functions and generics (default 20)
+  --format <human|json>  a table (default) or one JSON object
+
 fmt options:
   --check                  change nothing; list the files that are not formatted and exit with status 1
   --stdin                  format standard input to standard output
@@ -200,6 +235,10 @@ pub(crate) struct Args {
     pub(crate) pgo_use: Option<PathBuf>,
     pub(crate) output: Option<PathBuf>,
     pub(crate) emit_ir: Option<PathBuf>,
+    /// `--emit <kinds>`: the artifacts to write next to the output (`burdin build` only).
+    pub(crate) emit: Vec<emit::EmitKind>,
+    /// `--intel` or `--att`: the dialect of `--emit asm`.
+    pub(crate) asm_syntax: burdin_codegen::AsmSyntax,
     pub(crate) link_libs: Vec<String>,
     pub(crate) program_args: Vec<String>,
     pub(crate) diagnostics: DiagnosticOptions,
@@ -326,6 +365,15 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
             "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--emit-ir" => args.emit_ir = Some(option_value(&mut it, inline, a, "a path")?.into()),
+            "--emit" => args.emit = emit::parse_kinds(&option_value(&mut it, inline, a, "a list of kinds")?)?,
+            "--intel" => {
+                flag_without_value(a, inline)?;
+                args.asm_syntax = burdin_codegen::AsmSyntax::Intel;
+            }
+            "--att" => {
+                flag_without_value(a, inline)?;
+                args.asm_syntax = burdin_codegen::AsmSyntax::Att;
+            }
             "--link-lib" => args.link_libs.push(option_value(&mut it, inline, a, "a name")?),
             "--diagnostic-format" => {
                 args.diagnostics.format = parse_format(&option_value(&mut it, inline, a, "a value")?)?;
@@ -444,6 +492,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if args.lto && (args.pgo_generate || args.pgo_use.is_some()) {
         return Err("`--lto` cannot be combined with profile-guided optimization".to_string());
+    }
+    if !args.emit.is_empty() && args.command != "build" {
+        return Err("`--emit` is only valid for `burdin build`".to_string());
+    }
+    if args.asm_syntax != burdin_codegen::AsmSyntax::Default && !args.emit.contains(&emit::EmitKind::Asm) {
+        return Err("`--intel` and `--att` only apply to `--emit asm`".to_string());
     }
     args.target = target.ok_or("missing target file")?;
     let tests = args.command == "test";
@@ -692,6 +746,15 @@ fn driver_main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("check") {
         return check::run(&argv[1..]);
     }
+    if argv.first().map(String::as_str) == Some("asm") {
+        return asm::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("bloat") {
+        return bloat::run(&argv[1..]);
+    }
+    if argv.first().map(String::as_str) == Some("expand") {
+        return expand::run(&argv[1..]);
+    }
     if argv.first().map(String::as_str) == Some("explain") {
         return explain(&argv[1..]);
     }
@@ -726,6 +789,11 @@ fn driver_main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let emit = (!args.emit.is_empty()).then(|| emit::Emit {
+        kinds: args.emit.clone(),
+        asm_syntax: args.asm_syntax,
+        skip_link: false,
+    });
     let options = CompileOptions {
         release: args.release,
         debug: args.debug,
@@ -734,6 +802,7 @@ fn driver_main() -> ExitCode {
         pgo_generate: args.pgo_generate,
         pgo_use: args.pgo_use.as_deref(),
         emit_ir: args.emit_ir.as_deref(),
+        emit: emit.as_ref(),
         link_libs: &args.link_libs,
         mode: if args.tests { EntryMode::Test } else { EntryMode::Build },
         diagnostics: &args.diagnostics,
@@ -849,6 +918,8 @@ pub(crate) struct CompileOptions<'a> {
     /// Use this profile for PGO.
     pub(crate) pgo_use: Option<&'a Path>,
     pub(crate) emit_ir: Option<&'a Path>,
+    /// The artifacts `--emit` asked for (`spec/inspect.md`, INS7); `None` writes none.
+    pub(crate) emit: Option<&'a emit::Emit>,
     pub(crate) link_libs: &'a [String],
     /// `burdin test`: declare and check the package's `test` blocks, and emit the test dispatcher instead of
     /// `main`. `burdin bench` does the same for `bench` blocks (`EntryMode::Bench`).
@@ -988,7 +1059,7 @@ pub(crate) fn compile(
     output: Option<&Path>,
     options: &CompileOptions,
 ) -> Result<Compiled, ExitCode> {
-    let FrontEnd { loaded, sources, program, diags, script_inputs, .. } =
+    let FrontEnd { loaded, files, sources, program, diags, script_inputs, .. } =
         front_end(target, options, &SourceOverrides::new())?;
     if diags.has_errors() {
         report_errors("compile", target, &diags, &sources, options.diagnostics);
@@ -997,16 +1068,13 @@ pub(crate) fn compile(
     let mut program = program.expect("no errors means checking produced a program");
     // A build system watching `--emit-deps` must rebuild when a header the script declared changes too.
     program.build_inputs.extend(script_inputs);
+    let mut deps = String::new();
+    for input in &program.build_inputs {
+        deps.push_str(input);
+        deps.push('\n');
+    }
     if let Some(path) = options.emit_deps {
-        let mut text = String::new();
-        for input in &program.build_inputs {
-            text.push_str(input);
-            text.push('\n');
-        }
-        if let Err(e) = std::fs::write(path, text) {
-            eprintln!("error: cannot write {}: {e}", path.display());
-            return Err(ExitCode::from(2));
-        }
+        write_artifact(path, &deps)?;
     }
     // Warnings do not stop compilation, but they are printed before the build goes on (`spec/extensions.md`,
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
@@ -1022,6 +1090,16 @@ pub(crate) fn compile(
         eprintln!("error: the output path `{}` is a directory; pass `-o <file>`", output.display());
         return Err(ExitCode::from(2));
     }
+    if let Some(emit) = options.emit {
+        if emit.wants(emit::EmitKind::Deps) {
+            write_artifact(&emit.path(&output, emit::EmitKind::Deps), &deps)?;
+        }
+        if emit.wants(emit::EmitKind::Tir) {
+            let is_std = |file: burdin_diag::FileId| files.get(file.0 as usize).is_some_and(|(_, embedded)| *embedded);
+            let text = burdin_inspect::tir::dump(&program, &sources, &is_std);
+            write_artifact(&emit.path(&output, emit::EmitKind::Tir), &text)?;
+        }
+    }
     emit_program(&program, &sources, &loaded.stem, &output, options)?;
     let site = |span: burdin_diag::Span| {
         let file = sources.get(span.file);
@@ -1036,6 +1114,14 @@ pub(crate) fn compile(
         benches: program.benches,
         bench_sites,
         build_inputs: program.build_inputs,
+    })
+}
+
+/// Writes one artifact file, reporting a failure the way the driver reports every I/O error.
+pub(crate) fn write_artifact(path: &Path, text: &str) -> Result<(), ExitCode> {
+    std::fs::write(path, text).map_err(|e| {
+        eprintln!("error: cannot write {}: {e}", path.display());
+        ExitCode::from(2)
     })
 }
 
@@ -1063,18 +1149,34 @@ pub(crate) fn emit_program(
     };
     let object = dir.path.join(format!("program.{extension}"));
     let pgo_ir = options.pgo_use.map(|_| dir.path.join("program.pgo.ll"));
+    let emit = options.emit;
+    let artifact = |kind: emit::EmitKind| emit.filter(|e| e.wants(kind)).map(|e| e.path(output, kind));
     let opts = burdin_codegen::Options {
         release: options.release,
-        emit_ir: options.emit_ir.map(Path::to_path_buf),
+        emit_ir: options.emit_ir.map(Path::to_path_buf).or_else(|| artifact(emit::EmitKind::LlvmIr)),
         pgo_ir,
         debug: options.debug,
         bitcode: options.lto,
         instrument: options.pgo_generate,
         jobs: options.jobs,
-        units: env_codegen_units(),
+        // One object file is what `--emit obj` promises.
+        units: if emit.is_some_and(|e| e.wants(emit::EmitKind::Obj)) { Some(1) } else { env_codegen_units() },
+        emit_opt_ir: artifact(emit::EmitKind::LlvmIrOpt),
+        emit_bitcode: artifact(emit::EmitKind::LlvmBc),
+        emit_asm: artifact(emit::EmitKind::Asm),
+        asm_syntax: emit.map_or(Default::default(), |e| e.asm_syntax),
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
     let objects = burdin_codegen::emit_object(program, sources, stem, &object, &opts).map_err(fail)?;
+    if emit.is_some_and(|e| e.wants(emit::EmitKind::Obj)) {
+        for (index, object) in objects.iter().enumerate() {
+            let target = emit::object_path(output, index);
+            std::fs::copy(object, &target).map_err(|e| fail(format!("cannot write {}: {e}", target.display())))?;
+        }
+    }
+    if emit.is_some_and(|e| e.skip_link) {
+        return Ok(());
+    }
     let objects = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");

@@ -90,6 +90,7 @@ dependencies = [
  "burdin_diag",
  "burdin_doc",
  "burdin_fmt",
+ "burdin_inspect",
  "burdin_lint",
  "burdin_lsp",
  "burdin_query",
@@ -113,6 +114,15 @@ version = "0.1.0"
 dependencies = [
  "burdin_diag",
  "burdin_syntax",
+]
+
+[[package]]
+name = "burdin_inspect"
+version = "0.1.0"
+dependencies = [
+ "burdin_diag",
+ "burdin_syntax",
+ "burdin_tir",
 ]
 
 [[package]]

@@ -1,0 +1,24 @@
+// A program with generic functions and a generic type, for the instance report, `burdin asm`, `--emit`, and
+// `burdin bloat` (spec/inspect.md). Two types reach each generic, so there are two instances of each.
+
+struct Pair<T> { a: T, b: T }
+
+fn largest<T: Ord>(own x: T, own y: T): T {
+    if x > y { x } else { y }
+}
+
+fn twice<T: Ord + Copy>(own x: T): T {
+    largest(x, x)
+}
+
+fn main() {
+    let mut v = List<i32>.new()
+    v.push(3)
+    v.push(4)
+    let p = Pair { a: 1, b: 2 }
+    let n: i64 = 7
+    let q = Pair { a: n, b: n }
+    println("{}", twice(p.a))
+    println("{}", twice(q.a))
+    println("{}", v.len())
+}

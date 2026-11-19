@@ -1,0 +1,44 @@
+//@ run
+//> -5
+//> 5
+//> false
+//> true
+//> -7
+//> true
+
+// `Neg` and `Not` overload the unary operators; the operand is borrowed (spec/operators.md OP4, OP8).
+
+struct Signed {
+    v: i32,
+}
+
+Signed: Neg {
+    fn neg(self): Signed {
+        Signed { v: -self.v }
+    }
+}
+
+struct Flag {
+    v: bool,
+}
+
+Flag: Not {
+    fn not(self): Flag {
+        Flag { v: !self.v }
+    }
+}
+
+fn main() {
+    let a = Signed { v: 5 }
+    println(a.neg().v.to_string())
+    // `-a` borrowed `a`, so it is still usable.
+    println(a.v.to_string())
+
+    let b = Flag { v: true }
+    println(b.not().v.to_string())
+    println(b.v.to_string())
+
+    // The built-in unary operators are unchanged.
+    println((-7).to_string())
+    println((!false).to_string())
+}

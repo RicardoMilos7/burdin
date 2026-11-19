@@ -24,6 +24,7 @@ burdin_dap = { path = "crates/burdin_dap" }
 burdin_repl = { path = "crates/burdin_repl" }
 burdin_codegen = { path = "crates/burdin_codegen" }
 burdin_bindgen = { path = "crates/burdin_bindgen" }
+burdin_inspect = { path = "crates/burdin_inspect" }
 # LLVM 21 is the pinned version. `llvm-sys` finds it through `llvm-config` (or LLVM_SYS_211_PREFIX) and
 # `burdin_codegen/build.rs` links the shared library, because the static LLVM libraries do not work on Windows/MSVC.
 inkwell = { version = "=0.11.0", default-features = false, features = ["llvm21-1-no-llvm-linking", "target-x86", "target-aarch64"] }
