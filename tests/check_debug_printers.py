@@ -61,7 +61,8 @@ fn main() {
 # The printer fixture: one value of every printer-covered type, live in `main` when the panic stops the program
 # inside `show`. `show` prints its `str` parameter first: without a use before the panic the parameter has no
 # location of its own in the DWARF (the panic call is unreachable-terminated), and the printers are not what that
-# check is about.
+# check is about. The code after the panic keeps the call's return address inside `show`: a call that ends the
+# function leaves it one past the end, and older gdb versions then find no `burdin.show` frame.
 PRINTER_FIXTURE = """\
 interface Measured {
     fn size(self): i32
@@ -89,7 +90,10 @@ struct Item derives (Debug) {
 
 fn show(word: str) {
     println(word)
-    panic("show")
+    if word.len() > 0 {
+        panic("show")
+    }
+    println("not reached")
 }
 
 fn main() {
@@ -247,8 +251,13 @@ with harness.temporary_dir("burdin-dbgp-") as work:
     else:
         add_problem(f"burdin build (no -g) failed: {harness.text(plain.stderr).rstrip(chr(10))}")
 
+    # A macOS binary carries no gdb script: Mach-O has no such section and macOS debugs with lldb (DBG6).
     checks += 1
-    if b"burdin_printers.py" not in harness.read_bytes(exe):
+    carries = b"burdin_printers.py" in harness.read_bytes(exe)
+    if sys.platform == "darwin":
+        if carries:
+            add_problem("a macOS `-g` binary carries the gdb printers (DBG6)")
+    elif not carries:
         add_problem("the `-g` binary does not carry the embedded gdb printers (DBG6)")
 
     # DBG1: the panic hook. gdb stops there with the stack intact, before the panic prints anything.
@@ -302,6 +311,7 @@ with harness.temporary_dir("burdin-dbgp-") as work:
             commands = [
                 "break burdin_panic_begin",
                 "run",
+                "bt",
                 "frame function burdin.show",
                 "print word",
                 "frame function burdin.main",
