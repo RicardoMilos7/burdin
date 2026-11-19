@@ -169,6 +169,17 @@ try {
     } catch {
         Warn "$destination did not start. Burdin needs LLVM-C.dll at run time; put it on PATH or beside burdin.exe."
     }
+    # Linking needs the MSVC build tools and a Windows SDK; burdin finds them itself, so no Developer Command Prompt is
+    # needed. Only say so when no installation with the C++ tools is there.
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+    $vs = $null
+    if (Test-Path $vswhere) {
+        $vs = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    }
+    if (-not $vs) {
+        Warn 'burdin links programs with the MSVC build tools, and none were found. Install Build Tools for Visual Studio'
+        Warn '(https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload.'
+    }
     $onPath = ($env:PATH -split ';') -contains $InstallDir
     $modifyPath = -not ($NoModifyPath -or $env:BURDIN_NO_MODIFY_PATH)
     if ($modifyPath) {

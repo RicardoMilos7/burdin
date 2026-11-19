@@ -353,6 +353,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_scripts.py
 
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python3 tests/check_watch.py
+
       - name: Check host target
         if: matrix.part == 'unit'
         run: python3 tests/check_platform.py
@@ -698,6 +704,12 @@ jobs:
       - name: Check scripts
         if: matrix.part == 'tools'
         run: python3 tests/check_scripts.py
+
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python3 tests/check_watch.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -1065,6 +1077,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_scripts.py
 
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python tests/check_watch.py
+
       - name: Check host target
         if: matrix.part == 'unit'
         run: python tests/check_platform.py
@@ -1107,6 +1125,18 @@ jobs:
       - name: Conformance tests with BURDIN_CC=cl
         if: matrix.part == 'debug'
         run: BURDIN_CC=cl python tests/run_tests.py m01_hello m11_llvm
+
+      # An ordinary terminal has none of the variables a Developer Command Prompt sets, so the driver finds the
+      # MSVC installation and the Windows SDK itself (issue #826). Clearing them here makes it use `vswhere.exe`.
+      - name: Hello world without the MSVC environment
+        if: matrix.part == 'debug'
+        run: |
+          dir=$(mktemp -d)
+          printf 'fn main() {\n    let a = "Hello world"\n    println(a)\n}\n' > "$dir/main.bd"
+          out=$(env -u LIB -u INCLUDE -u LIBPATH -u VCINSTALLDIR -u VCToolsInstallDir -u WindowsSdkDir \
+            -u WindowsSDKVersion target/debug/burdin.exe run "$dir/main.bd")
+          echo "$out"
+          test "$out" = "Hello world"
 
   # Continuous fuzzing (issue #447). Every job replays the committed corpus through
   # `cargo test --workspace`, so a reintroduced panic fails a pull request. This job adds the longer

@@ -7,11 +7,11 @@
 // Default, Display, and Debug; `Instant` and `SystemTime` are Copy, Clone, Eq, Ord, Hash, Debug; `Weekday` is
 // Copy, Clone, Eq, Ord, Hash, Debug, and Display; `Path` is Clone, Eq, Debug, and Display.
 
-struct DurationHolder derives (Copy, Clone, Eq, Ord, Hash, Default, Debug) {
+struct DurationHolder: Copy, Clone, Eq, Ord, Hash, Default, Debug {
     value: Duration
 }
 
-struct InstantHolder derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+struct InstantHolder: Copy, Clone, Eq, Ord, Hash, Debug {
     value: Instant
 }
 

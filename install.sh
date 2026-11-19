@@ -194,6 +194,9 @@ else
     warn "  macOS: brew install llvm@21"
     warn "  Windows: put LLVM-C.dll on PATH or beside burdin.exe"
 fi
+if [ -n "$exe" ]; then
+    say "on Windows, linking needs Build Tools for Visual Studio with the \"Desktop development with C++\" workload"
+fi
 
 # --- PATH --------------------------------------------------------------------------------------------------------------
 

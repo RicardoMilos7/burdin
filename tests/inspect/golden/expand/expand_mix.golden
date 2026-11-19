@@ -3,11 +3,11 @@
 
 const SIZE: usize = 64
 
-struct P derives (Clone, Eq) {
+struct P: Clone, Eq {
     x: i32,
     y: i32,
 }
-// derives (Clone, Eq): built in; the compiler implements them structurally, so there is no source form
+// Clone, Eq: built in; the compiler implements them structurally, so there is no source form
 
 P: Add {
     fn add(self, other: P): P {

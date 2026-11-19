@@ -517,7 +517,7 @@ coexist (`Drop` with `Copy`). The diagnostic points at the offending field or de
 
 <!-- error-example: E0130 -->
 ```burdin
-struct Bad derives (Copy, Clone) { //~ E0130
+struct Bad: Copy, Clone { //~ E0130
     n: i32
 }
 
@@ -942,7 +942,7 @@ fn main() {
 `{}` needs the value's type to implement `Display`, and `{:?}` needs `Debug`. Integers, floats, `bool`, `char`,
 `str`, and `String` implement both; `()` and the compound types (tuples of 2 to 4, `Option`, `Result`, `List`,
 `Heap`) implement `Debug` when their parts do; a struct or enum implements them with an impl block or, for `Debug`
-only, with `derives (Debug)`. A type parameter needs the interface as a bound (`fn show<T: Display>(value: T)`).
+only, with `struct T: Debug`. A type parameter needs the interface as a bound (`fn show<T: Display>(value: T)`).
 
 <!-- error-example: E0193 -->
 ```burdin
@@ -972,7 +972,7 @@ fn main() {
 <!-- /error-example -->
 
 **How to fix:** write `Type: Display { fn fmt(self, mut f: Formatter) { ... } }`, or add `Debug` to the
-`derives` clause, or use `{:?}` when the type only implements `Debug`. A generic function adds the bound
+interfaces after the type's name, or use `{:?}` when the type only implements `Debug`. A generic function adds the bound
 (`<T: Display>`). When the message says the type implements `Debug`, `{:?}` formats it.
 
 ## E0194: Format string that is not a string literal
@@ -1069,7 +1069,7 @@ generic bound dispatches statically and does not require object safety.
 
 The compiler implements `Display` and `Debug` for the primitive types and the built-in containers directly, without
 a method, so there is no function for an `any Display`/`any Debug` vtable to dispatch to. A user type with a
-`Type: Display` block or `derives (Debug)` can be boxed, because it has callable methods.
+`Type: Display` block or `struct T: Debug` can be boxed, because it has callable methods.
 
 <!-- error-example: E0204 -->
 ```burdin
@@ -1440,8 +1440,8 @@ fn main() {
 ## E0233: Invalid derive
 
 A `derive Name { ... }` declaration cannot take the name of a built-in derive (`Copy`, `Clone`, `Eq`, `Ord`,
-`Hash`, `Default`, `Debug`), and `derives (Name)` on a type needs the interface `Name` in scope, because the derive
-generates `Type: Name`. `spec/reflection.md` RFL8, RFL9.
+`Hash`, `Default`, `Debug`), and `struct Type: Name` with a user derive needs the interface `Name` in scope, because
+the derive generates `Type: Name`. `spec/reflection.md` RFL8, RFL9.
 
 <!-- error-example: E0233 -->
 ```burdin
@@ -1454,6 +1454,26 @@ fn main() {}
 <!-- /error-example -->
 
 **How to fix:** pick a name no built-in derive uses, and import the interface together with the derive.
+
+## E0234: Interface cannot be derived
+
+The interfaces after a struct's or enum's name (`struct Point: Copy, Eq { ... }`) are implemented by the declaration
+itself: a built-in derive, a `derive` declaration, or an interface whose methods all have default bodies. An interface
+with a method that has no default, such as `Drop`, `From`, or `Display`, needs that method written, so the
+declaration cannot implement it. `spec/derives.md`.
+
+<!-- error-example: E0234 -->
+```burdin
+struct Handle: Drop { //~ E0234
+    id: i32
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** remove the interface from the list and write an impl block with the method,
+`Handle: Drop { fn drop(mut self) { ... } }`.
 
 ## E0240: `embed` could not read its file
 

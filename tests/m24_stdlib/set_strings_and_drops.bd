@@ -11,7 +11,7 @@
 // A set owns its elements. A value that is inserted twice is kept once and the second copy is dropped on the
 // spot; the set drops what it still holds when it goes out of scope.
 
-struct Tag derives (Eq) {
+struct Tag: Eq {
     id: i32
 }
 

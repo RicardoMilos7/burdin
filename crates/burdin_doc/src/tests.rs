@@ -62,7 +62,7 @@ const SHAPES: &str = "\
 //! Shapes.
 
 /// A point in the plane.
-struct Point derives (Copy, Eq) {
+struct Point: Copy, Eq {
     /// The x coordinate.
     x: i32
     priv secret: i32
@@ -108,7 +108,7 @@ fn items_members_and_signatures() {
     let names: Vec<_> = m.items.iter().map(|i| (i.kind, i.name.as_str())).collect();
     assert_eq!(names, vec![(Kind::Struct, "Point"), (Kind::Interface, "Shape"), (Kind::Function, "double")]);
     let point = api.item(&[], "Point").unwrap();
-    assert_eq!(point.signature, "struct Point derives (Copy, Eq)");
+    assert_eq!(point.signature, "struct Point: Copy, Eq");
     assert_eq!(point.docs.as_ref().unwrap().text, "A point in the plane.");
     // The private field and the private method are left out by default.
     assert_eq!(point.members.iter().map(|x| x.signature.as_str()).collect::<Vec<_>>(), vec!["x: i32"]);
@@ -278,7 +278,7 @@ fn json_has_a_version_and_the_documented_api() {
     let (api, _) = f.api(false);
     let text = json::render(&api, &f.sources);
     assert!(text.starts_with("{\n  \"format_version\": 1,\n  \"package\": \"pkg\","), "{text}");
-    assert!(text.contains("\"signature\": \"struct Point derives (Copy, Eq)\""), "{text}");
+    assert!(text.contains("\"signature\": \"struct Point: Copy, Eq\""), "{text}");
     assert!(text.contains("\"display\": \"a + b\""), "{text}");
     assert!(text.contains("\"line\": 4"), "{text}");
 }

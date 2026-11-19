@@ -7,7 +7,7 @@
 use fmt.{Debug, Formatter}
 
 /// A running hash: the FNV-1a state of the parts written so far. A hasher is a plain value; copy it to branch.
-struct Hasher derives (Copy, Clone, Eq, Debug) {
+struct Hasher: Copy, Clone, Eq, Debug {
     state: u64
 }
 

@@ -62,7 +62,7 @@ have no explicit generic arguments at a call; a struct literal takes its argumen
 
 ## CG7. Derives
 
-A derive on a type with a const parameter skips it: `derives (Clone, Debug, Eq)` on `Tagged<T, const N: usize>`
+A derive on a type with a const parameter skips it: `Clone, Debug, Eq` on `Tagged<T, const N: usize>`
 requires `T: Clone`, `T: Debug`, and `T: Eq`, and nothing for `N`. A user derive (`spec/reflection.md` RFL9) does the
 same.
 

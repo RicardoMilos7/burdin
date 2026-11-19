@@ -36,6 +36,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
+| [`spec/watch.md`](spec/watch.md) | `burdin watch` and `--watch`: what is watched and ignored, the debounce, restarting `run`, and the changed-modules-first `test` run (stage 3). |
 | [`spec/inspect.md`](spec/inspect.md) | Inspecting what the compiler generated: `burdin expand`, `--emit`, `burdin asm`, `burdin bloat`, and `burdin check --print-instances` (stage 3). |
 | [`spec/debug.md`](spec/debug.md) | Debugging: the panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file, `burdin debug`, and the `burdin dap` debug adapter (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
@@ -171,6 +172,8 @@ usage:
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
   burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>]
                [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain] [diagnostics]
+  burdin watch [check|build|test|run] <file.bd | package directory> [options of that command] [--no-clear]
+  burdin <build|run|test|check> <target> --watch [--no-clear] ...
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
@@ -279,6 +282,10 @@ and `--verbose` are options of `burdin test` and `burdin bench` (and so are the 
 `--ignored`/`--include-ignored`, `--failed`, `--shard`, `--slow-threshold`, and `--junit` are options of `burdin test`
 only, and `--save-baseline`, `--baseline`, `--fail-on-regression`, `--profile-time`, `--warmup`, `--sample-count`,
 and `--sample-time` are options of `burdin bench` only; any other command rejects them.
+
+`burdin watch` (or `--watch` on `build`, `run`, `test`, and `check`) reruns the command whenever a source, `burdin.toml`, or a
+build input changes, ignoring `target/` and version-control metadata, and clears the screen first unless `--no-clear`; `run` restarts the
+program and `test` runs the changed modules' tests first. `spec/watch.md` is the exact behavior.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
 

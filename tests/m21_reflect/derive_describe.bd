@@ -3,8 +3,8 @@
 //> Pair(a=1, b=hello)
 //> Empty()
 
-// A derive written in Burdin: `derive Describe` generates `Type: Describe { ... }` for every type whose `derives`
-// clause names it, and its body reads the type through `Self.fields` and `self.{field.name}` (spec/reflection.md,
+// A derive written in Burdin: `derive Describe` generates `Type: Describe { ... }` for every type that lists it after
+// its name, and its body reads the type through `Self.fields` and `self.{field.name}` (spec/reflection.md,
 // RFL4, RFL5, RFL8).
 
 interface Describe {
@@ -28,17 +28,17 @@ derive Describe {
     }
 }
 
-struct Point derives (Describe) {
+struct Point: Describe {
     x: i32
     y: i32
 }
 
-struct Pair derives (Describe) {
+struct Pair: Describe {
     a: i32
     b: String
 }
 
-struct Empty derives (Describe) {
+struct Empty: Describe {
 }
 
 fn main() {

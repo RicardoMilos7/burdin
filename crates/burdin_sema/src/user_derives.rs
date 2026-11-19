@@ -1,17 +1,18 @@
-//! User derives (`spec/reflection.md`, RFL8-RFL10): `derive Name { fn ... }` declares the methods of an impl
-//! block, and `derives (Name)` on a struct or enum applies them. The impl block is generated from the derive's
-//! syntax, so it is checked like a hand-written `Type: Name { ... }`; reflection in its bodies (`Self.fields`) sees
-//! the type the block is for.
+//! The names after `:` on a struct or enum declaration that are not built-in derives (`spec/derives.md`,
+//! `spec/reflection.md` RFL8-RFL10). A user derive (`derive Name { fn ... }`) supplies the methods of an impl block;
+//! an interface whose methods all have default bodies gets an impl block with no methods. Either way the impl block
+//! is generated as syntax, so it is checked like a hand-written `Type: Name { ... }`; reflection in a derive's
+//! bodies (`Self.fields`) sees the type the block is for.
 
-use crate::derives::BUILTIN_DERIVES;
+use crate::derives::builtin_derive;
 use crate::session::Sema;
 use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
 
 impl<'t> Sema<'t> {
-    /// Generates and registers the impl block of every user derive a type's `derives (...)` clause names. This runs
-    /// after the hand-written impl blocks: the interface a derive implements and the type it is applied to are
-    /// both known by then.
+    /// Generates and registers the impl block of every name in a declaration's `: A, B` list that is not a
+    /// built-in derive. This runs after the hand-written impl blocks: the interfaces and the types they are
+    /// applied to are all known by then.
     pub(crate) fn register_user_derives(&mut self, diags: &mut Diagnostics) {
         for module in 0..self.module_asts.len() {
             let ast = self.module_asts[module];
@@ -22,46 +23,113 @@ impl<'t> Sema<'t> {
                     _ => continue,
                 };
                 for clause in derives {
-                    let ast::TypeKind::Path(segments) = &clause.kind else { continue };
-                    if segments.len() != 1 || !segments[0].args.is_empty() {
+                    if builtin_derive(clause).is_some() {
                         continue;
                     }
-                    let derive = &segments[0].name.name;
-                    if BUILTIN_DERIVES.contains(&derive.as_str()) {
+                    let Some(methods) = self.declared_impl_methods(module, &name.name, clause, diags) else {
                         continue;
-                    }
-                    // An unknown name was reported when the derives were read.
-                    let Some(&index) = self.globals.modules[module].derives.get(derive) else { continue };
-                    if self.globals.iface_name(module, derive).is_none() {
-                        diags.error(
-                            Code::INVALID_DERIVE,
-                            clause.span,
-                            format!(
-                                "`derives ({derive})` generates `{}: {derive}`, but no interface named `{derive}` is \
-                                 in scope here; import it together with the derive",
-                                name.name
-                            ),
-                        );
-                        continue;
-                    }
-                    let decl = self.derive_srcs[index].decl;
+                    };
                     // The generated syntax lives as long as the compilation does: sema holds references into it
                     // for every method it checks, and the compiler exits when the compilation ends.
                     let imp: &'t ast::ImplBlock =
-                        Box::leak(Box::new(generated_impl(name, generics, decl, clause.span)));
+                        Box::leak(Box::new(generated_impl(name, generics, clause, methods, clause.span)));
                     self.register_impl(imp, module, diags);
                 }
             }
         }
     }
+
+    /// The methods of the impl block `type_name: <clause>` that a declaration's list generates: a user derive's
+    /// methods, or none for an interface whose methods all have defaults. `None` after reporting why the name
+    /// cannot be listed there.
+    fn declared_impl_methods(
+        &self,
+        module: usize,
+        type_name: &str,
+        clause: &ast::Type,
+        diags: &mut Diagnostics,
+    ) -> Option<Vec<ast::FnDecl>> {
+        let ast::TypeKind::Path(segments) = &clause.kind else {
+            diags.error(Code::UNKNOWN_NAME, clause.span, "only an interface or a derive can follow `:` here");
+            return None;
+        };
+        let last = segments.last().expect("a path has a segment");
+        let iface_name = &last.name.name;
+        if segments.len() == 1
+            && last.args.is_empty()
+            && let Some(&index) = self.globals.modules[module].derives.get(iface_name)
+        {
+            if self.globals.iface_name(module, iface_name).is_none() {
+                diags.error(
+                    Code::INVALID_DERIVE,
+                    clause.span,
+                    format!(
+                        "`{type_name}: {iface_name}` applies the derive `{iface_name}`, but no interface named \
+                         `{iface_name}` is in scope here; import it together with the derive"
+                    ),
+                );
+                return None;
+            }
+            return Some(self.derive_srcs[index].decl.methods.clone());
+        }
+        let iface = if segments.len() == 1 {
+            if let Some(method) = required_builtin_method(iface_name) {
+                not_derivable(type_name, iface_name, method, clause.span, diags);
+                return None;
+            }
+            self.globals.iface_name(module, iface_name)
+        } else {
+            let names: Vec<String> = segments[..segments.len() - 1].iter().map(|s| s.name.name.clone()).collect();
+            self.globals.resolve_module_path(module, &names).and_then(|m| self.globals.exported_iface(m, iface_name))
+        };
+        let Some(iface) = iface else {
+            diags.error(
+                Code::UNKNOWN_NAME,
+                clause.span,
+                format!(
+                    "`{iface_name}` is not a derive or an interface in scope; only `Copy`, `Clone`, `Eq`, `Ord`, \
+                     `Hash`, `Default`, `Debug`, the `derive` declarations, and the interfaces in scope can follow `:`"
+                ),
+            );
+            return None;
+        };
+        let info = &self.globals.interfaces[iface];
+        if let Some(m) = info.methods.iter().find(|m| !m.has_default) {
+            not_derivable(type_name, iface_name, &m.name, clause.span, diags);
+            return None;
+        }
+        Some(Vec::new())
+    }
 }
 
-/// `Name<A, B>: Derive where A: Derive, B: Derive { <the derive's methods> }`. A derive on a generic type needs
-/// the same bound on its type parameters, like the built-in derives (RFL9); a const parameter takes none.
+/// E0234: `iface` has the method `method` with no default body, so a declaration cannot implement it by itself.
+fn not_derivable(type_name: &str, iface: &str, method: &str, at: Span, diags: &mut Diagnostics) {
+    diags.error(
+        Code::NOT_DERIVABLE,
+        at,
+        format!(
+            "`{iface}` cannot be derived: its method `{method}` has no default; write \
+             `{type_name}: {iface} {{ fn {method}(...) {{ ... }} }}` instead"
+        ),
+    );
+}
+
+/// The method a built-in interface that is not derivable requires (`Drop`, `From`), by the interface's name.
+fn required_builtin_method(name: &str) -> Option<&'static str> {
+    match name {
+        "Drop" => Some("drop"),
+        "From" => Some("from"),
+        _ => None,
+    }
+}
+
+/// `Name<A, B>: Iface where A: Iface, B: Iface { <methods> }`. A generic type needs the same bound on its type
+/// parameters, like the built-in derives (RFL9); a const parameter takes none.
 fn generated_impl(
     type_name: &ast::Ident,
     generics: &[ast::GenericParam],
-    derive: &ast::DeriveDecl,
+    iface: &ast::Type,
+    methods: Vec<ast::FnDecl>,
     at: Span,
 ) -> ast::ImplBlock {
     let path = |name: &str, args: Vec<ast::Type>| ast::Type {
@@ -75,17 +143,14 @@ fn generated_impl(
     let where_clause = generics
         .iter()
         .filter(|g| g.const_ty.is_none())
-        .map(|g| ast::WherePred {
-            ty: path(&g.name.name, Vec::new()),
-            bounds: vec![path(&derive.name.name, Vec::new())],
-        })
+        .map(|g| ast::WherePred { ty: path(&g.name.name, Vec::new()), bounds: vec![iface.clone()] })
         .collect();
     ast::ImplBlock {
         is_unsafe: false,
         ty: path(&type_name.name, args),
-        interface: Some(path(&derive.name.name, Vec::new())),
+        interface: Some(iface.clone()),
         where_clause,
-        methods: derive.methods.clone(),
+        methods,
         span: at,
     }
 }

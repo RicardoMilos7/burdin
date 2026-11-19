@@ -6,7 +6,7 @@
 // A container with a stored allocator is cloned when the allocator is `Clone`: the clone allocates through a
 // clone of the allocator value and frees through it (`spec/allocators.md`, AL7).
 
-struct Pool derives (Clone) { }
+struct Pool: Clone { }
 
 Pool: Allocator {
     fn allocate(mut self, size: usize, align: usize): CPtr<u8> {

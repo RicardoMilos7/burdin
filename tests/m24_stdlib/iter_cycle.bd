@@ -41,7 +41,7 @@
 // range, `Chars`, and a user iterator that derives `Clone` can be cycled, and so can the chains built from them that
 // hold no closure (a closure cannot be cloned).
 
-struct Countdown derives (Clone) {
+struct Countdown: Clone {
     from: i32
 }
 

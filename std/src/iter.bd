@@ -617,7 +617,7 @@ FilterIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
 }
 
 /// The lazy `take` chain.
-struct TakeIter<I, T> derives (Clone) {
+struct TakeIter<I, T>: Clone {
     inner: I
     remaining: usize
 }
@@ -633,7 +633,7 @@ TakeIter<I, T>: Iterator<T> where I: Iterator<T> {
 }
 
 /// The lazy `skip` chain.
-struct SkipIter<I, T> derives (Clone) {
+struct SkipIter<I, T>: Clone {
     inner: I
     remaining: usize
 }
@@ -656,7 +656,7 @@ SkipIter<I, T>: Iterator<T> where I: Iterator<T> {
 }
 
 /// The lazy `enumerate` chain.
-struct EnumerateIter<I, T> derives (Clone) {
+struct EnumerateIter<I, T>: Clone {
     inner: I
     index: usize
 }
@@ -675,7 +675,7 @@ EnumerateIter<I, T>: Iterator<(usize, T)> where I: Iterator<T> {
 }
 
 /// The lazy `zip` chain.
-struct ZipIter<I, T, J, U> derives (Clone) {
+struct ZipIter<I, T, J, U>: Clone {
     first: I
     second: J
 }
@@ -695,7 +695,7 @@ ZipIter<I, T, J, U>: Iterator<(T, U)> where I: Iterator<T>, J: Iterator<U> {
 }
 
 /// The lazy `chain` chain.
-struct ChainIter<I, J, T> derives (Clone) {
+struct ChainIter<I, J, T>: Clone {
     first: I
     second: J
     first_done: bool
@@ -754,7 +754,7 @@ FlatMapIter<I, T, J, U, F>: Iterator<U> where I: Iterator<T>, J: Iterator<U>, F:
 }
 
 /// The lazy `flatten` chain: `current` is the inner iterator being drained, if any.
-struct FlattenIter<I, J, U> derives (Clone) {
+struct FlattenIter<I, J, U>: Clone {
     inner: I
     current: Option<J>
 }
@@ -789,7 +789,7 @@ FlattenIter<I, J, U>: Iterator<U> where I: Iterator<J>, J: Iterator<U> {
 }
 
 /// The lazy `cloned` chain: an owned copy of each viewed item.
-struct ClonedIter<I, U> derives (Clone) {
+struct ClonedIter<I, U>: Clone {
     inner: I
 }
 
@@ -803,7 +803,7 @@ ClonedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Clone {
 }
 
 /// The lazy `copied` chain: a copy of each viewed item.
-struct CopiedIter<I, U> derives (Clone) {
+struct CopiedIter<I, U>: Clone {
     inner: I
 }
 
@@ -817,7 +817,7 @@ CopiedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Copy {
 }
 
 /// The lazy `cycle` chain: `current` is the pass being walked and `original` is the pristine copy of the source.
-struct CycleIter<I, T> derives (Clone) {
+struct CycleIter<I, T>: Clone {
     original: I
     current: I
 }
@@ -835,7 +835,7 @@ CycleIter<I, T>: Iterator<T> where I: Iterator<T> + Clone {
 }
 
 /// The lazy `rev` chain: the source's items from the back.
-struct RevIter<I, T> derives (Clone) {
+struct RevIter<I, T>: Clone {
     inner: I
 }
 
@@ -993,7 +993,7 @@ MapWhileIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): Option<
 }
 
 /// The lazy `step_by` chain.
-struct StepByIter<I, T> derives (Clone) {
+struct StepByIter<I, T>: Clone {
     inner: I
     step: usize
     first: bool

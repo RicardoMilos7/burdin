@@ -6,15 +6,35 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- `burdin watch [check|build|test|run] <target>`, and `--watch` on those commands (issue #632, `spec/watch.md`): rerun
+  the command whenever a source, `burdin.toml`, a path dependency, or a build input changes, with a debounce, clearing the
+  screen first unless `--no-clear`. `target/`, version-control metadata, `burdin.lock`, and the command's own output are
+  ignored. `run` restarts the program; `test` runs the changed modules' and their dependents' tests first. The files are
+  polled, so it needs no new dependency. `tests/check_watch.py` runs in every CI job.
 - The `burdin` help is now cargo-style and built with clap (`crates/burdin_driver/src/cli.rs`): `burdin` or
   `burdin --help` lists the commands with a one-line summary each, and `burdin <command> --help` or
   `burdin help <command>` prints that command's usage, arguments, grouped options, and notes. A mistyped command gets
   a suggestion. A usage error prints its message, the command's usage line, and a pointer to its `--help`, instead of
   the usage of every command. Each command still reads its own options, so their error messages are unchanged.
-
+- On Windows, linking works from an ordinary terminal (issue #826). When `LIB` is not set, the driver finds the
+  Visual Studio installation (`VCINSTALLDIR` or `vswhere.exe`), its default MSVC tools version, and the newest Windows
+  SDK, passes their library directories to `link.exe` as `/LIBPATH:`, and runs that installation's `cl.exe` unless
+  `BURDIN_CC` names a linker. Without the build tools it says what is missing and how to install it, instead of
+  `LNK1181: cannot open input file 'libcmt.lib'`. The installers and `docs/platform-support.md` state the requirement.
 - `install.ps1` adds the install directory to the user's `PATH` (`HKCU\Environment`, once; a second run changes nothing),
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
+
+### Derived interfaces after the type's name (issue #825)
+
+- `struct Point: Copy, Clone, Eq { ... }` replaces `struct Point derives (Copy, Clone, Eq) { ... }` on structs, enums,
+  and error enums; `repr(C)` comes after the list. The old clause is a syntax error, and `derives` is an ordinary
+  identifier.
+- The list also takes an interface whose methods all have default bodies: the declaration implements it as an empty
+  `Type: Iface {}` would, with the interface required on each type parameter of a generic type, like a derive.
+- E0234: an interface with a method that has no default (`Drop`, `From`, `Display`, ...) cannot be listed. `Drop`
+  in the list was E0002 before.
+- `burdin fmt`, `burdin expand`, `burdin doc`, `std/`, the conformance tests, and the specs use the new form.
 
 ### Language server: completion, snippets, and the built-ins (issues #819-#824)
 
@@ -28,8 +48,8 @@ close-out checklist in `AGENTS.md`).
   primitive value its built-in methods, the prelude's extension methods, and what an implementation or derive provides
   (`to_string`, `clone`, `cmp`); after a prelude-bound standard module (`mem.`, `fs.`) its items. An empty statement
   offers the whole prelude and the standard modules.
-- **Contexts.** `self`, `mut self`, and `own self` only as a method's first parameter; `derives` after `struct Name` or
-  `enum Name`, and inside `derives (...)` the seven built-in derives and the user `derive` declarations in scope.
+- **Contexts.** `self`, `mut self`, and `own self` only as a method's first parameter; in the `: A, B` list after
+  `struct Name` or `enum Name`, the seven built-in derives and the user `derive` declarations in scope.
 - **Snippets and calls.** With the client's `snippetSupport`: item snippets at the top level (`main`, `fn`, `struct`,
   `enum`, `error enum`, `interface`, impl blocks, `test`, `bench`), a method snippet in an impl block, and statement
   snippets in a body (`if`, `match`, `for`, `while`); a completed function inserts `name($0)` (opening signature help)

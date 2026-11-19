@@ -216,15 +216,18 @@ impl Fmt<'_> {
         Ok(self.members_doc(open, members, close, ","))
     }
 
-    /// ` derives (A, B)`, when the next token is `derives`.
+    /// `: A, B` after a struct or enum name, when the next token is `:`: the interfaces the declaration implements.
     fn derives(&mut self) -> R<D> {
-        if !self.at_word("derives") {
+        if !self.at(&TokenKind::Colon) {
             return Ok(Doc::Nil);
         }
-        let kw = self.tok_doc();
-        let list = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| f.ty())?;
-        let list = self.list_doc(list, false);
-        Ok(concat(vec![space(), kw, space(), list]))
+        let mut parts = vec![self.tok_doc(), space(), self.ty()?];
+        while self.at(&TokenKind::Comma) {
+            parts.push(self.tok_doc());
+            parts.push(space());
+            parts.push(self.ty()?);
+        }
+        Ok(concat(parts))
     }
 
     fn struct_decl(&mut self) -> R<D> {
@@ -232,6 +235,7 @@ impl Fmt<'_> {
         if self.at(&TokenKind::Lt) {
             parts.push(self.generic_params()?);
         }
+        parts.push(self.derives()?);
         if self.at_word("repr") {
             let kw = self.tok_doc();
             let list = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| f.ident())?;
@@ -239,7 +243,6 @@ impl Fmt<'_> {
             parts.push(kw);
             parts.push(self.list_doc(list, false));
         }
-        parts.push(self.derives()?);
         parts.push(space());
         parts.push(self.field_list()?);
         Ok(concat(parts))

@@ -36,7 +36,7 @@ struct Matrix<T: Copy, const R: usize, const C: usize> {
 
 fn rows_of<T: Copy, const R: usize, const C: usize>(m: Matrix<T, R, C>): usize { R }
 
-struct Tagged<T, const N: usize> derives (Clone, Debug, Eq) {
+struct Tagged<T, const N: usize>: Clone, Debug, Eq {
     id: T
 }
 

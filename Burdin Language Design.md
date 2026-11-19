@@ -127,7 +127,7 @@ The type system is static and strong, with local inference, no implicit conversi
 **Structs**
 
 ```
-struct Circle derives (Copy, Clone, Eq) {
+struct Circle: Copy, Clone, Eq {
     r: f64
 }
 
@@ -292,7 +292,7 @@ Const generics take compile-time values (`Matrix<T, const R: usize, const C: usi
 **Derive.** Common interfaces are derived with a clause on the declaration:
 
 ```
-struct Point derives (Copy, Clone, Eq, Hash) {
+struct Point: Copy, Clone, Eq, Hash {
     x: f64
     y: f64
 }
@@ -606,7 +606,7 @@ test "user is valid" {
 - Math: linear algebra, statistics, vectors and matrices.
 - Others: regex, compression, cryptography, database drivers.
 
-**Serialization framework.** `Serialize` and `Deserialize` are derivable interfaces in `std`, in the spirit of Serde and Kotlin serialization. Each format package implements only the format side, so a struct with `derives (Serialize, Deserialize)` works with every format.
+**Serialization framework.** `Serialize` and `Deserialize` are derivable interfaces in `std`, in the spirit of Serde and Kotlin serialization. Each format package implements only the format side, so a struct declared `struct T: Serialize, Deserialize` works with every format.
 
 **Personal ecosystem.** Long-term goals are a UI library and a TUI library written in Burdin. The TUI library needs raw terminal I/O, tasks, and channels. The UI library mostly wraps an existing graphics or windowing library through bindgen. Neither is planned to be production-ready.
 

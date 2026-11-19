@@ -7,12 +7,12 @@
 // `Hash` works as a bound (HS2): `hash()`, `hash_from`, `Hasher.write`, and `hash_of` accept a type parameter, and a
 // generic struct derives `Hash` when its parameter is `Hash`.
 
-struct Tag derives (Eq, Hash) {
+struct Tag: Eq, Hash {
     name: String
     id: i32
 }
 
-struct Wrapper<T> derives (Eq, Hash) {
+struct Wrapper<T>: Eq, Hash {
     inner: T
 }
 

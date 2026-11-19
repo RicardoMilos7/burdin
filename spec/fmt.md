@@ -82,7 +82,8 @@ line is never added between two statements, except FM9 puts one between the grou
   line, even when the declaration would fit on one line, except an empty body, which is `{}`. A `struct` or `enum`
   member always ends with a comma, and a blank line between two members is kept.
 - An `impl` block `Type: Interface where bounds { ... }` follows the same `where` rule as a function.
-- `derives (A, B)`, `repr(...)`, `const`, `type`, `extern`, `comptime`, `test`, `derive` and attribute lists keep their
+- The interfaces after a struct's or enum's name are written `Name<T>: A, B`, with no space before `:` and one
+  after it and after each comma, all on the declaration's line. `repr(...)`, `const`, `type`, `extern`, `comptime`, `test`, `derive` and attribute lists keep their
   tokens and take one space between them.
 
 ## FM6: statements and blocks

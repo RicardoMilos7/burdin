@@ -40,8 +40,7 @@ impl Sema<'_> {
                 })
                 .collect();
             check_unique_fields(entry.decl.fields.iter().map(|f| &f.name), diags);
-            let derives =
-                parse_derives(&entry.decl.derives, &|n| self.globals.modules[module].derives.contains_key(n), diags);
+            let derives = parse_derives(&entry.decl.derives);
             let s = &mut self.globals.structs[id];
             s.fields = fields;
             s.derives = derives;
@@ -97,8 +96,7 @@ impl Sema<'_> {
                 };
                 variants.push(tir::VariantDef { name: v.name.name.clone(), shape, fields });
             }
-            let derives =
-                parse_derives(&entry.decl.derives, &|n| self.globals.modules[module].derives.contains_key(n), diags);
+            let derives = parse_derives(&entry.decl.derives);
             let e = &mut self.globals.enums[id];
             e.variants = variants;
             e.derives = derives;

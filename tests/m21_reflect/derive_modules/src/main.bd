@@ -6,12 +6,12 @@
 
 use describe.{Describe}
 
-struct User derives (Describe) {
+struct User: Describe {
     id: i32
     name: String
 }
 
-struct Point derives (Describe) {
+struct Point: Describe {
     x: i32
     y: i32
 }

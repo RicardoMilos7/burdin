@@ -360,7 +360,7 @@ with harness.temporary_dir("burdin-doc-json-") as work:
         shapes = {i["name"]: i for i in modules["shapes"]["items"]}
         point = shapes["Point"]
         check(point["path"] == "shapes.Point" and point["kind"] == "struct", "json: item path and kind")
-        check(point["signature"] == "struct Point derives (Copy, Eq, Debug)", "json: item signature")
+        check(point["signature"] == "struct Point: Copy, Eq, Debug", "json: item signature")
         check(point["span"] == {"file": "src/shapes.bd", "line": 6, "column": 8, "end_line": 6, "end_column": 13}, f"json: item span {point['span']}")
         check([f["name"] for f in point["fields"]] == ["x", "y"], "json: the private field is left out")
         check([o["display"] for o in point["operators"]] == ["a + b", "-a"], "json: operators")

@@ -13,7 +13,7 @@ struct Edge {
     cost: u32
 }
 
-struct Entry derives (Eq, Ord) {
+struct Entry: Eq, Ord {
     cost: u32
     node: usize
 }

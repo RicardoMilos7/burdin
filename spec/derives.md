@@ -1,11 +1,41 @@
 # Burdin derives (stage 0)
 
-A struct or enum may list `derives (...)` after its name (`grammar.md`). The compiler knows exactly seven derives:
-`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug`. Each is independent: deriving `Copy` does not provide
-`clone()`, and deriving `Ord` does not provide `==`; list every one a program uses. A derive whose requirement is
-not met is E0130, reported at the offending field (or at the derive clause for `Drop` and `Copy`).
+A struct, enum, or error enum lists the interfaces it implements by itself after its name and generic parameters,
+the way an impl block names its interface (`grammar.md`, issue #825):
 
-`Drop` is not derivable (E0002). It is declared only as `Type: Drop { fn drop(mut self) { ... } }`
+```
+struct Point: Copy, Clone, Eq { x: i32, y: i32 }
+struct Pair<T>: Clone, Debug { a: T, b: T }
+struct Rgb: Copy, Clone repr(C) { r: u8, g: u8, b: u8 }
+enum Color: Copy, Eq { Red, Green }
+error enum ParseError: Eq { Empty "empty input" }
+struct Config: Default {}
+```
+
+`: Iface` on a declaration means "implement this interface with its derived or default implementation". Each name
+is one of:
+
+- a built-in derive: the compiler knows exactly seven, `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug`,
+  described below;
+- a `derive` declaration in scope, which generates the impl block (`reflection.md`, RFL8-RFL9);
+- an interface in scope (by name or by a module path) whose methods all have default bodies. The declaration
+  implements it exactly as the empty impl block `Type: Iface {}` would, so the usual impl rules apply (`Send` and
+  `Sync` still need an `unsafe` block, E0281). To override a default, write the impl block by hand instead.
+
+An interface with a method that has no default (`Drop`, `From`, `Display`, or a user interface) cannot be listed:
+that is E0234 at the name, because the method has to be written in an impl block. A name that is none of the three
+is E0002. The names are separated by `,`, with no trailing comma, and `repr(C)` comes after the list. On a generic
+type, each type parameter needs the interface as well (`Pair<T>: Describe` holds for `Pair<A>` when `A: Describe`),
+the rule of every derive; a const parameter needs nothing.
+
+The old `derives (...)` clause is gone, and `derives` is an ordinary identifier, so `struct P derives (Eq) { ... }`
+is a syntax error (E0001).
+
+Each built-in derive is independent: deriving `Copy` does not provide `clone()`, and deriving `Ord` does not provide
+`==`; list every one a program uses. A derive whose requirement is not met is E0130, reported at the offending field
+(or at the name in the list for `Copy` on a type that implements `Drop`).
+
+`Drop` is not derivable (E0234). It is declared only as `Type: Drop { fn drop(mut self) { ... } }`
 (`memory-rules.md`, DR8). A type that implements `Drop` cannot be `Copy` (E0130).
 
 ## `Copy`
@@ -101,7 +131,7 @@ A default value is built as an ordinary value at the use site; there is no hidde
 
 ## `Debug`
 
-`derives (Debug)` implements `Debug`, the interface `{:?}` needs (`format.md`, FM4). The derive requires every
+`: Debug` implements `Debug`, the interface `{:?}` needs (`format.md`, FM4). The derive requires every
 field to implement `Debug` (E0130 at the field) and needs the same bound on a generic type's parameters. The
 compiler writes the impl block as ordinary Burdin source (`crates/burdin_syntax/src/derive.rs`) and parses it
 with the same parser as a hand-written block, so a derived `Debug` and a written one behave identically:
@@ -127,4 +157,7 @@ with the same parser as a hand-written block, so a derived `Debug` and a written
 | Requirement failures | `m07_generics/derive_field_not_eq` (E0130), `m05_ownership/copy_with_drop` (E0130) |
 | Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
 | `Debug` | `m14_format/debug_derive`, `debug_manual` |
-| `Drop` not derivable | `m05_ownership/drop_derive` (E0002) |
+| `Drop` not derivable | `m05_ownership/drop_derive` (E0234) |
+| Interfaces with default methods | `m07_generics/derive_default_interface`, `derive_default_bound` (E0141) |
+| Not derivable, unknown name | `m07_generics/derive_not_derivable` (E0234, E0002) |
+| The old `derives (...)` clause | `m07_generics/derives_old_syntax` (E0001) |

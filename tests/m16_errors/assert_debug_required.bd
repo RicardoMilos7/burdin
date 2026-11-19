@@ -3,7 +3,7 @@
 // `assert_eq` formats both values, so the test-build assertion needs `Debug` of their type
 // (spec/errors.md, ERR9). The missing bound is E0141.
 
-struct Point derives (Eq) {
+struct Point: Eq {
     x: i32
 }
 

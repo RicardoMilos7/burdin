@@ -11,13 +11,13 @@
 //> true
 //> false
 
-struct Version derives (Copy, Clone, Eq, Ord, Hash, Default) {
+struct Version: Copy, Clone, Eq, Ord, Hash, Default {
     major: i32
     minor: i32
 }
 
 // Variants compare in declaration order.
-enum Level derives (Copy, Clone, Eq, Ord) {
+enum Level: Copy, Clone, Eq, Ord {
     Low
     Mid
     High

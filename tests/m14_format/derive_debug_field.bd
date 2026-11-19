@@ -4,18 +4,18 @@ struct Opaque {
     id: i32
 }
 
-struct Holder derives (Debug) {
+struct Holder: Debug {
     fine: i32
     opaque: Opaque //~ E0130
     list: List<Opaque> //~ E0130
 }
 
-enum Choice derives (Debug) {
+enum Choice: Debug {
     A(i32)
     B { inner: Opaque } //~ E0130
 }
 
-struct Generic<T> derives (Debug) {
+struct Generic<T>: Debug {
     value: T
     other: Opaque //~ E0130
 }

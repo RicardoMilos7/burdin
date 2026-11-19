@@ -19,7 +19,7 @@ fn least<T: Ord>(a: T, b: T): T {
     if a < b { a } else { b }
 }
 
-struct Grid derives (Eq, Ord, Hash) {
+struct Grid: Eq, Ord, Hash {
     cells: [i32; 3]
     tag: char
 }

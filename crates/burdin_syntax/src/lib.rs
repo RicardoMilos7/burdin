@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn data_items() {
-        let src = "type Id = i32\nstruct P derives (Copy, Eq) {\n x: i32\n priv y: (Id, bool),\n}\n\
+        let src = "type Id = i32\nstruct P: Copy, Eq {\n x: i32\n priv y: (Id, bool),\n}\n\
                    enum S {\n A(i32, i32), B { w: i32, h: i32 }\n C\n}\nP {\n fn new(): P { P { x: 1, y } }\n \
                    priv fn get(mut self): i32 { self.x }\n}\n";
         assert_eq!(errors(src), "");

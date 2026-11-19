@@ -89,6 +89,21 @@ fn is_command(name: &str) -> bool {
     name != "help" && command().get_subcommands().any(|c| c.get_name() == name)
 }
 
+/// Whether `flag` (`--name` or `-n`) of command `name` takes a value; unknown flags take none.
+pub(crate) fn option_takes_value(name: &str, flag: &str) -> bool {
+    let command = subcommand(name);
+    let arg = if let Some(long) = flag.strip_prefix("--") {
+        command.get_arguments().find(|a| a.get_long() == Some(long))
+    } else {
+        let mut chars = flag.chars().skip(1);
+        match (chars.next(), chars.next()) {
+            (Some(short), None) => command.get_arguments().find(|a| a.get_short() == Some(short)),
+            _ => None,
+        }
+    };
+    arg.is_some_and(|a| a.get_action().takes_values())
+}
+
 /// The built subcommand `name` of the tree: its usage and help name it `burdin <name>`.
 fn subcommand(name: &str) -> Command {
     let mut root = command();
@@ -160,6 +175,7 @@ pub(crate) fn command() -> Command {
             new(),
             add(),
             repl(),
+            watch(),
             debug(),
             expand(),
             asm(),
@@ -184,6 +200,15 @@ fn flag(id: &'static str, help: &'static str) -> Arg {
 
 fn option(id: &'static str, value: &'static str, help: &'static str) -> Arg {
     Arg::new(id).long(id).value_name(value).help(help)
+}
+
+/// The options of `build`, `run`, `test`, and `check` that rerun the command when a file changes.
+fn watch_options() -> [Arg; 2] {
+    [
+        flag("watch", "Rerun the command whenever a source, the manifest, or a build input changes (spec/watch.md)")
+            .help_heading("Watch Options"),
+        flag("no-clear", "With --watch: do not clear the screen before each run").help_heading("Watch Options"),
+    ]
 }
 
 fn jobs(help: &'static str) -> Arg {
@@ -278,6 +303,7 @@ fn build() -> Command {
                 ]
                 .map(|arg| arg.help_heading("Output Options")),
             )
+            .args(watch_options())
             .after_help(ENVIRONMENT),
     )
 }
@@ -303,6 +329,7 @@ fn run() -> Command {
                 compile_jobs(),
                 comptime_steps(),
             ])
+            .args(watch_options())
             .after_help(
                 "A single file that starts with a shebang or an inline manifest runs as a script, from a cache \
                  (spec/scripts.md). The exit status is the program's.\n\n"
@@ -380,6 +407,7 @@ fn test() -> Command {
                 ]
                 .map(|arg| arg.help_heading(COMPILATION)),
             )
+            .args(watch_options())
             .after_help("The behavior is spec/test-runner.md.\n\n".to_string() + ENVIRONMENT),
     )
 }
@@ -467,6 +495,7 @@ fn check() -> Command {
                 ]
                 .map(|arg| arg.help_heading("Ownership Options")),
             )
+            .args(watch_options())
             .after_help(
                 "Nothing is printed when the program has no errors and no warnings. The exit status is 0 without \
                  errors, 1 with errors, and 2 for a usage error. With --print-instances the report goes to standard \
@@ -871,6 +900,26 @@ fn bindgen() -> Command {
     )
 }
 
+fn watch() -> Command {
+    Command::new("watch")
+        .about("Rerun check, build, test, or run whenever the sources change")
+        .override_usage("burdin watch [check|build|test|run] <file.bd | package directory> [OPTIONS]")
+        .arg(
+            Arg::new("args")
+                .value_name("command and options")
+                .num_args(0..)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true)
+                .help("The command (default: check), its target, and its options, as for the command itself"),
+        )
+        .arg(flag("no-clear", "Do not clear the screen before each run"))
+        .after_help(
+            "Watches the package's sources, burdin.toml, path dependencies, and the files build scripts read, \
+             ignoring the target directory and version-control metadata. `run` restarts the program; `test` runs \
+             the tests of changed modules and their dependents first. The behavior is spec/watch.md.",
+        )
+}
+
 fn lsp() -> Command {
     Command::new("lsp")
         .about("Run the language server on standard input and output")
@@ -910,7 +959,9 @@ mod tests {
     #[test]
     fn the_command_list_names_every_command() {
         let help = command().render_help().to_string();
-        for name in ["build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "explain", "lsp"] {
+        for name in
+            ["build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "explain", "watch", "lsp"]
+        {
             assert!(help.contains(&format!("  {name} ")), "`{name}` is missing from:\n{help}");
         }
         // The list stays short: the options of a command are only in its own help.

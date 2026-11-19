@@ -1,6 +1,6 @@
 //@ compile-fail
 
-struct Bad derives (Copy, Clone) { //~ E0130
+struct Bad: Copy, Clone { //~ E0130
     n: i32
 }
 

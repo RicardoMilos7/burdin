@@ -11,17 +11,17 @@
 // Constants of every materializable kind (spec/comptime.md, CT3, CT7), including constants built from other
 // constants.
 
-struct Point derives (Copy, Clone, Eq) {
+struct Point: Copy, Clone, Eq {
     x: i32,
     y: i32,
 }
-// derives (Copy, Clone, Eq): built in; the compiler implements them structurally, so there is no source form
+// Copy, Clone, Eq: built in; the compiler implements them structurally, so there is no source form
 
-enum Color derives (Copy, Clone, Eq) {
+enum Color: Copy, Clone, Eq {
     Red,
     Green,
 }
-// derives (Copy, Clone, Eq): built in; the compiler implements them structurally, so there is no source form
+// Copy, Clone, Eq: built in; the compiler implements them structurally, so there is no source form
 
 const F: f64 = 3.5
 const I: i8 = -2

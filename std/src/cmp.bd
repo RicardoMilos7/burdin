@@ -11,7 +11,7 @@ use ops.PartialOrd
 /// The result of comparing two values: `Less` when the left one sorts first, `Equal` when neither does, and
 /// `Greater` when the right one sorts first. The variants are declared in that order, so `Ord` compares
 /// `Less < Equal < Greater`.
-enum Ordering derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+enum Ordering: Copy, Clone, Eq, Ord, Hash, Debug {
     Less
     Equal
     Greater
@@ -145,7 +145,7 @@ fn max_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
 
 /// A value whose order is reversed: `Reverse(a) < Reverse(b)` exactly when `b < a`. It turns a max-ordered
 /// container into a min-ordered one and lets a sort by key run descending.
-struct Reverse<T> derives (Copy, Clone, Eq, Debug) {
+struct Reverse<T>: Copy, Clone, Eq, Debug {
     value: T
 }
 

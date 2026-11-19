@@ -1,0 +1,37 @@
+//@ compile-fail
+
+// Only the built-in derives, the `derive` declarations, and the interfaces whose methods all have defaults can follow
+// a declaration's name. An interface with a method that has no default is E0234, and a name that is not an interface
+// in scope is E0002 (spec/derives.md, issue #825).
+
+interface Area {
+    fn area(self): i32
+}
+
+interface Named {
+    fn name(self): String { String.from("named") }
+    fn id(self): i32
+}
+
+struct Square: Area { //~ E0234
+    side: i32
+}
+
+enum Shape: Copy, Named { //~ E0234
+    Dot
+}
+
+struct Text: Clone, Display { //~ E0234
+    s: String
+}
+
+struct Pair: From<i32> { //~ E0234
+    a: i32
+}
+
+struct Ghost: Missing { //~ E0002
+    a: i32
+}
+
+fn main() {
+}

@@ -97,7 +97,7 @@ interface Write {
     fn write_line(mut self, text: str): Result<(), IoError>
 }
 
-enum SeekFrom derives (Clone, Copy, Eq, Debug) { Start(u64), End(i64), Current(i64) }
+enum SeekFrom: Clone, Copy, Eq, Debug { Start(u64), End(i64), Current(i64) }
 
 interface Seek {
     fn seek(mut self, from: SeekFrom): Result<u64, IoError>
@@ -1169,7 +1169,7 @@ that. A value that is known at compile time is a `const` or a `comptime` express
 ## Paths (issue #194)
 
 ```
-struct Path derives (Clone, Eq) {
+struct Path: Clone, Eq {
     fn new(text: str): Path                 // the rules of the system the program is compiled for
     fn unix(text: str): Path                // Unix rules       fn windows(text: str): Path     // Windows rules
     fn as_str(self): str                    fn separator(self): char
@@ -1209,9 +1209,9 @@ Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`
 ## Directories, metadata, and walking (issue #411)
 
 ```
-enum FileKind derives (Copy, Clone, Eq, Debug) { File  Dir  Symlink  Other }
+enum FileKind: Copy, Clone, Eq, Debug { File  Dir  Symlink  Other }
 
-struct Metadata derives (Clone, Copy, Eq, Debug) {
+struct Metadata: Clone, Copy, Eq, Debug {
     size: u64                 // bytes
     mode: u32                 // the system's mode bits
     modified: i64             // seconds since the Unix epoch
@@ -1335,11 +1335,11 @@ Tests: `m24_stdlib/file_handles`, `file_errors`, `file_comptime`.
 ## Time (issue #195)
 
 ```
-struct Duration derives (Copy, Clone, Eq, Ord, Hash, Default)   // a non-negative length of time
-struct Instant derives (Copy, Clone, Eq, Ord, Hash, Debug)      // a reading of the monotonic clock
-struct SystemTime derives (Copy, Clone, Eq, Ord, Hash, Debug)   // a reading of the real-time clock
-struct DateTime derives (Copy, Clone, Eq, Ord, Hash, Debug)     // a calendar date and time of day, in UTC
-enum Weekday derives (Copy, Clone, Eq, Ord, Hash, Debug)        // Monday ... Sunday
+struct Duration: Copy, Clone, Eq, Ord, Hash, Default   // a non-negative length of time
+struct Instant: Copy, Clone, Eq, Ord, Hash, Debug      // a reading of the monotonic clock
+struct SystemTime: Copy, Clone, Eq, Ord, Hash, Debug   // a reading of the real-time clock
+struct DateTime: Copy, Clone, Eq, Ord, Hash, Debug     // a calendar date and time of day, in UTC
+enum Weekday: Copy, Clone, Eq, Ord, Hash, Debug        // Monday ... Sunday
 interface Clock { fn now(self): Instant   fn system_time(self): SystemTime }
 struct SystemClock { }                                          // zero-sized; the operating system's clocks
 struct ManualClock                                              // moves only when told to
@@ -1440,7 +1440,7 @@ Tests: `m24_stdlib/time_duration`, `time_instant`, `time_duration_underflow`, `t
 
 ```
 fn random_seed(): u64                                   // 64 random bits from the operating system
-struct Random derives (Clone, Eq)
+struct Random: Clone, Eq
 
 Random {
     fn seeded(seed: u64): Random                        fn from_entropy(): Random
@@ -1556,7 +1556,7 @@ decisions, and the reasons are `iterators.md` IT15 and `memory-rules.md` IT15.
 names the module.
 
 ```
-enum Ordering derives (Copy, Clone, Eq, Ord, Hash, Debug) { Less  Equal  Greater }
+enum Ordering: Copy, Clone, Eq, Ord, Hash, Debug { Less  Equal  Greater }
 
 fn Ordering.reverse(self): Ordering
 fn Ordering.then(self, other: Ordering): Ordering
@@ -1571,7 +1571,7 @@ fn cmp.max_by<T, F: FnMut(&T, &T): Ordering>(a: T, b: T, compare: F): T
 fn cmp.min_by_key<T, K: Ord, F: FnMut(&T): K>(a: T, b: T, key: F): T
 fn cmp.max_by_key<T, K: Ord, F: FnMut(&T): K>(a: T, b: T, key: F): T
 
-struct Reverse<T> derives (Copy, Clone, Eq, Debug) { value: T }   // `<` is `T`'s `>`; `T: Ord` through `PartialOrd`
+struct Reverse<T>: Copy, Clone, Eq, Debug { value: T }   // `<` is `T`'s `>`; `T: Ord` through `PartialOrd`
 ```
 
 `a.cmp(b): Ordering` is provided by the compiler for every type that satisfies `Ord`: the integers, `char`, `bool`,
@@ -1604,7 +1604,7 @@ a hand-written hash table. The prelude makes its names visible in every module, 
 x.hash(): u64                              // every type that is `Hash`; built in (derives.md)
 fn x.hash_from(state: u64): u64            // built in: folds `x` into a running state
 
-struct Hasher derives (Copy, Clone, Eq, Debug)     // one `u64` of state
+struct Hasher: Copy, Clone, Eq, Debug     // one `u64` of state
 fn Hasher.new(): Hasher                    // the FNV-1a offset basis
 fn Hasher.with_seed(seed: u64): Hasher     // `new()` followed by `write_u64(seed)`
 fn Hasher.write<T: Hash>(mut self, value: T)   // folds a whole value, as `value.hash()` would
@@ -1835,7 +1835,7 @@ the error passed through, and a release build records none (`errors.md`, ERR7).
 `std` declares its error types (`errors.md`, ERR10-ERR11):
 
 ```
-enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+enum IoErrorKind: Copy, Clone, Eq, Debug {
     NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
     InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut
     ConnectionRefused  ConnectionReset  ConnectionAborted  NotConnected
@@ -1881,7 +1881,7 @@ nothing and exits 0 (`errors.md`, ERR8).
 ## Networking (issue #220)
 
 ```
-struct SocketAddr derives (Copy, Clone, Eq, Debug) {
+struct SocketAddr: Copy, Clone, Eq, Debug {
     priv ip: u32       // a.b.c.d, a in the highest byte
     priv port: u16
 }
@@ -2073,8 +2073,8 @@ and `m20_comptime/purity_process`.
 ## The compilation target
 
 ```
-enum target.Os derives (Copy, Clone, Eq) { Linux  MacOs  Windows }
-enum target.Arch derives (Copy, Clone, Eq) { X86_64  Aarch64 }
+enum target.Os: Copy, Clone, Eq { Linux  MacOs  Windows }
+enum target.Arch: Copy, Clone, Eq { X86_64  Aarch64 }
 fn target.os(): target.Os                   // the operating system the program is compiled for
 fn target.arch(): target.Arch               // the processor architecture the program is compiled for
 ```

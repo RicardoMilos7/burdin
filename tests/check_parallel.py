@@ -108,7 +108,7 @@ def chunk(tag: str, index: int) -> str:
     """One generated unit of the codegen package: a struct with methods, an enum and a `match`, a generic
     function, a loop, a `List`, and a `String`."""
     n = f"{tag}{index}"
-    return f"""struct V{n} derives (Copy, Clone, Eq) {{
+    return f"""struct V{n}: Copy, Clone, Eq {{
     a: i32
     b: i64
     on: bool

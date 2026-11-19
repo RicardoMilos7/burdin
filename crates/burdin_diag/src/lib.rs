@@ -282,9 +282,13 @@ impl Code {
     pub const RESERVED_MEMBER: Code = Code("E0231");
     /// A computed field access `x.{name}` whose name is not a compile-time string (RFL5).
     pub const INVALID_COMPUTED_FIELD: Code = Code("E0232");
-    /// An invalid derive declaration or use: a derive named like a built-in derive, or `derives (Name)` with no
+    /// An invalid derive declaration or use: a derive named like a built-in derive, or `struct T: Name` with no
     /// interface `Name` in scope (RFL8, RFL9).
     pub const INVALID_DERIVE: Code = Code("E0233");
+    /// An interface after `:` on a struct or enum declaration that the declaration cannot implement by itself: it
+    /// has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...).
+    /// `spec/derives.md`.
+    pub const NOT_DERIVABLE: Code = Code("E0234");
     /// `embed` could not read its file: the file is missing, unreadable, or not UTF-8 text (`spec/comptime.md`,
     /// CT15).
     pub const EMBED_FAILED: Code = Code("E0240");

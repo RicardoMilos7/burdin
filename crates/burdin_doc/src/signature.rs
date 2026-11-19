@@ -148,10 +148,10 @@ mod tests {
 
     #[test]
     fn type_heads_stop_at_the_brace() {
-        let src = "priv struct P<T> derives (Copy, Eq) {\n    x: T\n}\nenum E {\n    A(i32), B { w: i32 }\n}\ntype Pair<T> = (T, T)\nconst N: i32 = 10\n";
+        let src = "priv struct P<T>: Copy, Eq {\n    x: T\n}\nenum E {\n    A(i32), B { w: i32 }\n}\ntype Pair<T> = (T, T)\nconst N: i32 = 10\n";
         let ast = parse(src);
         let Item::Struct(s) = &ast.items[0] else { panic!() };
-        assert_eq!(brace_head(src, s.span), "struct P<T> derives (Copy, Eq)");
+        assert_eq!(brace_head(src, s.span), "struct P<T>: Copy, Eq");
         let Item::Enum(e) = &ast.items[1] else { panic!() };
         assert_eq!(brace_head(src, e.span), "enum E");
         assert_eq!(variant_text(src, &e.variants[0], false), "A(i32)");

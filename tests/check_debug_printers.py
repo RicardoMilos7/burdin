@@ -78,12 +78,12 @@ Block: Measured {
     }
 }
 
-enum Shape derives (Debug) {
+enum Shape: Debug {
     Circle { radius: f64 }
     Square { side: f64 }
 }
 
-struct Item derives (Debug) {
+struct Item: Debug {
     name: String
     count: i32
 }

@@ -329,7 +329,7 @@ A `Copy` value of 64 bytes or more is passed by value to a function inside a loo
 
 <!-- lint-example: L0012 -->
 ```burdin
-struct Big derives (Copy, Clone) {
+struct Big: Copy, Clone {
     a: i64
     b: i64
     c: i64

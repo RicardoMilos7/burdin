@@ -69,7 +69,7 @@ fn write_chunks(src: &mut String, units: usize, tag: &str) {
         write!(
             src,
             "\
-struct V{tag}{i} derives (Copy, Clone, Eq) {{
+struct V{tag}{i}: Copy, Clone, Eq {{
     a: i32
     b: i64
     on: bool
