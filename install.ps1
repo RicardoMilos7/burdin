@@ -12,7 +12,8 @@
 #   BURDIN_RELEASE_DIR   local directory to install from, instead of the network (a rehearsal)
 #
 # Every download is verified against the release's SHA256SUMS before it is unpacked. The compiler needs LLVM-C.dll at
-# run time; this script warns when the installed compiler cannot start (docs/releasing.md).
+# run time; the archive carries it and this script installs it beside burdin.exe. It warns when the installed compiler
+# cannot start anyway (docs/releasing.md).
 param(
     [string]$Version = $env:BURDIN_VERSION,
     [string]$Channel = $(if ($env:BURDIN_CHANNEL) { $env:BURDIN_CHANNEL } else { 'stable' }),
@@ -129,6 +130,11 @@ try {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $destination = Join-Path $InstallDir 'burdin.exe'
     Copy-Item -LiteralPath $source -Destination $destination -Force
+    # The runtime library travels with the compiler: Windows finds a DLL next to the executable first.
+    $dll = Join-Path (Split-Path -Parent $source) 'LLVM-C.dll'
+    if (Test-Path $dll) {
+        Copy-Item -LiteralPath $dll -Destination (Join-Path $InstallDir 'LLVM-C.dll') -Force
+    }
 
     Say "installed burdin $Version ($Channel) for $Target in $InstallDir"
     try {

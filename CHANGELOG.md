@@ -19,6 +19,15 @@ the crate's sources changed, build it with cargo under the pinned toolchain, and
 system libraries `rustc` reports. A failure is the new E0264; a dependency's crates need a `[build] allow` grant
 (E0260). New crate `burdin_rustgen`; the macOS and Windows paths are written but not run.
 
+### Release builds link LLVM statically
+
+- Linux and macOS release archives hold a compiler with LLVM linked in: no `libLLVM` is needed at run time.
+  `BURDIN_STATIC_LLVM=1` selects it in `crates/burdin_codegen/build.rs`; development builds stay shared.
+  `tests/build_release.py` sets it, checks the binary with `ldd`/`otool -L`, and the reproducibility check covers it.
+- Windows archives carry `LLVM-C.dll` beside `burdin.exe`, and `install.ps1` installs it with the compiler, so a fresh
+  install starts without LLVM on `PATH`. `build_release.py` refuses to package a Windows build without the DLL and
+  takes `--llvm-dll`. A static Windows build (`BURDIN_STATIC_LLVM=1`, static CRT) is wired but not yet proven.
+
 ### Debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
 `spec/debug.md` (DBG1-DBG12) is the specification; `tests/check_debug_info.py` and `tests/check_debug_printers.py`
