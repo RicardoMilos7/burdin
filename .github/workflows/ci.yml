@@ -286,6 +286,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
+      # `burdin add` and `burdin.lock`: path and git dependencies (local repositories), the golden manifest and
+      # lockfile, `--locked` on a stale lockfile, checksums, and failures that change nothing (issues #238, #239).
+      - name: Check burdin add and burdin.lock
+        if: matrix.part == 'tools'
+        run: python3 tests/check_packages.py
+
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
       - name: Check burdin check
@@ -608,6 +614,12 @@ jobs:
       - name: Check burdin new
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
+
+      # `burdin add` and `burdin.lock`: path and git dependencies (local repositories), the golden manifest and
+      # lockfile, `--locked` on a stale lockfile, checksums, and failures that change nothing (issues #238, #239).
+      - name: Check burdin add and burdin.lock
+        if: matrix.part == 'tools'
+        run: python3 tests/check_packages.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
@@ -951,6 +963,12 @@ jobs:
       - name: Check burdin new
         if: matrix.part == 'tools'
         run: python tests/check_new.py
+
+      # `burdin add` and `burdin.lock`: path and git dependencies (local repositories), the golden manifest and
+      # lockfile, `--locked` on a stale lockfile, checksums, and failures that change nothing (issues #238, #239).
+      - name: Check burdin add and burdin.lock
+        if: matrix.part == 'tools'
+        run: python tests/check_packages.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).

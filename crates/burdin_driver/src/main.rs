@@ -1,9 +1,10 @@
 //! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `expand`, `asm`, `bloat`, `fmt`, `lint`, `doc`,
-//! `debug`, `explain`, `bindgen`, `new`, `repl`, `lsp`, and `dap`. The command tree and its help are declared with
+//! `debug`, `explain`, `bindgen`, `new`, `add`, `repl`, `lsp`, and `dap`. The command tree and its help are declared with
 //! clap in `cli.rs`.
 //! The contract is documented in `README.md` at the repository root (`The driver contract`) and summarized at the
 //! top of tests/run_tests.py.
 
+mod add;
 mod asm;
 mod bench_runner;
 mod bindgen;
@@ -39,6 +40,8 @@ pub(crate) struct Args {
     pub(crate) command: String,
     pub(crate) target: PathBuf,
     pub(crate) release: bool,
+    /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
+    pub(crate) locked: bool,
     /// Emit source-level debug information (DWARF in the object and the executable).
     pub(crate) debug: bool,
     /// Pass the linker's strip option (Unix `-s`; with MSVC, optimize for size).
@@ -181,6 +184,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--strip" => args.strip = flag_without_value(a, inline)?,
             "--lto" => args.lto = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
+            "--locked" => args.locked = flag_without_value(a, inline)?,
             "--pgo-generate" => args.pgo_generate = flag_without_value(a, inline)?,
             "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
             "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
@@ -572,6 +576,7 @@ fn driver_main() -> ExitCode {
         "doc" => return doc::run(rest),
         "debug" => return debug::run(rest),
         "new" => return new::run(rest),
+        "add" => return add::run(rest),
         "lsp" => return lsp(rest),
         "dap" => return dap(rest),
         "repl" => return repl::run(rest),
@@ -602,6 +607,7 @@ fn driver_main() -> ExitCode {
         emit_deps: args.emit_deps.as_deref(),
         report_clean: args.command == "build",
         run_build_scripts: true,
+        locked: args.locked,
         jobs: jobs_or_default(args.jobs),
     };
     match args.command.as_str() {
@@ -721,6 +727,9 @@ pub(crate) struct CompileOptions<'a> {
     /// Run the package's `build.bd` (and its granted dependencies' scripts) before reading sources. A build
     /// script's own compilation passes `false`, so a script cannot run another script (BS3).
     pub(crate) run_build_scripts: bool,
+    /// `--locked`: a `burdin.lock` that does not match the manifests is an error instead of being rewritten
+    /// (`spec/packages.md`, PKG8).
+    pub(crate) locked: bool,
     /// The most threads parsing and code generation use (`-j`); 0 is the machine's parallelism.
     pub(crate) jobs: usize,
 }
@@ -762,6 +771,22 @@ pub(crate) struct FrontEnd {
     pub(crate) rust_libs: Vec<String>,
 }
 
+/// Resolves the dependencies of a package directory and brings its `burdin.lock` up to date before the package is
+/// loaded (`spec/packages.md`, PKG8): git dependencies are fetched into the cache, and with `locked` a lockfile that
+/// would change is an error. A one-file target has no lockfile. Errors are printed; the exit status is 1.
+pub(crate) fn sync_dependencies(target: &Path, locked: bool) -> Result<(), ExitCode> {
+    if !target.join("burdin.toml").is_file() {
+        return Ok(());
+    }
+    match burdin_pkg::resolve::sync(target, locked) {
+        Ok(_) => Ok(()),
+        Err(message) => {
+            eprintln!("error: {message}");
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
 /// Replacement texts for source files, by path: `burdin lint --fix` checks the program it is about to write.
 pub(crate) type SourceOverrides = std::collections::HashMap<PathBuf, String>;
 
@@ -776,6 +801,7 @@ pub(crate) fn front_end(
     overrides: &SourceOverrides,
 ) -> Result<FrontEnd, ExitCode> {
     let mode = options.mode;
+    sync_dependencies(target, options.locked)?;
     let mut loaded = match if mode.wants_main() { package::load(target) } else { package::load_for_tests(target) } {
         Ok(loaded) => loaded,
         Err(message) => {

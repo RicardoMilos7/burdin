@@ -1,0 +1,9 @@
+[package]
+name = "burdin_pkg"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+burdin_query.workspace = true
+burdin_syntax.workspace = true

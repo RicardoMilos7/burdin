@@ -128,6 +128,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,
+        locked: false,
         jobs: jobs_or_default(args.jobs),
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {

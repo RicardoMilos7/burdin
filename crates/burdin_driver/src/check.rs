@@ -30,6 +30,8 @@ struct CheckArgs {
     target: PathBuf,
     release: bool,
     tests: bool,
+    /// `--locked`: refuse to update `burdin.lock`.
+    locked: bool,
     /// `--print-instances`: print the monomorphization report after a clean check.
     print_instances: bool,
     comptime_steps: Option<u64>,
@@ -59,6 +61,7 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
+            "--locked" => args.locked = flag_without_value(a, inline)?,
             "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
             "--explain-ownership" => args.explain_ownership = flag_without_value(a, inline)?,
             "--explain" => args.explain = flag_without_value(a, inline)?,
@@ -118,6 +121,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         // A CI gate gets a log even when the package is clean, like `burdin build` (`spec/diagnostics.md`, DG11).
         report_clean: true,
         run_build_scripts: true,
+        locked: args.locked,
         jobs: jobs_or_default(args.jobs),
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {

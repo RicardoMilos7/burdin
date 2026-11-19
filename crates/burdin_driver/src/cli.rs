@@ -119,6 +119,7 @@ const ENVIRONMENT: &str = "\
 Environment:
   BURDIN_CC             The C compiler driver used to link against libc (default: cc; cl on Windows)
   BURDIN_JOBS           The default of -j (default: the machine's parallelism; 1 is sequential)
+  BURDIN_HOME           Where tools keep state, including the git dependency cache under git/
   BURDIN_CODEGEN_UNITS  Split code generation into exactly this many units (default: by program size)
   LLVM_SYS_211_PREFIX   The LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
   COLUMNS               The terminal width used when --width is not given
@@ -154,6 +155,7 @@ pub(crate) fn command() -> Command {
             lint(),
             doc(),
             new(),
+            add(),
             repl(),
             debug(),
             expand(),
@@ -205,6 +207,10 @@ fn debug_info() -> Arg {
         .help("Emit source-level debug information")
 }
 
+fn locked() -> Arg {
+    flag("locked", "Fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)")
+}
+
 fn link_lib() -> Arg {
     option("link-lib", "name", "Link against a native library; may repeat").action(ArgAction::Append)
 }
@@ -241,6 +247,7 @@ fn build() -> Command {
             .args([
                 release("Build with optimizations"),
                 debug_info(),
+                locked(),
                 flag("strip", "Strip the executable (with MSVC, optimize for size)"),
                 flag("lto", "Emit bitcode and link with -flto (needs an LLVM compiler driver)"),
                 flag("pgo-generate", "Instrument the program for profile-guided optimization"),
@@ -285,7 +292,14 @@ fn run() -> Command {
                     .last(true)
                     .help("Arguments passed to the program"),
             )
-            .args([release("Build with optimizations"), debug_info(), link_lib(), compile_jobs(), comptime_steps()])
+            .args([
+                release("Build with optimizations"),
+                debug_info(),
+                locked(),
+                link_lib(),
+                compile_jobs(),
+                comptime_steps(),
+            ])
             .after_help(
                 "A single file that starts with a shebang or an inline manifest runs as a script, from a cache \
                  (spec/scripts.md). The exit status is the program's.\n\n"
@@ -357,6 +371,7 @@ fn test() -> Command {
                 [
                     release("Build the tests with optimizations"),
                     debug_info(),
+                    locked(),
                     jobs("Run at most n tests at once, and compile on at most n threads (default: the number of CPUs)"),
                     comptime_steps(),
                 ]
@@ -408,6 +423,7 @@ fn bench() -> Command {
                 [
                     release("Accepted for symmetry: benches always build with optimizations"),
                     debug_info(),
+                    locked(),
                     jobs("Compile on at most n threads; benches are measured one at a time"),
                     comptime_steps(),
                 ]
@@ -427,6 +443,7 @@ fn check() -> Command {
                 release("Check the way `burdin build --release` does"),
                 flag("tests", "Also check the `test` blocks, and do not require a `main` (a library package)"),
                 flag("print-instances", "Print every generic instance the program created and why (spec/inspect.md)"),
+                locked(),
                 option(
                     "format",
                     "fmt",
@@ -562,6 +579,37 @@ fn new() -> Command {
         .override_usage("burdin new <name>")
         .arg(Arg::new("name").value_name("name").required(true).help("The package directory to create"))
         .after_help("Creates <name>/burdin.toml, <name>/src/main.bd, and <name>/.gitignore.")
+}
+
+fn add() -> Command {
+    Command::new("add")
+        .about("Add a path or git dependency to burdin.toml")
+        .override_usage(
+            "burdin add [<name>] --path <dir> [--manifest-path <path>]\n       \
+             burdin add [<name>] --git <url> [--branch <branch> | --tag <tag> | --rev <commit>] [--manifest-path <path>]",
+        )
+        .arg(
+            Arg::new("name")
+                .value_name("name")
+                .help("The name `use` reaches the dependency by (default: the dependency's package name)"),
+        )
+        .args([
+            option("path", "dir", "A package directory, relative to the working directory"),
+            option("git", "url", "A git repository whose root is a package"),
+            option("branch", "branch", "With --git: the branch to pin (default: the repository's default branch)"),
+            option("tag", "tag", "With --git: the tag to pin"),
+            option("rev", "commit", "With --git: the commit to pin"),
+            option(
+                "manifest-path",
+                "path",
+                "The burdin.toml to edit, or its directory (default: the nearest one at or above the working directory)",
+            ),
+        ])
+        .after_help(
+            "The dependency and the whole graph are resolved and burdin.lock is written; a git dependency is pinned to \
+             the commit its branch, tag, or rev names now. On failure neither file changes. The behavior is \
+             spec/packages.md.",
+        )
 }
 
 fn repl() -> Command {
@@ -772,7 +820,7 @@ mod tests {
     #[test]
     fn the_command_list_names_every_command() {
         let help = command().render_help().to_string();
-        for name in ["build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "explain", "lsp"] {
+        for name in ["build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "explain", "lsp"] {
             assert!(help.contains(&format!("  {name} ")), "`{name}` is missing from:\n{help}");
         }
         // The list stays short: the options of a command are only in its own help.

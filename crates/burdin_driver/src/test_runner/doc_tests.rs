@@ -588,6 +588,7 @@ fn build_one(
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,
+        locked: false,
         jobs: per_compile,
     };
     let FrontEnd { files, sources, program: checked, diags, .. } =
