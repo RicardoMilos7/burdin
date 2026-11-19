@@ -4,6 +4,12 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Watch mode (issue #632, 2026-11-19).** `burdin watch [check|build|test|run] <target>` and `--watch`/`--no-clear` on
+`build`, `run`, `test`, and `check` (`crates/burdin_driver/src/watch.rs`, `spec/watch.md`, `tests/check_watch.py`). It polls
+modification times (no new dependency) and reruns the command as a child `burdin`; `run` builds to a temporary file and
+restarts the program; `test` runs the changed modules' tests and their dependents first (a full rerun follows). Not done:
+build-script inputs outside the package are watched for `build`/`run` only (`--emit-deps`), not for `check`/`test`.
+
 **Derived interfaces follow the name (issue #825, 2026-11-19).** `struct Point: Copy, Clone, Eq { ... }` replaces
 `struct Point derives (Copy, Clone, Eq) { ... }` for structs, enums, and error enums, with `repr(C)` after the list.
 Besides the built-in derives and `derive` declarations, the list takes any interface whose methods all have
