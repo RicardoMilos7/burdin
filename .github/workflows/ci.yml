@@ -344,6 +344,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_scripts.py
 
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python3 tests/check_watch.py
+
       - name: Check host target
         if: matrix.part == 'unit'
         run: python3 tests/check_platform.py
@@ -680,6 +686,12 @@ jobs:
       - name: Check scripts
         if: matrix.part == 'tools'
         run: python3 tests/check_scripts.py
+
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python3 tests/check_watch.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -1037,6 +1049,12 @@ jobs:
       - name: Check scripts
         if: matrix.part == 'tools'
         run: python tests/check_scripts.py
+
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python tests/check_watch.py
 
       - name: Check host target
         if: matrix.part == 'unit'

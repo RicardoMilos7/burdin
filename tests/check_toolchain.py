@@ -84,8 +84,13 @@ with harness.temporary_dir("burdin-toolchain-") as work:
             text = text.replace(prefix, "<work>")
         return text.replace("\\", "/")
 
+    # On Windows, rustc must be told which linker to use: Git's coreutils `link.exe` can come first on PATH, and CI
+    # pins the MSVC one for cargo with CARGO_TARGET_<TRIPLE>_LINKER (the same trap the driver's build avoids).
+    pinned_linker = os.environ.get(f"CARGO_TARGET_{HOST.upper().replace('-', '_')}_LINKER")
+    linker_flags = ["-C", f"linker={pinned_linker}"] if pinned_linker else []
     built = harness.run(
-        ["rustc", "--edition", "2021", "-o", work / f"fake_burdin{EXE}", harness.TESTS / "toolchain" / "fake_burdin.rs"],
+        ["rustc", "--edition", "2021", *linker_flags, "-o", work / f"fake_burdin{EXE}",
+         harness.TESTS / "toolchain" / "fake_burdin.rs"],
         merge=True,
     )
     if built.returncode != 0:
@@ -616,7 +621,10 @@ with harness.temporary_dir("burdin-toolchain-") as work:
     inst_bin = work / "inst" / "bin"
     user_home = work / "userhome"
     user_home.mkdir()
-    bashrc = user_home / ".bashrc"
+    # install.sh writes the PATH line to the startup file of the user's shell: ~/.bash_profile on macOS, ~/.bashrc on
+    # Linux (the installer's own startup_file rule).
+    startup_name = ".bash_profile" if harness.PLATFORM == "macos" else ".bashrc"
+    bashrc = user_home / startup_name
     harness.write_text(bashrc, "alias ll='ls -l'\n")
     inst_env = env_for(home_dir=inst_home)
     for key in ("BURDIN_VERSION", "BURDIN_CHANNEL", "BURDIN_INSTALL_DIR", "BURDIN_TARGET", "BURDIN_BASE_URL",
@@ -647,7 +655,7 @@ with harness.temporary_dir("burdin-toolchain-") as work:
     expect("the installed proxy", run(["--version"], exe=proxy, env=inst_env), 0,
            fake_line("burdin", "0.4.1", ["--version"], "0.4.1"))
     path_line = f'export PATH="{inst_bin}:$PATH"'
-    startup = "" if harness.PLATFORM == "windows" else f"startup line: <work>/userhome/.bashrc: {norm(path_line.encode())}\n"
+    startup = "" if harness.PLATFORM == "windows" else f"startup line: <work>/userhome/{startup_name}: {norm(path_line.encode())}\n"
     if harness.PLATFORM != "windows":
         check(path_line in harness.read_text(bashrc), "install.sh did not add the PATH line")
     expect(
@@ -727,7 +735,10 @@ with harness.temporary_dir("burdin-toolchain-") as work:
         f"self uninstall did not report the file it left: {out!r}",
     )
     if harness.PLATFORM != "windows":
-        check(harness.read_text(bashrc) == "alias ll='ls -l'\n", f"self uninstall did not restore .bashrc: {harness.read_text(bashrc)!r}")
+        check(
+            harness.read_text(bashrc) == "alias ll='ls -l'\n",
+            f"self uninstall did not restore {startup_name}: {harness.read_text(bashrc)!r}",
+        )
         check("removed the line" in out, f"self uninstall did not report the startup line: {out!r}")
 
     # A compiler run directly, not through the proxy, says where `toolchain` and `+toolchain` belong (TC9).
