@@ -42,6 +42,7 @@ pub fn standalone(files: &[(&str, &str)]) -> Db {
             root_module: Some(entry),
             lint: Vec::new(),
             rust: Default::default(),
+            edition: Default::default(),
         }],
         entry_package: 0,
         entry_module: entry,

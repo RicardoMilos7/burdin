@@ -1,0 +1,20 @@
+--- a/pkg/burdin.toml
++++ b/pkg/burdin.toml
+@@ -1,5 +1,6 @@
+ [package]
+ name = "migrate"
+ version = "0.1.0"
++edition = "2026"
+ 
+ [dependencies]
+--- a/pkg/src/main.bd
++++ b/pkg/src/main.bd
+@@ -2,7 +2,7 @@
+     if flag {
+         return 1
+     }
+-    unimplemented()
++    panic("not implemented")
+ }
+ 
+ fn main() {

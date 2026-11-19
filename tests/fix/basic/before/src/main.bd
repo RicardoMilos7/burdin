@@ -1,0 +1,9 @@
+use util.{triple}
+
+fn main() {
+    let total = 1
+    total = 2
+    let count = triple(total)
+    println(cuont.to_string())
+    println(format_label())
+}

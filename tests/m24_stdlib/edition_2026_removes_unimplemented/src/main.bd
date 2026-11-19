@@ -1,0 +1,13 @@
+//@ compile-fail
+//@ suggest: E0002 machine-applicable: replace the call with `panic("not implemented")`
+
+// Edition 2026 removed `unimplemented()`: a call is an unknown function, with the fix edition 2024's deprecation
+// warning carried (`spec/fix.md`, FX11).
+
+fn encode(): i32 {
+    unimplemented() //~ E0002
+}
+
+fn main() {
+    println(encode().to_string())
+}

@@ -173,6 +173,7 @@ pub fn check(generated: &Generated) -> (Program, Diagnostics) {
     let packages = [burdin_sema::Package {
         name: "bench".to_string(),
         is_root: true,
+        edition: Default::default(),
         deps: Vec::new(),
         root_module: Some(0),
         modules: vec![burdin_sema::Module { file: generated.file, path: Vec::new(), ast: &generated.ast }],

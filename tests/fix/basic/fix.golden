@@ -1,0 +1,4 @@
+fixed pkg/src/main.bd:4: [E0005] make `total` mutable
+fixed pkg/src/main.bd:7: [E0002] use `count`, the name in scope with a similar spelling
+fixed pkg/src/main.bd:2: [E0002] import `util.format_label`
+fixed pkg/src/util.bd:10: [E0301] replace the call with `panic("not implemented")`

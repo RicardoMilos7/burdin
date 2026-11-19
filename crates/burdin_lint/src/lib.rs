@@ -11,7 +11,6 @@
 
 mod dead_code;
 mod else_enum;
-mod fix;
 mod mentions;
 mod missing_docs;
 mod naming;
@@ -189,21 +188,21 @@ fn finish(cx: &Ctx, mut findings: Vec<Finding>) -> Diagnostics {
     diags
 }
 
-/// The fixes a set of diagnostics offers: the machine-applicable suggestions, as `(span, replacement)` edits.
-pub fn applicable_edits(diags: &Diagnostics) -> Vec<(Span, String)> {
-    let mut edits: Vec<(Span, String)> = Vec::new();
+/// The fixes a set of diagnostics offers: the machine-applicable suggestions, each a group of edits that apply
+/// together (`spec/fix.md`, FX2). Children's suggestions count too.
+pub fn applicable_suggestions(diags: &Diagnostics) -> Vec<burdin_diag::Suggestion> {
+    let mut out = Vec::new();
     for d in diags.iter() {
-        collect_edits(d, &mut edits);
+        collect(d, &mut out);
     }
-    edits
+    out
 }
 
-fn collect_edits(d: &Diagnostic, out: &mut Vec<(Span, String)>) {
-    // Every edit of one suggestion list applies together, so a diagnostic with several is all or nothing: the lints
-    // here offer one edit per diagnostic, and the compiler's suggestions are single edits too.
-    for s in d.suggestions.iter().filter(|s| s.machine_applicable) {
-        out.push((s.span, s.replacement.clone()));
+fn collect(d: &Diagnostic, out: &mut Vec<burdin_diag::Suggestion>) {
+    out.extend(d.suggestions.iter().filter(|s| s.is_machine_applicable()).cloned());
+    for child in &d.children {
+        collect(child, out);
     }
 }
 
-pub use fix::{EditConflict, apply_edits, unified_diff};
+pub use burdin_diag::edit::{EditConflict, apply_edits, unified_diff};

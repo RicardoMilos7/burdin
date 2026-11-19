@@ -29,7 +29,10 @@ impl FnCx<'_> {
             } else if !self.place_mutable(&place) {
                 let name = place_root(&place).map(|root| self.locals[root.0].name.clone());
                 let whose = name.unwrap_or_else(|| "this place".to_string());
-                self.diags.error(Code::IMMUTABLE, lhs.span, format!("cannot assign to `{whose}`: it is not mutable"));
+                let fix = self.mut_binding_fix(&place);
+                let d =
+                    self.diags.error(Code::IMMUTABLE, lhs.span, format!("cannot assign to `{whose}`: it is not mutable"));
+                Self::attach_mut_fix(fix, d);
             }
         }
         mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)
@@ -429,11 +432,13 @@ impl FnCx<'_> {
                     return error_expr(span);
                 }
                 if mutable && !self.place_mutable(&place) {
-                    self.diags.error(
+                    let fix = self.mut_binding_fix(&place);
+                    let d = self.diags.error(
                         Code::MUT_OF_IMMUTABLE,
                         span,
                         "cannot take a mutable reference to a place that is not mutable",
                     );
+                    Self::attach_mut_fix(fix, d);
                 }
                 let ty = Ty::Ref { mutable, inner: Box::new(place.ty.clone()) };
                 mk(tir::ExprKind::Ref { place: Box::new(place), mutable }, ty, span)

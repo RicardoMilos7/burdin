@@ -49,8 +49,8 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
                         .with("title", s.message.as_str())
                         .with("kind", "quickfix")
                         .with("diagnostics", Json::Arr(vec![diagnostic.clone()]))
-                        .with("isPreferred", s.machine_applicable)
-                        .with("edit", edit_of(vec![(s.span.lo, s.span.hi, s.replacement.clone())])),
+                        .with("isPreferred", s.is_machine_applicable())
+                        .with("edit", edit_of(burdin_diag::edit::text_edits(&s.edits, s.span().file))),
                 );
             }
             for (title, edits) in fixes_for(server, i, &path, &text, d) {
@@ -96,7 +96,7 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
         let removals: Vec<(u32, u32, String)> = diags
             .iter()
             .filter(|d| d.code.0 == "L0006")
-            .flat_map(|d| d.suggestions.iter().map(|s| (s.span.lo, s.span.hi, s.replacement.clone())))
+            .flat_map(|d| d.suggestions.iter().flat_map(|s| burdin_diag::edit::text_edits(&s.edits, s.span().file)))
             .collect();
         if !removals.is_empty() {
             actions.push(

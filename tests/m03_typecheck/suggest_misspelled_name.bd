@@ -1,0 +1,9 @@
+//@ compile-fail
+//@ suggest: E0002 machine-applicable: use `count`, the name in scope with a similar spelling
+
+// A misspelled local with exactly one name in scope close to it: the fix renames the use (`spec/fix.md`, FX13).
+
+fn main() {
+    let count = 3
+    println(cuont.to_string()) //~ E0002
+}

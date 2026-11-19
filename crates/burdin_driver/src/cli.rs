@@ -153,6 +153,7 @@ pub(crate) fn command() -> Command {
             check(),
             fmt(),
             lint(),
+            fix(),
             doc(),
             new(),
             add(),
@@ -547,6 +548,25 @@ fn lint() -> Command {
                 "Levels also come from the [lint] table of burdin.toml (name = \"allow\" | \"warn\" | \"deny\"); \
                  the command line wins. A comment `// lint: allow(name)` suppresses a lint at one item, statement, \
                  or line. The lint reference is docs/lints.md.",
+            ),
+    )
+}
+
+fn fix() -> Command {
+    with_diagnostics(
+        Command::new("fix")
+            .about("Apply the machine-applicable fixes of the compiler and the linter across a package")
+            .override_usage("burdin fix <file.bd | package directory> [OPTIONS]")
+            .arg(target().required(true))
+            .args([
+                flag("dry-run", "Print the changes as a unified diff and write nothing"),
+                flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
+                flag("migrate", "Also move the package to the next edition, after checking it compiles there"),
+                jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
+                comptime_steps(),
+            ])
+            .after_help(
+                "Fixes apply round after round until nothing changes, conflicting fixes are skipped and reported,                  and a round that would add errors is undone. The touched files are formatted. The behavior is                  spec/fix.md.",
             ),
     )
 }
