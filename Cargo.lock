@@ -94,6 +94,7 @@ dependencies = [
  "burdin_lsp",
  "burdin_query",
  "burdin_repl",
+ "burdin_rustgen",
  "burdin_syntax",
  "burdin_tir",
 ]
@@ -161,6 +162,13 @@ dependencies = [
  "burdin_query",
  "burdin_syntax",
  "libc",
+]
+
+[[package]]
+name = "burdin_rustgen"
+version = "0.1.0"
+dependencies = [
+ "burdin_json",
 ]
 
 [[package]]
