@@ -4,7 +4,30 @@ Burdin has no backward-compatibility promise (see `Burdin Language Design.md`). 
 GitHub milestones and the roadmap track the work in progress. A milestone closes with an entry here (see the
 close-out checklist in `AGENTS.md`).
 
-## Unreleased — Stage 3
+## Unreleased
+
+- Nothing yet.
+
+## 0.1.0 — 2026-11-19
+
+The first published release of the Burdin compiler, for Linux, macOS, and Windows on x86-64 and arm64. Burdin is a
+personal experiment, not for production, and makes no backward-compatibility promise. The per-milestone history is
+in `CHANGELOG.md` in the repository; in short:
+
+- **Stage 0 — the core language.** Lexer and parser, primitives and control flow, type checking, structs, enums and
+  `match`, moves, `Drop` and `Heap`, conventions and references, generics, interfaces and derives, modules, `extern`
+  and `unsafe`, and the standard library.
+- **Stage 1 — the rest of the core language.** Closures, iterators, formatting, `any` and `impl`, errors, default and
+  named arguments, extension methods, operator overloading and `Index`, comptime, reflection and user derives, const
+  generics, `embed`, build scripts, and allocators with `Arena` and `Shared`.
+- **Stage 2 — concurrency.** Tasks and the scheduler, channels and `select`, shared state, and asynchronous I/O.
+- **Stage 3 — tooling.** `burdin fmt`, `lint`, `doc`, `check`, `new`, `bench`, doc tests and `burdin test` filters,
+  machine-readable diagnostics, the query-based compiler library, `burdin lsp`, `burdin repl`, single-file scripts,
+  C bindgen and Rust interop, debugger integration, and parallel compilation.
+- **Releases.** Archives for six targets with SHA-256 checksums and one-line installers. Linux and macOS builds link
+  LLVM statically; Windows archives carry `LLVM-C.dll` beside `burdin.exe`.
+
+## Stage 3 — 0.1.0 (2026-11-19)
 
 ### Rust interop through C-ABI shims (issue #249, sub-issue #477)
 
@@ -433,7 +456,7 @@ every CI job runs them.
 - Unit tests in `burdin_syntax::docs` and `burdin_doc`, the fixtures in `tests/doc/` with golden pages in
   `tests/doc/expect/`, and `tests/check_doc.py`, which every CI job runs.
 
-## Unreleased — Stage 2
+## Stage 2 — 0.1.0 (2026-11-19)
 
 ### Milestone 2.4: asynchronous I/O (issue #220)
 
@@ -528,7 +551,7 @@ every CI job runs them.
   when a reachable body creates it, which also shrinks every program that does not use tasks.
 - Written for Linux, macOS, and Windows on x86-64 and arm64; run so far only on Linux x86-64 (debug and release).
 
-## Unreleased — Infrastructure
+## Infrastructure — 0.1.0 (2026-11-19)
 
 - The Windows stack-overflow guard reserves a 64 KiB stack guarantee (`SetThreadStackGuarantee`) before it registers
   its vectored filter. The system's default left the filter only a few kilobytes once the exception dispatcher had
@@ -786,7 +809,7 @@ every CI job runs them.
   `fuzz-crashes` artifact; committing it with the fix keeps the regression covered. `tests/check-ci.sh` fails if
   the schedule, the fuzz job, the long session, the artifact upload, or the corpus goes missing.
 
-## Unreleased — Stage 1
+## Stage 1 — 0.1.0 (2026-11-19)
 
 Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub roadmap.
 

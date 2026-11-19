@@ -187,7 +187,8 @@ $ tests/release_notes.py --unreleased --check-links                       # a dr
 ## Cutting a release
 
 1. Move the `## Unreleased` entries under a new `## <version> — <YYYY-MM-DD>` heading in `CHANGELOG.md` and leave an
-   empty `## Unreleased` section for the next cycle.
+   `## Unreleased` section with a placeholder line for the next cycle (`release_notes.py --unreleased`, which the
+   nightly notes use, fails on an empty section).
 2. Set `[workspace.package] version` in `Cargo.toml` to `<version>`, then run a build so `Cargo.lock` records the
    new workspace versions, and commit both.
 3. Run the full local gate: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
