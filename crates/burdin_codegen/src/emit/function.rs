@@ -105,8 +105,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
         }
         // Last, when every body exists: the frame table the panic backtrace reads with `-g`
-        // (`spec/debug.md`, DBG2), or the stub lookup that keeps the non-`-g` trace unchanged.
+        // (`spec/debug.md`, DBG2), or the stub lookup that keeps the non-`-g` trace unchanged, and the embedded
+        // debugger scripts (DBG6).
         self.emit_frame_table(&reach)?;
+        if self.debug.is_some() {
+            self.emit_debug_scripts()?;
+        }
         Ok(())
     }
 

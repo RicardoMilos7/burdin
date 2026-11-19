@@ -86,7 +86,7 @@
           "type": "burdin",
           "request": "launch",
           "name": "Debug test total adds",
-          "program": "ROOT",
+          "target": "ROOT",
           "test": "total adds",
           "cwd": "ROOT"
         }
@@ -145,7 +145,7 @@
           "type": "burdin",
           "request": "launch",
           "name": "Debug test square area",
-          "program": "ROOT",
+          "target": "ROOT",
           "test": "square area",
           "cwd": "ROOT"
         }
@@ -199,7 +199,7 @@
           "type": "burdin",
           "request": "launch",
           "name": "Debug geometry",
-          "program": "ROOT",
+          "target": "ROOT",
           "cwd": "ROOT"
         }
       ]

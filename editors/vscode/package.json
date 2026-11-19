@@ -1,22 +1,34 @@
 {
   "name": "burdin",
   "displayName": "Burdin",
-  "description": "Burdin language support: the burdin lsp language server, syntax highlighting, and test lenses.",
+  "description": "Burdin language support: the burdin lsp language server, the burdin dap debug adapter, syntax highlighting, and test lenses.",
   "version": "0.1.0",
   "publisher": "burdin",
   "private": true,
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages", "Formatters", "Linters"],
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
   "main": "./extension.js",
-  "activationEvents": ["workspaceContains:**/burdin.toml"],
+  "activationEvents": [
+    "workspaceContains:**/burdin.toml",
+    "onDebugResolve:burdin"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "burdin",
-        "aliases": ["Burdin", "burdin"],
-        "extensions": [".bd"],
+        "aliases": [
+          "Burdin",
+          "burdin"
+        ],
+        "extensions": [
+          ".bd"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -28,9 +40,18 @@
       }
     ],
     "commands": [
-      { "command": "burdin.restartServer", "title": "Burdin: Restart the language server" },
-      { "command": "burdin.run", "title": "Burdin: Run" },
-      { "command": "burdin.debug", "title": "Burdin: Debug" }
+      {
+        "command": "burdin.restartServer",
+        "title": "Burdin: Restart the language server"
+      },
+      {
+        "command": "burdin.run",
+        "title": "Burdin: Run"
+      },
+      {
+        "command": "burdin.debug",
+        "title": "Burdin: Debug"
+      }
     ],
     "configuration": {
       "title": "Burdin",
@@ -73,7 +94,97 @@
           "description": "Show the run and debug lenses above tests and `main`."
         }
       }
-    }
+    },
+    "debuggers": [
+      {
+        "type": "burdin",
+        "label": "Burdin",
+        "languages": [
+          "burdin"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "The `.bd` file or package directory to build with `-g` and debug. Defaults to the workspace folder."
+              },
+              "test": {
+                "type": "string",
+                "description": "Debug this `test` block instead of `main`: its name (matched like `burdin test`'s filters) or its index."
+              },
+              "program": {
+                "type": "string",
+                "description": "An already-built executable to debug instead of a `target`."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The arguments the program starts with."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "The working directory of the program."
+              },
+              "preRunCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "lldb commands run before the program starts; the adapter adds its formatters here."
+              }
+            }
+          },
+          "attach": {
+            "required": [],
+            "properties": {
+              "pid": {
+                "type": "string",
+                "description": "The process to attach to."
+              },
+              "program": {
+                "type": "string",
+                "description": "The executable the process runs."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "burdin",
+            "request": "launch",
+            "name": "Burdin: debug the package",
+            "target": "${workspaceFolder}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Burdin: launch a package",
+            "description": "Build the package with `-g` and debug it.",
+            "body": {
+              "type": "burdin",
+              "request": "launch",
+              "name": "Burdin",
+              "target": "${workspaceFolder}"
+            }
+          },
+          {
+            "label": "Burdin: debug a test",
+            "description": "Build the package's tests and stop inside one of them.",
+            "body": {
+              "type": "burdin",
+              "request": "launch",
+              "name": "Burdin test",
+              "target": "${workspaceFolder}",
+              "test": ""
+            }
+          }
+        ]
+      }
+    ]
   },
   "dependencies": {
     "vscode-languageclient": "9.0.1"

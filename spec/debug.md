@@ -99,14 +99,18 @@ hard-coded offsets, so a layout change moves them only if the names move. Facts 
 written once in this document and mirrored in the three printer files, and the golden fixtures fail when either
 side drifts: a `List`'s `ptr` addresses `cap` contiguous elements; a `Map`'s buffer holds `cap` (a power of
 two) slots of `(key, value, u64 hash)` where a zero hash marks an empty slot and there are no tombstones; a
-`Shared` cell is the value followed by the `usize` strong count; the `any` vtable is
-`{ i64 type_id, ptr drop, ptr name, ptr method_0, ... }`, where `name` is the concrete type's Burdin name —
-the name pointer is at index 2, after `type_id` and `drop`.
+`Shared` cell is `{ count: usize, value }` — the strong count first — and the `Shared<T>` value points at it;
+the `any` vtable is `{ i64 type_id, ptr drop, ptr name, usize name_len, ptr method_0, ... }`, where `name` is
+the concrete type's Burdin name at index 2, after `type_id` and `drop`. The DWARF types give the containers a
+typed element pointer (`List<T>`'s `ptr` is `T*`, a `Map`'s points at its `(key, value, hash)` slot struct,
+`Heap<T>` has a `value: T*` member and `Shared<T>` a `cell` member), so the printers never guess a type.
 
 **DBG6 — gdb printers are embedded in the binary.** `burdin build -g` writes a `.debug_gdb_scripts` section
-into the object: the byte `!` (the section version), then one embedded Python script entry naming
-`burdin_printers.py`. gdb auto-loads the section when it opens the program, so no installation or
-configuration is needed. The script is the repository file `debuggers/gdb/burdin_printers.py`, embedded by
+into the object, holding one embedded script entry: the type byte `4` (inline Python text), the script's name
+`burdin_printers.py` and a newline (the name is what gdb uses to run a script once), the script's text, and a
+terminating NUL. There is no version byte. gdb auto-loads the section when it opens the program, so no
+installation or configuration is needed; a site policy that restricts auto-loading is lifted with
+`set auto-load safe-path /`. The script is the repository file `debuggers/gdb/burdin_printers.py`, embedded by
 `burdin_codegen` — the compiler and the printers ship together. Without `-g` there is no section.
 
 **DBG7 — lldb formatters are written beside the session.** lldb has no equivalent of the section, so the

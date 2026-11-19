@@ -15,10 +15,13 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, GlobalValue, Struc
 use inkwell::{AddressSpace, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
-    /// The shape of a vtable: `{ i64 type_id, ptr drop, ptr method_0, ..., ptr method_n }`.
+    /// The shape of a vtable: `{ i64 type_id, ptr drop, ptr name, i64 name_len, ptr method_0, ..., ptr method_n }`.
+    /// `name` is the concrete type's Burdin name, so a debugger's `any` printer can show what a box holds
+    /// (`spec/debug.md`, DBG5).
     pub(super) fn vtable_struct_ty(&self, iface: usize) -> StructType<'ctx> {
         let ptr = self.cx.ptr_type(AddressSpace::default());
-        let mut fields: Vec<BasicTypeEnum<'ctx>> = vec![self.cx.i64_type().into(), ptr.into()];
+        let mut fields: Vec<BasicTypeEnum<'ctx>> =
+            vec![self.cx.i64_type().into(), ptr.into(), ptr.into(), self.usize_ty.into()];
         for _ in &self.program.any_ifaces[iface].methods {
             fields.push(ptr.into());
         }
@@ -39,9 +42,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         );
         let concrete = vtable.concrete.clone();
         let ty = self.vtable_struct_ty(vtable.iface);
-        let mut fields: Vec<BasicValueEnum<'ctx>> = Vec::new();
-        fields.push(self.cx.i64_type().const_int(vtable.type_id as u64, false).into());
-        fields.push(self.drop_glue(&concrete).as_global_value().as_pointer_value().into());
+        let name = self.str_literal(format!("{concrete}").as_bytes());
+        let mut fields: Vec<BasicValueEnum<'ctx>> = vec![
+            self.cx.i64_type().const_int(vtable.type_id as u64, false).into(),
+            self.drop_glue(&concrete).as_global_value().as_pointer_value().into(),
+            name.get_field_at_index(0).expect("str has a pointer"),
+            name.get_field_at_index(1).expect("str has a length"),
+        ];
         for entry in &vtable.entries {
             fields.push(self.functions[entry.0].as_global_value().as_pointer_value().into());
         }
@@ -67,6 +74,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let v = self.need(v, &value.ty);
             self.builder.build_store(data, v).map_err(llvm_err)?;
         }
+        // The box is the only place the concrete type's name survives (`spec/debug.md`, DBG5); naming its storage
+        // keeps the type in the debug info for the `any` printer.
+        self.debug_any_box(&value.ty, data);
         let vtable = self.vtable_global(vtable).as_pointer_value();
         let mut agg = undef(self.any_ty.into()).into_struct_value();
         agg = self.builder.build_insert_value(agg, data, 0, "any.data").map_err(llvm_err)?.into_struct_value();
@@ -101,7 +111,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let vtable = self.builder.build_extract_value(boxed, 1, "any.vtable").map_err(llvm_err)?.into_pointer_value();
         let vtable_ty = self.vtable_struct_ty(iface);
         let slot_ptr =
-            self.builder.build_struct_gep(vtable_ty, vtable, (2 + slot) as u32, "any.slot").map_err(llvm_err)?;
+            self.builder.build_struct_gep(vtable_ty, vtable, (4 + slot) as u32, "any.slot").map_err(llvm_err)?;
         let method = self.builder.build_load(ptr_ty, slot_ptr, "any.method").map_err(llvm_err)?.into_pointer_value();
         let mut fn_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
         let mut values: Vec<BasicMetadataValueEnum<'ctx>> = vec![data.into()];

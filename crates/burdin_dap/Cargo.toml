@@ -1,0 +1,15 @@
+[package]
+name = "burdin_dap"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The Debug Adapter Protocol server (`spec/debug.md`, DBG11). `burdin dap` runs it from the driver; the
+# `burdin-dap` binary is the same server without LLVM, for the integration tests and for editors that configure an
+# adapter path directly.
+[[bin]]
+name = "burdin-dap"
+path = "src/main.rs"
+
+[dependencies]
+burdin_json.workspace = true

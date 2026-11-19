@@ -92,6 +92,12 @@ program name and the test index are how the dispatcher finds the test).
 The runner removes the test binary directory and every test working directory when `burdin test` exits, including
 after a failure.
 
+The binary `burdin test` runs is also available on its own: `burdin build --tests <target> -o <exe>` compiles the test
+blocks and the dispatcher instead of `main` and writes the executable where `-o` says, with no runner, capture, or
+isolation. `<exe> <index>` then runs the test at `index` in the order `burdin test --list` prints them. The debug
+adapter builds a single test this way and starts the debugger on it with the index as the program's first argument
+(`spec/debug.md`, DBG10-DBG11).
+
 ## Discovery and selection
 
 The target is a `.bd` file or a package directory.

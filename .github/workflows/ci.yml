@@ -71,12 +71,12 @@ jobs:
             if [ -d "$cache/root" ]; then
               sudo cp -a "$cache/root/." /
             fi
-            sudo apt-get install -y libzstd-dev zlib1g-dev
+            sudo apt-get install -y libzstd-dev zlib1g-dev gdb
           else
             wget -q https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
             sudo ./llvm.sh 21
-            sudo apt-get install -y llvm-21-dev libclang-21-dev libpolly-21-dev libzstd-dev zlib1g-dev
+            sudo apt-get install -y llvm-21-dev libclang-21-dev libpolly-21-dev libzstd-dev zlib1g-dev gdb
             mkdir -p "$cache/root"
             sudo cp -a /usr/lib/llvm-21 "$cache/llvm-21"
             # Ubuntu splits the headers and libLLVM out of the tree: the in-tree symlinks
@@ -278,6 +278,19 @@ jobs:
       - name: Check burdin lsp
         if: matrix.part == 'tools'
         run: python3 tests/check_lsp.py
+
+      # The debugger integration (issue #565): the panic hook, the symbolized frames, the embedded gdb printers,
+      # the lldb formatters, the Natvis file, and `burdin debug` (spec/debug.md, DBG1-DBG10). gdb and lldb are
+      # optional; the check records a skip for each one that is missing.
+      - name: Check the debugger printers
+        if: matrix.part == 'tools'
+        run: python3 tests/check_debug_printers.py
+
+      # `burdin dap` (issue #576): the panic filter, the merged function breakpoints, glue-skipping steps, and a
+      # `target` built from a launch request, driven against a stub backend (spec/debug.md, DBG11).
+      - name: Check burdin dap
+        if: matrix.part == 'tools'
+        run: python3 tests/check_dap.py
 
       - name: Check host target
         if: matrix.part == 'unit'
@@ -556,6 +569,19 @@ jobs:
       - name: Check burdin lsp
         if: matrix.part == 'tools'
         run: python3 tests/check_lsp.py
+
+      # The debugger integration (issue #565): the panic hook, the symbolized frames, the embedded gdb printers,
+      # the lldb formatters, the Natvis file, and `burdin debug` (spec/debug.md, DBG1-DBG10). gdb and lldb are
+      # optional; the check records a skip for each one that is missing.
+      - name: Check the debugger printers
+        if: matrix.part == 'tools'
+        run: python3 tests/check_debug_printers.py
+
+      # `burdin dap` (issue #576): the panic filter, the merged function breakpoints, glue-skipping steps, and a
+      # `target` built from a launch request, driven against a stub backend (spec/debug.md, DBG11).
+      - name: Check burdin dap
+        if: matrix.part == 'tools'
+        run: python3 tests/check_dap.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -854,6 +880,19 @@ jobs:
       - name: Check burdin lsp
         if: matrix.part == 'tools'
         run: python tests/check_lsp.py
+
+      # The debugger integration (issue #565): the panic hook, the symbolized frames, the embedded gdb printers,
+      # the lldb formatters, the Natvis file, and `burdin debug` (spec/debug.md, DBG1-DBG10). gdb and lldb are
+      # optional; the check records a skip for each one that is missing.
+      - name: Check the debugger printers
+        if: matrix.part == 'tools'
+        run: python tests/check_debug_printers.py
+
+      # `burdin dap` (issue #576): the panic filter, the merged function breakpoints, glue-skipping steps, and a
+      # `target` built from a launch request, driven against a stub backend (spec/debug.md, DBG11).
+      - name: Check burdin dap
+        if: matrix.part == 'tools'
+        run: python tests/check_dap.py
 
       - name: Check host target
         if: matrix.part == 'unit'

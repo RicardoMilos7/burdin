@@ -20,13 +20,21 @@ mod actions;
 mod diagnostics;
 mod edit;
 mod index;
-pub mod json;
 mod nav;
 mod outline;
 mod project;
-pub mod rpc;
 mod server;
 pub mod text;
+
+/// The JSON value and the `Content-Length` framing, shared with the DAP server (`burdin_json`, `spec/debug.md`,
+/// DBG11).
+pub mod json {
+    pub use burdin_json::json::*;
+}
+
+pub mod rpc {
+    pub use burdin_json::rpc::*;
+}
 
 pub use edit::{TOKEN_MODIFIERS, TOKEN_TYPES};
 pub use server::serve;

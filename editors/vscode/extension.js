@@ -4,8 +4,6 @@
 
 const vscode = require("vscode");
 const { LanguageClient } = require("vscode-languageclient/node");
-const os = require("os");
-const path = require("path");
 
 let client;
 
@@ -47,60 +45,32 @@ function run(argument) {
   terminal.sendText(argument.argv.map(quote).join(" "));
 }
 
-// `burdin.debug`: the lens carries a DAP `launch` configuration of type `burdin`, for `burdin dap` (issue #576). Until
-// a debug adapter of that type is installed, a program is built with `-g` and started under CodeLLDB when it is
-// installed; a test has no fallback.
+// `burdin.debug`: the lens carries a DAP `launch` configuration of type `burdin` — a `target` (and a `test`) that
+// `burdin dap` builds with `-g` before launching it (`spec/debug.md`, DBG11-DBG12). The descriptor factory below is
+// the whole integration: the debugger is the driver's `dap` subcommand.
 async function debug(launch) {
   if (!launch) {
     return;
   }
   const folder = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0] : undefined;
-  try {
-    if (await vscode.debug.startDebugging(folder, launch)) {
-      return;
-    }
-  } catch (_) {
-    // No adapter for `burdin`: fall through.
+  if (!(await vscode.debug.startDebugging(folder, launch))) {
+    vscode.window.showErrorMessage("Burdin: the debug session could not be started.");
   }
-  if (launch.test) {
-    vscode.window.showInformationMessage("Burdin: debugging a test needs `burdin dap` (issue #576).");
-    return;
+}
+
+// The `burdin` debug type is `burdin dap`, which speaks DAP on standard input and output and forwards to lldb-dap
+// (`spec/debug.md`, DBG11).
+class BurdinDebugAdapterFactory {
+  createDebugAdapterDescriptor() {
+    return new vscode.DebugAdapterExecutable(burdinPath(), ["dap"]);
   }
-  if (!vscode.extensions.getExtension("vadimcn.vscode-lldb")) {
-    vscode.window.showInformationMessage("Burdin: install CodeLLDB to debug a program until `burdin dap` exists.");
-    return;
-  }
-  const output = path.join(os.tmpdir(), `burdin-debug-${process.pid}${process.platform === "win32" ? ".exe" : ""}`);
-  const build = new vscode.ProcessExecution(burdinPath(), ["build", launch.program, "-g", "-o", output], {
-    cwd: launch.cwd,
-  });
-  const task = new vscode.Task({ type: "process" }, vscode.TaskScope.Workspace, "build for debugging", "burdin", build);
-  const execution = await vscode.tasks.executeTask(task);
-  const code = await new Promise((resolve) => {
-    const done = vscode.tasks.onDidEndTaskProcess((e) => {
-      if (e.execution === execution) {
-        done.dispose();
-        resolve(e.exitCode);
-      }
-    });
-  });
-  if (code !== 0) {
-    vscode.window.showErrorMessage("Burdin: the build for debugging failed.");
-    return;
-  }
-  await vscode.debug.startDebugging(folder, {
-    type: "lldb",
-    request: "launch",
-    name: launch.name,
-    program: output,
-    cwd: launch.cwd,
-  });
 }
 
 function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("burdin.run", run),
     vscode.commands.registerCommand("burdin.debug", debug),
+    vscode.debug.registerDebugAdapterDescriptorFactory("burdin", new BurdinDebugAdapterFactory()),
     vscode.commands.registerCommand("burdin.restartServer", async () => {
       if (client) {
         await client.stop();

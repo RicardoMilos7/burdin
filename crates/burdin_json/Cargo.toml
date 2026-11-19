@@ -1,0 +1,10 @@
+[package]
+name = "burdin_json"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The JSON value, its parser and printer, and the `Content-Length` framing the two protocol servers share: the
+# language server (`spec/lsp.md`) and the Debug Adapter Protocol server (`spec/debug.md`, DBG11). No dependencies,
+# so a tool that speaks either protocol links only this.
+[dependencies]

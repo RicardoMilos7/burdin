@@ -4,8 +4,8 @@
 //! Each Burdin function becomes a `DW_TAG_subprogram` with its parameters and locals as `DW_TAG_formal_parameter`
 //! and `DW_TAG_variable`, and every expression sets the builder's current debug location from its span, so a
 //! debugger can stop on a Burdin line and read a local. Types are modeled for the built-in scalars, references,
-//! arrays, tuples, structs, `Option`, `Result`, `str`, `String`, and the containers; an enum with a payload is
-//! described as an unnamed value, because its payload is a sized byte blob in the generated layout.
+//! arrays, tuples, structs, `Option`, `Result`, `str`, `String`, the containers, and enums, whose payload is a
+//! union member per variant (`spec/debug.md`, DBG5).
 //!
 //! The metadata is attached to the module by [`DebugInfoBuilder::finalize`], which code generation calls after the
 //! last function; the module carries the `Debug Info Version` flag LLVM requires.
@@ -341,27 +341,78 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_basic(&name, bits, DW_ATE_FLOAT)
             }
-            Ty::Ref { inner, .. } | Ty::CPtr(inner) | Ty::Heap(inner, _) => {
+            Ty::Ref { inner, .. } | Ty::CPtr(inner) => {
                 let pointee = self.debug_type(inner);
                 let db = self.debug.as_ref().expect("debug info is on");
                 db.builder
                     .create_pointer_type(&format!("{ty:?}"), pointee, 64, 64, inkwell::AddressSpace::default())
                     .as_type()
             }
-            Ty::Shared(inner) => {
+            // `Heap<T>` is one pointer, but it keeps its identity and its pointee's type, so a debugger can show
+            // `Heap(<value>)` instead of a bare address (`spec/debug.md`, DBG5).
+            Ty::Heap(inner, _) => {
                 let pointee = self.debug_type(inner);
-                let db = self.debug.as_ref().expect("debug info is on");
-                db.builder
-                    .create_pointer_type(&format!("{ty:?}"), pointee, 64, 64, inkwell::AddressSpace::default())
-                    .as_type()
+                let ptr = self.debug_pointer("Heap<T>.ptr", pointee);
+                self.debug_struct_words(&Self::debug_name(ty), &[("value", ptr)])
+            }
+            // `Shared<T>` points at a cell `{ count: usize, value }`: the value first in the printer, the strong
+            // count next to it.
+            Ty::Shared(inner) => {
+                let cell_name = format!("{}.cell", Self::debug_name(ty));
+                let cell = {
+                    let count = self.debug_basic("usize", 64, DW_ATE_UNSIGNED);
+                    let (size, align) = self.debug_sizes(inner);
+                    let members = vec![
+                        ("count".to_string(), count, 8u64, 8u32),
+                        ("value".to_string(), self.debug_type(inner), size, align.max(1)),
+                    ];
+                    self.debug_struct_typed(&cell_name, &members)
+                };
+                let ptr = self.debug_pointer("Shared<T>.cell_ptr", cell);
+                self.debug_struct_words(&Self::debug_name(ty), &[("cell", ptr)])
             }
             Ty::Str | Ty::Slice(_) => {
                 let name = Self::debug_name(ty);
-                self.debug_words(&name, &[("ptr", 8), ("len", 8)])
+                let elem = match ty {
+                    Ty::Str => self.debug_basic("u8", 8, DW_ATE_UNSIGNED),
+                    Ty::Slice(inner) => self.debug_type(inner),
+                    _ => unreachable!(),
+                };
+                let ptr = self.debug_pointer("bytes", elem);
+                let usize = self.debug_usize();
+                self.debug_struct_words(&name, &[("ptr", ptr), ("len", usize)])
             }
-            Ty::String | Ty::List(_, burdin_tir::Alloc::Global) | Ty::Map(_, _, burdin_tir::Alloc::Global) => {
+            Ty::String => {
+                let bytes = self.debug_basic("u8", 8, DW_ATE_UNSIGNED);
+                let ptr = self.debug_pointer("bytes", bytes);
+                let usize = self.debug_usize();
+                self.debug_struct_words("String", &[("ptr", ptr), ("len", usize), ("cap", usize)])
+            }
+            Ty::List(inner, burdin_tir::Alloc::Global) => {
+                let elem = self.debug_type(inner);
+                let ptr = self.debug_pointer("elements", elem);
+                let usize = self.debug_usize();
+                self.debug_struct_words(&Self::debug_name(ty), &[("ptr", ptr), ("len", usize), ("cap", usize)])
+            }
+            // A map's buffer holds `(key, value, hash)` slots, and a zero hash marks an empty one. The slot as a
+            // named struct is what lets a debugger walk the table (`spec/debug.md`, DBG5).
+            Ty::Map(key, value, burdin_tir::Alloc::Global) => {
                 let name = Self::debug_name(ty);
-                self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8)])
+                let slot_name = format!("{name}.slot");
+                let slot = {
+                    let hash = self.debug_basic("u64", 64, DW_ATE_UNSIGNED);
+                    let (key_size, key_align) = self.debug_sizes(key);
+                    let (value_size, value_align) = self.debug_sizes(value);
+                    let members = vec![
+                        ("key".to_string(), self.debug_type(key), key_size, key_align.max(1)),
+                        ("value".to_string(), self.debug_type(value), value_size, value_align.max(1)),
+                        ("hash".to_string(), hash, 8u64, 8u32),
+                    ];
+                    self.debug_struct_typed(&slot_name, &members)
+                };
+                let ptr = self.debug_pointer("slots", slot);
+                let usize = self.debug_usize();
+                self.debug_struct_words(&name, &[("ptr", ptr), ("len", usize), ("cap", usize)])
             }
             // A container with a stored allocator appends an arbitrary type after the buffer words.
             Ty::List(..) | Ty::Map(..) => self.debug_unspecified(&Self::debug_name(ty)),
@@ -401,7 +452,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = adt.name.to_string();
                 self.debug_product(&name, &members)
             }
-            Ty::Enum(adt) => self.debug_unspecified(&adt.name),
+            // An enum is `{ tag: i32, payload }`, where the payload is a union with one member per variant, so a
+            // debugger and the printers can name the active variant from the tag (`spec/debug.md`, DBG5).
+            Ty::Enum(adt) => self.debug_enum(adt),
             Ty::Range(inner, _) => {
                 let members = vec![("lo".to_string(), (**inner).clone()), ("hi".to_string(), (**inner).clone())];
                 let name = Self::debug_name(ty);
@@ -450,9 +503,212 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
+    /// An enum's debug type: `{ tag: i32, payload: union { Variant_0, Variant_1, ... } }`. The payload's member
+    /// offset is where code generation puts it (the tag's four bytes rounded up to the payload's alignment), and
+    /// each union member is a struct with one named member per field, so a printer can read the tag, pick the
+    /// member, and show the variant by name (`spec/debug.md`, DBG5).
+    fn debug_enum(&mut self, adt: &burdin_tir::AdtRef) -> DIType<'ctx> {
+        let scope = self.debug_unit_scope();
+        let file = self.debug_file_current();
+        let name = adt.name.to_string();
+        let variants: Vec<(String, Vec<(String, Ty)>)> = self.program.enums[adt.id]
+            .variants
+            .iter()
+            .map(|v| (v.name.clone(), v.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect::<Vec<_>>()))
+            .collect();
+        // The union's size and alignment: the largest variant's payload.
+        let mut payload_size = 0u64;
+        let mut payload_align = 1u32;
+        for (_, fields) in &variants {
+            let tys: Vec<Ty> = fields.iter().map(|(_, t)| t.clone()).collect();
+            let (size, align) = self.debug_layout(&tys);
+            payload_size = payload_size.max(size);
+            payload_align = payload_align.max(align);
+        }
+        let mut members = Vec::new();
+        for (variant, fields) in &variants {
+            let inner = self.debug_product(variant, fields);
+            let (size, align) = self.debug_layout(&fields.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>());
+            let member = {
+                let db = self.debug.as_ref().expect("debug info is on");
+                db.builder.create_member_type(
+                    scope,
+                    variant,
+                    file,
+                    0,
+                    size * 8,
+                    align.max(1) * 8,
+                    0,
+                    DIFlagsConstants::ZERO,
+                    inner,
+                )
+            };
+            members.push(member.as_type());
+        }
+        let union = {
+            let db = self.debug.as_ref().expect("debug info is on");
+            db.builder
+                .create_union_type(
+                    scope,
+                    &format!("{name}.payload"),
+                    file,
+                    0,
+                    payload_size * 8,
+                    payload_align * 8,
+                    DIFlagsConstants::ZERO,
+                    &members,
+                    0,
+                    "",
+                )
+                .as_type()
+        };
+        let tag_ty = self.debug_basic("i32", 32, DW_ATE_SIGNED);
+        let tag = {
+            let db = self.debug.as_ref().expect("debug info is on");
+            db.builder.create_member_type(scope, "tag", file, 0, 32, 32, 0, DIFlagsConstants::ZERO, tag_ty)
+        };
+        let payload_offset = 4u64.div_ceil(u64::from(payload_align.max(1))) * u64::from(payload_align.max(1));
+        let payload = {
+            let db = self.debug.as_ref().expect("debug info is on");
+            db.builder.create_member_type(
+                scope,
+                "payload",
+                file,
+                0,
+                payload_size * 8,
+                payload_align.max(1) * 8,
+                payload_offset * 8,
+                DIFlagsConstants::ZERO,
+                union,
+            )
+        };
+        let total = payload_offset + payload_size;
+        let total = total.div_ceil(u64::from(payload_align.max(1))) * u64::from(payload_align.max(1));
+        let db = self.debug.as_ref().expect("debug info is on");
+        db.builder
+            .create_struct_type(
+                scope,
+                &name,
+                file,
+                0,
+                total * 8,
+                payload_align.max(1) * 8,
+                DIFlagsConstants::ZERO,
+                None,
+                &[tag.as_type(), payload.as_type()],
+                0,
+                None,
+                "",
+            )
+            .as_type()
+    }
+
+    /// The size and alignment of a field list laid out like `debug_product` does: each member padded to its own
+    /// alignment, the whole rounded up to the largest one.
+    fn debug_layout(&self, fields: &[Ty]) -> (u64, u32) {
+        let mut offset = 0u64;
+        let mut align = 1u32;
+        for field in fields {
+            let (size, field_align) = self.debug_sizes(field);
+            let field_align = field_align.max(1);
+            align = align.max(field_align);
+            offset = offset.div_ceil(u64::from(field_align)) * u64::from(field_align);
+            offset += size;
+        }
+        let total = offset.div_ceil(u64::from(align)) * u64::from(align);
+        (total, align)
+    }
+
+    /// A 64-bit pointer to `pointee`.
+    fn debug_pointer(&mut self, name: &str, pointee: DIType<'ctx>) -> DIType<'ctx> {
+        let db = self.debug.as_ref().expect("debug info is on");
+        db.builder.create_pointer_type(name, pointee, 64, 64, inkwell::AddressSpace::default()).as_type()
+    }
+
+    /// The `usize` debug type.
+    fn debug_usize(&mut self) -> DIType<'ctx> {
+        self.debug_basic("usize", 64, DW_ATE_UNSIGNED)
+    }
+
+    /// A struct of pointer-sized members (pointers or `usize` integers), for the built-in layouts.
+    fn debug_struct_words(&mut self, name: &str, members: &[(&str, DIType<'ctx>)]) -> DIType<'ctx> {
+        let scope = self.debug_unit_scope();
+        let file = self.debug_file_current();
+        let mut fields = Vec::new();
+        for (i, (member_name, ty)) in members.iter().enumerate() {
+            let db = self.debug.as_ref().expect("debug info is on");
+            let member = db.builder.create_member_type(
+                scope,
+                member_name,
+                file,
+                0,
+                64,
+                64,
+                64 * i as u64,
+                DIFlagsConstants::ZERO,
+                *ty,
+            );
+            fields.push(member.as_type());
+        }
+        let total = 64 * members.len() as u64;
+        let db = self.debug.as_ref().expect("debug info is on");
+        db.builder
+            .create_struct_type(scope, name, file, 0, total, 8, DIFlagsConstants::ZERO, None, &fields, 0, None, "")
+            .as_type()
+    }
+
+    /// A struct whose members carry their own size and alignment, laid out naturally, for the built-in record
+    /// layouts (`Shared`'s cell, a `Map` slot) that mix a type's members with fixed words.
+    fn debug_struct_typed(&mut self, name: &str, members: &[(String, DIType<'ctx>, u64, u32)]) -> DIType<'ctx> {
+        let scope = self.debug_unit_scope();
+        let file = self.debug_file_current();
+        let mut fields = Vec::new();
+        let mut offset = 0u64;
+        let mut struct_align = 1u32;
+        for (member_name, ty, size, align) in members {
+            let align = (*align).max(1);
+            struct_align = struct_align.max(align);
+            offset = offset.div_ceil(u64::from(align)) * u64::from(align);
+            let member = {
+                let db = self.debug.as_ref().expect("debug info is on");
+                db.builder.create_member_type(
+                    scope,
+                    member_name,
+                    file,
+                    0,
+                    size * 8,
+                    align * 8,
+                    offset * 8,
+                    DIFlagsConstants::ZERO,
+                    *ty,
+                )
+            };
+            fields.push(member.as_type());
+            offset += size;
+        }
+        let total = offset.div_ceil(u64::from(struct_align)) * u64::from(struct_align);
+        let db = self.debug.as_ref().expect("debug info is on");
+        db.builder
+            .create_struct_type(
+                scope,
+                name,
+                file,
+                0,
+                total * 8,
+                struct_align * 8,
+                DIFlagsConstants::ZERO,
+                None,
+                &fields,
+                0,
+                None,
+                "",
+            )
+            .as_type()
+    }
+
     /// A struct of pointer-sized words, for the built-in view and container layouts.
     fn debug_words(&mut self, name: &str, words: &[(&str, u64)]) -> DIType<'ctx> {
-        let scope = self.debug_scope();
+        let scope = self.debug_unit_scope();
         let file = self.debug_file_current();
         let word = self.debug_basic("usize", 64, DW_ATE_UNSIGNED);
         let mut members = Vec::new();
@@ -480,7 +736,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// A struct with one member per `(name, type)` pair, laid out field by field.
     fn debug_product(&mut self, name: &str, fields: &[(String, Ty)]) -> DIType<'ctx> {
-        let scope = self.debug_scope();
+        let scope = self.debug_unit_scope();
         let file = self.debug_file_current();
         let mut members = Vec::new();
         let mut offset = 0u64;
@@ -534,12 +790,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.debug_basic(name, 0, DW_ATE_UNSIGNED)
     }
 
-    fn debug_scope(&self) -> DIScope<'ctx> {
-        self.debug
-            .as_ref()
-            .and_then(|db| db.scope)
-            .map(|scope| scope.as_debug_info_scope())
-            .unwrap_or_else(|| self.debug.as_ref().expect("debug info is on").unit.as_debug_info_scope())
+    /// The compile unit's scope. Named aggregate types are emitted at file scope rather than inside the function
+    /// that happened to need them first, so a debugger finds one by name (`type lookup Block`) even when no local
+    /// declares it — the concrete type behind an `any I` is the case that needs it (`spec/debug.md`, DBG5).
+    fn debug_unit_scope(&self) -> DIScope<'ctx> {
+        self.debug.as_ref().expect("debug info is on").unit.as_debug_info_scope()
     }
 
     fn debug_file_current(&self) -> DIFile<'ctx> {
@@ -577,8 +832,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn debug_name(ty: &Ty) -> String {
         match ty {
             Ty::Unit => "()".to_string(),
+            Ty::Bool => "bool".to_string(),
+            Ty::Char => "char".to_string(),
+            Ty::Int(i) => i.name().to_string(),
+            Ty::Float(f) => match f {
+                burdin_tir::FloatTy::F32 => "f32".to_string(),
+                burdin_tir::FloatTy::F64 => "f64".to_string(),
+            },
             Ty::Str => "str".to_string(),
             Ty::String => "String".to_string(),
+            Ty::Chars => "Chars".to_string(),
+            Ty::Ref { inner, mutable: false } => format!("&{}", Self::debug_name(inner)),
+            Ty::Ref { inner, mutable: true } => format!("&mut {}", Self::debug_name(inner)),
             Ty::Slice(inner) => format!("[{}]", Self::debug_name(inner)),
             Ty::Array(inner, n) => format!("[{}; {}]", Self::debug_name(inner), n),
             Ty::Option(inner) => format!("Option<{}>", Self::debug_name(inner)),
@@ -589,6 +854,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 format!("MapEntry<{}, {}>", Self::debug_name(k), Self::debug_name(v))
             }
             Ty::Heap(inner, _) => format!("Heap<{}>", Self::debug_name(inner)),
+            Ty::Shared(inner) => format!("Shared<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
             Ty::Fn { .. } | Ty::Any(_) => ty.to_string(),
             Ty::Range(inner, false) => format!("Range<{}>", Self::debug_name(inner)),
@@ -612,6 +878,50 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return;
         };
         self.builder.set_current_debug_location(location);
+    }
+
+    /// Names a boxed `any I` value's storage as an artificial variable of its concrete type (`spec/debug.md`,
+    /// DBG5).
+    ///
+    /// The box's `{ data, vtable }` pair carries the concrete type only as the name in its vtable, so the type
+    /// itself would be missing from the debug info whenever no local of it exists — which is the usual case, since
+    /// the value moved into the box. The artificial variable keeps the type in the debug info, and it is also a
+    /// true statement: the box does hold that value. It is a `dbg.value` over the box address with `DW_OP_deref`,
+    /// like a restored local, so it neither outlives nor outranks the locals of DBG4.
+    pub(super) fn debug_any_box(&mut self, ty: &Ty, data: PointerValue<'ctx>) {
+        if self.debug.is_none() || matches!(ty, Ty::Unit | Ty::Never | Ty::Error) {
+            return;
+        }
+        let Some((scope, location, file, line)) =
+            self.debug.as_ref().and_then(|db| Some((db.scope?, db.fn_location?, db.file?, db.fn_location?.get_line())))
+        else {
+            return;
+        };
+        let Some(block) = self.builder.get_insert_block() else { return };
+        let ty = self.debug_type(ty);
+        let db = self.debug.as_ref().expect("debug info is on");
+        let var = db.builder.create_auto_variable(
+            scope.as_debug_info_scope(),
+            "any.value",
+            file,
+            line,
+            ty,
+            false,
+            DIFlagsConstants::ARTIFICIAL,
+            8,
+        );
+        let expr = db.builder.create_expression(vec![DW_OP_DEREF]);
+        // SAFETY: as `reopen`, with `data` a value of this function's own module.
+        unsafe {
+            inkwell::llvm_sys::debuginfo::LLVMDIBuilderInsertDbgValueRecordAtEnd(
+                self.debug.as_mut().expect("debug info is on").builder.as_mut_ptr(),
+                data.as_value_ref(),
+                var.as_mut_ptr(),
+                expr.as_mut_ptr(),
+                location.as_mut_ptr(),
+                block.as_mut_ptr(),
+            );
+        }
     }
 
     /// Finishes the module's debug metadata. Must run before verification or object emission.

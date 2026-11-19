@@ -24,6 +24,7 @@ mod place;
 mod reach;
 mod results;
 mod scope;
+mod scripts;
 mod slices;
 mod strings;
 mod structural;
