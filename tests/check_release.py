@@ -36,8 +36,9 @@ INSTALLER_SETTINGS = (
     "BURDIN_INSTALL_DIR",
     "BURDIN_BASE_URL",
     "BURDIN_RELEASE_DIR",
+    "BURDIN_NO_MODIFY_PATH",
 )
-NOTES = harness.TESTS / "release_notes.py"
+NOTES =harness.TESTS / "release_notes.py"
 POLICY = harness.ROOT / "docs" / "releasing.md"
 
 problems = []
@@ -374,6 +375,8 @@ with harness.temporary_dir("burdin-release-") as work:
             "BURDIN_RELEASE_DIR",
             "install.ps1",
             "LLVM",
+            "BURDIN_NO_MODIFY_PATH",
+            "export PATH",
         ):
             check()
             if needle not in install_text:
@@ -386,6 +389,7 @@ with harness.temporary_dir("burdin-release-") as work:
             "SHA256SUMS",
             "BURDIN_INSTALL_DIR",
             "BURDIN_RELEASE_DIR",
+            "BURDIN_NO_MODIFY_PATH",
             "LLVM-C.dll",
         ):
             check()
@@ -399,6 +403,12 @@ with harness.temporary_dir("burdin-release-") as work:
         for key, value in os.environ.items()
         if key not in INSTALLER_SETTINGS
     }
+    # install.sh writes the install directory into the startup file of the user's shell, so the rehearsals get a scratch
+    # HOME and never touch the real one.
+    (work / "home").mkdir()
+    installer_env["HOME"] = str(work / "home")
+    # fish's startup file follows XDG_CONFIG_HOME, which CI runners set to the real one.
+    installer_env.pop("XDG_CONFIG_HOME", None)
 
     linux_archive = dist_a / "burdin-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
     if INSTALL_SH.is_file() and linux_archive.is_file():
@@ -432,6 +442,88 @@ with harness.temporary_dir("burdin-release-") as work:
             first_line = harness.text(version.stdout).split("\n")[0]
             if first_line != "burdin 9.9.9":
                 add_problem(f"install.sh installed a binary that reports '{first_line}'")
+
+        # install.sh puts the install directory on PATH through the startup file of bash, zsh, or fish, once. Any other
+        # shell, and BURDIN_NO_MODIFY_PATH, leave the startup files alone; those users get the hint instead.
+        def run_installer(home, install_dir, shell, modify=True):
+            env = {
+                **installer_env,
+                "HOME": str(home),
+                "SHELL": shell,
+                "BURDIN_RELEASE_DIR": str(release),
+                "BURDIN_TARGET": "x86_64-unknown-linux-gnu",
+                "BURDIN_INSTALL_DIR": str(install_dir),
+            }
+            if not modify:
+                env["BURDIN_NO_MODIFY_PATH"] = "1"
+            return harness.run(["sh", str(INSTALL_SH)], merge=True, env=env)
+
+        def profile_lines(path):
+            return path.read_text().split("\n") if path.is_file() else []
+
+        # On Windows, Git Bash is handed a C:\ path, and a backslash cannot go safely into a startup file, so every shell
+        # gets the hint there and no file is written. bash reads ~/.bash_profile on macOS and ~/.bashrc elsewhere.
+        writes_profiles = harness.PLATFORM != "windows"
+        bash_profile = ".bash_profile" if harness.PLATFORM == "macos" else ".bashrc"
+        export_line = 'export PATH="{dir}:$PATH"'
+        path_cases = (
+            ("bash", "/bin/bash", bash_profile, export_line),
+            ("zsh", "/bin/zsh", ".zshrc", export_line),
+            (
+                "fish",
+                "/usr/bin/fish",
+                ".config/fish/config.fish",
+                'contains -- "{dir}" $PATH; or set -gx PATH "{dir}" $PATH',
+            ),
+        )
+        for name, shell, profile_name, template in path_cases:
+            home = work / f"path-home-{name}"
+            home.mkdir()
+            install_dir = work / f"install-path-{name}"
+            line = template.format(dir=install_dir)
+            for run_number in (1, 2):
+                check()
+                outcome = run_installer(home, install_dir, shell)
+                output = harness.text(outcome.stdout)
+                if outcome.returncode != 0:
+                    add_problem(f"install.sh PATH run {run_number} ({name}): {output.rstrip(chr(10))}")
+                    break
+                check()
+                if writes_profiles:
+                    count = profile_lines(home / profile_name).count(line)
+                    if count != 1:
+                        add_problem(
+                            f"install.sh PATH run {run_number} ({name}): "
+                            f"{count} PATH lines in {profile_name}, expected 1"
+                        )
+                elif any(home.iterdir()) or f"add {install_dir} to PATH" not in output:
+                    add_problem(
+                        f"install.sh PATH run {run_number} ({name}): a Windows path must get the hint "
+                        "and no startup file"
+                    )
+
+        off_home = work / "path-home-off"
+        off_home.mkdir()
+        check()
+        outcome = run_installer(off_home, work / "install-path-off", "/bin/bash", modify=False)
+        check()
+        if outcome.returncode != 0:
+            add_problem(f"install.sh PATH (off): {harness.text(outcome.stdout).rstrip(chr(10))}")
+        elif any(off_home.iterdir()):
+            add_problem("install.sh wrote a startup file with BURDIN_NO_MODIFY_PATH set")
+
+        csh_home = work / "path-home-csh"
+        csh_home.mkdir()
+        csh_dir = work / "install-path-csh"
+        check()
+        outcome = run_installer(csh_home, csh_dir, "/bin/csh")
+        check()
+        if outcome.returncode != 0:
+            add_problem(f"install.sh PATH (csh): {harness.text(outcome.stdout).rstrip(chr(10))}")
+        elif any(csh_home.iterdir()):
+            add_problem("install.sh wrote a startup file for an unknown shell")
+        elif f"add {csh_dir} to PATH" not in harness.text(outcome.stdout):
+            add_problem("install.sh did not print the PATH hint for an unknown shell")
 
         # A tampered archive is refused and leaves nothing installed.
         tampered = work / "tampered"
@@ -507,6 +599,34 @@ with harness.temporary_dir("burdin-release-") as work:
     # On Windows the PowerShell installer is exercised against the same fake release. The archive holds a shell script
     # named burdin.exe, so only the checksum, extraction, and placement are proven; running it is not.
     if INSTALL_PS1.is_file() and harness.PLATFORM == "windows":
+        # The user's PATH (HKCU\Environment) is saved as (value, type) and put back after each test that changes it.
+        def read_user_path():
+            import winreg
+
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+                    return winreg.QueryValueEx(key, "Path")
+            except FileNotFoundError:
+                return None
+
+        def restore_user_path(saved) -> None:
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+                if saved is None:
+                    try:
+                        winreg.DeleteValue(key, "Path")
+                    except FileNotFoundError:
+                        pass
+                else:
+                    winreg.SetValueEx(key, "Path", 0, saved[1], saved[0])
+
+        def user_path_entries(directory) -> int:
+            saved = read_user_path()
+            value = saved[0] if saved else ""
+            wanted = str(directory).rstrip("\\").lower()
+            return sum(1 for entry in value.split(";") if entry.rstrip("\\").lower() == wanted)
+
         powershell = harness.which("powershell.exe") or harness.which("powershell")
         if powershell:
             check()
@@ -563,26 +683,28 @@ with harness.temporary_dir("burdin-release-") as work:
                 shutil.copyfile(
                     work / "dist-win" / f"SHA256SUMS.{win_target}", win_release / "SHA256SUMS"
                 )
+                ps_command = [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(INSTALL_PS1),
+                    "-Version",
+                    "9.9.9",
+                    "-Target",
+                    win_target,
+                    "-ReleaseDir",
+                    str(win_release),
+                ]
+                # -NoModifyPath keeps this run off the user's PATH; the PATH runs below restore it afterwards.
                 check()
+                path_before = read_user_path()
                 installed_ps = harness.run(
-                    [
-                        powershell,
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-File",
-                        str(INSTALL_PS1),
-                        "-Version",
-                        "9.9.9",
-                        "-Target",
-                        win_target,
-                        "-ReleaseDir",
-                        str(win_release),
-                        "-InstallDir",
-                        str(work / "install-win"),
-                    ],
+                    [*ps_command, "-InstallDir", str(work / "install-win"), "-NoModifyPath"],
                     merge=True,
+                    env=installer_env,
                 )
                 if installed_ps.returncode != 0:
                     detail = "\n".join(harness.text(installed_ps.stdout).split("\n")[:5])
@@ -594,6 +716,38 @@ with harness.temporary_dir("burdin-release-") as work:
                     check()
                     if not (work / "install-win" / "LLVM-C.dll").is_file():
                         add_problem("install.ps1 did not install LLVM-C.dll beside burdin.exe")
+                    check()
+                    if read_user_path() != path_before:
+                        add_problem("install.ps1 -NoModifyPath changed the user PATH")
+
+                    # Without -NoModifyPath the directory is added to the user PATH once; a second run leaves it there
+                    # once. The saved PATH is restored afterwards, whatever happens.
+                    install_path = work / "install-path"
+                    saved_path = read_user_path()
+                    try:
+                        for run_number in (1, 2):
+                            check()
+                            pathed = harness.run(
+                                [*ps_command, "-InstallDir", str(install_path)],
+                                merge=True,
+                                env=installer_env,
+                            )
+                            if pathed.returncode != 0:
+                                detail = "\n".join(harness.text(pathed.stdout).split("\n")[:5])
+                                add_problem(f"install.ps1 PATH run {run_number}: {detail}")
+                                break
+                            check()
+                            entries = user_path_entries(install_path)
+                            if entries != 1:
+                                add_problem(
+                                    f"install.ps1 PATH run {run_number}: the install directory appears "
+                                    f"{entries} times on the user PATH, expected once"
+                                )
+                    finally:
+                        restore_user_path(saved_path)
+                    check()
+                    if read_user_path() != saved_path:
+                        add_problem("the user PATH was not restored after the install.ps1 PATH test")
 
     # --- Release notes (issue #456) ------------------------------------------------------
 

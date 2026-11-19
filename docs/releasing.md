@@ -162,7 +162,10 @@ Both installers:
 - install to `$HOME/.local/bin` (Unix) or `%LOCALAPPDATA%\Programs\burdin\bin` (Windows); `BURDIN_INSTALL_DIR`
   overrides it;
 - run `burdin --version` and warn, with the platform's fix, when the LLVM 21 runtime is missing;
-- print a `PATH` hint without editing the user's shell profile.
+- put the install directory on `PATH` once: `install.ps1` appends it to the user's `PATH` (`HKCU\Environment`), and
+  `install.sh` appends a PATH line to the startup file of zsh (`~/.zshrc`), bash (`~/.bashrc` on Linux,
+  `~/.bash_profile` on macOS), or fish (`~/.config/fish/config.fish`). Other shells get a hint instead. `BURDIN_NO_MODIFY_PATH` (or `install.ps1 -NoModifyPath`)
+  leaves `PATH` and the startup files alone.
 
 `BURDIN_BASE_URL` points the download at another mirror, and `BURDIN_RELEASE_DIR` installs from a local directory —
 the rehearsal path used by `tests/check_release.py` and the release job. A package-manager formula is a later work

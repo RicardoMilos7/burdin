@@ -109,7 +109,10 @@ On Windows PowerShell:
 
 The installers verify the release's `SHA256SUMS` before unpacking, install into `$HOME/.local/bin`
 (`%LOCALAPPDATA%\Programs\burdin\bin` on Windows), and accept `BURDIN_VERSION` to pin a version,
-`BURDIN_CHANNEL=nightly` for a nightly, and `BURDIN_INSTALL_DIR` to change the destination. A prebuilt compiler needs
+`BURDIN_CHANNEL=nightly` for a nightly, and `BURDIN_INSTALL_DIR` to change the destination. `install.ps1` adds that
+directory to your user `PATH`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
+`~/.config/fish/config.fish`; other shells get a hint. Set `BURDIN_NO_MODIFY_PATH` (or pass `-NoModifyPath` to `install.ps1`) to skip the PATH
+step. A prebuilt compiler needs
 the LLVM 21 shared library at run time (`libLLVM-21.so`, `libLLVM.dylib`, or `LLVM-C.dll`); it is not bundled. The
 artifact names, checksums, reproducibility rules, and release steps are in [`docs/releasing.md`](docs/releasing.md).
 
