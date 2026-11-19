@@ -1,23 +1,21 @@
 name: Release
 
 # Builds the six supported release targets natively, smoke-tests each one, packages versioned archives with SHA-256
-# checksums, verifies that the Linux archive is reproducible, and publishes a GitHub release only from a tag push or
-# from a manual run that explicitly asks to publish (issues #452-#456, docs/releasing.md).
+# checksums, verifies that the Linux archive is reproducible, and publishes a GitHub release only from a manual run that
+# explicitly asks to publish (issues #452-#456, docs/releasing.md). The workflow creates the release itself, and the
+# release creates its `v<version>` tag at the built commit; nobody pushes a tag by hand.
 #
 # A manual run without `publish` is a dry run: it builds and verifies every artifact, writes the checksums to the job
 # summary, and uploads the bundle without creating a release. The weekly schedule builds the nightly channel the same
 # way and never publishes.
 
 on:
-  push:
-    tags:
-      - 'v[0-9]*'
   schedule:
     - cron: '43 5 * * 3'
   workflow_dispatch:
     inputs:
       channel:
-        description: 'Channel to build'
+        description: 'Channel to build (stable publishes the Cargo.toml version as a release)'
         type: choice
         options: [nightly, stable]
         default: nightly
@@ -52,7 +50,6 @@ jobs:
         id: plan
         env:
           EVENT: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref_name }}
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_PUBLISH: ${{ inputs.publish }}
@@ -61,22 +58,8 @@ jobs:
           manifest=$(python3 tests/build_release.py --print-version)
           channel=nightly
           publish=false
-          tag=""
           version=""
-          if [ "$EVENT" = push ]; then
-            tag=$REF_NAME
-            case "$tag" in
-              v[0-9]*) ;;
-              *) echo "release tags must look like v1.2.3, not $tag" >&2; exit 1 ;;
-            esac
-            version=${tag#v}
-            # A nightly published by hand creates its own tag; rebuilding that tag must not be treated as stable.
-            case "$version" in
-              *-nightly.*) channel=nightly ;;
-              *) channel=stable ;;
-            esac
-            publish=true
-          elif [ "$EVENT" = schedule ]; then
+          if [ "$EVENT" = schedule ]; then
             version="$manifest-nightly.$(date -u +%Y%m%d)"
           else
             channel=$INPUT_CHANNEL
@@ -97,7 +80,7 @@ jobs:
           case "$version" in
             *[!0-9A-Za-z.+-]*|"") echo "invalid version: $version" >&2; exit 1 ;;
           esac
-          [ -n "$tag" ] || tag="v$version"
+          tag="v$version"
           {
             echo "version=$version"
             echo "channel=$channel"
@@ -338,7 +321,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          args=(--title "Burdin $VERSION" --notes-file NOTES.md)
+          # The release creates the tag, so pin it to the commit this run built rather than the default branch's tip.
+          args=(--title "Burdin $VERSION" --notes-file NOTES.md --target "$GITHUB_SHA")
           if [ "$CHANNEL" = nightly ]; then args+=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" --clobber dist/*.tar.gz dist/SHA256SUMS

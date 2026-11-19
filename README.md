@@ -875,7 +875,7 @@ $ tests/check_doc.py            # burdin doc: the site and its goldens, links, J
 The release pipeline has three scripts of its own: `tests/build_release.py` builds and packages one target (and
 `--verify-reproducible` proves two checkout paths produce the same archive), `tests/release_notes.py` extracts a
 changelog section and checks its links, and `.github/workflows/release.yml` builds the six targets, verifies the
-checksums, and publishes only from a tag push or an explicit manual `publish`. See
+checksums, and publishes only from an explicit manual `publish` (the release creates its own tag). See
 [`docs/releasing.md`](docs/releasing.md).
 `tests/check_check.py` covers `burdin check`: the fixtures under `tests/check/` with their golden outputs, the equivalence with
 `burdin build`, every conformance test (a `compile-fail` program reports exactly its markers, every other program is

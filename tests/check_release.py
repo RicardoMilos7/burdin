@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Checks the release pipeline (issues #452-#456):
   * .github/workflows/release.yml builds the six supported targets on native runners, smoke-tests each one,
-    uploads archives and per-target checksums, verifies reproducibility, and publishes only from a tag push or an
-    explicit manual `publish`;
+    uploads archives and per-target checksums, verifies reproducibility, and publishes only from an explicit manual
+    `publish` (the release creates its own tag; a pushed tag does not start the workflow);
   * tests/build_release.py prints the manifest version, packages a versioned archive whose contents and checksum
     are deterministic, and rejects a binary whose --version disagrees with the archive name;
   * install.sh and install.ps1 verify SHA256SUMS before installing, and install.sh installs from a local release
@@ -109,8 +109,6 @@ with harness.temporary_dir("burdin-release-") as work:
         text = harness.read_text(WORKFLOW)
         needs = [
             "name: Release",
-            "tags:",
-            "'v[0-9]*'",
             "workflow_dispatch:",
             "x86_64-unknown-linux-gnu",
             "aarch64-unknown-linux-gnu",
@@ -133,6 +131,7 @@ with harness.temporary_dir("burdin-release-") as work:
             "SHA256SUMS",
             "sha256sum -c",
             "gh release create",
+            "--target",
             "actions/upload-artifact@v4",
             "actions/download-artifact@v4",
             "install.sh",
@@ -155,6 +154,10 @@ with harness.temporary_dir("burdin-release-") as work:
         check()
         if "if: needs.plan.outputs.publish == 'true'" not in text:
             add_problem("release.yml: the GitHub release is not gated on the publish output")
+        # The release creates the tag, so a tag push must not start the workflow (that would publish twice).
+        check()
+        if re.search(r"^  push:", text, re.MULTILINE) or "tags:" in text:
+            add_problem("release.yml: a tag push starts the workflow; the release must create the tag instead")
         check()
         if "contents: write" not in text:
             add_problem("release.yml: no job has contents: write for the publish step")

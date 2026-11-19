@@ -11,7 +11,8 @@ Burdin uses [SemVer](https://semver.org/) for the compiler: `MAJOR.MINOR.PATCH`.
 - The workspace version in `Cargo.toml` (`[workspace.package] version`) is the single source of truth. A build
   prints it as the first line of `burdin --version`.
 - A stable release is a tag named `vMAJOR.MINOR.PATCH`. The release workflow refuses a tag whose version does not
-  equal the manifest, so tagging a commit with a stale `Cargo.toml` fails before anything is published.
+  equal the manifest, so publishing a commit with a stale `Cargo.toml` fails before anything is published. The tag is
+  created by the release workflow's GitHub release, never pushed by hand.
 - **Before 1.0** the language has no compatibility promise. A breaking change bumps `MINOR`, and a compatible
   addition or a fix bumps `PATCH`. `0.1.0` is the first published version.
 - **From 1.0** a breaking change bumps `MAJOR`.
@@ -34,14 +35,15 @@ outside a git checkout still reports where it came from.
 | --- | --- | --- | --- |
 | `dev` | a local `cargo build`, or `tests/build_release.py` without `--channel` | the manifest version | never |
 | `nightly` | the weekly schedule or a manual workflow run | `<manifest>-nightly.YYYYMMDD` | only when a manual run sets `publish`, as a prerelease |
-| `stable` | a push of a `vMAJOR.MINOR.PATCH` tag | exactly the manifest version | yes |
+| `stable` | a manual run with channel `stable` | exactly the manifest version | only when `publish` is checked |
 
 - The scheduled workflow is a nightly **build** of all six targets. It uploads artifacts and checksums but never
   creates a release, so the schedule cannot publish by accident.
 - A manual run defaults to `publish: false`. It builds, smoke-tests, verifies the checksums, writes them to the job
   summary, and uploads the bundle; that is the dry run.
-- A tag push publishes. A manual run can publish a nightly or a stable release only when `publish` is explicitly
-  checked.
+- Nothing publishes on its own, and pushing a tag does not start the workflow. A manual run publishes a nightly or a
+  stable release only when `publish` is explicitly checked. The workflow creates the GitHub release, and the release
+  creates its `v<version>` tag at the commit that was built, so the tag is a result of the release, not its trigger.
 - `install.sh` and `install.ps1` default to the stable channel and accept `BURDIN_CHANNEL=nightly` with an explicit
   `BURDIN_VERSION` (a nightly is never the "latest release").
 
@@ -109,7 +111,7 @@ installers print the fix when the installed compiler cannot start. Bundling the 
   not one of the six are refused; `tests/check_release.py` proves the first two against a local release directory.
 
 There is no signing or provenance attestation yet; a checksum proves the download matches the published file, not
-who built it. The release job is the only writer, and it runs from the tagged commit.
+who built it. The release job is the only writer, and it runs from the commit the release tag points at.
 
 ## Reproducibility
 
@@ -168,8 +170,8 @@ $ tests/release_notes.py --version 0.1.0 --check-links --output NOTES.md   # a s
 $ tests/release_notes.py --unreleased --check-links                       # a dry run
 ```
 
-- `--version X.Y.Z` requires a `## X.Y.Z — <date>` section; the release workflow fails on a tag without one, so the
-  changelog must be updated before tagging.
+- `--version X.Y.Z` requires a `## X.Y.Z — <date>` section; the release workflow fails on a stable release without
+  one, so the changelog must be updated before publishing.
 - `--unreleased` uses the `## Unreleased` section and is the rehearsal form; the release job prefixes nightly notes
   with the nightly version.
 - `--check-links` checks every relative Markdown link in the extracted section against the repository, so a note
@@ -187,15 +189,17 @@ $ tests/release_notes.py --unreleased --check-links                       # a dr
 4. Run the release workflow by hand with `publish: false` and inspect the six archives, `SHA256SUMS`, and the
    reproducibility job. Install the Linux archive with `install.sh` and run `burdin build/run/test` on a sample
    package.
-5. Commit, tag `v<version>`, and push the tag. The workflow builds the six targets, verifies the checksums and
-   reproducibility, generates the notes, and creates the GitHub release. Re-running the workflow on the same tag
-   uploads the assets again (`gh release upload --clobber`) instead of creating a second release.
+5. Commit and push to `main`, then run the release workflow with channel `stable` and `publish` checked (Actions →
+   Release → Run workflow, or `gh workflow run release.yml -f channel=stable -f publish=true`). The workflow builds the
+   six targets, verifies the checksums and reproducibility, generates the notes, and creates the GitHub release; the
+   release creates the `v<version>` tag at the built commit. Do not push the tag yourself. Re-running the workflow for
+   the same version uploads the assets again (`gh release upload --clobber`) instead of creating a second release.
 6. After publication, verify the installer one-liners on a clean machine and record the versions and checksums in
    the release notes. Open the next `## Unreleased` section.
 
 ## Rehearsal checklist
 
-Every item below is automated; run it before the first real tag and after a change to the pipeline.
+Every item below is automated; run it before the first stable release and after a change to the pipeline.
 
 | Step | Command | Expected |
 | --- | --- | --- |
@@ -206,7 +210,7 @@ Every item below is automated; run it before the first real tag and after a chan
 | Install rehearsal | `BURDIN_RELEASE_DIR=$PWD/dist BURDIN_VERSION=<v> BURDIN_INSTALL_DIR=$PWD/bin sh install.sh` | the installed compiler prints `<v>`; a sample `build`, `run`, and `test` pass |
 | Checksum refusal | append a byte to the archive and rerun the installer | `checksum mismatch`, non-zero exit, nothing installed |
 | Dry run | Actions → Release → Run workflow, `publish` unchecked | six artifacts, a verified `SHA256SUMS`, no GitHub release |
-| Stable publish | push a `v<version>` tag whose version matches `Cargo.toml` | a GitHub release with six archives, `SHA256SUMS`, and changelog notes |
+| Stable publish | run the workflow with channel `stable` and `publish` checked (the version must match `Cargo.toml`) | a GitHub release and its `v<version>` tag, with six archives, `SHA256SUMS`, and changelog notes |
 
 The pipeline does not yet provide code signing, an SBOM or provenance attestation, a package-manager formula, a
 bundled LLVM runtime, or Windows PDB symbols. The arm64 Windows and Intel macOS runner labels are GitHub-hosted
