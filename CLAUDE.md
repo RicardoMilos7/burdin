@@ -46,9 +46,11 @@ not updated and may disagree with the repository.
    `spec/diagnostics.md` is the versioned JSON diagnostic format, the SARIF log, and the links to the error
    reference; `spec/query.md` is the query-based compiler library: the memo, its granularity, cancellation, the
    budget, the tool API, and the parity between the library and the command line; and `spec/lsp.md` is `burdin lsp`,
-   the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests;
-   `spec/debug.md` is debugging: the panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers,
-   the Windows Natvis file, `burdin debug`, and the `burdin dap` debug adapter.
+   the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests,
+   `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, `spec/scripts.md` is
+   single-file scripts, the shebang, the inline manifest, and the binary cache, and `spec/debug.md` is debugging: the
+   panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
+   `burdin debug`, and the `burdin dap` debug adapter.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -102,6 +104,8 @@ python3 tests/check_new.py               check `burdin new`: the generated packa
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
 python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
+python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
+python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
@@ -168,7 +172,12 @@ crates/
                             the loop, lifecycle, cancellation, and progress (`server.rs`), and the features (`diagnostics.rs`,
                             `nav.rs`, `edit.rs`, `outline.rs`, `actions.rs`); its `burdin-lsp` binary is the same server
                             without LLVM, which the integration tests in `tests/` drive over JSON-RPC
-  burdin_driver/            the `burdin` binary: build, run, test, bench, check, fmt, lint, doc, bindgen, lsp; it runs its
+  burdin_repl/              the REPL behind `burdin repl` (spec/repl.md): the session model and the input classifier
+                            (`text.rs`), the check-evaluate-print flow and the meta-commands (`lib.rs`), completion
+                            (`complete.rs`), the raw terminal (`terminal.rs`), the line editor with history
+                            (`editor.rs`), and the highlighter (`highlight.rs`); it never links LLVM, and the driver
+                            hands it `:compile` and `:ir`
+  burdin_driver/            the `burdin` binary: build, run, test, bench, check, fmt, lint, doc, bindgen, repl, lsp; it runs its
                             front end through `burdin_query`, and keeps build scripts (`build.rs`), the bench runner
                             (`bench_runner.rs`), the bindgen command line (`bindgen.rs`), and the export header built
                             from the checked program (`export.rs`)

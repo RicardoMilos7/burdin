@@ -317,6 +317,8 @@ impl Code {
     /// An invalid `blocking` marker: on a declaration that is not an `extern "C"` function, or two declarations
     /// of one C symbol that disagree about it (`spec/io.md`, IO4).
     pub const INVALID_BLOCKING: Code = Code("E0290");
+    /// A `#!` shebang line anywhere but the first line of a file (`spec/scripts.md`, SC2).
+    pub const SHEBANG_PLACEMENT: Code = Code("E0300");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");
@@ -348,6 +350,51 @@ pub fn code_url(code: &str) -> Option<String> {
         b'E' => Some(format!("{URL_BASE}/errors/{code}")),
         b'L' => Some(format!("{URL_BASE}/lints/{code}")),
         _ => None,
+    }
+}
+
+/// The user-facing error-code reference, embedded so `burdin explain` and the REPL's `:explain` cannot disagree
+/// with the page that `tests/check_error_docs.py` checks (issue #437).
+const ERROR_DOCS: &str = include_str!("../../../docs/error-codes.md");
+
+/// The section of the error reference for `code`, without the HTML comments the check uses to delimit examples.
+/// `None` when the code is not in the reference.
+pub fn explain_section(code: &str) -> Option<String> {
+    let code = code.to_ascii_uppercase();
+    let heading = format!("## {code}:");
+    let start = ERROR_DOCS.find(&heading)?;
+    let rest = &ERROR_DOCS[start..];
+    let end = rest[3..].find("\n## ").map_or(rest.len(), |i| 3 + i);
+    Some(
+        rest[..end]
+            .trim_end()
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("<!--"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// Every heading in the reference, one per line, as `E0001: Syntax error`.
+pub fn code_list() -> String {
+    let mut out = String::new();
+    for line in ERROR_DOCS.lines() {
+        if heading_code(line).is_some() {
+            out.push_str(line.trim_start_matches("## "));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The code a reference heading names, if the line is one.
+fn heading_code(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("## ")?;
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 6 && bytes[0] == b'E' && bytes[1..5].iter().all(u8::is_ascii_digit) && bytes[5] == b':' {
+        Some(&rest[..5])
+    } else {
+        None
     }
 }
 

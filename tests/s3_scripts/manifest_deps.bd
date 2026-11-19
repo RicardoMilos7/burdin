@@ -1,0 +1,10 @@
+//! [dependencies]
+//! greet = { path = "greet" }
+//@ run
+//> hello from a dependency
+
+use greet.hello
+
+fn main() {
+    println(hello())
+}

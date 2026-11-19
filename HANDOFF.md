@@ -4,7 +4,7 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-Updated at the end of the fifty-second session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-third session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -1055,7 +1055,7 @@ names) and a sema whose shared state is read-only while bodies are checked. That
 programs, whose time is mostly sema over the standard library. A `burdin test --workspace` still compiles its
 packages one after another. Build timing reports (#472) and cached objects (#243) remain open.
 
-## The fifty-second session: debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
+## The fifty-third session: debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
 `spec/debug.md` (DBG1-DBG12) holds the twelve decisions this session settled; the checks are
 `tests/check_debug_info.py` (variable lifetimes), `tests/check_debug_printers.py` (the panic hook, the symbolized
@@ -1129,6 +1129,49 @@ profiler. The syntax and semantics are `spec/bench.md`; `crates/burdin_syntax/sr
 What is left: the language server has no bench integration (lenses or `--list` consumption; the issue's
 follow-up list already names it), there is no way to bench a debug build, and bench bodies cannot take setup or
 teardown code beyond what a `let` outside the loop can express.
+
+## The fifty-second session: the REPL and single-file scripts (stage 3, issue #578, sub-issues #580, #582, #584, #586)
+
+`burdin repl` is a new crate, `crates/burdin_repl` (`spec/repl.md`, RP1-RP15), that the driver calls. The session is
+one growing program held in memory: `fn main() {` first, the statements of every accepted input inside it, then the
+accepted items below — a layout chosen so the interpreter's closure and vtable indices stay stable as items are
+added, which lets binding values (closures included) be carried from input to input. Every input is classified by
+the parser (module content, statements, incomplete, or bad), checked by the query library in test mode, and
+evaluated by `burdin_comptime`, which gained `session.rs`: a public boundary over the typed tree that evaluates a
+body's statements from an index with the bindings pre-bound, carries the values out, and (for `:reset`) runs their
+drops. Printing in a session is real: the interpreter's output builtins write the process's streams in `Output::Live`
+mode, so an expression's value prints through the standard library's own `Debug` code and matches the compiled
+program byte for byte. The trigger for printing is elegant and worth remembering: a bare non-unit expression is not
+a statement in Burdin, so the checker answers with exactly one E0003 at it, and the REPL turns that answer into the
+rewrite `let __repl_v = <expr>` / `println("{(__repl_v):?}")`. An input that fails checking or evaluation is
+discarded and the bindings restored (a fault reports E0222/E0224/E0225 and says so). The meta-commands are `:type`
+and `:ownership` (throwaway probe analyses over `Analysis::statements_of` and `Analysis::expr_facts`, both new in
+`burdin_query`'s tool API), `:explain` (the reference text moved into `burdin_diag` so `burdin explain` and the REPL
+share it), `:load`, `:reset`, `:help`, `:quit`, and the driver-provided `:ir` and `:compile`. Interactive mode
+(only when stdin is a terminal) is a raw-mode editor with no new dependency — libc termios on Unix, hand-declared
+kernel32 calls on Windows — with per-keystroke highlighted redraws using the editor grammar's token classes,
+history in the Burdin home, Tab completion through the query library, and multi-line input decided by the parser.
+What the tests pin: `tests/check_repl.py` with golden sessions under `tests/repl/` (values, moves across lines, type
+errors, items, closures across item inputs, panic/impure rollback, drops on `:reset`, multi-line input, the
+meta-commands), plus `:ir`/`:compile`; the crate's unit tests cover the session text, the classifier, the
+highlighter, history, and completion. The interactive path was exercised through a pty (RP15 records the checklist)
+but not on Windows or macOS consoles — do that before calling the editor finished.
+
+Single-file scripts (`spec/scripts.md`, SC1-SC7, issue #586) reuse the language's own pieces: the lexer skips `#!`
+at byte 0 and reports E0300 anywhere else; the loader reads a leading `//!` block's `[dependencies]` fragment into a
+hidden in-memory package, so `build`, `check`, and `test` resolve a script's dependencies like any package's; and
+`burdin run script.bd` caches the binary by a 128-bit content key (script text, the dependency closure's manifests
+and sources, the compiler's identity, and the build flags) under `<burdin home>/cache/scripts/<key>/`, published
+with one rename so an interrupted build is never trusted. `tests/s3_scripts/` covers the shebang and the fragment;
+`tests/check_scripts.py` proves the cache with a deliberately broken linker (an unchanged script still runs, a
+changed one cannot rebuild), and the conformance runner now points `BURDIN_HOME` into each test's scratch
+directory so no test writes to the user's home. A plain one-file target (no shebang, no fragment) is exactly what it
+was and is never cached.
+
+What is left: the interactive editor on Windows and macOS (untested consoles), completion after `.` for
+expressions that are not bare bindings and for `use` paths, re-running `burdin test` over a session (#583's idea
+became `:compile`), the REPL's `--history`-style options and prompt customization (deliberately none), and
+per-function memory checks and comptime evaluation (the same open item the query library records).
 
 ## Decisions already made (do not reopen without a reason)
 

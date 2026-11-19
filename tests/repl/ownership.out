@@ -1,0 +1,12 @@
+type: usize
+reads: s
+moves: nothing
+borrows: nothing
+type: String
+reads: nothing
+moves: s
+borrows: nothing
+type: String
+reads: nothing
+moves: b:0
+borrows: nothing

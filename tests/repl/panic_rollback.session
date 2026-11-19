@@ -1,0 +1,4 @@
+let keep = 7
+panic("boom")
+keep
+:quit

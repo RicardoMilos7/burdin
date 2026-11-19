@@ -1,0 +1,3 @@
+42
+i32
+note: the value's type `Point` does not implement Debug; nothing was printed

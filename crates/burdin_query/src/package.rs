@@ -76,6 +76,29 @@ pub fn in_memory<'a>(paths: impl IntoIterator<Item = &'a str>) -> Workspace {
     Workspace { packages, entry_package: 0, entry_module, stem: "app".to_string() }
 }
 
+/// The user's Burdin home, where tools keep state that outlives one run (`spec/scripts.md` SC6 and
+/// `spec/repl.md` RP11): `BURDIN_HOME` when it is set, otherwise the platform's directory for such data.
+pub fn home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("BURDIN_HOME") {
+        return Some(PathBuf::from(home));
+    }
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join("burdin"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support/burdin"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+            .map(|base| base.join("burdin"))
+    }
+}
+
 /// A source path as diagnostics and recorded allocation sites spell it. On Windows, `fs::canonicalize` returns a
 /// verbatim path (`\?\C:\...`); the prefix is an implementation detail, so it is removed (`\?\UNC\server\share`
 /// becomes `\server\share`). Every other platform keeps the path as it is.
@@ -99,6 +122,64 @@ pub fn strip_verbatim_prefix(text: &str) -> String {
 /// its own modules. The entry module falls back to `src/<package>.bd` or `src/lib.bd`, then the first module.
 pub fn load_for_tests(target: &Path) -> Result<Workspace, String> {
     load_impl(target, false)
+}
+
+/// The manifest fragment of a script (`spec/scripts.md`, SC3): the dependency entries of the leading `//!` doc
+/// block. Paths are kept as written, relative to the script's directory.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScriptManifest {
+    pub deps: Vec<(String, String)>,
+}
+
+/// Reads a script's manifest fragment: the `[dependencies]` section of its leading `//!` doc block. `None` when
+/// the block has no such section, so the file's doc comment is just documentation. A malformed fragment is an
+/// error naming the script's line.
+pub fn script_manifest(text: &str) -> Result<Option<ScriptManifest>, String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut at = 0usize;
+    // A shebang line comes before the doc block.
+    if lines.first().is_some_and(|line| line.starts_with("#!")) {
+        at = 1;
+    }
+    // The leading doc block: blank lines, then the run of `//!` lines.
+    while at < lines.len() && lines[at].trim().is_empty() {
+        at += 1;
+    }
+    let mut block: Vec<(usize, &str)> = Vec::new();
+    while at < lines.len() {
+        let line = lines[at];
+        let Some(rest) = line.strip_prefix("//!") else { break };
+        block.push((at + 1, rest.strip_prefix(' ').unwrap_or(rest)));
+        at += 1;
+    }
+    let Some(start) = block.iter().position(|(_, content)| content.trim() == "[dependencies]") else {
+        return Ok(None);
+    };
+    let mut deps: Vec<(String, String)> = Vec::new();
+    for (line_number, content) in &block[start + 1..] {
+        let line = strip_comment(content).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            return Err(format!(
+                "{line_number}: a script's manifest declares only `[dependencies]`;                  a script has no other manifest sections"
+            ));
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("{line_number}: expected a dependency as `name = {{ path = \"..\" }}`"));
+        };
+        let (key, value) = (key.trim(), value.trim());
+        if !is_ident(key) {
+            return Err(format!("{line_number}: `{key}` is not a valid dependency name"));
+        }
+        if deps.iter().any(|(name, _)| name == key) {
+            return Err(format!("{line_number}: dependency `{key}` is declared twice"));
+        }
+        let dep_path = parse_dependency(value).map_err(|e| format!("{line_number}: {e}"))?;
+        deps.push((key.to_string(), dep_path));
+    }
+    Ok(Some(ScriptManifest { deps }))
 }
 
 fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
@@ -127,6 +208,9 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
         Ok(Workspace { packages, entry_package: root, entry_module, stem })
     } else if target.is_file() {
         let stem = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "a".into());
+        let path = source_path_text(target);
+        let text = std::fs::read_to_string(target).map_err(|e| format!("cannot read {path}: {e}"))?;
+        let manifest = script_manifest(&text).map_err(|e| format!("{path}:{e}"))?;
         let package = PackageFiles {
             name: stem.clone(),
             dir: None,
@@ -137,6 +221,27 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
             lint: Vec::new(),
         };
         let mut packages = vec![package];
+        if let Some(manifest) = manifest {
+            let base = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            let mut loader =
+                Loader { packages: Vec::new(), loaded: HashMap::new(), names: HashMap::new(), loading: Vec::new() };
+            for (name, relative) in manifest.deps {
+                let dep_dir =
+                    base.join(&relative).canonicalize().map_err(|e| format!("{path}: dependency `{name}`: {e}"))?;
+                let id = loader.load_package(&dep_dir).map_err(|e| format!("{path}: {e}"))?;
+                packages[0].deps.push((name, id + 1));
+            }
+            if loader.packages.iter().any(|p| p.name == stem) {
+                return Err(format!("{path}: a dependency is also named `{stem}`, the script's own package name"));
+            }
+            // The loader numbers its packages from zero; the script's package takes index zero.
+            for package in &mut loader.packages {
+                for (_, id) in &mut package.deps {
+                    *id += 1;
+                }
+            }
+            packages.extend(loader.packages);
+        }
         attach_std(&mut packages);
         Ok(Workspace { packages, entry_package: 0, entry_module: 0, stem })
     } else {

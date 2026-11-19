@@ -1,0 +1,5 @@
+let n: i32 = "not a number"
+n
+let n = 4
+n
+:quit

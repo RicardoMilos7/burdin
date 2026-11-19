@@ -1,0 +1,7 @@
+#!/usr/bin/env burdin run
+//@ run
+//> the shebang line is not code
+
+fn main() {
+    println("the shebang line is not code")
+}

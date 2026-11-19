@@ -136,7 +136,7 @@ illustrative; the behavior they show is covered by the conformance tests and by 
 ## The driver contract
 
 The `burdin` command has the subcommands `build`, `run`, `test`, `bench`, `check`, `fmt`, `doc`, `debug`, `explain`,
-`bindgen`, `new`, `lsp`, and `dap`.
+`bindgen`, `new`, `repl`, `lsp`, and `dap`.
 This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
@@ -168,6 +168,7 @@ usage:
                  [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
   burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]
   burdin new <name>
+  burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lsp [--stdio]
   burdin dap [--stdio]
   burdin --version

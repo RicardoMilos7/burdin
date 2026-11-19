@@ -1,0 +1,6 @@
+let v = [1, 2, 3]
+:type v
+:type v[0]
+:type "text"
+:type (1, true)
+:quit

@@ -8,6 +8,7 @@
 mod interp;
 mod prims;
 mod reify;
+mod session;
 mod value;
 
 use burdin_diag::{Code, Diagnostics, Span};
@@ -17,8 +18,10 @@ use burdin_tir::{
     TestOutcome, Ty, TypeDefs,
 };
 use interp::{ConstState, Fault, Interp};
+pub use session::{Bindings, Fault as SessionFault};
+pub use session::{drop_bindings, eval_stmts, session_function};
 use std::collections::HashMap;
-use value::Value;
+pub use value::{Place, Root, Step, Value};
 
 /// The default step budget of one evaluation (CT11).
 pub const DEFAULT_STEPS: u64 = 10_000_000;

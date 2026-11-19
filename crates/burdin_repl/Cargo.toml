@@ -1,0 +1,19 @@
+[package]
+name = "burdin_repl"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The interactive REPL (`spec/repl.md`), the `burdin repl` command. It answers everything through the query-based
+# compiler library and evaluates inputs with the comptime interpreter; it has no LLVM dependency, and the driver
+# hands it the two operations that need code generation: `:ir` and `:compile`.
+
+[dependencies]
+burdin_diag.workspace = true
+burdin_syntax.workspace = true
+burdin_comptime.workspace = true
+burdin_query.workspace = true
+
+# The raw terminal mode on Unix: termios is libc's, and libc is already a pinned, audited dependency.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
