@@ -13,7 +13,7 @@
 
 use super::Outcome;
 use crate::package::{self, Workspace};
-use crate::{CompileOptions, FrontEnd, SourceOverrides, emit_program, front_end, render_options};
+use crate::{CompileOptions, EntryMode, FrontEnd, SourceOverrides, emit_program, front_end, render_options};
 use burdin_diag::{Diagnostic, Diagnostics, FileId, Severity, SourceMap, Span};
 use burdin_doc::markdown::{self, Block, BlockLine};
 use burdin_syntax::docs::{self, DocComment};
@@ -581,7 +581,7 @@ fn build_one(
         pgo_use: options.pgo_use,
         emit_ir: None,
         link_libs: options.link_libs,
-        test_mode: false,
+        mode: EntryMode::Build,
         diagnostics: options.diagnostics,
         comptime_steps: options.comptime_steps,
         emit_deps: None,

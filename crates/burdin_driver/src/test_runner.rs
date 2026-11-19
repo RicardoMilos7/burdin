@@ -9,10 +9,10 @@
 
 mod doc_tests;
 mod report;
-mod select;
+pub(crate) mod select;
 
 use crate::package::{self, Workspace};
-use crate::{Args, CompileOptions, TempDir, TestFormat, TestSite, USAGE, compile};
+use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, USAGE, compile};
 use burdin_tir::{TestAttrs, TestEntry, TestOutcome};
 use doc_tests::{DocAttrs, DocExample};
 use select::FailedRecord;
@@ -143,7 +143,7 @@ struct CompiledPackage {
     name: String,
     exe: PathBuf,
     tests: Vec<TestEntry>,
-    sites: Vec<TestSite>,
+    sites: Vec<Site>,
 }
 
 /// How a test process ended. The dispatcher returns 0 for `Ok` and 1 for `Err`; anything else is an abort or a
@@ -209,7 +209,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         pgo_use: args.pgo_use.as_deref(),
         emit_ir: args.emit_ir.as_deref(),
         link_libs: &args.link_libs,
-        test_mode: true,
+        mode: EntryMode::Test,
         diagnostics: &args.diagnostics,
         comptime_steps: args.comptime_steps,
         emit_deps: None,
@@ -414,7 +414,7 @@ fn merge_cases(blocks: Vec<TestCase>, docs: Vec<TestCase>, packages: &[String]) 
 
 /// The packages `-p`/`--workspace` select, in build order (the entry package first, then its dependencies). The
 /// embedded standard library has no directory and is never selected.
-fn select_packages(args: &Args, workspace: &Workspace) -> Result<Vec<usize>, String> {
+pub(crate) fn select_packages(args: &Args, workspace: &Workspace) -> Result<Vec<usize>, String> {
     if !args.packages.is_empty() {
         let mut selected = Vec::new();
         for name in &args.packages {
@@ -441,7 +441,7 @@ fn select_packages(args: &Args, workspace: &Workspace) -> Result<Vec<usize>, Str
     }
 }
 
-fn package_target(workspace: &Workspace, args: &Args, index: usize) -> PathBuf {
+pub(crate) fn package_target(workspace: &Workspace, args: &Args, index: usize) -> PathBuf {
     if index == workspace.entry_package {
         args.target.clone()
     } else {
@@ -590,17 +590,23 @@ fn doc_verdict(ending: Ending, attrs: &Attrs) -> Result<(), String> {
 /// with it. On Windows the variables the C runtime needs to start are kept. `BURDIN_TEST` names the running test.
 fn isolate(command: &mut Command, workdir: &Path, display: &str) {
     command.env_clear();
-    for (name, value) in isolation_env(workdir, display) {
+    for (name, value) in isolation_env(workdir, "BURDIN_TEST", display) {
         command.env(name, value);
     }
 }
 
-fn isolation_env(workdir: &Path, display: &str) -> Vec<(&'static str, std::ffi::OsString)> {
+/// A bench or test process starts with an empty environment plus these variables (`name` is `BURDIN_TEST` for a
+/// test and `BURDIN_BENCH` for a bench).
+pub(crate) fn isolation_env(
+    workdir: &Path,
+    name: &'static str,
+    display: &str,
+) -> Vec<(&'static str, std::ffi::OsString)> {
     let mut vars = vec![
         ("TMPDIR", workdir.as_os_str().to_owned()),
         ("TMP", workdir.as_os_str().to_owned()),
         ("TEMP", workdir.as_os_str().to_owned()),
-        ("BURDIN_TEST", std::ffi::OsString::from(display)),
+        (name, std::ffi::OsString::from(display)),
     ];
     if let Some(path) = std::env::var_os("PATH") {
         vars.push(("PATH", path));
@@ -816,7 +822,7 @@ mod tests {
     #[test]
     fn isolation_keeps_only_the_defined_variables() {
         let workdir = Path::new("/tmp/burdin-test-dir");
-        let vars = isolation_env(workdir, "one");
+        let vars = isolation_env(workdir, "BURDIN_TEST", "one");
         let find = |name: &str| vars.iter().find(|(key, _)| *key == name).map(|(_, value)| value.clone());
         assert_eq!(find("TMPDIR"), Some(workdir.as_os_str().to_owned()));
         assert_eq!(find("TMP"), Some(workdir.as_os_str().to_owned()));
@@ -866,7 +872,7 @@ mod tests {
     }
 
     fn compiled(name: &str, tests: Vec<TestEntry>) -> CompiledPackage {
-        let sites = tests.iter().map(|_| TestSite { file: format!("{name}/src/main.bd"), line: 3 }).collect();
+        let sites = tests.iter().map(|_| Site { file: format!("{name}/src/main.bd"), line: 3 }).collect();
         CompiledPackage { name: name.to_string(), exe: PathBuf::from(format!("{name}-bin")), tests, sites }
     }
 

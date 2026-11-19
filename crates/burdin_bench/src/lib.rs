@@ -179,7 +179,8 @@ pub fn check(generated: &Generated) -> (Program, Diagnostics) {
     }];
     let mut diags = Diagnostics::default();
     // The generated programs have no standard library and record no trace frames.
-    let program = burdin_sema::check(&packages, 0, 0, false, false, &generated.sources, &mut diags);
+    let program =
+        burdin_sema::check(&packages, 0, 0, burdin_sema::EntryMode::Build, false, &generated.sources, &mut diags);
     (program, diags)
 }
 

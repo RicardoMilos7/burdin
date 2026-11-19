@@ -1,0 +1,4 @@
+// A single .bd file is a one-module package: the bench's full path has no module part (spec/bench.md, BN8).
+bench "only bench" {
+    black_box(1)
+}

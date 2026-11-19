@@ -400,8 +400,42 @@ impl<'t> Sema<'t> {
                 }
             }
         }
-        if self.test_mode {
-            self.declare_tests(diags);
+        match self.mode {
+            crate::EntryMode::Build => {}
+            crate::EntryMode::Test => self.declare_tests(diags),
+            crate::EntryMode::Bench => self.declare_benches(diags),
+        }
+    }
+
+    /// Declares the `bench` blocks of the entry package as ordinary functions: the parser names each one
+    /// `__burdin_bench_N`, with no parameters and no result (`spec/bench.md`, BN1). One call of the function is one
+    /// iteration of the measurement, so the harness times the whole body. Benches of dependency packages are not
+    /// measured, so they are not declared; every other build ignores them entirely.
+    fn declare_benches(&mut self, diags: &mut Diagnostics) {
+        let root = self.globals.modules[self.entry].package;
+        for module in 0..self.module_asts.len() {
+            if self.globals.modules[module].package != root {
+                continue;
+            }
+            let ast = self.module_asts[module];
+            for bench in &ast.benches {
+                let name = bench.func.name.name.clone();
+                if self.globals.modules[module].values.contains_key(&name) || builtin(&name).is_some() {
+                    diags.error(Code::DUPLICATE_NAME, bench.name_span, format!("`{name}` is defined more than once"));
+                    continue;
+                }
+                let full = self.globals.qualified(module, &name);
+                let id = self.push_fn(FnItem::plain(&bench.func, full, module, None));
+                self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
+                self.globals.modules[module].value_priv.insert(name, true);
+                let module_path = test_module_path(&self.globals.modules[module].path);
+                self.benches.push(tir::BenchEntry {
+                    name: bench.name.clone(),
+                    module: module_path,
+                    span: bench.name_span,
+                    func: id,
+                });
+            }
         }
     }
 

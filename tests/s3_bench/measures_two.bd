@@ -1,0 +1,21 @@
+//@ burdin-bench measured=2 failed=0
+
+// `burdin bench` warms each bench up, calibrates the iteration count, and takes its samples
+// (`spec/bench.md`, BN4). The whole body is one iteration, so the loop through `black_box` is the measured work.
+fn main() {}
+
+bench "adds up" {
+    let mut total = 0
+    for i in 0..100 {
+        total = total + black_box(i)
+    }
+    black_box(total)
+}
+
+bench "builds a string" {
+    let mut s = String.new()
+    for _ in 0..16 {
+        s.push_str("abcdef")
+    }
+    black_box(s)
+}

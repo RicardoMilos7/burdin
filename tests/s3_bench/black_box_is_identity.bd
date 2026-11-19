@@ -1,0 +1,24 @@
+//@ run
+
+// `black_box` hands back the value it takes, in any build; at compile time it is the identity too
+// (`spec/bench.md`, BN9).
+const TWICE: i32 = black_box(21) * 2
+
+fn main() {
+    let n = black_box(TWICE)
+    println("{}", n)
+    let flag = black_box(n > 40)
+    println("{}", flag)
+    let s = black_box(String.from("abc"))
+    println("{}", s)
+    println("{}", s)
+    let pair = black_box((1, 2))
+    let (a, b) = pair
+    println("{} {}", a, b)
+    black_box(())
+}
+//> 42
+//> true
+//> abc
+//> abc
+//> 1 2

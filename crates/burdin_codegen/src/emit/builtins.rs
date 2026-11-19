@@ -6,7 +6,7 @@ use burdin_tir::{self as tir, AssertKind, BinOp, Builtin, FloatOp, FloatTy, Meth
 use inkwell::intrinsics::Intrinsic;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, FunctionValue};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, FunctionValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -1382,6 +1382,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Builtin::Atomic(op, width) => return self.atomic_primitive(op, width, args),
             // Same representation, different type: the closure value passes through unchanged.
             Builtin::ClosureOwn => return self.expr_mode(&args[0], Mode::Move),
+            // `black_box(value)`: the value is spilled to a stack slot whose address goes through an opaque
+            // inline-asm call that may read or write any memory, then loaded back. The optimizer cannot delete
+            // the store, forward it to the load, or lift the computation that produced the value out of a loop
+            // (`spec/bench.md`, BN9).
+            Builtin::BlackBox => {
+                let ty = args[0].ty.clone();
+                let value = self.expr_mode(&args[0], Mode::Move)?;
+                let Some(t) = self.llvm_ty(&ty) else { return Ok(value) };
+                let value = self.need(value, &ty);
+                let slot = self.alloca(t, "blackbox")?;
+                self.builder.build_store(slot, value).map_err(llvm_err)?;
+                self.blackbox_barrier(slot)?;
+                let out = self.builder.build_load(t, slot, "blackbox.value").map_err(llvm_err)?;
+                return Ok(Some(out));
+            }
             Builtin::Assertion(kind) => {
                 // `debug_assert*` is removed from a release build; neither its condition nor its message is
                 // evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
@@ -1907,6 +1922,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// The pointer and length of a `str` expression's bytes.
+    /// Passes `slot`'s address through an empty inline-asm call with a side effect (`black_box`,
+    /// `spec/bench.md`, BN9). LLVM cannot look inside the assembly, and without `nomem` it must assume the call
+    /// reads or writes any memory: the value stored to `slot` before the call must be reloaded after it, and
+    /// neither the store nor the computation that produced the value can be deleted.
+    fn blackbox_barrier(&mut self, slot: PointerValue<'ctx>) -> GenResult<()> {
+        let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
+        let ty = self.cx.void_type().fn_type(&[ptr_ty.into()], false);
+        let asm = match self.blackbox_asm {
+            Some(asm) => asm,
+            None => {
+                let asm =
+                    self.cx.create_inline_asm(ty, String::new(), "r,~{memory}".to_string(), true, false, None, false);
+                self.blackbox_asm = Some(asm);
+                asm
+            }
+        };
+        self.builder.build_indirect_call(ty, asm, &[slot.into()], "blackbox.barrier").map_err(llvm_err)?;
+        Ok(())
+    }
+
     pub(super) fn str_parts(&mut self, e: &'a tir::Expr) -> GenResult<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>)> {
         let s = self.expr_mode(e, Mode::Use)?;
         let s = self.need(s, &Ty::Str).into_struct_value();

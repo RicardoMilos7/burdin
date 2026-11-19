@@ -1,0 +1,6 @@
+//@ compile-fail
+
+// A bench takes no attributes in this stage, so anything after the name is a syntax error (`spec/bench.md`, BN1).
+bench "no attributes" [ignore] { } //~ E0001
+
+fn main() {}

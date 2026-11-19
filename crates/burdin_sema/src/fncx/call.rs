@@ -109,6 +109,7 @@ impl FnCx<'_> {
                     None if id.name == "format" && self.lookup("format").is_none() => {
                         return self.format_call(args, span);
                     }
+                    None if id.name == "black_box" => return self.black_box_call(args, span),
                     None => match builtin(&id.name) {
                         Some(b @ (Builtin::Print | Builtin::Println | Builtin::Eprint | Builtin::Eprintln))
                             if args.len() > 1 =>
@@ -600,6 +601,35 @@ impl FnCx<'_> {
         let ty =
             Ty::Fn { sig: std::rc::Rc::new(sig), kind: tir::FnKind::FnOnce, borrowed: false, send: tir::FnSend::yes() };
         mk(tir::ExprKind::Builtin(Builtin::ClosureOwn, vec![f]), ty, span)
+    }
+
+    /// `black_box(value)`: the same value through a barrier the optimizer cannot see through, so a benchmark's
+    /// measured work is not deleted (`spec/bench.md`, BN9). The value is moved in and moved out again; a view is
+    /// rejected with E0120, because the barrier hands back a fresh value with no storage a view could point into.
+    fn black_box_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("black_box", args);
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`black_box` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let value = self.expr(&args[0].expr, None);
+        if value.ty.is_second_class() {
+            // The barrier hands back a fresh value with no storage a view could point into, so a view is
+            // rejected the way a stored position rejects one, and the expression stops here rather than
+            // reporting the view again downstream.
+            self.diags.error(
+                Code::SECOND_CLASS_POSITION,
+                span,
+                format!("`{}` is a view of other storage, so it cannot be the argument of `black_box`", value.ty),
+            );
+            return error_expr(span);
+        }
+        let ty = value.ty.clone();
+        mk(tir::ExprKind::Builtin(Builtin::BlackBox, vec![value]), ty, span)
     }
 
     /// `replace(mut place, value)`: stores `value` and returns what `place` held.

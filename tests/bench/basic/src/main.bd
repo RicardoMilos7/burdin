@@ -1,0 +1,20 @@
+fn main() {
+    println("the package's main never runs in bench mode")
+}
+
+bench "counts" {
+    let mut n = 0
+    for i in 0..64 {
+        n = n + black_box(i)
+    }
+    black_box(n)
+}
+
+// An empty body is a legal bench: the harness still warms up, calibrates, and samples it.
+bench "empty body" {}
+
+// A bench that prints is tolerated: the runner takes the last result line (spec/bench.md, BN4).
+bench "chatty" {
+    println("a chatty bench prints")
+    black_box(1)
+}

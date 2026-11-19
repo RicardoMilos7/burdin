@@ -251,6 +251,7 @@ with harness.temporary_dir("burdin-cgu-") as work:
     commands = (
         ["build", "one.bd", "-o", work / "one"],
         ["run", "one.bd"],
+        ["bench", "one.bd"],
         ["check", "one.bd"],
         ["lint", "one.bd"],
         ["doc", "one.bd", "--coverage"],
