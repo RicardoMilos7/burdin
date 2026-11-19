@@ -1,0 +1,12 @@
+// ==== src/main.bd ====
+use shapes.area
+
+fn main() {
+    println(area(3, 6).to_string())
+}
+// ==== src/shapes.bd ====
+const UNIT: i32 = 6
+
+fn area(h: i32, w: i32 = UNIT): i32 {
+    { w * h }
+}

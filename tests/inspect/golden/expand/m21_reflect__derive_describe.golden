@@ -1,0 +1,92 @@
+//@ run
+//> Point(x=3, y=4)
+//> Pair(a=1, b=hello)
+//> Empty()
+
+// A derive written in Burdin: `derive Describe` generates `Type: Describe { ... }` for every type whose `derives`
+// clause names it, and its body reads the type through `Self.fields` and `self.{field.name}` (spec/reflection.md,
+// RFL4, RFL5, RFL8).
+
+interface Describe {
+    fn describe(self): String
+}
+
+// derive Describe: expanded into the impl block of each type that derives it
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+Point: Describe {
+    fn describe(self): String {
+        let mut out = String.from("Point")
+        out.push_str("(")
+        {
+            if (0 as usize) > 0 {
+                out.push_str(", ")
+            }
+            out.push_str("x")
+            out.push_str("=")
+            out.push_str(format("{}", self.x))
+        }
+        {
+            if (1 as usize) > 0 {
+                out.push_str(", ")
+            }
+            out.push_str("y")
+            out.push_str("=")
+            out.push_str(format("{}", self.y))
+        }
+        out.push_str(")")
+        out
+    }
+}
+
+struct Pair {
+    a: i32,
+    b: String,
+}
+
+Pair: Describe {
+    fn describe(self): String {
+        let mut out = String.from("Pair")
+        out.push_str("(")
+        {
+            if (0 as usize) > 0 {
+                out.push_str(", ")
+            }
+            out.push_str("a")
+            out.push_str("=")
+            out.push_str(format("{}", self.a))
+        }
+        {
+            if (1 as usize) > 0 {
+                out.push_str(", ")
+            }
+            out.push_str("b")
+            out.push_str("=")
+            out.push_str(format("{}", self.b))
+        }
+        out.push_str(")")
+        out
+    }
+}
+
+struct Empty {}
+
+Empty: Describe {
+    fn describe(self): String {
+        let mut out = String.from("Empty")
+        out.push_str("(")
+        {}
+        out.push_str(")")
+        out
+    }
+}
+
+fn main() {
+    println(Point { x: 3, y: 4 }.describe())
+    println(Pair { a: 1, b: String.from("hello") }.describe())
+    println(Empty {}.describe())
+}

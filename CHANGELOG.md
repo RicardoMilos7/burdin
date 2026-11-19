@@ -6,6 +6,28 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Inspecting what the compiler generated (issue #595, sub-issues #597, #598, #600, #602)
+
+`spec/inspect.md` (INS1-INS19) is the specification; `tests/check_inspect.py` checks it and every CI job runs it. The
+new crate `burdin_inspect` holds the logic and reads what the compiler built; the driver calls it.
+
+- **`burdin expand` (#597).** Prints the source after comptime evaluation, `comptime if`/`for` unrolling, user
+  derives, default and named arguments, and operators: each file's own text with only the rewritten parts replaced,
+  then formatted. `--item <path>` prints one item, `--instances` adds the instances of generic functions. The
+  expansion of every conformance program of `m17_arguments`, `m19_operators`, `m20_comptime`, and `m21_reflect` goes
+  back through `burdin check` and prints what the original prints. Extension calls stay method calls (an extension
+  is not a value, EX1), and a rewrite with no source form is skipped, never guessed.
+- **`--emit` and `burdin asm` (#598).** `burdin build --emit tir,llvm-ir,llvm-ir-opt,llvm-bc,asm,obj,deps` writes each
+  artifact next to the output; `--intel`/`--att` choose the x86 dialect. `burdin asm <target> [<function>]` cuts one
+  function out of the program's assembly with the source lines interleaved (`--llvm` for its IR), and lists the
+  instances of a generic function named without type arguments.
+- **`burdin bloat` (#600).** Reads the symbol sizes of the release object file (ELF, Mach-O, and COFF readers) and
+  reports the largest functions and the size per package, module, and generic, with the glue, the runtime, and the rest
+  counted apart; `--format json` for tools.
+- **`burdin check --print-instances` (#602).** Every generic function and type instance the program created, the
+  call that required it (the chain is derived from the call graph, so sema is unchanged), and the instances nothing
+  reaches counted apart.
+
 ### Rust interop through C-ABI shims (issue #249, sub-issue #477)
 
 `spec/rust-interop.md` (RI1-RI11) is the specification; `tests/check_rust_interop.py` checks it, and the packages

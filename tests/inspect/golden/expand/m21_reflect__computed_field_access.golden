@@ -1,0 +1,52 @@
+//@ run
+//> 10 20
+//> 2 3 4
+//> 6
+
+// `x.{name}` is a field access whose name is a compile-time string: it can be read, assigned, and borrowed like the
+// field itself, and in a derive body the name comes from `Type.fields` (spec/reflection.md, RFL5).
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Triple {
+    a: i32,
+    b: i32,
+    c: i32,
+}
+
+interface Bump {
+    fn bump(mut self)
+}
+
+// derive Bump: expanded into the impl block of each type that derives it
+
+struct Counter {
+    low: i32,
+    high: i32,
+}
+
+Counter: Bump {
+    fn bump(mut self) {
+        { self.low = self.low + 1 }
+        { self.high = self.high + 1 }
+    }
+}
+
+fn main() {
+    let mut p = Point { x: 1, y: 2 }
+    p.x = 10
+    let r = &mut p.y
+    *r = 20
+    println("{} {}", p.x, p.y)
+
+    let mut t = Triple { a: 1, b: 2, c: 3 }
+    let a = t.a + 1
+    println("{} {} {}", a, t.b + 1, t.c + 1)
+
+    let mut c = Counter { low: 1, high: 3 }
+    c.bump()
+    println("{}", c.low + c.high)
+}

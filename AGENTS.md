@@ -56,6 +56,7 @@ python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules,
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
+python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
 python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
 python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
@@ -175,6 +176,7 @@ crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_json (the JSON value and framing both protocol servers share),
                           burdin_dap (the debug adapter behind `burdin dap`),
                           burdin_repl (the REPL behind `burdin repl`),
+                          burdin_inspect (`burdin expand`, `asm`, `bloat`, and the instance report),
                           burdin_bench (generated inputs and `cargo bench` targets),
                           burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin

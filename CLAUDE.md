@@ -44,6 +44,8 @@ not updated and may disagree with the repository.
    suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
    intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report;
    `spec/check.md` is `burdin check`, the type-check-only command (what it shares with a build, and `--tests`);
+   `spec/inspect.md` is the inspection commands: `burdin expand`, `--emit`, `burdin asm`, `burdin bloat`, and
+   `burdin check --print-instances`;
    `spec/diagnostics.md` is the versioned JSON diagnostic format, the SARIF log, and the links to the error
    reference; `spec/query.md` is the query-based compiler library: the memo, its granularity, cancellation, the
    budget, the tool API, and the parity between the library and the command line; and `spec/lsp.md` is `burdin lsp`,
@@ -104,6 +106,7 @@ python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules,
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
+python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
 python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
 python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
@@ -183,7 +186,12 @@ crates/
                             (`complete.rs`), the raw terminal (`terminal.rs`), the line editor with history
                             (`editor.rs`), and the highlighter (`highlight.rs`); it never links LLVM, and the driver
                             hands it `:compile` and `:ir`
-  burdin_driver/            the `burdin` binary: build, run, test, bench, check, fmt, lint, doc, bindgen, repl, lsp; it runs its
+  burdin_inspect/           the inspection commands (spec/inspect.md): the source expander behind `burdin expand`
+                            (`expand.rs`), the monomorphization report (`instances.rs`), the assembly view (`asm.rs`),
+                            the binary-size analysis and the ELF/Mach-O/COFF symbol reader behind `burdin bloat`
+                            (`bloat.rs`, `object.rs`), and the typed-tree dump of `--emit tir` (`tir.rs`); it reads
+                            what the compiler built, never links LLVM, and the driver is its only caller
+  burdin_driver/            the `burdin` binary: build, run, test, bench, check, expand, asm, bloat, fmt, lint, doc, bindgen, repl, lsp; it runs its
                             front end through `burdin_query`, and keeps build scripts (`build.rs`), the bench runner
                             (`bench_runner.rs`), the bindgen command line (`bindgen.rs`), and the export header built
                             from the checked program (`export.rs`)

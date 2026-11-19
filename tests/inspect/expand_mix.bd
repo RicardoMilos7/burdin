@@ -1,0 +1,42 @@
+// What `burdin expand` rewrites in one small program: a constant, a built-in derive, an operator, a default and a
+// named argument, an extension call, `comptime` in an expression and in an `if` (spec/inspect.md, INS1-INS6).
+
+const SIZE: usize = 4 * 16
+
+struct P derives (Clone, Eq) {
+    x: i32
+    y: i32
+}
+
+P: Add {
+    fn add(self, other: P): P {
+        P { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+fn str.shout(self): i32 {
+    1
+}
+
+fn greet(name: str = "world", times: i32 = 2): i32 {
+    times
+}
+
+fn scaled(n: i32): i32 {
+    comptime if SIZE > 10 {
+        n * 2
+    } else {
+        n
+    }
+}
+
+fn main() {
+    let table = comptime SIZE + 1
+    let a = P { x: 1, y: 2 }
+    let b = P { x: 3, y: 4 }
+    let c = a + b
+    println("{}", greet(times: 5))
+    println("{}", scaled(table as i32))
+    println("{}", "hi".shout())
+    println("{}", c.x)
+}

@@ -75,6 +75,11 @@ missing target, an unknown option, a bad value); the usage is printed after the 
 standard output and exits 0.
 Tests: the exit status of every fixture, the missing target, the usage-error checks, `--help`.
 
+**CK9. `--print-instances`.** After a clean check the command prints the monomorphization report (`spec/inspect.md`,
+INS12-INS15) to standard output; `--format json` makes it one JSON object. A check with errors prints the diagnostics and
+no report, and `--format` without `--print-instances` is a usage error.
+Tests: `tests/check_inspect.py` (`check_print_instances`).
+
 ## Choices that are not obvious
 
 - **There is no separate "check" implementation.** The issue asks to reuse the query-based library. That library is a

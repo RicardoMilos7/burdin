@@ -1,0 +1,33 @@
+//@ run
+//> 3
+//> 112
+//> 205
+//> 109
+//> 9
+
+// `f(name: value)` fills the parameter with that name, and named arguments may be written in any order
+// (spec/arguments.md, AG4). Positional arguments still fill the parameters in order.
+
+fn sub(a: i32, b: i32): i32 {
+    a - b
+}
+
+fn digits(a: i32, b: i32 = 0, c: i32 = 0): i32 {
+    a * 100 + b * 10 + c
+}
+
+fn max_of<T: Ord>(own a: T, own b: T): T {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+fn main() {
+    println("{}", sub(5, 2))
+    println("{}", digits(1, 1, 2))
+    println("{}", digits(2, 0, 5))
+    println("{}", digits(1, 0, 9))
+    println("{}", max_of(3, 9))
+}

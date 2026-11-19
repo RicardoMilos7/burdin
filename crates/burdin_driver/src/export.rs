@@ -29,6 +29,7 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &
         pgo_generate: false,
         pgo_use: None,
         emit_ir: None,
+        emit: None,
         link_libs: &[],
         // A library package has no `main`, and the checks are the same.
         mode: EntryMode::Test,

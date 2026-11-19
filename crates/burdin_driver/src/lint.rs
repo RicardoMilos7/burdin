@@ -153,6 +153,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         pgo_generate: false,
         pgo_use: None,
         emit_ir: None,
+        emit: None,
         link_libs: &[],
         // Test blocks are linted too, and a library package has no `main`.
         mode: EntryMode::Test,

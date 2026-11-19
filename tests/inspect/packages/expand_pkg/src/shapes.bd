@@ -1,0 +1,9 @@
+const UNIT: i32 = 2 * 3
+
+fn area(h: i32, w: i32 = UNIT): i32 {
+    comptime if UNIT > 4 {
+        w * h
+    } else {
+        h
+    }
+}

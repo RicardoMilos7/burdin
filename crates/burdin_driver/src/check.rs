@@ -12,21 +12,30 @@ use std::process::ExitCode;
 
 pub(crate) const CHECK_USAGE: &str = "\
 usage:
-  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin check <file.bd | package directory> [--release] [--tests] [--print-instances [--format <human|json>]]
+               [-j <n>] [--comptime-steps <n>] [diagnostics]
 
 check options:
   --release            check the way `burdin build --release` does (integer overflow in compile-time code, error traces)
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
+  --print-instances    print every generic instance the program created and why (spec/inspect.md, INS12-INS15)
+  --format <human|json>  the format of --print-instances (default: human)
   -j, --jobs <n>       parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
 
-Nothing is printed when the package has no errors and no warnings; the exit status is 0 then and 1 otherwise.";
+Nothing is printed when the package has no errors and no warnings; the exit status is 0 then and 1 otherwise.
+With --print-instances the report goes to standard output.";
 
 #[derive(Debug, Default)]
 struct CheckArgs {
     target: PathBuf,
     release: bool,
     tests: bool,
+    /// `--print-instances`: print the monomorphization report after a clean check.
+    print_instances: bool,
+    /// `--format json` (only with `--print-instances`).
+    json: bool,
+    format_given: bool,
     comptime_steps: Option<u64>,
     jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
@@ -49,6 +58,15 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
+            "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
+            "--format" => {
+                args.json = match option_value(&mut it, inline, a, "a value")?.as_str() {
+                    "human" => false,
+                    "json" => true,
+                    other => return Err(format!("`--format` takes `human` or `json`, got `{other}`")),
+                };
+                args.format_given = true;
+            }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--comptime-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
@@ -63,6 +81,9 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             _ if target.is_none() => target = Some(PathBuf::from(a)),
             _ => return Err(format!("unexpected argument `{a}`")),
         }
+    }
+    if args.format_given && !args.print_instances {
+        return Err("`--format` is only valid with `--print-instances`".to_string());
     }
     args.target = target.ok_or("missing target file")?;
     Ok(args)
@@ -88,6 +109,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         pgo_generate: false,
         pgo_use: None,
         emit_ir: None,
+        emit: None,
         link_libs: &[],
         mode: if args.tests { EntryMode::Test } else { EntryMode::Build },
         diagnostics: &args.diagnostics,
@@ -107,6 +129,18 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
     print_warnings(&front.diags, &front.sources, &args.diagnostics, options.report_clean);
+    if args.print_instances {
+        let program = front.program.as_ref().expect("no errors means checking produced a program");
+        let files = &front.files;
+        let is_std = |file: burdin_diag::FileId| files.get(file.0 as usize).is_some_and(|(_, embedded)| *embedded);
+        let report = burdin_inspect::instances::build(program, &front.sources, &is_std);
+        let text = if args.json {
+            burdin_inspect::instances::render_json(&report)
+        } else {
+            burdin_inspect::instances::render_human(&report)
+        };
+        print!("{text}");
+    }
     ExitCode::SUCCESS
 }
 

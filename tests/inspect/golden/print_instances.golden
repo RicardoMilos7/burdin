@@ -1,0 +1,22 @@
+4 function instances of 2 generics; 2 type instances of 1 generic
+not listed: <n> function instances and <n> type instances that no emitted code reaches
+
+fn twice: 2 instances
+  twice<i32>  (generics.bd:10)
+    required at generics.bd:21:19 in main
+  twice<i64>  (generics.bd:10)
+    required at generics.bd:22:19 in main
+
+fn largest: 2 instances
+  largest<i32>  (generics.bd:6)
+    required at generics.bd:11:5 in twice<i32>
+    which is required at generics.bd:21:19 in main
+  largest<i64>  (generics.bd:6)
+    required at generics.bd:11:5 in twice<i64>
+    which is required at generics.bd:22:19 in main
+
+type Pair: 2 instances
+  Pair<i32>  (struct)
+    first used in main (generics.bd:14)
+  Pair<i64>  (struct)
+    first used in main (generics.bd:14)

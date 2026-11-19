@@ -1,0 +1,6 @@
+// A program with a type error: `burdin expand` reports it like a build and prints no source.
+
+fn main() {
+    let n: i32 = "text" //~ E0003
+    println("{}", n)
+}

@@ -1,0 +1,52 @@
+//@ run
+//> 13
+//> 5
+//> 36
+//> 2
+//> 1
+
+// The five arithmetic interfaces lower `+ - * / %` to their methods (spec/operators.md OP1-OP3).
+
+struct Num {
+    v: i32,
+}
+
+Num: Add {
+    fn add(self, other: Num): Num {
+        Num { v: self.v + other.v }
+    }
+}
+
+Num: Sub {
+    fn sub(self, other: Num): Num {
+        Num { v: self.v - other.v }
+    }
+}
+
+Num: Mul {
+    fn mul(self, other: Num): Num {
+        Num { v: self.v * other.v }
+    }
+}
+
+Num: Div {
+    fn div(self, other: Num): Num {
+        Num { v: self.v / other.v }
+    }
+}
+
+Num: Rem {
+    fn rem(self, other: Num): Num {
+        Num { v: self.v % other.v }
+    }
+}
+
+fn main() {
+    let a = Num { v: 9 }
+    let b = Num { v: 4 }
+    println(a.add(b).v.to_string())
+    println(a.sub(b).v.to_string())
+    println(a.mul(b).v.to_string())
+    println(a.div(b).v.to_string())
+    println(a.rem(b).v.to_string())
+}

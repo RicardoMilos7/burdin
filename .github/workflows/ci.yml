@@ -292,6 +292,13 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_check.py
 
+      # The inspection commands: `burdin expand` (its golden outputs, and every conformance program of m17, m19, m20,
+      # and m21 expanded, checked again, and run), `--emit`, `burdin asm`, `burdin bloat`, and `burdin check
+      # --print-instances` (issue #595, spec/inspect.md).
+      - name: Check the inspection commands
+        if: matrix.part == 'tools'
+        run: python3 tests/check_inspect.py
+
       # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
       # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
       - name: Check burdin lsp
@@ -607,6 +614,13 @@ jobs:
       - name: Check burdin check
         if: matrix.part == 'tools'
         run: python3 tests/check_check.py
+
+      # The inspection commands: `burdin expand` (its golden outputs, and every conformance program of m17, m19, m20,
+      # and m21 expanded, checked again, and run), `--emit`, `burdin asm`, `burdin bloat`, and `burdin check
+      # --print-instances` (issue #595, spec/inspect.md).
+      - name: Check the inspection commands
+        if: matrix.part == 'tools'
+        run: python3 tests/check_inspect.py
 
       # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
       # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
@@ -943,6 +957,13 @@ jobs:
       - name: Check burdin check
         if: matrix.part == 'tools'
         run: python tests/check_check.py
+
+      # The inspection commands: `burdin expand` (its golden outputs, and every conformance program of m17, m19, m20,
+      # and m21 expanded, checked again, and run), `--emit`, `burdin asm`, `burdin bloat`, and `burdin check
+      # --print-instances` (issue #595, spec/inspect.md).
+      - name: Check the inspection commands
+        if: matrix.part == 'tools'
+        run: python tests/check_inspect.py
 
       # `burdin lsp` from the driver: a test run through a lens with the real `burdin test`, the exit codes, and the
       # editor files (spec/lsp.md, LS19-LS20). The JSON-RPC integration tests run in `cargo test --workspace`.
