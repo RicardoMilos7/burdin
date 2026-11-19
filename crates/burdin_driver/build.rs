@@ -4,10 +4,16 @@
 //! `BURDIN_COMMIT` overrides the commit (useful in CI archives without a `.git` directory). `BURDIN_VERSION` overrides
 //! the version the workspace manifest declares (nightly builds append a prerelease suffix). `BURDIN_CHANNEL` names the
 //! channel (`dev`, `nightly`, or `stable`); local builds default to `dev`.
+//!
+//! `BURDIN_STATIC_LLVM=1` also links the LLVM static archives into `burdin` (release builds do; docs/releasing.md).
+//! They are passed as link arguments of the binary, so they come after every crate on the link line, where `inkwell`
+//! and `llvm-sys` can find them. `crates/burdin_codegen/build.rs` links nothing in that mode. The helpers, and the
+//! `std::path` and `std::process::Command` imports, come from `llvm_link.rs`.
 
-use std::process::Command;
+include!("../burdin_codegen/llvm_link.rs");
 
 fn main() {
+    link_static_llvm();
     for name in ["BURDIN_COMMIT", "BURDIN_VERSION", "BURDIN_CHANNEL"] {
         println!("cargo:rerun-if-env-changed={name}");
     }
@@ -59,5 +65,20 @@ fn git_commit() -> String {
             if text.is_empty() { "unknown".to_string() } else { text }
         }
         _ => "unknown".to_string(),
+    }
+}
+
+/// The static LLVM link: the archives and system libraries as link arguments of the `burdin` binary.
+fn link_static_llvm() {
+    println!("cargo:rerun-if-env-changed=LLVM_SYS_211_PREFIX");
+    println!("cargo:rerun-if-env-changed=BURDIN_STATIC_LLVM");
+    println!("cargo:rerun-if-changed=../burdin_codegen/llvm_link.rs");
+    if !static_llvm_requested() {
+        return;
+    }
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    for argument in static_link_args(&llvm_prefix(), &target_os, &target_env) {
+        println!("cargo:rustc-link-arg-bins={argument}");
     }
 }
