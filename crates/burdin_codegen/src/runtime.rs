@@ -2226,14 +2226,21 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let (i64_ty, i32_ty) = (self.i64(), self.i32());
         let entry = self.frame_entry_ty();
         let stderr = i32_ty.const_int(2, false);
-        // The entry point is not printed; it ends the trace.
+        // A frame the table does not know (every frame without `-g`) answers `null`: it prints its raw address and
+        // has no `stop` flag to read. The entry point is not printed; it ends the trace.
+        let info_i = self.b.build_ptr_to_int(info, i64_ty, "").map_err(llvm_err)?;
+        let known =
+            self.b.build_int_compare(IntPredicate::NE, info_i, i64_ty.const_zero(), "known").map_err(llvm_err)?;
+        let check_stop = self.block(f, "frame.check.stop");
+        let line_bb = self.block(f, "frame.line");
+        self.b.build_conditional_branch(known, check_stop, line_bb).map_err(llvm_err)?;
+        self.b.position_at_end(check_stop);
         let stop_ptr = self.b.build_struct_gep(entry, info, 6, "stop").map_err(llvm_err)?;
         let stop = self.b.build_load(self.cx.bool_type(), stop_ptr, "").map_err(llvm_err)?.into_int_value();
         let is_stop = self
             .b
             .build_int_compare(IntPredicate::NE, stop, self.cx.bool_type().const_zero(), "is.stop")
             .map_err(llvm_err)?;
-        let line_bb = self.block(f, "frame.line");
         self.b.build_conditional_branch(is_stop, stop_bb, line_bb).map_err(llvm_err)?;
         self.b.position_at_end(line_bb);
         self.write_const(write_all, 2, b"  #")?;
@@ -2242,9 +2249,6 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let sym = self.block(f, "frame.sym");
         let raw = self.block(f, "frame.raw");
         let done = self.block(f, "frame.done");
-        let info_i = self.b.build_ptr_to_int(info, i64_ty, "").map_err(llvm_err)?;
-        let known =
-            self.b.build_int_compare(IntPredicate::NE, info_i, i64_ty.const_zero(), "known").map_err(llvm_err)?;
         self.b.build_conditional_branch(known, sym, raw).map_err(llvm_err)?;
         self.b.position_at_end(sym);
         let name_ptr = self.b.build_struct_gep(entry, info, 1, "name").map_err(llvm_err)?;
