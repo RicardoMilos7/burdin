@@ -18,6 +18,7 @@ What it checks:
 import json
 import os
 import sys
+import time
 
 import harness
 
@@ -171,7 +172,13 @@ def start_session(work, wrapper, log):
 
 def backend_log(log):
     """The messages the stub received, in order."""
-    return [json.loads(line) for line in harness.read_text(log).splitlines() if line.strip()]
+    messages = []
+    for line in harness.read_text(log).splitlines():
+        try:
+            messages.append(json.loads(line))
+        except ValueError:
+            pass  # a line the stub is still writing
+    return messages
 
 
 def last_launch(log):
@@ -238,8 +245,15 @@ with harness.temporary_dir("burdin-dap-") as work:
                 if not response.get("success"):
                     add_problem(f"the client was not answered for `{command}`: {response}")
 
-            merged = [m for m in backend_log(log) if m.get("command") == "setFunctionBreakpoints"]
-            names = [b.get("name") for b in merged[-1]["arguments"]["breakpoints"]] if merged else []
+            # The adapter answers the client as soon as it has written to the backend, and the stub logs a request
+            # only when it has read it, so wait for the merged list to arrive instead of reading the log at once.
+            deadline = time.monotonic() + 30
+            while True:
+                merged = [m for m in backend_log(log) if m.get("command") == "setFunctionBreakpoints"]
+                names = [b.get("name") for b in merged[-1]["arguments"]["breakpoints"]] if merged else []
+                if names == ["main", "burdin_panic_begin"] or time.monotonic() > deadline:
+                    break
+                time.sleep(0.05)
             checks += 1
             if names != ["main", "burdin_panic_begin"]:
                 add_problem(f"the merged function breakpoints are `{names}`, not the client's plus the panic hook")

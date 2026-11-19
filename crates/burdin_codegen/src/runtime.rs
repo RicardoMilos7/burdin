@@ -2195,7 +2195,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
     }
 
     /// `print_backtrace()`: writes `stack backtrace:` and the frames above the panic runtime to stderr. The first
-    /// two frames (this function and `burdin_rt_panic`) are hidden; on Windows the capture skips three. A frame the
+    /// two frames (this function and `burdin_rt_panic`) are hidden, on Windows by the capture's skip count. A frame the
     /// `-g` table names prints `  #N  at <file>:<line> in <name>`; every other frame prints its raw address.
     fn print_backtrace(&mut self) -> GenResult<FunctionValue<'ctx>> {
         let void = self.cx.void_type();
@@ -2365,9 +2365,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         );
         let write_all = self.module.get_function("burdin_rt_write_all").expect("write_all exists");
         let buf = self.b.build_alloca(ptr_ty.array_type(BACKTRACE_FRAMES), "frames").map_err(llvm_err)?;
-        // Skip `RtlCaptureStackBackTrace`, this function, and `burdin_rt_panic`; the runtime frames are hidden
-        // like on Unix.
-        let hidden = i32_ty.const_int(3, false);
+        // Skip this function and `burdin_rt_panic`, like the two frames hidden on Unix: the capture does not count
+        // `RtlCaptureStackBackTrace` itself, so skipping three would drop the panicking function.
+        let hidden = i32_ty.const_int(2, false);
         let n = self
             .call(
                 capture,
