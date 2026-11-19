@@ -682,7 +682,7 @@ impl Analysis {
     pub fn expr_facts(&self, path: &str, lo: u32, hi: u32) -> Option<ExprFacts> {
         let program = self.program.as_ref()?;
         let file = self.file_id(path)?;
-        for f in program.functions.iter().filter(|f| !f.symbolic) {
+        for f in program.functions.iter().filter(|f| !f.symbolic).chain(program.closures.iter().map(|c| &c.func)) {
             if f.span.file != file {
                 continue;
             }

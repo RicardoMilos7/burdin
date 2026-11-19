@@ -132,11 +132,8 @@ pub(crate) fn fix_loop(
         outcome = candidate;
     }
     // A skipped fix is reported only when the final text still offers it: most clashes resolve in the next round.
-    let still: HashSet<(PathBuf, String, String)> = offered(&outcome)
-        .into_values()
-        .flatten()
-        .map(|(r, _)| (r.path, r.code, r.message))
-        .collect();
+    let still: HashSet<(PathBuf, String, String)> =
+        offered(&outcome).into_values().flatten().map(|(r, _)| (r.path, r.code, r.message)).collect();
     let mut conflicts: Vec<FixRecord> =
         skipped.into_iter().filter(|r| still.contains(&(r.path.clone(), r.code.clone(), r.message.clone()))).collect();
     conflicts.sort();

@@ -22,6 +22,7 @@ mod fmt;
 mod lint;
 mod migrate;
 mod new;
+mod refactor;
 mod repl;
 mod rust_build;
 mod rust_interop;
@@ -576,6 +577,8 @@ fn driver_main() -> ExitCode {
         "bindgen" => return bindgen::run(rest),
         "lint" => return lint::run(rest),
         "fix" => return fix::run(rest),
+        "ssr" => return refactor::run_ssr(rest),
+        "refactor" => return refactor::run_refactor(rest),
         "doc" => return doc::run(rest),
         "debug" => return debug::run(rest),
         "new" => return new::run(rest),

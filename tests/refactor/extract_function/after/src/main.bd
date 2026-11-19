@@ -1,0 +1,9 @@
+fn main() {
+    let a = 2
+    let b = 3
+    report(a, b)
+}
+fn report(a: i32, b: i32) {
+    let total = a + b
+    println("{total}")
+}

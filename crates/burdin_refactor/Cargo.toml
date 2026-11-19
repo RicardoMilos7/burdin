@@ -1,0 +1,12 @@
+[package]
+name = "burdin_refactor"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The refactoring engine (`spec/refactor.md`): structural search and replace and the refactorings, over the query
+# library. It never links LLVM: the driver (`burdin ssr`, `burdin refactor`) and the language server share it.
+[dependencies]
+burdin_diag.workspace = true
+burdin_syntax.workspace = true
+burdin_query.workspace = true

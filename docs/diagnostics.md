@@ -49,7 +49,7 @@ every failing conformance test.
 | `help` | array of strings | advice that is not an edit |
 | `related` | array | `{span, message}`: the notes that have a span, in the shape of the Language Server Protocol's `relatedInformation` |
 | `children` | array | diagnostics that belong to this one: the same fields without `type`, `version`, and `rendered` |
-| `suggestions` | array | `{message, applicability, edits}`: a fix; `applicability` is `"machine"` (safe to apply without review, what `burdin lint --fix` applies) or `"manual"`; `edits` is a list of `{span, replacement}` |
+| `suggestions` | array | `{message, applicability, edits}`: a fix; `applicability` is `"machine"` (safe to apply without review, what `burdin fix` applies), `"maybe-incorrect"` (probably right; never applied automatically), `"has-placeholders"` (the text needs a person), or `"manual"`; `edits` is a list of `{span, replacement}` |
 | `rendered` | string | the human text of this diagnostic: no color, no link, no wrapping |
 
 A suggestion's edits apply together. An edit whose span is empty (`byte_start == byte_end`) inserts its replacement;

@@ -68,7 +68,7 @@ python3 tests/release_notes.py           generate release notes from CHANGELOG.m
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
-cargo test -p burdin_lsp           the language server's JSON-RPC integration tests (no LLVM)
+cargo test -p burdin_refactor (the refactoring engine, spec/refactor.md), burdin_lsp           the language server's JSON-RPC integration tests (no LLVM)
 cargo test -p burdin_dap           the debug adapter's scripted-peer tests (no LLVM, no debugger)
 cargo bench -p burdin_bench        compiler benchmarks (lex, parse, sema, codegen)
 cargo bench -p burdin_bench -- --smoke   benchmark budgets CI runs

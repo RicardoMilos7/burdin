@@ -1,0 +1,9 @@
+fn area(width: i32, height: i32): i32 {
+    width * height
+}
+
+fn main() {
+    let a = area(width: 2, height: 3)
+    let b = area(4, 5)
+    println("{a} {b}")
+}

@@ -301,7 +301,13 @@ fn report(outcome: &Outcome, args: &LintArgs) -> bool {
 }
 
 pub(crate) fn plural(n: usize, word: &str) -> String {
-    let suffix = if n == 1 { "" } else if word.ends_with('x') { "es" } else { "s" };
+    let suffix = if n == 1 {
+        ""
+    } else if word.ends_with('x') {
+        "es"
+    } else {
+        "s"
+    };
     format!("{n} {word}{suffix}")
 }
 

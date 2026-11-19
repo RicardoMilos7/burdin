@@ -79,10 +79,8 @@ pub fn inline_diff(sources: &SourceMap, edits: &[Edit]) -> Vec<(char, String)> {
     let start = text[..lo].rfind('\n').map_or(0, |n| n + 1);
     let end = text[hi..].find('\n').map_or(text.len(), |n| hi + n);
     let old = &text[start..end];
-    let shifted: Vec<TextEdit> = edits
-        .iter()
-        .map(|e| (e.span.lo - start as u32, e.span.hi - start as u32, e.replacement.clone()))
-        .collect();
+    let shifted: Vec<TextEdit> =
+        edits.iter().map(|e| (e.span.lo - start as u32, e.span.hi - start as u32, e.replacement.clone())).collect();
     let (new, conflicts) = apply_edits(old, &shifted);
     if !conflicts.is_empty() {
         return Vec::new();

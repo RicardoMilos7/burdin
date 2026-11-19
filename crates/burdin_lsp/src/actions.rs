@@ -92,6 +92,30 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
             }
         }
     }
+    if wanted("refactor.extract") && lo < hi {
+        for (kind, name, title) in [
+            ("extract-variable", "value", "extract the selection into a local"),
+            ("extract-function", "extracted", "extract the selection into a function"),
+        ] {
+            if let Some(edits) = refactor_edits(server, i, &path, lo, hi, kind, Some(name)) {
+                actions.push(
+                    Json::obj().with("title", title).with("kind", "refactor.extract").with("edit", edit_of(edits)),
+                );
+            }
+        }
+    }
+    if wanted("refactor.inline") && lo == hi {
+        for (kind, title) in [
+            ("inline-variable", "inline the local at the cursor"),
+            ("inline-function", "inline the function at the cursor"),
+        ] {
+            if let Some(edits) = refactor_edits(server, i, &path, lo, hi, kind, None) {
+                actions.push(
+                    Json::obj().with("title", title).with("kind", "refactor.inline").with("edit", edit_of(edits)),
+                );
+            }
+        }
+    }
     if wanted("source.organizeImports") {
         let removals: Vec<(u32, u32, String)> = diags
             .iter()
@@ -110,117 +134,95 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
     Ok(Json::Arr(actions))
 }
 
+/// The edits one refactoring makes to the package, in the text the editor has (RF7). `None` when the refactoring
+/// would change what the program means; the editor then offers no action, and the command line explains why.
+fn refactor_edits(
+    server: &mut Server,
+    i: usize,
+    path: &str,
+    lo: u32,
+    hi: u32,
+    kind: &str,
+    name: Option<&str>,
+) -> Option<Vec<Edit>> {
+    let encoding = server.encoding;
+    let package = &mut server.packages[i];
+    let mut engine = burdin_refactor::Engine::new(&mut package.db).ok()?;
+    let outcome = match (kind, name) {
+        ("extract-variable", Some(name)) => burdin_refactor::extract::variable(&mut engine, path, lo, hi, name),
+        ("extract-function", Some(name)) => burdin_refactor::extract::function(&mut engine, path, lo, hi, name),
+        ("inline-variable", _) => burdin_refactor::inline::variable(&mut engine, path, lo, hi),
+        ("inline-function", _) => burdin_refactor::inline::function(&mut engine, path, lo, hi),
+        _ => return None,
+    };
+    let changes = outcome.ok()?;
+    let mut edits = Vec::new();
+    for change in changes {
+        if let Some(edit) = minimal_edit(&change.before, &change.after) {
+            edits.push(edit);
+        }
+    }
+    let _ = encoding;
+    (!edits.is_empty()).then_some(edits)
+}
+
+/// The one edit that turns `before` into `after`: the text between their common prefix and their common suffix.
+fn minimal_edit(before: &str, after: &str) -> Option<(u32, u32, String)> {
+    let (b, a) = (before.as_bytes(), after.as_bytes());
+    let mut prefix = 0;
+    while prefix < b.len() && prefix < a.len() && b[prefix] == a[prefix] {
+        prefix += 1;
+    }
+    while prefix > 0 && (!before.is_char_boundary(prefix) || !after.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+    let mut suffix = 0;
+    while suffix < b.len() - prefix && suffix < a.len() - prefix && b[b.len() - 1 - suffix] == a[a.len() - 1 - suffix] {
+        suffix += 1;
+    }
+    while suffix > 0 && (!before.is_char_boundary(b.len() - suffix) || !after.is_char_boundary(a.len() - suffix)) {
+        suffix -= 1;
+    }
+    let text = after[prefix..a.len() - suffix].to_string();
+    (before[prefix..b.len() - suffix] != text).then(|| (prefix as u32, (b.len() - suffix) as u32, text))
+}
+
 /// A text edit: the byte range it replaces and the new text.
 type Edit = (u32, u32, String);
 
-/// Fixes the server writes itself for a diagnostic without a suggestion: an import for an unknown name, `mut` on an
-/// immutable binding, and stubs for missing interface methods.
+/// The fixes the server writes itself, for a diagnostic the compiler gives no suggestion for: a stub for a missing
+/// interface method. Everything else (`mut` on a binding, an import, the `mut` marker) is the compiler's suggestion
+/// (`spec/fix.md`, FX13), which the server offers like any other.
 fn fixes_for(server: &mut Server, i: usize, path: &str, text: &str, d: &Diagnostic) -> Vec<(String, Vec<Edit>)> {
     let mut out = Vec::new();
-    let slice = text.get(d.span.lo as usize..d.span.hi as usize).unwrap_or("");
-    match d.code.0 {
-        "E0002" => {
-            let name = slice.split(['.', '(', '<', ' ']).next().unwrap_or(slice).to_string();
-            if !crate::index::is_identifier(&name) {
-                return out;
-            }
-            let Some(package) = server.packages[i].package_of(path) else { return out };
-            let modules = server.packages[i].visible_modules(package);
-            let insert = import_position(server, i, path, text);
-            let mut r = Resolver::new(&mut server.packages[i]);
-            let all = r.all_items();
-            let mut seen = Vec::new();
-            for (file, item) in all.iter() {
-                if item.name != name
-                    || item.parent.is_some()
-                    || item.kind == Kind::Impl
-                    || item.kind == Kind::Test
-                    || file == path
-                {
-                    continue;
-                }
-                let Some((module, _)) = modules.iter().filter(|(_, f)| f == file).min_by_key(|(m, _)| m.len()) else {
-                    continue;
-                };
-                let line = format!("use {}.{name}\n", module.join("."));
-                if seen.contains(&line) {
-                    continue;
-                }
-                seen.push(line.clone());
-                out.push((format!("import `{name}` from `{}`", module.join(".")), vec![(insert, insert, line)]));
-            }
-        }
-        "E0005" | "E0113" => {
-            let analysis = server.packages[i].current();
-            let resolved = analysis.and_then(|a| {
-                // The diagnostic covers the use; its first name is the binding.
-                let at = text[d.span.lo as usize..]
-                    .find(|c: char| c.is_ascii_alphabetic() || c == '_')
-                    .map(|n| d.span.lo + n as u32)?;
-                a.resolve_at(path, at)
-            });
-            if let Some(r) = resolved
-                && let Some(def) = r.definition
-                && matches!(r.kind, burdin_query::DefinitionKind::Local)
-            {
-                let def_text = server.text_of(&def.path).unwrap_or_default();
-                let before = def_text[..def.lo as usize].trim_end();
-                if !before.ends_with("mut") {
-                    let loc = Loc::from(&def);
-                    if loc.path == path {
-                        out.push((format!("make `{}` mutable", r.name), vec![(def.lo, def.lo, "mut ".to_string())]));
-                    }
-                }
-            }
-        }
-        "E0140" => {
-            let Some(method) = d.message.split('`').nth(3).map(str::to_string) else { return out };
-            let mut r = Resolver::new(&mut server.packages[i]);
-            let Some(ix) = r.index(path) else { return out };
-            let Some(block) = ix
-                .items
-                .iter()
-                .filter(|it| it.kind == Kind::Impl && it.span.0 <= d.span.lo && d.span.lo <= it.span.1)
-                .min_by_key(|it| it.span.1 - it.span.0)
-                .cloned()
-            else {
-                return out;
-            };
-            let Some(iface) = block.interface.clone() else { return out };
-            let all = r.all_items();
-            let Some((_, decl)) = all.iter().find(|(_, it)| {
-                it.kind == Kind::InterfaceMethod && it.name == method && it.owner.as_deref() == Some(iface.as_str())
-            }) else {
-                return out;
-            };
-            let close = block.span.1.saturating_sub(1);
-            let line_start = text[..close as usize].rfind('\n').map_or(0, |n| n + 1) as u32;
-            let only_space = text[line_start as usize..close as usize].trim().is_empty();
-            let stub = format!("    {} {{\n        todo()\n    }}\n", decl.detail);
-            let edit = if only_space { (line_start, line_start, stub) } else { (close, close, format!("\n{stub}")) };
-            out.push((format!("add the missing method `{method}`"), vec![edit]));
-        }
-        _ => {}
+    if d.code.0 == "E0140" {
+        let Some(method) = d.message.split('`').nth(3).map(str::to_string) else { return out };
+        let mut r = Resolver::new(&mut server.packages[i]);
+        let Some(ix) = r.index(path) else { return out };
+        let Some(block) = ix
+            .items
+            .iter()
+            .filter(|it| it.kind == Kind::Impl && it.span.0 <= d.span.lo && d.span.lo <= it.span.1)
+            .min_by_key(|it| it.span.1 - it.span.0)
+            .cloned()
+        else {
+            return out;
+        };
+        let Some(iface) = block.interface.clone() else { return out };
+        let all = r.all_items();
+        let Some((_, decl)) = all.iter().find(|(_, it)| {
+            it.kind == Kind::InterfaceMethod && it.name == method && it.owner.as_deref() == Some(iface.as_str())
+        }) else {
+            return out;
+        };
+        let close = block.span.1.saturating_sub(1);
+        let line_start = text[..close as usize].rfind('\n').map_or(0, |n| n + 1) as u32;
+        let only_space = text[line_start as usize..close as usize].trim().is_empty();
+        let stub = format!("    {} {{\n        todo()\n    }}\n", decl.detail);
+        let edit = if only_space { (line_start, line_start, stub) } else { (close, close, format!("\n{stub}")) };
+        out.push((format!("add the missing method `{method}`"), vec![edit]));
     }
     out
-}
-
-/// Where a new `use` goes: after the last one, or at the top of the file after its `//!` comments.
-fn import_position(server: &mut Server, i: usize, path: &str, text: &str) -> u32 {
-    if let Some(ix) = server.packages[i].index(path)
-        && let Some(last) = ix.uses.iter().map(|u| u.span.1).max()
-    {
-        return text[last as usize..].find('\n').map_or(text.len(), |n| last as usize + n + 1) as u32;
-    }
-    let mut at = 0usize;
-    for line in text.split_inclusive('\n') {
-        if line.trim_start().starts_with("//!") {
-            at += line.len();
-        } else {
-            break;
-        }
-    }
-    at as u32
 }
 
 // ---- code lenses ------------------------------------------------------------------------------------------------
@@ -365,6 +367,9 @@ pub fn execute_command(server: &mut Server, params: &Json) -> Reply {
         return Err(ReqError::params(format!("unknown command `{command}`")));
     }
     let argument = params.get("arguments").as_array().first().cloned().unwrap_or(Json::Null);
+    if command == "burdin.structuralSearchReplace" {
+        return structural_search_replace(server, &argument);
+    }
     let argv: Vec<String> =
         argument.get("argv").as_array().iter().filter_map(|a| a.as_str().map(str::to_string)).collect();
     let root = argument.get("root").as_str().map(PathBuf::from).ok_or_else(|| ReqError::params("missing root"))?;
@@ -377,6 +382,38 @@ pub fn execute_command(server: &mut Server, params: &Json) -> Reply {
     command_line.push("json".to_string());
     let root = root.canonicalize().unwrap_or(root);
     Err(ReqError::deferred(Box::new(move || run_tests(&command_line, &root))))
+}
+
+/// `burdin.structuralSearchReplace`: replace every match of a pattern in a package (spec/refactor.md, RF6). The
+/// argument is `{ "pattern": "...", "replacement": "...", "root": "<package directory>" }`; the answer is a workspace
+/// edit for the editor to apply.
+fn structural_search_replace(server: &mut Server, argument: &Json) -> Reply {
+    let pattern_text = argument.get("pattern").as_str().ok_or_else(|| ReqError::params("missing pattern"))?;
+    let replacement = argument.get("replacement").as_str().ok_or_else(|| ReqError::params("missing replacement"))?;
+    let root = argument.get("root").as_str().map(PathBuf::from).ok_or_else(|| ReqError::params("missing root"))?;
+    let root = root.canonicalize().unwrap_or(root);
+    let index = server
+        .packages
+        .iter()
+        .position(|p| p.root.canonicalize().map(|r| r == root).unwrap_or(p.root == root))
+        .ok_or_else(|| ReqError::params("the root is not a package this server has open"))?;
+    let pattern = burdin_refactor::ssr::parse(pattern_text).map_err(|r| ReqError::params(r.0))?;
+    let encoding = server.encoding;
+    let changes = {
+        let package = &mut server.packages[index];
+        let mut engine = burdin_refactor::Engine::new(&mut package.db).map_err(|r| ReqError::failed(r.0))?;
+        burdin_refactor::ssr::replace(&mut engine, &pattern, replacement).map_err(|r| ReqError::failed(r.0))?.changes
+    };
+    let mut all = Json::obj();
+    for change in &changes {
+        if let Some((lo, hi, text)) = minimal_edit(&change.before, &change.after) {
+            let index = LineIndex::new(&change.before, encoding);
+            let uri = server.uri_of(&change.path);
+            let edit = Json::obj().with("range", index.range(lo, hi)).with("newText", text);
+            all = all.with(&uri, Json::Arr(vec![edit]));
+        }
+    }
+    Ok(Json::obj().with("changes", all))
 }
 
 fn run_tests(argv: &[String], root: &Path) -> Result<RunOutcome, String> {

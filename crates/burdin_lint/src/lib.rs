@@ -19,7 +19,7 @@ mod scopes;
 mod suppress;
 mod tir_lints;
 mod unreachable;
-mod walk;
+use burdin_syntax::walk;
 
 pub use registry::{Config, Level, Lint};
 

@@ -1118,7 +1118,9 @@ mod tests {
             rendered.text,
             "a.bd:1:1: error[E0114]: pass the argument as `mut ...`\n\
              \x20 = note: a.bd:1:1: declared here\n\
-             \x20 = help: add `mut` before this argument\n"
+             \x20 = help: add `mut` before this argument\n\
+             \x20         - mut x\n\
+             \x20         + mut mut x\n"
         );
     }
 

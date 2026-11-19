@@ -10,8 +10,20 @@ use burdin_tir::{self as tir, LocalKind, Ty};
 
 /// The value names the compiler provides that are not declared anywhere: what a misspelled call may have meant.
 const PROVIDED: [&str; 14] = [
-    "print", "println", "eprint", "eprintln", "panic", "Some", "None", "Ok", "Err", "swap", "replace", "format",
-    "embed", "black_box",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "panic",
+    "Some",
+    "None",
+    "Ok",
+    "Err",
+    "swap",
+    "replace",
+    "format",
+    "embed",
+    "black_box",
 ];
 
 /// A fix for a name that is not in scope.
@@ -21,7 +33,10 @@ pub(super) enum NameFix {
     /// Several are; a help line lists them.
     Candidates(Vec<String>),
     /// No name in scope is close, but exactly one other module of the package declares it.
-    Import { path: String, edit: Edit },
+    Import {
+        path: String,
+        edit: Edit,
+    },
     None,
 }
 
@@ -33,8 +48,8 @@ fn distance(a: &str, b: &str) -> usize {
     for (i, row) in d.iter_mut().enumerate() {
         row[0] = i;
     }
-    for j in 0..=b.len() {
-        d[0][j] = j;
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
     }
     for i in 1..=a.len() {
         for j in 1..=b.len() {
