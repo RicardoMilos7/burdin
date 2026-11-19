@@ -103,21 +103,72 @@ fn link_unix_static(prefix: &Path, target_os: &str) {
         panic!("`{} --link-static --libs` failed: LLVM 21 must include its static libraries", config.display())
     });
     println!("cargo:rustc-link-search=native={libdir}");
+    let mut linked = 0;
     for word in libs.split_whitespace() {
-        if let Some(name) = word.strip_prefix("-l") {
-            println!("cargo:rustc-link-lib=static={name}");
+        if let Some(library) = library_word(word) {
+            println!("cargo:rustc-link-lib=static={}", library.name);
+            linked += 1;
         }
+    }
+    if linked == 0 {
+        panic!("`{} --link-static --libs` named no libraries: {libs}", config.display());
     }
     if let Some(system) = run(&config, &["--link-static", "--system-libs"]) {
         for word in system.split_whitespace() {
-            if let Some(name) = word.strip_prefix("-l") {
-                println!("cargo:rustc-link-lib={name}");
-            } else if let Some(dir) = word.strip_prefix("-L") {
-                println!("cargo:rustc-link-search=native={dir}");
+            let Some(library) = library_word(word) else { continue };
+            if library.name == "zstd" && target_os == "macos" {
+                link_macos_zstd();
+            } else {
+                println!("cargo:rustc-link-lib={}", library.name);
             }
         }
     }
     println!("cargo:rustc-link-lib={}", if target_os == "macos" { "c++" } else { "stdc++" });
+}
+
+/// A library `llvm-config` named: `-lLLVMCore`, or the path of an archive or shared library (some builds print paths).
+struct Library {
+    name: String,
+}
+
+/// The library a word of `llvm-config` output stands for. A path also adds its directory to the search path. Words
+/// that name no library (`-L<dir>` and the like) are handled here or skipped.
+fn library_word(word: &str) -> Option<Library> {
+    if let Some(dir) = word.strip_prefix("-L") {
+        println!("cargo:rustc-link-search=native={dir}");
+        return None;
+    }
+    if let Some(name) = word.strip_prefix("-l") {
+        return Some(Library { name: name.to_string() });
+    }
+    let path = Path::new(word);
+    let extension = path.extension()?.to_str()?;
+    if !matches!(extension, "a" | "so" | "dylib" | "lib") {
+        return None;
+    }
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        println!("cargo:rustc-link-search=native={}", dir.display());
+    }
+    let stem = path.file_stem()?.to_str()?;
+    Some(Library { name: stem.strip_prefix("lib").unwrap_or(stem).to_string() })
+}
+
+/// macOS: Homebrew's `zstd` lives outside the compiler's default search path, and a dynamic link would make the
+/// binary depend on a Homebrew path that other machines lack. Link its static archive.
+fn link_macos_zstd() {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(prefix) = run(Path::new("brew"), &["--prefix", "zstd"]) {
+        dirs.push(Path::new(&prefix).join("lib"));
+    }
+    dirs.push(PathBuf::from("/opt/homebrew/lib"));
+    dirs.push(PathBuf::from("/usr/local/lib"));
+    match dirs.iter().find(|dir| dir.join("libzstd.a").is_file()) {
+        Some(dir) => {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+            println!("cargo:rustc-link-lib=static=zstd");
+        }
+        None => panic!("cannot find libzstd.a for the static LLVM link: `brew install zstd`"),
+    }
 }
 
 fn link_unix(prefix: &Path) {
