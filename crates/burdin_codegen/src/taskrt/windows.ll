@@ -7,6 +7,7 @@ declare ptr @calloc(i64, i64)
 declare void @free(ptr)
 declare void @abort()
 declare ptr @CreateThread(ptr, i64, ptr, ptr, i32, ptr)
+declare i32 @SetThreadStackGuarantee(ptr)
 declare i32 @CloseHandle(ptr)
 declare void @InitializeSRWLock(ptr)
 declare void @AcquireSRWLockExclusive(ptr)
@@ -30,7 +31,19 @@ declare i32 @GetActiveProcessorCount(i16)
 
 ; ---- threads ----------------------------------------------------------------------------------------------------
 
+; The vectored filter that turns a stack overflow into `panic: stack overflow` runs on whatever is left of the
+; overflowing stack. The system's default guarantee leaves too little for it to flush and write, so the message would
+; sometimes never appear. Every worker thread, and every task fiber, asks for the same 64 KiB the main thread gets
+; (`STACK_GUARANTEE` in `runtime.rs`); a fiber needs its own request because its stack is not the thread's.
+define void @burdin_rt_reserve_stack_guarantee() {
+  %request = alloca i32
+  store i32 65536, ptr %request
+  %r = call i32 @SetThreadStackGuarantee(ptr %request)
+  ret void
+}
+
 define i32 @burdin_rt_thread_main(ptr %arg) {
+  call void @burdin_rt_reserve_stack_guarantee()
   %code = load ptr, ptr %arg
   %envp = getelementptr i8, ptr %arg, i64 8
   %env = load ptr, ptr %envp
@@ -165,6 +178,7 @@ define void @burdin_rt_spin_unlock() {
 ; to; `ctx_new` creates a fiber that reserves `size` bytes of stack and commits them as they are used.
 
 define void @burdin_rt_ctx_entry(ptr %e) {
+  call void @burdin_rt_reserve_stack_guarantee()
   %code = load ptr, ptr %e
   %envp = getelementptr i8, ptr %e, i64 8
   %env = load ptr, ptr %envp

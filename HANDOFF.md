@@ -947,6 +947,11 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
   (`m02_basics/stack_overflow_aborts` was flaky on the `windows` CI job). `burdin_rt_install_stack_guard` now calls
   `SetThreadStackGuarantee` for 64 KiB before it adds the filter, matching the Unix alternate signal stack; a
   runtime unit test pins the call and the size.
+- **Windows task stack-overflow determinism.** `SetThreadStackGuarantee` is per thread, and a task runs on a fiber on a
+  worker thread, not on the main thread that reserves the guarantee, so `s2_tasks/stack_overflow_aborts` was still
+  occasionally ending without `panic: stack overflow`. `taskrt/windows.ll` now reserves the same 64 KiB at the start of
+  every worker thread (`burdin_rt_thread_main`) and every task fiber (`burdin_rt_ctx_entry`); a unit test in `taskrt.rs`
+  pins both calls. Not reproducible locally (no Windows toolchain in the dev setup): confirm on the `windows` CI job.
 
 ## The forty-seventh session: the query-based compiler library (stage 3, issue #241)
 

@@ -188,3 +188,26 @@ fn switch_asm(darwin: bool, aarch64: bool) -> String {
     }
     asm
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Windows stack-overflow filter runs on what is left of the overflowing stack. A task runs on a fiber on a
+    /// worker thread, neither of which is the main thread that reserves a guarantee in `runtime.rs`, so each must
+    /// reserve its own or `panic: stack overflow` is sometimes never written
+    /// (`s2_tasks/stack_overflow_aborts` was flaky on Windows).
+    #[test]
+    fn windows_workers_and_fibers_reserve_a_stack_guarantee() {
+        let text = WINDOWS_IR.replace("\r\n", "\n");
+        let body = |name: &str| {
+            let start = text.find(&format!("define {name}")).unwrap_or_else(|| panic!("{name} is defined"));
+            let end = text[start..].find("\n}\n").expect("the function ends") + start;
+            text[start..end].to_string()
+        };
+        let reserve = "call void @burdin_rt_reserve_stack_guarantee()";
+        assert!(body("i32 @burdin_rt_thread_main").contains(reserve), "a worker thread reserves a guarantee");
+        assert!(body("void @burdin_rt_ctx_entry").contains(reserve), "a task fiber reserves a guarantee");
+        assert!(body("void @burdin_rt_reserve_stack_guarantee").contains("store i32 65536"), "it asks for 64 KiB");
+    }
+}
