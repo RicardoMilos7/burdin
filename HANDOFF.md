@@ -1230,6 +1230,29 @@ from the Linux design and never run; a fallible API needs a non-`Result` functio
 decision); a crate's own dependencies on other bound crates are not modeled; and two shims in one program each carry
 their own Rust runtime.
 
+## The fifty-fifth session: `burdin add` and `burdin.lock` (stage 3, issues #238, #239)
+
+`spec/packages.md` (PKG1-PKG14) is the design. What is worth remembering: the manifest parser and the lockfile format
+(`crates/burdin_query/src/lockfile.rs`) stay in `burdin_query` because the package loader reads a git dependency
+from the checkout `burdin.lock` pins; everything that fetches or writes is the new crate `burdin_pkg` (`git.rs`,
+`resolve.rs`, `add.rs`, and a hand-written `sha256.rs`, so no new external crate). The driver calls
+`sync_dependencies` at the top of `front_end` and of `test_runner::run`/`bench_runner::run` (before they load the
+workspace for selection), so every command that compiles a package keeps the lockfile current; `CompileOptions`
+gained `locked`. A graph of path packages writes no lockfile until one exists, which keeps the test packages in the
+repository free of generated files. Git runs with `core.autocrlf=false`, so checksums agree across platforms; a
+checkout is materialized with `read-tree -u` into a temporary work tree against the bare clone, with a private
+`GIT_INDEX_FILE`, so it has no `.git`. The unit test that rejected `{ git = "x" }` in `package.rs` now rejects a
+table with neither source instead, because git dependencies are part of the language now.
+
+What the tests pin: `tests/check_packages.py` (local repositories through `file://` URLs and a private
+`BURDIN_HOME`: golden manifests and lockfiles, a tag and a branch dependency, a moved branch, `--locked` for five
+commands, checksum tampering, and every failure leaving both files unchanged), `crates/burdin_pkg/tests/git.rs`
+(the same end to end without the driver, so it runs on Windows without LLVM), and unit tests in `lockfile.rs`,
+`resolve.rs`, `add.rs`, `sha256.rs`, `package.rs`, and the driver's `add.rs`.
+
+What is left: a registry and version requirements, `burdin update`, git packages in a subdirectory of their
+repository, `--offline`, and doc tests reading the documented package's lockfile (each example resolves its own).
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

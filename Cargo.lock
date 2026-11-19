@@ -93,6 +93,7 @@ dependencies = [
  "burdin_inspect",
  "burdin_lint",
  "burdin_lsp",
+ "burdin_pkg",
  "burdin_query",
  "burdin_repl",
  "burdin_rustgen",
@@ -147,6 +148,14 @@ dependencies = [
  "burdin_fmt",
  "burdin_json",
  "burdin_lint",
+ "burdin_query",
+ "burdin_syntax",
+]
+
+[[package]]
+name = "burdin_pkg"
+version = "0.1.0"
+dependencies = [
  "burdin_query",
  "burdin_syntax",
 ]

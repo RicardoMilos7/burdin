@@ -238,6 +238,7 @@ fn run_script(
         emit_deps: None,
         report_clean: false,
         run_build_scripts: false,
+        locked: false,
         jobs: options.jobs,
     };
     let compiled = crate::compile(script, out, Some(&exe), &nested).map_err(|_| {

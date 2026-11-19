@@ -290,6 +290,15 @@ an identifier that is not a reserved word or `std`) with a `burdin.toml`, a `src
 `.gitignore` for `target/` and the executable `burdin build .` leaves in the package directory. It refuses, with exit
 status 2, to touch a path that already exists. `tests/check_new.py` checks it.
 
+A dependency in `burdin.toml` is a directory (`lib = { path = "../lib" }`) or a git repository (`json = { git = "<url>",
+tag = "v1" }`, or `branch`, or `rev`). `burdin add [<name>] --path <dir>` and `burdin add [<name>] --git <url> [--tag <t> |
+--branch <b> | --rev <commit>]` add one to the nearest `burdin.toml`, resolve it, and write `burdin.lock`, which pins
+every git dependency to an exact commit and the SHA-256 checksum of its files; a failed `add` changes neither file. Every
+build keeps `burdin.lock` current (git checkouts are cached under `BURDIN_HOME`), and `--locked` on `build`, `run`,
+`test`, `bench`, and `check` fails with exit status 1, naming each difference, when the lockfile does not match the
+manifests. There is no package registry yet. [`spec/packages.md`](spec/packages.md) is the specification and
+`tests/check_packages.py` checks it.
+
 `burdin lsp` is the language server: it speaks the Language Server Protocol over standard input and output (`--stdio` is
 accepted and changes nothing) and exits 0 after `shutdown` and `exit`, 1 otherwise. Editors start it themselves;
 [`editors/`](editors/README.md) has the VS Code extension and the settings for Neovim and Helix, and

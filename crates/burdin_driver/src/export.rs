@@ -37,6 +37,7 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &
         comptime_steps: None,
         emit_deps: None,
         run_build_scripts: true,
+        locked: false,
         report_clean: false,
         jobs: crate::jobs_or_default(None),
     };
