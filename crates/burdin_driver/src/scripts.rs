@@ -13,6 +13,12 @@ use std::process::{Command, ExitCode};
 /// where a script's build lives.
 const BINARY: &str = "script";
 
+/// The file name of a script's binary: `script` plus the platform's executable suffix (`.exe` on Windows, nothing
+/// elsewhere). `EXE_EXTENSION` has no dot, so it cannot be appended to a name directly.
+fn binary_name() -> String {
+    format!("{BINARY}{}", std::env::consts::EXE_SUFFIX)
+}
+
 /// Runs the target as a script when it is one. `None` when it is not a script, so `burdin run` takes its usual path.
 pub(crate) fn run_script(args: &Args, options: &CompileOptions) -> Option<ExitCode> {
     let target = &args.target;
@@ -44,14 +50,12 @@ fn run_cached(target: &Path, text: &str, args: &Args, options: &CompileOptions) 
     else {
         return build_uncached(target, args, options);
     };
-    let exe = cache.join(format!("{BINARY}{}", std::env::consts::EXE_EXTENSION));
+    let exe = cache.join(binary_name());
     if exe.is_file() {
         return run_exe(&exe, args);
     }
-    // Build into a staging directory, then publish the finished binary with one file rename, so a crash mid-build
-    // never leaves a half-written binary where a later run would trust it. The file is renamed, not the staging
-    // directory: Windows refuses to rename a directory while anything inside it is open, and a freshly linked
-    // executable is often held for a moment by a virus scanner.
+    // Build into a staging directory and publish it with one rename, so a crash mid-build never leaves a
+    // half-written binary where a later run would trust it.
     let staging = cache.with_extension(format!("tmp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
     if let Err(e) = std::fs::create_dir_all(&staging) {
@@ -59,41 +63,28 @@ fn run_cached(target: &Path, text: &str, args: &Args, options: &CompileOptions) 
         let _ = e;
         return build_uncached(target, args, options);
     }
-    let staged_exe = staging.join(format!("{BINARY}{}", std::env::consts::EXE_EXTENSION));
+    let staged_exe = staging.join(binary_name());
     let code = build_and_run(target, &staging, &staged_exe, args, options);
     // The linker writes the binary only when the build succeeded; the program's own exit status is its own.
     if staged_exe.is_file() {
-        let _ = publish(&staged_exe, &cache, &exe);
-    }
-    let _ = std::fs::remove_dir_all(&staging);
-    code
-}
-
-/// Moves a built binary to its cache entry. The rename is retried briefly, and falls back to a copy that is itself
-/// renamed into place, so the entry either holds a whole binary or no binary at all (SC6).
-fn publish(staged: &Path, cache: &Path, exe: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(cache)?;
-    let mut last = None;
-    for attempt in 0..5u64 {
-        match std::fs::rename(staged, exe) {
-            Ok(()) => return Ok(()),
-            Err(e) => last = Some(e),
+        if let Some(parent) = cache.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-        std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+        let _ = std::fs::remove_dir_all(&cache);
+        if std::fs::rename(&staging, &cache).is_err() {
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+    } else {
+        let _ = std::fs::remove_dir_all(&staging);
     }
-    let partial = exe.with_extension(format!("part-{}", std::process::id()));
-    let copied = std::fs::copy(staged, &partial).and_then(|_| std::fs::rename(&partial, exe));
-    if copied.is_err() {
-        let _ = std::fs::remove_file(&partial);
-    }
-    copied.map_err(|_| last.expect("the loop ran"))
+    code
 }
 
 /// Builds without a cache, for a Burdin home that cannot hold one.
 fn build_uncached(target: &Path, args: &Args, options: &CompileOptions) -> ExitCode {
     match TempDir::new() {
         Ok(dir) => {
-            let exe = dir.path.join(format!("{BINARY}{}", std::env::consts::EXE_EXTENSION));
+            let exe = dir.path.join(binary_name());
             build_and_run(target, &dir.path, &exe, args, options)
         }
         Err(e) => {
@@ -181,6 +172,18 @@ fn run_exe(exe: &Path, args: &Args) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_binary_name_carries_the_platform_suffix() {
+        let name = binary_name();
+        assert!(name.starts_with(BINARY));
+        // On Windows this is `script.exe`, never `scriptexe`: the linker and `CreateProcess` both add `.exe` to a
+        // name that lacks it, so a wrong name builds and runs but is never found afterwards.
+        assert_eq!(
+            Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default(),
+            std::env::consts::EXE_EXTENSION
+        );
+    }
 
     #[test]
     fn scripts_are_told_apart_from_plain_files() {
