@@ -21,13 +21,14 @@ use std::process::ExitCode;
 pub(crate) const CHECK_USAGE: &str = "\
 usage:
   burdin check <file.bd | package directory> [--release] [--tests] [--print-instances [--format <human|json>]]
-               [-j <n>] [--comptime-steps <n>] [diagnostics]
+               [--locked] [-j <n>] [--comptime-steps <n>] [diagnostics]
                [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain]
 
 check options:
   --release            check the way `burdin build --release` does (integer overflow in compile-time code, error traces)
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
   --print-instances    print every generic instance the program created and why (spec/inspect.md, INS12-INS15)
+  --locked             fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)
   -j, --jobs <n>       parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
 
@@ -54,6 +55,8 @@ struct CheckArgs {
     target: PathBuf,
     release: bool,
     tests: bool,
+    /// `--locked`: refuse to update `burdin.lock`.
+    locked: bool,
     /// `--print-instances`: print the monomorphization report after a clean check.
     print_instances: bool,
     comptime_steps: Option<u64>,
@@ -83,6 +86,7 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
+            "--locked" => args.locked = flag_without_value(a, inline)?,
             "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
             "--explain-ownership" => args.explain_ownership = flag_without_value(a, inline)?,
             "--explain" => args.explain = flag_without_value(a, inline)?,
@@ -149,6 +153,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         // A CI gate gets a log even when the package is clean, like `burdin build` (`spec/diagnostics.md`, DG11).
         report_clean: true,
         run_build_scripts: true,
+        locked: args.locked,
         jobs: jobs_or_default(args.jobs),
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {

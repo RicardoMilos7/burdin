@@ -1,9 +1,12 @@
-//! Packages: `burdin.toml`, every `.bd` file under `src/` as a module, and path dependencies.
+//! Packages: `burdin.toml`, every `.bd` file under `src/` as a module, and path and git dependencies.
 //!
 //! A single `.bd` file is a package with one module (its path is empty). A directory is a package described by
 //! its `burdin.toml`; its entry point is `src/main.bd`, and `[dependencies]` are loaded recursively from their
-//! `path`. Module paths are relative to `src/` (`geometry/shapes.bd` is module `geometry.shapes`).
+//! `path`, or from the checkout of the commit `burdin.lock` pins for a `git` dependency (`spec/packages.md`). The
+//! loader never fetches: `burdin_pkg` resolves and checks out git dependencies before a build. Module paths are
+//! relative to `src/` (`geometry/shapes.bd` is module `geometry.shapes`).
 
+use crate::lockfile::{self, GitRef, Lockfile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -190,7 +193,15 @@ pub fn script_manifest(text: &str) -> Result<Option<ScriptManifest>, String> {
         if deps.iter().any(|(name, _)| name == key) {
             return Err(format!("{line_number}: dependency `{key}` is declared twice"));
         }
-        let dep_path = parse_dependency(value).map_err(|e| format!("{line_number}: {e}"))?;
+        let dep_path = match parse_dependency(value).map_err(|e| format!("{line_number}: {e}"))? {
+            DepSource::Path(path) => path,
+            DepSource::Git { .. } => {
+                return Err(format!(
+                    "{line_number}: a script's dependency must be a `path`; a script has no lockfile to pin a git \
+                     dependency"
+                ));
+            }
+        };
         deps.push((key.to_string(), dep_path));
     }
     Ok(Some(ScriptManifest { deps }))
@@ -199,8 +210,9 @@ pub fn script_manifest(text: &str) -> Result<Option<ScriptManifest>, String> {
 fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
     if target.is_dir() {
         let dir = target.canonicalize().map_err(|e| format!("cannot open {}: {e}", target.display()))?;
-        let mut loader =
-            Loader { packages: Vec::new(), loaded: HashMap::new(), names: HashMap::new(), loading: Vec::new() };
+        // The entry package's lockfile says which commit each git dependency builds with, anywhere in the graph.
+        let lock = if dir.join("burdin.toml").is_file() { lockfile::read(&dir)? } else { None };
+        let mut loader = Loader::new(lock);
         let root = loader.load_package(&dir)?;
         let package = &loader.packages[root];
         let main = package.modules.iter().position(|m| m.path == ["main"]);
@@ -238,8 +250,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
         let mut packages = vec![package];
         if let Some(manifest) = manifest {
             let base = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-            let mut loader =
-                Loader { packages: Vec::new(), loaded: HashMap::new(), names: HashMap::new(), loading: Vec::new() };
+            let mut loader = Loader::new(None);
             for (name, relative) in manifest.deps {
                 let dep_dir =
                     base.join(&relative).canonicalize().map_err(|e| format!("{path}: dependency `{name}`: {e}"))?;
@@ -374,9 +385,51 @@ struct Loader {
     names: HashMap<String, PathBuf>,
     /// The packages being loaded, to report a dependency cycle.
     loading: Vec<PathBuf>,
+    /// The entry package's `burdin.lock`, which pins every git dependency to a commit.
+    lock: Option<Lockfile>,
 }
 
 impl Loader {
+    fn new(lock: Option<Lockfile>) -> Loader {
+        Loader { packages: Vec::new(), loaded: HashMap::new(), names: HashMap::new(), loading: Vec::new(), lock }
+    }
+
+    /// The directory a dependency's package is in: its path, or the checkout of the commit the lockfile pins.
+    fn dependency_dir(
+        &self,
+        dir: &Path,
+        manifest_path: &Path,
+        name: &str,
+        source: &DepSource,
+    ) -> Result<PathBuf, String> {
+        match source {
+            DepSource::Path(relative) => dir
+                .join(relative)
+                .canonicalize()
+                .map_err(|e| format!("`{}`: dependency `{name}`: {e}", manifest_path.display())),
+            DepSource::Git { url, reference } => {
+                let locked = self.lock.as_ref().and_then(|lock| lock.git_package(url, reference));
+                let Some(git) = locked.and_then(|p| p.git.as_ref()) else {
+                    return Err(format!(
+                        "`{}`: git dependency `{name}` ({url}, {}) is not in burdin.lock; run `burdin build` to \
+                         resolve it",
+                        manifest_path.display(),
+                        reference.describe()
+                    ));
+                };
+                let checkout = lockfile::git_checkout_dir(url, &git.commit)?;
+                if !checkout.is_dir() {
+                    return Err(format!(
+                        "`{}`: git dependency `{name}` ({url} at {}) is not fetched; run `burdin build` to fetch it",
+                        manifest_path.display(),
+                        git.commit
+                    ));
+                }
+                checkout.canonicalize().map_err(|e| format!("`{}`: dependency `{name}`: {e}", manifest_path.display()))
+            }
+        }
+    }
+
     fn load_package(&mut self, dir: &Path) -> Result<usize, String> {
         if self.loading.contains(&dir.to_path_buf()) {
             let mut chain: Vec<String> = self.loading.iter().map(|p| p.display().to_string()).collect();
@@ -419,15 +472,12 @@ impl Loader {
         self.loading.push(dir.to_path_buf());
         let mut deps = Vec::new();
         let mut seen = Vec::new();
-        for (name, relative) in &manifest.deps {
+        for (name, source) in &manifest.deps {
             if seen.contains(name) {
                 return Err(format!("`{}`: dependency `{name}` is declared twice", manifest_path.display()));
             }
             seen.push(name.clone());
-            let dep_dir = dir.join(relative);
-            let dep_dir = dep_dir
-                .canonicalize()
-                .map_err(|e| format!("`{}`: dependency `{name}`: {e}", manifest_path.display()))?;
+            let dep_dir = self.dependency_dir(dir, &manifest_path, name, source)?;
             let dep_id = self.load_package(&dep_dir)?;
             deps.push((name.clone(), dep_id));
         }
@@ -437,10 +487,22 @@ impl Loader {
     }
 }
 
+/// Where a dependency comes from (`spec/packages.md`, PKG1-PKG2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DepSource {
+    /// A directory, relative to the manifest that names it.
+    Path(String),
+    /// A git repository and the reference to build; `burdin.lock` pins it to a commit.
+    Git { url: String, reference: GitRef },
+}
+
+#[derive(Debug)]
 pub struct Manifest {
     pub name: String,
-    /// `(dependency name, path relative to the manifest)`.
-    pub deps: Vec<(String, String)>,
+    /// `[package] version`, when the manifest gives one.
+    pub version: Option<String>,
+    /// `(dependency name, where it comes from)`, in file order.
+    pub deps: Vec<(String, DepSource)>,
     /// The dependency names whose build scripts the manifest grants (`[build] allow`).
     pub build_allow: Vec<String>,
     /// The `[lint]` entries: `(name, level, line)`.
@@ -448,10 +510,10 @@ pub struct Manifest {
     pub rust: RustConfig,
 }
 
-/// The minimal `burdin.toml` this stage needs: `[package] name = "..."`, `[dependencies]` entries with a
-/// `path`, and `[build] allow = [...]` grants. Unknown sections and keys are ignored, so a newer manifest does
+/// The minimal `burdin.toml` this stage needs: `[package] name = "..."` and `version`, `[dependencies]` entries
+/// with a `path` or a `git` repository, and `[build] allow = [...]` grants. Unknown sections and keys are ignored, so a newer manifest does
 /// not break an older compiler.
-fn parse_manifest(path: &Path) -> Result<Manifest, String> {
+pub fn parse_manifest(path: &Path) -> Result<Manifest, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     parse_manifest_text(&text, path)
 }
@@ -459,7 +521,8 @@ fn parse_manifest(path: &Path) -> Result<Manifest, String> {
 pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
     let mut section = String::new();
     let mut name: Option<String> = None;
-    let mut deps: Vec<(String, String)> = Vec::new();
+    let mut version: Option<String> = None;
+    let mut deps: Vec<(String, DepSource)> = Vec::new();
     let mut build_allow: Vec<String> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
     let mut rust = RustConfig::default();
@@ -484,6 +547,8 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
             "package" => {
                 if key == "name" {
                     name = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
+                } else if key == "version" {
+                    version = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
                 }
             }
             "dependencies" => {
@@ -504,7 +569,12 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                 if !is_ident(key) {
                     return Err(format!("{}: `{key}` is not a valid module name for a Rust crate", where_()));
                 }
-                let path = parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))?;
+                let path = match parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))? {
+                    DepSource::Path(path) => path,
+                    DepSource::Git { .. } => {
+                        return Err(format!("{}: a Rust crate must be a `path`", where_()));
+                    }
+                };
                 rust.crates.push((key.to_string(), path));
             }
             "build" if key == "allow" => {
@@ -530,11 +600,11 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    Ok(Manifest { name, deps, build_allow, lint, rust })
+    Ok(Manifest { name, version, deps, build_allow, lint, rust })
 }
 
 /// A `["a", "b"]` array of quoted strings, also accepting a single `"a"`.
-fn parse_string_array(value: &str) -> Result<Vec<String>, String> {
+pub(crate) fn parse_string_array(value: &str) -> Result<Vec<String>, String> {
     if value.starts_with('"') {
         return Ok(vec![parse_string(value)?]);
     }
@@ -549,7 +619,7 @@ fn parse_string_array(value: &str) -> Result<Vec<String>, String> {
 }
 
 /// A `"..."` string, with `\"`, `\\`, `\n`, and `\t` escapes.
-fn parse_string(value: &str) -> Result<String, String> {
+pub(crate) fn parse_string(value: &str) -> Result<String, String> {
     let bytes = value.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
         return Err("expected a quoted string".to_string());
@@ -574,22 +644,58 @@ fn parse_string(value: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// `{ path = "../lib" }`, or a bare `"../lib"` as a shorthand.
-fn parse_dependency(value: &str) -> Result<String, String> {
+/// `{ path = "../lib" }` (or a bare `"../lib"` as a shorthand), or `{ git = "<url>" }` with at most one of
+/// `branch`, `tag`, and `rev` (`spec/packages.md`, PKG1-PKG2). Other keys are ignored, so a newer manifest loads.
+fn parse_dependency(value: &str) -> Result<DepSource, String> {
     if value.starts_with('"') {
-        return parse_string(value);
+        return parse_string(value).map(DepSource::Path);
     }
     if !(value.starts_with('{') && value.ends_with('}')) {
-        return Err("a dependency must be `{ path = \"...\" }`".to_string());
+        return Err("a dependency must be `{ path = \"...\" }` or `{ git = \"...\" }`".to_string());
     }
     let inner = &value[1..value.len() - 1];
+    let mut path = None;
+    let mut git = None;
+    let mut references: Vec<GitRef> = Vec::new();
+    let mut has_version = false;
     for part in split_table(inner) {
-        let Some((key, value)) = part.split_once('=') else { continue };
-        if key.trim() == "path" {
-            return parse_string(value.trim());
+        let Some((key, value)) = part.split_once('=') else {
+            return Err(format!("expected `key = value` in the dependency table, found `{}`", part.trim()));
+        };
+        let (key, value) = (key.trim(), value.trim());
+        match key {
+            "path" => path = Some(parse_string(value)?),
+            "git" => git = Some(parse_string(value)?),
+            "branch" => references.push(GitRef::Branch(parse_string(value)?)),
+            "tag" => references.push(GitRef::Tag(parse_string(value)?)),
+            "rev" => references.push(GitRef::Rev(parse_string(value)?)),
+            "version" => has_version = true,
+            _ => {}
         }
     }
-    Err("a dependency needs a `path`".to_string())
+    if references.len() > 1 {
+        return Err("a git dependency takes at most one of `branch`, `tag`, and `rev`".to_string());
+    }
+    match (path, git) {
+        (Some(_), Some(_)) => Err("a dependency takes a `path` or a `git` repository, not both".to_string()),
+        (Some(_), None) if !references.is_empty() => {
+            Err("`branch`, `tag`, and `rev` apply only to a `git` dependency".to_string())
+        }
+        (Some(path), None) => Ok(DepSource::Path(path)),
+        (None, Some(url)) => {
+            if url.trim().is_empty() {
+                return Err("a `git` dependency needs a repository URL".to_string());
+            }
+            Ok(DepSource::Git { url, reference: references.pop().unwrap_or(GitRef::DefaultBranch) })
+        }
+        (None, None) if !references.is_empty() => {
+            Err("`branch`, `tag`, and `rev` apply only to a `git` dependency".to_string())
+        }
+        (None, None) if has_version => Err("a dependency needs a `path` or a `git` repository: there is no \
+                                            package registry yet, so a `version` alone cannot be resolved"
+            .to_string()),
+        (None, None) => Err("a dependency needs a `path` or a `git` repository".to_string()),
+    }
 }
 
 /// Splits the inside of an inline table on commas that are not inside a string.
@@ -619,7 +725,7 @@ fn split_table(text: &str) -> Vec<&str> {
 }
 
 /// The part of a line before a `#` that is not inside a string.
-fn strip_comment(line: &str) -> &str {
+pub fn strip_comment(line: &str) -> &str {
     let mut in_string = false;
     let mut escaped = false;
     for (i, c) in line.char_indices() {
@@ -772,8 +878,55 @@ mod tests {
                 .unwrap();
         assert_eq!(
             m.deps,
-            vec![("lib".to_string(), "../lib".to_string()), ("other".to_string(), "../other".to_string())]
+            vec![
+                ("lib".to_string(), DepSource::Path("../lib".to_string())),
+                ("other".to_string(), DepSource::Path("../other".to_string()))
+            ]
         );
+    }
+
+    #[test]
+    fn git_dependency_forms() {
+        let text = "[package]
+name = \"app\"
+version = \"0.3.1\"
+[dependencies]
+a = { git = \"https://example.com/a.git\" }
+b = { git = \"https://example.com/b.git\", branch = \"main\" }
+c = { git = \"https://example.com/c.git\", tag = \"v1\" }
+d = { git = \"https://example.com/d.git\", rev = \"1a2b3c\" }
+";
+        let m = manifest(text).unwrap();
+        assert_eq!(m.version.as_deref(), Some("0.3.1"));
+        let git = |url: &str, reference: GitRef| DepSource::Git { url: url.to_string(), reference };
+        assert_eq!(
+            m.deps,
+            vec![
+                ("a".to_string(), git("https://example.com/a.git", GitRef::DefaultBranch)),
+                ("b".to_string(), git("https://example.com/b.git", GitRef::Branch("main".into()))),
+                ("c".to_string(), git("https://example.com/c.git", GitRef::Tag("v1".into()))),
+                ("d".to_string(), git("https://example.com/d.git", GitRef::Rev("1a2b3c".into()))),
+            ]
+        );
+    }
+
+    #[test]
+    fn invalid_dependency_tables_are_rejected() {
+        let dep = |table: &str| manifest(&format!("[package]\nname = \"app\"\n[dependencies]\nlib = {table}\n"));
+        assert!(dep("{ git = \"x\", tag = \"a\", branch = \"b\" }").unwrap_err().contains("at most one"));
+        assert!(dep("{ path = \"../lib\", git = \"x\" }").unwrap_err().contains("not both"));
+        assert!(dep("{ path = \"../lib\", tag = \"v1\" }").unwrap_err().contains("only to a `git`"));
+        assert!(dep("{ version = \"1.0\" }").unwrap_err().contains("no package registry"));
+        assert!(dep("{ git = \"\" }").unwrap_err().contains("repository URL"));
+        assert!(dep("{ }").unwrap_err().contains("needs a `path` or a `git`"));
+    }
+
+    #[test]
+    fn scripts_and_rust_crates_take_only_paths() {
+        let script = "//! [dependencies]\n//! lib = { git = \"https://example.com/lib.git\" }\nfn main() {}\n";
+        assert!(script_manifest(script).unwrap_err().contains("must be a `path`"));
+        let rust = "[package]\nname = \"app\"\n[rust.crates]\ngeo = { git = \"x\" }\n";
+        assert!(manifest(rust).unwrap_err().contains("must be a `path`"));
     }
 
     #[test]
@@ -829,7 +982,7 @@ name = \"app\"
     fn malformed_manifests_are_rejected() {
         assert!(manifest("[package]\nversion = \"1\"\n").is_err(), "a package needs a name");
         assert!(manifest("[package]\nname = \"not an ident\"\n").is_err());
-        assert!(manifest("[package]\nname = \"app\"\n[dependencies]\nlib = { git = \"x\" }\n").is_err());
+        assert!(manifest("[package]\nname = \"app\"\n[dependencies]\nlib = { other = \"x\" }\n").is_err());
         assert!(manifest("[package]\nname = \"app\"\n[dependencies]\nlib = { path = \"../lib\"\n").is_err());
         assert!(manifest("[package]\nname = \"unterminated\n").is_err());
     }

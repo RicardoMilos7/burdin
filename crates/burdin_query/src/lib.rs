@@ -13,6 +13,7 @@
 
 pub mod api;
 mod db;
+pub mod lockfile;
 mod memory;
 pub mod navigate;
 pub mod package;

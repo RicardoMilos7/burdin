@@ -10,6 +10,25 @@ close-out checklist in `AGENTS.md`).
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
 
+### Dependencies: `burdin add` and `burdin.lock` (issues #238, #239)
+
+`spec/packages.md` (PKG1-PKG14) is the specification; `tests/check_packages.py` checks it and every CI job runs it.
+The new crate `burdin_pkg` resolves dependencies; the manifest parser and the lockfile format stay in the package
+loader in `burdin_query`.
+
+- **Git dependencies.** `name = { git = "<url>" }` with an optional `branch`, `tag`, or `rev`. Repositories are cloned
+  into a cache under `BURDIN_HOME` (`git/db`, `git/checkouts/<key>/<commit>`) by the `git` executable. A `version`
+  alone is an error that says there is no package registry yet.
+- **`burdin.lock`.** Every package of the graph with its version and dependencies; a git package also records its
+  URL, reference, exact commit, and the SHA-256 checksum of its files. Builds keep it current, a path-only graph
+  needs none until one exists, a changed checkout fails its checksum, and the loader builds a git dependency from
+  the commit the lockfile pins, so a moved branch changes nothing.
+- **`--locked`** on `build`, `run`, `test`, `bench`, and `check`: a lockfile that would change is an error (exit
+  status 1) listing each difference, and nothing is written.
+- **`burdin add [<name>] (--path <dir> | --git <url> [--branch | --tag | --rev])`** edits `[dependencies]` as text
+  (one line added or replaced, everything else kept), resolves the whole graph, then writes `burdin.toml` and
+  `burdin.lock`; any failure leaves both unchanged.
+
 ## 0.1.0 — 2026-11-19
 
 The first published release of the Burdin compiler, for Linux, macOS, and Windows on x86-64 and arm64. Burdin is a

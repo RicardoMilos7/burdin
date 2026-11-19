@@ -51,7 +51,8 @@ not updated and may disagree with the repository.
    budget, the tool API, and the parity between the library and the command line; and `spec/lsp.md` is `burdin lsp`,
    the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests,
    `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, `spec/scripts.md` is
-   single-file scripts, the shebang, the inline manifest, and the binary cache, and `spec/debug.md` is debugging: the
+   single-file scripts, the shebang, the inline manifest, and the binary cache, `spec/packages.md` is path and git
+   dependencies, `burdin.lock`, `--locked`, and `burdin add`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
@@ -105,6 +106,7 @@ python3 tests/check_build_scripts.py     check build-script caching, declared in
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
+python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
 python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
@@ -169,8 +171,12 @@ crates/
   burdin_query/             the query-based compiler library (spec/query.md): the database of file texts, the parse
                             memo and the body-only reparse, the check cache's orchestration, cancellation and the
                             budget, the tool API (syntax tree with trivia, resolve/type/signature/ownership at a
-                            position), and the package loader (`package.rs`); the driver and a language server share
-                            it, and it never links LLVM
+                            position), the package loader (`package.rs`), and the `burdin.lock` format
+                            (`lockfile.rs`); the driver and a language server share it, and it never links LLVM
+  burdin_pkg/               the package resolver (spec/packages.md): git dependencies and their cache (`git.rs`),
+                            resolution, the checksum, and keeping `burdin.lock` current or `--locked` (`resolve.rs`),
+                            `burdin add`'s manifest edit (`add.rs`), and SHA-256 (`sha256.rs`); it depends on
+                            burdin_query and burdin_syntax, runs only `git`, and the driver is its only caller
   burdin_json/              the JSON value, its parser, and the `Content-Length` framing: shared by the language
                             server and the debug adapter
   burdin_dap/               the debug adapter behind `burdin dap` (spec/debug.md, DBG11): the lldb-dap child
@@ -191,7 +197,7 @@ crates/
                             the binary-size analysis and the ELF/Mach-O/COFF symbol reader behind `burdin bloat`
                             (`bloat.rs`, `object.rs`), and the typed-tree dump of `--emit tir` (`tir.rs`); it reads
                             what the compiler built, never links LLVM, and the driver is its only caller
-  burdin_driver/            the `burdin` binary: build, run, test, bench, check, expand, asm, bloat, fmt, lint, doc, bindgen, repl, lsp; it runs its
+  burdin_driver/            the `burdin` binary: build, run, test, bench, check, expand, asm, bloat, fmt, lint, doc, bindgen, new, add, repl, lsp; it runs its
                             front end through `burdin_query`, and keeps build scripts (`build.rs`), the bench runner
                             (`bench_runner.rs`), the bindgen command line (`bindgen.rs`), and the export header built
                             from the checked program (`export.rs`)

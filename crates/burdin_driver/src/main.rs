@@ -1,7 +1,8 @@
-//! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `expand`, `asm`, `bloat`, `fmt`, `lint`, `explain`, `bindgen`, and `new`.
+//! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `expand`, `asm`, `bloat`, `fmt`, `lint`, `explain`, `bindgen`, `new`, and `add`.
 //! The contract is documented in `README.md` at the repository root (`The driver contract`) and summarized at the
 //! top of tests/run_tests.py.
 
+mod add;
 mod asm;
 mod bench_runner;
 mod bindgen;
@@ -33,23 +34,23 @@ use std::process::{Command, ExitCode};
 
 pub(crate) const USAGE: &str = "\
 usage:
-  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
+  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [--locked] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [--emit <kinds>] [--intel | --att]
                [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
-  burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
+  burdin run <file.bd | package directory> [--release] [-g] [--locked] [-j <n>] [--link-lib <name>]...
              [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+  burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [--locked] [-j <n>] [--verbose]
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list] [--doc]
               [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
-  burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+  burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [--locked] [-j <n>] [--verbose]
                [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
   burdin check <file.bd | package directory> [--release] [--tests] [--print-instances [--format <human|json>]]
-               [-j <n>] [--comptime-steps <n>] [diagnostics]
+               [--locked] [-j <n>] [--comptime-steps <n>] [diagnostics]
                [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain]
   burdin asm <file.bd | package directory> [<function>] [--debug] [--intel | --att] [--llvm] [--no-source]
              [-j <n>] [--comptime-steps <n>] [diagnostics]
@@ -70,6 +71,8 @@ usage:
   burdin explain [<error code>]
   burdin bindgen <header> --out <file>
   burdin new <name>
+  burdin add [<name>] (--path <dir> | --git <url> [--branch <b> | --tag <t> | --rev <commit>])
+             [--manifest-path <path>]
   burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lsp [--stdio]
   burdin dap [--stdio]
@@ -87,6 +90,11 @@ compile options:
   --intel, --att       with `--emit asm`: the x86 assembly dialect (default: the target's, AT&T on x86)
   --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,
                        as `burdin test` does, without running anything (the debug adapter builds a test this way)
+  --locked             fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)
+
+add (the behavior is spec/packages.md):
+  adds a `path` or `git` dependency to the nearest burdin.toml (or --manifest-path's), resolves it and the whole
+  graph, and writes burdin.lock; a git dependency is pinned to the commit its branch, tag, or rev names now
 
 lint options (the lint reference is docs/lints.md):
   -A, --allow <lint>   do not run the lint        -W, --warn <lint>   report it as a warning
@@ -209,6 +217,8 @@ environment:
   BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
   BURDIN_CHANNEL       release channel printed by `--version` (dev, nightly, or stable; default: dev)
   BURDIN_COMMIT        overrides the git commit printed by `--version`
+  BURDIN_HOME          where tools keep state, including the git dependency cache under git/ (default: the
+                       platform's directory for application data)
   BURDIN_CODEGEN_UNITS split code generation into exactly this many units (default: by program size)
   BURDIN_JOBS          the default of -j (default: the machine's parallelism; 1 is sequential)
   BURDIN_VERSION       overrides the version printed by `--version` (nightly builds)
@@ -227,6 +237,8 @@ pub(crate) struct Args {
     pub(crate) command: String,
     pub(crate) target: PathBuf,
     pub(crate) release: bool,
+    /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
+    pub(crate) locked: bool,
     /// Emit source-level debug information (DWARF in the object and the executable).
     pub(crate) debug: bool,
     /// Pass the linker's strip option (Unix `-s`; with MSVC, optimize for size).
@@ -369,6 +381,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--strip" => args.strip = flag_without_value(a, inline)?,
             "--lto" => args.lto = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
+            "--locked" => args.locked = flag_without_value(a, inline)?,
             "--pgo-generate" => args.pgo_generate = flag_without_value(a, inline)?,
             "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
             "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
@@ -781,6 +794,9 @@ fn driver_main() -> ExitCode {
     if argv.first().map(String::as_str) == Some("new") {
         return new::run(&argv[1..]);
     }
+    if argv.first().map(String::as_str) == Some("add") {
+        return add::run(&argv[1..]);
+    }
     if argv.first().map(String::as_str) == Some("lsp") {
         return lsp(&argv[1..]);
     }
@@ -818,6 +834,7 @@ fn driver_main() -> ExitCode {
         emit_deps: args.emit_deps.as_deref(),
         report_clean: args.command == "build",
         run_build_scripts: true,
+        locked: args.locked,
         jobs: jobs_or_default(args.jobs),
     };
     match args.command.as_str() {
@@ -943,6 +960,9 @@ pub(crate) struct CompileOptions<'a> {
     /// Run the package's `build.bd` (and its granted dependencies' scripts) before reading sources. A build
     /// script's own compilation passes `false`, so a script cannot run another script (BS3).
     pub(crate) run_build_scripts: bool,
+    /// `--locked`: a `burdin.lock` that does not match the manifests is an error instead of being rewritten
+    /// (`spec/packages.md`, PKG8).
+    pub(crate) locked: bool,
     /// The most threads parsing and code generation use (`-j`); 0 is the machine's parallelism.
     pub(crate) jobs: usize,
 }
@@ -984,6 +1004,22 @@ pub(crate) struct FrontEnd {
     pub(crate) rust_libs: Vec<String>,
 }
 
+/// Resolves the dependencies of a package directory and brings its `burdin.lock` up to date before the package is
+/// loaded (`spec/packages.md`, PKG8): git dependencies are fetched into the cache, and with `locked` a lockfile that
+/// would change is an error. A one-file target has no lockfile. Errors are printed; the exit status is 1.
+pub(crate) fn sync_dependencies(target: &Path, locked: bool) -> Result<(), ExitCode> {
+    if !target.join("burdin.toml").is_file() {
+        return Ok(());
+    }
+    match burdin_pkg::resolve::sync(target, locked) {
+        Ok(_) => Ok(()),
+        Err(message) => {
+            eprintln!("error: {message}");
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
 /// Replacement texts for source files, by path: `burdin lint --fix` checks the program it is about to write.
 pub(crate) type SourceOverrides = std::collections::HashMap<PathBuf, String>;
 
@@ -998,6 +1034,7 @@ pub(crate) fn front_end(
     overrides: &SourceOverrides,
 ) -> Result<FrontEnd, ExitCode> {
     let mode = options.mode;
+    sync_dependencies(target, options.locked)?;
     let mut loaded = match if mode.wants_main() { package::load(target) } else { package::load_for_tests(target) } {
         Ok(loaded) => loaded,
         Err(message) => {
