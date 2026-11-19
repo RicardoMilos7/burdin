@@ -246,7 +246,7 @@ impl FnCx<'_> {
             _ => {
                 let e = child.expr(body, body_expect.as_ref());
                 let ty = e.ty.clone();
-                (tir::Block { stmts: Vec::new(), tail: Some(Box::new(e)) }, ty)
+                (tir::Block { stmts: Vec::new(), tail: Some(Box::new(e)), close: span }, ty)
             }
         };
         // An expected return type that is still a type parameter (`F: Fn(T): U` in a generic method) is an
@@ -376,6 +376,7 @@ impl FnCx<'_> {
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
+            events: Vec::new(),
         };
         let closure =
             tir::Closure { name: func.name.clone(), span, kind, sig: sig.clone(), captures: captures.clone(), func };

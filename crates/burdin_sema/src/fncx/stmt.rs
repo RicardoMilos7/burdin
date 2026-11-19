@@ -71,6 +71,7 @@ impl FnCx<'_> {
             _ if diverges => Ty::Never,
             _ => Ty::Unit,
         };
-        (tir::Block { stmts, tail }, ty)
+        let close = burdin_diag::Span::new(b.span.file, b.span.hi.saturating_sub(1), b.span.hi);
+        (tir::Block { stmts, tail, close }, ty)
     }
 }

@@ -80,6 +80,19 @@ impl SourceFile {
         (position.line, position.column)
     }
 
+    /// The text of a 1-based line, without its line break. An empty string past the last line.
+    pub fn line_text(&self, line: u32) -> &str {
+        let index = (line as usize).saturating_sub(1);
+        let Some(&start) = self.line_starts.get(index) else { return "" };
+        let end = self.line_starts.get(index + 1).map_or(self.text.len(), |&next| next as usize);
+        self.text[start as usize..end].trim_end_matches(['\n', '\r'])
+    }
+
+    /// How many lines the file has.
+    pub fn line_count(&self) -> u32 {
+        self.line_starts.len() as u32
+    }
+
     /// The line of a byte offset and its column counted three ways, all 1-based: in characters (Unicode scalar
     /// values, what the human format prints), in UTF-8 bytes, and in UTF-16 code units.
     pub fn position(&self, offset: u32) -> Position {
@@ -377,6 +390,25 @@ pub fn explain_section(code: &str) -> Option<String> {
             .collect::<Vec<_>>()
             .join("\n"),
     )
+}
+
+/// The step-by-step fix for `code` from the error reference, without the Markdown marker: the paragraph that
+/// follows `**How to fix:**` (`spec/check.md`, CK11). `None` when the code has no entry or no fix paragraph.
+pub fn explain_fix(code: &str) -> Option<String> {
+    let section = explain_section(code)?;
+    let marker = "**How to fix:**";
+    let start = section.find(marker)? + marker.len();
+    let rest = &section[start..];
+    let end = rest.find("\n\n").unwrap_or(rest.len());
+    // One paragraph on one line: the renderer prefixes it with `fix:` and its own indentation.
+    let text = rest[..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
+}
+
+/// The JSON source location of a span, as the `json` diagnostic format writes it (`docs/diagnostics.md`, DG2). The
+/// ownership event list (`spec/check.md`, CK10) uses it too, so every tool sees the same span shape.
+pub fn span_json(sources: &SourceMap, span: Span) -> Json {
+    json::location(sources, span)
 }
 
 /// Every heading in the reference, one per line, as `E0001: Syntax error`.

@@ -1,0 +1,14 @@
+fn make(): String {
+    String.from("value")
+}
+
+fn read(s: String): usize {
+    s.len()
+}
+
+fn main() {
+    let _ = make()
+    make()
+    let n = read(String.from("temporary"))
+    println(n.to_string())
+}

@@ -119,6 +119,43 @@ fn inlay_hints_for_types_and_parameter_names_can_be_turned_off() {
 }
 
 #[test]
+fn the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them() {
+    let root = fixture("ownership");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    let params = doc(&uri).with("range", whole(&text));
+    // The lens is off by default (`spec/lsp.md`, LS5/LS13).
+    let off = client.call("textDocument/inlayHint", params.clone());
+    assert!(
+        off.as_array().iter().all(|hint| {
+            let label = hint.get("label").as_str().unwrap_or("");
+            !label.starts_with("move ") && !label.starts_with("drop ")
+        }),
+        "the ownership lens is off by default: {}",
+        off.to_text()
+    );
+
+    let settings = Json::obj().with("burdin", Json::obj().with("inlayHints", Json::obj().with("ownership", true)));
+    client.notify("workspace/didChangeConfiguration", Json::obj().with("settings", settings));
+    let hints = client.call("textDocument/inlayHint", params);
+    golden("ownership-hints", &normalize(&hints, &root));
+    let labels: Vec<String> =
+        hints.as_array().iter().map(|hint| hint.get("label").as_str().unwrap_or("").to_string()).collect();
+    assert!(labels.contains(&"move s -> t".to_string()), "{labels:?}");
+    assert!(labels.iter().any(|label| label == "drop u"), "{labels:?}");
+
+    // A hover on the local lists the events the checker recorded for it.
+    let hover = client.call("textDocument/hover", client.at(&uri, &text, "println(u)", 0, 8));
+    let value = hover.at(&["contents", "value"]).as_str().unwrap_or("").to_string();
+    assert!(value.contains("**Ownership**"), "{value}");
+    assert!(value.contains("borrowed (read)"), "{value}");
+    assert!(value.contains("dropped"), "{value}");
+    golden("ownership-hover", &normalize(&hover, &root));
+    assert_eq!(client.shutdown(), 0);
+}
+
+#[test]
 fn semantic_tokens_cover_the_file_and_a_range() {
     let root = fixture("geometry");
     let mut client = Client::new(&[&root]);

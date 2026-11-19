@@ -101,8 +101,10 @@ Tests: every golden `.out`/`.err`/`.exit` triple.
 **RP9. `:type` and `:ownership`.** Both analyze the session with the expression appended as one more statement and
 then discard it: nothing is evaluated and nothing moves. `:type <expr>` prints the expression's type, from the
 typed tree; a type error in the expression is reported as the input would report it. `:ownership <expr>` prints
-four lines — the type, what the expression reads, the places it moves (as `local` or `local:field.index`, the diff
-of the checker's move records with and without the probe), and what it borrows (`mut x` for an exclusive borrow).
+four lines — the type, what the expression reads, the places it moves (as `local` or `local:field.index`), and what
+it borrows (`mut x` for an exclusive borrow). The moves and borrows are the checker's ownership events
+(`spec/check.md`, CK10) whose spans lie inside the probed expression, so the REPL shows the same facts as
+`burdin check --explain-ownership` and the language server.
 Tests: `type_meta.session`, `ownership.session`.
 
 **RP10. `:ir <fn>` and `:compile`.** These are the driver's: `:ir` builds the session with `--emit-ir` and prints

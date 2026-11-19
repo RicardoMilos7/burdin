@@ -1,0 +1,8 @@
+fn bad(): &i32 {
+    let x = 1
+    &x //~ E0122
+}
+
+fn main() {
+    println((*bad()).to_string())
+}

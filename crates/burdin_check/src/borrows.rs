@@ -33,6 +33,8 @@ struct Loan {
     holders: Vec<LocalId>,
     /// The top-level statement the loan was created in; with no holders it lives only there.
     start: usize,
+    /// Where the borrow was created, for the explanation of a conflict (issue #593).
+    span: Span,
     /// A loan taken by a task of a `scope`: it lasts to the end of the scope body, whatever holds it (TK7).
     pinned: bool,
 }
@@ -54,10 +56,20 @@ struct Checker<'a> {
     outer: &'a [LocalId],
     reported: Vec<Span>,
     diags: &'a mut Diagnostics,
+    /// The borrow events of the body, in source order (`spec/check.md`, CK10).
+    events: Vec<tir::OwnershipEvent>,
+    /// Set while a call the compiler generated (an interpolated string's formatter) is checked: its borrows are
+    /// real, but they are not facts about the source the lens shows.
+    suppress_events: bool,
 }
 
-/// Checks the borrows of one function body.
-pub(crate) fn check(f: &tir::Function, env: Env, outer: &[LocalId], diags: &mut Diagnostics) {
+/// Checks the borrows of one function body and returns the events it observed.
+pub(crate) fn check(
+    f: &tir::Function,
+    env: Env,
+    outer: &[LocalId],
+    diags: &mut Diagnostics,
+) -> Vec<tir::OwnershipEvent> {
     let mut last_use = vec![None; f.locals.len()];
     for (i, stmt) in f.body.stmts.iter().enumerate() {
         uses_stmt(stmt, i, &mut last_use);
@@ -76,17 +88,31 @@ pub(crate) fn check(f: &tir::Function, env: Env, outer: &[LocalId], diags: &mut 
         outer,
         reported: Vec::new(),
         diags,
+        events: Vec::new(),
+        suppress_events: false,
     };
     cx.body(&f.body);
+    cx.events
 }
 
 impl<'a> Checker<'a> {
-    fn error(&mut self, span: Span) {
+    fn error(&mut self, span: Span, loan: Option<(Span, bool)>) {
         if self.reported.contains(&span) {
             return;
         }
         self.reported.push(span);
-        self.diags.error(Code::BORROW_CONFLICT, span, "this access conflicts with a borrow that is still live");
+        let created = loan;
+        let error =
+            self.diags.error(Code::BORROW_CONFLICT, span, "this access conflicts with a borrow that is still live");
+        if let Some((created, mutable)) = created
+            && created != span
+        {
+            error.note(
+                created,
+                if mutable { "the exclusive borrow is created here" } else { "the borrow is created here" },
+            );
+        }
+        error.help(crate::moves::TRACE_HELP);
     }
 
     fn is_copy(&self, ty: &Ty) -> bool {
@@ -112,9 +138,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn conflicts(&self, e: &tir::Expr, access: Access) -> bool {
-        let Some((root, path, _)) = burdin_tir::place::tir_place(e) else { return false };
-        self.loans.iter().any(|loan| {
+    fn conflict(&self, e: &tir::Expr, access: Access) -> Option<&Loan> {
+        let (root, path, _) = burdin_tir::place::tir_place(e)?;
+        self.loans.iter().find(|loan| {
             loan.root == root
                 && (path.starts_with(&loan.path) || loan.path.starts_with(&path))
                 && self.loan_live(loan, self.stmt)
@@ -128,8 +154,9 @@ impl<'a> Checker<'a> {
     /// Checks an access to the place `e`, then evaluates the parts of it that are not the place itself (indices,
     /// calls under a field).
     fn access_place(&mut self, e: &tir::Expr, access: Access) {
-        if self.conflicts(e, access) {
-            self.error(e.span);
+        let loan = self.conflict(e, access).map(|loan| (loan.span, loan.mutable));
+        if loan.is_some() {
+            self.error(e.span, loan);
         }
         self.place_subexpr(e);
     }
@@ -162,7 +189,35 @@ impl<'a> Checker<'a> {
             None => self.reference_origin(e),
         };
         for (root, path) in places {
-            self.loans.push(Loan { root, path, mutable, holders: Vec::new(), start: self.stmt, pinned: false });
+            let kind = if mutable { tir::OwnershipEventKind::BorrowMut } else { tir::OwnershipEventKind::BorrowRead };
+            if !self.suppress_events && !self.locals[root.0].name.starts_with("__") {
+                self.events.push(tir::OwnershipEvent { span: e.span, local: Some(root), path: path.clone(), kind });
+            }
+            self.loans.push(Loan {
+                root,
+                path,
+                mutable,
+                holders: Vec::new(),
+                start: self.stmt,
+                span: e.span,
+                pinned: false,
+            });
+        }
+    }
+
+    /// Records an exclusive borrow that a call takes without a `&mut` expression in the source (`mut` arguments,
+    /// mutating methods, and the cases a method's `self` convention makes exclusive).
+    fn add_exclusive_access(&mut self, e: &tir::Expr) {
+        if let Some((root, path, _)) = burdin_tir::place::tir_place(e)
+            && !self.suppress_events
+            && !self.locals[root.0].name.starts_with("__")
+        {
+            self.events.push(tir::OwnershipEvent {
+                span: e.span,
+                local: Some(root),
+                path,
+                kind: tir::OwnershipEventKind::BorrowMut,
+            });
         }
     }
 
@@ -341,7 +396,10 @@ impl<'a> Checker<'a> {
             K::ClosureCall { callee, args, kind } => {
                 match kind {
                     tir::FnKind::Fn => self.access_place(callee, Access::Read),
-                    tir::FnKind::FnMut => self.access_place(callee, Access::BorrowMut),
+                    tir::FnKind::FnMut => {
+                        self.add_exclusive_access(callee);
+                        self.access_place(callee, Access::BorrowMut);
+                    }
                     tir::FnKind::FnOnce => self.expr(callee, Mode::Move),
                 }
                 for arg in args {
@@ -381,10 +439,13 @@ impl<'a> Checker<'a> {
                     }
                 }
                 tir::Builtin::Swap => {
+                    self.add_exclusive_access(&args[0]);
+                    self.add_exclusive_access(&args[1]);
                     self.access_place(&args[0], Access::BorrowMut);
                     self.access_place(&args[1], Access::BorrowMut);
                 }
                 tir::Builtin::Replace => {
+                    self.add_exclusive_access(&args[0]);
                     self.access_place(&args[0], Access::BorrowMut);
                     self.expr(&args[1], Mode::Move);
                 }
@@ -414,6 +475,7 @@ impl<'a> Checker<'a> {
                     .and_then(|m| m.sig.params.first())
                     .is_some_and(|p| p.exclusive);
                 if exclusive {
+                    self.add_exclusive_access(recv);
                     self.access_place(recv, Access::BorrowMut);
                 } else {
                     self.access_place(recv, Access::Read);
@@ -422,6 +484,7 @@ impl<'a> Checker<'a> {
                     if p.own {
                         self.expr(a, Mode::Move);
                     } else if p.exclusive {
+                        self.add_exclusive_access(a);
                         self.access_place(a, Access::BorrowMut);
                     } else {
                         self.expr(a, Mode::Use);
@@ -430,6 +493,7 @@ impl<'a> Checker<'a> {
             }
             K::Method(m, args) => {
                 if m.mutates_receiver() {
+                    self.add_exclusive_access(&args[0]);
                     self.access_place(&args[0], Access::BorrowMut);
                     // A mutable view of a map value or of a list element, or a mutable iterator, keeps that
                     // storage exclusively borrowed (`Iterator.next` also mutates its receiver and returns a view,
@@ -612,6 +676,11 @@ impl<'a> Checker<'a> {
     }
 
     fn call(&mut self, f: usize, args: &[tir::Expr]) {
+        // A call the compiler generated (an interpolated string's formatter) borrows for real, but the lens does
+        // not show its internals.
+        let generated = self.env.names.get(f).is_some_and(|name| generated_name(name));
+        let saved = self.suppress_events;
+        self.suppress_events = saved || generated;
         let sig = &self.env.sigs[f];
         let loans_before = self.loans.len();
         for (i, arg) in args.iter().enumerate() {
@@ -624,6 +693,7 @@ impl<'a> Checker<'a> {
             } else if param.exclusive {
                 // An exclusive borrow for the call (`mut` parameter or `mut self`). The exclusion between
                 // arguments of the same call is checked in sema (EX1).
+                self.add_exclusive_access(arg);
                 self.access_place(arg, Access::BorrowMut);
             } else {
                 self.expr(arg, Mode::Use);
@@ -647,6 +717,7 @@ impl<'a> Checker<'a> {
                 self.add_loan(arg, mutable);
             }
         }
+        self.suppress_events = saved;
     }
 }
 
@@ -695,7 +766,7 @@ impl Checker<'_> {
             repeated |= in_loop && loan.mutable;
         }
         if repeated {
-            self.error(task.span);
+            self.error(task.span, None);
         }
     }
 }
@@ -1008,4 +1079,9 @@ fn uses_stmt(stmt: &tir::Stmt, index: usize, last: &mut [Option<usize>]) {
         tir::Stmt::Let(_, init, _) => uses_expr(init, index, last),
         tir::Stmt::Expr(e) => uses_expr(e, index, last),
     }
+}
+
+/// Whether a function name is one the compiler generated (an interpolated string's formatter).
+fn generated_name(name: &str) -> bool {
+    name.rsplit('.').next().is_some_and(|segment| segment.starts_with("__"))
 }

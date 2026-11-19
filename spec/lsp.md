@@ -85,6 +85,7 @@ Tests: `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
 | --- | --- | --- |
 | `inlayHints.types` | `true` | the inferred type after a `let` name without one |
 | `inlayHints.parameterNames` | `true` | the parameter's name before a positional argument |
+| `inlayHints.ownership` | `false` | the ownership lens: moves and implicit drops (`spec/check.md`, CK10) |
 | `diagnostics.lints` | `true` | publish `burdin lint` diagnostics too (LS7) |
 | `diagnostics.debounceMs` | `200` | the quiet time after an edit before the analysis (at most 10000) |
 | `formatting.enabled` | `true` | answer formatting requests (LS15) |
@@ -93,7 +94,8 @@ Tests: `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
 
 A change republishes the diagnostics and asks the client to refresh its inlay hints and lenses when it supports that.
 Tests: `lints_are_published_unless_turned_off`, `configuration_is_pulled_when_the_client_only_says_it_changed`,
-`inlay_hints_for_types_and_parameter_names_can_be_turned_off`, `lenses_run_and_debug_tests_and_main_with_exact_command_lines`,
+`inlay_hints_for_types_and_parameter_names_can_be_turned_off`, `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`,
+`lenses_run_and_debug_tests_and_main_with_exact_command_lines`,
 `formatting_matches_burdin_fmt_and_refuses_a_file_that_does_not_parse`.
 
 **LS6. Cancellation and progress.** `$/cancelRequest` for a request that has not started makes it answer `-32800`
@@ -160,8 +162,12 @@ Tests: `implementations_of_interfaces_their_methods_and_types`, `call_hierarchy_
 
 **LS11. Hover.** A declaration, call, or member shows its signature as the command line prints it (`fn total(a: i32,
 b: i32): i32`), followed by its doc comment; a local or parameter shows `let name: Type`; any other expression shows its
-type. The answer's range is the name.
-Tests: `hover_shows_signatures_types_and_docs`, `positions_count_utf16_units_or_utf8_bytes_as_negotiated`.
+type. A local or parameter also lists the ownership events the memory checks recorded for it (`spec/check.md`, CK10),
+one line each: `moved to \`t\``, `copied`, `borrowed (read)`, `borrowed (mut)`, `dropped`, `cloned`, with the
+`line:column` of the event. The events come from `Analysis::ownership_events`; the server computes nothing. The
+answer's range is the name.
+Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`
+(`ownership-hover.json`), `positions_count_utf16_units_or_utf8_bytes_as_negotiated`.
 
 **LS12. Completion.** After `x.`, the members of `x`: a module's items, a type's variants and methods, or a value's
 fields and then methods, by the receiver's type (on a line that does not parse yet, from the last analysis with a
@@ -177,8 +183,14 @@ not a parameter); outside a call it is `null`. Inlay hints show `: Type` after a
 (not when the type is unknown or an error), and `name:` before a positional argument written in an argument list,
 unless the argument already says the name (`a` for `a`, `x.a` for `a`), the argument is named, or the parameter is
 `self`; a `mut` marker comes after the hint. LS5's two settings turn each kind off.
+
+The ownership lens is the third kind, off by default (`inlayHints.ownership`): a `move <local>` (or
+`move <local> -> <target>`) at the expression that moves it, a `drop <local>` at the closing brace that drops it
+(`drop <local> (conditional)` when a runtime flag guards it, and `drop flag <local>` at a conditional move), all from
+the same event list as the command line's `--explain-ownership`. The server renders the events of
+`Analysis::ownership_events` and stops there; it never re-derives a move, a drop, or a flag.
 Tests: `signature_help_marks_the_active_parameter`, `inlay_hints_for_types_and_parameter_names_can_be_turned_off`
-(`inlay-hints.json`).
+(`inlay-hints.json`), `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them` (`ownership-hints.json`).
 
 **LS14. Semantic tokens.** `semanticTokens/full` and `/range` classify every identifier by what it resolves to, with
 the legend in the capabilities: `namespace` (modules), `type`, `struct`, `enum`, `interface`, `enumMember`, `function`,

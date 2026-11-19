@@ -1,0 +1,9 @@
+fn eat(own s: String) {}
+
+fn touch(s: String) {
+    eat(s) //~ E0101
+}
+
+fn main() {
+    touch(String.from("x"))
+}

@@ -1,0 +1,12 @@
+struct Thing {
+    id: i32
+}
+
+fn take(own t: Thing) {}
+
+fn main() {
+    let t = Thing { id: 1 }
+    for i in 0..3 {
+        take(t) //~ E0104
+    }
+}

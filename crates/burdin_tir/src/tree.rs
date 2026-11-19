@@ -44,6 +44,10 @@ pub struct Function {
     pub symbolic: bool,
     /// An `extern "C" fn`: the function is exported under its plain name with the C ABI (issue #489).
     pub exported: bool,
+    /// Every ownership fact of the body, in source order (`spec/check.md`, CK10). The command line's
+    /// `--explain-ownership`, the language server's ownership lens, and the REPL render these; no tool recomputes
+    /// them.
+    pub events: Vec<OwnershipEvent>,
 }
 
 /// A whole local whose location the debug information ends after `span`: the statement that moved it out
@@ -138,6 +142,66 @@ pub struct Closure {
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub tail: Option<Box<Expr>>,
+    /// The closing `}` of the block, where the values its scope owns are dropped (DR1-DR2). A block the compiler
+    /// synthesized without source text has an empty span at the expression it replaced.
+    pub close: Span,
+}
+
+impl Block {
+    /// A block with no source of its own, for compiler-generated bodies.
+    pub fn synthetic(stmts: Vec<Stmt>, tail: Option<Box<Expr>>, close: Span) -> Block {
+        Block { stmts, tail, close }
+    }
+}
+
+/// How an argument is passed at a call (`spec/memory-rules.md`, CV1-CV3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallConvention {
+    /// A read-only borrow: no marker.
+    Read,
+    /// `mut`: borrowed exclusively for the call.
+    Mut,
+    /// `own`: the value is moved into the callee.
+    Own,
+}
+
+/// What one ownership event is (`spec/check.md`, CK10; `spec/memory-rules.md`). The list is stable data the command
+/// line, the language server, and the REPL all render, so none of them has to re-derive the facts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnershipEventKind {
+    /// The local comes into being: a `let` or pattern binding, or a parameter.
+    Declare,
+    /// A non-Copy place is moved out. `target` names the destination when the move has one: the local a `let`
+    /// binds, the parameter an `own` argument fills, or the place an assignment writes.
+    Move { target: Option<String> },
+    /// A Copy place is read in a move context.
+    Copy,
+    /// A shared borrow is taken (`&place`, a slice, `as_str`, a `for` loop, or an argument the callee borrows).
+    BorrowRead,
+    /// An exclusive borrow is taken (`&mut place`, a `mut` argument, or a mutating method's receiver).
+    BorrowMut,
+    /// The value is dropped when its scope ends. `conditional` is set when the compiler keeps a runtime drop flag
+    /// because the value may already have been moved on some path (DR7).
+    Drop { conditional: bool },
+    /// A runtime drop flag is kept for this move, which happens on only some paths (DR7).
+    DropFlag,
+    /// The convention of one argument at a call (`spec/memory-rules.md`, CV).
+    CallArg { parameter: String, convention: CallConvention },
+    /// `.clone()` on a value whose `Clone` the compiler derives (`spec/derives.md`).
+    Clone { derived: bool },
+}
+
+/// One fact about the ownership of one place in a function body (`spec/check.md`, CK10). Events are in source
+/// order, one per place they concern.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnershipEvent {
+    pub span: Span,
+    /// The local the event is about; `None` for a `CallArg` event on a temporary argument.
+    pub local: Option<LocalId>,
+    /// Field indices from the local to the place; empty is the whole local. [`MOVED_DEREF`] steps walk through a
+    /// `Heap<T>` pointee.
+    pub path: Vec<usize>,
+    pub kind: OwnershipEventKind,
 }
 
 #[derive(Clone, Debug)]

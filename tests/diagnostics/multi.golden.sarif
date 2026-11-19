@@ -50,6 +50,26 @@
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
+                  "startLine": 16,
+                  "startColumn": 9,
+                  "endLine": 16,
+                  "endColumn": 10,
+                  "byteOffset": 154,
+                  "byteLength": 1
+                }
+              },
+              "id": 0,
+              "message": {
+                "text": "`t` is declared here"
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "multi.bd",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
                   "startLine": 17,
                   "startColumn": 10,
                   "endLine": 17,
@@ -58,12 +78,17 @@
                   "byteLength": 1
                 }
               },
-              "id": 0,
+              "id": 1,
               "message": {
                 "text": "value moved here"
               }
             }
-          ]
+          ],
+          "properties": {
+            "help": [
+              "run `burdin check --explain` to trace the path to this error"
+            ]
+          }
         },
         {
           "ruleId": "E0114",
