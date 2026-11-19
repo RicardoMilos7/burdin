@@ -22,7 +22,8 @@ system libraries `rustc` reports. A failure is the new E0264; a dependency's cra
 ### Release builds link LLVM statically
 
 - Linux and macOS release archives hold a compiler with LLVM linked in: no `libLLVM` is needed at run time.
-  `BURDIN_STATIC_LLVM=1` selects it in `crates/burdin_codegen/build.rs`; development builds stay shared.
+  `BURDIN_STATIC_LLVM=1` selects it in `crates/burdin_driver/build.rs`, which passes the archives as link arguments of the
+  binary so they follow every crate on the link line; development builds stay shared.
   `tests/build_release.py` sets it, checks the binary with `ldd`/`otool -L`, and the reproducibility check covers it.
 - Windows archives carry `LLVM-C.dll` beside `burdin.exe`, and `install.ps1` installs it with the compiler, so a fresh
   install starts without LLVM on `PATH`. `build_release.py` refuses to package a Windows build without the DLL and
