@@ -123,7 +123,7 @@ impl Tok {
 }
 
 /// Everything the server reads from one file's syntax.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct FileIndex {
     pub items: Vec<Item>,
     pub uses: Vec<Use>,

@@ -1000,7 +1000,7 @@ resolved name), `locals`, `calls` (with the argument written for each parameter)
 read a per-file index of the syntax tree and tokens (`index.rs`).
 
 What the tests pin: `crates/burdin_lsp/tests/` starts the crate's `burdin-lsp` binary (the server without LLVM) and
-speaks JSON-RPC to it, one file per area (lifecycle, diagnostics, navigation, editing, outline, actions, workspace),
+speaks JSON-RPC to it, one file per area (lifecycle, diagnostics, navigation, editing, completion, outline, actions, workspace),
 including a non-ASCII position in both encodings and a cancellation, with golden files for the capabilities,
 diagnostics, symbols, semantic tokens, inlay hints, lenses, and type hierarchy (`BURDIN_LSP_UPDATE=1` rewrites them).
 `tests/check_lsp.py` (every CI job) drives the driver's `burdin lsp`, runs a passing and a failing test through the

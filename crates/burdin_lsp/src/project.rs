@@ -3,6 +3,7 @@
 //! it (or by itself, for a file outside every package); its diagnostics come from its owner. A dependency's files are
 //! also part of every package that depends on it, so an edit reaches every database that reads the file.
 
+use crate::builtins;
 use crate::index::FileIndex;
 use burdin_query::EntryMode;
 use burdin_query::package;
@@ -63,6 +64,8 @@ pub struct Package {
     /// The texts the latest analysis with a program was computed on.
     good_texts: Texts,
     indexes: HashMap<String, (Rc<Parsed>, Rc<FileIndex>)>,
+    /// The index of the built-ins' file (`builtins.rs`), made on first use.
+    builtins: Option<Rc<FileIndex>>,
 }
 
 impl Package {
@@ -102,6 +105,7 @@ impl Package {
             lint_cache: None,
             good_texts: HashMap::new(),
             indexes: HashMap::new(),
+            builtins: None,
         }
     }
 
@@ -183,11 +187,17 @@ impl Package {
     }
 
     pub fn text(&self, path: &str) -> Option<&str> {
+        if path == builtins::PATH {
+            return Some(&builtins::get().text);
+        }
         self.db.file_text(path)
     }
 
     /// The syntax index of a file at its current text.
     pub fn index(&mut self, path: &str) -> Option<Rc<FileIndex>> {
+        if path == builtins::PATH {
+            return Some(self.builtins.get_or_insert_with(|| Rc::new(builtins::get().index.clone())).clone());
+        }
         let parsed = self.db.syntax(path)?;
         if let Some((p, index)) = self.indexes.get(path)
             && Rc::ptr_eq(p, &parsed)

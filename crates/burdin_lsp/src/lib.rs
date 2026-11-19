@@ -8,6 +8,7 @@
 //! text           positions (UTF-8 and UTF-16) and file URIs
 //! project        one query database per package root; which package owns a file
 //! index          what a file declares, from its syntax tree and tokens
+//! builtins       the compiler's built-in functions and methods, as a read-only file the server indexes
 //! server         the loop, lifecycle, documents, folders, configuration, cancellation, progress
 //! diagnostics    the compiler's and the linter's diagnostics, published as files change
 //! nav            definition, references, rename, implementation, call and type hierarchies
@@ -17,6 +18,7 @@
 //! ```
 
 mod actions;
+mod builtins;
 mod diagnostics;
 mod edit;
 mod index;

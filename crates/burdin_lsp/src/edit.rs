@@ -1,7 +1,7 @@
 //! Help while editing (`spec/lsp.md`, LS11-LS15): hover, completion, signature help, inlay hints, semantic tokens,
 //! and formatting through `burdin fmt`.
 
-use crate::index::{FileIndex, Item, KEYWORDS, Kind, Tk};
+use crate::index::{FileIndex, Item, KEYWORDS, Kind, Tk, Tok};
 use crate::json::Json;
 use crate::nav::{Resolver, SymKind, base_type};
 use crate::project::{Loc, Package};
@@ -28,16 +28,6 @@ pub const TOKEN_TYPES: &[&str] = &[
 
 /// The semantic token modifiers, in legend order (bit `i` is modifier `i`).
 pub const TOKEN_MODIFIERS: &[&str] = &["declaration", "readonly", "mutable", "defaultLibrary"];
-
-/// Functions every program can call without a `use` (the compiler's built-ins).
-const BUILTIN_FUNCTIONS: &[(&str, &str)] = &[
-    ("print", "fn print(value)"),
-    ("println", "fn println(value)"),
-    ("eprint", "fn eprint(value)"),
-    ("eprintln", "fn eprintln(value)"),
-    ("panic", "fn panic(message: str): !"),
-    ("format", "fn format(template: str, ...): String"),
-];
 
 /// Types every program can name without a `use`.
 const BUILTIN_TYPES: &[&str] = &[
@@ -240,9 +230,50 @@ fn completion_kind(kind: Kind) -> u32 {
     }
 }
 
+/// The derives the compiler knows (`spec/derives.md`).
+const BUILTIN_DERIVES: &[(&str, &str)] = &[
+    ("Copy", "copied by assignment, passing, and returning"),
+    ("Clone", "`clone()`, field by field"),
+    ("Eq", "`==` and `!=`, field by field"),
+    ("Ord", "`<`, `<=`, `>`, `>=`, and `cmp`, in declaration order"),
+    ("Hash", "hashing, field by field"),
+    ("Default", "`Type.default()`, every field's default"),
+    ("Debug", "the `{x:?}` format"),
+];
+
+/// The snippets at item position: label, body, and what it declares (`spec/lsp.md`, LS12).
+const ITEM_SNIPPETS: &[(&str, &str, &str)] = &[
+    ("main", "fn main() {\n    $0\n}", "the program's entry point"),
+    ("fn", "fn ${1:name}(${2}): ${3:Type} {\n    $0\n}", "a function"),
+    ("struct", "struct ${1:Name} {\n    $0\n}", "a struct"),
+    ("enum", "enum ${1:Name} {\n    $0\n}", "an enum"),
+    ("error enum", "error enum ${1:Name} {\n    ${2:Variant} \"${3:message}\"\n}", "an error enum"),
+    ("interface", "interface ${1:Name} {\n    $0\n}", "an interface"),
+    ("impl", "${1:Type} {\n    $0\n}", "an impl block"),
+    ("impl interface", "${1:Type}: ${2:Interface} {\n    $0\n}", "an interface implementation"),
+    ("test", "test \"${1:name}\" {\n    $0\n}", "a test"),
+    ("bench", "bench \"${1:name}\" {\n    $0\n}", "a benchmark"),
+];
+
+/// The snippet inside an impl block or an interface.
+const METHOD_SNIPPETS: &[(&str, &str, &str)] = &[("fn", "fn ${1:name}(${2:self}): ${3:Type} {\n    $0\n}", "a method")];
+
+/// The snippets at statement position, inside a body.
+const STATEMENT_SNIPPETS: &[(&str, &str, &str)] = &[
+    ("if", "if ${1:condition} {\n    $0\n}", "an `if` statement"),
+    ("match", "match ${1:value} {\n    ${2:pattern} => ${3:result}\n}", "a `match`"),
+    ("for", "for ${1:item} in ${2:items} {\n    $0\n}", "a `for` loop"),
+    ("while", "while ${1:condition} {\n    $0\n}", "a `while` loop"),
+];
+
 struct Completions {
     items: Vec<Json>,
     seen: Vec<String>,
+    /// The client inserts snippets.
+    snippets: bool,
+    /// A function's completion inserts the call's parentheses (LS12): snippets work, the position is not a `use`
+    /// path, and no `(` follows already.
+    calls: bool,
 }
 
 impl Completions {
@@ -259,6 +290,21 @@ impl Completions {
         if let Some(docs) = docs {
             item.set("documentation", Json::obj().with("kind", "markdown").with("value", docs));
         }
+        if self.calls
+            && matches!(kind, 2 | 3)
+            && let Some(params) = has_parameters(detail)
+        {
+            item.set("insertTextFormat", 2);
+            if params {
+                item.set("insertText", format!("{label}($0)"));
+                item.set(
+                    "command",
+                    Json::obj().with("title", "Signature help").with("command", "editor.action.triggerParameterHints"),
+                );
+            } else {
+                item.set("insertText", format!("{label}()$0"));
+            }
+        }
         self.items.push(item);
     }
 
@@ -267,6 +313,288 @@ impl Completions {
             return;
         }
         self.add(&item.name, completion_kind(item.kind), &item.detail, item.docs.as_deref(), group);
+    }
+
+    /// Snippet items; without the client's support, nothing (the keywords are added as plain words).
+    fn snippets(&mut self, list: &[(&str, &str, &str)]) {
+        if !self.snippets {
+            return;
+        }
+        for (label, body, what) in list {
+            if self.seen.iter().any(|s| s == label) {
+                continue;
+            }
+            self.seen.push(label.to_string());
+            self.items.push(
+                Json::obj()
+                    .with("label", *label)
+                    .with("kind", 15)
+                    .with("detail", *what)
+                    .with("insertText", *body)
+                    .with("insertTextFormat", 2)
+                    .with("sortText", format!("5{label}")),
+            );
+        }
+    }
+}
+
+/// Whether a function's declaration (`fn add(a: i32, b: i32): i32`) takes parameters besides `self`; `None` when it
+/// does not read as a function.
+fn has_parameters(detail: &str) -> Option<bool> {
+    let params = parameter_list(detail)?;
+    Some(params.iter().any(|p| !is_self_param(p)))
+}
+
+/// Whether a function's declaration takes `self` first (a method, not an associated function).
+fn takes_self(detail: &str) -> bool {
+    parameter_list(detail).is_some_and(|p| p.first().is_some_and(|p| is_self_param(p)))
+}
+
+fn is_self_param(p: &str) -> bool {
+    matches!(p.trim(), "self" | "mut self" | "own self")
+}
+
+/// The parameters of a function's declaration, as written.
+fn parameter_list(detail: &str) -> Option<Vec<String>> {
+    let at = detail.find("fn ")? + 3;
+    let rest = &detail[at..];
+    // The `(` of the parameter list: after the name and its generic parameters.
+    let mut depth = 0i32;
+    let mut open = None;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            '(' if depth == 0 => {
+                open = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut current = String::new();
+    for c in rest[open + 1..].chars() {
+        match c {
+            '(' | '<' | '[' => depth += 1,
+            ')' if depth == 0 => {
+                if !current.trim().is_empty() {
+                    out.push(current.trim().to_string());
+                }
+                return Some(out);
+            }
+            ')' | '>' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(current.trim().to_string());
+                current.clear();
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    None
+}
+
+/// Where completion was asked for.
+enum Context {
+    /// In a `use` declaration.
+    Use,
+    /// After `x.`; the offset of the dot.
+    Member(u32),
+    /// At the start of a function's parameter: the first one, and whether the function is a method.
+    Parameter { first: bool, method: bool },
+    /// After `struct Name` or `enum Name`: `derives` comes next.
+    AfterTypeName,
+    /// Inside `derives (...)`.
+    Derives,
+    /// The name a declaration is introducing: nothing to offer.
+    NewName,
+    /// At the start of a line at the top level.
+    Item,
+    /// At the start of a line inside an impl block, an interface, or a derive.
+    MethodItem,
+    /// At the start of a line inside a body.
+    Statement,
+    /// Anywhere else: an expression or a type.
+    Expression,
+}
+
+/// What kind of block a `{` opens, from the tokens before it.
+#[derive(PartialEq)]
+enum Block {
+    /// An impl block, an interface, or a derive: methods go inside.
+    Methods,
+    /// A struct, an enum, or another declaration that is not code.
+    Declaration,
+    /// A function's or test's body, or a block inside one.
+    Code,
+}
+
+/// The unmatched `{`s before token `end`, outermost first, with what each opens.
+fn open_blocks(text: &str, ix: &FileIndex, end: usize) -> Vec<(usize, Block)> {
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, t) in ix.tokens[..end].iter().enumerate() {
+        match t.kind {
+            Tk::LBrace => stack.push(i),
+            Tk::RBrace => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for (depth, &brace) in stack.iter().enumerate() {
+        let kind = if depth > 0 {
+            match out.last() {
+                Some((_, Block::Methods)) => Block::Code,
+                Some((_, Block::Code)) => Block::Code,
+                _ => Block::Declaration,
+            }
+        } else {
+            top_level_block(text, ix, brace)
+        };
+        out.push((brace, kind));
+    }
+    out
+}
+
+/// What a top-level `{` at token `brace` opens: the first token of its header says. The header is the last line
+/// before the brace that starts at the first column with a word (a top-level item does), after the previous `}`.
+fn top_level_block(text: &str, ix: &FileIndex, brace: usize) -> Block {
+    let after = ix.tokens[..brace].iter().rposition(|t| t.kind == Tk::RBrace).map_or(0, |i| i + 1);
+    let column_0 = |t: &Tok| t.lo == 0 || text.as_bytes().get(t.lo as usize - 1) == Some(&b'\n');
+    let start = (after..brace)
+        .rev()
+        .find(|&i| {
+            let t = &ix.tokens[i];
+            column_0(t) && matches!(t.kind, Tk::Keyword(_) | Tk::Ident(_) | Tk::SelfType)
+        })
+        .unwrap_or(after);
+    let mut head = ix.tokens[start..brace].iter().map(|t| &t.kind);
+    let mut first = head.next();
+    while matches!(first, Some(Tk::Keyword("priv" | "unsafe"))) || first.is_some_and(|k| *k == Tk::Ident("pub".into()))
+    {
+        first = head.next();
+    }
+    match first {
+        Some(Tk::Keyword("interface" | "derive")) => Block::Methods,
+        Some(Tk::Keyword("fn" | "extern")) => Block::Code,
+        Some(Tk::Ident(word)) if word == "test" || word == "bench" => Block::Code,
+        Some(Tk::Ident(_) | Tk::SelfType) => Block::Methods,
+        _ => Block::Declaration,
+    }
+}
+
+/// The index of the unmatched `(` before token `end` that is still open at it, with the number of commas at its
+/// depth after it.
+fn open_paren(ix: &FileIndex, end: usize) -> Option<(usize, u32)> {
+    let mut depth = 0i32;
+    let mut commas = 0u32;
+    for ti in (0..end).rev() {
+        match ix.tokens[ti].kind {
+            Tk::RParen | Tk::RBracket => depth += 1,
+            Tk::LBracket if depth > 0 => depth -= 1,
+            Tk::LParen if depth > 0 => depth -= 1,
+            Tk::LParen => return Some((ti, commas)),
+            Tk::LBrace | Tk::RBrace | Tk::LBracket => return None,
+            Tk::Comma if depth == 0 => commas += 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether the `(` at token `open` starts a function declaration's parameters, and whether that function is an
+/// extension method (`fn Type.name(`).
+fn declares_function(ix: &FileIndex, open: usize) -> Option<bool> {
+    let mut i = open.checked_sub(1)?;
+    if ix.tokens[i].kind == Tk::Gt {
+        // Skip the generic parameters.
+        let mut depth = 0;
+        loop {
+            match ix.tokens[i].kind {
+                Tk::Gt => depth += 1,
+                Tk::Lt => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i = i.checked_sub(1)?;
+        }
+        i = i.checked_sub(1)?;
+    }
+    ix.tokens[i].ident()?;
+    let mut extension = false;
+    let mut j = i.checked_sub(1)?;
+    // `fn Type.name` and `fn List<T>.name`: walk back over the receiver's type path.
+    while ix.tokens[j].kind != Tk::Keyword("fn") {
+        if !matches!(ix.tokens[j].kind, Tk::Dot | Tk::Ident(_) | Tk::Lt | Tk::Gt | Tk::Comma | Tk::SelfType) {
+            return None;
+        }
+        extension = true;
+        j = j.checked_sub(1)?;
+    }
+    Some(extension)
+}
+
+fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
+    let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
+    let line = text[line_start..start].trim_start();
+    if line.starts_with("use ") || line.starts_with("pub use ") {
+        return Context::Use;
+    }
+    if start > 0 && text.as_bytes()[start - 1] == b'.' {
+        return Context::Member((start - 1) as u32);
+    }
+    // The tokens before the word being completed.
+    let end = ix.tokens.partition_point(|t| (t.hi as usize) <= start && (t.lo as usize) < start);
+    let prev = end.checked_sub(1).map(|i| &ix.tokens[i].kind);
+    let before = end.checked_sub(2).map(|i| &ix.tokens[i].kind);
+    if let Some((open, commas)) = open_paren(ix, end) {
+        let at_start = matches!(prev, Some(Tk::LParen | Tk::Comma));
+        if open > 0 && ix.tokens[open - 1].ident() == Some("derives") {
+            return Context::Derives;
+        }
+        if let Some(extension) = declares_function(ix, open) {
+            if !at_start {
+                return Context::Expression;
+            }
+            let blocks = open_blocks(text, ix, end);
+            let method = extension || blocks.last().is_some_and(|(_, b)| *b == Block::Methods);
+            return Context::Parameter { first: commas == 0, method };
+        }
+    }
+    match (before, prev) {
+        (Some(Tk::Keyword("struct" | "enum")), Some(Tk::Ident(_))) => return Context::AfterTypeName,
+        (_, Some(Tk::Gt)) => {
+            // `struct Name<T> `: the generic parameters' `<` follows the name, which follows the keyword.
+            let lt = ix.tokens[..end].iter().rposition(|t| t.kind == Tk::Lt);
+            if let Some(lt) = lt
+                && lt >= 2
+                && ix.tokens[lt - 1].ident().is_some()
+                && matches!(ix.tokens[lt - 2].kind, Tk::Keyword("struct" | "enum"))
+                && !ix.tokens[lt..end].iter().any(|t| matches!(t.kind, Tk::LBrace | Tk::RBrace | Tk::LParen))
+            {
+                return Context::AfterTypeName;
+            }
+        }
+        (_, Some(Tk::Keyword("struct" | "enum" | "interface" | "fn"))) => return Context::NewName,
+        _ => {}
+    }
+    if !line.is_empty() {
+        return Context::Expression;
+    }
+    match open_blocks(text, ix, end).last() {
+        None => Context::Item,
+        Some((_, Block::Methods)) => Context::MethodItem,
+        Some((_, Block::Code)) => Context::Statement,
+        Some((_, Block::Declaration)) => Context::Expression,
     }
 }
 
@@ -279,18 +607,53 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
     while start > 0 && (text.as_bytes()[start - 1].is_ascii_alphanumeric() || text.as_bytes()[start - 1] == b'_') {
         start -= 1;
     }
-    let mut out = Completions { items: Vec::new(), seen: Vec::new() };
-    let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
-    let line = text[line_start..start].trim_start();
-    let in_use = line.starts_with("use ") || line.starts_with("pub use ");
+    let mut end = offset as usize;
+    while end < text.len() && (text.as_bytes()[end].is_ascii_alphanumeric() || text.as_bytes()[end] == b'_') {
+        end += 1;
+    }
+    let paren_follows = text.as_bytes().get(end) == Some(&b'(');
+    let snippets = server.caps.snippets;
     let mut r = Resolver::new(&mut server.packages[i]);
     let ix = r.index(&path).unwrap_or_default();
-    if in_use {
-        use_completions(&mut r, &path, line, &mut out);
-    } else if start > 0 && text.as_bytes()[start - 1] == b'.' {
-        member_completions(&mut r, &path, &ix, (start - 1) as u32, &mut out);
-    } else {
-        scope_completions(&mut r, &path, &ix, offset, &mut out);
+    let context = context(&text, &ix, start);
+    let calls = snippets && !paren_follows && !matches!(context, Context::Use);
+    let mut out = Completions { items: Vec::new(), seen: Vec::new(), snippets, calls };
+    match context {
+        Context::Use => {
+            let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
+            use_completions(&mut r, &path, text[line_start..start].trim_start(), &mut out);
+        }
+        Context::Member(dot) => member_completions(&mut r, &path, &ix, &text, dot, &mut out),
+        Context::Parameter { first, method } => {
+            if first && method {
+                for (label, what) in [
+                    ("self", "read the receiver"),
+                    ("mut self", "change the receiver"),
+                    ("own self", "consume the receiver"),
+                ] {
+                    out.add(label, 14, what, None, 0);
+                }
+            }
+            for word in ["mut", "own", "comptime"] {
+                out.add(word, 14, "keyword", None, 1);
+            }
+        }
+        Context::AfterTypeName => out.add("derives", 14, "derive interfaces", None, 0),
+        Context::Derives => derive_completions(&mut r, &path, &ix, &mut out),
+        Context::NewName => {}
+        Context::Item => {
+            out.snippets(ITEM_SNIPPETS);
+            scope_completions(&mut r, &path, &ix, offset, &mut out);
+        }
+        Context::MethodItem => {
+            out.snippets(METHOD_SNIPPETS);
+            scope_completions(&mut r, &path, &ix, offset, &mut out);
+        }
+        Context::Statement => {
+            out.snippets(STATEMENT_SNIPPETS);
+            scope_completions(&mut r, &path, &ix, offset, &mut out);
+        }
+        Context::Expression => scope_completions(&mut r, &path, &ix, offset, &mut out),
     }
     let mut items = out.items;
     items.sort_by(|a, b| a.get("sortText").as_str().cmp(&b.get("sortText").as_str()));
@@ -325,32 +688,48 @@ fn use_completions(r: &mut Resolver, path: &str, line: &str, out: &mut Completio
     }
 }
 
-/// After `x.`: a module's items, a type's variants and methods, or a value's fields and methods.
-fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, dot: u32, out: &mut Completions) {
+/// The type of a literal receiver, from its spelling: `"text"` is a `str` (an interpolated one a `String`), `'c'` a
+/// `char`, `1.5` an `f64`, `7` an `i32`, and `true` a `bool`.
+fn literal_type(text: &str, tok: &Tok) -> Option<&'static str> {
+    let spelled = text.get(tok.lo as usize..tok.hi as usize).unwrap_or("");
+    match &tok.kind {
+        Tk::Str if spelled.contains('{') => Some("String"),
+        Tk::Str => Some("str"),
+        Tk::Num if spelled.starts_with('\'') => Some("char"),
+        Tk::Num if !spelled.starts_with("0x") && spelled.contains(['.', 'e', 'E']) => Some("f64"),
+        Tk::Num => Some("i32"),
+        Tk::Keyword("true" | "false") => Some("bool"),
+        _ => None,
+    }
+}
+
+/// After `x.`: a module's items, a type's variants and associated functions, or a value's fields and methods.
+fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, text: &str, dot: u32, out: &mut Completions) {
     let Some(ti) = ix.tokens.iter().position(|t| t.hi == dot) else { return };
     let receiver = ix.tokens[ti].clone();
 
     if let Tk::Ident(name) = &receiver.kind {
-        let is_value = r.p.program_analysis().is_some_and(|(a, _)| {
-            a.resolve_at(path, receiver.lo)
+        // The answering analysis may be older than the text: its offsets are mapped.
+        let is_value = Answering::of(r.p, path).is_some_and(|a| {
+            a.old_offset(receiver.lo)
+                .and_then(|at| a.analysis.resolve_at(path, at))
                 .is_some_and(|x| matches!(x.kind, DefinitionKind::Local | DefinitionKind::Parameter))
         });
         if !is_value {
             if let Some(file) = module_file_named(r, path, ix, name)
                 && let Some(mix) = r.index(&file)
             {
-                for item in mix.items.iter().filter(|i| i.parent.is_none()) {
-                    out.item(item, 0);
+                let foreign = r.p.package_of(&file) != r.p.package_of(path);
+                for item in mix.items.iter().filter(|i| i.parent.is_none() && !(foreign && i.is_priv)) {
+                    if item.kind != Kind::Method {
+                        out.item(item, 0);
+                    }
                 }
                 return;
             }
             let all = r.all_items();
             if all.iter().any(|(_, i)| i.kind.is_type() && i.name == *name) {
-                for (_, item) in all.iter().filter(|(_, i)| i.owner.as_deref() == Some(name.as_str())) {
-                    if matches!(item.kind, Kind::Variant | Kind::Method | Kind::InterfaceMethod) {
-                        out.item(item, if item.kind == Kind::Variant { 0 } else { 1 });
-                    }
-                }
+                type_members(&all, name, out);
                 return;
             }
         }
@@ -358,24 +737,117 @@ fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, dot: u32, ou
     let ty = Answering::of(r.p, path).and_then(|a| {
         // A half-written member (`sq.` before the next line) may parse as part of a larger expression that does not
         // type-check; the receiver's own declaration still says what it is.
-        a.type_at(path, receiver.lo).filter(|t| !t.contains("{error}")).or_else(|| match &receiver.kind {
-            Tk::Ident(name) => a.local_before(path, name, receiver.lo),
-            _ => None,
+        a.type_at(path, receiver.lo).filter(|t| !t.contains("{error}") && !t.is_empty()).or_else(|| {
+            match &receiver.kind {
+                Tk::Ident(name) => a.local_before(path, name, receiver.lo),
+                _ => None,
+            }
         })
     });
-    let Some(ty) = ty else { return };
-    let owner = base_type(&ty);
+    // A literal's spelling says its type when the analysis has not seen it yet.
+    let ty = match (ty, literal_type(text, &receiver)) {
+        (Some(ty), _) => ty,
+        (None, Some(literal)) => literal.to_string(),
+        (None, None) => return,
+    };
     let all = r.all_items();
-    for (_, item) in all.iter().filter(|(_, i)| i.owner.as_deref() == Some(owner.as_str())) {
+    value_members(&all, &base_type(&ty), out);
+}
+
+/// The associated functions of a type written by name (`String.new`, `Rect.new`) and its variants: what follows
+/// `Type.`. A built-in type's associated functions that the standard library declares as `__type_name` are listed
+/// by their name (`f64.parse`, `i32.from_le_bytes`).
+fn type_members(all: &[(String, Item)], name: &str, out: &mut Completions) {
+    for (_, item) in all.iter().filter(|(_, i)| i.owner.as_deref() == Some(name)) {
+        match item.kind {
+            Kind::Variant => out.item(item, 0),
+            Kind::Method | Kind::InterfaceMethod if !takes_self(&item.detail) => out.item(item, 1),
+            _ => {}
+        }
+    }
+    let hidden = [format!("__{name}_"), format!("__{}_", name.to_lowercase())];
+    for (_, item) in all.iter().filter(|(p, i)| p.starts_with("<std>/") && i.parent.is_none()) {
+        let Some(short) = hidden.iter().find_map(|h| item.name.strip_prefix(h.as_str())) else { continue };
+        if !matches!(item.kind, Kind::Function | Kind::Const) || short.is_empty() {
+            continue;
+        }
+        let detail = item.detail.replacen(&item.name, short, 1);
+        out.add(short, completion_kind(item.kind), &detail, item.docs.as_deref(), 1);
+    }
+}
+
+/// The fields and methods of a value of type `owner`: its own, its extension methods, the methods of the
+/// interfaces it implements, and the ones an implementation or a derive provides (`to_string` through `Display`,
+/// `clone` through `Clone`, `cmp` through `Ord`).
+fn value_members(all: &[(String, Item)], owner: &str, out: &mut Completions) {
+    for (_, item) in all.iter().filter(|(_, i)| i.owner.as_deref() == Some(owner)) {
         match item.kind {
             Kind::Field => out.item(item, 0),
-            Kind::Method | Kind::InterfaceMethod => out.item(item, 1),
+            Kind::Method | Kind::InterfaceMethod if takes_self(&item.detail) => out.item(item, 1),
             _ => {}
+        }
+    }
+    let mut interfaces: Vec<String> = all
+        .iter()
+        .filter(|(_, i)| i.kind == Kind::Impl && i.owner.as_deref() == Some(owner))
+        .filter_map(|(_, i)| i.interface.clone())
+        .collect();
+    // `derives (Clone, Ord)` in the type's declaration.
+    if let Some((_, decl)) = all.iter().find(|(_, i)| i.kind.is_type() && i.name == owner)
+        && let Some(list) = decl.detail.split_once("derives").map(|(_, l)| l)
+    {
+        let list = list.trim_start().trim_start_matches('(');
+        let list = list.split(')').next().unwrap_or("");
+        interfaces.extend(list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+    }
+    for iface in &interfaces {
+        for (_, item) in
+            all.iter().filter(|(_, i)| i.kind == Kind::InterfaceMethod && i.owner.as_deref() == Some(iface))
+        {
+            if takes_self(&item.detail) {
+                out.item(item, 1);
+            }
+        }
+        let provided = match iface.as_str() {
+            "Display" => Some(("to_string", "fn to_string(self): String".to_string(), "The text `Display` writes.")),
+            "Clone" => Some(("clone", format!("fn clone(self): {owner}"), "A copy, through `Clone`.")),
+            "Ord" => Some(("cmp", format!("fn cmp(self, other: {owner}): Ordering"), "The order, through `Ord`.")),
+            _ => None,
+        };
+        if let Some((name, detail, docs)) = provided {
+            out.add(name, 2, &detail, Some(docs), 1);
         }
     }
 }
 
-/// The module a name stands for in a file: an alias, an imported module, a module of the package, or a dependency.
+/// Inside `derives (...)`: the compiler's derives and the `derive` declarations the file can name.
+fn derive_completions(r: &mut Resolver, path: &str, ix: &FileIndex, out: &mut Completions) {
+    for (name, what) in BUILTIN_DERIVES {
+        out.add(name, 8, what, None, 0);
+    }
+    let imported: Vec<&str> = ix
+        .uses
+        .iter()
+        .flat_map(|u| {
+            let mut names: Vec<&str> = u.items.iter().map(|(n, _)| n.as_str()).collect();
+            if u.items.is_empty() && u.alias.is_none() {
+                names.extend(u.path.last().map(|(n, _)| n.as_str()));
+            }
+            names
+        })
+        .collect();
+    let all = r.all_items();
+    for (file, item) in all.iter().filter(|(_, i)| i.kind == Kind::Derive) {
+        let visible =
+            file == path || imported.contains(&item.name.as_str()) || (file.starts_with("<std>/") && !item.is_priv);
+        if visible {
+            out.item(item, 1);
+        }
+    }
+}
+
+/// The module a name stands for in a file: an alias, an imported module, a module of the package, a dependency, or
+/// a standard-library module the prelude binds (`env`, `fs`).
 fn module_file_named(r: &mut Resolver, path: &str, ix: &FileIndex, name: &str) -> Option<String> {
     let package = r.p.package_of(path)?;
     for u in &ix.uses {
@@ -387,11 +859,11 @@ fn module_file_named(r: &mut Resolver, path: &str, ix: &FileIndex, name: &str) -
             return Some(f);
         }
     }
-    r.p.module_file(package, &[name.to_string()])
+    crate::nav::std_module(r.p, package, name)
 }
 
-/// A plain name: the locals in scope, the file's items, what its `use` declarations import, the built-ins, and the
-/// keywords.
+/// A plain name: the locals in scope, the file's items, what its `use` declarations import, the prelude, the
+/// built-ins, and the keywords.
 fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, out: &mut Completions) {
     // Locals and parameters of the function around the cursor, declared before it.
     if let Some(function) = ix.function_around(offset).cloned()
@@ -407,7 +879,7 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
             }
         }
     }
-    for item in ix.items.iter().filter(|i| i.parent.is_none()) {
+    for item in ix.items.iter().filter(|i| i.parent.is_none() && i.kind != Kind::Method) {
         out.item(item, 1);
     }
     // Imported names.
@@ -447,14 +919,27 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
             }
         }
     }
-    // The standard library's root module is visible everywhere.
-    if let Some(ix) = r.index("<std>/std.bd") {
-        for item in ix.items.iter().filter(|i| i.parent.is_none() && !i.is_priv) {
-            out.item(item, 3);
-        }
+    // The built-in functions (`println`), then the prelude: every public item of every standard-library module, and
+    // the one-segment modules by name (`env`, `fs`).
+    let builtins = r.index(crate::builtins::PATH).unwrap_or_default();
+    for item in builtins.items.iter().filter(|i| i.kind == Kind::Function) {
+        out.item(item, 3);
     }
-    for (name, detail) in BUILTIN_FUNCTIONS {
-        out.add(name, 3, detail, None, 3);
+    let std_files: Vec<(String, String)> =
+        r.p.modules
+            .iter()
+            .filter(|m| m.path.starts_with("<std>/"))
+            .map(|m| (m.path.clone(), m.module.join(".")))
+            .collect();
+    for (file, module) in &std_files {
+        if let Some(ix) = r.index(file) {
+            for item in ix.items.iter().filter(|i| i.parent.is_none() && !i.is_priv && i.kind != Kind::Method) {
+                out.item(item, 3);
+            }
+        }
+        if !module.is_empty() && !module.contains('.') && module != "std" {
+            out.add(module, 9, &format!("module std.{module}"), None, 4);
+        }
     }
     for name in BUILTIN_TYPES {
         out.add(name, 22, "built-in type", None, 4);
@@ -504,28 +989,46 @@ pub fn signature_help(server: &mut Server, params: &Json) -> Reply {
     let Some(answer) = Answering::of(r.p, &path) else { return Ok(Json::Null) };
     let functions = answer.analysis.functions();
     // A method call on a value names the receiver's type; a call through a type or module names it directly.
+    let is_type_name = |n: &str| n.starts_with(|c: char| c.is_ascii_uppercase()) || BUILTIN_TYPES.contains(&n);
     let receiver_type = receiver.as_ref().and_then(|t| match &t.kind {
-        Tk::Ident(n) if n.starts_with(|c: char| c.is_ascii_uppercase()) => Some(n.clone()),
+        Tk::Ident(n) if is_type_name(n) => Some(n.clone()),
         _ => answer.type_at(&path, t.lo).map(|ty| base_type(&ty)),
     });
     let by_value = receiver.as_ref().is_some_and(|t| match &t.kind {
-        Tk::Ident(n) => !n.starts_with(|c: char| c.is_ascii_uppercase()) && answer.type_at(&path, t.lo).is_some(),
+        Tk::Ident(n) => !is_type_name(n) && answer.type_at(&path, t.lo).is_some(),
         _ => true,
     });
+    let owner_match = |f: &burdin_query::FunctionInfo| {
+        receiver_type.as_ref().is_some_and(|t| f.qualified.ends_with(&format!("{t}.{}", callee.0)))
+    };
     let candidates: Vec<&burdin_query::FunctionInfo> = functions.iter().filter(|f| f.name == callee.0).collect();
     let best = candidates
         .iter()
         .min_by_key(|f| {
-            let owner_match =
-                receiver_type.as_ref().is_some_and(|t| f.qualified.ends_with(&format!("{t}.{}", callee.0)));
-            (!owner_match, f.location.path != path, f.location.path.starts_with("<std>"), f.qualified.clone())
+            (!owner_match(f), f.location.path != path, f.location.path.starts_with("<std>"), f.qualified.clone())
         })
         .copied();
-    let Some(f) = best else { return Ok(Json::Null) };
-    let label = f.display.clone();
+    // The compiler's built-ins (`println`, `String.push_str`) are not functions of the program: their signatures come
+    // from the built-ins' file.
+    let builtin = match (best, &receiver_type) {
+        (Some(f), Some(_)) if owner_match(f) => None,
+        (Some(_), None) if !dotted => None,
+        (_, Some(t)) => crate::builtins::get().find(t, &callee.0),
+        (None, None) if !dotted => crate::builtins::get().find("", &callee.0),
+        _ => None,
+    };
+    let (label, has_self) = match (builtin, best) {
+        (Some(item), _) => (item.detail.clone(), takes_self(&item.detail)),
+        (None, Some(f)) => (f.display.clone(), f.params.first().is_some_and(|p| p.name == "self")),
+        (None, None) => return Ok(Json::Null),
+    };
     let parameters = parameter_labels(&label);
-    let skip_self = by_value && f.params.first().is_some_and(|p| p.name == "self");
-    let active = commas + u32::from(skip_self);
+    let skip_self = by_value && has_self;
+    let mut active = commas + u32::from(skip_self);
+    // The variadic part of `println(fmt: str, ...)` takes every argument after the ones before it.
+    if label.contains("...)") && !parameters.is_empty() {
+        active = active.min(parameters.len() as u32 - 1);
+    }
     let signature = Json::obj()
         .with("label", label.as_str())
         .with(
@@ -742,7 +1245,8 @@ fn classify(p: &mut Package, path: &str) -> Vec<(u32, u32, u32, u32)> {
     let Some(ix) = r.index(path) else { return Vec::new() };
     let all = r.all_items();
     let mut types: HashMap<&str, Kind> = HashMap::new();
-    for (_, item) in all.iter() {
+    // The built-in types stay unclassified, as the editor's grammar colors them.
+    for (_, item) in all.iter().filter(|(file, _)| file != crate::builtins::PATH) {
         if item.kind.is_type() {
             types.entry(item.name.as_str()).or_insert(item.kind);
         }

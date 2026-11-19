@@ -118,12 +118,13 @@ impl<'a> Resolver<'a> {
         list
     }
 
-    /// Every item of every file of the package, the standard library's included.
+    /// Every item of every file of the package, the standard library's and the built-ins' included.
     pub fn all_items(&mut self) -> Rc<Vec<(String, Item)>> {
         if let Some(all) = &self.all {
             return all.clone();
         }
-        let paths: Vec<String> = self.p.modules.iter().map(|m| m.path.clone()).collect();
+        let mut paths: Vec<String> = self.p.modules.iter().map(|m| m.path.clone()).collect();
+        paths.push(crate::builtins::PATH.to_string());
         let mut out = Vec::new();
         for path in paths {
             if let Some(ix) = self.p.index(&path) {
@@ -209,7 +210,7 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        self.p.module_file(package, &[name.to_string()])
+        std_module(self.p, package, name)
     }
 
     /// A member (field, variant, or method) of a type.
@@ -385,6 +386,13 @@ impl<'a> Resolver<'a> {
         }
         None
     }
+}
+
+/// A module of the package or of a dependency named `name`, or else the standard-library module the prelude binds to
+/// that name (`env`, `fs`).
+pub fn std_module(p: &Package, package: usize, name: &str) -> Option<String> {
+    p.module_file(package, &[name.to_string()])
+        .or_else(|| p.module_file(package, &["std".to_string(), name.to_string()]))
 }
 
 /// `List<i32>` -> `List`; `&mut Rect` -> `Rect`.
