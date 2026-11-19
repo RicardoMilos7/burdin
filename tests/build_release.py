@@ -7,13 +7,19 @@ Usage: tests/build_release.py [options]
   --channel <channel>     dev, nightly, or stable (default: BURDIN_CHANNEL, else dev)
   --out <dir>             output directory (default: dist/)
   --binary <path>         package this binary instead of building; its --version must match
+  --llvm-dll <path>       Windows: bundle this LLVM-C.dll beside burdin.exe (default for a build: LLVM-C.dll in
+                          LLVM_SYS_211_PREFIX/bin, else on PATH; --binary bundles one only when this is given)
   --skip-smoke            do not run build/run/test with the binary
   --verify-reproducible   build twice from two copies and require identical archives
   --print-version         print the workspace version and exit
   -h, --help              show this help
 
 The archive is `burdin-<version>-<target>.tar.gz`; its root directory is `burdin-<version>-<target>/` and holds the
-compiler, README.md, CHANGELOG.md, docs/error-codes.md, and docs/lints.md. Next to it the script writes
+compiler, README.md, CHANGELOG.md, docs/error-codes.md, and docs/lints.md; a Windows archive also holds
+LLVM-C.dll beside burdin.exe, because that build links LLVM as a shared library. Linux and macOS builds link LLVM
+statically (BURDIN_STATIC_LLVM=1, set by this script) and the script checks that the binary needs no LLVM shared
+library. BURDIN_STATIC_LLVM=1 in the environment on Windows links LLVM statically there too, with the static CRT, and
+the archive then has no DLL; BURDIN_STATIC_LLVM=0 on Linux or macOS links the shared library. Next to it the script writes
 `<archive>.sha256` and `SHA256SUMS.<target>`, both in the `sha256sum -c` format. The release workflow aggregates the
 per-target files into one `SHA256SUMS` (docs/releasing.md).
 
@@ -108,6 +114,7 @@ class Options:
         self.channel = ""
         self.out = ROOT / "dist"
         self.binary = ""
+        self.llvm_dll = ""
         self.skip_smoke = False
         self.reproducible = False
 
@@ -133,6 +140,7 @@ def parse_args(arguments) -> Options:
             "--channel": ("channel", "a value"),
             "--out": ("out", "a directory"),
             "--binary": ("binary", "a path"),
+            "--llvm-dll": ("llvm_dll", "a path"),
         }
         if argument not in flags:
             die(f"unknown option: {argument} (try --help)")
@@ -156,6 +164,27 @@ def check_binary_version(binary, version: str, channel: str, target: str) -> Non
             die(f"{binary} --version does not report {expected}: {output}")
 
 
+def uses_static_llvm(target: str) -> bool:
+    """Linux and macOS release builds link LLVM into the compiler. Windows ships LLVM-C.dll beside it unless
+    BURDIN_STATIC_LLVM=1 asks for the static link there too (it needs the static CRT; see build.rs)."""
+    setting = os.environ.get("BURDIN_STATIC_LLVM")
+    if setting is not None:
+        return setting not in ("", "0")
+    return not target.endswith("-pc-windows-msvc")
+
+
+def check_no_llvm_library(binary: Path) -> None:
+    """A statically linked compiler has no LLVM shared library among its dependencies."""
+    tool = ["otool", "-L"] if harness.PLATFORM == "macos" else ["ldd"]
+    result = harness.run([*tool, binary], merge=True)
+    listing = harness.text(result.stdout)
+    if result.returncode != 0:
+        die(f"{tool[0]} {binary} failed: {listing}")
+    for line in listing.splitlines():
+        if "libLLVM" in line or "LLVM-C" in line:
+            die(f"{binary} still depends on an LLVM shared library: {line.strip()}")
+
+
 def build_binary(source_root: Path, target_dir: Path, version: str, channel: str, target: str) -> Path:
     if not target_dir.is_absolute():
         target_dir = source_root / target_dir
@@ -163,6 +192,8 @@ def build_binary(source_root: Path, target_dir: Path, version: str, channel: str
         f"--remap-path-prefix={source_root}=/burdin "
         f"--remap-path-prefix={target_dir}=/burdin/target"
     )
+    if target.endswith("-pc-windows-msvc") and uses_static_llvm(target):
+        flags += " -C target-feature=+crt-static"
     if os.environ.get("RUSTFLAGS"):
         flags = os.environ["RUSTFLAGS"] + " " + flags
     print(f"building {version} ({channel}) for {target} from {source_root}", file=sys.stderr)
@@ -174,6 +205,8 @@ def build_binary(source_root: Path, target_dir: Path, version: str, channel: str
         "BURDIN_VERSION": version,
         "BURDIN_CHANNEL": channel,
     }
+    if uses_static_llvm(target):
+        env["BURDIN_STATIC_LLVM"] = "1"
     result = harness.run(
         ["cargo", "build", "--release", "--locked", "-p", "burdin_driver"],
         cwd=source_root,
@@ -186,6 +219,8 @@ def build_binary(source_root: Path, target_dir: Path, version: str, channel: str
     binary = target_dir / "release" / f"burdin{exe_suffix(target)}"
     if not binary.is_file():
         die(f"cargo did not produce {binary}")
+    if uses_static_llvm(target) and not target.endswith("-pc-windows-msvc"):
+        check_no_llvm_library(binary)
     return binary
 
 
@@ -247,7 +282,19 @@ def make_archive(stage: Path, root: str, archive: Path, epoch: int) -> None:
         plain.unlink(missing_ok=True)
 
 
-def package_binary(binary: Path, out: Path, version: str, target: str, epoch: int) -> Path:
+def find_llvm_dll() -> str:
+    """The LLVM-C.dll a Windows build links against: the LLVM prefix first, then PATH."""
+    prefix = os.environ.get("LLVM_SYS_211_PREFIX", "")
+    if prefix:
+        candidate = Path(prefix) / "bin" / "LLVM-C.dll"
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("LLVM-C.dll") or ""
+
+
+def package_binary(
+    binary: Path, out: Path, version: str, target: str, epoch: int, llvm_dll: str = ""
+) -> Path:
     root = f"burdin-{version}-{target}"
     name = archive_name(version, target)
     archive = out / name
@@ -257,6 +304,8 @@ def package_binary(binary: Path, out: Path, version: str, target: str, epoch: in
         (stage / root / "docs").mkdir(parents=True)
         shutil.copyfile(binary, stage / root / f"burdin{exe_suffix(target)}")
         (stage / root / f"burdin{exe_suffix(target)}").chmod(0o755)
+        if llvm_dll:
+            shutil.copyfile(llvm_dll, stage / root / "LLVM-C.dll")
         for source, destination in (
             (ROOT / "README.md", stage / root / "README.md"),
             (ROOT / "CHANGELOG.md", stage / root / "CHANGELOG.md"),
@@ -295,6 +344,10 @@ def main(arguments) -> int:
         die(f"not a MAJOR.MINOR.PATCH version: {version}")
     if options.reproducible and options.binary:
         die("--verify-reproducible builds the compiler; it cannot be combined with --binary")
+    if options.llvm_dll and not target.endswith("-pc-windows-msvc"):
+        die("--llvm-dll only applies to a Windows target")
+    if options.llvm_dll and not Path(options.llvm_dll).is_file():
+        die(f"--llvm-dll is not a file: {options.llvm_dll}")
     if options.binary and not os.access(options.binary, os.X_OK):
         die(f"the binary is missing or not executable: {options.binary}")
 
@@ -319,8 +372,16 @@ def main(arguments) -> int:
 
     if options.binary:
         check_binary_version(options.binary, version, channel, target)
-        package_binary(Path(options.binary), options.out, version, target, epoch)
+        package_binary(Path(options.binary), options.out, version, target, epoch, options.llvm_dll)
         return 0
+
+    # A Windows build needs LLVM-C.dll at run time and the archive does not bundle LLVM any other way, so a build
+    # without one would publish an archive whose compiler cannot start (docs/releasing.md).
+    llvm_dll = options.llvm_dll
+    if not llvm_dll and target.endswith("-pc-windows-msvc") and not uses_static_llvm(target):
+        llvm_dll = find_llvm_dll()
+        if not llvm_dll:
+            die("LLVM-C.dll not found; set LLVM_SYS_211_PREFIX to the LLVM 21 install or pass --llvm-dll")
 
     if options.reproducible:
         work = Path(tempfile.mkdtemp(prefix="burdin-repro-"))
@@ -337,13 +398,13 @@ def main(arguments) -> int:
             check_binary_version(binary_a, version, channel, target)
             if not options.skip_smoke:
                 smoke_test(binary_a, work)
-            archive_a = package_binary(binary_a, work / "out-a", version, target, epoch)
+            archive_a = package_binary(binary_a, work / "out-a", version, target, epoch, llvm_dll)
             print("reproducibility run 2 (different checkout path)", file=sys.stderr)
             binary_b = build_binary(copy, work / "target-b", version, channel, target)
             check_binary_version(binary_b, version, channel, target)
             if not options.skip_smoke:
                 smoke_test(binary_b, work)
-            archive_b = package_binary(binary_b, work / "out-b", version, target, epoch)
+            archive_b = package_binary(binary_b, work / "out-b", version, target, epoch, llvm_dll)
             hash_a = sha256_of(archive_a)
             hash_b = sha256_of(archive_b)
             if hash_a != hash_b:
@@ -365,7 +426,7 @@ def main(arguments) -> int:
             smoke_test(binary, work)
         finally:
             shutil.rmtree(work, ignore_errors=True)
-    package_binary(binary, options.out, version, target, epoch)
+    package_binary(binary, options.out, version, target, epoch, llvm_dll)
     return 0
 
 
