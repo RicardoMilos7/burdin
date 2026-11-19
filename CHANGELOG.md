@@ -30,6 +30,30 @@ close-out checklist in `AGENTS.md`).
   and `burdin-bench` directives, `tests/check_bench.py` checks the command black-box in every CI job, and the
   driver, runner, and parser unit tests cover the statistics, the baseline files, the result line, and the parser.
 
+### Doc tests (issues #250, #650-#652)
+
+- `burdin test` runs the `///` and `//!` code blocks of the selected packages' doc comments with the `test` blocks;
+  `burdin test --doc` runs only them (#650). Every Burdin fenced block — untagged, or tagged `burdin` or `bd` — is
+  built as its own one-file package that depends on the documented package, so an example sees its public API only.
+  An example without `fn main` is wrapped in one, its leading declarations (the longest prefix that parses as items)
+  are hoisted above the wrapper, and padding comment lines put every line on the line of its doc comment, so a panic
+  reports the line a reader sees. A failure is reported at the doc comment's file and line: the compile's
+  diagnostics are rewritten from the generated program to the original file before they are shown, and the headings
+  read `---- doc test "<owner> (line N)" at <file>:<line>: <reason> ----`. The doc tests selected run in parallel
+  under `-j`; a one-file target is copied into a package so its examples can import it, and a package with no
+  importable root module gets one note and still runs its examples.
+- The fence's info string carries the block's attributes (#651): `ignore` (not built), `no_run` (compiled, not run),
+  `should_panic`, and `compile_fail` / `compile_fail E0123` (must not compile, with that code when named); an unknown
+  word warns at the fence's line and the block still runs. `--list` prints them in source syntax, and the JSON
+  listing and event stream carry `ignore`, `should_panic`, `no_run`, `compile_fail`, and `compile_fail_code`.
+- A line that begins with `# ` (or is only `#`) inside a Burdin block is setup (#652): `burdin test` compiles it with
+  the marker removed, and `burdin doc` does not show it (a block that is entirely hidden shows nothing). The marker
+  is in `spec/doc.md` DC6; `burdin fmt` leaves a block with hidden lines as written and now recognizes attribute
+  fences (`burdin,no_run`) as Burdin.
+- The `tests/doc/geometry` fixture's example now runs: it hides its `use` line and constructs points with the new
+  `Point.new`. `tests/check_test_runner.py` covers the fixtures in `tests/runner/doctests/`,
+  `tests/runner/doctests-bin/`, and `tests/runner/doctest_one.bd`; `spec/test-runner.md` has the "Doc tests" section.
+
 ### Parallel compilation and `-j` (issues #334, #352, #773)
 
 - Code generation is parallel: after lowering, unused runtime and glue functions are dropped, and a program of more

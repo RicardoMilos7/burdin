@@ -142,7 +142,8 @@ sorted where it stands.
 
 ## FM10: code blocks in doc comments
 
-A fenced code block in a run of `///` lines, whose fence is empty, `burdin`, or `bd`, holds Burdin code and is formatted:
+A fenced code block in a run of `///` lines, whose fence is empty, `burdin`, or `bd` (attributes may follow the
+word, as in `burdin,no_run`; the word is what the doc tests read, DC6), holds Burdin code and is formatted:
 
 ```
 /// ```
@@ -163,8 +164,9 @@ becomes
 - The code gets the width left after the indentation and the `/// ` prefix, so a formatted line never passes column 120
   (a line the formatter cannot split may).
 - A block whose fence names another language or word (`text`, `console`, `rust`, ...), a block that does not parse, a
-  block whose formatted form is not the same program, a block not closed by a fence, and an empty block are left as
-  written. A block that is not formatted is never reported as an error.
+  block whose formatted form is not the same program, a block not closed by a fence, an empty block, and a block with a
+  hidden `# ` setup line (DC6: the marker is not Burdin text, so the block cannot be checked against the formatted
+  program) are left as written. A block that is not formatted is never reported as an error.
 - Only `///` comments are searched; a fence in a `//` or `/* */` comment is an ordinary comment.
 
 ## FM11: formatting a range

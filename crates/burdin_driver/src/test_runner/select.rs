@@ -187,7 +187,7 @@ fn unescape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burdin_tir::TestAttrs;
+    use crate::test_runner::{Attrs, Run};
     use std::path::PathBuf;
 
     fn case(package: &str, module: &str, name: &str, ignore: bool) -> TestCase {
@@ -201,10 +201,8 @@ mod tests {
             path: local,
             file: "src/main.bd".to_string(),
             line: 1,
-            exe: PathBuf::from("bin"),
-            index: 0,
-            attrs: TestAttrs { ignore, ..TestAttrs::default() },
-            comptime: None,
+            run: Run::Block { exe: PathBuf::from("bin"), index: 0, comptime: None },
+            attrs: Attrs { ignore, ..Attrs::default() },
         }
     }
 
