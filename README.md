@@ -145,6 +145,11 @@ The `burdin` command has the subcommands `build`, `run`, `test`, `bench`, `check
 This section is the
 contract they implement; the conformance runner (`tests/run_tests.py`) and the documentation check depend on it.
 
+`burdin` alone (or `burdin --help`) lists the commands with a one-line summary each. `burdin <command> --help`, or
+`burdin help <command>`, prints everything about one command: its usage, arguments, options grouped by topic, and
+notes. The command tree and its help are declared with clap in `crates/burdin_driver/src/cli.rs`; a mistyped command
+gets a suggestion (`a similar subcommand exists: 'check'`). The synopsis of the main commands:
+
 ```
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
@@ -879,7 +884,7 @@ error: cannot run the linker `cc`: No such file or directory (os error 2) (set B
 | 2 | A usage error, or a driver failure after loading: the output path is a directory, code generation failed, the linker could not be started or failed, or a temporary directory could not be created. |
 | program status | `run` exits with the program's status; 128+signal on Unix. |
 
-Usage errors print `error: <message>` followed by the usage block.
+Usage errors print `error: <message>`, the command's usage line, and a pointer to `burdin <command> --help`.
 
 ## Fuzzing the lexer and parser
 

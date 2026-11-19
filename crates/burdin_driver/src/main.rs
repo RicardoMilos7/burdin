@@ -1,4 +1,6 @@
-//! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `expand`, `asm`, `bloat`, `fmt`, `lint`, `explain`, `bindgen`, `new`, and `add`.
+//! The `burdin` command: `build`, `run`, `test`, `bench`, `check`, `expand`, `asm`, `bloat`, `fmt`, `lint`, `doc`,
+//! `debug`, `explain`, `bindgen`, `new`, `add`, `repl`, `lsp`, and `dap`. The command tree and its help are declared with
+//! clap in `cli.rs`.
 //! The contract is documented in `README.md` at the repository root (`The driver contract`) and summarized at the
 //! top of tests/run_tests.py.
 
@@ -9,6 +11,7 @@ mod bindgen;
 mod bloat;
 mod build;
 mod check;
+mod cli;
 mod debug;
 mod doc;
 mod emit;
@@ -32,206 +35,6 @@ use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-
-pub(crate) const USAGE: &str = "\
-usage:
-  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [--locked] [-j <n>]
-               [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--emit <kinds>] [--intel | --att]
-               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
-  burdin run <file.bd | package directory> [--release] [-g] [--locked] [-j <n>] [--link-lib <name>]...
-             [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [--locked] [-j <n>] [--verbose]
-              [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
-              [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list] [--doc]
-              [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
-  burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [--locked] [-j <n>] [--verbose]
-               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
-               [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
-               [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
-               [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
-  burdin check <file.bd | package directory> [--release] [--tests] [--print-instances [--format <human|json>]]
-               [--locked] [-j <n>] [--comptime-steps <n>] [diagnostics]
-               [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain]
-  burdin asm <file.bd | package directory> [<function>] [--debug] [--intel | --att] [--llvm] [--no-source]
-             [-j <n>] [--comptime-steps <n>] [diagnostics]
-  burdin bloat <file.bd | package directory> [--debug] [--top <n>] [--format <human|json>] [-j <n>]
-               [--comptime-steps <n>] [diagnostics]
-  burdin expand <file.bd | package directory> [--item <path>] [--instances] [--no-format] [-j <n>]
-                [--comptime-steps <n>] [diagnostics]
-  burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
-  burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
-  burdin lint <file.bd | package directory> [-A|-W|-D <lint>]... [--deny-warnings] [--fix [--dry-run]]
-              [-j <n>] [--comptime-steps <n>] [diagnostics]
-  burdin lint --list
-  burdin lint --explain <lint>
-  burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
-             [--coverage] [--deny-warnings] [-j <n>] [--comptime-steps <n>] [diagnostics]
-  burdin debug <file.bd | package directory> [--debugger <name | path>] [--test <name | index>]
-               [--break-on-panic] [--release] [-j <n>] [diagnostics] [-- <program arguments>...]
-  burdin explain [<error code>]
-  burdin bindgen <header> --out <file>
-  burdin new <name>
-  burdin add [<name>] (--path <dir> | --git <url> [--branch <b> | --tag <t> | --rev <commit>])
-             [--manifest-path <path>]
-  burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
-  burdin lsp [--stdio]
-  burdin dap [--stdio]
-  burdin --version
-
-compile options:
-  -j, --jobs <n>       run at most n threads: parsing, code generation, and formatting (default: BURDIN_JOBS,
-                       then the number of CPUs); `burdin test` also runs at most n tests at once
-  --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
-  --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
-  --emit <kinds>       also write build artifacts next to the output, one file per kind, named after its stem
-                       (`-o app` gives `app.s`, `app.ll`, ...): tir (the typed tree), llvm-ir (as generated),
-                       llvm-ir-opt (after optimization), llvm-bc (bitcode), asm, obj (one codegen unit), and
-                       deps (the same list as --emit-deps); kinds are separated by commas (spec/inspect.md)
-  --intel, --att       with `--emit asm`: the x86 assembly dialect (default: the target's, AT&T on x86)
-  --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,
-                       as `burdin test` does, without running anything (the debug adapter builds a test this way)
-  --locked             fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)
-
-add (the behavior is spec/packages.md):
-  adds a `path` or `git` dependency to the nearest burdin.toml (or --manifest-path's), resolves it and the whole
-  graph, and writes burdin.lock; a git dependency is pinned to the commit its branch, tag, or rev names now
-
-lint options (the lint reference is docs/lints.md):
-  -A, --allow <lint>   do not run the lint        -W, --warn <lint>   report it as a warning
-  -D, --deny <lint>    report it as an error      --deny-warnings     deny every lint that warns
-  --fix                apply the safe fixes (checked, all or nothing); --dry-run prints the diff only
-
-doc options (the behavior is spec/doc.md):
-  -o, --out <path>     a directory for html (default: <package>/target/doc), a file for json (default: stdout)
-  --output-format <f>  html (default) writes a static site; json writes the documented API as JSON
-  --private            document `priv` items, fields, and methods too
-  --coverage           print how much of the public interface is documented, per module
-  --deny-warnings      exit with status 1 when a doc comment has a broken link
-
-check options (type-check only: the front end and every memory check, no code generation or linking):
-  --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
-  --print-instances    print every generic instance the program created and why (spec/inspect.md)
-  --explain-ownership  print each function's source with margin annotations: its moves, copies, borrows, drops,
-                       drop flags, argument conventions, and derived clones (issue #587)
-  --fn <name>          with --explain-ownership: print only this function (or qualified name)
-  --format <fmt>       with --print-instances: `human` (default) or `json`; with --explain-ownership:
-                       annotated source, `text` (default), or `json` events with spans
-  --explain            print the path that leads to each memory error, with its rule ID and the suggested fix
-
-asm options (one function's assembly, with the source interleaved; the behavior is spec/inspect.md):
-  <function>           `module.name`, `Type.method`, or an instance such as `largest<i32>`; without it, the
-                       functions that have code are listed
-  --debug              build the debug profile (the default is release)    --llvm   print the LLVM IR instead
-  --intel, --att       the x86 assembly dialect                            --no-source   leave out source lines
-
-expand options (the program's source after comptime, derives, default and named arguments, and operators; the
-behavior is spec/inspect.md):
-  --item <path>        print only this function, type, constant, or method (`area`, `Circle.area`, `shapes.area`)
-  --instances          after the source, print each monomorphized instance of a generic function
-  --no-format          print the expansion without running the formatter over it
-
-test options:
-  -j, --jobs <n>       tests to run at once, and compilation threads (default: the number of CPUs)
-  -p <package>         run the tests of one package of the build; may repeat
-  --workspace          run the tests of the entry package and every path dependency
-  <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
-                       is the same as a positional filter
-  --exact              filters and --skip patterns must equal the full path instead of being contained in it
-  --skip <pattern>     do not run tests whose full path contains pattern; may repeat
-  --ignored            run only tests marked [ignore]
-  --include-ignored    run ignored tests too
-  --failed             run only the tests that failed in the previous run (kept under <package>/target/burdin)
-  --shard <i>/<n>      run the i-th of n deterministic slices of the selected tests (1 <= i <= n)
-  --timeout <ms>       per-test timeout (default: 60000; 0 disables it)
-  --slow-threshold <ms>  list tests that ran at least this long (default: 5000; 0 disables it)
-  --list               print the selected tests and their attributes without running them
-  --doc                run only the doc tests: the Burdin code blocks of doc comments (spec/test-runner.md)
-  --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
-                       test per line)
-  --junit <file>       also write a JUnit XML report of the run
-  -v, --verbose        print the output of passing tests too
-
-bench options (the behavior is spec/bench.md; benchmarks build in the release profile, so --release is the
-default and changes nothing):
-  -j, --jobs <n>       compilation threads only: benches are measured one at a time
-  -p <package>         measure the benches of one package of the build; may repeat
-  --workspace          measure the entry package and every path dependency
-  <filter>...          measure only benches whose full path contains any filter; --filter <text> is the same as
-                       a positional filter
-  --exact              filters and --skip patterns must equal the full path instead of being contained in it
-  --skip <pattern>     do not measure benches whose full path contains pattern; may repeat
-  --timeout <ms>       per-bench timeout (default: 600000; 0 disables it)
-  --warmup <ms>       how long the warmup of each bench runs (default: 100)
-  --sample-count <n>   how many samples each bench takes (default: 20)
-  --sample-time <ms>  the target duration of one sample (default: 5)
-  --list               print the selected benches without measuring them
-  --format <human|json>  human (default) prints the report; json streams one event per line (with --list, one
-                       bench per line)
-  --save-baseline <name>  store the measurements under <package>/target/burdin/bench/<name>.json
-  --baseline <name>    compare each measurement with the named baseline and report what changed beyond noise
-  --fail-on-regression <percent>  with --baseline, fail when a bench is this much slower and the change is
-                       beyond noise
-  --profile-time <seconds>  run one selected bench in a loop for this long without measuring, for an external
-                       profiler
-  -v, --verbose        print the captured output of passing benches too
-
-repl (the interactive session, spec/repl.md):
-  reads items, statements, and expressions from standard input; each input is checked by the real front end
-  and evaluated by the comptime interpreter, an expression's value prints with Debug, and the meta-commands
-  (:help lists them) include :type, :ownership, :explain, :load, :ir, :compile, and :reset; a standard input
-  that is not a terminal disables the interactive editing, so scripted sessions are deterministic
-
-lsp (the language server, spec/lsp.md):
-  speaks the Language Server Protocol on standard input and output; --stdio is accepted and changes nothing
-
-debug (the behavior is spec/debug.md):
-  builds the target with `-g` in a temporary directory and starts the platform debugger on it: lldb on macOS,
-  gdb (or lldb) on Linux, cdb on Windows. The pretty-printers load with the program, and `--break-on-panic`
-  starts stopped on `burdin_panic_begin`, before the panic prints anything. Program arguments go after `--`.
-  --debugger <name | path>  gdb, lldb, cdb, or a program to start instead
-  --test <name | index>     debug one `test` block, resolved like `burdin test`'s filters
-  --break-on-panic          start with a breakpoint on the panic hook
-  --release                 debug an optimized build
-
-bloat options (the size of each function, module, package, and generic in the release build; spec/inspect.md):
-  --debug              measure the debug profile        --top <n>   the n largest functions and generics (default 20)
-  --format <human|json>  a table (default) or one JSON object
-
-fmt options:
-  --check                  change nothing; list the files that are not formatted and exit with status 1
-  --stdin                  format standard input to standard output
-  --stdin-filepath <path>  the path standard input stands for (names it in diagnostics, finds its package)
-  --range <lo>:<hi>        with --stdin, format only the items that overlap these byte offsets
-
-diagnostics:
-  --diagnostic-format <human|short|json|sarif>
-                                          human (default) colors and wraps; short prints one plain line per
-                                          diagnostic; json prints one version 1 JSON object per line; sarif
-                                          prints one SARIF 2.1.0 log (docs/diagnostics.md)
-  --color <auto|always|never>             color (default auto: only when stderr is a terminal)
-  --no-color                              same as --color never
-  --width <columns>                       wrap human diagnostics at this width (0 disables wrapping)
-  --error-limit <n>                       print at most n errors after sorting (0 prints all)
-
-environment:
-  BURDIN_CC            C compiler driver used to link against libc (default: cc; cl on Windows)
-  BURDIN_CHANNEL       release channel printed by `--version` (dev, nightly, or stable; default: dev)
-  BURDIN_COMMIT        overrides the git commit printed by `--version`
-  BURDIN_HOME          where tools keep state, including the git dependency cache under git/ (default: the
-                       platform's directory for application data)
-  BURDIN_CODEGEN_UNITS split code generation into exactly this many units (default: by program size)
-  BURDIN_JOBS          the default of -j (default: the machine's parallelism; 1 is sequential)
-  BURDIN_VERSION       overrides the version printed by `--version` (nightly builds)
-  LLVM_SYS_211_PREFIX  LLVM 21 installation; its bin/llvm-config resolves `--link-lib LLVM-C`
-  COLUMNS              terminal width used when --width is not given
-  FORCE_HYPERLINK      1 links error codes to the error reference in colored output, 0 never does
-  NO_COLOR             disables color unless --color=always or --color=never says otherwise";
-
-const EXPLAIN_USAGE: &str = "\
-usage:
-  burdin explain           list the error codes
-  burdin explain <code>    print the reference entry for an error code (for example E0003)";
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Args {
@@ -343,7 +146,7 @@ pub(crate) enum ColorChoice {
 
 /// The build metadata `burdin --version` prints, in a fixed order: the version and release channel, the host target,
 /// the LLVM library the compiler is linked against, the git commit, and the profile.
-fn version_text() -> String {
+pub(crate) fn version_text() -> String {
     format!(
         "burdin {}
 channel: {}
@@ -734,10 +537,10 @@ fn main() -> ExitCode {
 /// 0 after `shutdown` and `exit`, 1 when the client exits without shutting down or the input closes first.
 fn lsp(args: &[String]) -> ExitCode {
     if let Some(other) = args.iter().find(|a| *a != "--stdio") {
-        eprintln!(
-            "error: unknown argument `{other}` for `burdin lsp` (it speaks LSP on standard input and output)\n{USAGE}"
+        return cli::usage_error(
+            "lsp",
+            &format!("unknown argument `{other}` for `burdin lsp` (it speaks LSP on standard input and output)"),
         );
-        return ExitCode::from(2);
     }
     ExitCode::from(burdin_lsp::serve_stdio() as u8)
 }
@@ -746,11 +549,10 @@ fn lsp(args: &[String]) -> ExitCode {
 /// forwards to lldb-dap and builds a launch request's `target` with this very executable.
 fn dap(args: &[String]) -> ExitCode {
     if let Some(other) = args.iter().find(|a| *a != "--stdio") {
-        eprintln!(
-            "error: unknown argument `{other}` for `burdin dap` (it speaks DAP on standard input and output)
-{USAGE}"
+        return cli::usage_error(
+            "dap",
+            &format!("unknown argument `{other}` for `burdin dap` (it speaks DAP on standard input and output)"),
         );
-        return ExitCode::from(2);
     }
     let driver = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("burdin"));
     ExitCode::from(burdin_dap::serve_stdio_with_driver(driver) as u8)
@@ -758,61 +560,32 @@ fn dap(args: &[String]) -> ExitCode {
 
 fn driver_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    if matches!(argv.as_slice(), [flag] if flag == "--version" || flag == "-V") {
-        println!("{}", version_text());
-        return ExitCode::SUCCESS;
-    }
-    if argv.first().map(String::as_str) == Some("fmt") {
-        return fmt::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("check") {
-        return check::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("asm") {
-        return asm::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("bloat") {
-        return bloat::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("expand") {
-        return expand::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("explain") {
-        return explain(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("bindgen") {
-        return bindgen::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("lint") {
-        return lint::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("doc") {
-        return doc::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("debug") {
-        return debug::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("new") {
-        return new::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("add") {
-        return add::run(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("lsp") {
-        return lsp(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("dap") {
-        return dap(&argv[1..]);
-    }
-    if argv.first().map(String::as_str) == Some("repl") {
-        return repl::run(&argv[1..]);
+    let command = match cli::route(&argv) {
+        cli::Route::Exit(code) => return code,
+        cli::Route::Command(command) => command,
+    };
+    let rest = &argv[1..];
+    match command.as_str() {
+        "fmt" => return fmt::run(rest),
+        "check" => return check::run(rest),
+        "asm" => return asm::run(rest),
+        "bloat" => return bloat::run(rest),
+        "expand" => return expand::run(rest),
+        "explain" => return explain(rest),
+        "bindgen" => return bindgen::run(rest),
+        "lint" => return lint::run(rest),
+        "doc" => return doc::run(rest),
+        "debug" => return debug::run(rest),
+        "new" => return new::run(rest),
+        "add" => return add::run(rest),
+        "lsp" => return lsp(rest),
+        "dap" => return dap(rest),
+        "repl" => return repl::run(rest),
+        _ => {}
     }
     let args = match parse_args(&argv) {
         Ok(a) => a,
-        Err(msg) => {
-            eprintln!("error: {msg}\n{USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(msg) => return cli::usage_error(&command, &msg),
     };
     let emit = (!args.emit.is_empty()).then(|| emit::Emit {
         kinds: args.emit.clone(),
@@ -865,15 +638,9 @@ fn explain(args: &[String]) -> ExitCode {
                 }
                 ExitCode::SUCCESS
             }
-            None => {
-                eprintln!("error: unknown error code `{code}`\n{EXPLAIN_USAGE}");
-                ExitCode::from(2)
-            }
+            None => cli::usage_error("explain", &format!("unknown error code `{code}`")),
         },
-        _ => {
-            eprintln!("error: `explain` takes one error code\n{EXPLAIN_USAGE}");
-            ExitCode::from(2)
-        }
+        _ => cli::usage_error("explain", "`explain` takes one error code"),
     }
 }
 

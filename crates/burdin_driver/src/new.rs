@@ -6,10 +6,6 @@ use crate::package::is_ident;
 use std::path::Path;
 use std::process::ExitCode;
 
-const NEW_USAGE: &str = "\
-usage:
-  burdin new <name>    create the package directory <name> with burdin.toml, src/main.bd, and .gitignore";
-
 /// `main.bd`: the program `burdin run` prints a greeting for.
 const MAIN: &str = "fn main() {\n    println(\"hello, world\")\n}\n";
 
@@ -19,10 +15,6 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     let mut target: Option<&str> = None;
     for arg in args {
         match arg.as_str() {
-            "-h" | "--help" => {
-                println!("{NEW_USAGE}");
-                return ExitCode::SUCCESS;
-            }
             option if option.starts_with('-') => return usage_error(&format!("unknown option `{option}`")),
             _ if target.is_none() => target = Some(arg),
             _ => return usage_error(&format!("unexpected argument `{arg}`")),
@@ -44,8 +36,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 }
 
 fn usage_error(message: &str) -> ExitCode {
-    eprintln!("error: {message}\n{NEW_USAGE}");
-    ExitCode::from(2)
+    crate::cli::usage_error("new", message)
 }
 
 /// Creates the package directory at `dir` and returns the package name, which is the last component of `dir`.

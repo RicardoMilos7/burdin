@@ -33,3 +33,6 @@ inkwell = { version = "=0.11.0", default-features = false, features = ["llvm21-1
 # The C layouts the runtime reads from libc (`struct stat`, `struct dirent`), so metadata and directory
 # listings use the host's exact field offsets (issue #411).
 libc = "=0.2.191"
+# The `burdin` command tree and its help (`crates/burdin_driver/src/cli.rs`). Only the builder API, without color or
+# terminal-size detection, keeps the crates it pulls in to clap_builder, clap_lex, anstyle, and strsim.
+clap = { version = "=4.6.8", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions"] }
