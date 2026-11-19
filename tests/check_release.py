@@ -29,6 +29,14 @@ WORKFLOW = harness.ROOT / ".github" / "workflows" / "release.yml"
 RELEASE_SCRIPT = harness.TESTS / "build_release.py"
 INSTALL_SH = harness.ROOT / "install.sh"
 INSTALL_PS1 = harness.ROOT / "install.ps1"
+INSTALLER_SETTINGS = (
+    "BURDIN_VERSION",
+    "BURDIN_CHANNEL",
+    "BURDIN_TARGET",
+    "BURDIN_INSTALL_DIR",
+    "BURDIN_BASE_URL",
+    "BURDIN_RELEASE_DIR",
+)
 NOTES = harness.TESTS / "release_notes.py"
 POLICY = harness.ROOT / "docs" / "releasing.md"
 
@@ -376,6 +384,14 @@ with harness.temporary_dir("burdin-release-") as work:
             if needle not in ps_text:
                 add_problem(f"install.ps1: missing: {needle}")
 
+    # The installer reads its own settings from the environment, and the release workflow sets BURDIN_VERSION and
+    # BURDIN_CHANNEL for this script, so the rehearsals start from an environment without them.
+    installer_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in INSTALLER_SETTINGS
+    }
+
     linux_archive = dist_a / "burdin-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
     if INSTALL_SH.is_file() and linux_archive.is_file():
         release = work / "release"
@@ -391,7 +407,7 @@ with harness.temporary_dir("burdin-release-") as work:
             ["sh", str(INSTALL_SH)],
             merge=True,
             env={
-                **os.environ,
+                **installer_env,
                 "BURDIN_RELEASE_DIR": str(release),
                 "BURDIN_TARGET": "x86_64-unknown-linux-gnu",
                 "BURDIN_INSTALL_DIR": str(work / "install"),
@@ -419,7 +435,7 @@ with harness.temporary_dir("burdin-release-") as work:
             ["sh", str(INSTALL_SH)],
             merge=True,
             env={
-                **os.environ,
+                **installer_env,
                 "BURDIN_RELEASE_DIR": str(tampered),
                 "BURDIN_TARGET": "x86_64-unknown-linux-gnu",
                 "BURDIN_INSTALL_DIR": str(work / "install-tampered"),
@@ -444,7 +460,7 @@ with harness.temporary_dir("burdin-release-") as work:
             ["sh", str(INSTALL_SH)],
             merge=True,
             env={
-                **os.environ,
+                **installer_env,
                 "BURDIN_RELEASE_DIR": str(missing),
                 "BURDIN_TARGET": "x86_64-unknown-linux-gnu",
                 "BURDIN_INSTALL_DIR": str(work / "install-missing"),
@@ -457,7 +473,7 @@ with harness.temporary_dir("burdin-release-") as work:
             ["sh", str(INSTALL_SH)],
             merge=True,
             env={
-                **os.environ,
+                **installer_env,
                 "BURDIN_RELEASE_DIR": str(release),
                 "BURDIN_TARGET": "riscv64-unknown-linux-gnu",
                 "BURDIN_VERSION": "9.9.9",
@@ -470,7 +486,7 @@ with harness.temporary_dir("burdin-release-") as work:
             ["sh", str(INSTALL_SH)],
             merge=True,
             env={
-                **os.environ,
+                **installer_env,
                 "BURDIN_RELEASE_DIR": str(release),
                 "BURDIN_TARGET": "x86_64-unknown-linux-gnu",
                 "BURDIN_VERSION": "9.9.9",
