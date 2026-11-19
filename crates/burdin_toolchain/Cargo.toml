@@ -1,0 +1,17 @@
+[package]
+name = "burdin_toolchain"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The toolchain manager behind `burdin toolchain` and the `burdin` proxy that selects a toolchain for each command
+# (`spec/toolchain.md`). The release archive carries it as `burdin-toolchain`; the installers copy it to the bin
+# directory as `burdin` and `burdin-lsp`. It never links the compiler or LLVM: downloads go through `curl`, archives
+# are unpacked with `tar`, and the checksums are verified with `burdin_sha256`.
+[[bin]]
+name = "burdin-toolchain"
+path = "src/main.rs"
+
+[dependencies]
+burdin_json.workspace = true
+burdin_sha256.workspace = true

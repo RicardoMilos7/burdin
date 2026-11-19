@@ -7,3 +7,4 @@ publish.workspace = true
 [dependencies]
 burdin_query.workspace = true
 burdin_syntax.workspace = true
+burdin_sha256.workspace = true

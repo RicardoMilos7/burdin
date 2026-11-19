@@ -6,6 +6,19 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The toolchain manager (stage 3, issue #624: #626, #628, #630, #631; `spec/toolchain.md`). The new
+  `crates/burdin_toolchain` builds `burdin-toolchain`, which the release archive carries and the installers copy into
+  the install directory as the `burdin` and `burdin-lsp` proxies. `burdin toolchain install|update|list|default|remove`
+  manages `stable`, `nightly`, and exact versions under the Burdin home, with downloads that resume and are verified
+  against `SHA256SUMS` before they replace anything. `burdin +<toolchain> ...`, `BURDIN_TOOLCHAIN`, the nearest
+  `burdin-toolchain.toml` (installed on first use), and the default select a toolchain, in that order, and
+  `burdin toolchain show` says which applied and why. The `debuggers`, `docs`, `lsp`, and `std-src` components are
+  separate verified archives in each release, installed on demand; a target other than the host is refused until
+  cross-compilation exists (issue #282). `burdin toolchain self show|update|uninstall` prints where everything lives,
+  replaces the proxies with a newer release's manager, and removes exactly what the installers and the manager
+  created, including the startup-file line or user `PATH` entry. `tests/check_toolchain.py` checks it in every CI job.
+  SHA-256 moved into the new `crates/burdin_sha256`, shared with the package resolver.
+
 - The `burdin` help is now cargo-style and built with clap (`crates/burdin_driver/src/cli.rs`): `burdin` or
   `burdin --help` lists the commands with a one-line summary each, and `burdin <command> --help` or
   `burdin help <command>` prints that command's usage, arguments, grouped options, and notes. A mistyped command gets

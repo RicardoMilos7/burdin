@@ -52,7 +52,8 @@ not updated and may disagree with the repository.
    the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests,
    `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, `spec/scripts.md` is
    single-file scripts, the shebang, the inline manifest, and the binary cache, `spec/packages.md` is path and git
-   dependencies, `burdin.lock`, `--locked`, and `burdin add`, and `spec/debug.md` is debugging: the
+   dependencies, `burdin.lock`, `--locked`, and `burdin add`, `spec/toolchain.md` is the toolchain manager: `burdin
+   toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
@@ -107,6 +108,7 @@ python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules,
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
+python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
 python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
@@ -177,6 +179,12 @@ crates/
                             resolution, the checksum, and keeping `burdin.lock` current or `--locked` (`resolve.rs`),
                             `burdin add`'s manifest edit (`add.rs`), and SHA-256 (`sha256.rs`); it depends on
                             burdin_query and burdin_syntax, runs only `git`, and the driver is its only caller
+  burdin_toolchain/         the toolchain manager and the `burdin` proxy (spec/toolchain.md): names and versions
+                            (`version.rs`), the home, settings, and receipt (`home.rs`), releases, resumable verified
+                            downloads, and unpacking (`dist.rs`), installs and components (`install.rs`), selection and
+                            `burdin-toolchain.toml` (`select.rs`), the proxy (`proxy.rs`), the commands (`cli.rs`,
+                            `selfcmd.rs`); it links no compiler crate and no LLVM, only burdin_json and burdin_sha256
+  burdin_sha256/            SHA-256, shared by the package resolver and the toolchain manager
   burdin_json/              the JSON value, its parser, and the `Content-Length` framing: shared by the language
                             server and the debug adapter
   burdin_dap/               the debug adapter behind `burdin dap` (spec/debug.md, DBG11): the lldb-dap child

@@ -116,6 +116,12 @@ step. A prebuilt compiler needs
 the LLVM 21 shared library at run time (`libLLVM-21.so`, `libLLVM.dylib`, or `LLVM-C.dll`); it is not bundled. The
 artifact names, checksums, reproducibility rules, and release steps are in [`docs/releasing.md`](docs/releasing.md).
 
+A release that carries the toolchain manager installs through it: the installed `burdin` is a proxy that runs the
+selected toolchain, and `burdin toolchain` installs several toolchains side by side (`stable`, `nightly`, `0.4.1`),
+updates them, pins one per project with `burdin-toolchain.toml`, selects one per command with `burdin +nightly ...`,
+adds components (`lsp`, `std-src`, `docs`, `debuggers`), and updates or uninstalls itself. See
+[`spec/toolchain.md`](spec/toolchain.md).
+
 ## Hello, world
 
 Write `hello.bd`:
