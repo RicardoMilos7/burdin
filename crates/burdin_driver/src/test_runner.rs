@@ -12,7 +12,7 @@ mod report;
 pub(crate) mod select;
 
 use crate::package::{self, Workspace};
-use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, USAGE, compile};
+use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, compile};
 use burdin_tir::{TestAttrs, TestEntry, TestOutcome};
 use doc_tests::{DocAttrs, DocExample};
 use select::FailedRecord;
@@ -181,15 +181,16 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     let selected = match select_packages(args, &workspace) {
         Ok(selected) => selected,
         Err(message) => {
-            eprintln!("error: {message}\n{USAGE}");
-            return ExitCode::from(2);
+            return crate::cli::usage_error("test", &message);
         }
     };
     // `--failed` reads what the previous run left under the package's `target` directory, so it needs a package.
     let record_path = failed_record_path(&workspace, args);
     if args.failed && record_path.is_none() {
-        eprintln!("error: `--failed` needs a package directory to keep its record in, not a single file\n{USAGE}");
-        return ExitCode::from(2);
+        return crate::cli::usage_error(
+            "test",
+            "`--failed` needs a package directory to keep its record in, not a single file",
+        );
     }
     let previous = record_path.as_deref().and_then(FailedRecord::load);
 

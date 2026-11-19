@@ -1,7 +1,7 @@
 # The language server
 
 `burdin lsp` is the Burdin language server (stage 3; issue #242 and its sub-issues #309-#313, #365-#376, #470, and
-#662). It speaks the Language Server Protocol 3.17 over standard input and output and answers every request from the
+#662; completion, snippets, and the built-ins in #819-#824). It speaks the Language Server Protocol 3.17 over standard input and output and answers every request from the
 query-based compiler library (`spec/query.md`), so an editor sees exactly the diagnostics, types, and names the command
 line does. This file is the exact behavior, with a rule ID for each point and the tests that cover it.
 
@@ -132,10 +132,17 @@ Tests: `every_error_of_a_file_is_published_with_its_code_and_span` (`broken-diag
 declaration names itself; a local or parameter its binding; a `use` path its module or item; a call, type, constant,
 or variant its declaration; a field or method after `.` the member of the receiver's type (through the analysis); a
 field in a struct literal the struct's field, and a shorthand field (`Rect { w, h }`) the local it reads. A name of the
-standard library opens a copy of its source materialized under the temporary directory. A keyword, literal, or comment
+standard library opens a copy of its source materialized under the temporary directory. The standard library is part of
+every package's database (embedded, read-only, and memoized like a dependency: an edit never checks it again). The
+compiler's built-ins have no Burdin source (`println`, `format`, `panic`, the built-in types, and their compiler-provided
+methods such as `String.new`, `str.len`, `i32.to_string`, `List.push`); the server writes their declarations, with a
+doc comment each, into one generated file, `builtins.bd`, beside the materialized standard library (`builtins.rs`),
+and a definition lands there. The same declarations answer hover, signature help, and completion; the file is never
+compiled, and its names cannot be renamed. A keyword, literal, or comment
 has no definition (`null`). When the latest analysis has no program (the file does not parse), the last analysis that
 had one answers, with positions mapped through the edit.
-Tests: `definition_finds_functions_types_methods_fields_locals_and_modules`.
+Tests: `definition_finds_functions_types_methods_fields_locals_and_modules`,
+`builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`.
 
 **LS9. References, highlights, rename.** `textDocument/references` lists every identifier, in every file of every
 package that contains the declaration, that resolves to the same declaration; `includeDeclaration` adds the
@@ -169,17 +176,72 @@ answer's range is the name.
 Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`
 (`ownership-hover.json`), `positions_count_utf16_units_or_utf8_bytes_as_negotiated`.
 
-**LS12. Completion.** After `x.`, the members of `x`: a module's items, a type's variants and methods, or a value's
-fields and then methods, by the receiver's type (on a line that does not parse yet, from the last analysis with a
-program and the receiver's declaration). In a `use` path, the modules and the public items below the path written so
-far, from the package and its dependencies (a dependency's `priv` items are left out). Anywhere else, the locals and
-parameters declared before the cursor (nearest first), the file's items, the imported names, the standard library's
-prelude, the built-in types, and the keywords. `.` triggers completion.
-Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_another_root_is_navigable_and_not_checked_again`.
+**LS12. Completion.** What is offered depends on where the cursor is (issues #819-#824):
+
+- **After `x.`**, the members of `x`. A module (an alias, an imported module, a dependency, or a standard-library
+  module the prelude binds, such as `mem` or `fs`): its items. A type written by name (`String.`, `i32.`, `Rect.`): its
+  variants and its associated functions (no `self`): the built-ins' (`String.new`, `String.with_capacity`), the
+  standard library's hidden `__type_name` ones by their name (`f64.parse`, `i32.from_le_bytes`), and the user's. A
+  value: its fields, then its methods, by the receiver's type: the type's own methods and the extension methods on it
+  (the prelude's included, such as `str.trim` and `i32.pow`), the built-in methods of a built-in type
+  (`i32.to_string`, `String.push_str`), the methods of every interface it implements or derives, and the ones an
+  implementation or derive provides (`to_string` through `Display`, `clone` through `Clone`, `cmp` through `Ord`). A
+  literal is a value of its type: `"..."` a `str` (an interpolated one a `String`), an integer literal an `i32`, a float
+  literal an `f64`, a character a `char`, and `true`/`false` a `bool`. On a line that does not parse yet, the type
+  comes from the last analysis with a program and the receiver's declaration (or its spelling, for a literal).
+- **In a `use` path**, the modules and the public items below the path written so far, from the package and its
+  dependencies (a dependency's `priv` items are left out).
+- **At a function declaration's parameter**: directly after `fn name(` inside an impl block, an interface, or a
+  `derive`, or in an extension method (`fn Type.name(`), the receiver forms `self`, `mut self`, and `own self`; at any
+  other parameter, and in a free function, only the conventions `mut`, `own`, and `comptime`. A `self` parameter is
+  valid only first and only in a method, so it is never offered elsewhere.
+- **In the `: A, B` list after `struct Name` or `enum Name`** (and their generic parameters; issue #825), after the
+  `:` or a `,`, the seven derives the compiler knows (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`, `spec/derives.md`) and
+  the `derive` declarations the file can name (its own, the imported ones, and the standard library's public ones),
+  and nothing else. Directly after the type's name nothing is offered (the list's `:`, `repr(C)`, or the body comes
+  next), and a `:` inside the generic parameters starts a bound, not the list. The name a `struct`, `enum`,
+  `interface`, or `fn` is introducing gets no completion.
+- **Anywhere else**, the locals and parameters declared before the cursor (nearest first), the file's items, the
+  imported names, the built-in functions, the prelude (every public item of every standard-library module, and the
+  one-segment standard modules by name, such as `env`, `fs`, and `mem`), the built-in types, and the keywords.
+
+**Snippets.** When the client advertises `textDocument.completion.completionItem.snippetSupport`, the server adds
+snippet items (kind `Snippet`, `insertTextFormat` 2, tab stops `${n:...}` and the final `$0`). A snippet replaces the
+plain keyword of the same label. At the start of a line at the top level (item position):
+
+| Label | Inserts |
+| --- | --- |
+| `main` | `fn main() {` / `$0` / `}` |
+| `fn` | `fn ${1:name}(${2}): ${3:Type} {` / `$0` / `}` |
+| `struct`, `enum`, `interface` | `struct ${1:Name} {` / `$0` / `}` (and the same for the others) |
+| `error enum` | `error enum ${1:Name} {` / `${2:Variant} "${3:message}"` / `}` |
+| `impl` | `${1:Type} {` / `$0` / `}` |
+| `impl interface` | `${1:Type}: ${2:Interface} {` / `$0` / `}` |
+| `test`, `bench` | `test "${1:name}" {` / `$0` / `}` (and the same for `bench`) |
+
+At the start of a line inside an impl block, an interface, or a `derive`, `fn` is a method:
+`fn ${1:name}(${2:self}): ${3:Type} {` / `$0` / `}`. At the start of a line inside a body (statement position): `if`
+(`if ${1:condition} {` / `$0` / `}`), `match` (`match ${1:value} {` / `${2:pattern} => ${3:result}` / `}`), `for`
+(`for ${1:item} in ${2:items} {` / `$0` / `}`), and `while` (`while ${1:condition} {` / `$0` / `}`). Item snippets are
+offered only at item position and statement snippets only inside a body. A client without `snippetSupport` gets no
+snippet item, only the plain keywords.
+
+**Call parentheses.** With `snippetSupport`, accepting a function or method inserts the call too: `name($0)` when it
+takes parameters, with the `editor.action.triggerParameterHints` command so signature help opens, and `name()$0` when
+it takes none (a method's `self` does not count). The bare name is inserted when the next character is already `(`, in
+a `use` path, and when the client has no `snippetSupport`. `.` triggers completion.
+Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
+`members_after_a_type_name_a_literal_and_a_primitive`,
+`builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
+`self_is_offered_only_as_the_first_parameter_of_a_method`, `snippets_follow_the_position_and_the_client`,
+`completing_a_function_inserts_the_call`, `derives_and_the_derivable_interfaces`; the `builtins.rs` unit test.
 
 **LS13. Signature help and inlay hints.** Inside a call's argument list, signature help shows the callee's signature
 with each parameter's label range and the active parameter (counting commas at the call's depth; a method's `self` is
-not a parameter); outside a call it is `null`. Inlay hints show `: Type` after a `let` name without a written type
+not a parameter); outside a call it is `null`. A built-in without source is answered from its declaration in
+`builtins.bd` (LS8): `println(` shows `fn println(fmt: str, ...)` with the parameters `fmt: str` and `...`, and the
+variadic `...` stays the active parameter for every argument after `fmt`; a built-in method on a value
+(`n.wrapping_add(`) skips its `self` like any other method. Inlay hints show `: Type` after a `let` name without a written type
 (not when the type is unknown or an error), and `name:` before a positional argument written in an argument list,
 unless the argument already says the name (`a` for `a`, `x.a` for `a`), the argument is named, or the parameter is
 `self`; a `mut` marker comes after the hint. LS5's two settings turn each kind off.
@@ -189,7 +251,9 @@ The ownership lens is the third kind, off by default (`inlayHints.ownership`): a
 (`drop <local> (conditional)` when a runtime flag guards it, and `drop flag <local>` at a conditional move), all from
 the same event list as the command line's `--explain-ownership`. The server renders the events of
 `Analysis::ownership_events` and stops there; it never re-derives a move, a drop, or a flag.
-Tests: `signature_help_marks_the_active_parameter`, `inlay_hints_for_types_and_parameter_names_can_be_turned_off`
+Tests: `signature_help_marks_the_active_parameter`,
+`builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
+`inlay_hints_for_types_and_parameter_names_can_be_turned_off`
 (`inlay-hints.json`), `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them` (`ownership-hints.json`).
 
 **LS14. Semantic tokens.** `semanticTokens/full` and `/range` classify every identifier by what it resolves to, with

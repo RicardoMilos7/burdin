@@ -12,20 +12,6 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub(crate) const DOC_USAGE: &str = "\
-usage:
-  burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
-             [--coverage] [--deny-warnings] [-j <n>] [--comptime-steps <n>] [diagnostics]
-
-doc options:
-  -o, --out <path>         where to write: a directory for html (default: <package>/target/doc), a file for json
-                           (default: standard output)
-  --output-format <f>      html (default) writes a static site; json writes the documented API as JSON
-  --private                document `priv` items, fields, and methods too
-  --coverage               print how much of the public interface is documented, per module, and write nothing else
-  --deny-warnings          exit with status 1 when a doc comment has a broken link
-  -j, --jobs <n>           parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)";
-
 /// The marker file that says a directory holds a site `burdin doc` wrote, and which files it wrote.
 const MARKER: &str = ".burdin-doc";
 
@@ -123,10 +109,7 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
 pub(crate) fn run(argv: &[String]) -> ExitCode {
     let args = match parse(argv) {
         Ok(a) => a,
-        Err(message) => {
-            eprintln!("error: {message}\n{DOC_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("doc", &message),
     };
     let options = CompileOptions {
         release: false,

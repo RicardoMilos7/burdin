@@ -5,8 +5,8 @@
 //! `burdin build` changes: this command only picks the profile, the `-g` flag, and where the executable goes.
 
 use crate::{
-    ColorChoice, CompileOptions, DiagnosticOptions, TempDir, USAGE, compile, jobs_or_default, parse_color,
-    parse_format, parse_number,
+    ColorChoice, CompileOptions, DiagnosticOptions, TempDir, compile, jobs_or_default, parse_color, parse_format,
+    parse_number,
 };
 use burdin_diag::DiagnosticFormat;
 use std::path::{Path, PathBuf};
@@ -258,8 +258,7 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
     let args = match parse(words) {
         Ok(args) => args,
         Err(message) => {
-            eprintln!("error: {message}\n{USAGE}");
-            return ExitCode::from(2);
+            return crate::cli::usage_error("debug", &message);
         }
     };
     let target = args.target.clone();

@@ -72,8 +72,8 @@ Tests: `budget.bd` (fine with the default budget, E0225 with 1000 steps), the us
 
 **CK8. Exit statuses.** 0: no errors (warnings allowed). 1: the front end reported errors, or the package could not be
 loaded or read (a missing target, an unreadable file, a missing `main.bd`, a failing build script). 2: a usage error (a
-missing target, an unknown option, a bad value); the usage is printed after the message. `--help` prints the usage to
-standard output and exits 0.
+missing target, an unknown option, a bad value); the usage is printed after the message. `--help` prints the command's
+help (usage, options, and notes) to standard output and exits 0.
 Tests: the exit status of every fixture, the missing target, the usage-error checks, `--help`.
 
 **CK9. `--print-instances`.** After a clean check the command prints the monomorphization report (`spec/inspect.md`,

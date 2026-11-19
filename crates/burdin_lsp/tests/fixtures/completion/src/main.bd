@@ -1,0 +1,39 @@
+use util.twice
+
+/// Something that describes itself.
+interface Describe {
+    fn describe(self): String
+}
+
+derive Describe {
+    fn describe(self): String {
+        String.from(Self.name)
+    }
+}
+
+/// A point.
+struct Point: Clone, Describe {
+    x: i32
+    y: i32
+}
+
+Point {
+    fn origin(): Point {
+        Point { x: 0, y: 0 }
+    }
+
+    fn sum(self): i32 {
+        self.x + self.y
+    }
+
+    fn shift(mut self, dx: i32) {
+        self.x = self.x + dx
+    }
+}
+
+fn main() {
+    let n: i32 = 5
+    let mut p = Point.origin()
+    p.shift(twice(n))
+    println("{n} {p.sum()}")
+}

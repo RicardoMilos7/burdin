@@ -5,18 +5,6 @@ use burdin_query::lockfile::GitRef;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub(crate) const ADD_USAGE: &str = "\
-usage:
-  burdin add [<name>] --path <dir> [--manifest-path <path>]
-  burdin add [<name>] --git <url> [--branch <branch> | --tag <tag> | --rev <commit>] [--manifest-path <path>]
-
-  <name>                  the name `use` reaches the dependency by (default: the dependency's package name)
-  --path <dir>            a package directory, relative to the working directory
-  --git <url>             a git repository whose root is a package; --branch, --tag, or --rev picks the commit
-                          (default: the repository's default branch), and burdin.lock pins it
-  --manifest-path <path>  the burdin.toml to edit, or its directory (default: the nearest burdin.toml at or above
-                          the working directory)";
-
 #[derive(Debug, Default)]
 struct AddArgs {
     name: Option<String>,
@@ -32,13 +20,10 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     let args = match parse(argv) {
         Ok(Some(args)) => args,
         Ok(None) => {
-            println!("{ADD_USAGE}");
+            crate::cli::print_help("add");
             return ExitCode::SUCCESS;
         }
-        Err(message) => {
-            eprintln!("error: {message}\n{ADD_USAGE}");
-            return ExitCode::from(2);
-        }
+        Err(message) => return crate::cli::usage_error("add", &message),
     };
     let manifest_dir = match manifest_dir(args.manifest.as_deref()) {
         Ok(dir) => dir,
