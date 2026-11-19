@@ -122,7 +122,15 @@ fn static_link_args_unix(prefix: &Path, target_os: &str) -> Vec<String> {
             }
         }
     }
-    args.push(if target_os == "macos" { "-lc++" } else { "-lstdc++" }.to_string());
+    if target_os == "macos" {
+        args.push("-lc++".to_string());
+    } else {
+        args.push("-lstdc++".to_string());
+        // rustc's own `-lc` comes before these archives, and the linker drops a shared library nothing has used yet
+        // (`--as-needed`). LLVM's objects call into libc too: on arm64 glibc the stack protector reads the global
+        // `__stack_chk_guard` there (x86-64 uses a thread-local canary and never showed it).
+        args.push("-lc".to_string());
+    }
     args
 }
 
