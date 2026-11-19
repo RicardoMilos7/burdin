@@ -43,6 +43,7 @@ tests/
                        their stress tests
   s2_io/               stage 2.4: the reactor, timers, the file helper pool, `blocking` extern functions, TCP and
                        UDP sockets, name resolution, and their stress tests
+  s3_scripts/          stage 3: the shebang line of a single-file script and its inline dependency manifest
 ```
 
 A test for a design question that is still open can be marked `//@ undecided: question`. The runner skips it.
@@ -260,6 +261,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0280 | A value that is not `Send` (or not `Sync`) given to something that needs it: a task or thread whose closure moves or borrows one, a `Channel<T>` of one, or a call whose type argument misses a `Send` or `Sync` bound. The message names the field or capture that makes it so |
 | E0281 | An invalid `Send` or `Sync` implementation: one not written `unsafe`, an `unsafe` block for an interface other than `Send` or `Sync`, or one that gives a method |
 | E0290 | An invalid `blocking` marker: on a declaration that is not an `extern "C"` function, on a variadic declaration, or two declarations of one C symbol that disagree about it |
+| E0300 | A `#!` shebang line anywhere but the first line of a file |
 
 ### Codes without a compile-fail test
 

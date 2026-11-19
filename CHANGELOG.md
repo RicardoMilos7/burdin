@@ -6,6 +6,32 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### The REPL (issue #578, sub-issues #580, #582, #584)
+
+- `burdin repl` (new crate `burdin_repl`, `spec/repl.md` RP1-RP15) is a session built on the comptime interpreter
+  and the query library: inputs are items, statements, or expressions, the session is one growing program — `main`'s
+  body for statements, module content below it for items — so every diagnostic is the one `burdin build` reports and
+  moves and borrows persist across lines with the same E-codes. An expression's value prints with `Debug` through
+  the standard library's own formatter, interpreted, so the output is byte-for-byte the compiled program's. A failed
+  input is discarded and the bindings restored.
+- Meta-commands (#584): `:type` and `:ownership` analyze a throwaway probe and evaluate nothing; `:explain` shares
+  the reference text with `burdin explain`; `:load` appends a file's module content atomically; `:reset` runs the
+  bindings' drops; `:ir` and `:compile` come from the driver, the two operations that need the back end.
+- Interactive mode (#582), only when standard input is a terminal: a raw-mode line editor (`libc` termios on Unix,
+  the console API on Windows; no new dependency), history in the Burdin home, highlighting with the editor
+  grammar's token classes, Tab completion through the query library, and multi-line input decided by the parser.
+  A piped standard input disables all of it, so scripted sessions are deterministic.
+
+### Single-file scripts (issue #586)
+
+- A one-file target whose first line is `#!` or whose leading `//!` doc block declares `[dependencies]` is a script
+  (`spec/scripts.md` SC1-SC7): the lexer skips the shebang at byte 0 (and only there; elsewhere it is the new
+  E0300), and the loader resolves the fragment into a hidden in-memory package, so `build`, `check`, and `test`
+  see the dependencies too.
+- `burdin run script.bd` caches its binary by content under `<burdin home>/cache/scripts/<key>/`: the script text,
+  the dependency closure's manifests and sources, the compiler's identity, and the flags that change a build. An
+  unchanged script runs from the cache; changing it or a dependency rebuilds. A plain one-file target is unchanged.
+
 ### Parallel compilation and `-j` (issues #334, #352, #773)
 
 - Code generation is parallel: after lowering, unused runtime and glue functions are dropped, and a program of more

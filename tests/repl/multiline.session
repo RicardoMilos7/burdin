@@ -1,0 +1,9 @@
+fn area(w: i32, h: i32): i32 {
+    w * h
+}
+area(3, 4)
+match area(1, 2) {
+    2 => "two",
+    other => "other",
+}
+:quit

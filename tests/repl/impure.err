@@ -1,0 +1,5 @@
+main.bd:6:1: error[E0224]: running tasks and threads, or network I/O is not
+    allowed at compile time: comptime is pure (spec/comptime.md, CT9); the
+    interpreter cannot do this, but `:compile` builds the session and runs it
+    natively
+  = note: the input was discarded and the session is unchanged

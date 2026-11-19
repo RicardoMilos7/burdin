@@ -2,7 +2,7 @@
 //! (equality, ordering, hashing, layout) that compiled code answers with generated glue. Each one follows the code
 //! generator's behavior so a comptime result is the result the compiled program would compute (CT1).
 
-use crate::interp::{Fault, Interp, Mode, R, impure, range_bounds};
+use crate::interp::{Fault, Interp, Mode, Output, R, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
 use burdin_tir::{
@@ -10,6 +10,8 @@ use burdin_tir::{
 };
 use std::cmp::Ordering;
 use std::collections::VecDeque;
+use std::io::IsTerminal as _;
+use std::io::Write as _;
 use std::rc::Rc;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -27,6 +29,25 @@ fn panic(msg: impl Into<String>, span: Span) -> crate::interp::Unwind {
 
 fn internal(msg: impl Into<String>, span: Span) -> crate::interp::Unwind {
     Fault::Internal(msg.into(), span).into()
+}
+
+/// Writes `bytes` to the process's standard output or error, with a trailing newline when `newline`. This is the
+/// one side effect a REPL session may perform (`spec/repl.md`, RP3); a failure to write is a panic, as it is in
+/// the compiled program's runtime.
+fn write_stream(bytes: &[u8], newline: bool, err: bool, span: Span) -> R<()> {
+    let written = |stream: &mut dyn std::io::Write| -> std::io::Result<()> {
+        stream.write_all(bytes)?;
+        if newline {
+            stream.write_all(b"\n")?;
+        }
+        Ok(())
+    };
+    let target = if err { "standard error" } else { "standard output" };
+    let ok = if err { written(&mut std::io::stderr()) } else { written(&mut std::io::stdout()) };
+    match ok {
+        Ok(()) => Ok(()),
+        Err(e) => Err(panic(format!("cannot write to {target}: {e}"), span)),
+    }
 }
 
 /// `v` reduced to the range of `ty`, two's complement.
@@ -508,18 +529,77 @@ impl<'p> Interp<'p, '_> {
         matches!(e.kind, K::Local(_) | K::Field(..) | K::Index(..) | K::Deref(_) | K::DerefRef(_))
     }
 
+    /// `print`/`println` (and their error-stream forms): the text of `e`, written to the process's standard
+    /// output or error when this is a REPL session, or the impure fault a compile-time evaluation reports.
+    fn print_value(&mut self, e: &'p Expr, newline: bool, err: bool, span: Span) -> R<Value> {
+        let what = if err { "printing to standard error" } else { "printing" };
+        if self.out != Output::Live {
+            return Err(impure(what, span));
+        }
+        let text = self.peek(e, |v| v.bytes().to_vec())?;
+        write_stream(&text, newline, err, span)?;
+        Ok(Value::Unit)
+    }
+
+    /// `__stdout_write` and its line and error-stream forms: like [`Interp::print_value`] for the low-level
+    /// builtins the standard library's writers call.
+    fn write_value(&mut self, e: &'p Expr, newline: bool, err: bool, span: Span) -> R<Value> {
+        let what = if err { "writing to standard error" } else { "writing to standard output" };
+        if self.out != Output::Live {
+            return Err(impure(what, span));
+        }
+        let text = self.peek(e, |v| v.bytes().to_vec())?;
+        write_stream(&text, newline, err, span)?;
+        Ok(Value::Unit)
+    }
+
+    /// `__stdout_write_bytes`/`__stderr_write_bytes`: the elements of `e` as bytes.
+    fn write_bytes_value(&mut self, e: &'p Expr, err: bool, span: Span) -> R<Value> {
+        let what = if err { "writing to standard error" } else { "writing to standard output" };
+        if self.out != Output::Live {
+            return Err(impure(what, span));
+        }
+        let bytes =
+            self.peek(e, |v| v.elems().iter().map(|x| u8::try_from(x.int()).unwrap_or(0)).collect::<Vec<u8>>())?;
+        write_stream(&bytes, false, err, span)?;
+        Ok(Value::Unit)
+    }
+
     pub(crate) fn builtin(&mut self, b: Builtin, args: &'p [Expr], ty: &Ty, span: Span) -> R<Value> {
         Ok(match b {
-            Builtin::Print | Builtin::Println => return Err(impure("printing", span)),
-            Builtin::Eprint | Builtin::Eprintln => return Err(impure("printing to standard error", span)),
-            Builtin::StdoutWrite | Builtin::StdoutWriteLine | Builtin::StdoutWriteBytes => {
-                return Err(impure("writing to standard output", span));
+            Builtin::Print | Builtin::Println | Builtin::Eprint | Builtin::Eprintln => {
+                // In a REPL session the output builtins write the process's real streams, exactly as the
+                // compiled program would (`spec/repl.md`, RP3); compile-time evaluation still rejects them.
+                let newline = matches!(b, Builtin::Println | Builtin::Eprintln);
+                let err = matches!(b, Builtin::Eprint | Builtin::Eprintln);
+                return self.print_value(&args[0], newline, err, span);
             }
-            Builtin::StdoutFlush => return Err(impure("flushing standard output", span)),
-            Builtin::StderrWrite | Builtin::StderrWriteLine | Builtin::StderrWriteBytes => {
-                return Err(impure("writing to standard error", span));
+            Builtin::StdoutWrite | Builtin::StdoutWriteLine => {
+                return self.write_value(&args[0], b == Builtin::StdoutWriteLine, false, span);
             }
-            Builtin::IsTerminal => return Err(impure("asking whether a stream is a terminal", span)),
+            Builtin::StdoutWriteBytes => return self.write_bytes_value(&args[0], false, span),
+            Builtin::StdoutFlush => {
+                if self.out == Output::Live {
+                    if let Err(e) = std::io::stdout().flush() {
+                        return Err(panic(format!("cannot flush standard output: {e}"), span));
+                    }
+                    return Ok(Value::Unit);
+                }
+                return Err(impure("flushing standard output", span));
+            }
+            Builtin::StderrWrite | Builtin::StderrWriteLine => {
+                return self.write_value(&args[0], b == Builtin::StderrWriteLine, true, span);
+            }
+            Builtin::StderrWriteBytes => return self.write_bytes_value(&args[0], true, span),
+            Builtin::IsTerminal => {
+                if self.out == Output::Live {
+                    let fd = self.eval(&args[0], Mode::Use)?.int();
+                    let terminal = matches!(fd, 1 | 2)
+                        && if fd == 1 { std::io::stdout().is_terminal() } else { std::io::stderr().is_terminal() };
+                    return Ok(Value::Bool(terminal));
+                }
+                return Err(impure("asking whether a stream is a terminal", span));
+            }
             Builtin::StdinReadLine
             | Builtin::StdinReadToString
             | Builtin::StdinAvail

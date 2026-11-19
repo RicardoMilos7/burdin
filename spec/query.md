@@ -121,6 +121,14 @@ source writes them, without the module path the checker uses to disambiguate.
 - `Analysis::ownership_of(path, offset)` — the innermost function or closure whose body contains the position: the
   places it moves out of (with the field path and whether the checker proved the local is dead there), the locals it
   owns, and the parameters a second-class result derives from.
+- `Analysis::statements_of(path, function)` — a body's statements in order, the tail expression counted as one more:
+  a `let` with the names it binds and their types, an expression statement with its type and whether that type is
+  `()` or `!`. The REPL reads these to see what an input appended and whether to print it (`spec/repl.md`, RP5).
+- `Analysis::expr_facts(path, lo, hi)` — the expression with exactly that span: its type, and every local it
+  mentions in source order, merged per name, with whether the mention borrows or borrows `mut`. `:ownership` uses
+  it (`spec/repl.md`, RP9).
+- `Analysis::members_of_type(ty)` — the fields and variants of the struct or enum a printed type names, and the
+  methods whose qualified name starts with it, for completion after `.` (`spec/repl.md`, RP13).
 
 The navigation questions a language server asks of a whole program (`navigate.rs`; `spec/lsp.md` reads them):
 

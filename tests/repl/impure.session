@@ -1,0 +1,4 @@
+read_to_string("no-such-file.bd")
+let after = 1
+after
+:quit

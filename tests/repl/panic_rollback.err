@@ -1,0 +1,2 @@
+main.bd:3:1: error[E0222]: boom
+  = note: the input was discarded and the session is unchanged

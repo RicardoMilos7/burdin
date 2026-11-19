@@ -50,7 +50,7 @@ pub(crate) enum Mode {
     Use,
 }
 
-enum Slot {
+pub(crate) enum Slot {
     Val(Value),
     /// A parameter or capture passed by address: the caller's place.
     Alias(Place),
@@ -75,6 +75,14 @@ pub(crate) enum ConstState {
 
 pub(crate) const MAX_DEPTH: usize = 512;
 
+/// Where the interpreter's output builtins write: nowhere (compile-time evaluation, CT9) or the real standard
+/// output and error of the process (a REPL session, `spec/repl.md` RP3).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Output {
+    Silent,
+    Live,
+}
+
 pub(crate) struct Interp<'p, 'c> {
     pub(crate) p: &'p Program,
     pub(crate) consts: &'c mut Vec<ConstState>,
@@ -82,12 +90,23 @@ pub(crate) struct Interp<'p, 'c> {
     pub(crate) steps: u64,
     pub(crate) budget: u64,
     pub(crate) release: bool,
+    pub(crate) out: Output,
     drop_cache: HashMap<Ty, bool>,
 }
 
 impl<'p, 'c> Interp<'p, 'c> {
     pub(crate) fn new(p: &'p Program, consts: &'c mut Vec<ConstState>, budget: u64, release: bool) -> Self {
-        Interp { p, consts, frames: Vec::new(), steps: 0, budget, release, drop_cache: HashMap::new() }
+        Self::with_output(p, consts, budget, release, Output::Silent)
+    }
+
+    pub(crate) fn with_output(
+        p: &'p Program,
+        consts: &'c mut Vec<ConstState>,
+        budget: u64,
+        release: bool,
+        out: Output,
+    ) -> Self {
+        Interp { p, consts, frames: Vec::new(), steps: 0, budget, release, out, drop_cache: HashMap::new() }
     }
 
     fn defs(&self) -> TypeDefs<'p> {
@@ -619,33 +638,7 @@ impl<'p, 'c> Interp<'p, 'c> {
     fn block_inner(&mut self, b: &'p Block, mode: Mode) -> R<Value> {
         for s in &b.stmts {
             let temps = self.frame().temps.len();
-            match s {
-                Stmt::Let(pat, init, other) => {
-                    let v = self.eval(init, Mode::Move)?;
-                    if let Pat::Binding(id, _) = pat {
-                        self.frame().slots[id.0] = Slot::Val(v);
-                        self.frame().scope.push(id.0);
-                    } else {
-                        let p = self.temp(v, &init.ty);
-                        let v = self.place_mut(&p, init.span)?.clone();
-                        if pattern_matches(pat, &v) {
-                            self.bind(pat, &p, true, init.span)?;
-                        } else {
-                            let other = other.as_ref().ok_or_else(|| {
-                                Unwind::from(Fault::Internal("a refutable `let` without `else`".into(), init.span))
-                            })?;
-                            self.block(other, Mode::Use)?;
-                            return Err(
-                                Fault::Internal("the `else` of `let` finished normally".into(), init.span).into()
-                            );
-                        }
-                    }
-                }
-                Stmt::Expr(e) => {
-                    let v = self.eval(e, Mode::Move)?;
-                    self.drop_value(v, &e.ty, e.span)?;
-                }
-            }
+            self.stmt(s)?;
             self.end_temps(temps, stmt_span(s))?;
         }
         match &b.tail {
@@ -656,6 +649,38 @@ impl<'p, 'c> Interp<'p, 'c> {
                 Ok(v)
             }
             None => Ok(Value::Unit),
+        }
+    }
+
+    /// One statement of a block: a `let`, or an expression whose value is dropped (DR5, the statement's
+    /// temporaries are the caller's to end).
+    pub(crate) fn stmt(&mut self, s: &'p Stmt) -> R<()> {
+        match s {
+            Stmt::Let(pat, init, other) => {
+                let v = self.eval(init, Mode::Move)?;
+                if let Pat::Binding(id, _) = pat {
+                    self.frame().slots[id.0] = Slot::Val(v);
+                    self.frame().scope.push(id.0);
+                } else {
+                    let p = self.temp(v, &init.ty);
+                    let v = self.place_mut(&p, init.span)?.clone();
+                    if pattern_matches(pat, &v) {
+                        self.bind(pat, &p, true, init.span)?;
+                    } else {
+                        let other = other.as_ref().ok_or_else(|| {
+                            Unwind::from(Fault::Internal("a refutable `let` without `else`".into(), init.span))
+                        })?;
+                        self.block(other, Mode::Use)?;
+                        return Err(Fault::Internal("the `else` of `let` finished normally".into(), init.span).into());
+                    }
+                }
+                Ok(())
+            }
+            Stmt::Expr(e) => {
+                let v = self.eval(e, Mode::Move)?;
+                self.drop_value(v, &e.ty, e.span)?;
+                Ok(())
+            }
         }
     }
 
@@ -840,6 +865,51 @@ impl<'p, 'c> Interp<'p, 'c> {
         };
         let frame = self.frames.pop().expect("pushed above");
         r.map(|v| (v, frame.slots))
+    }
+
+    /// Runs `body`'s statements from item `from` on (the tail included, as one more item) in a fresh root
+    /// frame with `env` pre-bound, for the REPL's session (`spec/repl.md`, RP4). Unlike [`Interp::run`] the
+    /// top-level scope is not closed afterwards: the session's bindings outlive one input, so their values
+    /// leave through the returned slots and nothing is dropped here. Sub-blocks still open, close, and drop as
+    /// in any function body. The tail runs like the function's return sees it: evaluated, its value dropped.
+    pub(crate) fn session_run(
+        &mut self,
+        locals: &'p [Local],
+        env: &[(tir::LocalId, Value)],
+        body: &'p burdin_tir::Block,
+        from: usize,
+        span: Span,
+    ) -> R<Vec<Slot>> {
+        if self.frames.len() > MAX_DEPTH {
+            return Err(depth(span));
+        }
+        let mut slots: Vec<Slot> = locals.iter().map(|_| Slot::Val(Value::Moved)).collect();
+        for (id, v) in env {
+            slots[id.0] = Slot::Val(v.clone());
+        }
+        self.frames.push(Frame { slots, locals, temps: Vec::new(), scope: Vec::new() });
+        let items = body.stmts.len() + usize::from(body.tail.is_some());
+        let mut result = Ok(());
+        for s in body.stmts.iter().skip(from.min(body.stmts.len())) {
+            let temps = self.frame().temps.len();
+            result = self.stmt(s).and_then(|_| self.end_temps(temps, stmt_span(s)));
+            if result.is_err() {
+                break;
+            }
+        }
+        if result.is_ok()
+            && from < items
+            && let Some(tail) = &body.tail
+        {
+            let temps = self.frame().temps.len();
+            result = self
+                .eval(tail, Mode::Move)
+                .and_then(|v| self.drop_value(v, &tail.ty, tail.span).and_then(|_| self.end_temps(temps, tail.span)));
+        }
+        // A fault unwinds: no drops run (DR10). A return or a loop jump leaving the statements is the caller's
+        // to report; the slots still move out so partial reads cannot dangle.
+        let frame = self.frames.pop().expect("pushed above");
+        result.map(|_| frame.slots)
     }
 
     fn closure_call(&mut self, callee: &'p Expr, args: &'p [Expr], kind: tir::FnKind, span: Span) -> R<Value> {

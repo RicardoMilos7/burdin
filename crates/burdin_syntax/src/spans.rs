@@ -439,7 +439,8 @@ mod tests {
     }
 
     /// The standard library and every conformance test that parses cover every construct the grammar has, so a
-    /// span the walk forgets shows up as a difference.
+    /// span the walk forgets shows up as a difference. A script is skipped: its shebang is only valid at byte 0
+    /// (`spec/scripts.md`, SC1), so no padded copy of it parses.
     #[test]
     fn the_walk_reaches_every_span_the_parser_produces() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -449,6 +450,9 @@ mod tests {
         let mut checked = 0;
         for path in files {
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            if text.starts_with("#!") {
+                continue;
+            }
             let mut d = Diagnostics::default();
             let mut ast = crate::parse(FileId(0), &text, &mut d);
             if d.has_errors() {

@@ -1,0 +1,4 @@
+// A script's dependency: an ordinary library package next to the script.
+fn hello(): str {
+    "hello from a dependency"
+}

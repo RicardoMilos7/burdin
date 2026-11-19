@@ -11,7 +11,7 @@ use burdin_syntax::ast;
 use burdin_syntax::lexer;
 use burdin_syntax::token::{Token, TokenKind};
 use burdin_tir::visit::{self, Visit};
-use burdin_tir::{ConstId, Expr, ExprKind, FuncId, Function, LocalId, LocalKind, Program, Ty};
+use burdin_tir::{ConstId, Expr, ExprKind, FuncId, Function, LocalId, LocalKind, Pat, Program, Stmt, Ty};
 use std::rc::Rc;
 
 /// A stretch of one file.
@@ -180,6 +180,54 @@ pub struct OwnedLocal {
     pub ty: String,
     /// A parameter taken with `own`, rather than a `let` or a pattern binding.
     pub is_parameter: bool,
+}
+
+/// One statement of a function body, as a tool sees it. The REPL reads these to decide which statement an input
+/// appended and whether its value is printed (`spec/repl.md`, RP5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StmtInfo {
+    pub at: Location,
+    pub kind: StmtKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StmtKind {
+    /// `let pattern = ...`: the names the pattern binds, with their types, in pattern order.
+    Let(Vec<(String, String)>),
+    /// A bare expression statement: its type, and whether that type is `()` or `!`.
+    Expr { ty: String, unit: bool, never: bool },
+    /// Anything else the tree does not name (currently nothing: a body is lets and expressions).
+    Other,
+}
+
+/// What one expression does to the locals it mentions, as a tool sees it (`spec/repl.md`, `:ownership`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExprFacts {
+    /// The type of the whole expression.
+    pub ty: String,
+    /// Every local it mentions, in source order, with how the mention uses the value. A local mentioned more
+    /// than once appears once, with every use merged.
+    pub locals: Vec<LocalUse>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalUse {
+    pub name: String,
+    pub ty: String,
+    /// `&local` somewhere in the expression.
+    pub borrowed: bool,
+    /// `&mut local` somewhere in the expression.
+    pub borrowed_mut: bool,
+}
+
+/// A field or a method of one type, for completion after `.`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Member {
+    pub name: String,
+    /// A field of the type itself (`false` is a method).
+    pub is_field: bool,
+    /// The field's type, or `fn add(a: i32, b: i32): i32` for a method.
+    pub detail: String,
 }
 
 impl Db {
@@ -447,6 +495,214 @@ impl Analysis {
         }
         best
     }
+
+    /// The statements of the body of the function `function` declared in `path`, in order. The REPL reads these
+    /// to see which statements one input appended (`spec/repl.md`, RP5).
+    pub fn statements_of(&self, path: &str, function: &str) -> Option<Vec<StmtInfo>> {
+        let program = self.program.as_ref()?;
+        let file = self.file_id(path)?;
+        for f in program.functions.iter().filter(|f| !f.symbolic) {
+            if f.span.file != file || source_text(&f.name) != function {
+                continue;
+            }
+            let mut out = Vec::new();
+            for stmt in &f.body.stmts {
+                match stmt {
+                    Stmt::Let(pat, init, _) => {
+                        let mut ids = Vec::new();
+                        pattern_ids(pat, &mut ids);
+                        out.push(StmtInfo {
+                            at: self.location(init.span),
+                            kind: StmtKind::Let(
+                                ids.into_iter()
+                                    .map(|id| {
+                                        let local = &f.locals[id];
+                                        (local.name.clone(), type_text(&local.ty))
+                                    })
+                                    .collect(),
+                            ),
+                        });
+                    }
+                    Stmt::Expr(e) => {
+                        let ty = type_text(&e.ty);
+                        out.push(StmtInfo {
+                            at: self.location(e.span),
+                            kind: StmtKind::Expr { unit: e.ty == Ty::Unit, never: e.ty == Ty::Never, ty },
+                        });
+                    }
+                }
+            }
+            // The body's tail expression counts as one more statement: it is what an input's trailing
+            // expression is, and the caller's indexes cover it.
+            if let Some(t) = &f.body.tail {
+                let ty = type_text(&t.ty);
+                out.push(StmtInfo {
+                    at: self.location(t.span),
+                    kind: StmtKind::Expr { unit: t.ty == Ty::Unit, never: t.ty == Ty::Never, ty },
+                });
+            }
+            return Some(out);
+        }
+        None
+    }
+
+    /// The expression with exactly the span `lo..hi` of `path`, with its type and the locals it mentions
+    /// (`:ownership`, `spec/repl.md` RP9). `None` when no expression has exactly that span (the caller then knows
+    /// the span it asked about is not one whole expression).
+    pub fn expr_facts(&self, path: &str, lo: u32, hi: u32) -> Option<ExprFacts> {
+        let program = self.program.as_ref()?;
+        let file = self.file_id(path)?;
+        for f in program.functions.iter().filter(|f| !f.symbolic) {
+            if f.span.file != file {
+                continue;
+            }
+            let mut finder = ExactFinder { func: f, file, lo, hi, found: None };
+            finder.block(&f.body);
+            if let Some(found) = finder.found {
+                return Some(ExprFacts { ty: type_text(&found.ty), locals: found.uses });
+            }
+        }
+        None
+    }
+
+    /// The fields and the methods of the type named `ty` (as [`type_text`] prints it: `Rect`, `List<i32>`), for
+    /// completion after `.`. Methods come from the functions whose qualified name starts with the type's name.
+    /// Empty for a type the program does not declare.
+    pub fn members_of_type(&self, ty: &str) -> Vec<Member> {
+        let Some(program) = self.program.as_ref() else { return Vec::new() };
+        let name = ty.split('<').next().unwrap_or(ty);
+        let name = name.split('.').next_back().unwrap_or(name).trim();
+        let mut out = Vec::new();
+        for def in &program.structs {
+            if def.name == name {
+                out.extend(def.fields.iter().filter(|f| !f.is_priv).map(|f| Member {
+                    name: f.name.clone(),
+                    is_field: true,
+                    detail: type_text(&f.ty),
+                }));
+            }
+        }
+        for def in &program.enums {
+            if def.name == name {
+                out.extend(def.variants.iter().map(|v| Member {
+                    name: v.name.clone(),
+                    is_field: false,
+                    detail: "a variant".to_string(),
+                }));
+            }
+        }
+        for (id, f) in program.functions.iter().enumerate() {
+            let qualified = source_text(&f.name);
+            if let Some(method) = qualified.strip_prefix(&format!("{name}."))
+                && program.signatures.get(id).is_some_and(|sig| sig.has_self)
+            {
+                out.push(Member {
+                    name: method.to_string(),
+                    is_field: false,
+                    detail: signature_display(&f.name, &program.signatures[id]),
+                });
+            }
+        }
+        out
+    }
+}
+
+/// The local ids a pattern binds, in pattern order. A `Pat` carries no names; the names live on the function's
+/// locals.
+fn pattern_ids(pat: &Pat, out: &mut Vec<usize>) {
+    match pat {
+        Pat::Binding(id, _) => out.push(id.0),
+        Pat::At(id, _, inner) => {
+            out.push(id.0);
+            pattern_ids(inner, out);
+        }
+        Pat::Some(inner) | Pat::Ok(inner) | Pat::Err(inner) => pattern_ids(inner, out),
+        Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| pattern_ids(s, out)),
+        Pat::Or(alts) => alts.iter().for_each(|a| pattern_ids(a, out)),
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+    }
+}
+
+/// The expression with exactly one span, and the locals it mentions.
+struct ExactFound {
+    ty: Ty,
+    uses: Vec<LocalUse>,
+}
+
+/// Finds the expression with exactly the span `lo..hi` of one file, and collects the locals it mentions.
+struct ExactFinder<'a> {
+    func: &'a Function,
+    file: FileId,
+    lo: u32,
+    hi: u32,
+    found: Option<ExactFound>,
+}
+
+impl Visit for ExactFinder<'_> {
+    fn expr(&mut self, e: &Expr) {
+        let span = e.span;
+        if span.file == self.file && span.lo == self.lo && span.hi == self.hi {
+            // The smallest expression with this span is the one the caller means (a parenthesized expression
+            // and its operand can share one).
+            let mut uses = LocalsUsed { func: self.func, out: Vec::new() };
+            uses.expr(e);
+            self.found = Some(ExactFound { ty: e.ty.clone(), uses: merge_uses(uses.out) });
+            return;
+        }
+        visit::walk_expr(self, e);
+    }
+}
+
+/// The locals one expression mentions, in source order, with the borrows it takes.
+struct LocalsUsed<'a> {
+    func: &'a Function,
+    out: Vec<LocalUse>,
+}
+
+impl Visit for LocalsUsed<'_> {
+    fn expr(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::Local(LocalId(i)) => {
+                let (name, ty) = match self.func.locals.get(*i) {
+                    Some(local) => (local.name.clone(), type_text(&local.ty)),
+                    None => (String::new(), String::new()),
+                };
+                if !name.is_empty() {
+                    self.out.push(LocalUse { name, ty, borrowed: false, borrowed_mut: false });
+                }
+            }
+            ExprKind::Ref { place, mutable } => {
+                if let ExprKind::Local(LocalId(i)) = &place.kind
+                    && let Some(local) = self.func.locals.get(*i)
+                    && !local.name.is_empty()
+                {
+                    self.out.push(LocalUse {
+                        name: local.name.clone(),
+                        ty: type_text(&local.ty),
+                        borrowed: !*mutable,
+                        borrowed_mut: *mutable,
+                    });
+                    return;
+                }
+            }
+            _ => {}
+        }
+        visit::walk_expr(self, e);
+    }
+}
+
+/// Merges the mentions of one local: one entry, with every borrow flag any mention took.
+fn merge_uses(uses: Vec<LocalUse>) -> Vec<LocalUse> {
+    let mut out: Vec<LocalUse> = Vec::new();
+    for u in uses {
+        if let Some(prev) = out.iter_mut().find(|p| p.name == u.name) {
+            prev.borrowed |= u.borrowed;
+            prev.borrowed_mut |= u.borrowed_mut;
+        } else {
+            out.push(u);
+        }
+    }
+    out
 }
 
 /// The text of a type as source writes it. The checker prints a struct or enum type with its module path

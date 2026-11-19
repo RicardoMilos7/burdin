@@ -1,0 +1,4 @@
+// A helper a session can load.
+fn helper(n: i32): i32 {
+    n + 40
+}
