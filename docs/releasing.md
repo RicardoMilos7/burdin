@@ -88,6 +88,7 @@ all six. Its layout is:
 ```
 burdin-<version>-<target>/
   burdin            (burdin.exe on Windows)
+  LLVM-C.dll        (Windows only, beside burdin.exe)
   README.md
   CHANGELOG.md
   docs/error-codes.md
@@ -96,8 +97,12 @@ burdin-<version>-<target>/
 
 **Runtime requirement.** The compiler links LLVM 21 as a shared library (the static Windows archives crash in the
 dynamic-CRT Rust binary), so a prebuilt `burdin` needs the matching LLVM runtime: `libLLVM-21.so` on Linux,
-`libLLVM.dylib` on macOS (`brew install llvm@21`), or `LLVM-C.dll` on Windows. The archive does not bundle LLVM; the
-installers print the fix when the installed compiler cannot start. Bundling the LLVM runtime is a later change.
+`libLLVM.dylib` on macOS (`brew install llvm@21`), or `LLVM-C.dll` on Windows. The Linux and macOS archives do not
+bundle LLVM; the installers print the fix when the installed compiler cannot start. The Windows archives carry the
+`LLVM-C.dll` from the LLVM 21 release the build linked against (found through `LLVM_SYS_211_PREFIX`, or `--llvm-dll`;
+`build_release.py` refuses to package a Windows build without it), and `install.ps1` installs it beside `burdin.exe`.
+Linking programs still needs the MSVC `cl` on the user's machine. Bundling the runtime on Linux and macOS is a later
+change.
 
 ## Checksums
 

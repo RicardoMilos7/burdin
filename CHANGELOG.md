@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased — Stage 3
 
+### Windows release archives bundle `LLVM-C.dll`
+
+- A Windows archive carries the `LLVM-C.dll` the compiler was linked against beside `burdin.exe`, and `install.ps1`
+  installs it with the compiler, so a fresh install starts without LLVM on `PATH`. `tests/build_release.py` refuses to
+  package a Windows build without the DLL and takes `--llvm-dll`; `tests/check_release.py` covers both.
+
 ### Debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
 `spec/debug.md` (DBG1-DBG12) is the specification; `tests/check_debug_info.py` and `tests/check_debug_printers.py`
