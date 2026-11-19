@@ -1,0 +1,8 @@
+explain/E0123.bd:2:13: error[E0123]: this view borrows from a local of an inner block, which does not live as long as the binding
+error: could not check explain/E0123.bd (1 error)
+
+trace for explain/E0123.bd:2:13: error[E0123]: this view borrows from a local of an inner block, which does not live as long as the binding
+  rule: spec/memory-rules.md RT5
+  note at explain/E0123.bd:3:13: `s` is declared in an inner block and dropped before the binding
+  fails here: explain/E0123.bd:2:13
+  fix: keep the source in a local that outlives the view (`let pair = Pair { a: 1, b: 2 }` and then `first_of(pair)`), or store an owned value instead of a view.

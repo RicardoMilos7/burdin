@@ -303,15 +303,21 @@ impl FnCx<'_> {
             Ty::Unit,
             span,
         );
-        let body =
-            mk(tir::ExprKind::Block(tir::Block { stmts: vec![tir::Stmt::Expr(assign)], tail: None }), Ty::Unit, span);
+        let body = mk(
+            tir::ExprKind::Block(tir::Block { stmts: vec![tir::Stmt::Expr(assign)], tail: None, close: span }),
+            Ty::Unit,
+            span,
+        );
         let arms = vec![
             tir::Arm { pat: Pat::Some(Box::new(Pat::Binding(x, mode))), guard: None, body },
             tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break, Ty::Never, span) },
         ];
         let matched = mk(tir::ExprKind::Match(Box::new(next), arms), Ty::Unit, span);
-        let looped =
-            mk(tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)) }), Ty::Unit, span);
+        let looped = mk(
+            tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)), close: span }),
+            Ty::Unit,
+            span,
+        );
         let init = tir::Stmt::Let(Pat::Binding(it, self.bind_mode(&iter_ty, true)), recv, None);
         let zero_mode = self.bind_mode(&int, true);
         let start = match (&int, product) {
@@ -322,6 +328,7 @@ impl FnCx<'_> {
         let block = tir::Block {
             stmts: vec![init, zero, tir::Stmt::Expr(looped)],
             tail: Some(Box::new(mk(tir::ExprKind::Local(sum), int.clone(), span))),
+            close: span,
         };
         mk(tir::ExprKind::Block(block), int, span)
     }
@@ -393,10 +400,17 @@ impl FnCx<'_> {
             tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break, Ty::Never, span) },
         ];
         let matched = mk(tir::ExprKind::Match(Box::new(next), arms), Ty::Unit, span);
-        let looped =
-            mk(tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)) }), Ty::Unit, span);
+        let looped = mk(
+            tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)), close: span }),
+            Ty::Unit,
+            span,
+        );
         let init = tir::Stmt::Let(Pat::Binding(it, self.bind_mode(&iter_ty, true)), iterable, None);
-        mk(tir::ExprKind::Block(tir::Block { stmts: vec![init], tail: Some(Box::new(looped)) }), Ty::Unit, span)
+        mk(
+            tir::ExprKind::Block(tir::Block { stmts: vec![init], tail: Some(Box::new(looped)), close: span }),
+            Ty::Unit,
+            span,
+        )
     }
 
     /// `for pattern in mut e`: the loop calls `e.iter_mut()` and walks the iterator it returns, whose items are

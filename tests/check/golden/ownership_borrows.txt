@@ -1,0 +1,35 @@
+fn read (ownership/borrows.bd:5):
+   5 | fn read(c: Counter): i32 {
+   6 |     let r = &c
+     | borrow (read) c
+   7 |     (*r).n
+     | copy r
+   8 | }
+
+fn bump (ownership/borrows.bd:10):
+  10 | fn bump(mut c: Counter) {
+  11 |     c.n = c.n + 1
+  12 | }
+
+fn main (ownership/borrows.bd:14):
+  14 | fn main() {
+  15 |     let mut c = Counter { n: 1 }
+  16 |     bump(mut c)
+     | call arg `c`: mut
+     | borrow (mut) c
+  17 |     let text = String.from("hello")
+  18 |     let view = text.as_str()
+     | call arg `self`: read
+     | borrow (read) text
+  19 |     let mut xs = [1, 2, 3]
+  20 |     for x in xs {
+     | borrow (read) xs
+  21 |         println(x.to_string())
+     | call arg `self`: read
+  22 |     }
+  23 |     println(view)
+  24 |     println(read(c).to_string())
+     | call arg `self`: read
+     | call arg `c`: read
+  25 | }
+     | drop text

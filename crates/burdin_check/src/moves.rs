@@ -20,6 +20,10 @@ use burdin_diag::{Code, Diagnostic, Diagnostics, Span};
 use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Ty};
 use std::collections::HashMap;
 
+/// The one-line pointer every memory diagnostic carries to its step-by-step explanation (`spec/check.md`, CK11;
+/// issue #593).
+pub(crate) const TRACE_HELP: &str = "run `burdin check --explain` to trace the path to this error";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Status {
     Init,
@@ -147,15 +151,21 @@ struct Checker<'a> {
     /// For every declared local: whether every observation at a drop site saw it moved. `None` before the first
     /// observation, `Some(false)` once any exit could drop it while it is initialized.
     dead_at_exits: Vec<Option<bool>>,
+    /// Every ownership fact of the body, in source order (`spec/check.md`, CK10).
+    events: Vec<tir::OwnershipEvent>,
+    /// The destination a move in progress flows into, for the `move a -> b` annotation. It is set around the
+    /// initializer of a `let`, the value of an assignment, and an `own` argument, and cleared inside the
+    /// subexpressions that build a new aggregate.
+    move_dest: Option<String>,
 }
 
-/// Checks the body of `f` and returns the places it moves and the whole-local moves whose statement is the
-/// last one the local is alive at.
+/// Checks the body of `f` and returns the places it moves, the whole-local moves whose statement is the last one
+/// the local is alive at, and the ownership events it observed.
 pub(crate) fn check_function(
     f: &tir::Function,
     env: Env,
     diags: &mut Diagnostics,
-) -> (Vec<tir::MovedPlace>, Vec<tir::DebugKill>) {
+) -> (Vec<tir::MovedPlace>, Vec<tir::DebugKill>, Vec<tir::OwnershipEvent>) {
     let mut cx = Checker {
         env,
         locals: &f.locals,
@@ -168,13 +178,62 @@ pub(crate) fn check_function(
         conditional: 0,
         declared: f.locals.iter().map(|local| matches!(local.kind, LocalKind::OwnParam)).collect(),
         dead_at_exits: vec![None; f.locals.len()],
+        events: Vec::new(),
+        move_dest: None,
     };
-    cx.block(&f.body, Mode::Move);
+    // A parameter exists before the body runs; a borrowed one is never dropped but is still declared.
+    for param in &f.params {
+        let local = &f.locals[param.0];
+        if local.span.lo < local.span.hi && !local.name.is_empty() && !local.name.starts_with("__") {
+            cx.events.push(tir::OwnershipEvent {
+                span: local.span,
+                local: Some(*param),
+                path: Vec::new(),
+                kind: tir::OwnershipEventKind::Declare,
+            });
+        }
+    }
+    let falls = cx.block(&f.body, Mode::Move);
     cx.observe_exits();
     for place in &mut cx.moved {
         place.always_dead = place.path.is_empty() && cx.dead_at_exits[place.local.0] == Some(true);
     }
-    (cx.moved, cx.debug_kills)
+    // An owned parameter drops after the body's locals, in reverse declaration order (DR3).
+    if falls {
+        for param in f.params.iter().rev() {
+            if cx.locals[param.0].kind == LocalKind::OwnParam {
+                cx.drop_event(*param, f.body.close);
+            }
+        }
+    }
+    // Every moved place that keeps a runtime flag is a `drop flag` the annotation can show (DR7).
+    let moved = cx.moved.clone();
+    for place in &moved {
+        if place.always_dead
+            || cx.locals[place.local.0].name.is_empty()
+            || cx.locals[place.local.0].name.starts_with("__")
+        {
+            continue;
+        }
+        let from = cx
+            .events
+            .iter()
+            .find(|e| {
+                e.local == Some(place.local)
+                    && e.path == place.path
+                    && matches!(e.kind, tir::OwnershipEventKind::Move { .. })
+            })
+            .map_or_else(|| cx.locals[place.local.0].span, |e| e.span);
+        cx.events.push(tir::OwnershipEvent {
+            span: from,
+            local: Some(place.local),
+            path: place.path.clone(),
+            kind: tir::OwnershipEventKind::DropFlag,
+        });
+    }
+    // Source order, with the events of one span in the order the checker recorded them.
+    cx.events.sort_by_key(|e| (e.span.file.0, e.span.lo, e.span.hi));
+    (cx.moved, cx.debug_kills, cx.events)
 }
 
 impl<'a> Checker<'a> {
@@ -184,6 +243,67 @@ impl<'a> Checker<'a> {
 
     fn error(&mut self, code: Code, span: Span, message: impl Into<String>) -> &mut Diagnostic {
         self.diags.error(code, span, message)
+    }
+
+    /// Records one ownership event (`spec/check.md`, CK10). A compiler-made local (an interpolated string's hidden
+    /// formatter, a desugared loop counter) is not source the lens shows.
+    fn event(&mut self, span: Span, local: Option<LocalId>, path: &[usize], kind: tir::OwnershipEventKind) {
+        if local.is_some_and(|id| {
+            let name = &self.locals[id.0].name;
+            name.is_empty() || name.starts_with("__")
+        }) {
+            return;
+        }
+        self.events.push(tir::OwnershipEvent { span, local, path: path.to_vec(), kind });
+    }
+
+    /// Records that the place `id` + `path` is dropped at `span`, unless it is Copy or already moved out.
+    /// `conditional` is set when the value may have moved on some path, which is what a runtime drop flag
+    /// resolves (DR7).
+    fn drop_place_event(&mut self, id: LocalId, path: &[usize], ty: &Ty, span: Span) {
+        if !self.declared[id.0] || !self.env.defs.needs_drop(ty) {
+            return;
+        }
+        let state = self.states[id.0].get(path);
+        if state == Status::Moved {
+            return;
+        }
+        let conditional = state == Status::Maybe || self.states[id.0].has_moved_inside(path);
+        self.event(span, Some(id), path, tir::OwnershipEventKind::Drop { conditional });
+    }
+
+    /// Records the drop of a whole local at the end of its scope.
+    fn drop_event(&mut self, id: LocalId, span: Span) {
+        let ty = self.locals[id.0].ty.clone();
+        self.drop_place_event(id, &[], &ty, span);
+    }
+
+    /// Closes the innermost scope and records the drops at its end. `reaches_end` is false when the scope always
+    /// leaves through `return`, `break`, or `continue`, so its values are dropped by that early exit (DR6).
+    fn end_scope(&mut self, span: Span, reaches_end: bool) {
+        let scope = self.scopes.pop().expect("a scope is open");
+        if reaches_end {
+            // Locals drop in reverse order of declaration (DR2).
+            for id in scope.into_iter().rev() {
+                self.drop_event(id, span);
+            }
+        }
+    }
+
+    /// Whether `ty`'s `Clone` is the compiler's derived member (`spec/derives.md`).
+    fn derived_clone(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Struct(a) => self.env.defs.structs.get(a.id).is_some_and(|d| d.derives.clone),
+            Ty::Enum(a) => self.env.defs.enums.get(a.id).is_some_and(|d| d.derives.clone),
+            _ => false,
+        }
+    }
+
+    /// Evaluates `e` with a move destination for the annotation, restoring the previous one afterwards.
+    fn with_dest(&mut self, dest: Option<String>, mode: Mode, e: &tir::Expr) {
+        let saved = std::mem::replace(&mut self.move_dest, dest);
+        self.expr(e, mode);
+        self.move_dest = saved;
     }
 
     /// The local and field path of a place expression. Field selections on any base extend the path; indexing
@@ -233,18 +353,33 @@ impl<'a> Checker<'a> {
             Status::Moved => {
                 let name = name.clone();
                 let moved_at = self.states[root.0].moved_span(path);
+                let declared = self.locals[root.0].span;
                 let error = self.error(Code::MOVED, span, format!("use of moved value `{name}`"));
+                if declared.lo < declared.hi && declared != span {
+                    error.note(declared, format!("`{name}` is declared here"));
+                }
                 if let Some(moved_at) = moved_at {
                     error.note(moved_at, "value moved here");
                 }
+                error.help(TRACE_HELP);
             }
             Status::Maybe => {
                 let name = name.clone();
-                self.error(Code::MOVED, span, format!("use of possibly moved value `{name}`"));
+                let declared = self.locals[root.0].span;
+                let error = self.error(Code::MOVED, span, format!("use of possibly moved value `{name}`"));
+                if declared.lo < declared.hi && declared != span {
+                    error.note(declared, format!("`{name}` is declared here"));
+                }
+                error.help(TRACE_HELP);
             }
             Status::Init if partial => {
                 let name = name.clone();
-                self.error(Code::MOVED, span, format!("use of partially moved value `{name}`"));
+                let declared = self.locals[root.0].span;
+                let error = self.error(Code::MOVED, span, format!("use of partially moved value `{name}`"));
+                if declared.lo < declared.hi && declared != span {
+                    error.note(declared, format!("`{name}` is declared here"));
+                }
+                error.help(TRACE_HELP);
             }
             Status::Init => {}
         }
@@ -280,12 +415,20 @@ impl<'a> Checker<'a> {
         let local = &self.locals[root.0];
         if matches!(local.kind, LocalKind::BorrowedParam | LocalKind::View) {
             let name = local.name.clone();
-            self.error(Code::MOVE_FROM_BORROW, span, format!("cannot move out of `{name}`: it is only borrowed"));
+            let declared = local.span;
+            let error =
+                self.error(Code::MOVE_FROM_BORROW, span, format!("cannot move out of `{name}`: it is only borrowed"));
+            if declared.lo < declared.hi && declared != span {
+                error.note(declared, format!("`{name}` is borrowed here, so it does not own its value"));
+            }
+            error.help(TRACE_HELP);
             return;
         }
         self.check_partial_move(&local.ty.clone(), path, span);
         self.states[root.0].move_out(path, span);
         self.record_move(root, path, span);
+        let target = self.move_dest.clone();
+        self.event(span, Some(root), path, tir::OwnershipEventKind::Move { target });
         // A whole-local move at conditional depth zero, not inside a loop over a local already in scope when
         // the loop started, is the last statement the local is alive at: its debug location ends here (DBG4).
         if path.is_empty()
@@ -303,7 +446,8 @@ impl<'a> Checker<'a> {
             return;
         }
         if self.env.defs.has_drop_impl(ty) {
-            self.error(Code::PARTIAL_MOVE_FROM_DROP, span, "cannot move a field out of a type that implements `Drop`");
+            self.error(Code::PARTIAL_MOVE_FROM_DROP, span, "cannot move a field out of a type that implements `Drop`")
+                .help(TRACE_HELP);
             return;
         }
         let (first, rest) = path.split_first().expect("path is not empty");
@@ -438,6 +582,12 @@ impl<'a> Checker<'a> {
     fn init_place(&mut self, root: LocalId, path: &[usize]) {
         self.states[root.0].reinit(path);
         if path.is_empty() {
+            if !self.declared[root.0] {
+                let span = self.locals[root.0].span;
+                if span.lo < span.hi {
+                    self.event(span, Some(root), &[], tir::OwnershipEventKind::Declare);
+                }
+            }
             self.declared[root.0] = true;
         }
     }
@@ -470,10 +620,32 @@ impl<'a> Checker<'a> {
                 self.expr(hi, Mode::Use);
             }
             K::Call(f, args) => {
-                let sig = &self.env.sigs[f.0];
-                for (a, p) in args.iter().zip(&sig.params) {
-                    let m = if p.own { Mode::Move } else { Mode::Use };
-                    self.expr(a, m);
+                let params = self.env.sigs[f.0].params.clone();
+                // A call the compiler generated (an interpolated string's formatter) is not source code the
+                // annotation shows; its arguments are still walked for their effects.
+                let generated = self.env.names.get(f.0).is_some_and(|name| generated_name(name));
+                for (i, a) in args.iter().enumerate() {
+                    let Some(p) = params.get(i) else {
+                        self.with_dest(None, Mode::Use, a);
+                        continue;
+                    };
+                    let convention = if p.own {
+                        tir::CallConvention::Own
+                    } else if p.mut_param || p.exclusive {
+                        tir::CallConvention::Mut
+                    } else {
+                        tir::CallConvention::Read
+                    };
+                    let place = self.place_of(a);
+                    let (root, path) = match &place {
+                        Some((root, path)) => (Some(*root), path.as_slice()),
+                        None => (None, &[][..]),
+                    };
+                    if !generated {
+                        let parameter = p.name.clone().unwrap_or_else(|| format!("#{i}"));
+                        self.event(a.span, root, path, tir::OwnershipEventKind::CallArg { parameter, convention });
+                    }
+                    self.with_dest(None, if p.own { Mode::Move } else { Mode::Use }, a);
                 }
             }
             // Every `extern` parameter is passed by value and is a C scalar or a `CPtr`, so all are Copy and the
@@ -515,24 +687,111 @@ impl<'a> Checker<'a> {
                 }
             },
             K::Method(m, args) => {
+                let method = *m;
+                // Calls and borrows on a compiler-made local (the hidden formatter of an interpolated string)
+                // are not facts about the source.
+                let generated = args
+                    .first()
+                    .and_then(|recv| self.place_of(recv))
+                    .is_some_and(|(root, _)| self.locals[root.0].name.starts_with("__"));
+                // A derived `.clone()` is the one compiler-produced deep copy (`spec/derives.md`).
+                if method == tir::Method::Clone
+                    && !generated
+                    && let Some(recv) = args.first()
+                {
+                    let derived = self.derived_clone(&recv.ty);
+                    let place = self.place_of(recv);
+                    let (root, path) = match &place {
+                        Some((root, path)) => (Some(*root), path.as_slice()),
+                        None => (None, &[][..]),
+                    };
+                    self.event(e.span, root, path, tir::OwnershipEventKind::Clone { derived });
+                }
+                if let Some(recv) = args.first()
+                    && !generated
+                {
+                    let convention = if method.owns_argument(0) {
+                        tir::CallConvention::Own
+                    } else if method.mutates_receiver() {
+                        tir::CallConvention::Mut
+                    } else {
+                        tir::CallConvention::Read
+                    };
+                    let place = self.place_of(recv);
+                    let (root, path) = match &place {
+                        Some((root, path)) => (Some(*root), path.as_slice()),
+                        None => (None, &[][..]),
+                    };
+                    self.event(
+                        recv.span,
+                        root,
+                        path,
+                        tir::OwnershipEventKind::CallArg { parameter: "self".to_string(), convention },
+                    );
+                }
                 for (i, a) in args.iter().enumerate() {
-                    self.expr(a, if m.owns_argument(i) { Mode::Move } else { Mode::Use });
+                    let owns = method.owns_argument(i);
+                    if i > 0 && owns {
+                        let parameter = format!("#{i}");
+                        let place = self.place_of(a);
+                        let (root, path) = match &place {
+                            Some((root, path)) => (Some(*root), path.as_slice()),
+                            None => (None, &[][..]),
+                        };
+                        self.event(
+                            a.span,
+                            root,
+                            path,
+                            tir::OwnershipEventKind::CallArg { parameter, convention: tir::CallConvention::Own },
+                        );
+                    }
+                    self.with_dest(None, if owns { Mode::Move } else { Mode::Use }, a);
                 }
             }
             // Boxing moves (or copies) the value into the heap allocation; `downcast` consumes the box.
-            K::BoxAny { value, .. } => self.expr(value, Mode::Move),
+            K::BoxAny { value, .. } => self.with_dest(None, Mode::Move, value),
             K::AnyIs { value, .. } => self.expr(value, Mode::Use),
             K::AnyDowncast { value, .. } => self.expr(value, Mode::Move),
             // A dynamic call borrows the box (it can never take `own self`); its arguments follow the interface
             // method's conventions.
             K::AnyCall { recv, params, args, .. } => {
-                self.expr(recv, Mode::Use);
-                for (a, p) in args.iter().zip(params) {
-                    self.expr(a, if p.own { Mode::Move } else { Mode::Use });
+                let place = self.place_of(recv);
+                let (root, path) = match &place {
+                    Some((root, path)) => (Some(*root), path.as_slice()),
+                    None => (None, &[][..]),
+                };
+                self.event(
+                    recv.span,
+                    root,
+                    path,
+                    tir::OwnershipEventKind::CallArg {
+                        parameter: "self".to_string(),
+                        convention: tir::CallConvention::Read,
+                    },
+                );
+                self.with_dest(None, Mode::Use, recv);
+                for (i, (a, p)) in args.iter().zip(params).enumerate() {
+                    let convention = if p.own {
+                        tir::CallConvention::Own
+                    } else if p.exclusive {
+                        tir::CallConvention::Mut
+                    } else {
+                        tir::CallConvention::Read
+                    };
+                    let parameter = p.name.clone().unwrap_or_else(|| format!("#{i}"));
+                    let place = self.place_of(a);
+                    let (root, path) = match &place {
+                        Some((root, path)) => (Some(*root), path.as_slice()),
+                        None => (None, &[][..]),
+                    };
+                    self.event(a.span, root, path, tir::OwnershipEventKind::CallArg { parameter, convention });
+                    let dest = if p.own { p.name.clone() } else { None };
+                    self.with_dest(dest, if p.own { Mode::Move } else { Mode::Use }, a);
                 }
             }
             // Building a closure moves each moved-in capture and reads each borrowed one (CL2-CL4).
             K::Closure { captures, .. } => {
+                let saved = self.move_dest.take();
                 for c in captures {
                     match c.mode {
                         tir::CaptureMode::Move => {
@@ -545,13 +804,29 @@ impl<'a> Checker<'a> {
                         _ => self.read_place(c.local, &[], e.span),
                     }
                 }
+                self.move_dest = saved;
             }
             // Calling an `FnOnce` closure consumes it; an `Fn`/`FnMut` call only reads it (CL6). A closure
             // parameter is owned, so each argument is moved.
             K::ClosureCall { callee, args, kind } => {
                 self.expr(callee, if *kind == tir::FnKind::FnOnce { Mode::Move } else { Mode::Use });
-                for a in args {
-                    self.expr(a, Mode::Move);
+                for (i, a) in args.iter().enumerate() {
+                    let parameter = format!("#{i}");
+                    let place = self.place_of(a);
+                    let (root, path) = match &place {
+                        Some((root, path)) => (Some(*root), path.as_slice()),
+                        None => (None, &[][..]),
+                    };
+                    self.event(
+                        a.span,
+                        root,
+                        path,
+                        tir::OwnershipEventKind::CallArg {
+                            parameter: parameter.clone(),
+                            convention: tir::CallConvention::Own,
+                        },
+                    );
+                    self.with_dest(None, Mode::Move, a);
                 }
             }
             K::StringAsStr(inner) => self.expr(inner, Mode::Use),
@@ -574,7 +849,7 @@ impl<'a> Checker<'a> {
                 };
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, iter.span);
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), mode),
@@ -605,7 +880,7 @@ impl<'a> Checker<'a> {
                     self.scopes.last_mut().expect("a scope is open").push(*var);
                 }
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::ForRange { var, lo, hi, body, .. } => {
@@ -619,7 +894,7 @@ impl<'a> Checker<'a> {
                     self.scopes.last_mut().expect("a scope is open").push(*var);
                 }
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::ForArray { pat, array, body } => {
@@ -632,14 +907,14 @@ impl<'a> Checker<'a> {
                     // A type error already reported; the body still gets checked.
                     self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, array.span);
                     let body_falls = self.block(body, Mode::Use);
-                    self.scopes.pop();
+                    self.end_scope(body.close, body_falls);
                     self.finish_loop(entry, body_falls);
                     return;
                 };
                 let elem = (**elem).clone();
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, array.span);
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::ForSlice { pat, slice, body } => {
@@ -652,14 +927,14 @@ impl<'a> Checker<'a> {
                     // A type error already reported; the body still gets checked.
                     self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, slice.span);
                     let body_falls = self.block(body, Mode::Use);
-                    self.scopes.pop();
+                    self.end_scope(body.close, body_falls);
                     self.finish_loop(entry, body_falls);
                     return;
                 };
                 let elem = (**elem).clone();
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, slice.span);
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::ForList { pat, list, body } => {
@@ -674,7 +949,7 @@ impl<'a> Checker<'a> {
                 };
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, list.span);
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::ForMap { pat, map, body } => {
@@ -689,7 +964,7 @@ impl<'a> Checker<'a> {
                 };
                 self.bind_pattern(pat, &pair, &mut Vec::new(), None, map.span);
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::ForChars { pat, string, body } => {
@@ -700,7 +975,7 @@ impl<'a> Checker<'a> {
                 self.scopes.push(Vec::new());
                 self.bind_pattern(pat, &Ty::Char, &mut Vec::new(), None, string.span);
                 let body_falls = self.block(body, Mode::Use);
-                self.scopes.pop();
+                self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
             K::Match(scrutinee, arms) => {
@@ -739,14 +1014,22 @@ impl<'a> Checker<'a> {
                             scrutinee.span,
                         );
                     }
+                    let mut arm_bindings = Vec::new();
                     if !(moves && crossing) {
                         self.bind_pattern(&arm.pat, &scrutinee.ty, &mut Vec::new(), root.as_ref(), scrutinee.span);
+                        collect_bindings(&arm.pat, &mut arm_bindings);
                     }
                     if let Some(g) = &arm.guard {
                         self.expr(g, Mode::Use);
                     }
                     self.expr(&arm.body, mode);
-                    self.scopes.pop();
+                    self.end_scope(arm.body.span, arm.body.ty != Ty::Never);
+                    // A binding of the arm is dropped at the end of the arm (MV8).
+                    if arm.body.ty != Ty::Never {
+                        for id in arm_bindings.into_iter().rev() {
+                            self.drop_event(id, arm.body.span);
+                        }
+                    }
                     // An arm that does not fall through contributes no state to the code after the match.
                     if arm.body.ty != Ty::Never {
                         match &mut result {
@@ -780,12 +1063,16 @@ impl<'a> Checker<'a> {
                 self.observe_exits();
             }
             K::Assign(place, value) => {
-                self.expr(value, Mode::Move);
+                let dest = self.place_of(place).map(|(root, _)| self.locals[root.0].name.clone());
+                self.with_dest(dest, Mode::Move, value);
                 if let Some((root, path)) = self.place_of(place) {
                     self.place_subexpr(place);
                     if is_tracked_place(place) {
                         // Assigning to a field uses the values above it, but not its sibling fields (MV5).
                         self.read_ancestors(root, &path, place.span);
+                        // The old value is dropped before the new one is stored (DR4).
+                        let ty = place.ty.clone();
+                        self.drop_place_event(root, &path, &ty, place.span);
                         self.init_place(root, &path);
                     } else {
                         // Assigning through a runtime index is not tracked; using the place only reads the base.
@@ -800,27 +1087,28 @@ impl<'a> Checker<'a> {
                 self.expr(r, Mode::Use);
             }
             K::Range { lo, hi, .. } => {
-                self.expr(lo, Mode::Move);
-                self.expr(hi, Mode::Move);
+                self.with_dest(None, Mode::Move, lo);
+                self.with_dest(None, Mode::Move, hi);
             }
             K::Unary(_, operand) | K::Cast(operand) => self.expr(operand, Mode::Use),
+            // The elements of a new aggregate move into the aggregate, not into whatever the aggregate is for.
             K::Array(elems) => {
                 for el in elems {
-                    self.expr(el, Mode::Move);
+                    self.with_dest(None, Mode::Move, el);
                 }
             }
-            K::ArrayRepeat(value, _) => self.expr(value, Mode::Move),
+            K::ArrayRepeat(value, _) => self.with_dest(None, Mode::Move, value),
             K::Tuple(elems) => {
                 for el in elems {
-                    self.expr(el, Mode::Move);
+                    self.with_dest(None, Mode::Move, el);
                 }
             }
             K::Struct(fields) | K::Variant(_, fields) => {
                 for (_, v) in fields {
-                    self.expr(v, Mode::Move);
+                    self.with_dest(None, Mode::Move, v);
                 }
             }
-            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.expr(inner, Mode::Move),
+            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.with_dest(None, Mode::Move, inner),
         }
     }
 
@@ -831,7 +1119,7 @@ impl<'a> Checker<'a> {
         // the checker can follow. Reading a non-Copy value from it would move out of borrowed content (MV7,
         // `spec/operators.md`, OP10).
         if mode == Mode::Move && !self.is_copy(&e.ty) && is_view_place(e) && self.place_of(e).is_none() {
-            self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content");
+            self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content").help(TRACE_HELP);
             return;
         }
         let Some((root, path)) = self.place_of(e) else { return };
@@ -841,7 +1129,7 @@ impl<'a> Checker<'a> {
             // A move is tracked through fields, constant array and `List` indices, and `Heap` pointee fields.
             if !is_tracked_place(e) {
                 if is_view_place(e) {
-                    self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content");
+                    self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content").help(TRACE_HELP);
                 } else {
                     self.error(
                         Code::UNSUPPORTED, // e9000: move-runtime-index-place
@@ -853,6 +1141,9 @@ impl<'a> Checker<'a> {
             }
             self.move_place(root, &path, e.span);
         } else {
+            if mode == Mode::Move && self.is_copy(&ty) {
+                self.event(e.span, Some(root), &path, tir::OwnershipEventKind::Copy);
+            }
             self.read_place(root, &path, e.span);
         }
     }
@@ -880,6 +1171,9 @@ impl<'a> Checker<'a> {
         if mode == Mode::Move && !self.is_copy(&self.locals[id.0].ty.clone()) {
             self.move_place(id, path, span);
         } else {
+            if mode == Mode::Move {
+                self.event(span, Some(id), path, tir::OwnershipEventKind::Copy);
+            }
             self.read_place(id, path, span);
         }
     }
@@ -953,7 +1247,8 @@ impl<'a> Checker<'a> {
                 Code::MOVED_IN_LOOP,
                 span,
                 "this value is moved in a previous loop iteration; reinitialize it before the next one",
-            );
+            )
+            .help(TRACE_HELP);
         }
     }
 
@@ -969,7 +1264,14 @@ impl<'a> Checker<'a> {
                 tir::Stmt::Let(pat, init, else_block) => {
                     // `let _ = e` does not bind, so a place in `e` is only read (DR5); an rvalue is a temporary.
                     let init_mode = if matches!(pat, Pat::Wild) { Mode::Use } else { Mode::Move };
-                    self.expr(init, init_mode);
+                    // The value a `let` binds is where a move in its initializer goes (`move a -> b`).
+                    let dest = if init_mode == Mode::Move { single_binding(pat, self.locals) } else { None };
+                    self.with_dest(dest, init_mode, init);
+                    // `let _ = e` binds nothing, so a value it leaves is a temporary (DR5).
+                    if matches!(pat, Pat::Wild) && self.env.defs.needs_drop(&init.ty) {
+                        let at = Span::new(init.span.file, init.span.hi.saturating_sub(1), init.span.hi);
+                        self.event(at, None, &[], tir::OwnershipEventKind::Drop { conditional: false });
+                    }
                     if init.ty == Ty::Never {
                         falls = false;
                         break;
@@ -996,6 +1298,12 @@ impl<'a> Checker<'a> {
                 }
                 tir::Stmt::Expr(e) => {
                     self.expr(e, Mode::Move);
+                    // A value the statement leaves behind is a temporary, dropped at the end of the statement
+                    // (DR5).
+                    if self.env.defs.needs_drop(&e.ty) {
+                        let at = Span::new(e.span.file, e.span.hi.saturating_sub(1), e.span.hi);
+                        self.event(at, None, &[], tir::OwnershipEventKind::Drop { conditional: false });
+                    }
                     if e.ty == Ty::Never {
                         falls = false;
                         break;
@@ -1012,7 +1320,7 @@ impl<'a> Checker<'a> {
         if falls {
             self.observe_exits();
         }
-        self.scopes.pop();
+        self.end_scope(b.close, falls);
         falls
     }
 
@@ -1102,7 +1410,10 @@ impl<'a> Checker<'a> {
         {
             let mut full = base.clone();
             full.extend_from_slice(path);
+            let dest = self.locals[id.0].name.clone();
+            let saved = self.move_dest.replace(dest);
             self.move_place(*root, &full, span);
+            self.move_dest = saved;
         }
     }
 }
@@ -1155,6 +1466,16 @@ fn pattern_moves(pat: &Pat) -> bool {
     }
 }
 
+/// The name a `let` pattern binds, when it binds exactly one name: the destination of a move in its initializer.
+fn single_binding(pat: &Pat, locals: &[tir::Local]) -> Option<String> {
+    let mut ids = Vec::new();
+    collect_bindings(pat, &mut ids);
+    match ids.as_slice() {
+        [id] => locals.get(id.0).map(|local| local.name.clone()),
+        _ => None,
+    }
+}
+
 fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
     match pat {
         Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
@@ -1168,6 +1489,11 @@ fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
         Pat::Ok(inner) | Pat::Err(inner) => collect_bindings(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
     }
+}
+
+/// Whether a function name is one the compiler generated (an interpolated string's formatter).
+fn generated_name(name: &str) -> bool {
+    name.rsplit('.').next().is_some_and(|segment| segment.starts_with("__"))
 }
 
 #[cfg(test)]

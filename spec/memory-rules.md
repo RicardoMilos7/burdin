@@ -9,6 +9,12 @@ All checks run on a function body at a time, on the typed tree (`burdin_tir`). N
 function's body: a call is checked from its signature alone. Stage 0 has no MIR; the design's MIR steps belong to
 stage 1 (`stage1-subset.md`).
 
+Each check also records the ownership events it observes — declarations, moves, copies, borrows, drops, drop flags,
+argument conventions, and derived clones — as `Function::events` (`spec/check.md`, CK10). The command line
+(`burdin check --explain-ownership`), the language server's ownership lens, and the REPL render that one list; a tool
+never re-derives these facts. `burdin check --explain` prints the path to a memory error and names the rule ID below
+(CK11).
+
 ## 0. Definitions
 
 **Place.** A local variable or parameter, followed by zero or more struct-field or tuple-field selections:

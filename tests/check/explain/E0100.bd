@@ -1,0 +1,11 @@
+struct Thing {
+    id: i32
+}
+
+fn take(own t: Thing) {}
+
+fn main() {
+    let t = Thing { id: 1 }
+    take(t)
+    let u = t //~ E0100
+}

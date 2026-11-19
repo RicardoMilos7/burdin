@@ -1,0 +1,25 @@
+struct Counter {
+    n: i32
+}
+
+fn read(c: Counter): i32 {
+    let r = &c
+    (*r).n
+}
+
+fn bump(mut c: Counter) {
+    c.n = c.n + 1
+}
+
+fn main() {
+    let mut c = Counter { n: 1 }
+    bump(mut c)
+    let text = String.from("hello")
+    let view = text.as_str()
+    let mut xs = [1, 2, 3]
+    for x in xs {
+        println(x.to_string())
+    }
+    println(view)
+    println(read(c).to_string())
+}

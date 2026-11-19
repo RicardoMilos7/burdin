@@ -182,6 +182,50 @@ pub struct OwnedLocal {
     pub is_parameter: bool,
 }
 
+/// What one ownership event is, as a tool sees it (`spec/check.md`, CK10). A tool renders these facts; it never
+/// recomputes them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnershipEventKind {
+    /// The local comes into being: a `let` or pattern binding, or a parameter.
+    Declare,
+    /// A non-Copy place is moved out, optionally into `target`.
+    Move { target: Option<String> },
+    /// A Copy place is read in a move context.
+    Copy,
+    /// A shared borrow is taken.
+    BorrowRead,
+    /// An exclusive borrow is taken.
+    BorrowMut,
+    /// The value is dropped at the end of its scope; `conditional` when a drop flag guards it.
+    Drop { conditional: bool },
+    /// A runtime drop flag is kept for a move that happens on only some paths.
+    DropFlag,
+    /// The convention of one argument at a call.
+    CallArg { parameter: String, convention: Convention },
+    /// `.clone()`, with whether `Clone` is the compiler's derived member.
+    Clone { derived: bool },
+}
+
+/// One ownership event with the names and locations a tool shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnershipEventInfo {
+    pub kind: OwnershipEventKind,
+    pub at: Location,
+    /// The local the event concerns; `None` for an argument that is not a place.
+    pub local: Option<String>,
+    /// Field indices from the local to the place; empty is the whole local.
+    pub path: Vec<usize>,
+}
+
+/// The ownership events of one function or closure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FunctionOwnership {
+    pub function: String,
+    /// Where the function or closure is written.
+    pub at: Location,
+    pub events: Vec<OwnershipEventInfo>,
+}
+
 /// One statement of a function body, as a tool sees it. The REPL reads these to decide which statement an input
 /// appended and whether its value is printed (`spec/repl.md`, RP5).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -228,6 +272,49 @@ pub struct Member {
     pub is_field: bool,
     /// The field's type, or `fn add(a: i32, b: i32): i32` for a method.
     pub detail: String,
+}
+
+/// One function's ownership events, translated from the typed tree with `path` as the file they point into
+/// (`spec/query.md`, QL7). The command line uses it directly; `Analysis::ownership_events` uses it per file.
+pub fn function_ownership(function: &Function, path: &str) -> FunctionOwnership {
+    let location = |span: Span| Location { path: path.to_string(), lo: span.lo, hi: span.hi };
+    FunctionOwnership {
+        function: function.name.clone(),
+        at: location(function.span),
+        events: function
+            .events
+            .iter()
+            .map(|event| OwnershipEventInfo {
+                kind: match &event.kind {
+                    burdin_tir::OwnershipEventKind::Declare => OwnershipEventKind::Declare,
+                    burdin_tir::OwnershipEventKind::Move { target } => {
+                        OwnershipEventKind::Move { target: target.clone() }
+                    }
+                    burdin_tir::OwnershipEventKind::Copy => OwnershipEventKind::Copy,
+                    burdin_tir::OwnershipEventKind::BorrowRead => OwnershipEventKind::BorrowRead,
+                    burdin_tir::OwnershipEventKind::BorrowMut => OwnershipEventKind::BorrowMut,
+                    burdin_tir::OwnershipEventKind::Drop { conditional } => {
+                        OwnershipEventKind::Drop { conditional: *conditional }
+                    }
+                    burdin_tir::OwnershipEventKind::DropFlag => OwnershipEventKind::DropFlag,
+                    burdin_tir::OwnershipEventKind::CallArg { parameter, convention } => OwnershipEventKind::CallArg {
+                        parameter: parameter.clone(),
+                        convention: match convention {
+                            burdin_tir::CallConvention::Read => Convention::Read,
+                            burdin_tir::CallConvention::Mut => Convention::Mut,
+                            burdin_tir::CallConvention::Own => Convention::Own,
+                        },
+                    },
+                    burdin_tir::OwnershipEventKind::Clone { derived } => {
+                        OwnershipEventKind::Clone { derived: *derived }
+                    }
+                },
+                at: location(event.span),
+                local: event.local.and_then(|id| function.locals.get(id.0).map(|local| local.name.clone())),
+                path: event.path.clone(),
+            })
+            .collect(),
+    }
 }
 
 impl Db {
@@ -472,6 +559,49 @@ impl Analysis {
                 .collect(),
             return_origins: function.ret_origins.clone(),
         })
+    }
+
+    /// The ownership events of every function and closure written in `path`, in source order
+    /// (`spec/check.md`, CK10; `spec/query.md` QL7). The command line's `--explain-ownership` and the language
+    /// server's ownership lens render these.
+    pub fn ownership_events(&self, path: &str) -> Vec<FunctionOwnership> {
+        let Some(program) = self.program.as_ref() else { return Vec::new() };
+        let Some(file) = self.file_id(path) else { return Vec::new() };
+        let mut out: Vec<FunctionOwnership> = program
+            .functions
+            .iter()
+            .filter(|f| !f.symbolic && f.span.file == file)
+            .map(|f| self.function_ownership(f))
+            .collect();
+        out.extend(
+            program.closures.iter().filter(|c| c.func.span.file == file).map(|c| self.function_ownership(&c.func)),
+        );
+        out.sort_by_key(|f| (f.at.lo, f.at.hi));
+        out
+    }
+
+    /// The ownership events of the innermost function or closure whose body contains a byte offset of `path`.
+    pub fn ownership_at(&self, path: &str, offset: u32) -> Option<FunctionOwnership> {
+        let program = self.program.as_ref()?;
+        let file = self.file_id(path)?;
+        let mut best: Option<&Function> = None;
+        for function in program.functions.iter().filter(|f| !f.symbolic).chain(program.closures.iter().map(|c| &c.func))
+        {
+            let s = function.span;
+            if s.file != file || !(s.lo <= offset && offset < s.hi) {
+                continue;
+            }
+            if best.is_none_or(|b| s.hi - s.lo < b.span.hi - b.span.lo) {
+                best = Some(function);
+            }
+        }
+        best.map(|f| self.function_ownership(f))
+    }
+
+    /// Translates one function's typed events into the names and locations a tool shows.
+    fn function_ownership(&self, function: &Function) -> FunctionOwnership {
+        let path = self.files.get(function.span.file.0 as usize).map(String::as_str).unwrap_or("");
+        function_ownership(function, path)
     }
 
     /// The innermost expression of the program that contains a position, and the function it is in.

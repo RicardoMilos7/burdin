@@ -1,0 +1,9 @@
+explain/E0121.bd:1:1: error[E0121]: this returns views of more than one parameter (`a`, `b`); a second-class result must derive from exactly one parameter
+error: could not check explain/E0121.bd (1 error)
+
+trace for explain/E0121.bd:1:1: error[E0121]: this returns views of more than one parameter (`a`, `b`); a second-class result must derive from exactly one parameter
+  rule: spec/memory-rules.md RT3
+  note at explain/E0121.bd:1:9: `a` is one of the sources of this result
+  note at explain/E0121.bd:1:18: `b` is one of the sources of this result
+  fails here: explain/E0121.bd:1:1
+  fix: return a reference derived from one parameter only, or return an owned value instead. A static string literal is the one result that needs no parameter.

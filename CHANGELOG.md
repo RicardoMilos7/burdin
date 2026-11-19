@@ -76,6 +76,26 @@ system libraries `rustc` reports. A failure is the new E0264; a dependency's cra
   install starts without LLVM on `PATH`. `build_release.py` refuses to package a Windows build without the DLL and
   takes `--llvm-dll`. A static Windows build (`BURDIN_STATIC_LLVM=1`, static CRT) is wired but not yet proven.
 
+### Ownership and drop visualizer (issue #587, sub-issues #589, #591, #593)
+
+`spec/check.md` (CK10-CK11), `spec/lsp.md` (LS5, LS11, LS13), and `spec/query.md` (QL7) are the specification;
+`tests/check_check.py`, the LSP tests, and the `tests/diagnostics/` goldens check it.
+
+- **A stable ownership event list.** The move and borrow checks record every declaration, move, copy, borrow, drop,
+  drop flag, argument convention, and derived clone in `tir::Function::events` (no new analysis), and `burdin_query`
+  exposes it as `Analysis::ownership_events`. The command line, the language server, and the REPL render the same
+  facts.
+- **`burdin check --explain-ownership` (#589).** Prints each function's source with margin annotations — `move a -> b`,
+  `copy`, `borrow (read)`/`borrow (mut)`, `drop a` at the closing brace, `drop flag`, the parameter conventions at each
+  call, and derived clones. `--fn <name>` selects one function; `--format json` lists the events with spans.
+- **The ownership lens (#591).** `inlayHints.ownership`, off by default, adds inlay hints for moves at their use and
+  implicit drops at the closing brace; a hover on a local lists its moves, copies, borrows, drops, and clones.
+- **`burdin check --explain` (#593).** Traces a memory error from the value's declaration through every move or
+  borrow to the failing use, with the rule ID from `spec/memory-rules.md` and the reference's suggested fix over
+  E0100, E0101, E0103, E0104, E0110, E0111, E0121, E0122, and E0123. The diagnostics carry a one-line pointer, and
+  their notes (the JSON `related` information) name the declaration and the move or borrow sites. The plain
+  diagnostic line and the conformance suite's markers are unchanged.
+
 ### Debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
 `spec/debug.md` (DBG1-DBG12) is the specification; `tests/check_debug_info.py` and `tests/check_debug_printers.py`

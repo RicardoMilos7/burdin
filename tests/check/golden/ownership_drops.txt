@@ -1,0 +1,22 @@
+fn consume (ownership/drops.bd:1):
+   1 | fn consume(own s: String) {}
+     | drop s
+
+fn main (ownership/drops.bd:3):
+   3 | fn main() {
+   4 |     let mut s = String.from("a")
+   5 |     s = String.from("b")
+     | drop s
+   6 |     let mut t = String.from("c")
+   7 |     if t.len() > 0 {
+     | call arg `self`: read
+   8 |         consume(t)
+     | call arg `s`: own
+     | move t
+     | drop flag t
+   9 |     }
+  10 |     println(s)
+     | borrow (read) s
+  11 | }
+     | drop t (conditional)
+     | drop s

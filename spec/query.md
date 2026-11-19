@@ -121,6 +121,11 @@ source writes them, without the module path the checker uses to disambiguate.
 - `Analysis::ownership_of(path, offset)` — the innermost function or closure whose body contains the position: the
   places it moves out of (with the field path and whether the checker proved the local is dead there), the locals it
   owns, and the parameters a second-class result derives from.
+- `Analysis::ownership_events(path)` — the ownership events of every function and closure written in `path`, in
+  source order (`spec/check.md`, CK10): the move, copy, borrow, drop, drop flag, argument convention, and derived
+  clone the memory checks recorded, with the local's name, the field path, and the event's location. `ownership_at(path,
+  offset)` is the same for the innermost function at a position; `burdin_query::function_ownership` translates one
+  typed function for the command line. Nothing is recomputed: the events are `Function::events`.
 - `Analysis::statements_of(path, function)` — a body's statements in order, the tail expression counted as one more:
   a `let` with the names it binds and their types, an expression statement with its type and whether that type is
   `()` or `!`. The REPL reads these to see what an input appended and whether to print it (`spec/repl.md`, RP5).

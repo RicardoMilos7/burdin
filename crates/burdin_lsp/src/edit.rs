@@ -50,45 +50,93 @@ const BUILTIN_TYPES: &[&str] = &[
 pub fn hover(server: &mut Server, params: &Json) -> Reply {
     let (i, path) = server.document(params, true)?;
     let offset = server.offset(i, &path, params.get("position"))?;
-    let mut r = Resolver::new(&mut server.packages[i]);
-    let tok = r.index(&path).and_then(|ix| ix.ident_at(offset).map(|t| Loc::new(&path, t.lo, t.hi)));
-    let (markdown, at) = match r.symbol_at(&path, offset) {
-        Some(symbol) => {
-            let code = match symbol.kind {
-                SymKind::Local => format!("let {}: {}", symbol.name, symbol.ty.clone().unwrap_or_default()),
-                SymKind::Parameter => format!("{}: {}", symbol.name, symbol.ty.clone().unwrap_or_default()),
-                SymKind::Module => format!("module {}", symbol.name),
-                SymKind::Item(_) => symbol.detail.clone().unwrap_or_default(),
-            };
-            let mut text = format!("```burdin\n{code}\n```");
-            match (symbol.kind, &symbol.owner) {
-                (SymKind::Item(Kind::Method | Kind::InterfaceMethod), Some(owner)) => {
-                    text.push_str(&format!("\n\nmethod of `{owner}`"));
-                    if let Some(iface) = &symbol.interface {
-                        text.push_str(&format!(" (implements `{iface}`)"));
+    let mut hovered_local: Option<(String, u32)> = None;
+    let (mut markdown, at) = {
+        let mut r = Resolver::new(&mut server.packages[i]);
+        let tok = r.index(&path).and_then(|ix| ix.ident_at(offset).map(|t| Loc::new(&path, t.lo, t.hi)));
+        let (markdown, at) = match r.symbol_at(&path, offset) {
+            Some(symbol) => {
+                let code = match symbol.kind {
+                    SymKind::Local => format!("let {}: {}", symbol.name, symbol.ty.clone().unwrap_or_default()),
+                    SymKind::Parameter => format!("{}: {}", symbol.name, symbol.ty.clone().unwrap_or_default()),
+                    SymKind::Module => format!("module {}", symbol.name),
+                    SymKind::Item(_) => symbol.detail.clone().unwrap_or_default(),
+                };
+                let mut text = format!("```burdin\n{code}\n```");
+                match (symbol.kind, &symbol.owner) {
+                    (SymKind::Item(Kind::Method | Kind::InterfaceMethod), Some(owner)) => {
+                        text.push_str(&format!("\n\nmethod of `{owner}`"));
+                        if let Some(iface) = &symbol.interface {
+                            text.push_str(&format!(" (implements `{iface}`)"));
+                        }
                     }
+                    (SymKind::Item(Kind::Field), Some(owner)) => text.push_str(&format!("\n\nfield of `{owner}`")),
+                    (SymKind::Item(Kind::Variant), Some(owner)) => text.push_str(&format!("\n\nvariant of `{owner}`")),
+                    (SymKind::Parameter, _) => text.push_str("\n\nparameter"),
+                    _ => {}
                 }
-                (SymKind::Item(Kind::Field), Some(owner)) => text.push_str(&format!("\n\nfield of `{owner}`")),
-                (SymKind::Item(Kind::Variant), Some(owner)) => text.push_str(&format!("\n\nvariant of `{owner}`")),
-                (SymKind::Parameter, _) => text.push_str("\n\nparameter"),
-                _ => {}
+                if let Some(docs) = &symbol.docs {
+                    text.push_str("\n\n---\n\n");
+                    text.push_str(docs);
+                }
+                // A local or parameter also lists what the checker saw done to it (`spec/lsp.md`, LS11/LS13).
+                if matches!(symbol.kind, SymKind::Local | SymKind::Parameter) {
+                    hovered_local = Some((symbol.name.clone(), symbol.def.lo));
+                }
+                (text, tok)
             }
-            if let Some(docs) = &symbol.docs {
-                text.push_str("\n\n---\n\n");
-                text.push_str(docs);
-            }
-            (text, tok)
-        }
-        None => match r.p.current().and_then(|a| a.type_at(&path, offset)) {
-            Some(typed) => (format!("```burdin\n{}\n```", typed.ty), Some(Loc::from(&typed.at))),
-            None => return Ok(Json::Null),
-        },
+            None => match r.p.current().and_then(|a| a.type_at(&path, offset)) {
+                Some(typed) => (format!("```burdin\n{}\n```", typed.ty), Some(Loc::from(&typed.at))),
+                None => return Ok(Json::Null),
+            },
+        };
+        (markdown, at)
     };
+    if let Some((name, declared)) = hovered_local
+        && let Some(notes) = ownership_notes(server, i, &path, &name, declared)
+    {
+        markdown.push_str(&notes);
+    }
     let mut out = Json::obj().with("contents", Json::obj().with("kind", "markdown").with("value", markdown));
     if let Some(at) = at {
         out.set("range", server.range_of(&at));
     }
     Ok(out)
+}
+
+/// The ownership a local or parameter took part in, as a hover section (`spec/lsp.md`, LS11/LS13). It reads the
+/// events the memory checks recorded (`spec/check.md`, CK10); nothing is recomputed here.
+fn ownership_notes(server: &Server, package: usize, path: &str, name: &str, declared: u32) -> Option<String> {
+    let p = &server.packages[package];
+    let analysis = p.current()?;
+    let function = analysis.ownership_at(path, declared)?;
+    let text = p.text(path).unwrap_or("");
+    let index = LineIndex::new(text, server.encoding);
+    let mut lines = Vec::new();
+    for event in &function.events {
+        if event.local.as_deref() != Some(name) || event.at.lo < declared {
+            continue;
+        }
+        let what = match &event.kind {
+            burdin_query::OwnershipEventKind::Move { target } => match target {
+                Some(target) => format!("moved to `{target}`"),
+                None => "moved".to_string(),
+            },
+            burdin_query::OwnershipEventKind::Copy => "copied".to_string(),
+            burdin_query::OwnershipEventKind::BorrowRead => "borrowed (read)".to_string(),
+            burdin_query::OwnershipEventKind::BorrowMut => "borrowed (mut)".to_string(),
+            burdin_query::OwnershipEventKind::Drop { conditional } => {
+                format!("dropped{}", if *conditional { " (conditionally)" } else { "" })
+            }
+            burdin_query::OwnershipEventKind::Clone { derived } => {
+                format!("cloned{}", if *derived { " (derived)" } else { "" })
+            }
+            _ => continue,
+        };
+        let (line, column) = index.position(event.at.lo);
+        lines.push(format!("- {what} at {}:{}", line + 1, column + 1));
+    }
+    (!lines.is_empty()).then(|| format!("\n\n**Ownership**\n{}", lines.join("\n")))
 }
 
 // ---- stale analyses -----------------------------------------------------------------------------------------------
@@ -559,6 +607,37 @@ pub fn inlay_hints(server: &mut Server, params: &Json) -> Reply {
                     Json::obj()
                         .with("position", crate::text::position_json(line, character))
                         .with("label", format!(": {}", local.ty))
+                        .with("kind", 1),
+                ));
+            }
+        }
+    }
+    if server.config.inlay_ownership {
+        // The ownership lens renders the events the memory checks recorded (`spec/check.md`, CK10); the server
+        // computes nothing. A drop is shown at the closing brace it runs at, and a move at its use.
+        for function in analysis.ownership_events(&path) {
+            for event in &function.events {
+                if event.at.lo < lo || event.at.lo > hi {
+                    continue;
+                }
+                let Some(local) = &event.local else { continue };
+                let label = match &event.kind {
+                    burdin_query::OwnershipEventKind::Move { target } => match target {
+                        Some(target) => format!("move {local} -> {target}"),
+                        None => format!("move {local}"),
+                    },
+                    burdin_query::OwnershipEventKind::Drop { conditional } => {
+                        format!("drop {local}{}", if *conditional { " (conditional)" } else { "" })
+                    }
+                    burdin_query::OwnershipEventKind::DropFlag => format!("drop flag {local}"),
+                    _ => continue,
+                };
+                let (line, character) = index.position(event.at.lo);
+                hints.push((
+                    event.at.lo,
+                    Json::obj()
+                        .with("position", crate::text::position_json(line, character))
+                        .with("label", label)
                         .with("kind", 1),
                 ));
             }

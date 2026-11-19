@@ -1,5 +1,8 @@
 //! Calls: functions, methods, associated functions, extern functions, and the argument conventions.
 
+/// The one-line pointer every exclusivity diagnostic carries to its step-by-step explanation
+/// (`spec/check.md`, CK11; issue #593).
+const EXCLUSIVITY_HELP: &str = "run `burdin check --explain` to trace the path to this error";
 use super::{FnCx, PathTy, error_expr, mk};
 use crate::builtins::{builtin, builtin_sig, method};
 use crate::globals::{Callee, Global, adt_key};
@@ -568,7 +571,9 @@ impl FnCx<'_> {
         place_mentions(&a, &mut pa);
         place_mentions(&b, &mut pb);
         if pa.iter().any(|p| pb.iter().any(|q| places_overlap(p, q))) {
-            self.diags.error(Code::EXCLUSIVITY, span, "`swap` needs two places that do not overlap");
+            self.diags
+                .error(Code::EXCLUSIVITY, span, "`swap` needs two places that do not overlap")
+                .help(EXCLUSIVITY_HELP);
         }
         mk(tir::ExprKind::Builtin(Builtin::Swap, vec![a, b]), Ty::Unit, span)
     }
@@ -655,7 +660,9 @@ impl FnCx<'_> {
         place_mentions(&place, &mut pa);
         place_mentions(&value, &mut pv);
         if pa.iter().any(|p| pv.iter().any(|q| places_overlap(p, q))) {
-            self.diags.error(Code::EXCLUSIVITY, span, "`replace` needs a place that the new value does not mention");
+            self.diags
+                .error(Code::EXCLUSIVITY, span, "`replace` needs a place that the new value does not mention")
+                .help(EXCLUSIVITY_HELP);
         }
         mk(tir::ExprKind::Builtin(Builtin::Replace, vec![place, value]), ty, span)
     }
@@ -923,7 +930,8 @@ impl FnCx<'_> {
                             span,
                             "another argument of this call touches the same value as a `mut` argument",
                         )
-                        .note(other, "this argument touches the same place");
+                        .note(other, "this argument touches the same place")
+                        .help(EXCLUSIVITY_HELP);
                     return;
                 }
             }

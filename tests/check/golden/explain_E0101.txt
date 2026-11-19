@@ -1,0 +1,8 @@
+explain/E0101.bd:4:9: error[E0101]: cannot move out of `s`: it is only borrowed
+error: could not check explain/E0101.bd (1 error)
+
+trace for explain/E0101.bd:4:9: error[E0101]: cannot move out of `s`: it is only borrowed
+  rule: spec/memory-rules.md MV7
+  created `s` at explain/E0101.bd:3:10
+  fails here: explain/E0101.bd:4:9
+  fix: take the parameter as `own` if the function is supposed to consume it, or clone the value before moving the clone.

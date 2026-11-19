@@ -1,0 +1,7 @@
+fn main() {
+    let r = { //~ E0123
+        let s = String.from("x")
+        s.as_str()
+    }
+    println(r)
+}

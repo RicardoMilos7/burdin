@@ -1,0 +1,16 @@
+struct Inner {
+    n: i32
+}
+
+struct Outer {
+    inner: Inner
+}
+
+Outer: Drop {
+    fn drop(mut self) {}
+}
+
+fn main() {
+    let o = Outer { inner: Inner { n: 1 } }
+    let i = o.inner //~ E0103
+}

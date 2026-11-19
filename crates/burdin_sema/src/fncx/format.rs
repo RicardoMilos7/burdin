@@ -300,7 +300,7 @@ impl FnCx<'_> {
         }
         let tail = self.formatter_call("finish", Vec::new(), span);
         self.scopes.pop();
-        let block = tir::Block { stmts, tail: Some(Box::new(tail)) };
+        let block = tir::Block { stmts, tail: Some(Box::new(tail)), close: span };
         mk(tir::ExprKind::Block(block), Ty::String, span)
     }
 

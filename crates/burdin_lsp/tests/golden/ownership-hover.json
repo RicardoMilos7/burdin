@@ -1,0 +1,16 @@
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```burdin\nlet u: String\n```\n\n**Ownership**\n- dropped at 17:5\n- borrowed (read) at 18:13\n- dropped at 22:1"
+  },
+  "range": {
+    "start": {
+      "line": 17,
+      "character": 12
+    },
+    "end": {
+      "line": 17,
+      "character": 13
+    }
+  }
+}

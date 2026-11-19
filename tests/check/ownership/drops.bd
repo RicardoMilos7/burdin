@@ -1,0 +1,11 @@
+fn consume(own s: String) {}
+
+fn main() {
+    let mut s = String.from("a")
+    s = String.from("b")
+    let mut t = String.from("c")
+    if t.len() > 0 {
+        consume(t)
+    }
+    println(s)
+}

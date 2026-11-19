@@ -208,7 +208,7 @@ impl FnCx<'_> {
             self.scopes.pop();
             copies.push(tir::Stmt::Expr(mk(tir::ExprKind::Block(block), ty, span)));
         }
-        Some(mk(tir::ExprKind::Block(tir::Block { stmts: copies, tail: None }), Ty::Unit, span))
+        Some(mk(tir::ExprKind::Block(tir::Block { stmts: copies, tail: None, close: span }), Ty::Unit, span))
     }
 
     /// `variable.member` where `variable` is a reflection loop variable: the member's literal.

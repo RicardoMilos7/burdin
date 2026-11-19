@@ -50,6 +50,7 @@ usage:
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
   burdin check <file.bd | package directory> [--release] [--tests] [--print-instances [--format <human|json>]]
                [-j <n>] [--comptime-steps <n>] [diagnostics]
+               [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain]
   burdin asm <file.bd | package directory> [<function>] [--debug] [--intel | --att] [--llvm] [--no-source]
              [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin bloat <file.bd | package directory> [--debug] [--top <n>] [--format <human|json>] [-j <n>]
@@ -102,7 +103,12 @@ doc options (the behavior is spec/doc.md):
 check options (type-check only: the front end and every memory check, no code generation or linking):
   --tests              also check the package's `test` blocks, and do not require a `main` (a library package)
   --print-instances    print every generic instance the program created and why (spec/inspect.md)
-  --format <human|json>  the format of --print-instances (default: human)
+  --explain-ownership  print each function's source with margin annotations: its moves, copies, borrows, drops,
+                       drop flags, argument conventions, and derived clones (issue #587)
+  --fn <name>          with --explain-ownership: print only this function (or qualified name)
+  --format <fmt>       with --print-instances: `human` (default) or `json`; with --explain-ownership:
+                       annotated source, `text` (default), or `json` events with spans
+  --explain            print the path that leads to each memory error, with its rule ID and the suggested fix
 
 asm options (one function's assembly, with the source interleaved; the behavior is spec/inspect.md):
   <function>           `module.name`, `Type.method`, or an instance such as `largest<i32>`; without it, the

@@ -1,0 +1,9 @@
+explain/E0104.bd:10:14: error[E0104]: this value is moved in a previous loop iteration; reinitialize it before the next one
+error: could not check explain/E0104.bd (1 error)
+
+trace for explain/E0104.bd:10:14: error[E0104]: this value is moved in a previous loop iteration; reinitialize it before the next one
+  rule: spec/memory-rules.md MV3
+  created `t` at explain/E0104.bd:8:9
+  moved `t` at explain/E0104.bd:10:14
+  fails here: explain/E0104.bd:10:14
+  fix: create the value inside the loop, clone it for each iteration, or move it before or after the loop instead of inside it.

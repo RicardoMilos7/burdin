@@ -18,6 +18,9 @@ struct Env<'a> {
     /// Which functions are `Scope.spawn` (spec/tasks.md, TK7): the closure they are given borrows from the scope's
     /// surroundings until the scope body ends.
     scoped_spawns: &'a [bool],
+    /// Every function's name, indexed by `FuncId`. The ownership events leave out the compiler's own generated
+    /// forwarding calls (an interpolated string expands to them), whose names start with `__`.
+    names: &'a [String],
 }
 
 /// Runs every memory check on `program`, filling in what later stages need: the return origin of each function and
@@ -29,23 +32,36 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
     origins::check(signatures, functions, diags);
 
     let scoped_spawns: Vec<bool> = functions.iter().map(|f| is_scope_spawn(&f.name)).collect();
-    let env = Env { defs: TypeDefs { structs, enums }, sigs: signatures, any_ifaces, scoped_spawns: &scoped_spawns };
+    let names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
+    let env = Env {
+        defs: TypeDefs { structs, enums },
+        sigs: signatures,
+        any_ifaces,
+        scoped_spawns: &scoped_spawns,
+        names: &names,
+    };
     for func in functions.iter_mut().filter(|f| !f.symbolic) {
-        let (moved, debug_kills) = moves::check_function(func, env, diags);
+        let (moved, debug_kills, events) = moves::check_function(func, env, diags);
         func.moved = moved;
         func.debug_kills = debug_kills;
+        func.events = events;
     }
     for closure in &mut *program.closures {
-        let (moved, debug_kills) = moves::check_function(&closure.func, env, diags);
+        let (moved, debug_kills, events) = moves::check_function(&closure.func, env, diags);
         closure.func.moved = moved;
         closure.func.debug_kills = debug_kills;
+        closure.func.events = events;
     }
-    for func in functions.iter().filter(|f| !f.symbolic) {
-        borrows::check(func, env, &[], diags);
+    for func in functions.iter_mut().filter(|f| !f.symbolic) {
+        let events = borrows::check(func, env, &[], diags);
+        func.events.extend(events);
+        func.events.sort_by_key(|e| (e.span.file.0, e.span.lo, e.span.hi));
     }
-    for closure in &program.closures {
+    for closure in &mut *program.closures {
         let outer: Vec<_> = closure.captures.iter().map(|c| c.local).collect();
-        borrows::check(&closure.func, env, &outer, diags);
+        let events = borrows::check(&closure.func, env, &outer, diags);
+        closure.func.events.extend(events);
+        closure.func.events.sort_by_key(|e| (e.span.file.0, e.span.lo, e.span.hi));
         origins::check_closure(&closure.func, signatures, diags);
     }
     // A constant's initializer is code the comptime engine runs (`spec/comptime.md`, CT7), so it follows the same
@@ -57,12 +73,13 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
             params: Vec::new(),
             ret: c.value.ty.clone(),
             locals: c.locals.clone(),
-            body: Block { stmts: Vec::new(), tail: Some(Box::new(c.value.clone())) },
+            body: Block { stmts: Vec::new(), tail: Some(Box::new(c.value.clone())), close: c.span },
             moved: Vec::new(),
             debug_kills: Vec::new(),
             ret_origins: Vec::new(),
             symbolic: false,
             exported: false,
+            events: Vec::new(),
         };
         moves::check_function(&func, env, diags);
         borrows::check(&func, env, &[], diags);
