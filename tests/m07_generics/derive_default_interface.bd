@@ -1,0 +1,59 @@
+//@ run
+//> plain: unnamed 0
+//> square: unnamed 4
+//> circle: shape 1
+//> err: unnamed 0
+//> pair: unnamed 0
+//> true
+
+// An interface whose methods all have default bodies can be listed after a struct's or enum's name, beside the
+// built-in derives: the declaration implements it with the defaults, as an empty `Type: Iface {}` block would. A
+// generic type needs the interface on its type parameters too, like a derive, and a hand-written impl block is
+// still how a type overrides a default (spec/derives.md, issue #825).
+
+interface Describe {
+    fn label(self): String { String.from("unnamed") }
+    fn weight(self): i32 { 0 }
+    fn line(self): String { "{self.label()} {self.weight()}" }
+}
+
+interface Marker {}
+
+struct Plain: Clone, Describe, Marker {}
+
+struct Square: Copy, Clone, Describe repr(C) {
+    side: i32
+}
+
+enum Shape: Copy, Eq, Describe {
+    Circle
+    Dot
+}
+
+error enum Failure: Describe {
+    Broken "broken"
+}
+
+struct Pair<T>: Clone, Describe {
+    a: T
+    b: T
+}
+
+fn show<T: Describe>(what: str, value: T) {
+    println("{what}: {value.line()}")
+}
+
+fn tagged<T: Marker>(value: T): bool {
+    true
+}
+
+fn main() {
+    show("plain", Plain {})
+    let sq = Square { side: 2 }
+    println("square: {sq.label()} {sq.side * sq.side}")
+    let c = Shape.Circle
+    println("circle: {if c == Shape.Circle { "shape" } else { "dot" }} 1")
+    show("err", Failure.Broken)
+    show("pair", Pair { a: Plain {}, b: Plain {} })
+    println(tagged(Plain {}).to_string())
+}

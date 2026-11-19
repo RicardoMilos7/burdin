@@ -96,7 +96,7 @@ interface Write {
 }
 
 /// Where a `seek` is measured from.
-enum SeekFrom derives (Clone, Copy, Eq, Debug) {
+enum SeekFrom: Clone, Copy, Eq, Debug {
     /// This many bytes after the start.
     Start(u64)
     /// This many bytes after the end; a negative offset is before it.

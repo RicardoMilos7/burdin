@@ -11,7 +11,7 @@
 // `get_or_insert_with` runs its closure only for an absent key. When the key is already there, the incoming value
 // and key are dropped on the spot; the map drops what it holds when it goes out of scope.
 
-struct Tag derives (Eq) {
+struct Tag: Eq {
     id: i32
 }
 

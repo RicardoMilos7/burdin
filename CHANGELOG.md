@@ -20,6 +20,17 @@ close-out checklist in `AGENTS.md`).
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
 
+### Derived interfaces after the type's name (issue #825)
+
+- `struct Point: Copy, Clone, Eq { ... }` replaces `struct Point derives (Copy, Clone, Eq) { ... }` on structs, enums,
+  and error enums; `repr(C)` comes after the list. The old clause is a syntax error, and `derives` is an ordinary
+  identifier.
+- The list also takes an interface whose methods all have default bodies: the declaration implements it as an empty
+  `Type: Iface {}` would, with the interface required on each type parameter of a generic type, like a derive.
+- E0234: an interface with a method that has no default (`Drop`, `From`, `Display`, ...) cannot be listed. `Drop`
+  in the list was E0002 before.
+- `burdin fmt`, `burdin expand`, `burdin doc`, `std/`, the conformance tests, and the specs use the new form.
+
 ### Language server: completion, snippets, and the built-ins (issues #819-#824)
 
 `spec/lsp.md` (LS8, LS12, LS13) is the specification; `crates/burdin_lsp/tests/completion.rs` checks it.
@@ -32,8 +43,8 @@ close-out checklist in `AGENTS.md`).
   primitive value its built-in methods, the prelude's extension methods, and what an implementation or derive provides
   (`to_string`, `clone`, `cmp`); after a prelude-bound standard module (`mem.`, `fs.`) its items. An empty statement
   offers the whole prelude and the standard modules.
-- **Contexts.** `self`, `mut self`, and `own self` only as a method's first parameter; `derives` after `struct Name` or
-  `enum Name`, and inside `derives (...)` the seven built-in derives and the user `derive` declarations in scope.
+- **Contexts.** `self`, `mut self`, and `own self` only as a method's first parameter; in the `: A, B` list after
+  `struct Name` or `enum Name`, the seven built-in derives and the user `derive` declarations in scope.
 - **Snippets and calls.** With the client's `snippetSupport`: item snippets at the top level (`main`, `fn`, `struct`,
   `enum`, `error enum`, `interface`, impl blocks, `test`, `bench`), a method snippet in an impl block, and statement
   snippets in a body (`if`, `match`, `for`, `while`); a completed function inserts `name($0)` (opening signature help)

@@ -72,8 +72,8 @@ hides its `use` line), `tests.rs`.
 **DC7. What a package documents.** The entry package and only its public interface: the non-`priv` functions, structs,
 enums, `error enums`, interfaces and their methods, type aliases, constants, `derive` declarations, and `extern`
 functions; the non-`priv` methods of an inherent `impl` block; the non-`priv` extension methods; and the fields and
-variants of the types that are documented. Items the parser generated (the impls of an `error enum`, a `derives`
-clause, the `main` wrapper) and the compiler's internal names (`main`, `__x`) are never documented. The members of a
+variants of the types that are documented. Items the parser generated (the impls of an `error enum`, a `: Debug`
+in a declaration, the `main` wrapper) and the compiler's internal names (`main`, `__x`) are never documented. The members of a
 `priv` type are left out even with `--private`: nothing outside the package can name them.
 Tests: `docs.rs` (`public_items_skip_private_and_generated`, `error_enums_are_recognized`), `tests/doc/geometry`.
 
@@ -85,7 +85,7 @@ an item; two segments name `module.Item` or `Item.member`; `Item::member` is the
 Tests: `tests/doc/links/broken.bd` (`fn.good`), `tests.rs`.
 
 **DC9. Signatures.** Every item and member has the signature as it is written in the source, from the declaration's
-head: `fn name(params): Ret`, `struct Name`, `struct Name derives (Copy)`, `interface Name`, `type Name = ...`,
+head: `fn name(params): Ret`, `struct Name`, `struct Name: Copy`, `interface Name`, `type Name = ...`,
 `const NAME: T = ...`, `error enum` variant texts with their message, and so on. Where the head spans several lines,
 the whitespace is collapsed. In the HTML, names of types and interfaces of the package that appear in a signature are
 links to their pages; parameters, fields, and methods stay plain.
@@ -169,7 +169,7 @@ fields), `tests/doc/expect/geometry/search-index.js`.
   "modules": [ { "name": "shapes", "segments": ["shapes"], "file": "src/shapes.bd", "root": false,
                  "docs": "…" | null, "links": [ … ],
                  "items": [ { "name": "Point", "path": "shapes.Point", "kind": "struct", "private": false,
-                              "signature": "struct Point derives (Copy, Eq, Debug)",
+                              "signature": "struct Point: Copy, Eq, Debug",
                               "docs": "…" | null, "links": [ … ],
                               "span": { "file": "src/shapes.bd", "line": 6, "column": 8,
                                         "end_line": 6, "end_column": 13 },

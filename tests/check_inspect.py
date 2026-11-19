@@ -118,7 +118,7 @@ def check_expand_goldens() -> None:
         ("(64 as usize)", "a `comptime` expression is its value (INS2)"),
         ("n * 2", "a `comptime if` is the branch it chose (INS2)"),
         ('"hi".shout()', "an extension call stays a method call: extensions are not values (INS3)"),
-        ("derives (Clone, Eq)", "a built-in derive stays (INS5)"),
+        ("struct P: Clone, Eq {", "a built-in derive stays (INS5)"),
     ]:
         check(needle in out, f"expand expand_mix.bd: {why}: `{needle}` missing")
     for needle in ["comptime SIZE", "comptime if", "a + b", "greet(times: 5)"]:

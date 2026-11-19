@@ -13,7 +13,7 @@
 // fold one word per byte, `write` folds a whole value as `hash()` does but from the current state, and writes
 // concatenate with no separator. `finish` does not consume or reset the hasher.
 
-struct Tag derives (Eq, Hash) {
+struct Tag: Eq, Hash {
     name: String
     id: i32
 }

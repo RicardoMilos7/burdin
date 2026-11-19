@@ -3,7 +3,7 @@
 
 // `hash()` at compile time is the same FNV-1a value compiled code computes (spec/comptime.md, CT1).
 
-struct Key derives (Copy, Clone, Eq, Hash) {
+struct Key: Copy, Clone, Eq, Hash {
     a: i32
     b: bool
     c: char

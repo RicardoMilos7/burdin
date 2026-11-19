@@ -31,13 +31,13 @@ Reflection runs when a function body is checked for a concrete type, so a derive
 structs of the standard library (`spec/stdlib.md`):
 
 ```
-struct FieldInfo derives (Clone, Eq, Debug) {
+struct FieldInfo: Clone, Eq, Debug {
     name: String        // the field's name
     type_name: String   // its type, as `Type.name` spells it
     index: usize        // its position, from 0
 }
 
-struct VariantInfo derives (Clone, Eq, Debug) {
+struct VariantInfo: Clone, Eq, Debug {
     name: String        // the variant's name
     index: usize        // its position, from 0
     arity: usize        // how many fields it carries
@@ -113,8 +113,8 @@ methods as for a hand-written one, so every error in them is an ordinary error. 
 
 ## RFL9. Applying a derive
 
-`derives (Name)` on a struct or an enum applies a user derive, alongside the built-in ones. For a generic type the
-generated impl is `Type<A, B>: Name where A: Name, B: Name` (one bound per type parameter; a const parameter takes
+`struct T: Name` (or `enum T: Name`) applies a user derive, alongside the built-in ones (`derives.md`). For a
+generic type the generated impl is `Type<A, B>: Name where A: Name, B: Name` (one bound per type parameter; a const parameter takes
 none), the rule of the built-in derives: `Pair<Leaf>` works when `Leaf` has the derive too. A derive whose generated
 impl does not check is reported at the derive's own lines, once, with the type's name in the message.
 
@@ -125,9 +125,9 @@ impl does not check is reported at the derive's own lines, once, with the type's
 | E0230 | `Type.fields` or `Type.variants` on a type that is neither a struct nor an enum |
 | E0231 | An associated function or enum variant named `name`, `size`, `align`, `fields`, or `variants` |
 | E0232 | A computed field access whose name is not a compile-time string |
-| E0233 | A derive named like a built-in derive, or `derives (Name)` with no interface `Name` in scope |
+| E0233 | A derive named like a built-in derive, or `struct T: Name` with a user derive and no interface `Name` in scope |
 
-An unknown derive name is E0002 (as before), a missing field in `x.{"z"}` is E0002, and E0220 and E0003 apply as
+An unknown name after `:` is E0002 (as before), a missing field in `x.{"z"}` is E0002, and E0220 and E0003 apply as
 everywhere.
 
 ## Tests

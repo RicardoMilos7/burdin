@@ -7,7 +7,7 @@
 //> true
 //> 1
 
-struct Version derives (Copy, Clone, Eq, Ord) {
+struct Version: Copy, Clone, Eq, Ord {
     major: i32
     minor: i32
 }

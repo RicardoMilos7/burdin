@@ -86,19 +86,21 @@ Tests: `m17_arguments__*` and `m19_operators__*` goldens, `expand_mix.golden`.
 A derive written in Burdin (`derive Name { ... }`, `spec/reflection.md`, RFL8) generates `Type: Name { ... }` for each
 type that names it. The expansion writes that impl block after the type, with each method's body expanded for the type
 (INS2: the loop over `Self.fields` unrolled, `self.{field.name}` as `self.x`, `Self.name` as the literal), removes the
-name from the type's `derives (...)`, and replaces the `derive` declaration by a comment once every type that named it has
-its impl block. A generic type keeps `derives (Name)` (its impl is per instance), and then the declaration stays too.
+name from the type's `: A, B` list, and replaces the `derive` declaration by a comment once every type that named it has
+its impl block. A generic type keeps `Name` in its list (its impl is per instance), and then the declaration stays too.
 
 Tests: `m21_reflect__derive_describe.golden`, `--item Point.describe`.
 
 ## INS5. Built-in derives
 
 `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug` have no source form that the compiler would accept back: their
-code is structural (`spec/derives.md`), and writing the impl by hand is E9000 (issue #402). The type keeps its
-`derives (...)` clause and a comment after it says so, so the expansion states where behavior comes from that is not in
+code is structural (`spec/derives.md`), and writing the impl by hand is E9000 (issue #402). The type keeps them in
+its `: A, B` list and a comment after it says so, so the expansion states where behavior comes from that is not in
 the text.
 
-Tests: every golden with a `derives` clause.
+An interface listed for its default methods (`spec/derives.md`) is source already and stays in the list.
+
+Tests: every golden with a built-in derive.
 
 ## INS6. The expansion is a program
 

@@ -28,7 +28,7 @@ fn random_seed(): u64 {
 
 /// A seeded pseudo-random number generator. A generator is a plain value: `clone` it to replay a sequence, and pass
 /// it as `mut` to code that draws numbers.
-struct Random derives (Clone, Eq) {
+struct Random: Clone, Eq {
     priv s0: u64
     priv s1: u64
     priv s2: u64

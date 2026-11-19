@@ -1,4 +1,6 @@
-//! Derives: reading the `derives (...)` clause and checking its requirements (memory-rules.md, CP).
+//! Derives: reading the built-in names of a declaration's `: A, B` list and checking their requirements
+//! (memory-rules.md, CP). The other names in the list (user derives and interfaces with default methods) are
+//! applied by `Sema::register_user_derives`, which also reports the names that are neither.
 
 use crate::globals::Globals;
 use burdin_diag::{Code, Diagnostics, Span};
@@ -8,15 +10,23 @@ use burdin_tir::{self as tir, Ty};
 /// The derives the compiler implements itself. A `derive` declaration cannot take one of these names.
 pub(crate) const BUILTIN_DERIVES: [&str; 7] = ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug"];
 
-/// Reads the built-in derives of a `derives (...)` clause. A name `user` accepts is a `derive` declaration, which
-/// `Sema::register_user_derives` expands; any other name is unknown.
-pub(crate) fn parse_derives(list: &[ast::Type], user: &dyn Fn(&str) -> bool, diags: &mut Diagnostics) -> tir::Derives {
+/// The built-in derive a name in a declaration's `: A, B` list stands for, if it is one.
+pub(crate) fn builtin_derive(t: &ast::Type) -> Option<&str> {
+    match &t.kind {
+        ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => {
+            let name = segs[0].name.name.as_str();
+            BUILTIN_DERIVES.contains(&name).then_some(name)
+        }
+        _ => None,
+    }
+}
+
+/// Reads the built-in derives of a declaration's `: A, B` list. Every other name is left to
+/// `Sema::register_user_derives`.
+pub(crate) fn parse_derives(list: &[ast::Type]) -> tir::Derives {
     let mut d = tir::Derives::default();
     for t in list {
-        let name = match &t.kind {
-            ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => segs[0].name.name.as_str(),
-            _ => "",
-        };
+        let Some(name) = builtin_derive(t) else { continue };
         let flag = match name {
             "Copy" => &mut d.copy,
             "Clone" => &mut d.clone,
@@ -24,17 +34,7 @@ pub(crate) fn parse_derives(list: &[ast::Type], user: &dyn Fn(&str) -> bool, dia
             "Ord" => &mut d.ord,
             "Hash" => &mut d.hash,
             "Default" => &mut d.default,
-            "Debug" => &mut d.debug,
-            _ if user(name) => continue,
-            _ => {
-                diags.error(
-                    Code::UNKNOWN_NAME,
-                    t.span,
-                    "only `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`, and the `derive` declarations in \
-                     scope can be derived",
-                );
-                continue;
-            }
+            _ => &mut d.debug,
         };
         *flag = true;
         match name {

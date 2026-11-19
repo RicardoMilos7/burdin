@@ -1,6 +1,6 @@
 //@ compile-fail
 
-// `min`, `max`, and `cmp` need an item with `Ord`; `eq` needs `Eq` (a struct without `derives` has neither). A float has neither `Ord` nor a total order, and a
+// `min`, `max`, and `cmp` need an item with `Ord`; `eq` needs `Eq` (a struct that lists neither has neither). A float has neither `Ord` nor a total order, and a
 // view of a `String` is not an owned `String`, so `min_by` with a comparator is the tool for both.
 
 fn main() {

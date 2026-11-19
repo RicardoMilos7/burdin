@@ -7,7 +7,7 @@ use std.Error
 use unicode.{len_utf8, to_char}
 
 /// What went wrong while decoding.
-error enum DecodeError derives (Eq, Debug) {
+error enum DecodeError: Eq, Debug {
     InvalidLength "invalid length"
     InvalidCharacter { index: usize } "invalid character at byte {index}"
     InvalidUtf8 { index: usize } "invalid UTF-8 at byte {index}"
@@ -15,7 +15,7 @@ error enum DecodeError derives (Eq, Debug) {
 
 /// Why a byte sequence is not valid UTF-8: the offset of the first byte that is not part of a well-formed
 /// sequence (`spec/stdlib.md`, "String bytes and UTF-8 validation").
-error enum Utf8Error derives (Eq, Debug) {
+error enum Utf8Error: Eq, Debug {
     Invalid { index: usize } "invalid UTF-8 at byte {index}"
 }
 

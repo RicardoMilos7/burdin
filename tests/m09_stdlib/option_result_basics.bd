@@ -11,7 +11,7 @@
 //> -1
 //> 3
 
-enum MathError derives (Copy, Clone, Eq) {
+enum MathError: Copy, Clone, Eq {
     DivideByZero
     Negative
 }

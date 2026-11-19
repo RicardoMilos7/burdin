@@ -15,7 +15,7 @@ use std.{IoError, IoErrorKind}
 use text.to_char_list
 
 /// The kind of entry a path names.
-enum FileKind derives (Copy, Clone, Eq, Debug) {
+enum FileKind: Copy, Clone, Eq, Debug {
     File
     Dir
     Symlink
@@ -23,7 +23,7 @@ enum FileKind derives (Copy, Clone, Eq, Debug) {
 }
 
 /// What the system reports about one path: the entry itself, without following a symbolic link.
-struct Metadata derives (Clone, Copy, Eq, Debug) {
+struct Metadata: Clone, Copy, Eq, Debug {
     /// The size in bytes.
     size: u64
     /// The system's mode bits: the file kind and the permission bits, as `stat` reports them.

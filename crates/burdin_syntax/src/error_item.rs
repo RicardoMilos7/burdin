@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn derives_compose_with_the_generated_impls() {
-        let (file, out) = parse_src("priv error enum E derives (Debug) {\n V \"v\"\n}\n");
+        let (file, out) = parse_src("priv error enum E: Debug {\n V \"v\"\n}\n");
         assert_eq!(out, "");
         let enums: Vec<&EnumDecl> = file
             .items

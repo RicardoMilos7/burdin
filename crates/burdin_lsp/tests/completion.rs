@@ -1,6 +1,6 @@
 //! Completion contexts, the built-ins, and the standard library (issues #819-#824; `spec/lsp.md` LS8, LS12, LS13):
 //! members after a type name, a literal, and a primitive; the built-in functions and the prelude; `self` as a
-//! method's first parameter; snippets; call parentheses; and `derives`.
+//! method's first parameter; snippets; call parentheses; and the `: A, B` list after a type's name.
 
 mod common;
 
@@ -278,15 +278,20 @@ fn completing_a_function_inserts_the_call() {
 fn derives_and_the_derivable_interfaces() {
     let mut s = open(false);
     let original = s.text.clone();
+    // After the name, before the list, nothing is offered: `:`, `repr(C)`, or the body comes next.
     let after_name = format!("{original}\nstruct Pair \n");
     s.edit(&after_name);
-    assert_eq!(labels(&s.complete("struct Pair ", 12)), ["derives"]);
-    let generic = format!("{original}\nenum Either<A, B> \n");
+    assert!(s.complete("struct Pair ", 12).is_empty());
+    // A bound in the generic parameters is not the list.
+    let bound = format!("{original}\nenum Either<A: \n");
+    s.edit(&bound);
+    assert!(!has(&s.complete("enum Either<A: ", 15), "Default"));
+    let generic = format!("{original}\nenum Either<A, B>: \n");
     s.edit(&generic);
-    assert_eq!(labels(&s.complete("enum Either<A, B> ", 18)), ["derives"]);
-    let inside = format!("{original}\nstruct Pair derives (\n");
+    assert!(has(&s.complete("enum Either<A, B>: ", 19), "Copy"));
+    let inside = format!("{original}\nstruct Pair: \n");
     s.edit(&inside);
-    let items = s.complete("struct Pair derives (", 21);
+    let items = s.complete("struct Pair: ", 13);
     for name in ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug", "Describe"] {
         assert!(has(&items, name), "{name}: {:?}", labels(&items));
     }
@@ -294,8 +299,8 @@ fn derives_and_the_derivable_interfaces() {
         assert!(!has(&items, name), "{name} is not derivable: {:?}", labels(&items));
     }
     // After a comma in the list, too.
-    let second = format!("{original}\nstruct Pair derives (Clone, \n");
+    let second = format!("{original}\nstruct Pair: Clone, \n");
     s.edit(&second);
-    assert!(has(&s.complete("derives (Clone, ", 16), "Eq"));
+    assert!(has(&s.complete("struct Pair: Clone, ", 20), "Eq"));
     assert_eq!(s.client.shutdown(), 0);
 }

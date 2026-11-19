@@ -3,7 +3,7 @@
 
 const SIZE: usize = 4 * 16
 
-struct P derives (Clone, Eq) {
+struct P: Clone, Eq {
     x: i32
     y: i32
 }

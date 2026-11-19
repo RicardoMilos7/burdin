@@ -5,11 +5,11 @@
 // Tuples derive Copy, Clone, Eq, Ord, Hash, Default, and Debug (of size 2 to 4). Arrays derive Copy, Clone, Eq,
 // Ord, and Hash; they have no derived `Debug` and no `Default` (`spec/stdlib.md`, "Interface coverage").
 
-struct TupleHolder derives (Copy, Clone, Eq, Ord, Hash, Default, Debug) {
+struct TupleHolder: Copy, Clone, Eq, Ord, Hash, Default, Debug {
     pair: (i32, bool)
 }
 
-struct ArrayHolder derives (Copy, Clone, Eq, Ord, Hash) {
+struct ArrayHolder: Copy, Clone, Eq, Ord, Hash {
     items: [i32; 3]
 }
 

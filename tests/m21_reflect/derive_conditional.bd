@@ -4,7 +4,7 @@
 // because `i32` is, and `Wrapper<NoEq>` is neither, so each use of the missing capability is an error at the use
 // (spec/impls.md, IM8).
 
-struct Wrapper<T> derives (Eq, Clone) {
+struct Wrapper<T>: Eq, Clone {
     value: T
 }
 

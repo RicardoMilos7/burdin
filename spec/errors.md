@@ -19,7 +19,7 @@ error enum ConfigError {
 ```
 
 `error` is a keyword; `enum` follows it. The declaration takes the permissive layout, the derives, and the
-package visibility of an ordinary enum (`priv`, a comma or a line break between variants, `derives (...)`).
+package visibility of an ordinary enum (`priv`, a comma or a line break between variants, `: A, B` after the name).
 
 Lowering is exactly:
 
@@ -28,7 +28,7 @@ Lowering is exactly:
 - `Name: Error` (ERR4), the marker that makes the type an error type;
 - one `Name: From<Source>` block per `from` variant (ERR3).
 
-A `derives (...)` clause is placed on the enum, so `derives (Debug)` composes with the generated impls. Because
+The interfaces after the name are placed on the enum, so `error enum E: Debug` composes with the generated impls. Because
 the lowering produces ordinary items, an error type is an ordinary value: it is moved, dropped, matched, stored,
 and compared like any enum, and it may be put in a `Result`, an `Option`, a `List`, or a box.
 
@@ -259,7 +259,7 @@ code, and `std` maps 0 to `IoErrorKind.Other` with `os_code() == None`. The inte
 The kind is portable; the code is not. `std` declares the kinds once and `IoError` carries one:
 
 ```
-enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+enum IoErrorKind: Copy, Clone, Eq, Debug {
     NotFound  PermissionDenied  AlreadyExists  IsADirectory  NotADirectory  DirectoryNotEmpty
     InvalidInput  InvalidData  UnexpectedEof  Interrupted  BrokenPipe  WouldBlock  TimedOut
     ConnectionRefused  ConnectionReset  ConnectionAborted  NotConnected

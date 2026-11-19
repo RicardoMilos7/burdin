@@ -2,14 +2,14 @@
 // while compiling and work in `comptime if` (spec/comptime.md, CT5).
 
 /// An operating system.
-enum Os derives (Copy, Clone, Eq) {
+enum Os: Copy, Clone, Eq {
     Linux
     MacOs
     Windows
 }
 
 /// A processor architecture.
-enum Arch derives (Copy, Clone, Eq) {
+enum Arch: Copy, Clone, Eq {
     X86_64
     Aarch64
 }

@@ -2,7 +2,7 @@
 //> 8
 //> 10
 
-enum Token derives (Copy, Clone) {
+enum Token: Copy, Clone {
     Num(i32)
     Add
     Sub

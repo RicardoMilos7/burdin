@@ -132,7 +132,7 @@ recorded in `spec/reflection.md` RFL1-RFL10, `spec/const-generics.md` CG1-CG9, `
 `spec/type-aliases.md` AL1-AL6, and `spec/impls.md` IM1-IM9. It did not split. The decisions: reflection is five compile-time members of every type, resolved by sema while a body is checked,
 with `comptime for` over `Type.fields`/`variants` unrolled there (not in `burdin_comptime`), because `x.{name}` needs
 the field's name to type; `x.{name}` is the computed field access syntax; a user derive is `derive Name { fn ... }`,
-syntax for the methods of an impl block that `derives (Name)` registers for the type; const generics put values in
+syntax for the methods of an impl block that `struct T: Name` registers for the type; const generics put values in
 `Ty::Const` so instances and inference reuse the type machinery, with array lengths evaluated by sema (CG3); and
 `embed` is a compile-time file read that records a build input (`--emit-deps`); a generic alias is a template
 expanded where it is used and is the aliased type, so an impl written through one is E0003; the arguments of an impl

@@ -12,7 +12,7 @@ derive Describe {
 }
 
 /// A point.
-struct Point derives (Clone, Describe) {
+struct Point: Clone, Describe {
     x: i32
     y: i32
 }

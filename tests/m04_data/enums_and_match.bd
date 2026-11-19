@@ -8,7 +8,7 @@
 //> point
 //> 0
 
-enum Shape derives (Copy, Clone) {
+enum Shape: Copy, Clone {
     Circle(i32)
     Rect { w: i32, h: i32 }
     Point

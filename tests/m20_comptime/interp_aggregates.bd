@@ -7,7 +7,7 @@
 // Structs, enums with payloads, tuples, nested matches with guards, `mut` parameters, and `Heap` values, at
 // compile time and at run time (spec/comptime.md, CT1).
 
-struct Point derives (Copy, Clone, Eq) {
+struct Point: Copy, Clone, Eq {
     x: i32
     y: i32
 }

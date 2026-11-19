@@ -324,7 +324,7 @@ block starts or what its fence says.
   in a quote or a list are doc tests like any other.
 - Every doc comment of the package's source files holds doc tests: module documentation (`//!`), items, fields,
   variants, methods, interface methods, extension methods, and `priv` items and `main` included. A comment the
-  parser generated an item from (a `derives` clause, an `error enum`'s impls) has none.
+  parser generated an item from (a `: Debug` after a type's name, an `error enum`'s impls) has none.
 - A doc test's name is `<owner> (line N)`, where `N` is the 1-based line of the block's opening fence and the owner
   is the documented item's name as a report shows it (`Point.new`, `Shape.Circle`, `Iterator.next`), or the file's
   stem for module documentation. Its module is the file's dotted path inside `src`, empty for the package's entry

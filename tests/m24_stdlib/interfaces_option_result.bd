@@ -7,11 +7,11 @@
 // `Option<T>` and `Result<T, E>` implement Clone, Eq, Ord, Hash, and Debug when their payloads do; `Option` also
 // has a default (`None`), while `Result` has none (`spec/stdlib.md`, "Interface coverage").
 
-struct OptionHolder derives (Copy, Clone, Eq, Ord, Hash, Default, Debug) {
+struct OptionHolder: Copy, Clone, Eq, Ord, Hash, Default, Debug {
     value: Option<i32>
 }
 
-struct ResultHolder derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+struct ResultHolder: Copy, Clone, Eq, Ord, Hash, Debug {
     value: Result<i32, i32>
 }
 

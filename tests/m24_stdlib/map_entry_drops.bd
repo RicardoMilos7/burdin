@@ -25,7 +25,7 @@
 // already there. `or_insert_with` calls the closure only for an absent key, and the closure value and what it
 // captured are dropped either way. An entry left unconsumed drops its key.
 
-struct Tag derives (Eq) {
+struct Tag: Eq {
     id: i32
 }
 

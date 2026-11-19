@@ -1,7 +1,7 @@
 //@ run
 //> D { v: 3 }
 
-struct D derives (Debug) {
+struct D: Debug {
     v: i32
 }
 

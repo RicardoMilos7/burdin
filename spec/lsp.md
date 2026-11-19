@@ -195,10 +195,12 @@ Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_
   `derive`, or in an extension method (`fn Type.name(`), the receiver forms `self`, `mut self`, and `own self`; at any
   other parameter, and in a free function, only the conventions `mut`, `own`, and `comptime`. A `self` parameter is
   valid only first and only in a method, so it is never offered elsewhere.
-- **After `struct Name` or `enum Name`** (and their generic parameters), `derives`; **inside `derives (...)`**, the
-  seven derives the compiler knows (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`, `spec/derives.md`) and
+- **In the `: A, B` list after `struct Name` or `enum Name`** (and their generic parameters; issue #825), after the
+  `:` or a `,`, the seven derives the compiler knows (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`, `spec/derives.md`) and
   the `derive` declarations the file can name (its own, the imported ones, and the standard library's public ones),
-  and nothing else. The name a `struct`, `enum`, `interface`, or `fn` is introducing gets no completion.
+  and nothing else. Directly after the type's name nothing is offered (the list's `:`, `repr(C)`, or the body comes
+  next), and a `:` inside the generic parameters starts a bound, not the list. The name a `struct`, `enum`,
+  `interface`, or `fn` is introducing gets no completion.
 - **Anywhere else**, the locals and parameters declared before the cursor (nearest first), the file's items, the
   imported names, the built-in functions, the prelude (every public item of every standard-library module, and the
   one-segment standard modules by name, such as `env`, `fs`, and `mem`), the built-in types, and the keywords.

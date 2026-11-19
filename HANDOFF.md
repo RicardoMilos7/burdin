@@ -4,6 +4,14 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Derived interfaces follow the name (issue #825, 2026-11-19).** `struct Point: Copy, Clone, Eq { ... }` replaces
+`struct Point derives (Copy, Clone, Eq) { ... }` for structs, enums, and error enums, with `repr(C)` after the list.
+Besides the built-in derives and `derive` declarations, the list takes any interface whose methods all have
+defaults (an empty generated impl block, `crates/burdin_sema/src/user_derives.rs`); an interface with a required
+method is the new E0234, and the old clause is a plain syntax error. Parser, sema, `burdin fmt`, `burdin expand`,
+`burdin doc`, `std/`, the tests, and the specs moved together (decision 31 in `tests/README.md`). The LSP
+completion of the list is issue #824.
+
 Updated at the end of the fifty-fourth session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
@@ -483,7 +491,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), member type arguments (`x.downcast<T>()`), `any`/`impl` types, `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, `...` in an `extern` signature, interpolated and raw strings, and the format-specifier grammar |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default`/`Debug` behavior, including the FNV-1a values (issue #39) |
-| Formatting | `spec/format.md`, `std/src/fmt.bd`, `crates/burdin_syntax/src/derive.rs`, `crates/burdin_sema/src/fncx/format.rs` | Milestone 14 (issue #109). Interpolated literals, `Display`/`Debug`, the specifiers, `format` and the generalized output functions, all checked at compile time and lowered to `Formatter` calls; `derives (Debug)` generates an impl block as Burdin source. The tests are `tests/m14_format/` |
+| Formatting | `spec/format.md`, `std/src/fmt.bd`, `crates/burdin_syntax/src/derive.rs`, `crates/burdin_sema/src/fncx/format.rs` | Milestone 14 (issue #109). Interpolated literals, `Display`/`Debug`, the specifiers, `format` and the generalized output functions, all checked at compile time and lowered to `Formatter` calls; a derived `Debug` generates an impl block as Burdin source. The tests are `tests/m14_format/` |
 | Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
 | Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, Error>`, error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
 | Arguments | `spec/arguments.md`, `crates/burdin_syntax`, `crates/burdin_tir` (`ParamSig.name`/`.default`), `crates/burdin_sema/src/fncx/{call,generic,item}.rs` | Milestone 17 (issue #137). `name: Type = expr` declares a constant default checked at the declaration and inserted at each call that omits it; `f(name: value)` matches a parameter by name in any order before generic inference; arguments evaluate in parameter order. New codes E0213 and E0214; the tests are `tests/m17_arguments/` |
@@ -1181,7 +1189,7 @@ differs has been rewritten (a `comptime` became a literal, an operator a call, a
 rewrites that have no source form are skipped, so the output re-checks; `tests/check_inspect.py` proves that over
 every program of m17, m19, m20, and m21 and compares what the original and the expansion print. Two deviations from
 the issue, both in `spec/inspect.md`: an extension call stays a method call (EX1 says an extension is not a value, so
-no function form exists), and the built-in derives keep their `derives (...)` clause with a comment, because a
+no function form exists), and the built-in derives stay in the type's `: A, B` list with a comment, because a
 hand-written impl of a built-in interface is E9000 (#402). `--instances` prints each instance of a generic function
 as its declaration with that instance's tree; it is for reading and is not part of the re-check guarantee.
 
@@ -1294,7 +1302,7 @@ repository, `--offline`, and doc tests reading the documented package's lockfile
 - Exclusivity works on places: field paths of a local or parameter are separate places. Indexing, `Heap` dereference, and method
   calls are not (option C). Recorded in the design document and as decision 16 in `tests/README.md`.
 - Stage 0 has no closures, string interpolation, `any`/`impl`, `error` declarations, comptime, tasks, or leak detection.
-- Syntax choices: `fn f(): T`, `let` / `let mut`, `Type: Interface { }`, `derives (...)`, `priv` means package-private,
+- Syntax choices: `fn f(): T`, `let` / `let mut`, `Type: Interface { }`, `struct T: Copy, Eq { }`, `priv` means package-private,
   `?` and `orelse`, `else` arm in `match`, call-site `mut` marker.
 
 ## Decided in the second session
@@ -1405,7 +1413,7 @@ repository, `--offline`, and doc tests reading the documented package's lockfile
     primitive types and the built-in containers are answered from the type (`builtin_formattable`) and lowered to
     `std` helpers; there is no method function, so there is no vtable entry to dispatch to. Boxing such a type as
     `any Display`/`any Debug` is therefore E0204, while `any Display` of a user type (an impl block, or
-    `derives (Debug)`) works and formats through the vtable. A user type that wraps the primitive restores it. A
+    `: Debug`) works and formats through the vtable. A user type that wraps the primitive restores it. A
     later milestone can generate the thunk once it has a way to lower the compiler's format calls into a function.
 22. **Explicitly typed generic struct literals keep their arguments only through inference.** `Pair<i64> { ... }` is
     parsed with the generic arguments, but the parser's struct-literal path drops them (`struct_literal` takes only
@@ -1432,7 +1440,7 @@ repository, `--offline`, and doc tests reading the documented package's lockfile
     `expr_place` only marks tracked places as moved. It is a pre-existing code generation bug that m21 worked around
     (a reflection loop variable's `name` is folded to a literal, and the test binds `Shape.variants` to a local
     first). Fixing it means marking the moved field of a temporary slot, or dropping only the other fields.
-27. **`derives (Debug)` on a type with an array field prints an empty value for a generic type.** A non-generic type
+27. **`: Debug` on a type with an array field prints an empty value for a generic type.** A non-generic type
     is E0130, but the derived `debug` of `Gen<T> { data: [T; 3] }` prints `data: ` and nothing else (arrays have no
     `Debug`). It predates m21; `derive_generic` and `const_params` avoid printing arrays.
 28. **Moving an element out of a temporary collection double-frees.** `let out = env.args()[2]` (a `List<String>`
@@ -1592,7 +1600,7 @@ repository, `--offline`, and doc tests reading the documented package's lockfile
 - E9000 for: generic interfaces, generic methods (method-level `<U>`), generic type aliases, an impl for specific
   type arguments (`Stack<i32> { ... }`), `Drop` or any built-in interface implemented by hand, `where` clauses on
   something other than a type parameter, a user interface implemented for a type that is not a local struct or enum
-  (`i32: Shape`), struct-like variants of generic enums built with a literal, and `derives (Default)` on enums.
+  (`i32: Shape`), struct-like variants of generic enums built with a literal, and a derived `Default` on enums.
 
 ## Decided in the sixth session
 
@@ -2087,7 +2095,7 @@ repository, `--offline`, and doc tests reading the documented package's lockfile
   no impl blocks; the checker answers "does this type implement it" from its type (`builtin_formattable`), and code
   generation uses `priv` helpers in `std/src/fmt.bd`. A user type writes the block, and `Debug` may be derived.
   `Formatter` applies the specifier in `pad`/`pad_number`; a user `fmt` chooses what to honor.
-- **`derives (Debug)` is generated source, not a special code path.** The parser appends an impl block written as
+- **A derived `Debug` is generated source, not a special code path.** The parser appends an impl block written as
   Burdin text, parsed with the same parser, with every token's span pointing at the `Debug` in the derive clause.
   The checker drops diagnostics raised inside that block so the field's E0130 is the one a programmer sees.
 - **Floats print the shortest round-trip text.** A new runtime function formats with `snprintf("%.*e")` and reads
@@ -2125,7 +2133,7 @@ repository, `--offline`, and doc tests reading the documented package's lockfile
   generic instances are distinct (AN6).
 - **The `Display`/`Debug` built-in implementations are the one absent vtable.** The compiler formats primitives and
   built-in containers directly and has no method function for them, so boxing those is E0204 rather than a silent
-  wrong call. A user impl or `derives (Debug)` supplies the method and works (`any Display` itself formats through
+  wrong call. A user impl or a derived `Debug` supplies the method and works (`any Display` itself formats through
   the vtable). This is the milestone's documented limitation (known problem 21).
 - **The vtable is a private constant with a type id first.** `{ i64 type_id, ptr drop, ptr method... }`; the type
   id is a program-wide index shared across interfaces, the drop slot is the existing drop glue, and each method

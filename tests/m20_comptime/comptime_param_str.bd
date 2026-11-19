@@ -14,7 +14,7 @@ fn tagged(comptime tag: str, message: str): String {
     out
 }
 
-struct Point derives (Copy, Clone, Eq) {
+struct Point: Copy, Clone, Eq {
     x: i32
     y: i32
 }

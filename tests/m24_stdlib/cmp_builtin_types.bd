@@ -20,12 +20,12 @@
 // `a.cmp(b)` on every type that supports `<` through `Ord`: integers, `char`, `bool`, strings, tuples, ranges,
 // and types that derive `Ord` (`spec/stdlib.md`, `Ordering`).
 
-struct Version derives (Ord, Eq) {
+struct Version: Ord, Eq {
     major: i32
     minor: i32
 }
 
-enum Level derives (Ord, Eq) {
+enum Level: Ord, Eq {
     Low
     Mid
     High(i32)

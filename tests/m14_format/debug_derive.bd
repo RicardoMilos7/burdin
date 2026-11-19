@@ -14,34 +14,34 @@
 //> "str"
 //> 1.0
 //> 22
-struct Point derives (Debug, Copy) {
+struct Point: Debug, Copy {
     x: i32
     y: f64
 }
 
-struct Person derives (Debug) {
+struct Person: Debug {
     name: String
     age: u8
     home: Point
     tags: List<String>
 }
 
-enum Shape derives (Debug) {
+enum Shape: Debug {
     Dot
     Circle(f64)
     Rect { w: i32, h: i32 }
     Pair(Point, Point)
 }
 
-struct Wrapper<T> derives (Debug) {
+struct Wrapper<T>: Debug {
     value: T
     maybe: Option<T>
 }
 
-struct Empty derives (Debug) {
+struct Empty: Debug {
 }
 
-enum Tree derives (Debug) {
+enum Tree: Debug {
     Leaf
     Node(Heap<Tree>, i32)
 }

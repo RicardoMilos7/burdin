@@ -6,7 +6,7 @@ interface Shape {
     fn area(self): i32
 }
 
-struct Square derives (Copy, Clone, Eq, Debug) {
+struct Square: Copy, Clone, Eq, Debug {
     side: i32
 }
 

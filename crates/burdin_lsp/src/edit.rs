@@ -406,9 +406,7 @@ enum Context {
     Member(u32),
     /// At the start of a function's parameter: the first one, and whether the function is a method.
     Parameter { first: bool, method: bool },
-    /// After `struct Name` or `enum Name`: `derives` comes next.
-    AfterTypeName,
-    /// Inside `derives (...)`.
+    /// In the `: A, B` list after `struct Name` or `enum Name`, at the start of a name.
     Derives,
     /// The name a declaration is introducing: nothing to offer.
     NewName,
@@ -543,6 +541,24 @@ fn declares_function(ix: &FileIndex, open: usize) -> Option<bool> {
     Some(extension)
 }
 
+/// Whether the tokens before `end` are a `struct Name<T>: A, B` or `enum Name: A` head up to its list, so the
+/// next word is a name in the list (`spec/derives.md`). A `:` inside the generic parameters is a bound, not the list.
+fn in_derive_list(ix: &FileIndex, end: usize) -> bool {
+    let mut depth = 0i32;
+    let mut colon = false;
+    for i in (0..end).rev() {
+        match &ix.tokens[i].kind {
+            Tk::Gt => depth += 1,
+            Tk::Lt => depth -= 1,
+            Tk::Colon if depth == 0 => colon = true,
+            Tk::Keyword("struct" | "enum") => return colon && depth == 0,
+            Tk::Ident(_) | Tk::Comma | Tk::Dot | Tk::Colon => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
 fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
     let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
     let line = text[line_start..start].trim_start();
@@ -558,9 +574,6 @@ fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
     let before = end.checked_sub(2).map(|i| &ix.tokens[i].kind);
     if let Some((open, commas)) = open_paren(ix, end) {
         let at_start = matches!(prev, Some(Tk::LParen | Tk::Comma));
-        if open > 0 && ix.tokens[open - 1].ident() == Some("derives") {
-            return Context::Derives;
-        }
         if let Some(extension) = declares_function(ix, open) {
             if !at_start {
                 return Context::Expression;
@@ -570,8 +583,12 @@ fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
             return Context::Parameter { first: commas == 0, method };
         }
     }
+    if matches!(prev, Some(Tk::Colon | Tk::Comma)) && in_derive_list(ix, end) {
+        return Context::Derives;
+    }
     match (before, prev) {
-        (Some(Tk::Keyword("struct" | "enum")), Some(Tk::Ident(_))) => return Context::AfterTypeName,
+        // After `struct Name` comes `:`, `repr(C)`, or the body: nothing to complete.
+        (Some(Tk::Keyword("struct" | "enum")), Some(Tk::Ident(_))) => return Context::NewName,
         (_, Some(Tk::Gt)) => {
             // `struct Name<T> `: the generic parameters' `<` follows the name, which follows the keyword.
             let lt = ix.tokens[..end].iter().rposition(|t| t.kind == Tk::Lt);
@@ -581,7 +598,7 @@ fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
                 && matches!(ix.tokens[lt - 2].kind, Tk::Keyword("struct" | "enum"))
                 && !ix.tokens[lt..end].iter().any(|t| matches!(t.kind, Tk::LBrace | Tk::RBrace | Tk::LParen))
             {
-                return Context::AfterTypeName;
+                return Context::NewName;
             }
         }
         (_, Some(Tk::Keyword("struct" | "enum" | "interface" | "fn"))) => return Context::NewName,
@@ -638,7 +655,6 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
                 out.add(word, 14, "keyword", None, 1);
             }
         }
-        Context::AfterTypeName => out.add("derives", 14, "derive interfaces", None, 0),
         Context::Derives => derive_completions(&mut r, &path, &ix, &mut out),
         Context::NewName => {}
         Context::Item => {
@@ -792,13 +808,9 @@ fn value_members(all: &[(String, Item)], owner: &str, out: &mut Completions) {
         .filter(|(_, i)| i.kind == Kind::Impl && i.owner.as_deref() == Some(owner))
         .filter_map(|(_, i)| i.interface.clone())
         .collect();
-    // `derives (Clone, Ord)` in the type's declaration.
-    if let Some((_, decl)) = all.iter().find(|(_, i)| i.kind.is_type() && i.name == owner)
-        && let Some(list) = decl.detail.split_once("derives").map(|(_, l)| l)
-    {
-        let list = list.trim_start().trim_start_matches('(');
-        let list = list.split(')').next().unwrap_or("");
-        interfaces.extend(list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+    // `struct Point: Clone, Ord` in the type's declaration.
+    if let Some((_, decl)) = all.iter().find(|(_, i)| i.kind.is_type() && i.name == owner) {
+        interfaces.extend(declared_interfaces(&decl.detail));
     }
     for iface in &interfaces {
         for (_, item) in
@@ -820,7 +832,30 @@ fn value_members(all: &[(String, Item)], owner: &str, out: &mut Completions) {
     }
 }
 
-/// Inside `derives (...)`: the compiler's derives and the `derive` declarations the file can name.
+/// The names in the `: A, B` list of a struct's or enum's declaration head (`struct Pair<T: Ord>: Clone, Eq`): what
+/// follows the first `:` outside the generic parameters, up to `repr` or the body.
+fn declared_interfaces(head: &str) -> Vec<String> {
+    let mut depth = 0i32;
+    let mut list = None;
+    for (i, c) in head.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ':' if depth == 0 => {
+                list = Some(&head[i + 1..]);
+                break;
+            }
+            '{' => break,
+            _ => {}
+        }
+    }
+    let Some(list) = list else { return Vec::new() };
+    let list = list.split(['{', '\n']).next().unwrap_or("");
+    let list = list.split(" repr").next().unwrap_or("");
+    list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+/// In the `: A, B` list after a type's name: the compiler's derives and the `derive` declarations the file can name.
 fn derive_completions(r: &mut Resolver, path: &str, ix: &FileIndex, out: &mut Completions) {
     for (name, what) in BUILTIN_DERIVES {
         out.add(name, 8, what, None, 0);

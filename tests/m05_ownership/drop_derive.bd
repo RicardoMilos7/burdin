@@ -1,8 +1,9 @@
 //@ compile-fail
 
-// Drop cannot be derived; it is declared as `Type: Drop { ... }`.
+// Drop cannot be derived: its `drop` method has no default, so it is declared as `Type: Drop { ... }`
+// (spec/derives.md).
 
-struct P derives (Drop) { //~ E0002
+struct P: Drop { //~ E0234
     id: i32
 }
 

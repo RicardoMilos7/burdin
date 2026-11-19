@@ -234,18 +234,18 @@ impl Parser<'_> {
         Err(self.unexpected(&format!("`,`, a line break, or `}}` after the {what}")))
     }
 
+    /// `: A, B` after a struct or enum name and its generic parameters: the interfaces the declaration implements
+    /// with their derived or default methods (`spec/derives.md`). There is no trailing comma: the list ends at the
+    /// first name not followed by `,`.
     pub(super) fn derives(&mut self) -> PResult<Vec<Type>> {
         let mut derives = Vec::new();
-        if matches!(self.kind(), TokenKind::Ident(n) if n == "derives") {
-            self.bump();
-            self.open(&TokenKind::LParen, false)?;
-            while !self.at(&TokenKind::RParen) {
+        if self.eat(&TokenKind::Colon) {
+            loop {
                 derives.push(self.ty()?);
                 if !self.eat(&TokenKind::Comma) {
                     break;
                 }
             }
-            self.close(&TokenKind::RParen)?;
         }
         Ok(derives)
     }
@@ -273,8 +273,8 @@ impl Parser<'_> {
         self.expect(&TokenKind::Struct)?;
         let name = self.ident("a struct name")?;
         let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
-        let repr_c = self.repr_c()?;
         let derives = self.derives()?;
+        let repr_c = self.repr_c()?;
         let fields = self.field_list()?;
         Ok(StructDecl { is_priv, name, generics, repr_c, derives, fields, span: start.to(self.prev_span()) })
     }
@@ -341,7 +341,7 @@ impl Parser<'_> {
         }
     }
 
-    /// `error enum Name [generics] [derives] { [Variant [from] "message", ...] }` (spec/errors.md, ERR1). The
+    /// `error enum Name [generics] [: Iface, ...] { [Variant [from] "message", ...] }` (spec/errors.md, ERR1). The
     /// variant layout is the ordinary enum's; the message is a required string literal that may be interpolated
     /// and the optional contextual `from` comes between the payload and the message. Everything is lowered to an
     /// ordinary enum in `crate::error_item`, after this parser is done.

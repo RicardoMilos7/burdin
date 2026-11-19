@@ -30,7 +30,7 @@
 // every element, and `to_list` clones into a list that drops its own copies
 // (spec/stdlib.md, "Slices"; memory-rules.md, DR).
 
-struct Token derives (Clone) {
+struct Token: Clone {
     id: i32
 }
 

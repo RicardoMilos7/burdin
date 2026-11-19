@@ -12,9 +12,10 @@
 //! - an operator that resolved to an interface method becomes the method call (`a + b` is `a.add(b)`), and a call
 //!   with named or omitted arguments lists every argument in parameter order (INS3);
 //! - a constant's initializer becomes its evaluated value (INS2);
-//! - `derives (Name)` of a derive written in Burdin becomes the `Type: Name { ... }` impl block it generated, with
-//!   the body expanded the same way (INS4). The built-in derives have no source form (a hand-written impl of a
-//!   built-in interface is E9000), so `derives (Copy, Clone, ...)` stays and a comment says so (INS5).
+//! - `struct Type: Name` with a derive written in Burdin becomes the `Type: Name { ... }` impl block it generated,
+//!   with the body expanded the same way (INS4). The built-in derives have no source form (a hand-written impl of a
+//!   built-in interface is E9000), so `: Copy, Clone, ...` stays and a comment says so (INS5). An interface whose
+//!   methods all have defaults stays in the list as written.
 //!
 //! Everything else is left as written. A rewrite that cannot be printed as source is skipped, never guessed, so
 //! the output re-parses and type-checks wherever the input did (INS6).
@@ -476,7 +477,9 @@ impl<'a> Expander<'a> {
             let user = self.derives.get(name.as_str());
             let text = self.slice(d.span).unwrap_or(&name).to_string();
             let Some((decl, decl_file)) = user else {
-                builtin.push(text.clone());
+                if BUILTIN_DERIVES.contains(&name.as_str()) {
+                    builtin.push(text.clone());
+                }
                 rest.push(text);
                 continue;
             };
@@ -500,14 +503,14 @@ impl<'a> Expander<'a> {
             let first = derives[0].span;
             let last = derives[derives.len() - 1].span;
             if let Some((lo, hi)) = clause_range(file.text, first.lo as usize, last.hi as usize) {
-                let text = if rest.is_empty() { String::new() } else { format!(" derives ({})", rest.join(", ")) };
+                let text = if rest.is_empty() { String::new() } else { format!(": {}", rest.join(", ")) };
                 plan.patches.push(Patch { lo, hi, text });
             }
         }
         let mut tail = String::new();
         if !builtin.is_empty() {
             tail.push_str(&format!(
-                "\n// derives ({}): built in; the compiler implements them structurally, so there is no source form",
+                "\n// {}: built in; the compiler implements them structurally, so there is no source form",
                 builtin.join(", ")
             ));
         }
@@ -1037,15 +1040,13 @@ fn indent_block(text: &str, by: &str) -> String {
     text.lines().map(|l| if l.is_empty() { String::new() } else { format!("{by}{l}") }).collect::<Vec<_>>().join("\n")
 }
 
-/// `derives (A, B)` around the derive types spanning `lo..hi`, with the space before it.
+/// The derives that the compiler implements itself (`spec/derives.md`); they have no source form.
+const BUILTIN_DERIVES: [&str; 7] = ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug"];
+
+/// The `: A, B` list around the derive types spanning `lo..hi`, from its `:` to the end of the last type.
 fn clause_range(text: &str, lo: usize, hi: usize) -> Option<(usize, usize)> {
-    let before = text[..lo].trim_end_matches(|c: char| c.is_whitespace() || c == '(');
-    let start = before.strip_suffix("derives")?.len();
-    let start = start - (text[..start].len() - text[..start].trim_end_matches([' ', '\t']).len());
-    let after = &text[hi..];
-    let rest = after.trim_start().strip_prefix(')')?;
-    let end = text.len() - rest.len();
-    Some((start, end))
+    let start = text[..lo].trim_end().strip_suffix(':')?.len();
+    Some((start, hi))
 }
 
 fn escape(s: &str, quote: char) -> String {
@@ -1236,11 +1237,11 @@ mod tests {
 
     #[test]
     fn the_derives_clause_is_found_around_its_types() {
-        let text = "struct P derives (Clone, Eq) {\n}";
+        let text = "struct P: Clone, Eq {\n}";
         let lo = text.find("Clone").unwrap();
         let hi = text.find("Eq").unwrap() + 2;
         let (start, end) = clause_range(text, lo, hi).unwrap();
-        assert_eq!(&text[start..end], " derives (Clone, Eq)");
+        assert_eq!(&text[start..end], ": Clone, Eq");
         assert!(clause_range("struct P {", 9, 9).is_none());
     }
 

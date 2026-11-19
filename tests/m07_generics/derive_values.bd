@@ -10,17 +10,17 @@
 
 // The exact FNV-1a values `Hash` produces, and the default values `Default` builds.
 
-struct Pair derives (Copy, Clone, Eq, Ord, Hash, Default) {
+struct Pair: Copy, Clone, Eq, Ord, Hash, Default {
     a: i32
     b: i32
 }
 
-enum E derives (Copy, Hash) {
+enum E: Copy, Hash {
     A
     B(i32)
 }
 
-struct Text derives (Default) {
+struct Text: Default {
     s: String
 }
 

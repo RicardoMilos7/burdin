@@ -687,7 +687,7 @@ mod tests {
     fn error_enums_parse() {
         // `parse_file` does not lower: the error declaration stays its own item until `parse` lowers it.
         let (file, out) = render(
-            "priv error enum E<T> derives (Debug) {\n\
+            "priv error enum E<T>: Debug {\n\
              Unit \"u\"\n\
              Tuple(i32, T) from \"t {0} {1}\"\n\
              Struct { line: i32 } \"s {line}\"\n\

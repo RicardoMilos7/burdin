@@ -31,7 +31,7 @@ struct TraceFrame {
 
 /// One field of a struct, as `Type.fields` describes it (`spec/reflection.md`, RFL2). `type_name` is the field's
 /// type as the checker prints it. The names are `String`s because a struct cannot hold a view.
-struct FieldInfo derives (Clone, Eq, Debug) {
+struct FieldInfo: Clone, Eq, Debug {
     name: String
     type_name: String
     index: usize
@@ -39,7 +39,7 @@ struct FieldInfo derives (Clone, Eq, Debug) {
 
 /// One variant of an enum, as `Type.variants` describes it (`spec/reflection.md`, RFL2). `arity` is the number
 /// of fields the variant carries.
-struct VariantInfo derives (Clone, Eq, Debug) {
+struct VariantInfo: Clone, Eq, Debug {
     name: String
     index: usize
     arity: usize
@@ -120,7 +120,7 @@ priv fn __error_context(own e: Error, message: str): Error {
 /// The portable kind of an I/O failure (`spec/errors.md`, ERR11): what went wrong, without the platform's own
 /// error code. An operating system code the compiler does not classify is `Other`; the code is still available
 /// through `IoError.os_code()`.
-enum IoErrorKind derives (Copy, Clone, Eq, Debug) {
+enum IoErrorKind: Copy, Clone, Eq, Debug {
     NotFound
     PermissionDenied
     AlreadyExists
@@ -179,7 +179,7 @@ IoErrorKind: Display {
 /// few failures (such as removing a path that is not a directory) and stores `None` there. The reader and writer
 /// interfaces report the failures that no system call observed (`spec/stdlib.md`, "Readers and writers"); they
 /// carry no path and no code, and `kind()` classifies them too.
-error enum IoError derives (Eq, Debug) {
+error enum IoError: Eq, Debug {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot write {path}: {kind}"
     Run { command: String, kind: IoErrorKind, os_code: Option<i32> } "cannot run {command}: {kind}"
@@ -225,7 +225,7 @@ IoError {
 }
 
 /// The error type of `i32.parse` and the other integer parsers.
-error enum ParseIntError derives (Eq, Debug) {
+error enum ParseIntError: Eq, Debug {
     Invalid "invalid integer"
 }
 

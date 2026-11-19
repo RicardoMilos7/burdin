@@ -70,7 +70,7 @@ the type declares.
 
 ## IM8. Built-in interfaces on a generic type
 
-A derive on a generic type holds for the instances whose parts allow it: `Wrapper<T> derives (Eq, Clone)` makes
+A derive on a generic type holds for the instances whose parts allow it: `Wrapper<T>: Eq, Clone` makes
 `Wrapper<i32>` `Eq` and `Clone` because `i32` is, and `Wrapper<NoEq>` neither, so `==`, `.clone()`, or a bound that
 needs them is an error at the use (E0003, E0002, E0141). A requirement that mentions no parameter is checked once, at the
 derive (E0130). The rule for `Debug`, `Hash`, `Ord`, and `Default` is the same (`spec/derives.md`).
