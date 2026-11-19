@@ -25,7 +25,7 @@ Secret: Display {
     }
 }
 
-struct Holder derives (Debug) {
+struct Holder: Debug {
     secret: Secret
     spare: Option<Secret>
 }

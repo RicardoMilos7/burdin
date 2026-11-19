@@ -19,12 +19,12 @@
 // Every type with `==` is a valid map key, not only integers: a derived-`Eq` struct, an enum with a `String`
 // payload, `Option`, `Result`, and a float (where `0.0` and `-0.0` must hash alike) (issue #82).
 
-struct Point derives (Eq) {
+struct Point: Eq {
     x: i32,
     y: i32,
 }
 
-enum Label derives (Eq) {
+enum Label: Eq {
     Num(i32),
     Text(String),
 }

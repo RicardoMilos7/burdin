@@ -11,7 +11,7 @@ use iter.{FromIterator, Iterable, Iterator}
 use ops.Index
 
 /// A priority queue: `pop` returns the greatest element. Its default is the empty heap.
-struct PriorityHeap<T: Ord> derives (Default) {
+struct PriorityHeap<T: Ord>: Default {
     items: List<T>
 }
 

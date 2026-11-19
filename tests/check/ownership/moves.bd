@@ -1,4 +1,4 @@
-struct Point derives (Clone) {
+struct Point: Clone {
     x: i32
     y: i32
 }

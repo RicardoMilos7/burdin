@@ -7,7 +7,7 @@
 // Derived `Clone`, `Eq`, `Ord`, and `Hash` at compile time give the run-time answers (spec/comptime.md, CT1;
 // spec/derives.md).
 
-struct Key derives (Copy, Clone, Eq, Ord, Hash) {
+struct Key: Copy, Clone, Eq, Ord, Hash {
     a: i32
     b: u8
 }

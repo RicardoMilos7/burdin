@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn public_items_skip_private_and_generated() {
-        let src = "/// A.\nfn a() {}\npriv fn b() {}\nstruct S derives (Debug) {\n    x: i32\n}\nS {\n    fn new(): S { S { x: 1 } }\n    priv fn hide(self) {}\n}\nfn main() {}\n";
+        let src = "/// A.\nfn a() {}\npriv fn b() {}\nstruct S: Debug {\n    x: i32\n}\nS {\n    fn new(): S { S { x: 1 } }\n    priv fn hide(self) {}\n}\nfn main() {}\n";
         let mut diags = burdin_diag::Diagnostics::default();
         let ast = crate::parse(F, src, &mut diags);
         assert!(!diags.has_errors());

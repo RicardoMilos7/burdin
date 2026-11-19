@@ -252,7 +252,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0230 | Invalid reflection: `Type.fields` or `Type.variants` on a type that is neither a struct nor an enum (a number, `bool`, `str`, a tuple, ...) |
 | E0231 | A name the reflection members reserve (`name`, `size`, `align`, `fields`, `variants`) used for an associated function or an enum variant |
 | E0232 | Invalid computed field access `x.{name}`: the name is not a string literal or the `name` of a `comptime for` variable over `Type.fields` |
-| E0233 | Invalid derive declaration or use: a user derive named like a built-in derive, or `derives (Name)` with no interface `Name` in scope |
+| E0233 | Invalid derive declaration or use: a user derive named like a built-in derive, or `struct T: Name` with a user derive and no interface `Name` in scope |
+| E0234 | An interface after a struct's or enum's name that the declaration cannot implement: it has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...) |
 | E0240 | `embed` could not read its file: it is missing, unreadable, or not valid UTF-8 text |
 | E0241 | Invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected `[u8; N]` is not the file's length |
 | E0250 | Invalid const generic declaration or argument: a type where a value is expected or the other way round, a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit |
@@ -326,7 +327,7 @@ executable form. The design document leaves them open; where a rule says "deviat
 10. **File I/O is binary-safe** on Windows (no newline translation) and treats text as UTF-8 bytes without
     normalization. `spec/stdlib.md`.
 11. **`Drop`** is `Type: Drop { fn drop(mut self) { ... } }` and nothing else: `mut self` and a unit return are
-    required (E0003), and `Drop` cannot be derived (E0002) or combined with `Copy` (E0130).
+    required (E0003), and `Drop` cannot be derived (E0234) or combined with `Copy` (E0130).
     `spec/grammar.md`, `spec/memory-rules.md` DR8.
 12. **Integer literals** have no suffixes (E0001 if one is written). Their type comes from context, else the other
     operand of a binary operator, else `i32` (`f64` for floats). `/` and `%` truncate toward zero.
@@ -379,7 +380,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     string is not a literal (E0194); the compiler then lowers the string to `Formatter` calls, so no format string
     is parsed at run time. An argument used by two placeholders is evaluated once (a place by borrowing, a `Copy`
     value by copying). `Display` and `Debug` are ordinary `std` interfaces implemented by the compiler for the
-    built-in types and by an impl block (or `derives (Debug)`) for a user type. A one-argument output call takes no
+    built-in types and by an impl block (or `struct T: Debug`) for a user type. A one-argument output call takes no
     format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
 20. **Existential types.** `any Interface` is an owned two-word heap box `{data, vtable}`; a concrete value is boxed
     implicitly wherever an expected type is known (an annotation, an argument, a return, a field, an element, a
@@ -464,7 +465,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `comptime for item in Type.fields` (or `.variants`) is unrolled while the body is checked, with `item.name`,
     `item.type_name`, `item.index`, `item.arity` as literals. `x.{name}` is a field access whose name is a string
     literal or `item.name` (E0232 otherwise). `derive Name { fn ... }` declares the methods of a user derive, and
-    `derives (Name)` applies it as the impl block `Type: Name`, with `where P: Name` on each type parameter. A derive
+    `struct T: Name` applies it as the impl block `Type: Name`, with `where P: Name` on each type parameter. A derive
     cannot take a built-in derive's name (E0233). `spec/reflection.md` RFL1-RFL10, `tests/m21_reflect/`.
 
 27. **Const generics and `embed`.** `const N: usize` (an integer, `bool`, or `char` type) is a generic parameter of
@@ -524,6 +525,16 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `allocated at path:line:column`) and fails that test. At compile time containers are modeled, `Shared` is a
     transient model of its value, and explicit allocation is impure (E0224).
     `spec/allocators.md` AL1-AL10, `tests/m23_allocators/`, `tests/runner/leaks/`.
+
+31. **Derived interfaces follow the name.** A struct, enum, or error enum lists the interfaces it implements by
+    itself after its name and generic parameters: `struct Pair<T>: Copy, Clone, Eq repr(C) { ... }`, with `,`
+    between names and before `repr(C)`. A name may be a built-in derive, a `derive` declaration, or an interface
+    whose methods all have default bodies (the declaration then implements it as an empty `Type: Iface {}` would).
+    On a generic type each type parameter needs the interface too, as for every derive. An interface with a method
+    that has no default (`Drop`, `From`, `Display`, ...) is E0234; a name that is none of these is E0002. The old
+    `derives (...)` clause is gone and `derives` is an ordinary identifier, so the old form is a syntax error
+    (E0001). Issue #825; `spec/grammar.md`, `spec/derives.md`, `m07_generics/derive_default_interface`,
+    `derive_default_bound`, `derive_not_derivable`, `derives_old_syntax`, `m05_ownership/drop_derive`.
 
 ## Review of the expected outputs
 

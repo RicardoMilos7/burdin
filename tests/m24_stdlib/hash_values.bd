@@ -12,7 +12,7 @@
 // `str` and `String` are `Hash`: they fold their UTF-8 bytes, one word per byte, with no length (HS2), starting
 // from the FNV-1a offset basis (HS1). The expected values come from that fold, not from the compiler.
 
-struct Tag derives (Eq, Hash) {
+struct Tag: Eq, Hash {
     name: String
     id: i32
 }

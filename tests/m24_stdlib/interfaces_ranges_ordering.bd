@@ -4,11 +4,11 @@
 // Ranges derive Copy, Clone, Eq, Ord, and Hash; `Ordering` derives them too plus Debug
 // (`spec/stdlib.md`, "Interface coverage").
 
-struct RangeHolder derives (Copy, Clone, Eq, Ord, Hash) {
+struct RangeHolder: Copy, Clone, Eq, Ord, Hash {
     span: Range<i32>
 }
 
-struct OrderingHolder derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+struct OrderingHolder: Copy, Clone, Eq, Ord, Hash, Debug {
     order: Ordering
 }
 

@@ -150,9 +150,9 @@ mod tests {
 
     #[test]
     fn adds_one_impl_per_derive() {
-        assert_eq!(derived("struct P derives (Debug) {\n x: i32\n y: i32\n}\n"), 1);
-        assert_eq!(derived("enum E derives (Debug, Eq) {\n A\n B(i32, i32)\n C { w: i32 }\n}\n"), 1);
-        assert_eq!(derived("struct W<T> derives (Debug) {\n v: T\n}\nstruct Q derives (Eq) {\n a: i32\n}\n"), 1);
-        assert_eq!(derived("struct E0 derives (Debug) {\n}\n"), 1);
+        assert_eq!(derived("struct P: Debug {\n x: i32\n y: i32\n}\n"), 1);
+        assert_eq!(derived("enum E: Debug, Eq {\n A\n B(i32, i32)\n C { w: i32 }\n}\n"), 1);
+        assert_eq!(derived("struct W<T>: Debug {\n v: T\n}\nstruct Q: Eq {\n a: i32\n}\n"), 1);
+        assert_eq!(derived("struct E0: Debug {\n}\n"), 1);
     }
 }

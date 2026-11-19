@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // A closure supports no derives, so an `Eq` field of closure type is E0130 (CL10).
-struct Holder derives (Eq) {
+struct Holder: Eq {
     f: Fn(): i32 //~ E0130
 }
 

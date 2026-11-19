@@ -31,7 +31,7 @@ fn run(command: str): Result<i32, IoError> {
 }
 
 /// How a child's standard stream is connected.
-enum Stdio derives (Copy, Clone, Eq) {
+enum Stdio: Copy, Clone, Eq {
     /// The child uses the parent's stream.
     Inherit
     /// The parent gets a handle: `Child.stdin`, `Child.stdout`, or `Child.stderr`.
@@ -432,7 +432,7 @@ ChildStderr: Drop {
 }
 
 /// How a child ended.
-struct ExitStatus derives (Copy, Clone, Eq) {
+struct ExitStatus: Copy, Clone, Eq {
     priv exit_code: Option<i32>
     priv term_signal: Option<i32>
 }

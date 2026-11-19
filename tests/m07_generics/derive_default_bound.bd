@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// An interface listed after a generic type's name holds for the instances whose type parameters implement it, the
+// rule of the derives (spec/derives.md, issue #825).
+
+interface Describe {
+    fn label(self): String { String.from("unnamed") }
+}
+
+struct Pair<T>: Describe {
+    a: T
+}
+
+struct NotDescribed {}
+
+fn show<T: Describe>(value: T) {
+    println(value.label())
+}
+
+fn main() {
+    show(Pair { a: NotDescribed {} }) //~ E0141
+}

@@ -6,7 +6,7 @@
 // Equal values hash alike, and `Map` and `Set` still take any `==` key (HS1, HS5): a key whose hash a program can read
 // is found through the table.
 
-struct Key derives (Eq, Hash) {
+struct Key: Eq, Hash {
     name: String
     id: i32
 }

@@ -30,7 +30,7 @@ priv fn __scale(n: u64, factor: u64): u64 {
 
 /// A length of time with nanosecond precision, from zero up to about 584 years. It is never negative: subtracting a
 /// longer duration from a shorter one panics, and `checked_sub` and `saturating_sub` are the other choices.
-struct Duration derives (Copy, Clone, Eq, Ord, Hash, Default) {
+struct Duration: Copy, Clone, Eq, Ord, Hash, Default {
     priv nanos: u64
 }
 
@@ -231,7 +231,7 @@ Duration: Debug {
 
 /// A reading of the monotonic clock: it never goes backward and has no calendar meaning, so it measures how long
 /// something took. Only the difference between two instants of the same clock means anything.
-struct Instant derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+struct Instant: Copy, Clone, Eq, Ord, Hash, Debug {
     priv nanos: u64
 }
 
@@ -282,7 +282,7 @@ Instant {
 /// A reading of the real-time clock, in nanoseconds since 1970-01-01 00:00:00 UTC (negative before it). The clock
 /// can be set, so it can jump; use `Instant` to measure a length of time. An `i64` of nanoseconds covers the years
 /// 1678 to 2262.
-struct SystemTime derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+struct SystemTime: Copy, Clone, Eq, Ord, Hash, Debug {
     priv nanos: i64
 }
 
@@ -366,7 +366,7 @@ SystemTime {
 }
 
 /// A day of the week.
-enum Weekday derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+enum Weekday: Copy, Clone, Eq, Ord, Hash, Debug {
     Monday
     Tuesday
     Wednesday
@@ -394,7 +394,7 @@ Weekday: Display {
 /// A calendar date and a time of day in UTC (the proleptic Gregorian calendar, no leap seconds). The fields are
 /// public so a value can be read and compared; use `DateTime.new` to build one that is checked. Derived ordering
 /// is chronological because the fields run from the largest unit to the smallest.
-struct DateTime derives (Copy, Clone, Eq, Ord, Hash, Debug) {
+struct DateTime: Copy, Clone, Eq, Ord, Hash, Debug {
     year: i32
     /// 1 to 12.
     month: u32

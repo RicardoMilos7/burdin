@@ -5,7 +5,7 @@
 
 // `==`, `<`, and `hash` work on a generic instance when the type parameter's bounds provide them (issue #69).
 
-struct Wrapper<T> derives (Eq, Ord, Hash) {
+struct Wrapper<T>: Eq, Ord, Hash {
     value: T
 }
 

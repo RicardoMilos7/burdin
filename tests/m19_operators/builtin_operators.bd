@@ -23,7 +23,7 @@
 // The stage 0 operators are unchanged by milestone 19 (spec/operators.md OP12; issue #155): integers, floats,
 // `str`/`String`, tuples, derived structs, shifts, and bool logic.
 
-struct Pair derives (Eq, Ord) {
+struct Pair: Eq, Ord {
     a: i32
     b: i32
 }

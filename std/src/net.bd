@@ -23,7 +23,7 @@ priv const BACKLOG: i32 = 128
 priv const CHUNK: usize = 4096
 
 /// An IPv4 address and a port.
-struct SocketAddr derives (Copy, Clone, Eq, Debug) {
+struct SocketAddr: Copy, Clone, Eq, Debug {
     priv ip: u32
     priv port: u16
 }

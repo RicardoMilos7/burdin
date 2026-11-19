@@ -3,7 +3,7 @@
 /// A point in the plane.
 ///
 /// Points add component by component: `a + b`.
-struct Point derives (Copy, Eq, Debug) {
+struct Point: Copy, Eq, Debug {
     /// The horizontal position.
     x: i32
     /// The vertical position.

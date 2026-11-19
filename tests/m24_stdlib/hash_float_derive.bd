@@ -2,7 +2,7 @@
 
 // A struct with a float field cannot derive `Hash` (HS2), the same E0130 as any derive whose field lacks it.
 
-struct Point derives (Hash) {
+struct Point: Hash {
     x: i32
     y: f64 //~ E0130
 }

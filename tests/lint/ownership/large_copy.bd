@@ -1,6 +1,6 @@
 // A large `Copy` value passed by value inside a loop (spec/lint.md LN22): 64 bytes or more.
 
-struct Big derives (Copy, Clone) {
+struct Big: Copy, Clone {
     a: i64
     b: i64
     c: i64
@@ -11,7 +11,7 @@ struct Big derives (Copy, Clone) {
     h: i64
 }
 
-struct Small derives (Copy, Clone) {
+struct Small: Copy, Clone {
     a: i64
     b: i64
 }

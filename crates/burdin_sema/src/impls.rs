@@ -675,7 +675,7 @@ fn builtin_by_hand(span: Span, diags: &mut Diagnostics) {
     diags.error(
         Code::UNSUPPORTED, // e9000: impl-builtin-hand
         span,
-        "implementing a built-in interface by hand is not implemented in this compiler yet; use `derives`",
+        "implementing a built-in interface by hand is not implemented in this compiler yet; list it after the type name (`struct T: Eq { ... }`)",
     );
 }
 

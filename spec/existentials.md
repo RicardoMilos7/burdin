@@ -75,7 +75,7 @@ expected is E0003; there is no re-boxing conversion.
 The compiler implements `Display` and `Debug` for the primitive types and the built-in containers directly, without a
 method (spec/format.md). Those implementations have no vtable entry, so a value whose implementation is built in this
 way cannot be boxed as `any Display`/`any Debug`: E0204. A user type with `Type: Display { ... }` or
-`derives (Debug)` can be boxed; `any Display` itself implements `Display` (AN9), so a boxed user value formats through
+`: Debug` can be boxed; `any Display` itself implements `Display` (AN9), so a boxed user value formats through
 the vtable.
 
 ## AN4: `impl Interface` is a hidden generic parameter

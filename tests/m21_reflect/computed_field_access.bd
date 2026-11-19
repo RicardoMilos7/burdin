@@ -29,7 +29,7 @@ derive Bump {
     }
 }
 
-struct Counter derives (Bump) {
+struct Counter: Bump {
     low: i32
     high: i32
 }

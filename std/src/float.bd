@@ -18,7 +18,7 @@ use std.Error
 use unicode.{is_ascii_digit, to_ascii_lowercase}
 
 /// What went wrong while parsing a float.
-error enum ParseFloatError derives (Eq, Debug) {
+error enum ParseFloatError: Eq, Debug {
     Empty "cannot parse a float from an empty string"
     Invalid "invalid float"
 }

@@ -4,7 +4,7 @@ struct NoEq {
     n: i32
 }
 
-struct Holder derives (Eq) {
+struct Holder: Eq {
     a: i32
     b: NoEq //~ E0130
 }

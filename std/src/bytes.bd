@@ -15,7 +15,7 @@ struct BytesMut {
 }
 
 /// A read-only run of bytes. Clones and slices share the same storage.
-struct Bytes derives (Clone) {
+struct Bytes: Clone {
     data: Shared<List<u8>>
     start: usize
     len: usize

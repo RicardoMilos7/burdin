@@ -220,7 +220,7 @@ fn item_of(cx: &Ctx, text: &str, item: &ast::Item) -> Option<Item> {
     })
 }
 
-/// The interfaces a `derives (...)` clause names.
+/// The interfaces the `: A, B` list after a struct or enum name names.
 fn derives(cx: &Ctx, list: &[Type]) -> Vec<Implementation> {
     list.iter()
         .map(|t| Implementation {

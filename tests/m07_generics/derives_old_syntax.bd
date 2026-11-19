@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// The derived interfaces follow the name after `:` (`struct P: Copy, Clone { ... }`); the old `derives (...)` clause
+// is gone and `derives` is an ordinary identifier, so the old form is a syntax error (spec/grammar.md, issue #825).
+
+struct P derives (Copy, Clone) { //~ E0001
+    x: i32
+}
+
+fn main() {
+}

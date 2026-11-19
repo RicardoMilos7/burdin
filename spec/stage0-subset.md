@@ -49,7 +49,7 @@ the executable form. Two decisions worth calling out here:
 | Enums and match | Tuple, struct, unit variants; `match` with destructuring, literals, ranges, guards, or-patterns, `@`, `else`; `if let`, `let else`; exhaustiveness | L |
 | Generics and interfaces | Bounded generics on functions, structs, enums; `interface` with `requires` and default methods; `Type: Interface { ... }` with `where`; monomorphization; orphan rule | L |
 | Built-in interfaces | `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Drop`, `From` | M |
-| Derive | `derives (Copy, Clone, Eq, Ord, Hash, Default)`, hard-coded in the Rust compiler | M |
+| Derive | `struct T: Copy, Clone, Eq, Ord, Hash, Default` (written `derives (...)` until issue #825), hard-coded in the Rust compiler | M |
 | Ownership and moves | Single owner, moves, use-after-move errors, partial and conditional moves | L |
 | Conventions and exclusivity | Read-only default, `mut`, `own`; place-based exclusivity check at each call | L |
 | References and views | `&T`, `&mut T`, `str`, `[T]` as second-class types; single-source return rule; propagation through generics | L |

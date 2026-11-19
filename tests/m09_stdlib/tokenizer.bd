@@ -3,7 +3,7 @@
 //> 12|+|(|3|*|45|)|-|6|
 //> bad char at 4
 
-enum Token derives (Clone, Eq) {
+enum Token: Clone, Eq {
     Num(i32)
     Plus
     Minus

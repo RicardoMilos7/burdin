@@ -5,7 +5,7 @@
 // `Map<K, V>` implements Clone, Eq, Hash (when `K` and `V` are `Eq`/`Hash`), Default (with the default allocator),
 // Debug, and Iterable. Equal maps hash alike whatever their insertion order (`spec/stdlib.md`, "Interface coverage").
 
-struct MapHolder derives (Clone, Eq, Hash, Default, Debug) {
+struct MapHolder: Clone, Eq, Hash, Default, Debug {
     entries: Map<String, i32>
 }
 

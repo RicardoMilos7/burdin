@@ -7,7 +7,7 @@
 // `String` and `str` implement Clone, Eq, Ord, Hash, Default, Debug, and Display (`spec/stdlib.md`,
 // "Interface coverage"). A struct holding a `String` derives all of them.
 
-struct TextHolder derives (Clone, Eq, Ord, Hash, Default, Debug) {
+struct TextHolder: Clone, Eq, Ord, Hash, Default, Debug {
     text: String
 }
 

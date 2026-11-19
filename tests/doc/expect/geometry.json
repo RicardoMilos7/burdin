@@ -393,7 +393,7 @@
           "path": "shapes.Point",
           "kind": "struct",
           "private": false,
-          "signature": "struct Point derives (Copy, Eq, Debug)",
+          "signature": "struct Point: Copy, Eq, Debug",
           "docs": "A point in the plane.\n\nPoints add component by component: `a + b`.",
           "links": [],
           "span": {

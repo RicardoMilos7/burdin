@@ -3,11 +3,11 @@
 //> 99
 //> 1
 
-struct Id derives (Copy, Clone, Eq) {
+struct Id: Copy, Clone, Eq {
     n: i32
 }
 
-struct Boxed derives (Clone) {
+struct Boxed: Clone {
     v: Heap<i32>
 }
 

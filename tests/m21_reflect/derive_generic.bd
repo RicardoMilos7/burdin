@@ -32,16 +32,16 @@ derive Describe {
     }
 }
 
-struct Leaf derives (Describe) {
+struct Leaf: Describe {
     v: i32
 }
 
-struct Pair<T> derives (Describe) {
+struct Pair<T>: Describe {
     first: T
     second: T
 }
 
-enum Mode derives (Describe) {
+enum Mode: Describe {
     Fast
     Slow
 }

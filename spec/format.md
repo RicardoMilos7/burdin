@@ -97,7 +97,7 @@ interface Debug {
   formats them with the `priv` helpers in `std/src/fmt.bd`.
 - **With a block.** `Type: Display { fn fmt(self, mut f: Formatter) { ... } }` and `Type: Debug { ... }` on any
   struct or enum, generic or not (`Wrapper<T>: Display where T: Display`).
-- **Derived.** `derives (Debug)` writes the `Debug` impl: `Name { field: value, ... }` for a struct, `Variant` /
+- **Derived.** `struct T: Debug` writes the `Debug` impl: `Name { field: value, ... }` for a struct, `Variant` /
   `Variant(a, b)` / `Variant { field: value }` (the variant's name, not the type's) for an enum, and every field in
   declaration order. Each field's value is written with `Debug`, so every field must implement it (E0130 at the
   field). A generic type needs `Debug` on its parameters and gets it through `where`. `Display` is never derived.

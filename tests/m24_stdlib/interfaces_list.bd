@@ -6,7 +6,7 @@
 // `List<T>` implements Clone, Hash (when `T: Hash`), Default (with the default allocator), Debug (when `T: Debug`),
 // and Iterable. It deliberately implements neither `Copy` nor `Eq` (`spec/stdlib.md`, "Interface coverage").
 
-struct ListHolder derives (Clone, Hash, Default, Debug) {
+struct ListHolder: Clone, Hash, Default, Debug {
     items: List<i32>
 }
 

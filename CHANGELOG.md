@@ -10,6 +10,17 @@ close-out checklist in `AGENTS.md`).
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
 
+### Derived interfaces after the type's name (issue #825)
+
+- `struct Point: Copy, Clone, Eq { ... }` replaces `struct Point derives (Copy, Clone, Eq) { ... }` on structs, enums,
+  and error enums; `repr(C)` comes after the list. The old clause is a syntax error, and `derives` is an ordinary
+  identifier.
+- The list also takes an interface whose methods all have default bodies: the declaration implements it as an empty
+  `Type: Iface {}` would, with the interface required on each type parameter of a generic type, like a derive.
+- E0234: an interface with a method that has no default (`Drop`, `From`, `Display`, ...) cannot be listed. `Drop`
+  in the list was E0002 before.
+- `burdin fmt`, `burdin expand`, `burdin doc`, `std/`, the conformance tests, and the specs use the new form.
+
 ### Dependencies: `burdin add` and `burdin.lock` (issues #238, #239)
 
 `spec/packages.md` (PKG1-PKG14) is the specification; `tests/check_packages.py` checks it and every CI job runs it.

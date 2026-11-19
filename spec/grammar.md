@@ -40,7 +40,7 @@ immediately after a `.` in a member position, where it is a member name: that is
 `impl` now that both are keywords.
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
-by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1), `derives` (after a struct or enum name),
+by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1),
 `requires` (after an interface name), `repr` (after a struct
 name), `from` (after an error variant's payload), `pub` (immediately before `use`), `select` (an expression start,
 followed by `{` on the same line, `channels.md` CH6), `default` (the head of a `select` arm), and `Fn`/`FnMut`/`FnOnce` (a
@@ -127,12 +127,14 @@ Bounds        = TypePath { "+" TypePath } ;
 WhereClause   = "where" WherePred { "," WherePred } ;
 WherePred     = Type ":" Bounds ;
 
-StructItem    = "struct" IDENT [ GenericParams ] [ "repr(C)" ] [ Derives ] "{" [ FieldList ] "}" ;
+StructItem    = "struct" IDENT [ GenericParams ] [ Derives ] [ "repr(C)" ] "{" [ FieldList ] "}" ;
 FieldList     = Field { Sep Field } [ Sep ] ;
 Field         = [ "priv" ] IDENT ":" Type ;
-Derives       = "derives" "(" TypePath { "," TypePath } [ "," ] ")" ;
+(* `: A, B` after the name: the interfaces the declaration implements by itself, each a built-in derive, a `derive`
+   declaration, or an interface whose methods all have defaults. No trailing comma. `derives.md`, issue #825. *)
+Derives       = ":" TypePath { "," TypePath } ;
 
-(* `derive Name { fn ... }`: the methods a user derive generates; `derives (Name)` applies it. The body of a method
+(* `derive Name { fn ... }`: the methods a user derive generates; `struct T: Name` applies it. The body of a method
    is ordinary code that can use the reflection members. `spec/reflection.md`, RFL8-RFL9. *)
 DeriveItem    = "derive" IDENT "{" { ImplFn } "}" ;
 

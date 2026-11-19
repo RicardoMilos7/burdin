@@ -5,7 +5,7 @@
 // `String` has no allocator argument and its buffer comes from `Global` (AL3), so its clone and drop are checked
 // on the same path.
 
-struct Pool derives (Clone) { }
+struct Pool: Clone { }
 
 Pool: Allocator {
     fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
