@@ -122,7 +122,20 @@ fn static_link_args_unix(prefix: &Path, target_os: &str) -> Vec<String> {
             }
         }
     }
-    args.push(if target_os == "macos" { "-lc++" } else { "-lstdc++" }.to_string());
+    if target_os == "macos" {
+        args.push("-lc++".to_string());
+    } else {
+        args.push("-lstdc++".to_string());
+        // rustc links with `-nodefaultlibs` and puts its own `-lc` before these archives, and the linker drops a shared
+        // library nothing has used yet (`--as-needed`). LLVM's objects need both afterwards. On arm64 glibc the stack
+        // protector reads the global `__stack_chk_guard` from libc, and LLVM is built with out-of-line atomics
+        // (`__aarch64_ldadd4_acq_rel`) that live in libgcc.a; x86-64 needs neither, so it never showed. The interpreter archive
+        // (`libLLVMInterpreter.a`, which `llvm-sys` links in) calls libffi, which `llvm-config --system-libs` does not
+        // list, and rustc's own earlier `-lffi` is dropped by `--as-needed` the same way.
+        args.push("-lffi".to_string());
+        args.push("-lgcc".to_string());
+        args.push("-lc".to_string());
+    }
     args
 }
 
