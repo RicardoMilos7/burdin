@@ -9,6 +9,8 @@ Usage: tests/run_tests.py [options] [filter ...]
   -j, --jobs N        tests to run in parallel (default: the CPU count, at most 8; 1 is sequential)
   -n, --repeat N      run each selected test N times; a test fails when any run fails (for stress tests, where a
                       lost wake-up or a race shows up in one run in many)
+  --sanitize LIST     build every `run` and `burdin-test` test with `--sanitize=LIST` (spec/sanitizers.md); the
+                      scheduled CI job runs the stage 0 and stage 1 milestones with `address`
   -h, --help          show this help
   filter              run only tests whose path contains one of these strings
                       (for example: m05, drop_order, m06_conventions/exclusivity)
@@ -74,6 +76,8 @@ KIND_WORDS = {
 }
 DEFAULT_TIMEOUT = 30
 DEFAULT_JOBS = min(8, os.cpu_count() or 1)
+# `--sanitize LIST`: added to every `burdin run` and `burdin test` command. Set once, before the workers start.
+SANITIZE = None
 
 USAGE = __doc__.split("--------------------------------------------------------------------------------")[0].rstrip()
 
@@ -285,6 +289,8 @@ def test_run(case: Case, burdin: str, release: bool, timeout: int):
     command = [burdin, "run", str(case.target)]
     if release:
         command.append("--release")
+    if SANITIZE:
+        command.append(f"--sanitize={SANITIZE}")
     for lib in libs:
         command.extend(["--link-lib", os.fsdecode(lib)])
     command.append("--")
@@ -371,6 +377,8 @@ def test_burdin_test(case: Case, burdin: str, release: bool, timeout: int):
     command = [burdin, "test", str(case.target)]
     if release:
         command.append("--release")
+    if SANITIZE:
+        command.append(f"--sanitize={SANITIZE}")
 
     directive = None
     for value in case.directives:
@@ -679,6 +687,14 @@ def parse_args(argv):
                 return usage_error(f"invalid job count: {argv[index]}")
             if options["jobs"] < 1:
                 return usage_error(f"invalid job count: {argv[index]}")
+        elif argument == "--sanitize" or argument.startswith("--sanitize="):
+            if argument == "--sanitize":
+                index += 1
+                if index >= len(argv):
+                    return usage_error(f"{argument} needs a value")
+                options["sanitize"] = argv[index]
+            else:
+                options["sanitize"] = argument[len("--sanitize="):]
         elif argument in ("-n", "--repeat"):
             index += 1
             if index >= len(argv):
@@ -704,7 +720,9 @@ def usage_error(message):
 
 
 def main(argv) -> int:
+    global SANITIZE
     options = parse_args(argv)
+    SANITIZE = options.get("sanitize")
     tests_dir = Path(__file__).resolve().parent
     repo_dir = tests_dir.parent
     platform = host_platform()

@@ -174,6 +174,8 @@ fn the_library_reports_the_command_lines_errors() {
                                 burdin_query::EntryMode::Build => "build",
                                 burdin_query::EntryMode::Test => "test",
                                 burdin_query::EntryMode::Bench => "bench",
+                                // No conformance test is a fuzz build; the arm is for completeness.
+                                burdin_query::EntryMode::Fuzz => "fuzz",
                             };
                             let output = Command::new(binary)
                                 .arg(command)

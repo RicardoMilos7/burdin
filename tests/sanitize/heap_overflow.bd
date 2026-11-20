@@ -1,0 +1,16 @@
+// An `unsafe` write one element past the end of a C allocation (spec/sanitizers.md). Without a sanitizer the
+// write lands in the allocator's padding and the program finishes; `--sanitize=address` stops it at the write.
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn main() {
+    unsafe {
+        let raw = malloc(16)
+        let p = raw as CPtr<i32>
+        *(p + 4) = 7
+        println("finished {*(p + 4)}")
+        free(raw)
+    }
+}

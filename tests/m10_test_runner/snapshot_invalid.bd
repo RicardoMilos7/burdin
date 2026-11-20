@@ -1,0 +1,31 @@
+//@ test-compile-fail
+
+// An inline snapshot is only the second argument of `assert_snapshot`, and the call takes a value, at most one
+// inline snapshot, and `display:` written as a literal; every other form is E0172 (spec/test-runner.md, SN1).
+fn flag(): bool {
+    true
+}
+
+test "inline snapshot outside the call" {
+    let text = @"hello" //~ E0172
+}
+
+test "a string where the inline snapshot goes" {
+    assert_snapshot(1, "1") //~ E0172
+}
+
+test "two inline snapshots" {
+    assert_snapshot(1, @"1", @"1") //~ E0172
+}
+
+test "display needs a literal" {
+    assert_snapshot(1, display: flag()) //~ E0172
+}
+
+test "an unknown named argument" {
+    assert_snapshot(1, format: true) //~ E0172
+}
+
+test "no value" {
+    assert_snapshot() //~ E0172
+}

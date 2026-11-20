@@ -5,7 +5,7 @@ package discovery. Needs a built driver. Usage: tests/check_test_runner.py
 BURDIN selects the driver, like tests/run_tests.py. The fixtures under tests/runner/ are ordinary packages with
 no `//@` directives, so the conformance runner ignores them.
 
-What it checks (issues #438, #439, #440, #441, #442, #443, #444, #638, #639, #640, #641):
+What it checks (issues #438, #439, #440, #441, #442, #443, #444, #616, #638, #639, #640, #641):
   * [ignore], [should_panic], [should_panic("text")], [should_fail], and [timeout(ms)] decide pass/fail;
     --ignored and --include-ignored select ignored tests and the summary counts what was skipped;
   * [differential] compares the comptime interpreter's Ok/Err outcome with the compiled run, and a divergent
@@ -24,7 +24,10 @@ What it checks (issues #438, #439, #440, #441, #442, #443, #444, #638, #639, #64
   * the doc tests of `///` and `//!` comments run with the `test` blocks, `--doc` runs only them, and a failure
     reports the doc comment's file and line, not the generated program; the attributes (`ignore`, `no_run`,
     `should_panic`, `compile_fail`) decide one, hidden `# ` setup lines are compiled, and a one-file target or a
-    package without an importable root module still runs its examples (#250, #650, #651, #652).
+    package without an importable root module still runs its examples (#250, #650, #651, #652);
+  * `assert_snapshot` compares with a stored or inline snapshot, a difference fails with a diff and a `.snap.new`,
+    `--review` and `--bless` accept new snapshots (rewriting an inline literal), and a complete green run reports a
+    stale snapshot file (#616).
 """
 
 import json
@@ -811,6 +814,80 @@ with harness.temporary_dir("burdin-runner-") as work:
     run_driver(burdin, "test", str(harness.TESTS / "doc" / "geometry"), "--doc", "-j", "4")
     expect_status("doc tests (the documentation fixture)", 0)
     expect_contains("doc tests (the documentation fixture)", "test result: 1 passed, 0 failed", out)
+
+    # --- snapshot tests ---------------------------------------------------------------
+
+    # `assert_snapshot` records a value; the runner compares it with `snapshots/<module>__<test>.snap` or the
+    # call's inline `@"..."` literal, fails on a missing or changed snapshot with a diff and a `.snap.new`, and
+    # `--review`/`--bless` accept new text (spec/test-runner.md, "Snapshot tests", issue #616). The fixture is copied
+    # so the committed snapshots stay as they are.
+    snap_pkg = scratch / "snapshots"
+    shutil.copytree(fixtures / "snapshots", snap_pkg)
+    snap_dir = snap_pkg / "src" / "snapshots"
+    snap_main = snap_pkg / "src" / "main.bd"
+    run_driver(burdin, "test", str(snap_pkg), "-j", "4")
+    expect_status("snapshots (check)", 1)
+    expect_contains("snapshots (check)", "test result: 2 passed, 3 failed", out)
+    for name in ("a changed value", "a changed inline value", "a new snapshot"):
+        expect_contains("snapshots (check)", f"FAIL {name}\n", out + "\n")
+    expect_contains("snapshots (check)", "main__a_changed_value.snap does not match ----", out)
+    expect_contains("snapshots (check)", "-Point { x: 1, y: 2 }\n+Point { x: 10, y: 20 }", out)
+    expect_contains("snapshots (check)", "main.bd:46 does not match", out)
+    expect_contains("snapshots (check)", "-Point { x: 5, y: 0 }\n+Point { x: 5, y: 6 }", out)
+    expect_contains("snapshots (check)", "main__a_new_snapshot.snap is missing ----", out)
+    expect_contains("snapshots (check)", '@@ -0,0 +1,1 @@\n+["x.o", ".x."]', out)
+    expect_contains("snapshots (check)", "run `burdin test --bless` to accept it", out)
+    checks += 1
+    if not (snap_dir / "main__a_changed_value.snap.new").is_file() or not (snap_dir / "main__a_new_snapshot.snap.new").is_file():
+        add_problem("snapshots (check): a missing or changed snapshot did not leave a .snap.new")
+    if (snap_dir / "main__a_new_snapshot.snap").exists():
+        add_problem("snapshots (check): a failing run wrote the snapshot itself")
+    # A run with failures cannot tell a stale snapshot from one a failed test did not reach.
+    expect_not_contains("snapshots (check)", "stale snapshot", err)
+
+    # --review asks about each difference in declaration order: decline the file, accept the inline one, and quit
+    # before the new one.
+    result = harness.run([burdin, "test", str(snap_pkg), "-j", "1", "--review"], cwd=work, input=b"n\ny\nq\n")
+    status = result.returncode
+    out = harness.text(harness.normalize(result.stdout))
+    expect_status("snapshots (--review)", 1)
+    expect_contains("snapshots (--review)", "accept it? [y]es, [n]o, [a]ll, [q]uit:", out)
+    expect_contains("snapshots (--review)", "---- changed inline snapshot at", out)
+    expect_contains("snapshots (--review)", "test result: 3 passed, 2 failed", out)
+    expect_contains("snapshots (--review)", 'assert_snapshot(Point { x: 5, y: 6 }, @r#"Point { x: 5, y: 6 }"#)',
+                    harness.read_text(snap_main))
+    expect_contains("snapshots (--review)", "Point { x: 1, y: 2 }", harness.read_text(snap_dir / "main__a_changed_value.snap"))
+
+    # --bless accepts the rest: the file is rewritten, the new snapshot is created, and no `.snap.new` is left.
+    run_driver(burdin, "test", str(snap_pkg), "-j", "4", "--bless")
+    expect_status("snapshots (--bless)", 0)
+    expect_contains("snapshots (--bless)", "test result: 5 passed, 0 failed", out)
+    expect_contains("snapshots (--bless)", "note: updated snapshot", err)
+    blessed = harness.read_text(snap_dir / "main__a_changed_value.snap")
+    expect_contains("snapshots (--bless)", "\n---\nPoint { x: 10, y: 20 }\n", blessed)
+    expect_contains("snapshots (--bless)", "source: main.bd:42\n", blessed)
+    expect_contains("snapshots (--bless)", '["x.o", ".x."]', harness.read_text(snap_dir / "main__a_new_snapshot.snap"))
+    checks += 1
+    if list(snap_dir.glob("*.snap.new")):
+        add_problem("snapshots (--bless): a .snap.new was left behind")
+    # A complete green run reports the snapshot no test checked.
+    expect_contains("snapshots (--bless)", "stale snapshot", err)
+    expect_contains("snapshots (--bless)", "main__a_removed_test.snap: no test of this run checked it", err)
+
+    run_driver(burdin, "test", str(snap_pkg), "-j", "4")
+    expect_status("snapshots (after --bless)", 0)
+    expect_contains("snapshots (after --bless)", "test result: 5 passed, 0 failed", out)
+    expect_contains("snapshots (after --bless)", "main__a_removed_test.snap: no test of this run checked it", err)
+    # A filtered run cannot tell which snapshots are stale.
+    run_driver(burdin, "test", str(snap_pkg), "inline")
+    expect_status("snapshots (filtered)", 0)
+    expect_not_contains("snapshots (filtered)", "stale snapshot", err)
+    run_driver(burdin, "test", str(snap_pkg), "--bless", "--review")
+    expect_status("snapshots (--bless with --review)", 2)
+    expect_contains("snapshots (--bless with --review)", "cannot be used together", err)
+    run_driver(burdin, "build", str(snap_pkg), "--bless")
+    expect_status("snapshots (--bless on build)", 2)
+    expect_contains("snapshots (--bless on build)", "only valid for `burdin test`", err)
 
     # The new options belong to `burdin test`.
     run_driver(burdin, "build", str(selection), "--list")

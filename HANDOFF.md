@@ -18,14 +18,16 @@ method is the new E0234, and the old clause is a plain syntax error. Parser, sem
 `burdin doc`, `std/`, the tests, and the specs moved together (decision 31 in `tests/README.md`). The LSP
 completion of the list is issue #824.
 
-Updated at the end of the fifty-fourth session (2026-11-19). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-sixth session (2026-11-20). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
 (`m24_stdlib`) is done, and stage 2 is complete through milestone 2.4 (asynchronous I/O)**: 1073 conformance tests;
 1070 pass in debug (three are skipped) and 1061 in release (the release run skips the debug-only and platform-specific
 tests). Stage 3's bench blocks (issue #251) are done: `bench` items, `black_box`, and `burdin bench` with statistics,
-baselines, filters, `--list`, and `--profile-time`.
+baselines, filters, `--list`, and `--profile-time`; the testing tools of issue #615 are done too: snapshot tests
+(`--bless`/`--review`), `fuzz` items with `burdin fuzz` and `burdin test --fuzz-replay`, `--sanitize`, and
+`burdin test --interpret` with strict memory checks.
 **The fifty-fifth session implemented issue #604 and its sub-issues (#606, #607, #609, #611, #613)**: the one edit
 model (`Applicability`, multi-edit suggestions, `burdin_diag::edit`), the compiler's suggestions (near-miss names,
 the import, `mut`, `.clone()` after a move), `burdin fix` with rounds, conflicts, the dirty-tree check, `--dry-run`
@@ -2371,6 +2373,38 @@ follows the stable channel only; the GitHub API path and the Windows user-PATH r
    server is in (forty-ninth session, issue #242, `spec/lsp.md`); its follow-ups are in that session's section. The rest of stage 3's compiler item — a lockfile, multiple-package workspaces, cached
    object files — and its tooling (`doc`, `add`) have not started; `burdin fmt`, `burdin lint`, `burdin new`, and the
    bindgen are done.
+
+## The fifty-seventh session: advanced testing tools (stage 3, issue #615, sub-issues #616, #618, #620, #622)
+
+Four tools that make the test suite stricter, each with its own spec file and its own black-box check:
+`spec/test-runner.md` (SN1-SN9 and the new "Interpreting a test" section, IN1-IN6), `spec/fuzz.md` (FZ1-FZ7), and
+`spec/sanitizers.md` (SAN1-SAN6).
+
+- **Snapshots (#616).** `assert_snapshot(value)` compares `Debug` output (or `Display` with `display: true`) with
+  `snapshots/<module>__<test>.snap`; a missing or different snapshot fails with a diff and writes `.snap.new`.
+  `--bless` accepts every change (rewriting files and the `@"..."` inline form), `--review` asks per snapshot, and a
+  snapshot no test checked any more is reported as stale. The test process records each call on a file the runner
+  reads after the run, so a snapshot check costs one file append.
+- **Fuzzing (#618).** `fuzz name(data: [u8]) { ... }` is a contextual item compiled as `__burdin_fuzz_<name>` (E0173
+  for any other signature). `burdin fuzz <target> <name>` builds it with libFuzzer's coverage and AddressSanitizer,
+  links libFuzzer's `main` through clang, and keeps `fuzz/corpus/<name>/` and `fuzz/artifacts/<name>/` next to the
+  package. `burdin test --fuzz-replay` adds one case per saved input to an ordinary test run. `tests/fuzz/planted`
+  holds a package with a planted out-of-bounds read that the fuzzer finds in about two seconds, and the committed
+  crash input is replayed in CI.
+- **Sanitizers (#620).** `--sanitize=address,thread,leak,undefined` for `build`, `run`, and `test`, through LLVM's
+  own passes and compiler-rt, with clang as the linker; `undefined` is Burdin-level (release-mode overflow checks
+  and checked `CPtr` dereferences) and needs no runtime. `tests/sanitize/` has one program per bug class. Running the
+  suite under AddressSanitizer found two real code-generation bugs — the sanitizer's zero-sized accesses and six
+  temporary-lifetime leaks — both fixed in `burdin_codegen`; the leak fix made `--sanitize=leak` clean and is
+  checked by `tests/sanitize/temporaries.bd`.
+- **The interpreter as a test runner (#622).** `burdin test --interpret` runs each `test` body in the interpreter
+  over a modeled C heap (`__alloc`/`__realloc`/`__dealloc`, pointer arithmetic, casts), checking bounds, alignment,
+  initialization, double frees, use after free, and leaks at the source line; a test that needs C, the environment, or
+  a thread is skipped with the reason. `tests/interpret/` has one fixture per class and a passing std-heavy one.
+
+What is left: snapshots are checked only in a compiled run (an interpreted test that reads a snapshot file is
+skipped); `--interpret` runs `test` blocks only, not doc tests; the fuzzer's corpus is not shared across a workspace;
+and a sanitizer report in a test is attributed to the test, not to the line inside the library that caused it.
 
 ## Starting the next session
 

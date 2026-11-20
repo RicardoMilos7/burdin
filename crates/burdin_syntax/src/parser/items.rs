@@ -32,6 +32,13 @@ impl Parser<'_> {
                 }
                 continue;
             }
+            if self.at_fuzz_item() {
+                match self.fuzz_decl() {
+                    Ok(fuzz) => file.fuzzes.push(fuzz),
+                    Err(Reported) => self.recover_item(),
+                }
+                continue;
+            }
             match self.item() {
                 Ok(Some(item)) => file.items.push(item),
                 Ok(None) => {}
@@ -57,6 +64,14 @@ impl Parser<'_> {
     fn at_bench_item(&self) -> bool {
         matches!(self.kind(), TokenKind::Ident(name) if name == "bench")
             && matches!(self.nth_kind(1), TokenKind::Str(_))
+    }
+
+    /// A `fuzz` item: the contextual keyword followed by the target's name and its parameter list
+    /// (`spec/fuzz.md`, FZ1). `fuzz` stays an ordinary identifier everywhere else.
+    fn at_fuzz_item(&self) -> bool {
+        matches!(self.kind(), TokenKind::Ident(name) if name == "fuzz")
+            && matches!(self.nth_kind(1), TokenKind::Ident(_))
+            && matches!(self.nth_kind(2), TokenKind::LParen | TokenKind::Lt)
     }
 
     /// The contextual `blocking` marker: `blocking fn` or `blocking unsafe fn`. It is a marker only there, so a
@@ -583,6 +598,21 @@ impl Parser<'_> {
             span,
         };
         Ok(BenchDecl { name, name_span, func, span })
+    }
+
+    /// `fuzz name(data: [u8]) { ... }` (`spec/fuzz.md`, FZ1): a fuzz target, parsed like a function after the
+    /// keyword and compiled as the private function `__burdin_fuzz_<name>`. The parser accepts any signature so
+    /// that sema can say what is wrong with it (E0173). Like a test, a fuzz target is kept out of `File.items`:
+    /// `burdin fuzz` and `burdin test` declare it, and every other build strips it.
+    pub(super) fn fuzz_decl(&mut self) -> PResult<FuzzDecl> {
+        let start = self.span();
+        self.bump(); // `fuzz`
+        let name = self.ident("a fuzz target name")?;
+        let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
+        let target = Ident { name: format!("__burdin_fuzz_{}", name.name), span: name.span };
+        let (func, _) = self.fn_rest(true, false, false, start, target, generics, false)?;
+        let span = func.span;
+        Ok(FuzzDecl { name: name.name, name_span: name.span, func, span })
     }
 
     pub(super) fn interface_decl(&mut self, is_priv: bool, start: Span) -> PResult<InterfaceDecl> {

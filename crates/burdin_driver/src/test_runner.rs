@@ -10,6 +10,7 @@
 mod doc_tests;
 mod report;
 pub(crate) mod select;
+pub(crate) mod snapshots;
 
 use crate::package::{self, Workspace};
 use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, compile};
@@ -62,6 +63,9 @@ enum Run {
     Doc(DocExample),
     /// A doc test whose program is built: ready for its process, which takes no index argument.
     DocExe(PathBuf),
+    /// `--fuzz-replay`: a fuzz target run on one saved input. The dispatcher index selects the target and the
+    /// input file is its second argument (`spec/fuzz.md`, FZ6).
+    Replay { exe: PathBuf, index: usize, input: PathBuf },
 }
 
 /// The attributes a test runs by, one shape for `test` blocks and one for doc blocks (`Attrs::doc` selects the
@@ -144,6 +148,9 @@ struct CompiledPackage {
     exe: PathBuf,
     tests: Vec<TestEntry>,
     sites: Vec<Site>,
+    /// With `--fuzz-replay`, each fuzz target, where it is declared, and its saved inputs in name order; empty
+    /// otherwise.
+    replays: Vec<(burdin_tir::FuzzEntry, Site, Vec<PathBuf>)>,
 }
 
 /// How a test process ended. The dispatcher returns 0 for `Ok` and 1 for `Err`; anything else is an abort or a
@@ -168,6 +175,9 @@ fn ending(status: &ExitStatus) -> Ending {
 }
 
 pub(crate) fn run(args: &Args) -> ExitCode {
+    if args.interpret {
+        return run_interpreted(args);
+    }
     if let Err(code) = crate::sync_dependencies(&args.target, args.locked) {
         return code;
     }
@@ -222,6 +232,8 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         run_build_scripts: true,
         locked: args.locked,
         jobs: crate::jobs_or_default(args.jobs),
+        sanitize: args.sanitize,
+        fuzz_target: None,
     };
     // `--doc` runs only the doc tests, so no `test` block is compiled.
     let mut compiled = Vec::new();
@@ -231,12 +243,29 @@ pub(crate) fn run(args: &Args) -> ExitCode {
             let target = package_target(&workspace, args, index);
             let exe = binaries.path.join(&package.name).with_extension(std::env::consts::EXE_EXTENSION);
             match compile(&target, &binaries.path, Some(&exe), &options) {
-                Ok(built) => compiled.push(CompiledPackage {
-                    name: package.name.clone(),
-                    exe,
-                    tests: built.tests,
-                    sites: built.test_sites,
-                }),
+                Ok(built) => {
+                    let replays = if args.fuzz_replay {
+                        let root = crate::fuzz_runner::fuzz_root(&target, package.dir.as_deref());
+                        built
+                            .fuzzes
+                            .into_iter()
+                            .zip(built.fuzz_sites)
+                            .map(|(fuzz, site)| {
+                                let inputs = saved_inputs(&crate::fuzz_runner::dirs(&root, &fuzz.name).artifacts);
+                                (fuzz, site, inputs)
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    compiled.push(CompiledPackage {
+                        name: package.name.clone(),
+                        exe,
+                        tests: built.tests,
+                        sites: built.test_sites,
+                        replays,
+                    })
+                }
                 Err(code) => return code,
             }
         }
@@ -309,7 +338,9 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         .tests
         .iter()
         .enumerate()
-        .filter(|(_, planned)| !planned.ignored && matches!(planned.case.run, Run::Block { .. } | Run::DocExe(_)))
+        .filter(|(_, planned)| {
+            !planned.ignored && matches!(planned.case.run, Run::Block { .. } | Run::DocExe(_) | Run::Replay { .. })
+        })
         .map(|(index, _)| index)
         .collect();
     let started = Instant::now();
@@ -320,8 +351,41 @@ pub(crate) fn run(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Snapshots are compared after every test has finished, so `--review` asks its questions in declaration order
+    // and an accepted snapshot counts before the report is printed.
+    let mut outcomes = outcomes;
+    let settled = match snapshots::settle(&plan.tests, &mut outcomes, &binaries.path, args.snapshots) {
+        Ok(settled) => settled,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    for updated in &settled.updated {
+        eprintln!("note: updated {updated}");
+    }
     let slow_ms = args.slow_ms.unwrap_or(DEFAULT_SLOW_MS);
     let summary = report::summarize(&plan, &outcomes, slow_ms, started.elapsed());
+    // A snapshot file no test checked is stale, which only a run of every test of the selected packages can tell.
+    let complete = args.filters.is_empty()
+        && args.skip.is_empty()
+        && !args.failed
+        && args.shard.is_none()
+        && !args.ignored_only
+        && !args.doc_only
+        && summary.ignored == 0
+        && summary.failed == 0;
+    if complete {
+        let sources: Vec<PathBuf> = selected
+            .iter()
+            .flat_map(|&index| workspace.packages[index].modules.iter())
+            .filter(|module| module.text.is_none())
+            .map(|module| module.file.clone())
+            .collect();
+        for path in snapshots::stale(&sources, &settled.touched) {
+            eprintln!("warning: stale snapshot {}: no test of this run checked it", path.display());
+        }
+    }
     match &stream {
         Some(stream) => stream.suite_finished(&plan, &summary),
         None => report::print_human(&plan, &outcomes, &summary, args.verbose),
@@ -368,6 +432,120 @@ fn failed_record_path(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
     Some(dir.join("target").join("burdin").join(profile).join("test-failed.txt"))
 }
 
+/// `burdin test --interpret` (`spec/test-runner.md`, IN1-IN6): checks each package and runs its `test` blocks in
+/// the interpreter instead of compiling them. A test that needs C or the operating system is skipped, with the
+/// reason; a test that trips one of the strict checks fails at the source line that tripped it.
+fn run_interpreted(args: &Args) -> ExitCode {
+    let workspace = match package::load_for_tests(&args.target) {
+        Ok(workspace) => workspace,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(1);
+        }
+    };
+    let selected = match select_packages(args, &workspace) {
+        Ok(selected) => selected,
+        Err(message) => return crate::cli::usage_error("test", &message),
+    };
+    let options = CompileOptions {
+        release: args.release,
+        debug: false,
+        strip: false,
+        lto: false,
+        pgo_generate: false,
+        pgo_use: None,
+        emit_ir: None,
+        emit: None,
+        link_libs: &[],
+        mode: EntryMode::Test,
+        diagnostics: &args.diagnostics,
+        comptime_steps: args.comptime_steps,
+        emit_deps: None,
+        report_clean: false,
+        run_build_scripts: true,
+        locked: args.locked,
+        jobs: 1,
+        sanitize: Default::default(),
+        fuzz_target: None,
+    };
+    let compile_options = CompileOptions { link_libs: args.link_libs.as_slice(), ..options };
+    let interp_options = burdin_comptime::Options {
+        release: args.release,
+        steps: args.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
+    };
+    let qualify = selected.len() > 1;
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut skipped = 0usize;
+    for &index in &selected {
+        let package_name = workspace.packages[index].name.clone();
+        let target = package_target(&workspace, args, index);
+        let front = match crate::front_end(&target, &compile_options, &crate::SourceOverrides::new()) {
+            Ok(front) => front,
+            Err(code) => return code,
+        };
+        if front.diags.has_errors() {
+            crate::report_errors("test", &target, &front.diags, &front.sources, &args.diagnostics);
+            return ExitCode::from(1);
+        }
+        let Some(program) = front.program else {
+            eprintln!("error: {} produced no program", target.display());
+            return ExitCode::from(1);
+        };
+        let site = |span: burdin_diag::Span| {
+            let file = front.sources.get(span.file);
+            (file.path.clone(), file.line_col(span.lo))
+        };
+        for test in &program.tests {
+            let local =
+                if test.module.is_empty() { test.name.clone() } else { format!("{}.{}", test.module, test.name) };
+            let path = if qualify { format!("{package_name}::{local}") } else { local };
+            let display = if qualify { format!("{package_name}::{}", test.name) } else { test.name.clone() };
+            if !select::name_selected(args, &path) {
+                continue;
+            }
+            if args.list {
+                let suffix = if test.attrs.ignore { " [ignore]" } else { "" };
+                println!("{path}{suffix}");
+                continue;
+            }
+            if test.attrs.ignore && !args.include_ignored {
+                skipped += 1;
+                println!("SKIP {display} ([ignore])");
+                continue;
+            }
+            match burdin_comptime::interpret_test(&program, test.func, interp_options) {
+                burdin_comptime::Interpreted::Passed => {
+                    passed += 1;
+                    if args.verbose {
+                        println!("PASS {display} (interpreted)");
+                    }
+                }
+                burdin_comptime::Interpreted::Skipped(reason) => {
+                    skipped += 1;
+                    println!("SKIP {display} ({reason})");
+                }
+                burdin_comptime::Interpreted::Failed(message, span) => {
+                    failed += 1;
+                    let (file, (line, column)) = site(span);
+                    println!("---- test \"{display}\" failed ----");
+                    println!("{file}:{line}:{column}: {message}");
+                    println!("FAIL {display}");
+                }
+            }
+        }
+    }
+    if args.list {
+        return ExitCode::SUCCESS;
+    }
+    let mut line = format!("test result: {passed} passed, {failed} failed");
+    if skipped > 0 {
+        line.push_str(&format!(", {skipped} skipped"));
+    }
+    println!("{line}");
+    if failed > 0 { ExitCode::from(1) } else { ExitCode::SUCCESS }
+}
+
 /// Every test of the compiled packages, in build order and then declaration order. When more than one package runs,
 /// names are qualified with the package.
 fn discover(compiled: &[CompiledPackage], qualify: bool) -> Vec<TestCase> {
@@ -395,8 +573,49 @@ fn discover(compiled: &[CompiledPackage], qualify: bool) -> Vec<TestCase> {
                 attrs: Attrs::of_block(&test.attrs),
             });
         }
+        // `--fuzz-replay`: one case per saved input of each fuzz target, named `fuzz <target>: <file>`. The
+        // dispatcher numbers the fuzz targets after the tests.
+        for (j, (fuzz, site, inputs)) in package.replays.iter().enumerate() {
+            for input in inputs {
+                let file_name = input.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                let name = format!("fuzz {}: {file_name}", fuzz.name);
+                let local = if fuzz.module.is_empty() { name.clone() } else { format!("{}.{name}", fuzz.module) };
+                let (display, path) = if qualify {
+                    (format!("{}::{name}", package.name), format!("{}::{local}", package.name))
+                } else {
+                    (name.clone(), local.clone())
+                };
+                cases.push(TestCase {
+                    package: package.name.clone(),
+                    module: fuzz.module.clone(),
+                    name,
+                    local,
+                    display,
+                    path,
+                    file: site.file.clone(),
+                    line: site.line,
+                    run: Run::Replay { exe: package.exe.clone(), index: package.tests.len() + j, input: input.clone() },
+                    attrs: Attrs::default(),
+                });
+            }
+        }
     }
     cases
+}
+
+/// The saved inputs of one fuzz target, `fuzz/artifacts/<name>/`, in name order. Hidden files (an editor's or a
+/// file manager's) are not inputs; a missing directory has none.
+fn saved_inputs(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut inputs: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')))
+        .collect();
+    inputs.sort();
+    // The test process runs in its own directory, so the input is named by an absolute path.
+    inputs.into_iter().map(|path| std::path::absolute(&path).unwrap_or(path)).collect()
 }
 
 /// The tests of a run in report order: each selected package's `test` blocks and then its doc tests, package by
@@ -521,6 +740,7 @@ fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome
     // A doc test's process takes no dispatcher index: the program is the test.
     let (exe, argument, comptime) = match run {
         Run::Block { exe, index, comptime } => (exe, Some(index.to_string()), *comptime),
+        Run::Replay { exe, index, .. } => (exe, Some(index.to_string()), None),
         Run::DocExe(exe) => (exe, None, None),
         Run::Doc(_) => unreachable!("the doc build decided or compiled every planned doc test"),
     };
@@ -540,7 +760,13 @@ fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome
     if let Some(argument) = argument {
         command.arg(argument);
     }
+    if let Run::Replay { input, .. } = run {
+        command.arg(input);
+    }
     isolate(&mut command, &work.path, display);
+    if matches!(run, Run::Block { .. }) {
+        command.env("BURDIN_SNAPSHOTS", snapshots::record_path(capture_dir, slot));
+    }
     let start = Instant::now();
     let mut child = command.spawn().map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
     let mut timed_out_after = None;
@@ -568,10 +794,21 @@ fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome
         None => match run {
             Run::Block { .. } => verdict(ending(&status), attrs, comptime, &String::from_utf8_lossy(&stderr)).err(),
             Run::DocExe(_) => doc_verdict(ending(&status), attrs).err(),
+            Run::Replay { input, .. } => replay_verdict(&status, input).err(),
             Run::Doc(_) => unreachable!("the doc build decided every planned doc test"),
         },
     };
     Ok(Outcome { passed: note.is_none(), stdout, stderr, note, duration })
+}
+
+/// Whether a fuzz replay passed: the target must finish on the input (FZ6). A panic or a sanitizer report is the
+/// failure the input was saved for; status 4 is the dispatcher's "cannot read the input".
+fn replay_verdict(status: &std::process::ExitStatus, input: &Path) -> Result<(), String> {
+    match status.code() {
+        Some(0) => Ok(()),
+        Some(4) => Err(format!("cannot read the saved input {}", input.display())),
+        _ => Err(format!("the fuzz target still fails on {}", input.display())),
+    }
 }
 
 /// Whether a doc test's ending satisfies its attributes: the example must exit 0, or abort when it is
@@ -881,7 +1118,13 @@ mod tests {
 
     fn compiled(name: &str, tests: Vec<TestEntry>) -> CompiledPackage {
         let sites = tests.iter().map(|_| Site { file: format!("{name}/src/main.bd"), line: 3 }).collect();
-        CompiledPackage { name: name.to_string(), exe: PathBuf::from(format!("{name}-bin")), tests, sites }
+        CompiledPackage {
+            name: name.to_string(),
+            exe: PathBuf::from(format!("{name}-bin")),
+            tests,
+            sites,
+            replays: Vec::new(),
+        }
     }
 
     #[test]

@@ -39,6 +39,10 @@ impl Codegen<'_, '_> {
         for bench in &program.benches {
             mark(bench.func, &mut reachable, &mut pending);
         }
+        // The test dispatcher replays every fuzz target; a fuzz build's entry point calls its own.
+        for fuzz in &program.fuzzes {
+            mark(fuzz.func, &mut reachable, &mut pending);
+        }
         for (i, f) in program.functions.iter().enumerate() {
             if f.exported {
                 mark(tir::FuncId(i), &mut reachable, &mut pending);

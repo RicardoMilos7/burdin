@@ -92,6 +92,7 @@ version = "0.1.0"
 dependencies = [
  "burdin_bindgen",
  "burdin_codegen",
+ "burdin_comptime",
  "burdin_dap",
  "burdin_diag",
  "burdin_doc",

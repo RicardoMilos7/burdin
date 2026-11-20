@@ -180,6 +180,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let p = self.builder.build_load(self.ptr_ty(), ptr_field, "heap").map_err(llvm_err)?;
                 Ok(Some(p.into_pointer_value()))
             }
+            tir::ExprKind::PtrDeref(base) if self.undefined_checks => {
+                let Some(v) = self.expr_mode(base, Mode::Use)? else { return Ok(None) };
+                let ptr = v.into_pointer_value();
+                self.check_raw_pointer(ptr, &e.ty, e.span)?;
+                Ok(Some(ptr))
+            }
             tir::ExprKind::Deref(base) | tir::ExprKind::PtrDeref(base) => {
                 let v = self.expr_mode(base, Mode::Use)?;
                 match v {
@@ -202,6 +208,32 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
             }
         }
+    }
+}
+
+impl<'ctx, 'a> Codegen<'ctx, 'a> {
+    /// `--sanitize=undefined`: a `CPtr` about to be dereferenced must be non-null and aligned for the type it points
+    /// at, or the program panics at the dereference (`spec/sanitizers.md`, SAN4). Both are undefined behavior in
+    /// the LLVM IR a dereference becomes, so the check is the only place they can be reported.
+    fn check_raw_pointer(&mut self, ptr: PointerValue<'ctx>, pointee: &Ty, span: burdin_diag::Span) -> GenResult<()> {
+        let null = self.builder.build_is_not_null(ptr, "").map_err(llvm_err)?;
+        self.check(null, "null pointer dereference", span)?;
+        let align = self.llvm_ty(pointee).map_or(1, |t| u64::from(self.target_data.get_abi_alignment(&t)));
+        if align > 1 {
+            let address = self.builder.build_ptr_to_int(ptr, self.usize_ty, "").map_err(llvm_err)?;
+            let mask = self.usize_ty.const_int(align - 1, false);
+            let low = self.builder.build_and(address, mask, "").map_err(llvm_err)?;
+            let aligned = self
+                .builder
+                .build_int_compare(inkwell::IntPredicate::EQ, low, self.usize_ty.const_zero(), "")
+                .map_err(llvm_err)?;
+            self.check(
+                aligned,
+                &format!("misaligned pointer dereference: `{pointee}` needs {align}-byte alignment"),
+                span,
+            )?;
+        }
+        Ok(())
     }
 }
 

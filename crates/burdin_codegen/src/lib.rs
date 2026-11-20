@@ -73,6 +73,52 @@ pub struct Options {
     pub emit_asm: Option<PathBuf>,
     /// The assembly dialect of `emit_asm`. Only x86 has two; asking for either on another processor is an error.
     pub asm_syntax: AsmSyntax,
+    /// The sanitizers to instrument for (`--sanitize`, `spec/sanitizers.md`) and libFuzzer's coverage
+    /// (`burdin fuzz`, `spec/fuzz.md`). An instrumented program is always one codegen unit.
+    pub sanitize: Sanitizers,
+}
+
+/// What `--sanitize` and `burdin fuzz` instrument. `leak` adds no instrumentation (the runtime finds leaks from the
+/// allocator alone), so only the linker sees it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sanitizers {
+    pub address: bool,
+    pub thread: bool,
+    pub leak: bool,
+    pub undefined: bool,
+    /// libFuzzer's coverage feedback: inline 8-bit edge counters, the PC table, and comparison tracing.
+    pub fuzzer: bool,
+}
+
+impl Sanitizers {
+    /// Whether anything changes the generated code.
+    pub fn instruments(&self) -> bool {
+        self.address || self.thread || self.undefined || self.fuzzer
+    }
+
+    /// Whether the link needs a sanitizer runtime library. `undefined` is checks in the generated code that panic
+    /// like any other run-time check, so it needs none.
+    pub fn needs_runtime(&self) -> bool {
+        self.address || self.thread || self.leak || self.fuzzer
+    }
+
+    /// The `-fsanitize=` list of the link, in a fixed order; empty when nothing is linked.
+    pub fn link_list(&self) -> String {
+        let mut names = Vec::new();
+        if self.fuzzer {
+            names.push("fuzzer");
+        }
+        if self.address {
+            names.push("address");
+        }
+        if self.thread {
+            names.push("thread");
+        }
+        if self.leak {
+            names.push("leak");
+        }
+        names.join(",")
+    }
 }
 
 /// The assembly dialect `--emit=asm` and `burdin asm` print.
@@ -140,6 +186,8 @@ pub fn emit_object(
         emit::DebugInfo::new(&module, opts.release, first)
     });
     let mut cg = Codegen::new(&context, &module, &machine, program, sources, opts.release, debug)?;
+    cg.undefined_checks = opts.sanitize.undefined;
+    cg.sanitized = opts.sanitize.needs_runtime();
     cg.program()?;
     cg.finish_debug();
     // Panic backtraces unwind through the generated frames: every definition needs an unwind table, in both
@@ -159,6 +207,7 @@ pub fn emit_object(
         .run_passes("globaldce", &machine, inkwell::passes::PassBuilderOptions::create())
         .map_err(|e| e.to_string_lossy().to_string())?;
     let single = opts.bitcode
+        || opts.sanitize.instruments()
         || opts.instrument
         || opts.pgo_ir.is_some()
         || opts.emit_opt_ir.is_some()
@@ -173,11 +222,15 @@ pub fn emit_object(
     if units > 1 {
         return split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.release, object);
     }
+    // The attributes go on before the optimization pipeline, as clang's front end puts them: some transformations
+    // are not done to a function that will be instrumented.
+    add_sanitizer_attributes(&module, opts.sanitize);
     if opts.release {
         module
             .run_passes("default<O2>", &machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
+    instrument_sanitizers(&module, &machine, opts.sanitize)?;
     if opts.instrument {
         // `pgo-instr-gen` adds the IR-level counters and `instrprof` lowers them to the profile data structures;
         // the result is what `pgo-instr-use` reads.
@@ -205,6 +258,117 @@ pub fn emit_object(
         machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
     }
     Ok(vec![object.to_path_buf()])
+}
+
+/// Opts every definition in to AddressSanitizer and ThreadSanitizer, which only instrument functions that carry
+/// `sanitize_address` or `sanitize_thread`.
+fn add_sanitizer_attributes(module: &Module<'_>, sanitize: Sanitizers) {
+    let context = module.get_context();
+    let mut attributes = Vec::new();
+    if sanitize.address {
+        attributes.push(context.create_enum_attribute(Attribute::get_named_enum_kind_id("sanitize_address"), 0));
+    }
+    if sanitize.thread {
+        attributes.push(context.create_enum_attribute(Attribute::get_named_enum_kind_id("sanitize_thread"), 0));
+    }
+    for function in module.get_functions() {
+        if function.count_basic_blocks() > 0 {
+            for attribute in &attributes {
+                function.add_attribute(AttributeLoc::Function, *attribute);
+            }
+        }
+    }
+}
+
+/// Adds the sanitizer instrumentation after the profile's optimization pipeline, where clang adds it too. The
+/// coverage pass's options are LLVM command-line options, which are process-wide and set once.
+fn instrument_sanitizers(module: &Module<'_>, machine: &TargetMachine, sanitize: Sanitizers) -> Result<(), String> {
+    let mut passes = Vec::new();
+    if sanitize.fuzzer {
+        set_coverage_options();
+        passes.push("sancov-module");
+    }
+    if sanitize.address {
+        passes.push("asan");
+    }
+    if sanitize.thread {
+        passes.push("tsan-module,function(tsan)");
+    }
+    if passes.is_empty() {
+        return Ok(());
+    }
+    if sanitize.address || sanitize.thread {
+        remove_zero_sized_accesses(module, machine);
+    }
+    module
+        .run_passes(&passes.join(","), machine, inkwell::passes::PassBuilderOptions::create())
+        .map_err(|e| e.to_string_lossy().to_string())
+}
+
+/// Deletes the loads and stores of zero-sized types (an empty struct, a unit, a zero-length array) that the code
+/// generator emits for values with no bytes. They touch no memory, but the sanitizers check the byte range
+/// `[addr, addr + size - 1]`, which for a size of 0 is the byte before the object: AddressSanitizer reports a heap
+/// overflow there for every boxed empty struct and then crashes describing it. A deleted load is replaced by
+/// `undef`, which is every value of a type with no bytes.
+fn remove_zero_sized_accesses(module: &Module<'_>, machine: &TargetMachine) {
+    use inkwell::llvm_sys::core::{LLVMGetUndef, LLVMReplaceAllUsesWith, LLVMTypeOf};
+    use inkwell::types::{AnyType, BasicType};
+    use inkwell::values::{AsValueRef, InstructionOpcode};
+    let data = machine.get_target_data();
+    let zero_sized = |ty: inkwell::types::AnyTypeEnum<'_>| -> bool {
+        inkwell::types::BasicTypeEnum::try_from(ty).is_ok_and(|ty| ty.is_sized() && data.get_store_size(&ty) == 0)
+    };
+    let mut dead = Vec::new();
+    for function in module.get_functions() {
+        for block in function.get_basic_blocks() {
+            let mut next = block.get_first_instruction();
+            while let Some(instruction) = next {
+                next = instruction.get_next_instruction();
+                let accessed = match instruction.get_opcode() {
+                    InstructionOpcode::Load => Some(instruction.get_type()),
+                    InstructionOpcode::Store => instruction
+                        .get_operand(0)
+                        .and_then(|operand| operand.value())
+                        .map(|value| value.get_type().as_any_type_enum()),
+                    _ => None,
+                };
+                if accessed.is_some_and(zero_sized) {
+                    dead.push(instruction);
+                }
+            }
+        }
+    }
+    for instruction in dead {
+        if instruction.get_opcode() == InstructionOpcode::Load {
+            let value = instruction.as_value_ref();
+            // SAFETY: `value` is a live load whose type is a sized first-class type, so its `undef` exists and has
+            // the same type as every use.
+            unsafe { LLVMReplaceAllUsesWith(value, LLVMGetUndef(LLVMTypeOf(value))) };
+        }
+        instruction.erase_from_basic_block();
+    }
+}
+
+/// The coverage libFuzzer reads:`-fsanitize=fuzzer`'s choice of inline 8-bit edge counters, the PC table, and
+/// comparison tracing, set once per process through LLVM's command-line options.
+fn set_coverage_options() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let flags = [
+            "burdin",
+            "-sanitizer-coverage-level=3",
+            "-sanitizer-coverage-inline-8bit-counters",
+            "-sanitizer-coverage-pc-table",
+            "-sanitizer-coverage-trace-compares",
+        ];
+        let owned: Vec<std::ffi::CString> =
+            flags.iter().map(|flag| std::ffi::CString::new(*flag).expect("no NUL in a literal")).collect();
+        let argv: Vec<*const std::ffi::c_char> = owned.iter().map(|flag| flag.as_ptr()).collect();
+        // SAFETY: `argv` holds NUL-terminated strings that outlive the call, and the overview is a null pointer.
+        unsafe {
+            inkwell::llvm_sys::support::LLVMParseCommandLineOptions(argv.len() as i32, argv.as_ptr(), std::ptr::null())
+        };
+    });
 }
 
 /// Selects the x86 assembly dialect through LLVM's own command-line option, which the x86 assembly printer reads

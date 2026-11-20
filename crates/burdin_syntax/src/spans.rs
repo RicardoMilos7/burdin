@@ -28,6 +28,11 @@ pub fn map_spans(file: &mut File, f: &mut dyn FnMut(&mut Span)) {
         m.fn_decl(&mut b.func);
         (m.f)(&mut b.span);
     }
+    for z in &mut file.fuzzes {
+        (m.f)(&mut z.name_span);
+        m.fn_decl(&mut z.func);
+        (m.f)(&mut z.span);
+    }
     file.bodies.iter_mut().for_each(|s| (m.f)(s));
 }
 
@@ -291,6 +296,7 @@ impl Mapper<'_> {
             | ExprKind::Float(_)
             | ExprKind::Char(_)
             | ExprKind::Str(_)
+            | ExprKind::InlineSnapshot(_)
             | ExprKind::Bool(_)
             | ExprKind::Unit
             | ExprKind::SelfValue

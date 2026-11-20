@@ -229,9 +229,13 @@ impl Parser<'_> {
         let start = self.pos;
         while !self.at_eof() {
             let t = self.tok();
-            // `test` and `bench` are contextual, so they only start an item when a string follows them.
-            let contextual_item = matches!(&t.kind, TokenKind::Ident(name) if name == "test" || name == "bench")
-                && self.toks.get(self.pos + 1).is_some_and(|next| matches!(next.kind, TokenKind::Str(_)));
+            // `test` and `bench` are contextual, so they only start an item when a string follows them, and `fuzz`
+            // when a name and a parameter list do.
+            let contextual_item = (matches!(&t.kind, TokenKind::Ident(name) if name == "test" || name == "bench")
+                && self.toks.get(self.pos + 1).is_some_and(|next| matches!(next.kind, TokenKind::Str(_))))
+                || (matches!(&t.kind, TokenKind::Ident(name) if name == "fuzz")
+                    && self.toks.get(self.pos + 1).is_some_and(|next| matches!(next.kind, TokenKind::Ident(_)))
+                    && self.toks.get(self.pos + 2).is_some_and(|next| next.kind == TokenKind::LParen));
             let item_start =
                 Self::starts_item_only(&t.kind) || (depth == 0 && t.kind == TokenKind::Unsafe) || contextual_item;
             if self.pos > start && t.nl_before && item_start {

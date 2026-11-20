@@ -240,6 +240,8 @@ fn run_script(
         run_build_scripts: false,
         locked: false,
         jobs: options.jobs,
+        sanitize: Default::default(),
+        fuzz_target: None,
     };
     let compiled = crate::compile(script, out, Some(&exe), &nested).map_err(|_| {
         Failure::new(Code::BUILD_SCRIPT, format!("the build script of package `{}` did not compile", package.name))

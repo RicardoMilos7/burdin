@@ -1,0 +1,53 @@
+// The snapshot fixture of tests/check_test_runner.py (spec/test-runner.md, "Snapshot tests"). Its stored
+// snapshots match the values below except where a test's name says otherwise; the check copies the package, so
+// `--bless` never rewrites the committed files.
+
+struct Point: Debug {
+    x: i32
+    y: i32
+}
+
+Point: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str("(")
+        self.x.fmt(mut f)
+        f.write_str(", ")
+        self.y.fmt(mut f)
+        f.write_str(")")
+    }
+}
+
+fn board(): List<String> {
+    let mut rows = List<String>.new()
+    rows.push("x.o".to_string())
+    rows.push(".x.".to_string())
+    rows
+}
+
+test "matches a file snapshot" {
+    assert_snapshot(Point { x: 1, y: 2 })
+    assert_snapshot(Point { x: 3, y: 4 }, display: true)
+}
+
+test "matches an inline snapshot" {
+    assert_snapshot(List<i32>.new(), @"[]")
+    assert_snapshot(board(), @r#"["x.o", ".x."]"#)
+    assert_snapshot("one\ntwo", display: true, @r#"
+        one
+        two
+        "#)
+}
+
+test "a changed value" {
+    assert_snapshot(Point { x: 10, y: 20 })
+}
+
+test "a changed inline value" {
+    assert_snapshot(Point { x: 5, y: 6 }, @r#"Point { x: 5, y: 0 }"#)
+}
+
+test "a new snapshot" {
+    assert_snapshot(board())
+}
+
+fn main() {}

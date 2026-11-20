@@ -1,5 +1,6 @@
 //! Operators, arithmetic with overflow checks, and casts.
 
+use super::place::is_place;
 use super::{Codegen, GenResult, Mode, llvm_err};
 use burdin_diag::Span;
 use burdin_tir::{self as tir, BinOp, IntTy, Ty};
@@ -21,6 +22,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let operand_ty = if l.ty == Ty::Never { &r.ty } else { &l.ty };
         let lv = self.expr_mode(l, Mode::Use)?;
         let rv = self.expr_mode(r, Mode::Use)?;
+        // A comparison reads its operands without consuming them, so an operand that is not a place (a `String`
+        // or a struct built for the comparison) is a temporary of the statement and is dropped at its end (DR5).
+        if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge) {
+            for (operand, value) in [(l, lv), (r, rv)] {
+                if !is_place(operand) && operand.ty != Ty::Never {
+                    self.add_temp_value(value, &operand.ty)?;
+                }
+            }
+        }
         if let Ty::CPtr(_) = operand_ty {
             return self.pointer_binary(op, lv, rv, l, r);
         }
@@ -250,7 +260,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         i: IntTy,
         span: Span,
     ) -> GenResult<IntValue<'ctx>> {
-        if self.release {
+        if self.release && !self.undefined_checks {
             return self.wrapping(op, x, y);
         }
         let (v, overflow) = self.with_overflow(op, x, y, i)?;
@@ -319,7 +329,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let is_min = self.builder.build_int_compare(IntPredicate::EQ, x, min, "").map_err(llvm_err)?;
             let is_m1 = self.builder.build_int_compare(IntPredicate::EQ, y, minus_one, "").map_err(llvm_err)?;
             let overflow = self.builder.build_and(is_min, is_m1, "").map_err(llvm_err)?;
-            if self.release {
+            if self.release && !self.undefined_checks {
                 // MIN / 1 = MIN and MIN % 1 = 0 are the wrapped results of MIN / -1 and MIN % -1.
                 divisor = self
                     .builder
@@ -365,7 +375,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     pub(super) fn negate(&mut self, v: IntValue<'ctx>, i: IntTy, span: Span) -> GenResult<IntValue<'ctx>> {
         let zero = v.get_type().const_zero();
-        if self.release {
+        if self.release && !self.undefined_checks {
             return self.builder.build_int_sub(zero, v, "").map_err(llvm_err);
         }
         let (r, overflow) = self.with_overflow(BinOp::Sub, zero, v, i)?;

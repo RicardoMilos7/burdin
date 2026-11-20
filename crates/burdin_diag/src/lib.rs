@@ -222,6 +222,12 @@ impl Code {
     pub const TEST_ATTRIBUTE: Code = Code("E0170");
     /// A closure that borrows its captures used where it could outlive them.
     pub const CLOSURE_ESCAPES: Code = Code("E0171");
+    /// A snapshot assertion written wrongly: an inline snapshot `@"..."` outside `assert_snapshot`, or an
+    /// `assert_snapshot` call whose arguments are not a value, an optional inline snapshot, and `display:`.
+    pub const INVALID_SNAPSHOT: Code = Code("E0172");
+    /// An invalid `fuzz` block: a parameter list other than one `[u8]` parameter, a result type, or a name used
+    /// by two fuzz blocks of one package.
+    pub const INVALID_FUZZ: Code = Code("E0173");
     /// Type arguments given to a type that declares no type parameters.
     pub const NOT_A_GENERIC_TYPE: Code = Code("E0180");
     /// A format specifier that is malformed or does not apply to the formatted type.

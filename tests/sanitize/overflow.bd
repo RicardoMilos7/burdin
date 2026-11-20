@@ -1,0 +1,10 @@
+// Integer overflow wraps in a release build; `--sanitize=undefined` keeps the overflow check in every profile
+// (spec/sanitizers.md, SAN4).
+fn bump(x: i32): i32 {
+    x + 1
+}
+
+fn main() {
+    let big = 2147483647
+    println("finished {bump(big)}")
+}

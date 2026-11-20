@@ -304,6 +304,20 @@ impl Parser<'_> {
                 let parts = self.interp_parts(pieces);
                 lit(ExprKind::Interp(parts))
             }
+            // `@"text"`: an inline snapshot (`spec/test-runner.md`, "Snapshot tests"). Its text is compared as it
+            // is, so it cannot hold placeholders; `@r#"..."#` writes braces and quotes.
+            TokenKind::At => match self.nth_kind(1).clone() {
+                TokenKind::Str(text) => {
+                    self.bump();
+                    let close = self.bump();
+                    Ok(Expr { kind: ExprKind::InlineSnapshot(text), span: start.to(close.span) })
+                }
+                TokenKind::Interp(_) => Err(self.error_at(
+                    self.toks[self.pos + 1].span,
+                    "an inline snapshot cannot hold placeholders; write it as a raw string, `@r#\"...\"#`".into(),
+                )),
+                _ => Err(self.unexpected("an expression")),
+            },
             TokenKind::True => {
                 self.bump();
                 lit(ExprKind::Bool(true))

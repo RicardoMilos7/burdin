@@ -2,7 +2,7 @@
 //! (equality, ordering, hashing, layout) that compiled code answers with generated glue. Each one follows the code
 //! generator's behavior so a comptime result is the result the compiled program would compute (CT1).
 
-use crate::interp::{Fault, Interp, Mode, Output, R, impure, range_bounds};
+use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
 use burdin_tir::{
@@ -533,8 +533,11 @@ impl<'p> Interp<'p, '_> {
     /// output or error when this is a REPL session, or the impure fault a compile-time evaluation reports.
     fn print_value(&mut self, e: &'p Expr, newline: bool, err: bool, span: Span) -> R<Value> {
         let what = if err { "printing to standard error" } else { "printing" };
-        if self.out != Output::Live {
+        if self.out == Output::Silent {
             return Err(impure(what, span));
+        }
+        if self.out == Output::Swallow {
+            return Ok(Value::Unit);
         }
         let text = self.peek(e, |v| v.bytes().to_vec())?;
         write_stream(&text, newline, err, span)?;
@@ -545,8 +548,11 @@ impl<'p> Interp<'p, '_> {
     /// builtins the standard library's writers call.
     fn write_value(&mut self, e: &'p Expr, newline: bool, err: bool, span: Span) -> R<Value> {
         let what = if err { "writing to standard error" } else { "writing to standard output" };
-        if self.out != Output::Live {
+        if self.out == Output::Silent {
             return Err(impure(what, span));
+        }
+        if self.out == Output::Swallow {
+            return Ok(Value::Unit);
         }
         let text = self.peek(e, |v| v.bytes().to_vec())?;
         write_stream(&text, newline, err, span)?;
@@ -556,8 +562,11 @@ impl<'p> Interp<'p, '_> {
     /// `__stdout_write_bytes`/`__stderr_write_bytes`: the elements of `e` as bytes.
     fn write_bytes_value(&mut self, e: &'p Expr, err: bool, span: Span) -> R<Value> {
         let what = if err { "writing to standard error" } else { "writing to standard output" };
-        if self.out != Output::Live {
+        if self.out == Output::Silent {
             return Err(impure(what, span));
+        }
+        if self.out == Output::Swallow {
+            return Ok(Value::Unit);
         }
         let bytes =
             self.peek(e, |v| v.elems().iter().map(|x| u8::try_from(x.int()).unwrap_or(0)).collect::<Vec<u8>>())?;
@@ -579,6 +588,9 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::StdoutWriteBytes => return self.write_bytes_value(&args[0], false, span),
             Builtin::StdoutFlush => {
+                if self.out == Output::Swallow {
+                    return Ok(Value::Unit);
+                }
                 if self.out == Output::Live {
                     if let Err(e) = std::io::stdout().flush() {
                         return Err(panic(format!("cannot flush standard output: {e}"), span));
@@ -653,7 +665,13 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::PipeWrite => return Err(impure("writing a pipe", span)),
             Builtin::PipeClose => return Err(impure("closing a pipe", span)),
-            Builtin::CPtrNull => return Err(impure("making a C pointer", span)),
+            Builtin::CPtrNull => {
+                if !self.raw_memory {
+                    return Err(impure("making a C pointer", span));
+                }
+                self.charge(1, span)?;
+                Value::Int(0)
+            }
             Builtin::CStringFrom => return Err(impure("allocating a C string", span)),
             Builtin::CStrToString => return Err(impure("reading a C string", span)),
             Builtin::Panic => {
@@ -753,15 +771,44 @@ impl<'p> Interp<'p, '_> {
                 Value::Str(Rc::from(bytes))
             }
             Builtin::SharedNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
-            // Allocation is a run-time operation: the interpreter models containers abstractly and has no
-            // allocator (`spec/allocators.md`, AL10).
-            Builtin::RawAlloc
-            | Builtin::RawRealloc
-            | Builtin::RawDealloc
-            | Builtin::ListNewIn
-            | Builtin::ListWithCapacityIn
-            | Builtin::MapNewIn
-            | Builtin::HeapNewIn => {
+            // `burdin test --interpret` models the C heap, so the raw allocation builtins run there; every other
+            // compile-time evaluation keeps its containers abstract and has no allocator
+            // (`spec/allocators.md`, AL10; `spec/test-runner.md`, IN1).
+            Builtin::RawAlloc => {
+                self.charge(2, span)?;
+                if !self.raw_memory {
+                    return Err(impure("allocating memory with an explicit allocator", span));
+                }
+                let size = self.eval(&args[0], Mode::Use)?.int();
+                let align = self.eval(&args[1], Mode::Use)?.int();
+                let size = usize::try_from(size).unwrap_or(0);
+                let align = usize::try_from(align).unwrap_or(1);
+                Value::Int(self.mem.alloc(size, align, span))
+            }
+            Builtin::RawRealloc => {
+                self.charge(3, span)?;
+                if !self.raw_memory {
+                    return Err(impure("allocating memory with an explicit allocator", span));
+                }
+                let addr = self.eval(&args[0], Mode::Use)?.int();
+                let _old = self.eval(&args[1], Mode::Use)?;
+                let new_size = self.eval(&args[2], Mode::Use)?.int();
+                let _align = self.eval(&args[3], Mode::Use)?;
+                let new_size = usize::try_from(new_size).unwrap_or(0);
+                Value::Int(self.mem.realloc(addr, new_size, span).map_err(Unwind::Fault)?)
+            }
+            Builtin::RawDealloc => {
+                self.charge(2, span)?;
+                if !self.raw_memory {
+                    return Err(impure("allocating memory with an explicit allocator", span));
+                }
+                let addr = self.eval(&args[0], Mode::Use)?.int();
+                let _size = self.eval(&args[1], Mode::Use)?;
+                let _align = self.eval(&args[2], Mode::Use)?;
+                self.mem.release(addr, span).map_err(Unwind::Fault)?;
+                Value::Unit
+            }
+            Builtin::ListNewIn | Builtin::ListWithCapacityIn | Builtin::MapNewIn | Builtin::HeapNewIn => {
                 return Err(impure("allocating memory with an explicit allocator", span));
             }
             Builtin::ListNew | Builtin::ListWithCapacity => Value::List(Vec::new()),
@@ -809,7 +856,13 @@ impl<'p> Interp<'p, '_> {
         let recv = &args[0];
         Ok(match m {
             Method::AsPtr => return Err(impure("taking the address of a C string", span)),
-            Method::IsNull => return Err(impure("inspecting a C pointer", span)),
+            Method::IsNull => {
+                if !self.raw_memory {
+                    return Err(impure("inspecting a C pointer", span));
+                }
+                let p = self.eval(&args[0], Mode::Use)?.int();
+                Value::Bool(p == 0)
+            }
             Method::ToString => {
                 let recv_ty = recv.ty.clone();
                 let text: Vec<u8> = self.peek(recv, |v| match (&recv_ty, v) {
@@ -1571,6 +1624,21 @@ impl<'p> Interp<'p, '_> {
                 _ => return Err(internal("a bit operator on floats", span)),
             });
         }
+        if let Ty::CPtr(inner) = &ty {
+            let size = layout(self.p, inner).0 as i128;
+            let (x, y) = (a.int(), b.int());
+            return Ok(match op {
+                BinOp::Eq => Value::Bool(x == y),
+                BinOp::Ne => Value::Bool(x != y),
+                // `p + n` and `p - n` move by `n` elements; `p - q` is the distance in elements (as compiled).
+                BinOp::Add => Value::Int(x.wrapping_add(y.wrapping_mul(size))),
+                BinOp::Sub => match &r.ty {
+                    Ty::CPtr(_) => Value::Int(if size == 0 { 0 } else { x.wrapping_sub(y) / size }),
+                    _ => Value::Int(x.wrapping_sub(y.wrapping_mul(size))),
+                },
+                _ => return Err(impure("this operation on a C pointer", span)),
+            });
+        }
         match op {
             BinOp::Eq => return Ok(Value::Bool(value_eq(&a, &b))),
             BinOp::Ne => return Ok(Value::Bool(!value_eq(&a, &b))),
@@ -1679,6 +1747,14 @@ impl<'p> Interp<'p, '_> {
                 Value::Int(if x.is_nan() { 0 } else { (x as i128).clamp(i.min(), i.max()) })
             }
             (Ty::Float(_), Ty::Float(_)) => Value::Float(round_float(v.float(), to)),
+            (Ty::CPtr(_), Ty::Int(i)) => Value::Int(wrap(v.int(), *i)),
+            (Ty::CPtr(_), Ty::Bool) => Value::Bool(v.int() != 0),
+            (Ty::Int(_) | Ty::Bool | Ty::Char | Ty::CPtr(_), Ty::CPtr(_)) => {
+                if !self.raw_memory {
+                    return Err(impure("converting a C pointer", span));
+                }
+                Value::Int(v.int())
+            }
             (Ty::CPtr(_), _) | (_, Ty::CPtr(_)) => return Err(impure("converting a C pointer", span)),
             _ => return Err(internal(format!("a cast from `{from}` to `{to}`"), span)),
         })
@@ -1833,6 +1909,8 @@ mod tests {
             main: None,
             tests: vec![],
             benches: vec![],
+            fuzzes: vec![],
+            fuzz_target: None,
             any_ifaces: vec![],
             any_vtables: vec![],
             any_type_ids: vec![],
@@ -1859,6 +1937,8 @@ mod tests {
             main: None,
             tests: vec![],
             benches: vec![],
+            fuzzes: vec![],
+            fuzz_target: None,
             any_ifaces: vec![],
             any_vtables: vec![],
             any_type_ids: vec![],

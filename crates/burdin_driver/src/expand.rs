@@ -83,6 +83,8 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         run_build_scripts: true,
         locked: false,
         jobs: jobs_or_default(args.jobs),
+        sanitize: Default::default(),
+        fuzz_target: None,
     };
     let FrontEnd { loaded, files, parsed, sources, program, diags, .. } =
         match front_end(&args.target, &options, &SourceOverrides::new()) {

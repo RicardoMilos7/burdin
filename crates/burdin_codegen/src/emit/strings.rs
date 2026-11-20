@@ -47,13 +47,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         s
     }
 
-    /// The pointer and length of a `str`, `String`, or `[T]` value. A `String` that is not a place is recorded
-    /// as a temporary of the statement, so its buffer outlives the view until the statement ends (DR5).
+    /// The pointer and length of a `str`, `String`, `List<T>`, or `[T]` value. A `String` or `List` that is not a
+    /// place is recorded as a temporary of the statement, so its buffer outlives the view until the statement
+    /// ends and is freed then (DR5).
     pub(super) fn view_parts(&mut self, e: &'a tir::Expr) -> GenResult<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>)> {
         let ty = e.ty.clone();
         let place = is_place(e);
         let v = self.expr_mode(e, Mode::Use)?;
-        if !place && ty == Ty::String {
+        if !place {
             self.add_temp_value(v, &ty)?;
         }
         let v = self.need(v, &ty);

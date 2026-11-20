@@ -33,6 +33,9 @@ not updated and may disagree with the repository.
    `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
    default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
    is the behavior of `burdin test`, `spec/bench.md` is the behavior of `burdin bench` (bench items, the harness,
+   statistics, baselines, `black_box`, and the profiler hook), `spec/fuzz.md` is the behavior of `burdin fuzz`
+   (fuzz items, the libFuzzer build, the corpus and artifacts, and `burdin test --fuzz-replay`), `spec/sanitizers.md`
+   is `--sanitize` (AddressSanitizer, ThreadSanitizer, LeakSanitizer, the undefined checks, and the platforms),
    statistics, baselines, `black_box`, and the profiler hook), `spec/fmt.md` is the behavior of `burdin fmt` (the one style, comments, `use`
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
@@ -103,12 +106,18 @@ python3 tests/check_parallel.py          check parallel parsing and deterministi
 python3 tests/check_diagnostics.py       check color, width, formats, error limits, and ordering (needs a built driver)
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
+python3 tests/check_fuzz.py              check `burdin fuzz` and `burdin test --fuzz-replay` (needs clang and
+                                         libFuzzer's runtime)
+python3 tests/check_interpret.py         check `burdin test --interpret`: one fixture per strict-check class,
+                                         and std code run in the interpreter
 python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
 python3 tests/check_fix.py               check `burdin fix`: suggestions, rounds, conflicts, the dirty tree, and `--migrate`
 python3 tests/check_ssr.py               check `burdin ssr`: patterns, type constraints, resolution, search, and skipped matches
 python3 tests/check_refactor.py          check `burdin refactor`: every refactoring and its refusal
 python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links, JSON, coverage, and the output rules
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
+python3 tests/check_sanitizers.py        check `--sanitize`: one program per bug class under tests/sanitize/
+                                         (needs clang and compiler-rt)
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
 python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules, compiled and run, wrappers, `--export`, and E0263
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)

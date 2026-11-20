@@ -51,6 +51,13 @@ impl Fmt<'_> {
         self.at_word("bench") && matches!(self.nth(1), TokenKind::Str(_))
     }
 
+    /// `fuzz name(data: [u8]) { ... }` (`spec/fuzz.md`, FZ1).
+    fn at_fuzz_item(&self) -> bool {
+        self.at_word("fuzz")
+            && matches!(self.nth(1), TokenKind::Ident(_))
+            && matches!(self.nth(2), TokenKind::LParen | TokenKind::Lt)
+    }
+
     fn item(&mut self) -> R<D> {
         let lead = self.start_of_line();
         if self.at_test_item() {
@@ -59,6 +66,10 @@ impl Fmt<'_> {
         }
         if self.at_bench_item() {
             let body = self.bench_item()?;
+            return Ok(concat(vec![lead, body]));
+        }
+        if self.at_fuzz_item() {
+            let body = self.fuzz_item()?;
             return Ok(concat(vec![lead, body]));
         }
         let mut parts = vec![lead];
@@ -134,6 +145,13 @@ impl Fmt<'_> {
         } else {
             parts.push(self.ident()?);
         }
+        parts.push(self.fn_rest(body_optional)?);
+        Ok(concat(parts))
+    }
+
+    /// The rest of a function after its name: generics, parameters, the return type, bounds, and the body.
+    fn fn_rest(&mut self, body_optional: bool) -> R<D> {
+        let mut parts = Vec::new();
         if self.at(&TokenKind::Lt) {
             parts.push(self.generic_params()?);
         }
@@ -480,6 +498,14 @@ impl Fmt<'_> {
 
     /// `bench "name" { ... }` (`spec/bench.md`, BN1): the keyword, the name, and the block. A benchmark takes no
     /// attributes in this stage.
+    /// `fuzz name(params) { ... }`: the keyword, the name, and the rest of a function.
+    fn fuzz_item(&mut self) -> R<D> {
+        let kw = self.tok_doc();
+        let name = self.ident()?;
+        let rest = self.fn_rest(false)?;
+        Ok(concat(vec![kw, space(), name, rest]))
+    }
+
     fn bench_item(&mut self) -> R<D> {
         let kw = self.tok_doc();
         let name = self.tok_doc();

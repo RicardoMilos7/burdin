@@ -1,0 +1,23 @@
+// A fuzz target with a planted bug (spec/fuzz.md, issue #618). `tests/check_fuzz.py` runs `burdin fuzz . header
+// --max-time 60`, which must find the crash, and `burdin test --fuzz-replay`, which must replay the saved crash
+// (`fuzz/artifacts/header/crash-planted` is committed, so the replay is checked on every platform).
+
+/// The length field of a header: the byte after the four-byte magic `FUZZ`, or 0 when there is no magic.
+fn header_length(data: [u8]): u8 {
+    if data.len() >= 4 && data[0] == 70 && data[1] == 85 && data[2] == 90 && data[3] == 90 {
+        // The bug: a header that is exactly the magic has no length byte, and this reads past the end.
+        return data[4]
+    }
+    0
+}
+
+fuzz header(data: [u8]) {
+    let _ = header_length(data)
+}
+
+test "a header without the magic has no length" {
+    let bytes: [u8; 3] = [1, 2, 3]
+    assert_eq(header_length(bytes[0..3]), 0)?
+}
+
+fn main() {}

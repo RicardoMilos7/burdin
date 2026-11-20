@@ -39,6 +39,26 @@ close-out checklist in `AGENTS.md`).
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
 
+### Advanced testing tools (issue #615, sub-issues #616, #618, #620, #622)
+
+- `assert_snapshot(value)` (and `assert_snapshot(value, @"text", display: true)`) compares a value's `Debug` or
+  `Display` output with `snapshots/<module>__<test>.snap`. A missing or changed snapshot fails with a diff and writes
+  `.snap.new`; `burdin test --bless` accepts every change, `--review` asks per snapshot, and a snapshot no test checks
+  any more is reported as stale (`spec/test-runner.md`, SN1-SN9).
+- `fuzz name(data: [u8]) { ... }` declares a fuzz target (E0173 for any other signature). `burdin fuzz <target>
+  <name>` builds it with libFuzzer's coverage and AddressSanitizer and keeps `fuzz/corpus/<name>/` and
+  `fuzz/artifacts/<name>/` next to the package; `burdin test --fuzz-replay` replays saved crashes as test cases
+  (`spec/fuzz.md`, FZ1-FZ7).
+- `--sanitize=address,thread,leak,undefined` for `burdin build`, `run`, and `test` (`spec/sanitizers.md`,
+  SAN1-SAN6), with the supported combinations listed in `docs/platform-support.md`. A scheduled CI step runs the
+  stage 0 and stage 1 suite under `--sanitize=address`. The first such run found and fixed two code-generation bugs:
+  the sanitizer's zero-sized loads and stores of empty aggregates, and six places where a statement temporary
+  (a comparison operand, a `List` borrowed by `len`/`as_slice`/`for`/`hash`, a closure called where it was made) was
+  never freed.
+- `burdin test --interpret` runs the tests in the interpreter over a modeled C heap with strict checks: bounds,
+  alignment, uninitialized reads, use after free, double free, and leaks, each reported at the source line. A test
+  that calls C or the operating system is skipped with the reason (`spec/test-runner.md`, IN1-IN6).
+
 ### Derived interfaces after the type's name (issue #825)
 
 - `struct Point: Copy, Clone, Eq { ... }` replaces `struct Point derives (Copy, Clone, Eq) { ... }` on structs, enums,

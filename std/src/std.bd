@@ -4,7 +4,9 @@
 // process control, the arguments, the environment, the working directory, and the memory helpers); everything a
 // Burdin program can express is here.
 
+use env.get
 use fmt.{Debug, Display, Formatter}
+use fs.append
 use reactor.__offload_raw
 
 /// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `Error`.
@@ -263,6 +265,41 @@ fn assert_eq<T: Eq>(a: T, b: T) {
 fn assert_ne<T: Eq>(a: T, b: T) {
     if a == b {
         panic("assertion failed: the two values are equal")
+    }
+}
+
+/// Records the `Debug` text of `value` as a snapshot, which `burdin test` compares with the one it keeps for this
+/// call: in `snapshots/<module>__<test>.snap` next to the test's file, or in the call itself when the second
+/// argument is an inline snapshot, `assert_snapshot(value, @"...")`. `display: true` records the `Display` text
+/// instead. A missing or different snapshot fails the test; `burdin test --bless` accepts the new text
+/// (`spec/test-runner.md`, "Snapshot tests"). Outside `burdin test` the call formats the value and does nothing
+/// else. The compiler routes every call to `__snapshot_debug` or `__snapshot_display` with its location.
+fn assert_snapshot<T: Debug>(value: T) { }
+
+/// `assert_snapshot(value)`: the `Debug` text, recorded for the runner with the call's `path:line:col`.
+priv fn __snapshot_debug<T: Debug>(value: T, location: str, inline: bool) {
+    __snapshot_record(format("{value:?}"), location, inline)
+}
+
+/// `assert_snapshot(value, display: true)`: the `Display` text.
+priv fn __snapshot_display<T: Display>(value: T, location: str, inline: bool) {
+    __snapshot_record(format("{value}"), location, inline)
+}
+
+/// Appends one record to the file `burdin test` names in `BURDIN_SNAPSHOTS`: a header line
+/// `snapshot <inline 0|1> <byte length> <location>`, the text, and a newline. The runner compares the records
+/// after the test process ends, so a test sees no difference between a matching and a differing snapshot.
+priv fn __snapshot_record(text: String, location: str, inline: bool) {
+    match get("BURDIN_SNAPSHOTS") {
+        Some(path) => {
+            let kind = if inline { 1 } else { 0 }
+            let record = format("snapshot {kind} {text.len()} {location}\n{text}\n")
+            match append(path, record.as_bytes()) {
+                Ok(()) => {}
+                Err(e) => panic("cannot record a snapshot in {path}: {e}"),
+            }
+        }
+        None => {}
     }
 }
 

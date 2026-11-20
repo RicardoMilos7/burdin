@@ -221,6 +221,8 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         run_build_scripts: true,
         locked: args.locked,
         jobs: crate::jobs_or_default(args.jobs),
+        sanitize: Default::default(),
+        fuzz_target: None,
     };
     let mut compiled = Vec::new();
     for &index in &selected {

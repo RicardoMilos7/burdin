@@ -590,6 +590,8 @@ fn build_one(
         run_build_scripts: true,
         locked: false,
         jobs: per_compile,
+        sanitize: options.sanitize,
+        fuzz_target: None,
     };
     let FrontEnd { files, sources, program: checked, diags, .. } =
         front_end(&dir, &doc_options, &SourceOverrides::new())?;

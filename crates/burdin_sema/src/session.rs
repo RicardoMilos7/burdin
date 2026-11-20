@@ -142,6 +142,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) tests: Vec<tir::TestEntry>,
     /// The `bench` blocks that were declared, in declaration order (`spec/bench.md`).
     pub(crate) benches: Vec<tir::BenchEntry>,
+    /// The `fuzz` targets that were declared, in declaration order (`spec/fuzz.md`).
+    pub(crate) fuzzes: Vec<tir::FuzzEntry>,
     /// Record the source locations of dynamic-error conversions (a debug build; `spec/errors.md`, ERR7).
     pub(crate) traces: bool,
     /// Where the paths, lines, and columns of trace frames come from.
@@ -222,6 +224,7 @@ impl<'t> Sema<'t> {
             mode,
             tests: Vec::new(),
             benches: Vec::new(),
+            fuzzes: Vec::new(),
             traces,
             sources,
         }
@@ -341,6 +344,8 @@ impl<'t> Sema<'t> {
             main,
             tests: self.tests,
             benches: self.benches,
+            fuzzes: self.fuzzes,
+            fuzz_target: None,
             any_ifaces,
             any_vtables,
             any_type_ids,

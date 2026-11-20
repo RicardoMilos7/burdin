@@ -19,6 +19,7 @@ mod expand;
 mod export;
 mod fix;
 mod fmt;
+mod fuzz_runner;
 mod lint;
 mod migrate;
 mod msvc;
@@ -27,6 +28,7 @@ mod refactor;
 mod repl;
 mod rust_build;
 mod rust_interop;
+mod sanitize;
 mod scripts;
 mod test_runner;
 mod watch;
@@ -104,6 +106,22 @@ pub(crate) struct Args {
     pub(crate) format: TestFormat,
     /// `--junit`: where to write the JUnit XML report.
     pub(crate) junit: Option<PathBuf>,
+    /// `--sanitize`: the sanitizers to build with (`spec/sanitizers.md`).
+    pub(crate) sanitize: burdin_codegen::Sanitizers,
+    /// `--bless` or `--review`: what happens to a snapshot that is missing or differs.
+    pub(crate) snapshots: test_runner::snapshots::SnapshotMode,
+    /// `burdin test --fuzz-replay`: run each fuzz target on its saved crash inputs (`spec/fuzz.md`, FZ6).
+    pub(crate) fuzz_replay: bool,
+    /// `burdin test --interpret`: run the tests in the interpreter instead of compiling them
+    /// (`spec/test-runner.md`, IN1).
+    pub(crate) interpret: bool,
+    // `burdin fuzz` only.
+    /// The fuzz target to run: the positional argument after the target.
+    pub(crate) fuzz_name: Option<String>,
+    /// `--max-time <seconds>`: stop fuzzing after this long.
+    pub(crate) max_time: Option<u64>,
+    /// `--minimize <file>`: shrink this crashing input instead of fuzzing.
+    pub(crate) minimize: Option<PathBuf>,
     // `burdin bench` only.
     /// `--save-baseline <name>`: store the measurements under the package's target directory.
     pub(crate) save_baseline: Option<String>,
@@ -170,7 +188,7 @@ profile: {}",
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut it = argv.iter();
     let command = it.next().ok_or("missing command")?.clone();
-    if !matches!(command.as_str(), "build" | "run" | "test" | "bench") {
+    if !matches!(command.as_str(), "build" | "run" | "test" | "bench" | "fuzz") {
         return Err(format!("unknown command `{command}`"));
     }
     let mut args = Args { command, ..Args::default() };
@@ -204,6 +222,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 args.asm_syntax = burdin_codegen::AsmSyntax::Att;
             }
             "--link-lib" => args.link_libs.push(option_value(&mut it, inline, a, "a name")?),
+            "--sanitize" => {
+                args.sanitize = sanitize::parse(&option_value(&mut it, inline, a, "a list of sanitizers")?)?
+            }
             "--diagnostic-format" => {
                 args.diagnostics.format = parse_format(&option_value(&mut it, inline, a, "a value")?)?;
             }
@@ -238,6 +259,26 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--doc" => args.doc_only = flag_without_value(a, inline)?,
             "--format" => args.format = parse_test_format(&option_value(&mut it, inline, a, "a value")?)?,
             "--junit" => args.junit = Some(option_value(&mut it, inline, a, "a path")?.into()),
+            "--bless" => {
+                flag_without_value(a, inline)?;
+                args.snapshots = test_runner::snapshots::SnapshotMode::Bless;
+            }
+            "--review" => {
+                flag_without_value(a, inline)?;
+                args.snapshots = test_runner::snapshots::SnapshotMode::Review;
+            }
+            "--fuzz-replay" => args.fuzz_replay = flag_without_value(a, inline)?,
+            "--interpret" => args.interpret = flag_without_value(a, inline)?,
+            "--max-time" => {
+                let value = option_value(&mut it, inline, a, "a number of seconds")?;
+                let seconds: u64 = value
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| format!("`--max-time` needs a positive number of seconds, got `{value}`"))?;
+                args.max_time = Some(seconds);
+            }
+            "--minimize" => args.minimize = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--slow-threshold" => {
                 let value = option_value(&mut it, inline, a, "a number of milliseconds")?;
                 let ms: u64 = value
@@ -313,6 +354,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             // `burdin test <target> <filter>...`: the arguments after the target are name filters. `burdin bench`
             // takes the same positional filters.
             _ if args.command == "test" || args.command == "bench" => args.filters.push(a.to_string()),
+            // `burdin fuzz <target> <name>`.
+            _ if args.command == "fuzz" && args.fuzz_name.is_none() => args.fuzz_name = Some(a.to_string()),
             _ => return Err(format!("unexpected argument `{a}`")),
         }
     }
@@ -322,6 +365,20 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     if args.lto && (args.pgo_generate || args.pgo_use.is_some()) {
         return Err("`--lto` cannot be combined with profile-guided optimization".to_string());
     }
+    if args.sanitize != burdin_codegen::Sanitizers::default() {
+        if args.command == "bench" {
+            return Err("`--sanitize` is only valid for `burdin build`, `burdin run`, and `burdin test`".to_string());
+        }
+        if args.lto || args.pgo_generate || args.pgo_use.is_some() {
+            return Err("`--sanitize` cannot be combined with `--lto` or profile-guided optimization".to_string());
+        }
+        // A combination error is reported first: it does not depend on the host, so the same command line fails the
+        // same way everywhere (`--interpret` runs no compiled code).
+        if args.interpret {
+            return Err("`--interpret` runs no compiled code, so `--sanitize` does not apply".to_string());
+        }
+        sanitize::check_platform(&args.sanitize, std::env::consts::OS, std::env::consts::ARCH)?;
+    }
     if !args.emit.is_empty() && args.command != "build" {
         return Err("`--emit` is only valid for `burdin build`".to_string());
     }
@@ -329,6 +386,52 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         return Err("`--intel` and `--att` only apply to `--emit asm`".to_string());
     }
     args.target = target.ok_or("missing target file")?;
+    if args.command == "fuzz" {
+        if args.fuzz_name.is_none() {
+            return Err("missing the fuzz target's name: `burdin fuzz <target> <name>`".to_string());
+        }
+        if args.sanitize != burdin_codegen::Sanitizers::default()
+            || args.lto
+            || args.pgo_generate
+            || args.pgo_use.is_some()
+        {
+            return Err(
+                "`burdin fuzz` builds with libFuzzer and AddressSanitizer; `--sanitize`, `--lto`, and PGO do not apply"
+                    .to_string(),
+            );
+        }
+        if args.tests || args.output.is_some() || !args.emit.is_empty() || args.emit_ir.is_some() {
+            return Err(
+                "`burdin fuzz` builds and runs its own binary; `--tests`, `-o`, and `--emit` do not apply".to_string()
+            );
+        }
+    } else if args.max_time.is_some() || args.minimize.is_some() {
+        return Err("`--max-time` and `--minimize` are only valid for `burdin fuzz`".to_string());
+    }
+    if args.fuzz_replay && args.command != "test" {
+        return Err("`--fuzz-replay` is only valid for `burdin test`".to_string());
+    }
+    if args.interpret && args.command != "test" {
+        return Err("`--interpret` is only valid for `burdin test`".to_string());
+    }
+    if args.interpret && args.fuzz_replay {
+        return Err("`--interpret` runs the tests, and a fuzz replay needs a compiled program; choose one".to_string());
+    }
+    if args.interpret && args.snapshots != test_runner::snapshots::SnapshotMode::Check {
+        return Err("`--bless` and `--review` need a compiled run; `--interpret` cannot write snapshots".to_string());
+    }
+    if args.interpret
+        && (args.junit.is_some()
+            || args.shard.is_some()
+            || args.failed
+            || args.slow_ms.is_some()
+            || args.doc_only
+            || args.format != TestFormat::Human)
+    {
+        return Err("`--interpret` does not take `--doc`, `--junit`, `--shard`, `--failed`, `--slow-threshold`, or \
+             `--format`; run the tests compiled for those"
+            .to_string());
+    }
     let tests = args.command == "test";
     let benches = args.command == "bench";
     if !tests && !benches {
@@ -367,6 +470,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         if args.doc_only {
             return Err("`--doc` is only valid for `burdin test`".to_string());
         }
+        if args.snapshots != test_runner::snapshots::SnapshotMode::Check {
+            return Err("`--bless` and `--review` are only valid for `burdin test`".to_string());
+        }
     }
     if !benches {
         if args.save_baseline.is_some()
@@ -383,6 +489,11 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         }
     } else if !args.program_args.is_empty() {
         return Err("`burdin bench` takes no program arguments: the runner starts the measured program".to_string());
+    }
+    if argv.iter().any(|a| a == "--bless") && argv.iter().any(|a| a == "--review") {
+        return Err(
+            "`--bless` and `--review` cannot be used together: one accepts every snapshot, the other asks".to_string()
+        );
     }
     if args.list && args.junit.is_some() {
         return Err("`--list` and `--junit` cannot be used together: a listing has no results".to_string());
@@ -628,6 +739,8 @@ fn driver_main() -> ExitCode {
         run_build_scripts: true,
         locked: args.locked,
         jobs: jobs_or_default(args.jobs),
+        sanitize: args.sanitize,
+        fuzz_target: None,
     };
     match args.command.as_str() {
         "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
@@ -636,6 +749,7 @@ fn driver_main() -> ExitCode {
         },
         "run" => run(&args, &options),
         "bench" => bench_runner::run(&args),
+        "fuzz" => fuzz_runner::run(&args),
         _ => test_runner::run(&args),
     }
 }
@@ -751,6 +865,10 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) locked: bool,
     /// The most threads parsing and code generation use (`-j`); 0 is the machine's parallelism.
     pub(crate) jobs: usize,
+    /// The sanitizers to instrument for and link (`--sanitize`, `spec/sanitizers.md`).
+    pub(crate) sanitize: burdin_codegen::Sanitizers,
+    /// With [`EntryMode::Fuzz`], the fuzz target the binary is built for (`spec/fuzz.md`, FZ3).
+    pub(crate) fuzz_target: Option<&'a str>,
 }
 
 /// What a successful compilation produced: the executable, its `test` blocks and `bench` blocks (empty for a
@@ -764,6 +882,10 @@ pub(crate) struct Compiled {
     pub(crate) benches: Vec<burdin_tir::BenchEntry>,
     /// Where each bench is declared, in the order of `benches`.
     pub(crate) bench_sites: Vec<Site>,
+    /// The `fuzz` targets of a test or fuzz build, empty for every other build (`spec/fuzz.md`).
+    pub(crate) fuzzes: Vec<burdin_tir::FuzzEntry>,
+    /// Where each fuzz target is declared, in the order of `fuzzes`.
+    pub(crate) fuzz_sites: Vec<Site>,
     pub(crate) build_inputs: Vec<String>,
 }
 
@@ -919,6 +1041,18 @@ pub(crate) fn compile(
         return Err(ExitCode::from(1));
     }
     let mut program = program.expect("no errors means checking produced a program");
+    if options.mode == EntryMode::Fuzz {
+        let name = options.fuzz_target.unwrap_or_default();
+        match program.fuzzes.iter().position(|fuzz| fuzz.name == name) {
+            Some(index) => program.fuzz_target = Some(index),
+            None => {
+                let names: Vec<String> = program.fuzzes.iter().map(|fuzz| format!("`{}`", fuzz.name)).collect();
+                let known = if names.is_empty() { "it has none".to_string() } else { names.join(", ") };
+                eprintln!("error: {} has no fuzz target `{name}`; its targets: {known}", target.display());
+                return Err(ExitCode::from(2));
+            }
+        }
+    }
     // A build system watching `--emit-deps` must rebuild when a header the script declared changes too.
     program.build_inputs.extend(script_inputs);
     let mut deps = String::new();
@@ -960,12 +1094,15 @@ pub(crate) fn compile(
     };
     let test_sites = program.tests.iter().map(|test| site(test.span)).collect();
     let bench_sites = program.benches.iter().map(|bench| site(bench.span)).collect();
+    let fuzz_sites = program.fuzzes.iter().map(|fuzz| site(fuzz.span)).collect();
     Ok(Compiled {
         exe: output,
         tests: program.tests,
         test_sites,
         benches: program.benches,
         bench_sites,
+        fuzzes: program.fuzzes,
+        fuzz_sites,
         build_inputs: program.build_inputs,
     })
 }
@@ -1019,6 +1156,7 @@ pub(crate) fn emit_program(
         emit_bitcode: artifact(emit::EmitKind::LlvmBc),
         emit_asm: artifact(emit::EmitKind::Asm),
         asm_syntax: emit.map_or(Default::default(), |e| e.asm_syntax),
+        sanitize: options.sanitize,
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
     let objects = burdin_codegen::emit_object(program, sources, stem, &object, &opts).map_err(fail)?;
@@ -1045,6 +1183,7 @@ pub(crate) fn emit_program(
         strip: options.strip,
         lto: options.lto,
         pgo_generate: options.pgo_generate,
+        sanitize: options.sanitize,
     };
     let libs: Vec<String> = options.link_libs.iter().chain(rust_libs).cloned().collect();
     link(&objects, output, &libs, &link_opts).map_err(fail)?;
@@ -1303,10 +1442,28 @@ struct LinkOptions {
     lto: bool,
     /// The program carries profile instrumentation, so the profile runtime must be linked (`--pgo-generate`).
     pgo_generate: bool,
+    /// The sanitizer runtimes to link (`--sanitize`, `burdin fuzz`); they need clang as the linker.
+    sanitize: burdin_codegen::Sanitizers,
 }
 
 /// Links the object files (which define `main` and the runtime) with libc into the executable `output`.
 fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Result<(), String> {
+    if opts.sanitize.needs_runtime() {
+        // The runtimes are compiler-rt's, which clang links with `-fsanitize=` (`spec/sanitizers.md`, SAN3).
+        let cc = sanitize::linker()?;
+        let out = Command::new(&cc)
+            .args(unix_link_args(objects, output, libs, opts))
+            .output()
+            .map_err(|e| linker_error(&cc, e))?;
+        if !out.status.success() {
+            return Err(format!(
+                "linking failed ({cc}):\n{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+        return Ok(());
+    }
     let named = std::env::var("BURDIN_CC").ok();
     let mut cc = named.clone().unwrap_or_else(|| if cfg!(windows) { "cl".into() } else { "cc".into() });
     // Outside a Developer Command Prompt `LIB` is not set and link.exe cannot find the C runtime, so find the
@@ -1517,6 +1674,9 @@ fn unix_link_args(objects: &[PathBuf], output: &Path, libs: &[String], opts: &Li
     }
     if opts.pgo_generate {
         args.push("-fprofile-instr-generate".into());
+    }
+    if opts.sanitize.needs_runtime() {
+        args.push(format!("-fsanitize={}", opts.sanitize.link_list()).into());
     }
     if opts.strip {
         args.push("-s".into());

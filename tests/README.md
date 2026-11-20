@@ -87,6 +87,11 @@ Directives are line comments at any position in the root file.
 | `//@ suggest: E0000 applicability: message` | One suggestion the test's diagnostics carry: the diagnostic's code, the applicability (`machine-applicable`, `maybe-incorrect`, `has-placeholders`, or `unspecified`), and the exact message. May repeat; the suggestions of the test must be exactly these. The runner then applies every suggestion's edits to a copy and checks it with `burdin check` (`spec/fix.md`, FX12). The code must be listed under "Codes with suggestions". |
 | `//@ fixed-error: E0000` | With `suggest`: one error the copy with the suggestions applied still reports. May repeat. Without any, the copy must check cleanly. |
 
+A file with no directive is outside the suite. The fixtures under `tests/interpret/` are like that: they are read
+by `tests/check_interpret.py`, and their `//~ interpret-error: <text>` markers name the line and message a
+`burdin test --interpret` run must report (`spec/test-runner.md`, IN2-IN5). The conformance runner ignores them, as
+it ignores `tests/sanitize/` and `tests/fuzz/`.
+
 Runner rules: run each test in a fresh empty temporary directory as the working directory; give standard input
 the `//@ stdin:`/`//@ stdin-eof:` bytes (an empty pipe when neither is present, so a test never waits for input);
 compare stdout after normalizing `\r\n` to `\n`; every `compile-fail` file must report all of its errors (no
@@ -228,6 +233,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0164 | Unsupported `repr`: only `repr(C)` exists |
 | E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, `should_panic` with `should_fail`, or `differential` with `should_panic` or `should_fail` |
 | E0171 | A closure whose captures or result would outlive the storage they borrow: a second-class closure used as an owned one, a closure returning a view, or a task of `Scope.spawn` that borrows a local of the scope body or is passed by name |
+| E0172 | An invalid snapshot assertion: an inline snapshot `@"..."` anywhere but the second argument of `assert_snapshot`, or an `assert_snapshot` call that is not a value, an optional inline snapshot, and an optional `display:` given a `bool` literal |
+| E0173 | An invalid `fuzz` block: a parameter list other than exactly one `[u8]` parameter, a result type, or two fuzz blocks of one package with the same name |
 | E0180 | Type arguments given to a type that declares no type parameters |
 | E0190 | Format specifier that is malformed or does not apply to the formatted value |
 | E0191 | Placeholder naming an argument the call does not have |

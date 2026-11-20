@@ -1,0 +1,17 @@
+// A C allocation that is never freed (spec/sanitizers.md): `--sanitize=leak` (and `address` on Linux) reports it
+// when the program exits.
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+}
+
+fn keep(p: CPtr<CVoid>): bool {
+    unsafe { p.is_null() }
+}
+
+fn main() {
+    let mut lost = false
+    unsafe {
+        lost = keep(malloc(64))
+    }
+    println("finished {lost}")
+}

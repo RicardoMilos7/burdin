@@ -105,6 +105,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Float(_)
         | K::Char(_)
         | K::Str(_)
+        | K::InlineSnapshot(_)
         | K::Bool(_)
         | K::Unit
         | K::SelfValue
