@@ -68,8 +68,20 @@ fn main() {
 ```
 <!-- /error-example -->
 
+A generic type named without the type arguments it needs is also E0003: `Map.new()` for `Map<K, V>`, or `let xs: List`
+in a type position. The message names the missing parameters and the form to write.
+
+<!-- error-example: E0003 -->
+```burdin
+fn main() {
+    let m = Map.new() //~ E0003
+}
+```
+<!-- /error-example -->
+
 **How to fix:** make the two types agree. Convert explicitly, for example with `to_string`, `parse`, or `as` for a
-numeric conversion. The one implicit conversion in the language is `String` to `str` in an argument-like position.
+numeric conversion. The one implicit conversion in the language is `String` to `str` in an argument-like position. For
+a generic type, write its type arguments, as in `Map<String, i32>.new()`, or give the context that determines them.
 
 ## E0004: Wrong number of arguments
 

@@ -1,0 +1,17 @@
+// A generic type named without the type arguments it needs is E0003 at the name, and the message names the missing
+// parameters and the form to write (issue #850). The golden file holds the whole message.
+
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+fn takes_map(m: Map) { //~ E0003
+}
+
+fn main() {
+    let a = Map.new() //~ E0003
+    let b = Set.new() //~ E0003
+    let c = Pair.new() //~ E0003
+    let d = Pair<i32>.new() //~ E0003
+}

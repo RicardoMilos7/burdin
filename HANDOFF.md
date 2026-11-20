@@ -4,6 +4,20 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Generic types named without their type arguments (issue #850, 2026-11-20).** `Map.new()`, `List.new()`, `Set.new()`,
+and `Pair.new()` for a user generic, and a bare `Map` or `Map<i32>` in a type position, are E0003 at the name. The
+message names the missing parameters and the form to write (`` `Map` is generic and needs type arguments for `K, V`;
+write them, as in `Map<K, V>` ``) where it used to say "unknown name" (E0002) for the built-in containers and "cannot
+tell the type arguments" for the others. The helpers are `generic_args_missing` and `builtin_generic_params` in
+`crates/burdin_sema/src/types.rs`; the value-name fallback is `name` in `fncx/literals.rs`, and the generic template
+path is `template_instance` in `fncx/generic.rs`. Inference still applies where the arguments or the context supply
+them (`Pair.make(1, 2)`, `let s: Set<i32> = Set.new()`, `List.from`, `Map.from`). Tests:
+`tests/m07_generics/missing_type_args.bd` (codes and lines), `tests/m07_generics/type_args_inferred.bd` (the inferred
+forms still run), and `tests/check/err_generic_args.bd` (the golden wording, checked by `tests/check_check.py`). The
+E0003 entry in `docs/error-codes.md` has an example. Not done: `Option.None` and `Result.Ok` do not take type arguments
+before the `.` in this language, so the hint names only the type form (`Option<T>`); a bare `Set` in a type position
+that is also used as `Set.new()` reports both places, once each.
+
 **Dependency tables, features, and targets (issues #340 and #341, 2026-11-20).** A manifest now also reads
 `[features]`, `[target.'cfg(...)'.dependencies]` and `.dev-dependencies`, and `[dev-dependencies]`
 (`crates/burdin_query/src/package.rs`, `cfg.rs`, `features.rs`; `spec/packages.md`, PKG25-PKG33). The loader reads a

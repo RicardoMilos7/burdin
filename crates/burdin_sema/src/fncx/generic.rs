@@ -2,6 +2,7 @@
 
 use super::{FnCx, error_expr, mk};
 use crate::generics::{Bound, GenericMethod, Request, SYMBOLIC_CALL};
+use crate::types::generic_args_missing;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::place::{is_place_expr, place_root};
@@ -328,14 +329,19 @@ impl FnCx<'_> {
                         ty
                     }
                     None => {
-                        self.diags.error(
-                            Code::TYPE_MISMATCH,
-                            span,
-                            format!(
-                                "cannot tell the type arguments of `{}` here; write them, as in `{}<...>`",
-                                info.name, info.name
-                            ),
-                        );
+                        // The parameters nothing supplies (not bound by the arguments or the expected type, and
+                        // without a default), and every parameter the written form needs.
+                        let has_default = |j: usize| info.defaults.get(j).is_some_and(Option::is_some);
+                        let missing: Vec<&String> = info
+                            .params
+                            .iter()
+                            .enumerate()
+                            .filter(|(j, q)| !has_default(*j) && !bindings.iter().any(|(n, _)| n == *q))
+                            .map(|(_, q)| q)
+                            .collect();
+                        let required: Vec<&String> =
+                            info.params.iter().enumerate().filter(|(j, _)| !has_default(*j)).map(|(_, q)| q).collect();
+                        generic_args_missing(&info.name, &missing, &required, span, self.diags);
                         return None;
                     }
                 },
