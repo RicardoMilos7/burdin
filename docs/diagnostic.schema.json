@@ -6,7 +6,8 @@
   "oneOf": [
     { "$ref": "#/$defs/diagnostic" },
     { "$ref": "#/$defs/summary" },
-    { "$ref": "#/$defs/lint_summary" }
+    { "$ref": "#/$defs/lint_summary" },
+    { "$ref": "#/$defs/check_summary" }
   ],
   "$defs": {
     "diagnostic": {
@@ -78,6 +79,22 @@
         "version": { "const": 1 },
         "warnings": { "type": "integer", "minimum": 0 },
         "errors": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "check_summary": {
+      "description": "The last line of `burdin check`, on every run that reaches the checks: the counts of each severity, what was shown, the source files read, and the milliseconds the run took.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version", "errors", "warnings", "shown", "limit", "files", "elapsed_ms"],
+      "properties": {
+        "type": { "const": "check-summary" },
+        "version": { "const": 1 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "shown": { "type": "integer", "minimum": 0 },
+        "limit": { "type": ["integer", "null"], "minimum": 1 },
+        "files": { "type": "integer", "minimum": 0 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
       }
     },
     "severity": { "enum": ["error", "warning"] },

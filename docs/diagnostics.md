@@ -10,7 +10,7 @@ code-scanning services. The behavior is specified in [`spec/diagnostics.md`](../
 | --- | --- | --- |
 | `human` (default) | people | colored when asked, wrapped, with notes and help lines; the first line is always `path:LINE:COL: error[E0000]: message` |
 | `short` | the test scripts | exactly one plain line per diagnostic; no notes, no link, no color |
-| `json` | editors, scripts | one version 1 JSON object per line, then a summary object |
+| `json` | editors, scripts | one version 1 JSON object per line, then a summary object (`check-summary` for `burdin check`) |
 | `sarif` | CI, code scanning | one SARIF 2.1.0 log for the whole run |
 
 The human format is the default and is unchanged by the other formats existing. Diagnostics are sorted by file and byte
@@ -25,6 +25,13 @@ keeps the first diagnostics of that order.
 - `"summary"`: the last line of a failed `build`, `run`, or `test`: `{"type":"summary","version":1,"errors":2,"shown":2,"limit":null}`.
   `errors` counts every diagnostic, `shown` the ones printed, and `limit` is the `--error-limit` or `null`.
 - `"lint-summary"`: the last line of `burdin lint`: `{"type":"lint-summary","version":1,"warnings":1,"errors":0}`.
+- `"check-summary"`: the last line of `burdin check`, printed on every run that reaches the checks, clean or not:
+  `{"type":"check-summary","version":1,"errors":0,"warnings":0,"shown":0,"limit":null,"files":1,"elapsed_ms":612}`.
+  `errors` and `warnings` count each severity, `shown` the diagnostics printed, and `limit` is the `--error-limit` or
+  `null`. `files` is the number of source files of the packages that the check read from disk (the embedded standard
+  library and generated modules are not counted), and `elapsed_ms` is the time the run took in whole milliseconds, so
+  it differs between runs. A run that fails before the checks (a package that cannot be read, a usage error) prints a
+  plain `error:` line instead, and no summary. The exit status is the one `spec/check.md` (CK8) gives.
 
 Output of the programs a build runs (a build script, for example) is not JSON; a reader ignores a line that does not
 start with `{`.
