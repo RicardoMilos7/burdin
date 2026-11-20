@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- One target directory per workspace (stage 3, issue #240; `spec/workspaces.md`, WS19). The members of a workspace share
+  the root's `target/`: executables, test binaries, the `--failed` record, and the benchmark baselines sit in
+  `target/burdin/<profile>/`, and a member's build-script output and Rust shims move to
+  `target/burdin/<profile>/packages/<name>/` so members never overwrite each other. A standalone package keeps its own
+  `target/`. `tests/check_workspace.py` and a unit test in `workspace.rs` cover it.
+
 - Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
   `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an
   impl block when their parts do, so a manual impl delegates to them: `String.deserialize(mut d)?` reads a string and

@@ -18,7 +18,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         eprintln!("error: {} is not a package: it has no burdin.toml", burdin_query::package::source_path_text(&dir));
         return ExitCode::from(1);
     }
-    let mut targets = vec![dir.join("target")];
+    let mut targets = vec![burdin_query::workspace::target_dir(&dir)];
     if flags.iter().any(|f| f == "--cache") {
         let Some(home) = burdin_query::package::home_dir() else {
             eprintln!("error: cannot find the Burdin home directory for the caches: set BURDIN_HOME");
