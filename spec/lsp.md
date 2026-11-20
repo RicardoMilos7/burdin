@@ -172,8 +172,13 @@ b: i32): i32`), followed by its doc comment; a local or parameter shows `let nam
 type. A local or parameter also lists the ownership events the memory checks recorded for it (`spec/check.md`, CK10),
 one line each: `moved to \`t\``, `copied`, `borrowed (read)`, `borrowed (mut)`, `dropped`, `cloned`, with the
 `line:column` of the event. The events come from `Analysis::ownership_events`; the server computes nothing. The
-answer's range is the name.
-Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`
+answer's range is the name. A callee still being written shows its signature too: a method named without its call
+(`sq.area`), a call whose arguments are not closed (`sq.area(`), and a module's function named alone. A member of a
+value resolves through the local declared last before it when the typed tree no longer holds the value (the method
+named without a call drops its receiver from the tree, and unclosed text has no tree); a hover never shows `{error}`
+for those.
+Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_incomplete_call` (`fixtures/incomplete`),
+`the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`
 (`ownership-hover.json`), `positions_count_utf16_units_or_utf8_bytes_as_negotiated`.
 
 **LS12. Completion.** What is offered depends on where the cursor is (issues #819-#824):
