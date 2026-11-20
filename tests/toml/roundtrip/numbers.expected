@@ -1,0 +1,17 @@
+decimal = 1000000
+negative = -17
+plus = 42
+zero = 0
+hex = 3735928559
+octal = 493
+binary = 214
+float = 3.14159
+exponent = 50000000000000000000000.0
+neg_exp = -0.02
+under = 6626.0701
+integral_exp = 1000000.0
+inf_value = inf
+neg_inf = -inf
+nan_value = nan
+small = 0.0
+neg_zero = -0.0

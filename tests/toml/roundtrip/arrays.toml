@@ -1,0 +1,8 @@
+mixed = [ 1, "two", 3.0, true, [4, 5], { six = 6 } ]
+empty = []
+nested = [[1, 2], ["a"]]
+multi = [
+  "x",   # comment
+  "y",
+]
+points = [ { x = 1 }, { x = 2 } ]

@@ -4,6 +4,25 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**The TOML package (issue #256, 2026-11-20).** `packages/toml` reads and writes TOML 1.0.0 on the serialization
+framework, under the decisions of `spec/toml.md` (TOML1-TOML16): `parse`/`render` (the `Value` tree and the canonical
+form), `to_value`/`from_value`, and `to_string`/`from_str`. Both directions go through an arena of nodes: the parser
+fills one while it applies the table rules (dotted keys, headers, arrays of tables, and the closed inline table), the
+writer fills one as the framework calls it, and the reader flattens a `Value` into one. The parser keeps a span on
+every key and value, so `parse` reports syntax errors at places TOML 1.0.0 does, and the reader reports a type error
+at the value it rejects with the framework's path. The canonical writer puts a table's scalars first, then its tables
+as sections, and a non-empty all-table array as `[[path]]`; a map's keys are sorted and a struct's keep declaration
+order. The goldens are `tests/toml/{roundtrip,spans,bad,config,write}/*.expected`, the black-box check is
+`tests/check_toml.py` (in every CI job), and `tests/s3_serialize/toml` is the conformance case. Open decisions and
+limitations: (1) an `Option.None` field is written by omitting the key, but a derived reader cannot tell an omitted key
+from a missing one, so reading it back is `missing field` (SER6; pinned by `tests/toml/write` and
+`tests/toml/config/missing_option`) — the fix belongs to the framework, not to TOML; (2) a datetime has no framework
+shape, so it is read and written through `parse`/`render`, not `from_str`/`to_string`; (3) `u64`/`usize` above
+`i64::MAX` and `unit` are errors, as TOML has no form for them. While writing the package, a recursion defect showed
+up: a type that recurses through `List<Self>` (`struct Node { kind: i32, children: List<Node> }`) builds fine and
+overflows the stack at run time, and a `Clone` derive on it is E0130, so the tree types use `Heap<T>` with an arena
+instead. The defect belongs to the compiler, not to the package.
+
 **Watch mode (issue #632, 2026-11-19).** `burdin watch [check|build|test|run] <target>` and `--watch`/`--no-clear` on
 `build`, `run`, `test`, and `check` (`crates/burdin_driver/src/watch.rs`, `spec/watch.md`, `tests/check_watch.py`). It polls
 modification times (no new dependency) and reruns the command as a child `burdin`; `run` builds to a temporary file and
@@ -1364,8 +1383,9 @@ The first format package is done: `packages/json` (issue #255, `packages/json/RE
 errors, and a negative zero is written `-0.0` because the display form `-.0` is not a JSON number. Syntax errors carry
 a line and a column (scalar values, so a column is not a byte offset), duplicate object names are rejected, and
 reading never panics on any byte sequence. The goldens are `tests/json/*/*.expected`, the black-box check is
-`tests/check_json.py`, and `tests/s3_serialize/json` is the conformance case. The remaining formats (toml #256, csv
-#257, yaml #258, xml #259) follow the same shape.
+`tests/check_json.py`, and `tests/s3_serialize/json` is the conformance case. The second format package is `packages/toml`
+(issue #256, `spec/toml.md`, described under State) and follows the same shape. The remaining formats (csv #257, yaml
+#258, xml #259) do too.
 
 ## The fifty-sixth session: the toolchain manager (stage 3, issue #624, sub-issues #626, #628, #630, #631)
 

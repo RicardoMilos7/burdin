@@ -1,0 +1,17 @@
+decimal = 1_000_000
+negative = -17
+plus = +42
+zero = 0
+hex = 0xDEAD_beef
+octal = 0o755
+binary = 0b1101_0110
+float = 3.14159
+exponent = 5e+22
+neg_exp = -2E-2
+under = 6_626.070_1
+integral_exp = 1e06
+inf_value = inf
+neg_inf = -inf
+nan_value = nan
+small = 0.0
+neg_zero = -0.0

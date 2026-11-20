@@ -59,7 +59,9 @@ not updated and may disagree with the repository.
    single-file scripts, the shebang, the inline manifest, and the binary cache, `spec/packages.md` is path, git, and
    official dependencies (`name = true`), `burdin.lock`, `--locked`, and `burdin add`, `spec/serialization.md` is the
    serialization framework: the data model, `Serialize`/`Deserialize` and the format-side `Serializer`/`Deserializer`,
-   path-aware errors, the derives, and the test format, `spec/toolchain.md` is the toolchain manager: `burdin
+   path-aware errors, the derives, and the test format, `spec/toml.md` is the TOML 1.0.0 package: the subset it reads,
+   the canonical form it writes, the framework mapping, the strict reader, and its errors with their locations,
+   `spec/toolchain.md` is the toolchain manager: `burdin
    toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter, and `spec/watch.md` is `burdin watch` and `--watch`: what is
@@ -126,6 +128,7 @@ python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
+python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`

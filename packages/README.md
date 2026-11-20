@@ -16,9 +16,10 @@ PKG18).
 Official packages today:
 
 - `json` — JSON reading and writing on the serialization framework (issue #255; `packages/json/README.md`).
+- `toml` — TOML 1.0.0 documents, the canonical form, and the framework mapping (issue #256; `packages/toml/README.md`,
+  `spec/toml.md`).
 
-The other formats (`toml`, `csv`, `yaml`, `xml`) and later libraries are added here, one folder each, as they are
-written.
+The other formats (`csv`, `yaml`, `xml`) and later libraries are added here, one folder each, as they are written.
 
 A test that needs an official package points `BURDIN_PACKAGES` at the fixtures in `tests/packages/official` instead of
 using the real ones, so it does not change when a package here does.
