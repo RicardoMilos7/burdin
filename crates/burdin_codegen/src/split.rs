@@ -35,7 +35,7 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::FileType;
 use inkwell::values::FunctionValue;
 
-use crate::OptLevel;
+use crate::{ObjectCache, OptLevel};
 
 /// About this many instructions make one unit: below it, a second thread costs more (reading the bitcode, and a
 /// second copy of the runtime's constants) than it saves. Measured on a generated 16-module package of 65,000
@@ -159,6 +159,9 @@ fn prepare(module: &Module<'_>, units: usize) -> Plan {
     Plan { units, owners, small }
 }
 
+/// What compiling one unit gave: the cache key it used, if there is a cache, or the error.
+type UnitResult = Result<Option<String>, String>;
+
 /// The path of unit `index`'s object: `object` itself for the first, `<stem>.<index>.<ext>` for the others.
 pub(crate) fn unit_path(object: &Path, index: usize) -> PathBuf {
     if index == 0 {
@@ -180,12 +183,13 @@ pub(crate) fn emit_units(
     jobs: usize,
     level: OptLevel,
     object: &Path,
+    cache: Option<&ObjectCache>,
 ) -> Result<Vec<PathBuf>, String> {
     let plan = prepare(module, units);
     let bitcode = module.write_bitcode_to_memory();
     let bitcode = bitcode.as_slice();
     let paths: Vec<PathBuf> = (0..plan.units).map(|index| unit_path(object, index)).collect();
-    let results: Mutex<Vec<Option<Result<(), String>>>> = Mutex::new(vec![None; plan.units]);
+    let results: Mutex<Vec<Option<UnitResult>>> = Mutex::new(vec![None; plan.units]);
     let next = AtomicUsize::new(0);
     let workers = jobs.clamp(1, plan.units);
     std::thread::scope(|scope| -> Result<(), String> {
@@ -200,7 +204,7 @@ pub(crate) fn emit_units(
                         if index >= plan.units {
                             break;
                         }
-                        let result = emit_unit(bitcode, &plan, index, level, &paths[index]);
+                        let result = emit_unit(bitcode, &plan, index, level, &paths[index], cache);
                         results.lock().expect("a unit thread panicked")[index] = Some(result);
                     }
                 })
@@ -214,14 +218,27 @@ pub(crate) fn emit_units(
         }
         Ok(())
     })?;
+    let mut keys = HashSet::new();
     for result in results.into_inner().expect("a unit thread panicked") {
-        result.unwrap_or_else(|| Err("a codegen unit was not compiled".to_string()))?;
+        keys.extend(result.unwrap_or_else(|| Err("a codegen unit was not compiled".to_string()))?);
+    }
+    if let Some(cache) = cache {
+        cache.prune(&keys);
     }
     Ok(paths)
 }
 
-/// Compiles unit `index` from the whole module's `bitcode` into `path`.
-fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, level: OptLevel, path: &Path) -> Result<(), String> {
+/// Compiles unit `index` from the whole module's `bitcode` into `path`. With a cache, the unit's object is fetched
+/// when the unit's module (as it is before the optimizer) was compiled before, and stored otherwise; the result is
+/// the cache key the unit used.
+fn emit_unit(
+    bitcode: &[u8],
+    plan: &Plan,
+    index: usize,
+    level: OptLevel,
+    path: &Path,
+    cache: Option<&ObjectCache>,
+) -> Result<Option<String>, String> {
     let context = Context::create();
     let buffer = MemoryBuffer::create_from_memory_range(bitcode, "burdin-unit");
     let module = Module::parse_bitcode_from_buffer(&buffer, &context).map_err(|e| e.to_string())?;
@@ -272,6 +289,16 @@ fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, level: OptLevel, path: &
     module
         .verify()
         .map_err(|e| format!("LLVM verification of codegen unit {index} failed:\n{}", e.to_string_lossy()))?;
+    let key = cache.map(|c| {
+        let unit = module.write_bitcode_to_memory();
+        let triple = module.get_triple();
+        c.key(unit.as_slice(), level.number(), &triple.as_str().to_string_lossy())
+    });
+    if let (Some(cache), Some(key)) = (cache, &key)
+        && cache.fetch(key, path)
+    {
+        return Ok(Some(key.clone()));
+    }
     if level.optimized() {
         // The imports this unit never calls go before the optimizer spends time on them.
         let pipeline = format!("globaldce,{}", level.pipeline());
@@ -279,7 +306,11 @@ fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, level: OptLevel, path: &
             .run_passes(&pipeline, &machine, PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
-    machine.write_to_file(&module, FileType::Object, path).map_err(|e| e.to_string_lossy().to_string())
+    machine.write_to_file(&module, FileType::Object, path).map_err(|e| e.to_string_lossy().to_string())?;
+    if let (Some(cache), Some(key)) = (cache, &key) {
+        cache.store(key, path);
+    }
+    Ok(key)
 }
 
 #[cfg(test)]

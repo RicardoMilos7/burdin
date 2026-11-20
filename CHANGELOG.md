@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Cached object files (stage 3, issue #243; `spec/target.md`, TG11-TG16). A cacheable build keeps each codegen unit's
+  object under `target/burdin/<profile>/objects/<kind>/`, keyed by a hash of the unit's module, the compiler, the
+  optimization level, and the target. A later build whose unit is unchanged copies the object instead of optimizing
+  and compiling it, so an edit to one function rebuilds only the units that contain it and a comment edit rebuilds
+  none; only the last build's objects are kept. Code generation stays whole-program and parallel by unit.
+  `tests/check_target.py` and the unit tests in `crates/burdin_codegen/src/cache.rs` cover it.
+
 - Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
   `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an
   impl block when their parts do, so a manual impl delegates to them: `String.deserialize(mut d)?` reads a string and

@@ -28,6 +28,7 @@
 //! Every function starts with an `entry` block that holds only stack slots and their initialization, and branches to
 //! the body. After a terminator (`return`, `break`, a panic, ...) code generation continues in a fresh block without
 //! predecessors, so the rest of the tree can be generated without special cases.
+mod cache;
 mod emit;
 mod runtime;
 mod split;
@@ -99,6 +100,8 @@ pub struct PackageFlags {
     pub debug_assertions: bool,
 }
 
+pub use cache::ObjectCache;
+
 pub struct Options {
     /// The optimization level (`spec/profiles.md`).
     pub opt_level: OptLevel,
@@ -136,6 +139,10 @@ pub struct Options {
     /// The sanitizers to instrument for (`--sanitize`, `spec/sanitizers.md`) and libFuzzer's coverage
     /// (`burdin fuzz`, `spec/fuzz.md`). An instrumented program is always one codegen unit.
     pub sanitize: Sanitizers,
+    /// Keep each codegen unit's object under a hash of its module and reuse it when a later build produces the same
+    /// module (`spec/target.md`, TG11-TG16). Ignored by every build that always uses one unit for its own reasons
+    /// (bitcode, instrumentation, and the inspection outputs).
+    pub object_cache: Option<ObjectCache>,
 }
 
 impl Default for Options {
@@ -158,6 +165,7 @@ impl Default for Options {
             emit_asm: None,
             asm_syntax: AsmSyntax::Default,
             sanitize: Sanitizers::default(),
+            object_cache: None,
         }
     }
 }
@@ -322,7 +330,26 @@ pub fn emit_object(
         split::unit_count(instructions, functions, opts.units)
     };
     if units > 1 {
-        return split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.opt_level, object);
+        return split::emit_units(
+            &module,
+            units,
+            resolve_jobs(opts.jobs),
+            opts.opt_level,
+            object,
+            opts.object_cache.as_ref().filter(|_| !single),
+        );
+    }
+    // One unit: the whole module is the unit, and its object is cached the same way (TG12).
+    let cache = opts.object_cache.as_ref().filter(|_| !single);
+    let cache_key = cache.map(|c| {
+        let bitcode = module.write_bitcode_to_memory();
+        c.key(bitcode.as_slice(), opts.opt_level.number(), &triple.as_str().to_string_lossy())
+    });
+    if let (Some(cache), Some(key)) = (cache, &cache_key)
+        && cache.fetch(key, object)
+    {
+        cache.prune(&std::iter::once(key.clone()).collect());
+        return Ok(vec![object.to_path_buf()]);
     }
     // The attributes go on before the optimization pipeline, as clang's front end puts them: some transformations
     // are not done to a function that will be instrumented.
@@ -359,6 +386,10 @@ pub fn emit_object(
         }
     } else {
         machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
+        if let (Some(cache), Some(key)) = (cache, &cache_key) {
+            cache.store(key, object);
+            cache.prune(&std::iter::once(key.clone()).collect());
+        }
     }
     Ok(vec![object.to_path_buf()])
 }

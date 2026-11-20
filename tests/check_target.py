@@ -14,7 +14,11 @@ hits the cache still succeeds, and a build that must link fails. What it checks:
   * the failure paths: a type error is reported while a cached program exists, and the cache is left as it was; a link
     that fails publishes nothing; a truncated executable, a missing fingerprint, or a missing executable each relink; a
     target directory that cannot be created does not fail the build;
-  * the bypass: a debug build (`-g`) always links and writes nothing to the cache.
+  * the bypass: a debug build (`-g`) always links and writes nothing to the cache;
+  * the object cache (issue #243, TG11-TG16): with `BURDIN_CODEGEN_UNITS` the program is several units, each kept under
+    `target/burdin/<profile>/objects/<kind>/`; an edit that does not change the generated code (a trailing comment)
+    reuses every object, an edit to one function keeps the objects of the other units, objects of an earlier build
+    are removed, and a debug build writes none.
 """
 
 import os
@@ -343,6 +347,58 @@ with harness.temporary_dir("burdin-target-") as work:
     settled = fingerprint_of(hit, "hit").read_bytes()
     check(burdin_run(["build", ".", "-g", "-o", "debug-out"], hit, home).returncode == 0, "the debug build failed")
     check(fingerprint_of(hit, "hit").read_bytes() == settled, "a debug build rewrote the cache's fingerprint")
+
+    # ---- the object cache -----------------------------------------------------
+    def objects_of(package: Path, profile: str = "debug", kind: str = "bin") -> dict:
+        directory = package / "target" / "burdin" / profile / "objects" / kind
+        if not directory.is_dir():
+            return {}
+        return {f.name: (f.stat().st_mtime_ns, f.read_bytes()) for f in directory.iterdir() if f.is_file()}
+
+    def units_build(package: Path, *args):
+        args = args or (".",)
+        env = dict(os.environ)
+        env["BURDIN_HOME"] = str(home)
+        env["BURDIN_CODEGEN_UNITS"] = "3"
+        env.pop("BURDIN_CC", None)
+        return harness.run([burdin, "build", *[str(a) for a in args]], cwd=package, env=env)
+
+    def many_functions(tag: str, comment: str = "") -> str:
+        parts = []
+        for i in range(12):
+            parts.append(
+                f"fn f{i}(n: i64): i64 {{\n    let mut total = n\n    for _ in 0..{i + 3} {{\n"
+                f"        total = total + n * {i + 1}\n    }}\n    total\n}}\n\n"
+            )
+        calls = "".join(f"    println(\"{{f{i}({i})}}\")\n" for i in range(12))
+        return "".join(parts) + f'fn main() {{\n    println("{tag}")\n{calls}}}\n{comment}'
+
+    objs = make_package(work, "objs", many_functions("one"))
+    check(units_build(objs).returncode == 0, "the first build with three units failed")
+    first = objects_of(objs)
+    check(len(first) >= 2, f"a build with three codegen units kept {len(first)} object(s) in the cache")
+    check(all(re.fullmatch(r"[0-9a-f]{64}\.(o|obj)", name) for name in first), f"unexpected cache entries: {sorted(first)}")
+    expected = run_output(cached_exe(objs, "objs"))
+
+    write(objs / "src" / "main.bd", many_functions("one", "// a trailing comment\n"))
+    check(units_build(objs).returncode == 0, "the build after a comment edit failed")
+    second = objects_of(objs)
+    check(second == first, "an edit that does not change the generated code did not reuse every cached object")
+    check(run_output(cached_exe(objs, "objs")) == expected, "the program built from cached objects prints differently")
+
+    write(objs / "src" / "main.bd", many_functions("two"))
+    check(units_build(objs).returncode == 0, "the build after a code edit failed")
+    third = objects_of(objs)
+    kept = [name for name in third if name in first and third[name] == first[name]]
+    check(len(kept) >= 1, "an edit to one function rebuilt every unit's object")
+    check(set(third) != set(first), "an edit to one function reused every cached object")
+    check(len(third) <= 3, f"objects of an earlier build were not removed: {len(third)} entries for three units")
+    check(run_output(cached_exe(objs, "objs")) == expected.replace("one", "two"), "the edited program printed wrongly")
+
+    fresh = make_package(work, "objsdebug", many_functions("one"))
+    debug_units = units_build(fresh, ".", "-g", "-o", "dbg-out")
+    check(debug_units.returncode == 0, f"the `-g` build with units failed: {stderr_of(debug_units)[:300]}")
+    check(objects_of(fresh) == {}, "a debug build wrote objects to the cache")
 
     # ---- --locked is an input-free flag: a package without dependencies hits ---
     locked = make_package(work, "locked", program("locked"))

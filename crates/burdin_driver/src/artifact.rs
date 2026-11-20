@@ -41,6 +41,8 @@ pub(crate) struct Plan {
     /// The cached executable, `<dir>/<name><EXE_SUFFIX>`.
     pub(crate) exe: PathBuf,
     dir: PathBuf,
+    /// Where the codegen units' objects are kept (TG11): `<profile>/objects/<kind>/`, beside the executable's directory.
+    pub(crate) objects: PathBuf,
     name: String,
     /// Every input the program is built from, one per line, in a fixed order (TG3). A fingerprint file holds exactly
     /// this text followed by one `artifact` line.
@@ -51,7 +53,11 @@ impl Plan {
     /// A plan that keeps an executable named `name` in `dir`, with the given fingerprint body.
     pub(crate) fn new(dir: PathBuf, name: &str, body: String) -> Plan {
         let exe = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-        Plan { exe, dir, name: name.to_string(), body }
+        let objects = match dir.parent() {
+            Some(profile) => profile.join("objects").join(dir.file_name().unwrap_or_default()),
+            None => dir.join("objects"),
+        };
+        Plan { exe, dir, objects, name: name.to_string(), body }
     }
 
     /// The plan for a build of the entry package, or `None` when the build is not cached (TG2). The inputs are the
