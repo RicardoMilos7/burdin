@@ -72,15 +72,19 @@ def sanitizer_env():
     its first lines on standard error are what says so."""
     env = dict(os.environ)
     if system == "Darwin":
-        env["ASAN_OPTIONS"] = "symbolize=0:verbosity=1"
-        env["TSAN_OPTIONS"] = "symbolize=0:verbosity=1"
+        env["ASAN_OPTIONS"] = "symbolize=0:verbosity=2"
+        env["TSAN_OPTIONS"] = "symbolize=0:verbosity=2"
     return env
 
 
 def brief(code, err):
-    """Exit status and the first lines of standard error, for a failure's detail."""
-    lines = [line for line in err.strip().split("\n") if line.strip()][:8]
-    return f"exit {code}: " + " | ".join(lines) if lines else f"exit {code} with no standard error"
+    """Exit status and the first and last lines of standard error, for a failure's detail: a sanitizer prints its
+    initialization first and its report last, and a hang is what lies between them."""
+    lines = [line for line in err.strip().split("\n") if line.strip()]
+    if not lines:
+        return f"exit {code} with no standard error"
+    shown = lines if len(lines) <= 12 else lines[:6] + ["..."] + lines[-6:]
+    return f"exit {code}: " + " | ".join(shown)
 
 
 def expect(description: str, condition: bool, detail: str = "") -> None:
@@ -118,7 +122,9 @@ with harness.temporary_dir("burdin-sanitize-") as work:
             continue
         # Without the sanitizer the bug goes unnoticed: the program finishes. A null dereference is the exception:
         # the hardware faults on it too, so that case is about the message `undefined` gives, not about detection.
-        if name != "null_deref":
+        # A program that corrupts its heap is undefined behavior by definition, so it is not required to finish
+        # without the sanitizer either: Darwin's allocator notices the overwritten chunk and the run is killed.
+        if sanitizer == "undefined" and name != "null_deref":
             code, out, err = run(burdin, "run", program, *profile, cwd=work)
             expect(
                 f"{what}: runs without the sanitizer", code == 0 and "finished" in out, f"exit {code}: {err[-800:]}"
@@ -133,6 +139,18 @@ with harness.temporary_dir("burdin-sanitize-") as work:
             code, out, err = call([exe], work, timeout=60, env=sanitizer_env())
             expect(f"{what}: reported", code != 0, brief(code, err))
             expect(f"{what}: reported", report in err, brief(code, err))
+
+    # A program with nothing to find builds and runs clean under every sanitizer the host has: this is also what
+    # tells a broken sanitizer apart from a broken report.
+    for sanitizer in sorted(supported):
+        exe = work / f"hello-{sanitizer}.out"
+        code, _, err = run(
+            burdin, "build", str(fixtures / "hello.bd"), f"--sanitize={sanitizer}", "-o", str(exe), cwd=work
+        )
+        expect(f"hello ({sanitizer}): builds", code == 0, brief(code, err))
+        if code == 0:
+            code, out, err = call([exe], work, timeout=60, env=sanitizer_env())
+            expect(f"hello ({sanitizer}): runs clean", code == 0 and out.strip() == "finished", brief(code, err))
 
     # Safe code that borrows temporaries frees them: the program runs clean under every leak detector the host has.
     expected = "false true\n2 2\n1\n2\n1\n2\nk 1\n8\ntrue\ntrue\nfinished\n"

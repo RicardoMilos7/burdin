@@ -1,0 +1,4 @@
+// A program with nothing to find: it must build and run clean under every sanitizer (spec/sanitizers.md, SAN4).
+fn main() {
+    println("finished")
+}
