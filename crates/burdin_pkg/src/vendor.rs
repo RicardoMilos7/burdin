@@ -12,6 +12,7 @@
 use crate::resolve;
 use burdin_query::lockfile::{self, LockedPackage};
 use burdin_query::package::source_path_text;
+use burdin_query::workspace;
 use std::path::{Path, PathBuf};
 
 /// The file in `vendor/` that names the packages this command wrote.
@@ -34,9 +35,11 @@ pub struct Vendored {
 /// copied. Refuses, before it removes anything, a `vendor/<name>` that the list file does not name.
 pub fn vendor(dir: &Path) -> Result<Vendored, String> {
     resolve::sync(dir, false)?;
-    let locked: Vec<LockedPackage> = lockfile::read(dir)?.map(|lock| lock.packages).unwrap_or_default();
+    // A workspace vendors once, at its root, beside the lockfile an offline build reads (`spec/workspaces.md`, WS14).
+    let root = workspace::lock_dir(dir)?;
+    let locked: Vec<LockedPackage> = lockfile::read(&root)?.map(|lock| lock.packages).unwrap_or_default();
     let packages: Vec<&LockedPackage> = locked.iter().filter(|p| p.git.is_some()).collect();
-    let vendor_dir = dir.join("vendor");
+    let vendor_dir = root.join("vendor");
     let listed = read_list(&vendor_dir)?;
 
     for package in &packages {

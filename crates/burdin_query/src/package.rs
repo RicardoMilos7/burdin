@@ -13,10 +13,11 @@
 use crate::cfg::{self, Cfg, Host};
 use crate::features::{self, Item};
 use crate::lockfile::{self, GitRef, Lockfile};
+use crate::workspace;
 use burdin_sema::EntryMode;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// One source file of a package.
 pub struct ModuleFile {
@@ -179,6 +180,31 @@ pub fn load_for_tests(target: &Path) -> Result<Workspace, String> {
     load_selected(target, EntryMode::Test, &FeatureRequest::default())
 }
 
+/// Loads the packages `dirs` as the build's roots, for a command that selects members of a workspace
+/// (`spec/workspaces.md`, WS6-WS11). The first is the entry package. A dependency that two roots reach is one package,
+/// and the lockfile is the workspace's (WS14). `dirs` are canonical package directories. Every member is a root, so
+/// each one enables its features and takes its dev-dependencies.
+pub fn load_members(dirs: &[PathBuf], mode: EntryMode, request: &FeatureRequest) -> Result<Workspace, String> {
+    let Some(first) = dirs.first() else {
+        return Err("no package is selected".to_string());
+    };
+    let mut loader = Loader::new(read_lock(&workspace::lock_dir(first)?)?);
+    let mut roots = Vec::with_capacity(dirs.len());
+    for dir in dirs {
+        let root = loader.add_root(dir)?;
+        loader.activate(root, mode != EntryMode::Build, request)?;
+        roots.push(root);
+    }
+    let entry_package = roots[0];
+    let packages = loader.into_packages(None)?;
+    let entry = &packages[entry_package];
+    let entry_module = entry.modules.iter().position(|m| m.path == ["main"]).or(entry.root_module).unwrap_or(0);
+    let stem = entry.name.clone();
+    let mut packages = packages;
+    attach_std(&mut packages);
+    Ok(Workspace { packages, entry_package, entry_module, stem })
+}
+
 /// The manifest fragment of a script (`spec/scripts.md`, SC3): the dependency entries of the leading `//!` doc
 /// block. Paths are kept as written, relative to the script's directory.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -251,11 +277,17 @@ pub fn script_manifest(text: &str) -> Result<Option<ScriptManifest>, String> {
     Ok(Some(ScriptManifest { deps }))
 }
 
+/// The lockfile in `dir`, when there is one: a directory without a manifest has none.
+fn read_lock(dir: &Path) -> Result<Option<Lockfile>, String> {
+    if dir.join(workspace::MANIFEST).is_file() { lockfile::read(dir) } else { Ok(None) }
+}
+
 fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureRequest) -> Result<Workspace, String> {
     if target.is_dir() {
         let dir = target.canonicalize().map_err(|e| format!("cannot open {}: {e}", target.display()))?;
-        // The entry package's lockfile says which commit each git dependency builds with, anywhere in the graph.
-        let lock = if dir.join("burdin.toml").is_file() { lockfile::read(&dir)? } else { None };
+        // The lockfile of the workspace the package belongs to (or its own, standalone) says which commit each git
+        // dependency builds with, anywhere in the graph (WS14).
+        let lock = read_lock(&workspace::lock_dir(&dir)?)?;
         let mut loader = Loader::new(lock);
         let root = loader.add_root(&dir)?;
         loader.activate(root, dev, request)?;
@@ -334,6 +366,8 @@ fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureReq
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
+            license: None,
+            authors: Vec::new(),
             profiles: Vec::new(),
             include: None,
             exclude: Vec::new(),
@@ -878,8 +912,12 @@ pub struct Feature {
 #[derive(Debug)]
 pub struct Manifest {
     pub name: String,
-    /// `[package] version`, when the manifest gives one.
+    /// `[package] version`, when the manifest gives one or inherits it (WS15).
     pub version: Option<String>,
+    /// `[package] license`, when the manifest gives one or inherits it (WS15).
+    pub license: Option<String>,
+    /// `[package] authors`, when the manifest gives them or inherits them (WS15).
+    pub authors: Vec<String>,
     /// `[dependencies]` and the `[target.'cfg(...)'.dependencies]` tables, in file order (PKG25).
     pub deps: Vec<Dependency>,
     /// `[dev-dependencies]` and the target tables of them, in file order (PKG26).
@@ -942,6 +980,420 @@ impl Node {
     }
 }
 
+/// A `[package]` value that a manifest sets itself, or inherits from its workspace (`spec/workspaces.md`, WS15). Each
+/// keeps its line, so an error can name it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Slot<T> {
+    Set(T, usize),
+    Inherit(usize),
+}
+
+/// The `[package]` values of one manifest that a workspace can supply (WS15).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Fields {
+    pub(crate) version: Option<Slot<String>>,
+    pub(crate) edition: Option<Slot<String>>,
+    pub(crate) license: Option<Slot<String>>,
+    pub(crate) authors: Option<Slot<Vec<String>>>,
+}
+
+/// The `[workspace]` section: its entries with their lines (WS3).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WorkspaceSection {
+    pub(crate) members: Vec<(String, usize)>,
+    pub(crate) exclude: Vec<(String, usize)>,
+    pub(crate) default_members: Vec<(String, usize)>,
+}
+
+/// One `burdin.toml`, read line by line before any inheritance is resolved (`spec/workspaces.md`). Only the sections
+/// and keys the workspace rules read are kept; every other line is ignored.
+#[derive(Debug, Default)]
+pub(crate) struct Document {
+    /// Whether the manifest has a `[package]` section.
+    pub(crate) package_seen: bool,
+    /// `name` in `[package]`, with its line.
+    pub(crate) name: Option<(String, usize)>,
+    pub(crate) fields: Fields,
+    /// The dependencies that inherit from the workspace, with their lines (WS16).
+    pub(crate) dep_inherits: Vec<(String, usize)>,
+    /// Whether `[dependencies]` declares anything: a virtual root may not (WS1).
+    pub(crate) deps_seen: bool,
+    /// `Some` when the manifest has a `[workspace]` section.
+    pub(crate) workspace: Option<WorkspaceSection>,
+    /// `[workspace.package]`: the values a member may inherit.
+    pub(crate) workspace_fields: Fields,
+    /// `[workspace.dependencies]` in file order: name, source, line.
+    pub(crate) workspace_deps: Vec<(String, DepSource, usize)>,
+}
+
+/// Whether a `[package]` value is inherited from the workspace.
+fn is_inherited<T>(slot: &Option<Slot<T>>) -> bool {
+    matches!(slot, Some(Slot::Inherit(_)))
+}
+
+impl Document {
+    /// Whether any value or dependency of the package is inherited from its workspace.
+    fn inherits(&self) -> bool {
+        is_inherited(&self.fields.version)
+            || is_inherited(&self.fields.edition)
+            || is_inherited(&self.fields.license)
+            || is_inherited(&self.fields.authors)
+            || !self.dep_inherits.is_empty()
+    }
+}
+
+/// Whether the manifest of `dir` is a workspace root with no `[package]` (WS1): such a directory holds members, not a
+/// package, so a tool that loads packages skips it.
+pub fn is_virtual_root(dir: &Path) -> bool {
+    let path = dir.join(workspace::MANIFEST);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => parse_document(&text, &path).is_ok_and(|doc| doc.workspace.is_some() && !doc.package_seen),
+        Err(_) => false,
+    }
+}
+
+/// Whether the manifest `text` takes its `edition` from the workspace (WS15). `burdin fix --migrate` moves a package's
+/// own edition, so it refuses such a package.
+pub fn edition_is_inherited(text: &str, path: &Path) -> Result<bool, String> {
+    Ok(matches!(parse_document(text, path)?.fields.edition, Some(Slot::Inherit(_))))
+}
+
+/// The `[profile...]` entries of the manifest at `path`, without reading it as a package: a workspace root may
+/// declare profiles and have no `[package]` of its own (`spec/profiles.md`, `spec/workspaces.md`).
+pub fn manifest_profiles(path: &Path) -> Result<Vec<ProfileEntry>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut profiles = Vec::new();
+    let mut section = String::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line = strip_comment(raw).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if section.starts_with("profile.") {
+            profiles.push(ProfileEntry {
+                section: section.clone(),
+                key: key.trim().to_string(),
+                value: value.trim().to_string(),
+                line: index + 1,
+            });
+        }
+    }
+    Ok(profiles)
+}
+
+/// The directory of a manifest, canonical when it exists.
+fn manifest_dir_of(path: &Path) -> PathBuf {
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf())
+}
+
+/// The document of the workspace root in `dir`.
+fn read_root(dir: &Path) -> Result<Document, String> {
+    let path = dir.join(workspace::MANIFEST);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    parse_document(&text, &path)
+}
+
+/// The value of a `[package]` field: the one the manifest sets, or the one its workspace root sets under
+/// `[workspace.package]` (WS15). `None` when neither sets it.
+fn inherited_value<T: Clone>(
+    slot: &Option<Slot<T>>,
+    key: &str,
+    path: &Path,
+    root: Option<(&Document, &Path)>,
+    from_root: fn(&Fields) -> &Option<Slot<T>>,
+) -> Result<Option<T>, String> {
+    match slot {
+        None => Ok(None),
+        Some(Slot::Set(value, _)) => Ok(Some(value.clone())),
+        Some(Slot::Inherit(line)) => {
+            let Some((root_doc, root_dir)) = root else {
+                return Err(format!(
+                    "{}:{line}: `{key}` inherits from the workspace, but no workspace root above this package lists it \
+                     as a member",
+                    path.display()
+                ));
+            };
+            match from_root(&root_doc.workspace_fields) {
+                Some(Slot::Set(value, _)) => Ok(Some(value.clone())),
+                _ => Err(format!(
+                    "{}:{line}: `{key}` inherits from the workspace, but `{}` does not set `[workspace.package] {key}`",
+                    path.display(),
+                    root_dir.join(workspace::MANIFEST).display()
+                )),
+            }
+        }
+    }
+}
+
+/// An inherited dependency's source as the member reads it (WS16).
+fn inherited_source(
+    dep: &str,
+    path: &Path,
+    root: Option<(&Document, &Path)>,
+    line: usize,
+    member_dir: &Path,
+) -> Result<DepSource, String> {
+    let Some((root_doc, root_dir)) = root else {
+        return Err(format!(
+            "{}:{line}: dependency `{dep}` inherits from the workspace, but no workspace root above this package lists \
+             it as a member",
+            path.display()
+        ));
+    };
+    let Some((_, source, _)) = root_doc.workspace_deps.iter().find(|(declared, _, _)| declared == dep) else {
+        return Err(format!(
+            "{}:{line}: dependency `{dep}` inherits from the workspace, but `{}` declares no \
+             `[workspace.dependencies] {dep}`",
+            path.display(),
+            root_dir.join(workspace::MANIFEST).display()
+        ));
+    };
+    Ok(rebase(source, root_dir, member_dir))
+}
+
+/// A dependency's source as the member reads it. A path in `[workspace.dependencies]` is relative to the workspace root,
+/// so it is rewritten relative to the member's directory (WS16); a git source is the same everywhere.
+fn rebase(source: &DepSource, root_dir: &Path, member_dir: &Path) -> DepSource {
+    match source {
+        DepSource::Path(relative) if root_dir != member_dir => {
+            DepSource::Path(relative_between(member_dir, &lexical_join(root_dir, relative)))
+        }
+        other => other.clone(),
+    }
+}
+
+/// `base` joined with a relative path that may use `..`, normalized without touching the disk.
+fn lexical_join(base: &Path, relative: &str) -> PathBuf {
+    let mut out = base.to_path_buf();
+    for part in Path::new(relative).components() {
+        match part {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(name) => out.push(name),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// `to` as a path relative to `from`, with `/` separators. Both are absolute and normalized (WS16).
+fn relative_between(from: &Path, to: &Path) -> String {
+    let from: Vec<Component> = from.components().collect();
+    let to: Vec<Component> = to.components().collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> = vec!["..".to_string(); from.len() - common];
+    parts.extend(to[common..].iter().map(|part| part.as_os_str().to_string_lossy().into_owned()));
+    if parts.is_empty() { ".".to_string() } else { parts.join("/") }
+}
+
+/// The error for an edition this compiler does not know.
+fn unknown_edition(text: &str) -> String {
+    let known: Vec<&str> = burdin_sema::Edition::ALL.iter().map(|e| e.as_str()).collect();
+    format!("unknown edition `{text}` (this compiler knows {})", known.join(" and "))
+}
+
+/// Reads a manifest line by line: the workspace sections and the inherited `[package]` values, with their lines. Every
+/// error names the line (`spec/packages.md`, `spec/workspaces.md`).
+pub(crate) fn parse_document(text: &str, path: &Path) -> Result<Document, String> {
+    let mut doc = Document::default();
+    let mut section = String::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let line = strip_comment(raw).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let at = format!("{}:{line_number}", path.display());
+        if line.starts_with('[') {
+            if !line.ends_with(']') {
+                return Err(format!("{at}: a section header must end with `]`"));
+            }
+            section = line[1..line.len() - 1].trim().to_string();
+            match section.as_str() {
+                "package" => doc.package_seen = true,
+                "workspace" => {
+                    doc.workspace.get_or_insert_with(WorkspaceSection::default);
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("{at}: expected `key = value`"));
+        };
+        let (key, value) = (key.trim(), value.trim());
+        // `key.workspace = true` inherits the key from the workspace (WS15-WS16).
+        let (key, dotted) = match key.strip_suffix(".workspace") {
+            Some(base) => (base.trim(), true),
+            None => (key, false),
+        };
+        if dotted && value != "true" {
+            return Err(format!("{at}: `{key}.workspace` must be `true`"));
+        }
+        if dotted && !matches!(section.as_str(), "package" | "dependencies") {
+            if section.starts_with("workspace.") {
+                return Err(format!("{at}: `[{section}]` cannot inherit from the workspace it defines"));
+            }
+            return Err(format!(
+                "{at}: `{key}.workspace` is not inherited here: only `[package]` values and `[dependencies]` take \
+                 `workspace = true`"
+            ));
+        }
+        let inline = workspace_table(value).map_err(|e| format!("{at}: {e}"))?.is_some();
+        let inherits = dotted || inline;
+        if inline && !matches!(section.as_str(), "package" | "dependencies" | "workspace.dependencies") {
+            return Err(format!("{at}: `workspace = true` is only valid in `[package]` and `[dependencies]`"));
+        }
+        match section.as_str() {
+            "package" if key == "name" => {
+                if inherits {
+                    return Err(format!("{at}: `name` cannot be inherited from the workspace"));
+                }
+                let name = parse_string(value).map_err(|e| format!("{at}: {e}"))?;
+                doc.name = Some((name, line_number));
+            }
+            "package" => set_package_field(&mut doc.fields, key, value, inherits, line_number, &at)?,
+            "dependencies" => {
+                if inherits {
+                    doc.dep_inherits.push((key.to_string(), line_number));
+                } else {
+                    doc.deps_seen = true;
+                }
+            }
+            "workspace" => {
+                let entries: Vec<(String, usize)> = parse_string_array(value)
+                    .map_err(|e| format!("{at}: {e}"))?
+                    .into_iter()
+                    .map(|entry| (entry, line_number))
+                    .collect();
+                let section = doc.workspace.get_or_insert_with(WorkspaceSection::default);
+                match key {
+                    "members" => section.members = entries,
+                    "exclude" => section.exclude = entries,
+                    "default-members" => section.default_members = entries,
+                    _ => {}
+                }
+            }
+            "workspace.package" => set_package_field(&mut doc.workspace_fields, key, value, false, line_number, &at)?,
+            "workspace.dependencies" => {
+                if !is_ident(key) {
+                    return Err(format!("{at}: `{key}` is not a valid dependency name"));
+                }
+                if inherits {
+                    return Err(format!("{at}: `[{section}]` cannot inherit from the workspace it defines"));
+                }
+                if value == "false" {
+                    return Err(format!("{at}: `{key} = false` means nothing: remove the line"));
+                }
+                let source = parse_dependency(value).map_err(|e| format!("{at}: {e}"))?;
+                doc.workspace_deps.push((key.to_string(), source, line_number));
+            }
+            _ => {}
+        }
+    }
+    if doc.workspace.is_some() && !doc.package_seen && (doc.deps_seen || !doc.dep_inherits.is_empty()) {
+        return Err(format!(
+            "{}: a workspace root without a `[package]` section cannot declare `[dependencies]`: a virtual workspace \
+             has no package of its own",
+            path.display()
+        ));
+    }
+    Ok(doc)
+}
+
+/// Sets one `[package]` value: `version`, `edition`, `license`, or `authors` (WS15). Every other key is left alone,
+/// unless it is inherited, which only those four can be.
+fn set_package_field(
+    fields: &mut Fields,
+    key: &str,
+    value: &str,
+    inherits: bool,
+    line: usize,
+    at: &str,
+) -> Result<(), String> {
+    match key {
+        "version" => put(&mut fields.version, key, text_slot(value, inherits, line, at)?, at)?,
+        "license" => put(&mut fields.license, key, text_slot(value, inherits, line, at)?, at)?,
+        "edition" => {
+            let slot = text_slot(value, inherits, line, at)?;
+            if let Slot::Set(text, _) = &slot
+                && burdin_sema::Edition::parse(text).is_none()
+            {
+                return Err(format!("{at}: {}", unknown_edition(text)));
+            }
+            put(&mut fields.edition, key, slot, at)?;
+        }
+        "authors" => {
+            let slot = if inherits {
+                Slot::Inherit(line)
+            } else {
+                Slot::Set(parse_string_array(value).map_err(|e| format!("{at}: {e}"))?, line)
+            };
+            put(&mut fields.authors, key, slot, at)?;
+        }
+        _ if inherits => {
+            return Err(format!(
+                "{at}: `{key}` cannot be inherited from the workspace: only version, edition, license, and authors can be"
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// A text `[package]` value, or the inheritance of one.
+fn text_slot(value: &str, inherits: bool, line: usize, at: &str) -> Result<Slot<String>, String> {
+    if inherits {
+        return Ok(Slot::Inherit(line));
+    }
+    Ok(Slot::Set(parse_string(value).map_err(|e| format!("{at}: {e}"))?, line))
+}
+
+/// Stores a `[package]` value. A key both set and inherited is an error that names the other line (WS15); a second
+/// value of the same kind replaces the first, as a repeated key always has.
+fn put<T>(target: &mut Option<Slot<T>>, key: &str, slot: Slot<T>, at: &str) -> Result<(), String> {
+    if let Some(previous) = target.as_ref() {
+        let other = match (previous, &slot) {
+            (Slot::Set(_, line), Slot::Inherit(_)) | (Slot::Inherit(line), Slot::Set(_, _)) => Some(*line),
+            _ => None,
+        };
+        if let Some(other) = other {
+            return Err(format!(
+                "{at}: `{key}` is both set and inherited from the workspace (line {other}); give it one or the other"
+            ));
+        }
+    }
+    *target = Some(slot);
+    Ok(())
+}
+
+/// `Some(())` when `value` is the inline table `{ workspace = true }`, the spelling of `key.workspace = true`; `None`
+/// when `value` is not a table with a `workspace` key. Any other table with that key is an error (WS15-WS16).
+fn workspace_table(value: &str) -> Result<Option<()>, String> {
+    if !(value.starts_with('{') && value.ends_with('}')) {
+        return Ok(None);
+    }
+    let parts = split_table(&value[1..value.len() - 1]);
+    if !parts.iter().any(|part| part.split_once('=').is_some_and(|(key, _)| key.trim() == "workspace")) {
+        return Ok(None);
+    }
+    let [part] = parts.as_slice() else {
+        return Err("`workspace = true` takes no other keys: the value comes from the workspace".to_string());
+    };
+    let flag = part.split_once('=').map_or("", |(_, flag)| flag.trim());
+    if flag != "true" {
+        return Err("`workspace` must be `true`".to_string());
+    }
+    Ok(Some(()))
+}
+
 /// One `key = value` line of a `[profile...]` table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileEntry {
@@ -963,10 +1415,40 @@ pub fn parse_manifest(path: &Path) -> Result<Manifest, String> {
 }
 
 pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> {
+    // The workspace metadata is read first: the inherited values, the virtual-root rule, and the member's root.
+    let doc = parse_document(text, path)?;
+    if !doc.package_seen && doc.workspace.is_some() {
+        return Err(format!(
+            "{}: a workspace root without a `[package]` section is not a package; build, run, test, bench, doc, and \
+             fmt select its members with `-p` or `--workspace`, and the other commands take a member's directory",
+            path.display()
+        ));
+    }
+    let dir = manifest_dir_of(path);
+    // The workspace this package inherits from: its own manifest when it is a root, else the root above it. It is read
+    // only when something is inherited, so an ordinary package never looks above its directory.
+    let above: Option<(Document, PathBuf)> = if doc.workspace.is_none() && doc.inherits() {
+        match workspace::root_of(&dir)? {
+            Some(root_dir) => Some((read_root(&root_dir)?, root_dir)),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let root: Option<(&Document, &Path)> = if doc.workspace.is_some() {
+        Some((&doc, dir.as_path()))
+    } else {
+        above.as_ref().map(|(root_doc, root_dir)| (root_doc, root_dir.as_path()))
+    };
+    let version = inherited_value(&doc.fields.version, "version", path, root, |f| &f.version)?;
+    let license = inherited_value(&doc.fields.license, "license", path, root, |f| &f.license)?;
+    let authors = inherited_value(&doc.fields.authors, "authors", path, root, |f| &f.authors)?.unwrap_or_default();
+    let edition = match inherited_value(&doc.fields.edition, "edition", path, root, |f| &f.edition)? {
+        Some(text) => burdin_sema::Edition::parse(&text)
+            .ok_or_else(|| format!("{}: {}", path.display(), unknown_edition(&text)))?,
+        None => burdin_sema::Edition::default(),
+    };
     let mut section = String::new();
-    let mut name: Option<String> = None;
-    let mut version: Option<String> = None;
-    let mut edition = burdin_sema::Edition::default();
     let mut deps: Vec<Dependency> = Vec::new();
     let mut dev_deps: Vec<Dependency> = Vec::new();
     let mut features: Vec<Feature> = Vec::new();
@@ -1004,6 +1486,11 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
         let (key, value) = (key.trim(), value.trim());
         if let Some(table) = dependency_table(&section) {
             let (target, dev) = table.map_err(|e| format!("{}: {e}", where_()))?;
+            // `name.workspace = true` is the dotted spelling (WS16); the name is what comes before the dot.
+            let (key, dotted) = match key.strip_suffix(".workspace") {
+                Some(base) => (base.trim(), true),
+                None => (key, false),
+            };
             if !is_ident(key) {
                 return Err(format!("{}: `{key}` is not a valid dependency name", where_()));
             }
@@ -1012,6 +1499,31 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                     "{}: `{key} = false` means nothing: remove the line (a dependency you do not use needs no entry)",
                     where_()
                 ));
+            }
+            let inherits = dotted || workspace_table(value).map_err(|e| format!("{}: {e}", where_()))?.is_some();
+            if inherits || doc.dep_inherits.iter().any(|(name, _)| name == key) {
+                // `name.workspace = true` takes the source the workspace declares, from the member's directory (WS16).
+                if dev || target.is_some() {
+                    return Err(format!(
+                        "{}: `{key}` inherits from the workspace, and only `[dependencies]` inherits; write the source \
+                         out in a dev-dependency or a target table",
+                        where_()
+                    ));
+                }
+                let source = inherited_source(key, path, root, index + 1, &dir)?;
+                if let Some((_, first)) = declared.iter().find(|(name, _)| name == key) {
+                    return Err(format!("{}: dependency `{key}` is declared twice (first on line {first})", where_()));
+                }
+                declared.push((key.to_string(), index + 1));
+                deps.push(Dependency {
+                    name: key.to_string(),
+                    source,
+                    optional: false,
+                    default_features: true,
+                    features: Vec::new(),
+                    target: None,
+                });
+                continue;
             }
             let spec = parse_dependency_spec(value).map_err(|e| format!("{}: {e}", where_()))?;
             if spec.optional && dev {
@@ -1043,18 +1555,10 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
             continue;
         }
         match section.as_str() {
+            // `name`, `version`, `edition`, `license`, and `authors` are read by `parse_document`, which resolves the
+            // ones a member inherits from its workspace (WS15).
             "package" => {
-                if key == "name" {
-                    name = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
-                } else if key == "version" {
-                    version = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
-                } else if key == "edition" {
-                    let text = parse_string(value).map_err(|e| format!("{}: {e}", where_()))?;
-                    edition = burdin_sema::Edition::parse(&text).ok_or_else(|| {
-                        let known: Vec<&str> = burdin_sema::Edition::ALL.iter().map(|e| e.as_str()).collect();
-                        format!("{}: unknown edition `{text}` (this compiler knows {})", where_(), known.join(" and "))
-                    })?;
-                } else if key == "include" || key == "exclude" {
+                if key == "include" || key == "exclude" {
                     let patterns = parse_string_array(value).map_err(|e| format!("{}: `{key}`: {e}", where_()))?;
                     if let Some(bad) = patterns.iter().find(|p| p.is_empty() || p.starts_with('/')) {
                         return Err(format!(
@@ -1126,8 +1630,9 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
             _ => {}
         }
     }
-    let Some(name) = name else {
-        return Err(format!("{}: the `[package]` section needs a `name`", path.display()));
+    let name = match &doc.name {
+        Some((name, _)) if doc.package_seen => name.clone(),
+        _ => return Err(format!("{}: the `[package]` section needs a `name`", path.display())),
     };
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
@@ -1135,6 +1640,8 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let manifest = Manifest {
         name,
         version,
+        license,
+        authors,
         deps,
         dev_deps,
         features,

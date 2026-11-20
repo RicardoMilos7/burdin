@@ -166,14 +166,14 @@ fn common(a: &str, b: &str) -> (usize, usize) {
 }
 
 /// An analysis with a program and a way to translate positions of the current text into it.
-struct Answering<'a> {
-    analysis: &'a Analysis,
+pub(crate) struct Answering<'a> {
+    pub(crate) analysis: &'a Analysis,
     old: Option<Rc<str>>,
     new: String,
 }
 
 impl Answering<'_> {
-    fn of<'a>(p: &'a Package, path: &str) -> Option<Answering<'a>> {
+    pub(crate) fn of<'a>(p: &'a Package, path: &str) -> Option<Answering<'a>> {
         let (analysis, texts) = p.program_analysis()?;
         let new = p.text(path)?.to_string();
         let old = texts.and_then(|t| t.get(path).cloned());
@@ -202,7 +202,7 @@ impl Answering<'_> {
 
     /// The type of the local `name` declared last before `offset` of the current text: what a name typed since the
     /// last good analysis most likely stands for.
-    fn local_before(&self, path: &str, name: &str, offset: u32) -> Option<String> {
+    pub(crate) fn local_before(&self, path: &str, name: &str, offset: u32) -> Option<String> {
         self.analysis
             .locals(path)
             .into_iter()

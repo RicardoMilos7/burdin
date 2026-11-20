@@ -287,7 +287,8 @@ pub fn discover(folder: &Path) -> Vec<PathBuf> {
 }
 
 fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-    if dir.join("burdin.toml").is_file() {
+    // A virtual workspace root has no package of its own (WS18): its members are found below it.
+    if dir.join("burdin.toml").is_file() && !burdin_query::package::is_virtual_root(dir) {
         out.push(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
     }
     if depth >= 4 {
@@ -363,6 +364,22 @@ fn std_path_in(path: &Path, dirs: &[Option<PathBuf>]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_discovery_skips_a_virtual_root() {
+        // WS18: a folder is one package per member, and a virtual root is not a package.
+        let folder = std::env::temp_dir().join(format!("burdin-lsp-discovery-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        for (dir, manifest) in [("app", "[package]\nname = \"app\"\n"), ("lib", "[package]\nname = \"lib\"\n")] {
+            std::fs::create_dir_all(folder.join(dir).join("src")).unwrap();
+            std::fs::write(folder.join(dir).join("burdin.toml"), manifest).unwrap();
+        }
+        std::fs::write(folder.join("burdin.toml"), "[workspace]\nmembers = [\"app\", \"lib\"]\n").unwrap();
+        let found = discover(&folder);
+        let root = folder.canonicalize().unwrap();
+        assert_eq!(found, vec![root.join("app"), root.join("lib")]);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 
     #[test]
     fn a_toolchain_with_std_src_supplies_the_std_files() {

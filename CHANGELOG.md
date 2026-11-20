@@ -13,6 +13,24 @@ close-out checklist in `AGENTS.md`).
   (`std/src/serialize.bd`). `tests/s3_serialize/builtin_impls`, `builtin_methods`, `builtin_map_key`, and
   `builtin_serialize_mut` cover it.
 
+- Workspaces (stage 3, issues #342 and #343; `spec/workspaces.md`). A `burdin.toml` with a `[workspace]` section makes
+  its directory a workspace root: `members` lists the packages that build together (a path, or a `*` pattern within one
+  component), `exclude` removes some, and `default-members` picks what a command in the root selects. A root with a
+  `[package]` section is a package too; without one it is virtual, and `check`, `lint`, `fix`, and the other
+  single-package commands reject it by naming its members. `build`, `run`, `test`, `bench`, `doc`, and `fmt` take
+  `-p`/`--package`, `--workspace`, and `--exclude`, which select members whatever the target is; outside a workspace
+  they mean what they did. `build` writes one executable per member that has a `src/main.bd`, under that member's
+  `target/burdin/<profile>/bin/`, and skips a library with a note; `run` runs exactly one; `test` and `bench` run the members together with
+  one report and share their `--failed` record and baselines under the root's `target/`; `doc` writes one site per
+  member; `fmt` formats the selected members' directories. One `burdin.lock` sits beside the root manifest and records
+  the whole workspace, whatever the command selects, and `burdin add` in a member edits that member and the root's
+  lockfile. `[workspace.package]` sets `version`, `edition`, `license`, and `authors`, which a member takes with
+  `key.workspace = true` (or `key = { workspace = true }`); a key both set and inherited, a key the root does not set,
+  and any other inherited key are errors, `name` is never inherited, and `burdin fix --migrate` refuses an inherited
+  edition. `[workspace.dependencies]` declares dependencies a member takes with `name.workspace = true`, a path there
+  relative to the root. The language server no longer treats a virtual root as a package. `tests/check_workspace.py`
+  checks all of it in every CI job.
+
 - Dependency tables, features, and platform targets (stage 3, issues #340 and #341; `spec/packages.md`, PKG25-PKG33).
   `[features]` declares named features whose items are other features, `dep:x` for an optional dependency, or
   `x/feature` to forward to a dependency; every optional dependency is an implicit feature of its name, `default` is

@@ -6,6 +6,7 @@
 //! type, or of a value whose type the analysis knows); a name in a `use` declaration; a field name in a struct
 //! literal; and finally a type, function, constant, or variant of that name visible from the file.
 
+use crate::edit::Answering;
 use crate::index::{FileIndex, Item, Kind, Tk};
 use crate::json::Json;
 use crate::project::{Loc, Package};
@@ -324,6 +325,9 @@ impl<'a> Resolver<'a> {
                 }
                 _ => {}
             }
+            if let Some(ty) = self.local_type(path, &receiver) {
+                return self.member(path, &ty, &name);
+            }
             if let Some(ty) = self.p.current().and_then(|a| a.type_at(path, receiver.lo)) {
                 // The innermost expression at the receiver's start may be longer than the receiver (`a.b` at `a` is
                 // `a`); only one that ends at the dot is the receiver.
@@ -349,10 +353,24 @@ impl<'a> Resolver<'a> {
 
     /// Whether the identifier is a local or parameter in scope (so `x.f` is a member of a value, not of a module).
     fn is_value(&mut self, path: &str, tok: &crate::index::Tok) -> bool {
-        self.p
-            .current()
-            .and_then(|a| a.resolve_at(path, tok.lo))
-            .is_some_and(|r| matches!(r.kind, DefinitionKind::Local | DefinitionKind::Parameter))
+        self.local_type(path, tok).is_some()
+    }
+
+    /// The type of the local or parameter an identifier names, when it names one. The analysis answers for a name
+    /// its typed tree holds. Otherwise the local declared last before it gives the type (see
+    /// [`Answering::local_before`]): a method named without a call (`sq.area`) leaves its receiver out of the typed
+    /// tree, and a call still being written (`sq.area(`) makes the text unparseable, so the last good analysis is
+    /// the one that knows `sq`.
+    fn local_type(&mut self, path: &str, tok: &crate::index::Tok) -> Option<String> {
+        let name = tok.ident()?;
+        if let Some(analysis) = self.p.current()
+            && let Some(r) = analysis.resolve_at(path, tok.lo)
+            && r.name == name
+            && matches!(r.kind, DefinitionKind::Local | DefinitionKind::Parameter)
+        {
+            return Some(r.ty);
+        }
+        Answering::of(&*self.p, path)?.local_before(path, name, tok.lo)
     }
 
     fn use_name(&mut self, path: &str, u: &crate::index::Use, tok: &crate::index::Tok, name: &str) -> Option<Symbol> {

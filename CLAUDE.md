@@ -66,9 +66,10 @@ not updated and may disagree with the repository.
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter, and `spec/watch.md` is `burdin watch` and `--watch`: what is
    watched, the debounce, restarting `run`, and the changed-modules-first `test` run; `spec/build-tool.md` is the
-   build tool's command surface, the Cargo commands it does not copy, and the exit statuses; and `spec/profiles.md`
+   build tool's command surface, the Cargo commands it does not copy, and the exit statuses; `spec/profiles.md`
    is named build profiles (`dev`, `release`, `test`, `bench`, and custom), their inheritance, settings, and
-   per-package overrides.
+   per-package overrides; and `spec/workspaces.md` is workspaces: members, default members, excludes, the selection
+   flags, inherited fields and dependencies, and the workspace lockfile.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -130,6 +131,8 @@ python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules,
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
+python3 tests/check_workspace.py         check workspaces: members, default members, excludes, the selection flags, inherited
+                                         fields, and one lockfile at the root
 python3 tests/check_features.py          check dependency tables, features, and targets: selection, unification, dev-dependencies, `cfg` tables, the generated `features` module, and the potential-graph lockfile
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
 python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin

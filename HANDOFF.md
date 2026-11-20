@@ -380,6 +380,23 @@ of `URL_BASE` plus the two scripts that pin it. SARIF columns are Unicode scalar
 `unicodeCodePoints`), and a relative path is `%SRCROOT%`-relative. Existing assertions changed only where the JSON
 summary gained `"version":1`.
 
+The forty-seventh session implemented stage 3's workspaces (issues #342 and #343). A manifest with a `[workspace]`
+section now makes its directory a workspace root: `crates/burdin_query/src/workspace.rs` reads the membership (patterns
+within one component, excludes, default members, a member's nearest root) without loading a package graph, so a member
+that inherits from its root cannot cycle; `package.rs` resolves `key.workspace = true` for `version`, `edition`,
+`license`, and `authors` and `name.workspace = true` in `[dependencies]` against `[workspace.package]` and
+`[workspace.dependencies]`, rebasing an inherited path to the member's directory. The lockfile moved to the root for the
+whole workspace (`resolve.rs`, `add.rs`), and its resolution walks every member, so a command run in a member reads and
+writes the same pins. The driver's new `workspace.rs` turns `-p`/`--workspace`/`--exclude` into one `Scope`, chosen once
+after parsing, and `build`, `run`, `test`, `bench`, `doc`, and `fmt` read it: build loops the members with a `main` and
+skips libraries with a note, run needs exactly one, test and bench load the members as the build's roots with one report
+and share their record and baselines under the root's `target/`, doc writes a site per member, and fmt formats the
+selected members' directories. Outside a workspace the flags behave as before. `tests/check_workspace.py` proves the
+behavior black-box (46 checks) and every CI job runs it; the parser, membership, selection, and workspace-lockfile rules
+have unit tests. The decisions are `spec/workspaces.md` WS1-WS18. Not done: `--offline`, multi-line arrays in a
+manifest, `**` in a member pattern, moving an inherited edition with `burdin fix --migrate`, and one workspace target
+directory (outputs stay under each package's `target/`).
+
 The forty-sixth session implemented stage 3's `burdin check` (issue #237): the type-check-only command. It is not a new
 pipeline: `check.rs` calls `front_end` (`main.rs`), the one function that `build`, `run`, `test`, and `lint` use to load
 a package, run its build script, parse it, check it, run the memory checks, and evaluate `comptime`, and stops there. The
@@ -605,6 +622,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
+| Workspaces | `spec/workspaces.md` | Members, default members, excludes, the `-p`/`--workspace`/`--exclude` selection for build, run, test, bench, doc, and fmt, the workspace lockfile, and the inheritance of package fields and dependencies (issues #342, #343); `tests/check_workspace.py` and the unit tests of `workspace.rs`, `package.rs`, and the driver's selection |
 | Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the `[differential]` comparison between the comptime interpreter and the compiled test (issue #444) |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), member type arguments (`x.downcast<T>()`), `any`/`impl` types, `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, `...` in an `extern` signature, interpolated and raw strings, and the format-specifier grammar |

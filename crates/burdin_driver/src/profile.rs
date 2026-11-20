@@ -217,8 +217,9 @@ fn manifest_entries(target: &Path) -> Result<(String, Vec<package::ProfileEntry>
     if !manifest.is_file() {
         return Ok((manifest.display().to_string(), Vec::new()));
     }
-    match package::parse_manifest(&manifest) {
-        Ok(parsed) => Ok((manifest.display().to_string(), parsed.profiles)),
+    // A workspace root declares profiles for its members and has no `[package]`, so only the profile tables are read.
+    match package::manifest_profiles(&manifest) {
+        Ok(profiles) => Ok((manifest.display().to_string(), profiles)),
         Err(message) => Err(Failure::Manifest(message)),
     }
 }

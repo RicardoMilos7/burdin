@@ -17,20 +17,36 @@ pub(crate) struct Plan {
     pub(crate) to: Edition,
 }
 
+/// Why a migration could not be planned: a command-line mistake (exit status 2) or a package that cannot move
+/// (exit status 1).
+pub(crate) enum Refusal {
+    Usage(String),
+    Error(String),
+}
+
 /// Reads the package's manifest and decides the edition it moves to: the one after its own.
-pub(crate) fn plan(target: &Path) -> Result<Plan, String> {
+pub(crate) fn plan(target: &Path) -> Result<Plan, Refusal> {
     if !target.join("burdin.toml").is_file() {
-        return Err(format!(
+        return Err(Refusal::Usage(format!(
             "`--migrate` needs a package directory with a burdin.toml, where the edition is recorded; {} is a \
              one-file target, which is always edition {}",
             crate::source_path_text(target),
             Edition::default().as_str()
-        ));
+        )));
     }
-    let dir = target.canonicalize().map_err(|e| format!("cannot open {}: {e}", target.display()))?;
+    let dir = target.canonicalize().map_err(|e| Refusal::Usage(format!("cannot open {}: {e}", target.display())))?;
     let manifest = dir.join("burdin.toml");
-    let text = std::fs::read_to_string(&manifest).map_err(|e| format!("cannot read {}: {e}", manifest.display()))?;
-    let from = burdin_query::package::parse_manifest_text(&text, &manifest)?.edition;
+    let text = std::fs::read_to_string(&manifest)
+        .map_err(|e| Refusal::Usage(format!("cannot read {}: {e}", manifest.display())))?;
+    // The edition a workspace sets is the workspace's to move, and `--migrate` cannot move it (WS15).
+    if burdin_query::package::edition_is_inherited(&text, &manifest).map_err(Refusal::Usage)? {
+        return Err(Refusal::Error(format!(
+            "the edition of {} is inherited from its workspace (`edition.workspace = true`), and `--migrate` cannot \
+             move an inherited edition; set the edition in the workspace's `[workspace.package]` instead",
+            crate::source_path_text(&manifest)
+        )));
+    }
+    let from = burdin_query::package::parse_manifest_text(&text, &manifest).map_err(Refusal::Usage)?.edition;
     let to = from.next().unwrap_or(from);
     Ok(Plan { manifest, text, from, to })
 }

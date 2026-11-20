@@ -1,0 +1,30 @@
+use json
+
+struct Data: Serialize, Deserialize {
+    name: String,
+}
+
+struct Square {
+    side: i32
+}
+
+Square {
+    /// The area of a square.
+    fn area(self): i32 {
+        self.side * self.side
+    }
+
+    fn grow(mut self, by: i32) {
+        self.side = self.side + by
+    }
+}
+
+/// Adds two numbers.
+fn add(a: i32, b: i32): i32 {
+    a + b
+}
+
+fn main() {
+    let sq = Square { side: 4 }
+    println("{sq.side}")
+}
