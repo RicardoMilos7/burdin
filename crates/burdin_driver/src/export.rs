@@ -40,6 +40,8 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &
         locked: false,
         report_clean: false,
         jobs: crate::jobs_or_default(None),
+        sanitize: Default::default(),
+        fuzz_target: None,
     };
     let front = match front_end(target, &options, &SourceOverrides::new()) {
         Ok(front) => front,

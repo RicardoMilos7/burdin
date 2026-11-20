@@ -24,6 +24,8 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
 | [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, the doc tests of doc comments, parallelism, output capture, isolation, and discovery. |
 | [`spec/bench.md`](spec/bench.md) | The behavior of `burdin bench`: bench items, warmup and calibration, statistics, baselines, and the profiler hook. |
+| [`spec/fuzz.md`](spec/fuzz.md) | The behavior of `burdin fuzz`: fuzz items, the libFuzzer build, the corpus and the artifacts, minimizing a crash, and `burdin test --fuzz-replay`. |
+| [`spec/sanitizers.md`](spec/sanitizers.md) | The behavior of `--sanitize`: AddressSanitizer, ThreadSanitizer, LeakSanitizer, the undefined checks, the platforms, and how a run reports. |
 | [`spec/fmt.md`](spec/fmt.md) | The behavior of `burdin fmt`: the one style (4-space indentation, 120 columns), comments, blank lines, the magic trailing comma, `use` sorting and grouping, doc-comment code blocks, range formatting, and the command line. |
 | [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the `bindgen` a script may invoke. |
 | [`spec/bindgen.md`](spec/bindgen.md) | `burdin bindgen`: C headers to Burdin declarations through libclang, the layout check, wrappers for `static inline` functions, and `--export` for a C header of what a package exports. |
@@ -154,18 +156,21 @@ gets a suggestion (`a similar subcommand exists: 'check'`). The synopsis of the 
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
+               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
-             [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
+             [--comptime-steps <n>] [--sanitize <list>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
-              [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+              [--format <human|json>] [--junit <file>] [--fuzz-replay] [--bless | --review] [--interpret]
+              [--sanitize <list>] [--comptime-steps <n>] [diagnostics]
   burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
                [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
+  burdin fuzz <file.bd | package directory> <name> [--max-time <seconds>] [--minimize <file>] [--release] [-g] [-j <n>]
+              [--comptime-steps <n>] [diagnostics] [-- <libFuzzer options>...]
   burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>]
                [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain] [diagnostics]
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]

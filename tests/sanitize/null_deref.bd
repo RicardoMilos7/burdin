@@ -1,0 +1,10 @@
+// A null `CPtr` dereference: `--sanitize=undefined` panics at the dereference, in every profile
+// (spec/sanitizers.md, SAN4).
+fn read(p: CPtr<i32>): i32 {
+    unsafe { *p }
+}
+
+fn main() {
+    let value = unsafe { read(CPtr.null()) }
+    println("finished {value}")
+}

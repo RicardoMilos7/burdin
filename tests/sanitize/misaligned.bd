@@ -1,0 +1,16 @@
+// A `CPtr<i64>` one byte into an allocation: `--sanitize=undefined` reports the misaligned dereference.
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn main() {
+    unsafe {
+        let raw = malloc(32)
+        let bytes = raw as CPtr<u8>
+        let p = (bytes + 1) as CPtr<i64>
+        *p = 5
+        free(raw)
+    }
+    println("finished")
+}

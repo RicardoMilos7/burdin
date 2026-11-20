@@ -83,6 +83,8 @@ Every test process starts with:
   - `TMPDIR`, `TMP`, and `TEMP`, set to the test's working directory, so a program that writes temporary files
     cleans them up with the directory;
   - `BURDIN_TEST`, the test's display name;
+  - `BURDIN_SNAPSHOTS`, for a `test` block, the file its `assert_snapshot` calls record into
+    ([Snapshot tests](#snapshot-tests), SN2);
   - on Windows, the variables the C runtime needs to start: `SystemRoot`, `SystemDrive`, `windir`, `ComSpec`,
     `PATHEXT`, `NUMBER_OF_PROCESSORS`, `PROCESSOR_ARCHITECTURE`, and `OS`, when the parent has them.
 
@@ -306,6 +308,113 @@ produce the same outcome, so an interpreter/compiled divergence is caught automa
 - One test binary is still built per package and each test still runs in its own process; the differential
   comparison uses the `Ok`/`Err` exit status the dispatcher already produces.
 
+## Snapshot tests
+
+A snapshot assertion compares a value's text with a copy the package keeps, so a test of a large or structured
+output does not have to spell the expected text in an `assert_eq` (issue #616).
+
+```
+assert_snapshot(value)                              // the Debug text, kept in a file
+assert_snapshot(value, display: true)               // the Display text
+assert_snapshot(value, @"[1, 2, 3]")                // kept in the call itself: an inline snapshot
+assert_snapshot(value, @r#"Point { x: 1, y: 2 }"#)  // a raw inline snapshot holds quotes and braces
+```
+
+- **SN1. The call.** `assert_snapshot` is a `std` function in the prelude of every build. Its first argument is
+  the value, formatted with `Debug` (`{:?}`), or with `Display` when the named argument `display: true` is given;
+  `display:` takes the literal `true` or `false`, because the format is decided when the test is compiled. The
+  optional second argument is an inline snapshot. Any other argument list, and an inline snapshot `@"..."`
+  anywhere but that second argument, is **E0172**. The call returns `()`: a test does not see whether its snapshot
+  matched, and it goes on after a difference, so one run reports every changed snapshot of a test. Outside
+  `burdin test` the call formats the value and records nothing.
+- **SN2. Recording.** Each call appends a record of its location, its kind, and the formatted text to the file
+  named by the variable `BURDIN_SNAPSHOTS`, which the runner sets for each `test` block process (in addition to the
+  variables of [Isolation](#isolation)). The runner compares the records of each test, in the order the calls ran,
+  after every test has finished. A test that ends before a call (a panic, an `Err`) records nothing for it.
+- **SN3. Files.** A snapshot without an inline literal lives in `snapshots/<module>__<test>.snap` in the directory
+  of the test's source file. `<module>` is the test's dotted module path, or the file's stem for a package's entry
+  file and a one-file target (`main`, `lib`); in `<test>` every character other than an ASCII letter, a digit, `_`,
+  and `-` becomes `_`. The second and later file snapshots of one test add `-2`, `-3`, ... before `.snap`. The file
+  is a header between two `---` lines and then the snapshot followed by one newline:
+
+  ```
+  ---
+  test: geometry.renders a board
+  source: shapes.bd:41
+  expression: assert_snapshot(board())
+  ---
+  ["x.o", ".x."]
+  ```
+
+  `test` is the test's package-local path, `source` the file name and line of the call, and `expression` the
+  call's text on one line. Only what follows the header is compared; a line ending `\r\n` reads as `\n`.
+- **SN4. Inline snapshots.** `@` followed by a string literal without placeholders is an inline snapshot; a text
+  with quotes, braces, or backslashes is written as a raw string, `@r#"..."#`, and `@"text {x}"` is a syntax error
+  that says so. A literal that starts with a line break is in *block form*: the break is dropped, the last line,
+  which holds only the spaces before the closing quote, is dropped with the break before it, and those spaces are
+  removed from the start of every other line. Any other literal is the snapshot exactly. The runner finds the
+  literal from the call's location in the source file.
+- **SN5. Differences.** A snapshot whose file is missing, or whose stored text differs from the recorded one, fails
+  the test. The reason heading names the snapshot (`snapshot src/snapshots/main__board.snap does not match`, `...
+  is missing`, `inline snapshot at src/main.bd:46 does not match`), and the test's captured stderr gets a unified
+  diff from the stored text to the new one (only additions for a missing snapshot) and how to accept it. A file
+  snapshot also writes the new file, with its header, as `<name>.snap.new` next to the `.snap`; a later run that
+  matches removes it. A test that failed for its own reason keeps that reason, followed by the snapshot's.
+- **SN6. `--bless`.** Every missing or different snapshot is accepted: the `.snap` file is written (and its
+  `.snap.new` removed), and an inline snapshot's literal is replaced in the source by the shortest literal that
+  holds the text: `@"text"` for one plain line, `@r#"..."#` (with as many `#` as the text needs) when it has a quote,
+  a brace, a backslash, or a tab, and the block form indented four spaces past the call's line for more than one
+  line. An accepted snapshot does not fail its test, and `note: updated <snapshot>` goes to standard error.
+- **SN7. `--review`.** Each difference is shown on standard output, in declaration order, with a diff and the
+  question `accept it? [y]es, [n]o, [a]ll, [q]uit: `, read from standard input: `y` accepts this snapshot as
+  `--bless` would, `n` leaves it failing, `a` accepts this and every later one, and `q` (or the end of the input)
+  declines this and every later one. `--bless` and `--review` cannot be combined, and both are usage errors on
+  another command.
+- **SN8. Stale snapshots.** When a run selected every test of its packages (no filter, `--skip`, `--failed`,
+  `--shard`, `--ignored`, or `--doc`) and every test ran and passed, a `.snap` file in a `snapshots/` directory next
+  to one of those packages' source files that no call of the run checked is reported on standard error as
+  `warning: stale snapshot <path>: no test of this run checked it`. A stale snapshot does not change the exit
+  status, and the runner never deletes one.
+- **SN9.** The doc tests record no snapshots: an example is an ordinary program, so its `assert_snapshot` calls
+  format their values and record nothing.
+
+## Interpreting a test
+
+`burdin test --interpret` runs the `test` blocks in the compiler's interpreter (`spec/comptime.md`, CT1) instead of
+compiling them, with a model of the C heap and the checks a sanitizer gives a compiled program (issue #622). It needs
+no linker, no sanitizer runtime, and no code generation, and a fault points at the source line that caused it.
+
+- **IN1. What runs.** The front end parses and checks the package exactly as for a normal `burdin test`, so a
+  package that does not compile fails as it always does. Then each selected `test` body runs in the interpreter,
+  with output captured and dropped the way a compiled run captures it. Selection, `--filter`, `--skip`, `--exact`,
+  `-p`, `--workspace`, `[ignore]`, and the summary line are the ones of a normal run; the summary gains
+  `, N skipped` when a test needed something the interpreter does not model. `--interpret` cannot be combined with
+  `--fuzz-replay` (a replay runs a compiled binary), with `--sanitize` (there is no compiled code), or with `--bless`
+  and `--review` (a snapshot comparison reads the file system, so those tests are skipped). Interpreted tests run
+  one at a time, so `-j` has no effect, and `--timeout` does not apply: the step budget of a compile-time evaluation
+  (`--comptime-steps`, CT11) ends a test that runs away, reported as a failure of that test.
+- **IN2. The heap.** `__alloc(size, align)` returns a pointer into a modeled block whose bytes are uninitialized,
+  `__realloc` grows or shrinks it, and `__dealloc` frees it. A pointer is an integer, so `p + n` moves by `n`
+  elements of `p`'s type, `p - q` is a distance in elements, and casts between `CPtr` and the integer types keep
+  the value. `*p` reads and `*p = v` writes the pointee, for the scalar pointees `bool`, `char`, the integer types,
+  `f32`, `f64`, and `CPtr`. A `CPtr` of any other pointee, a `CString`, and a C function are outside the model
+  (IN6).
+- **IN3. Bounds, alignment, and initialization.** A read or write must start at a non-negative offset of a block,
+  end inside it (`size` bytes fit), begin at an address that is a multiple of the pointee's alignment and of the
+  block's, and cover bytes that were written at least once. A violation is a failure of the test:
+  ``out-of-bounds access: 4 byte(s) at offset 8 of a 8-byte allocation``, ``misaligned access: offset 1 of a
+  8-byte-aligned block for a 8-byte type``, or `read of uninitialized memory`.
+- **IN4. Freed memory.** A dereference of a freed block is `use after free: block N was freed`, and freeing a block
+  twice is `double free: block N was already freed`. Freeing a null pointer or a pointer that is not the start of
+  its block is a failure too.
+- **IN5. Leaks.** A test that ends with a block it never freed fails with `leaked N byte(s) allocated here`, at the
+  line of the `__alloc`. The check runs after the body finishes normally, so a test that failed earlier reports its
+  own failure.
+- **IN6. Skips.** A test that calls C, reads the environment, touches the file system, runs a thread or an atomic, or
+  uses a type the model does not cover cannot be checked, so it is skipped and the report names what it needed:
+  `SKIP reads the environment (reading an environment variable)`. A skip is not a pass and not a failure: the
+  summary counts it separately, and a run whose tests are all skipped exits 0.
+
 ## Doc tests
 
 The Burdin code blocks of a package's doc comments are tests too (issues #250, #650, #651, #652): every fenced
@@ -435,3 +544,9 @@ example is an ordinary program with no dispatcher to return an error.
 | Hidden `# ` setup lines are compiled and hidden (#652) | `crates/burdin_doc/src/markdown.rs` (unit tests), `tests/doc/geometry`, `tests/check_doc.py`, `tests/check_test_runner.py` |
 | Doc tests: `--doc`, one-file targets, a package without an importable root | `tests/runner/doctest_one.bd`, `tests/runner/doctests-bin/`, `tests/check_test_runner.py` |
 | The `burdin doc` fixture's example runs green | `tests/check_test_runner.py` (the `tests/doc/geometry` doc test) |
+| Snapshots: file and inline matches, a changed and a missing snapshot with a diff and a `.snap.new`, `--review`, `--bless` rewriting a file and an inline literal, and a stale snapshot (SN1-SN8, #616) | `tests/runner/snapshots/`, `tests/check_test_runner.py`, unit tests in `crates/burdin_driver/src/test_runner/snapshots.rs` |
+| An inline snapshot outside `assert_snapshot`, bad `assert_snapshot` arguments (E0172) | `tests/m10_test_runner/snapshot_invalid.bd` (`//@ test-compile-fail`) |
+| `--interpret`: an out-of-bounds store, use after free, double free, uninitialized read, misaligned store, and leak, each at its line (IN2-IN5) | `tests/interpret/bugs.bd`, `tests/check_interpret.py` |
+| `--interpret`: correct code, std containers, iterators, and closures pass; a C test and an environment test are skipped with the reason (IN1, IN6) | `tests/interpret/passing.bd`, `tests/interpret/calls_c.bd`, `tests/check_interpret.py` |
+| `--interpret`: ordinary test files give the verdicts a compiled run gives, std code included | `tests/m10_test_runner/all_pass.bd`, `assert_messages_typed.bd`, `helper_propagation.bd`, `tests/m24_stdlib/interpreted_stdlib.bd`, `tests/check_interpret.py` |
+| `--interpret` combined with `--fuzz-replay`, `--sanitize`, `--bless`, or another command (IN1) | `tests/check_interpret.py` |

@@ -150,6 +150,7 @@ pub(crate) fn command() -> Command {
             run(),
             test(),
             bench(),
+            fuzz(),
             check(),
             fmt(),
             lint(),
@@ -215,6 +216,14 @@ fn link_lib() -> Arg {
     option("link-lib", "name", "Link against a native library; may repeat").action(ArgAction::Append)
 }
 
+fn sanitize() -> Arg {
+    option(
+        "sanitize",
+        "list",
+        "Build with sanitizers: address, undefined, thread, leak, comma-separated (spec/sanitizers.md)",
+    )
+}
+
 /// The diagnostics options every compiling command takes, under their own heading.
 fn diagnostics() -> [Arg; 5] {
     [
@@ -257,6 +266,7 @@ fn build() -> Command {
                     "Compile the package's `test` blocks and their dispatcher instead of `main`, without running them",
                 ),
                 link_lib(),
+                sanitize(),
                 compile_jobs(),
                 comptime_steps(),
             ])
@@ -297,6 +307,7 @@ fn run() -> Command {
                 debug_info(),
                 locked(),
                 link_lib(),
+                sanitize(),
                 compile_jobs(),
                 comptime_steps(),
             ])
@@ -352,6 +363,11 @@ fn test() -> Command {
                     flag("failed", "Run only the tests that failed in the previous run"),
                     option("shard", "i/n", "Run the i-th of n deterministic slices of the selected tests"),
                     flag("doc", "Run only the doc tests: the Burdin code blocks of doc comments"),
+                    flag("fuzz-replay", "Also run each fuzz target on every input saved under fuzz/artifacts/<name>/"),
+                    flag(
+                        "interpret",
+                        "Run the tests in the interpreter, with strict memory checks, instead of compiling them",
+                    ),
                 ]
                 .map(|arg| arg.help_heading(SELECTION)),
             )
@@ -369,15 +385,63 @@ fn test() -> Command {
             ])
             .args(
                 [
+                    flag("bless", "Accept every new or changed snapshot, rewriting files and inline snapshots"),
+                    flag("review", "Show each new or changed snapshot and ask whether to accept it"),
+                ]
+                .map(|arg| arg.help_heading("Snapshot Options")),
+            )
+            .args(
+                [
                     release("Build the tests with optimizations"),
                     debug_info(),
                     locked(),
+                    sanitize(),
                     jobs("Run at most n tests at once, and compile on at most n threads (default: the number of CPUs)"),
                     comptime_steps(),
                 ]
                 .map(|arg| arg.help_heading(COMPILATION)),
             )
             .after_help("The behavior is spec/test-runner.md.\n\n".to_string() + ENVIRONMENT),
+    )
+}
+
+fn fuzz() -> Command {
+    with_diagnostics(
+        Command::new("fuzz")
+            .about("Build a `fuzz` target with libFuzzer and AddressSanitizer, and fuzz it")
+            .override_usage("burdin fuzz <file.bd | package directory> <name> [OPTIONS] [-- <libFuzzer options>...]")
+            .arg(target().required(true))
+            .arg(Arg::new("name").value_name("name").required(true).help("The fuzz target to run"))
+            .args([
+                option("max-time", "seconds", "Stop after this many seconds without a crash (default: no limit)"),
+                option(
+                    "minimize",
+                    "file",
+                    "Shrink this crashing input instead of fuzzing; the result is saved beside the crashes",
+                ),
+                Arg::new("libfuzzer-args")
+                    .value_name("libFuzzer options")
+                    .num_args(0..)
+                    .last(true)
+                    .help("Options passed to libFuzzer, such as -jobs=4 or -dict=file"),
+            ])
+            .args(
+                [
+                    release("Build the target with optimizations"),
+                    debug_info(),
+                    locked(),
+                    compile_jobs(),
+                    comptime_steps(),
+                ]
+                .map(|arg| arg.help_heading(COMPILATION)),
+            )
+            .after_help(
+                "The corpus is fuzz/corpus/<name>/ and crashes are saved to fuzz/artifacts/<name>/, next to the \
+                 package's burdin.toml (or the file). `burdin test --fuzz-replay` runs the saved crashes. Linux and \
+                 macOS only. The behavior is spec/fuzz.md.\n\n"
+                    .to_string()
+                    + ENVIRONMENT,
+            ),
     )
 }
 

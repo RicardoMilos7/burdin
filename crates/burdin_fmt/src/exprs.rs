@@ -406,6 +406,12 @@ impl Fmt<'_> {
             | TokenKind::True
             | TokenKind::False
             | TokenKind::SelfValue => Ok(Ex::plain(self.tok_doc())),
+            // An inline snapshot, `@"..."`: the marker is written against its literal, which keeps its text.
+            TokenKind::At if matches!(self.nth(1), TokenKind::Str(_)) => {
+                let at = self.tok_doc();
+                let literal = self.tok_doc();
+                Ok(Ex::plain(concat(vec![at, literal])))
+            }
             TokenKind::SelfType => {
                 let name = self.tok_doc();
                 if self.at_struct_literal(r) {

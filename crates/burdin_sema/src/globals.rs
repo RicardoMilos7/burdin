@@ -256,6 +256,11 @@ pub(crate) struct Globals {
     pub(crate) test_assert: Option<FuncId>,
     pub(crate) test_assert_eq: Option<usize>,
     pub(crate) test_assert_ne: Option<usize>,
+    /// `assert_snapshot` and the two helpers a call is routed to, by `display:` (`spec/test-runner.md`, "Snapshot
+    /// tests"). Present in every build: outside `burdin test` a snapshot is formatted and not recorded.
+    pub(crate) snapshot_gen: Option<usize>,
+    pub(crate) snapshot_debug_gen: Option<usize>,
+    pub(crate) snapshot_display_gen: Option<usize>,
     /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10-ERR11).
     pub(crate) io_error_kind_ty: Option<Ty>,
     pub(crate) parse_int_error_ty: Option<Ty>,

@@ -109,6 +109,9 @@ pub(crate) struct Codegen<'ctx, 'a> {
     program: &'a Program,
     sources: &'a SourceMap,
     release: bool,
+    /// `--sanitize=undefined`: integer overflow panics in every profile, and every `CPtr` dereference checks that
+    /// the pointer is not null and is aligned for its pointee (`spec/sanitizers.md`, SAN4).
+    pub(crate) undefined_checks: bool,
     builder: Builder<'ctx>,
     /// Positioned at the end of the current function's `entry` block, for stack slots.
     entry_builder: Builder<'ctx>,
@@ -208,7 +211,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let platform = tir::ioerror::platform(windows, darwin);
         // The checking allocator is a `burdin test` build's (`spec/allocators.md`, AL9): a bench build measures the
         // plain C heap, so its numbers are not the allocator's bookkeeping.
-        let checking = program.main.is_none() && program.benches.is_empty();
+        let checking = program.main.is_none() && program.benches.is_empty() && program.fuzz_target.is_none();
         let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, checking)?;
         Ok(Codegen {
             cx,
@@ -216,6 +219,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             program,
             sources,
             release,
+            undefined_checks: false,
             builder: cx.create_builder(),
             entry_builder: cx.create_builder(),
             usize_ty,

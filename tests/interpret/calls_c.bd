@@ -1,0 +1,22 @@
+// A test that needs C or the operating system cannot run in the interpreter, so `burdin test --interpret` skips it
+// with the reason instead of failing (spec/test-runner.md, IN6).
+
+extern "C" {
+    fn getpid(): i32
+}
+
+test "asks C for the process id" {
+    let pid = unsafe { getpid() }
+    assert(pid > 0)
+}
+
+test "reads the environment" {
+    let _home = env.get("PATH")
+    assert(true)
+}
+
+test "runs here" {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    assert_eq(xs.len(), 1)?
+}

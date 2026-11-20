@@ -84,6 +84,9 @@ impl Sema<'_> {
             self.globals.debug_assert_fn = func(&self.globals, "debug_assert");
             self.globals.debug_assert_eq_gen = generic(&self.globals, "debug_assert_eq");
             self.globals.debug_assert_ne_gen = generic(&self.globals, "debug_assert_ne");
+            self.globals.snapshot_gen = generic(&self.globals, "assert_snapshot");
+            self.globals.snapshot_debug_gen = generic(&self.globals, "__snapshot_debug");
+            self.globals.snapshot_display_gen = generic(&self.globals, "__snapshot_display");
             if self.mode == crate::EntryMode::Test {
                 self.globals.test_assert = func(&self.globals, "__test_assert");
                 self.globals.test_assert_eq = generic(&self.globals, "__test_assert_eq");

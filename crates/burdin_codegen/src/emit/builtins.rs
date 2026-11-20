@@ -1,5 +1,6 @@
 //! Built-in functions and the methods of the primitive types.
 
+use super::place::is_place;
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
 use burdin_tir::{self as tir, AssertKind, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
@@ -1542,6 +1543,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if m == Method::Hash || m == Method::HashFrom {
             let recv_ty = args[0].ty.clone();
             let v = self.expr_mode(&args[0], Mode::Use)?;
+            // `hash` borrows its receiver: one that is not a place is a temporary of the statement (DR5).
+            if !is_place(&args[0]) {
+                self.add_temp_value(v, &recv_ty)?;
+            }
             let start = if m == Method::HashFrom {
                 let state = self.expr_mode(&args[1], Mode::Use)?;
                 self.need_int(state, &Ty::Int(burdin_tir::IntTy::U64))

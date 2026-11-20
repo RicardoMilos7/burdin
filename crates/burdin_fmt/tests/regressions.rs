@@ -65,3 +65,22 @@ fn doc_blocks_in_unusual_runs_keep_their_text() {
     assert!(out.contains("/// not closed"));
     assert!(out.contains("/// let   x"), "{out}");
 }
+
+#[test]
+fn an_inline_snapshot_keeps_its_marker_against_the_literal() {
+    // `@"..."` is the inline snapshot of `assert_snapshot` (spec/test-runner.md, SN4); a block-form literal keeps
+    // its text when the call is reflowed.
+    let out = format("test \"t\" {\n    assert_snapshot(x, @ \"[]\")\n}\n");
+    assert!(out.contains("assert_snapshot(x, @\"[]\")"), "{out}");
+    let block = "test \"t\" {\n    assert_snapshot(a_long_value_name, display: true, @r#\"\n        one\n        two\n        \"#)\n}\n";
+    let out = format(block);
+    assert!(out.contains("@r#\"\n        one\n        two\n        \"#"), "{out}");
+}
+
+#[test]
+fn a_fuzz_target_keeps_its_signature_and_body() {
+    // `fuzz name(data: [u8]) { ... }` is an item of its own (`spec/fuzz.md`, FZ1), not a call of a function named
+    // `fuzz`.
+    let out = format("fuzz parse( data : [u8] ){\nlet n=data.len()\n}\nfn main() {}\n");
+    assert_eq!(out, "fuzz parse(data: [u8]) {\n    let n = data.len()\n}\nfn main() {}\n");
+}

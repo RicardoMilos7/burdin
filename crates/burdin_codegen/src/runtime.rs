@@ -435,14 +435,147 @@ pub(crate) fn define_main<'ctx>(
     Ok(())
 }
 
+/// Defines libFuzzer's two entry points for a `burdin fuzz` build (`spec/fuzz.md`, FZ3): `LLVMFuzzerInitialize`,
+/// which prepares the process the way `main` does for a program (the arguments, binary-safe output, the
+/// standard-output flush, and the stack guard), and `LLVMFuzzerTestOneInput(data, size)`, which calls the target
+/// with the input as a `[u8]` and returns 0. libFuzzer's own `main` drives them; a panic in the target ends the
+/// process, and libFuzzer saves the input that caused it.
+pub(crate) fn define_fuzz_entry<'ctx>(
+    cx: &'ctx Context,
+    module: &Module<'ctx>,
+    target: FunctionValue<'ctx>,
+    usize_ty: IntType<'ctx>,
+    windows: bool,
+) -> GenResult<()> {
+    let i32_ty = cx.i32_type();
+    let ptr_ty = cx.ptr_type(AddressSpace::default());
+    let init =
+        module.add_function("LLVMFuzzerInitialize", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false), None);
+    let b = cx.create_builder();
+    b.position_at_end(cx.append_basic_block(init, "entry"));
+    let argc_ptr = init.get_nth_param(0).expect("argc").into_pointer_value();
+    let argv_ptr = init.get_nth_param(1).expect("argv").into_pointer_value();
+    let argc = b.build_load(i32_ty, argc_ptr, "argc").map_err(llvm_err)?.into_int_value();
+    let argv = b.build_load(ptr_ty, argv_ptr, "argv").map_err(llvm_err)?.into_pointer_value();
+    prepare_process(&b, module, argc, argv, windows)?;
+    b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+
+    let one =
+        module.add_function("LLVMFuzzerTestOneInput", i32_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false), None);
+    b.position_at_end(cx.append_basic_block(one, "entry"));
+    let data = one.get_nth_param(0).expect("data").into_pointer_value();
+    let size = one.get_nth_param(1).expect("size").into_int_value();
+    call_with_bytes(cx, &b, target, data, size, usize_ty)?;
+    b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+    Ok(())
+}
+
+/// Calls a fuzz target, whose one parameter is a read-only `[u8]` passed by address, with `size` bytes at `data`.
+fn call_with_bytes<'ctx>(
+    cx: &'ctx Context,
+    b: &Builder<'ctx>,
+    target: FunctionValue<'ctx>,
+    data: PointerValue<'ctx>,
+    size: IntValue<'ctx>,
+    usize_ty: IntType<'ctx>,
+) -> GenResult<()> {
+    let ptr_ty = cx.ptr_type(AddressSpace::default());
+    let slice_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into()], false);
+    let slot = b.build_alloca(slice_ty, "data").map_err(llvm_err)?;
+    let mut value = slice_ty.get_undef();
+    value = b.build_insert_value(value, data, 0, "").map_err(llvm_err)?.into_struct_value();
+    value = b.build_insert_value(value, size, 1, "").map_err(llvm_err)?.into_struct_value();
+    b.build_store(slot, value).map_err(llvm_err)?;
+    b.build_call(target, &[slot.into()], "").map_err(llvm_err)?;
+    Ok(())
+}
+
+/// Reads the whole file at the C string `path` into a fresh `malloc` buffer, for a fuzz replay (`spec/fuzz.md`,
+/// FZ6), and returns the buffer and its length. A file that cannot be opened makes `f` return 4.
+fn read_input_file<'ctx>(
+    cx: &'ctx Context,
+    b: &Builder<'ctx>,
+    module: &Module<'ctx>,
+    f: FunctionValue<'ctx>,
+    path: PointerValue<'ctx>,
+    usize_ty: IntType<'ctx>,
+    windows: bool,
+) -> GenResult<(PointerValue<'ctx>, IntValue<'ctx>)> {
+    let i32_ty = cx.i32_type();
+    let ptr_ty = cx.ptr_type(AddressSpace::default());
+    // C's `long` is 32 bits on Windows and 64 bits elsewhere; an input is far smaller than either limit.
+    let long_ty = if windows { i32_ty } else { cx.i64_type() };
+    let fopen = libc(module, "fopen", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+    let fseek = libc(module, "fseek", i32_ty.fn_type(&[ptr_ty.into(), long_ty.into(), i32_ty.into()], false));
+    let ftell = libc(module, "ftell", long_ty.fn_type(&[ptr_ty.into()], false));
+    let fread = libc(
+        module,
+        "fread",
+        usize_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into(), ptr_ty.into()], false),
+    );
+    let fclose = libc(module, "fclose", i32_ty.fn_type(&[ptr_ty.into()], false));
+    let malloc = libc(module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+    let mode = b.build_global_string_ptr("rb", "fuzz.mode").map_err(llvm_err)?.as_pointer_value();
+    let file = b
+        .build_call(fopen, &[path.into(), mode.into()], "file")
+        .map_err(llvm_err)?
+        .try_as_basic_value()
+        .basic()
+        .expect("fopen returns a pointer")
+        .into_pointer_value();
+    let missing = b.build_is_null(file, "missing").map_err(llvm_err)?;
+    let fail = cx.append_basic_block(f, "input.missing");
+    let read = cx.append_basic_block(f, "input.read");
+    b.build_conditional_branch(missing, fail, read).map_err(llvm_err)?;
+    b.position_at_end(fail);
+    b.build_return(Some(&i32_ty.const_int(4, false))).map_err(llvm_err)?;
+    b.position_at_end(read);
+    const SEEK_SET: u64 = 0;
+    const SEEK_END: u64 = 2;
+    let to_end = [file.into(), long_ty.const_zero().into(), i32_ty.const_int(SEEK_END, false).into()];
+    b.build_call(fseek, &to_end, "").map_err(llvm_err)?;
+    let end = b
+        .build_call(ftell, &[file.into()], "end")
+        .map_err(llvm_err)?
+        .try_as_basic_value()
+        .basic()
+        .expect("ftell returns a long")
+        .into_int_value();
+    let rewind = [file.into(), long_ty.const_zero().into(), i32_ty.const_int(SEEK_SET, false).into()];
+    b.build_call(fseek, &rewind, "").map_err(llvm_err)?;
+    let len = b.build_int_s_extend_or_bit_cast(end, usize_ty, "len").map_err(llvm_err)?;
+    // One spare byte, so an empty input still gets a real allocation.
+    let size = b.build_int_add(len, usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+    let buffer = b
+        .build_call(malloc, &[size.into()], "buffer")
+        .map_err(llvm_err)?
+        .try_as_basic_value()
+        .basic()
+        .expect("malloc returns a pointer")
+        .into_pointer_value();
+    let got = b
+        .build_call(fread, &[buffer.into(), usize_ty.const_int(1, false).into(), len.into(), file.into()], "got")
+        .map_err(llvm_err)?
+        .try_as_basic_value()
+        .basic()
+        .expect("fread returns a count")
+        .into_int_value();
+    b.build_call(fclose, &[file.into()], "").map_err(llvm_err)?;
+    Ok((buffer, got))
+}
+
 /// Defines the process entry point of a `burdin test` binary. The driver starts it once per test with the test's
 /// index as the only argument; this selects that test, calls it, and returns 0 when it passed and 1 when an
 /// `assert` failed. Running one test per process is what makes a panic abort only the running test. A missing or
-/// unknown index returns 2 or 3, which the driver reports as an error of its own.
+/// unknown index returns 2 or 3, which the driver reports as an error of its own. The indices after the tests are
+/// the fuzz targets, replayed on the file named by the second argument (`spec/fuzz.md`, FZ6): the target runs on
+/// the file's bytes and 0 is returned when it finishes; an unreadable file returns 4.
 pub(crate) fn define_test_main<'ctx>(
     cx: &'ctx Context,
     module: &Module<'ctx>,
     tests: &[FunctionValue<'ctx>],
+    fuzzes: &[FunctionValue<'ctx>],
+    usize_ty: IntType<'ctx>,
     leak_check: Option<FunctionValue<'ctx>>,
     windows: bool,
 ) -> GenResult<()> {
@@ -518,6 +651,47 @@ pub(crate) fn define_test_main<'ctx>(
         b.build_return(Some(&code)).map_err(llvm_err)?;
         b.position_at_end(fail);
         b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
+        b.position_at_end(next);
+    }
+    for (j, fuzz) in fuzzes.iter().enumerate() {
+        let i = tests.len() + j;
+        let case = cx.append_basic_block(f, &format!("fuzz.{j}"));
+        let next = cx.append_basic_block(f, &format!("fuzz.next.{j}"));
+        let is =
+            b.build_int_compare(IntPredicate::EQ, index, i32_ty.const_int(i as u64, false), "").map_err(llvm_err)?;
+        b.build_conditional_branch(is, case, next).map_err(llvm_err)?;
+        b.position_at_end(case);
+        let has_path =
+            b.build_int_compare(IntPredicate::SGT, argc, i32_ty.const_int(2, false), "has_path").map_err(llvm_err)?;
+        let read = cx.append_basic_block(f, &format!("fuzz.read.{j}"));
+        b.build_conditional_branch(has_path, read, missing).map_err(llvm_err)?;
+        b.position_at_end(read);
+        let slot =
+            unsafe { b.build_in_bounds_gep(ptr_ty, argv, &[i32_ty.const_int(2, false)], "path") }.map_err(llvm_err)?;
+        let path = b.build_load(ptr_ty, slot, "path").map_err(llvm_err)?.into_pointer_value();
+        let (data, size) = read_input_file(cx, &b, module, f, path, usize_ty, windows)?;
+        call_with_bytes(cx, &b, *fuzz, data, size, usize_ty)?;
+        let free = libc(module, "free", cx.void_type().fn_type(&[ptr_ty.into()], false));
+        b.build_call(free, &[data.into()], "").map_err(llvm_err)?;
+        // Like a passing test, a replay that finishes is checked for leaked allocations (AL9).
+        let code = match leak_check {
+            Some(check) => {
+                let leaked = b
+                    .build_call(check, &[], "leaked")
+                    .map_err(llvm_err)?
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("the leak check returns an int")
+                    .into_int_value();
+                let nonzero =
+                    b.build_int_compare(IntPredicate::NE, leaked, i32_ty.const_zero(), "").map_err(llvm_err)?;
+                b.build_select(nonzero, i32_ty.const_int(1, false), i32_ty.const_zero(), "code")
+                    .map_err(llvm_err)?
+                    .into_int_value()
+            }
+            None => i32_ty.const_zero(),
+        };
+        b.build_return(Some(&code)).map_err(llvm_err)?;
         b.position_at_end(next);
     }
     b.build_return(Some(&i32_ty.const_int(3, false))).map_err(llvm_err)?;
@@ -904,11 +1078,23 @@ fn prepare_main<'ctx>(
     f: FunctionValue<'ctx>,
     windows: bool,
 ) -> GenResult<()> {
+    let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
+    let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
+    prepare_process(b, module, argc, argv, windows)
+}
+
+/// What every entry point does before Burdin code runs: records the arguments, makes output binary-safe on
+/// Windows, chooses the output buffering, registers the flush at exit, and installs the stack guard.
+fn prepare_process<'ctx>(
+    b: &Builder<'ctx>,
+    module: &Module<'ctx>,
+    argc: IntValue<'ctx>,
+    argv: PointerValue<'ctx>,
+    windows: bool,
+) -> GenResult<()> {
     let cx = b.get_insert_block().expect("positioned").get_context();
     let i32_ty = cx.i32_type();
     let ptr_ty = cx.ptr_type(AddressSpace::default());
-    let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
-    let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
     if let Some(global) = module.get_global("burdin_rt_argc") {
         b.build_store(global.as_pointer_value(), argc).map_err(llvm_err)?;
     }

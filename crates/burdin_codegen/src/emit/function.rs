@@ -98,6 +98,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         match program.main {
             Some(main) => crate::runtime::define_main(self.cx, self.module, self.functions[main.0], self.windows)?,
+            // A `burdin fuzz` build: libFuzzer supplies `main` and calls the target once per input
+            // (`spec/fuzz.md`, FZ3).
+            None if program.fuzz_target.is_some() => {
+                let target = &program.fuzzes[program.fuzz_target.expect("checked")];
+                crate::runtime::define_fuzz_entry(
+                    self.cx,
+                    self.module,
+                    self.functions[target.func.0],
+                    self.usize_ty,
+                    self.windows,
+                )?
+            }
             // A bench build: the entry point selects one bench by its index and runs the measurement harness
             // (`spec/bench.md`, BN4).
             None if !program.benches.is_empty() => {
@@ -107,7 +119,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A test build: the entry point dispatches to one `test` block by its index on the command line.
             None => {
                 let tests: Vec<_> = program.tests.iter().map(|t| self.functions[t.func.0]).collect();
-                crate::runtime::define_test_main(self.cx, self.module, &tests, self.rt.leak_check, self.windows)?
+                let fuzzes: Vec<_> = program.fuzzes.iter().map(|z| self.functions[z.func.0]).collect();
+                crate::runtime::define_test_main(
+                    self.cx,
+                    self.module,
+                    &tests,
+                    &fuzzes,
+                    self.usize_ty,
+                    self.rt.leak_check,
+                    self.windows,
+                )?
             }
         }
         // Last, when every body exists: the frame table the panic backtrace reads with `-g`

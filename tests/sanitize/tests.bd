@@ -1,0 +1,27 @@
+// `burdin test --sanitize=address` instruments the test binary (spec/sanitizers.md): the first test is clean, and
+// the second writes past the end of a C allocation, which only the sanitizer notices.
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn write_at(index: usize): i32 {
+    unsafe {
+        let raw = malloc(16)
+        let p = raw as CPtr<i32>
+        *(p + index) = 7
+        let value = *(p + index)
+        free(raw)
+        value
+    }
+}
+
+test "writes inside the allocation" {
+    assert_eq(write_at(3), 7)?
+}
+
+test "writes past the end" {
+    assert_eq(write_at(4), 7)?
+}
+
+fn main() {}

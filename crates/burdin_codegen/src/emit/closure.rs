@@ -258,6 +258,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let mode = if kind == FnKind::FnOnce { Mode::Move } else { Mode::Use };
         let callee_v = self.expr_mode(callee, mode)?;
+        // An `Fn` or `FnMut` closure that is not a place (`make(4)(4)`) is borrowed by the call and owned by no
+        // one, so it is a temporary of the statement and its capture record is freed at the end (DR5).
+        if kind != FnKind::FnOnce && !super::place::is_place(callee) {
+            self.add_temp_value(callee_v, &callee.ty)?;
+        }
         let callee_v = self.need(callee_v, &callee.ty).into_struct_value();
         self.call_closure_value(callee_v, &callee.ty, kind, args)
     }

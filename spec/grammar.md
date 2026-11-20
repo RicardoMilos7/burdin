@@ -40,7 +40,8 @@ immediately after a `.` in a member position, where it is a member name: that is
 `impl` now that both are keywords.
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
-by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1),
+by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1), `fuzz` (item start, followed
+by a name and a parameter list; [`fuzz.md`](fuzz.md), FZ1),
 `requires` (after an interface name), `repr` (after a struct
 name), `from` (after an error variant's payload), `pub` (immediately before `use`), `select` (an expression start,
 followed by `{` on the same line, `channels.md` CH6), `default` (the head of a `select` arm), and `Fn`/`FnMut`/`FnOnce` (a
@@ -103,7 +104,7 @@ foo()
 ```
 File          = { Item } ;
 
-Item          = TestItem | BenchItem | UseItem | ImplBlock | ComptimeAssert
+Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock | ComptimeAssert
               | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | DeriveItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
@@ -170,6 +171,10 @@ TestAttr      = IDENT [ "(" ( INT | STRING ) ")" ] ;   (* ignore, timeout(ms), s
 
 (* `bench.md`, BN1. Only `burdin bench` declares and checks these; every other build strips them. *)
 BenchItem     = "bench" STRING Block ;
+
+(* `fuzz.md`, FZ1. Only `burdin fuzz` and `burdin test` declare these; every other build strips them. The signature
+   is fixed by the checker: one read-only `[u8]` parameter and no result (E0173). *)
+FuzzItem      = "fuzz" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
 
 Sep           = "," | NL ;
 ```
@@ -347,9 +352,11 @@ Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the
 
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
-              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" | "continue" ;
+              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" | "continue"
+              | InlineSnapshot ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
+InlineSnapshot = "@" STRING ;                           (* no placeholders; only `assert_snapshot`'s second argument, E0172 (test-runner.md, SN4) *)
 ClosureExpr   = "|" [ ClosureParam { "," ClosureParam } [ "," ] ] "|" [ ":" Type ] Expr
               | "||" [ ":" Type ] Expr ;                 (* zero parameters *)
 ClosureParam  = IDENT [ ":" Type ] ;                     (* no convention; the callee owns each argument *)

@@ -289,6 +289,8 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
         run_build_scripts: true,
         locked: false,
         jobs: jobs_or_default(args.jobs),
+        sanitize: Default::default(),
+        fuzz_target: None,
     };
     let built = match compile(&target, &dir.path, Some(&exe), &options) {
         Ok(built) => built,

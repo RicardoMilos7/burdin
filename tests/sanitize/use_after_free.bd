@@ -1,0 +1,17 @@
+// A C allocation read after `free` (spec/sanitizers.md): `--sanitize=address` reports a heap use after free.
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn main() {
+    let mut seen: i64 = 0
+    unsafe {
+        let raw = malloc(8)
+        let p = raw as CPtr<i64>
+        *p = 41
+        free(raw)
+        seen = *p
+    }
+    println("finished {seen}")
+}

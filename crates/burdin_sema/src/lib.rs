@@ -83,6 +83,8 @@ pub enum EntryMode {
     Test,
     /// The `bench` items of the entry package (`burdin bench`).
     Bench,
+    /// The `fuzz` targets of the entry package (`burdin fuzz`, `spec/fuzz.md`).
+    Fuzz,
 }
 
 impl EntryMode {
