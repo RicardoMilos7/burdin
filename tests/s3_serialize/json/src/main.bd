@@ -1,0 +1,124 @@
+//@ run
+//> {"name":"edge","servers":[{"host":"a.example","port":80,"tls":false},{"host":"b.example","port":443,"tls":true}],"protocol":{"Both":[80,443]},"backup":null,"weights":{"a":1},"note":"é"}
+//> edge 2 é
+//> both 80 443
+//> no backup
+//> {
+//>   "host": "a",
+//>   "port": 1,
+//>   "tls": true
+//> }
+//> missing field 'servers'
+//> line 1, column 10: expected a string at name
+//> unknown variant 'Https2' of Protocol at protocol
+//> line 2, column 1: trailing comma
+//> line 1, column 13: duplicate field 'name'
+//> line 1, column 11: invalid escape at name
+//> {"Value":null}
+//> {"Pair":[1,{"One":2}]}
+//> pair 1 2
+
+// The `json` official package (issue #255; spec/serialization.md). The data model is the framework's; this file pins
+// how JSON writes and reads it: objects and arrays, `null` for `Option.None` and the payload for `Some`, externally
+// tagged variants, and errors that name their line and column without an input ever panicking. The last two lines
+// are a variant whose payload is an `Option`, and one whose payload is another enum: the reader keeps one enum
+// state per open enum, so a payload may nest.
+
+use json
+
+struct Server: Serialize, Deserialize, Debug {
+    host: String,
+    port: u16,
+    tls: bool,
+}
+
+enum Protocol: Serialize, Deserialize, Debug {
+    Http,
+    Https(u16),
+    Both(u16, u16),
+}
+
+struct Config: Serialize, Deserialize, Debug {
+    name: String,
+    servers: List<Server>,
+    protocol: Protocol,
+    backup: Option<Server>,
+    weights: Map<String, i32>,
+    note: char,
+}
+
+enum Inner: Serialize, Deserialize, Debug {
+    Unit,
+    One(i32),
+}
+
+enum Outer: Serialize, Deserialize, Debug {
+    Value(Option<i32>),
+    Pair(Option<i32>, Inner),
+}
+
+fn main() {
+    let mut servers = List<Server>.new()
+    servers.push(Server { host: "a.example".to_string(), port: 80, tls: false })
+    servers.push(Server { host: "b.example".to_string(), port: 443, tls: true })
+    let mut weights = Map<String, i32>.new()
+    weights.insert("a".to_string(), 1)
+    let value = Config {
+        name: "edge".to_string(),
+        servers,
+        protocol: Protocol.Both(80, 443),
+        backup: None,
+        weights,
+        note: 'é',
+    }
+    let text = json.to_string(value).unwrap()
+    println(text)
+
+    let read: Result<Config, DeError> = json.from_str(text.as_str())
+    let back = read.unwrap()
+    println("{} {} {}", back.name, back.servers.len(), back.note)
+    match back.protocol {
+        Protocol.Both(first, second) => println("both {first} {second}"),
+        Protocol.Http => println("http"),
+        Protocol.Https(_port) => println("https"),
+    }
+    match back.backup {
+        Some(server) => println("backup {}", server.port),
+        None => println("no backup"),
+    }
+
+    let small = Server { host: "a".to_string(), port: 1, tls: true }
+    print(json.to_string_pretty(small).unwrap())
+
+    let missing: Result<Config, DeError> = json.from_str("{{\"name\": \"edge\"}}")
+    println(missing.unwrap_err().to_string())
+    let wrong: Result<Config, DeError> = json.from_str("{{\"name\": 3}}")
+    println(wrong.unwrap_err().to_string())
+    let variant: Result<Config, DeError> = json.from_str(
+        "{{\"name\": \"a\", \"servers\": [], \"protocol\": \"Https2\", \"backup\": null, \"weights\": {{}}, \"note\": \"x\"}}",
+    )
+    println(variant.unwrap_err().to_string())
+    let comma: Result<Config, DeError> = json.from_str("{{\"name\": \"a\",\n}}")
+    println(comma.unwrap_err().to_string())
+    let duplicate: Result<Config, DeError> = json.from_str("{{\"name\":\"a\",\"name\":\"b\"}}")
+    println(duplicate.unwrap_err().to_string())
+    let escape: Result<Config, DeError> = json.from_str("{{\"name\": \"\\q\"}}")
+    println(escape.unwrap_err().to_string())
+
+    let nested = json.to_string(Outer.Value(None)).unwrap()
+    println(nested)
+    let both = json.to_string(Outer.Pair(Some(1), Inner.One(2))).unwrap()
+    println(both)
+    let read: Result<Outer, DeError> = json.from_str(both.as_str())
+    match read {
+        Ok(Outer.Pair(value, inner)) => match value {
+            Some(n) => match inner {
+                Inner.One(m) => println("pair {} {}", n, m),
+                Inner.Unit => println("pair unit"),
+            }
+            None => println("pair none"),
+        }
+        Ok(_) => println("unexpected variant"),
+        Err(e) => println(e.to_string()),
+    }
+}

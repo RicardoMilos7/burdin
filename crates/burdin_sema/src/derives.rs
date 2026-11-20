@@ -8,7 +8,8 @@ use burdin_syntax::ast;
 use burdin_tir::{self as tir, Ty};
 
 /// The derives the compiler implements itself. A `derive` declaration cannot take one of these names.
-pub(crate) const BUILTIN_DERIVES: [&str; 7] = ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug"];
+pub(crate) const BUILTIN_DERIVES: [&str; 9] =
+    ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug", "Serialize", "Deserialize"];
 
 /// The built-in derive a name in a declaration's `: A, B` list stands for, if it is one.
 pub(crate) fn builtin_derive(t: &ast::Type) -> Option<&str> {
@@ -34,6 +35,8 @@ pub(crate) fn parse_derives(list: &[ast::Type]) -> tir::Derives {
             "Ord" => &mut d.ord,
             "Hash" => &mut d.hash,
             "Default" => &mut d.default,
+            "Serialize" => &mut d.serialize,
+            "Deserialize" => &mut d.deserialize,
             _ => &mut d.debug,
         };
         *flag = true;
@@ -108,6 +111,10 @@ pub(crate) fn check_derives(
             }
         }
     }
+    // `Serialize`/`Deserialize` are not here on purpose: their field requirement (every field implements the
+    // interface) is the next phase (spec/serialization.md, SER12). The generated body calls the per-shape helpers
+    // directly, so it is correct for the types a type can hold today, including a concrete `i32` field that has no
+    // `Serialize` impl yet.
     type Requirement = (bool, &'static str, fn(&Globals, &Ty) -> bool);
     let requirements: [Requirement; 6] = [
         (derives.clone, "Clone", Globals::is_clone),

@@ -1,0 +1,100 @@
+//@ run
+
+// A hand-written enum impl: externally tagged variants, one unit, one newtype, one two-field variant
+// (spec/serialization.md, SER1, SER5, SER8, SER13).
+
+enum Shape: Debug {
+    Circle(f64)
+    Rect(f64, f64)
+    Empty
+}
+
+Shape: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        match self {
+            Shape.Circle(radius) => {
+                s.begin_variant("Shape", "Circle", 0, 1)?
+                serialize_f64(mut s, radius)?
+                s.end_variant(1)
+            }
+            Shape.Rect(width, height) => {
+                s.begin_variant("Shape", "Rect", 1, 2)?
+                serialize_f64(mut s, width)?
+                serialize_f64(mut s, height)?
+                s.end_variant(2)
+            }
+            Shape.Empty => {
+                s.begin_variant("Shape", "Empty", 2, 0)?
+                s.end_variant(0)
+            }
+        }
+    }
+}
+
+Shape: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Shape, DeError> {
+        d.begin_enum("Shape")?
+        let name = d.variant_name()?
+        if name.as_str() == "Circle" {
+            d.begin_variant_payload(1)?
+            d.variant_payload_field(0)?
+            let radius = match deserialize_f64(mut d) {
+                Ok(value) => value,
+                Err(e) => return Err(e.variant("Circle")),
+            }
+            d.end_variant_payload(1)?
+            Ok(Shape.Circle(radius))
+        } else if name.as_str() == "Rect" {
+            d.begin_variant_payload(2)?
+            d.variant_payload_field(0)?
+            let width = match deserialize_f64(mut d) {
+                Ok(value) => value,
+                Err(e) => return Err(e.variant("Rect")),
+            }
+            d.variant_payload_field(1)?
+            let height = match deserialize_f64(mut d) {
+                Ok(value) => value,
+                Err(e) => return Err(e.variant("Rect")),
+            }
+            d.end_variant_payload(2)?
+            Ok(Shape.Rect(width, height))
+        } else if name.as_str() == "Empty" {
+            d.begin_variant_payload(0)?
+            d.end_variant_payload(0)?
+            Ok(Shape.Empty)
+        } else {
+            let failure = unknown_variant("Shape", name.as_str())
+            Err(failure.variant(name.as_str()))
+        }
+    }
+}
+
+fn main() {
+    let circle = Shape.Circle(1.5)
+    let circle_text = to_text(circle).unwrap()
+    println(circle_text)
+    let circle_read: Result<Shape, DeError> = from_text(circle_text)
+    let circle_back = circle_read.unwrap()
+    println("{:?}", circle_back)
+
+    let rect = Shape.Rect(1.0, 2.5)
+    let rect_text = to_text(rect).unwrap()
+    println(rect_text)
+    let rect_read: Result<Shape, DeError> = from_text(rect_text)
+    let rect_back = rect_read.unwrap()
+    println("{:?}", rect_back)
+
+    let empty = Shape.Empty
+    let empty_text = to_text(empty).unwrap()
+    println(empty_text)
+    let empty_read: Result<Shape, DeError> = from_text(empty_text)
+    let empty_back = empty_read.unwrap()
+    println("{:?}", empty_back)
+}
+
+//> Shape.Circle(1.5)
+//> Circle(1.5)
+//> Shape.Rect(1, 2.5)
+//> Rect(1.0, 2.5)
+//> Shape.Empty
+//> Empty

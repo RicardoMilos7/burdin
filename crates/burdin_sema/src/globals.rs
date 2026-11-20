@@ -106,6 +106,8 @@ pub(crate) struct PackageInfo {
     pub(crate) deps: HashMap<String, usize>,
     /// The module other packages reach as `use <package>` (the package's `src/<name>.bd` or `src/lib.bd`).
     pub(crate) root_module: Option<usize>,
+    /// The official packages this package does not declare (`spec/packages.md`, PKG18).
+    pub(crate) official: Vec<String>,
 }
 
 /// One `extern "C"` function. Its parameters are always passed by value.

@@ -490,7 +490,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), member type arguments (`x.downcast<T>()`), `any`/`impl` types, `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, `...` in an `extern` signature, interpolated and raw strings, and the format-specifier grammar |
 | Memory rules | `spec/memory-rules.md` | Moves, `Drop`, drop order and flags, and `Heap` (milestone 5); conventions, exclusivity, references, views, and return origins (milestone 6); the one implicit conversion (IC1), iteration (IT1-IT3), the stored-view lifetime RT5 (E0123), the extended Unsafe rule US, and the settled place and temporary rules (issue #21). All stage 0 memory rules are implemented |
-| Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default`/`Debug` behavior, including the FNV-1a values (issue #39) |
+| Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default`/`Debug`/`Serialize`/`Deserialize` behavior, including the FNV-1a values (issue #39) |
 | Formatting | `spec/format.md`, `std/src/fmt.bd`, `crates/burdin_syntax/src/derive.rs`, `crates/burdin_sema/src/fncx/format.rs` | Milestone 14 (issue #109). Interpolated literals, `Display`/`Debug`, the specifiers, `format` and the generalized output functions, all checked at compile time and lowered to `Formatter` calls; a derived `Debug` generates an impl block as Burdin source. The tests are `tests/m14_format/` |
 | Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
 | Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, Error>`, error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
@@ -1291,6 +1291,63 @@ commands, checksum tampering, and every failure leaving both files unchanged), `
 
 What is left: a registry and version requirements, `burdin update`, git packages in a subdirectory of their
 repository, `--offline`, and doc tests reading the documented package's lockfile (each example resolves its own).
+
+### Official packages (groundwork for the serialization framework)
+
+The formats (`json`, `toml`, `csv`, `yaml`, `xml`) and later libraries (`http`, `crypto`) will be official packages in the
+top-level `packages/` folder, while the `Serialize`/`Deserialize` core and the derives go in `std`. This session built only
+the mechanism, in `spec/packages.md` (PKG15-PKG18): `name = true` is a third `DepSource` (`Official`) in
+`crates/burdin_query/src/package.rs`, which also holds the lookup (`official_roots`, `official_dir`: `BURDIN_PACKAGES`, then
+`<exe dir>/../packages`, `<exe dir>/packages`, and in a debug build the repository's `packages/`); `burdin_pkg`'s `Walker`
+hashes the package like a git checkout and records `source = "official"` in `burdin.lock` (`LockedPackage::official`), but
+a changed checksum is a lockfile difference, not a corrupt checkout, because a newer compiler brings newer files. The
+sema `Package` has an `official` list so an unresolved `use json` can say how to declare it. The first real package is
+`packages/json` (issue #255); `tests/packages/official` still holds the `mark`/`shout` fixtures that the package tests
+use instead of the real ones. Decisions to review: the installers put `packages/` in the
+install directory itself (`~/.local/bin/packages`), not beside it, and refuse a `packages/` folder that is not Burdin's; a
+release build embeds no build path (that is why the repository fallback is debug-only), so a `--release` build from a
+checkout needs `BURDIN_PACKAGES` (or `target/release/packages`) for tests that use the real packages; scripts' inline
+manifests do not take `name = true` yet.
+
+### The serialization core (issues #297, #299, #300)
+
+`spec/serialization.md` (SER1-SER16) settles the data model, the two sides, the error path, the views story, and the
+derives; `std/src/serialize.bd` implements it in Burdin and is embedded like the other std modules (41 sources in
+`crates/burdin_query/src/package.rs`). The twelve shapes a format sees are unit, bool, signed and unsigned integers
+with their width, float with its precision, char, string, bytes, sequence, map (string keys in v1), struct, and enum
+variant (payload positional, externally tagged). `Serializer` has a method per shape plus begin/field/end for the
+containers; `Deserializer` adds `has_next_*` loops, and `variant_payload_field(i)` because payload readers need an
+explicit separator step. `DeError { message, path }` prepends path segments (`field`, `index`, `key`, `variant`), so an
+error reads `line 1, column 47: expected a number at config.servers[2].port`. The test format (`to_text`/`from_text`)
+is the format the conformance tests use. The six hand-written tests in `tests/s3_serialize/` (including `tuple_hand`)
+write their impls on top of the public per-shape helpers; the four `derive_*` tests use the built-in derives (issue
+#298). Every writer helper takes the serializer first and the value second; every reader helper takes only the
+deserializer, so a hand-written impl annotates the call's `Result` (`let read: Result<List<Leaf>, DeError> =
+deserialize_list(mut d)`) because the checker does not yet infer a type argument through `?` (SER16).
+
+`struct T: Serialize, Deserialize` is implemented: the flags are in `tir::Derives`, `BUILTIN_DERIVES`/`parse_derives`
+know the names, and `expand_derives` generates the impl blocks. The scalars and bytes call their helpers, a user type
+calls its own impl, and the built-in containers are written out recursively because their helpers require the element
+type to implement the interface; the fields' requirement is not checked yet. The generated format parameter is
+`__S`/`__D`, avoiding the method-shadows-impl-parameter scoping bug.
+
+What is left of the framework, in order: the compiler-provided impls for the primitives and the built-in containers
+(`List`, `Map`, `Option`, `Result`, tuples, arrays), specified in SER14, the derive's field requirement, and the
+switch of the derived container paths back to the SER14 helpers (SER12). An impl
+block cannot be written for a built-in type (so the compiler must provide those impls, in the place `Display`/`Debug`
+are provided), and a method's generic parameter currently shadows an impl parameter of the same name (so a hand-written
+generic impl must not name its format parameter `D`; fixing the scoping is a separate compiler change).
+v1 produces owned values: a struct field cannot be a view, so `deserialize_str` returns `String`.
+
+The first format package is done: `packages/json` (issue #255, `packages/json/README.md`) implements `Serializer` and
+`Deserializer` and surfaces `to_string`, `to_string_pretty`, and `from_str`. It settles the JSON-specific decisions:
+`Option` is `null`/transparent, enums are externally tagged with a positional payload (`{"Name": value}` for one,
+`{"Name": [values]}` for several, the name alone for none), bytes are an array of numbers, non-finite floats are
+errors, and a negative zero is written `-0.0` because the display form `-.0` is not a JSON number. Syntax errors carry
+a line and a column (scalar values, so a column is not a byte offset), duplicate object names are rejected, and
+reading never panics on any byte sequence. The goldens are `tests/json/*/*.expected`, the black-box check is
+`tests/check_json.py`, and `tests/s3_serialize/json` is the conformance case. The remaining formats (toml #256, csv
+#257, yaml #258, xml #259) follow the same shape.
 
 ## Decisions already made (do not reopen without a reason)
 

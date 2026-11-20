@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Official packages (`spec/packages.md`, PKG15-PKG18): `name = true` in `[dependencies]` declares a package that ships with
+  the compiler, from the new top-level `packages/` folder (empty for now; `packages/README.md` explains it). `burdin add
+  <name>` writes the line when `<name>` is an official package; `name = false` and an unknown official name are errors that
+  say what to do. The lockfile records such a package with `source = "official"` and the checksum of its files, a build
+  writes it when there is none, and `--locked` fails when an official package is not the one the lockfile pinned. A `use`
+  of an official package the manifest does not declare keeps E0002 and gains a help line. The compiler finds the folder
+  through `BURDIN_PACKAGES`, `<exe dir>/../packages`, `<exe dir>/packages`, and (debug builds) the repository it was built
+  from; the release archive carries `packages/` beside `burdin`, and `install.sh` and `install.ps1` install it beside the
+  compiler. `tests/check_packages.py` and `tests/check_release.py` check it against the fixtures in `tests/packages/`.
 - The `burdin` help is now cargo-style and built with clap (`crates/burdin_driver/src/cli.rs`): `burdin` or
   `burdin --help` lists the commands with a one-line summary each, and `burdin <command> --help` or
   `burdin help <command>` prints that command's usage, arguments, grouped options, and notes. A mistyped command gets
@@ -19,6 +28,39 @@ close-out checklist in `AGENTS.md`).
 - `install.ps1` adds the install directory to the user's `PATH` (`HKCU\Environment`, once; a second run changes nothing),
   so new terminals find `burdin`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
   `~/.config/fish/config.fish`, once; other shells get a hint. `BURDIN_NO_MODIFY_PATH` or `-NoModifyPath` skips both.
+
+### Serialization framework core (issues #297, #299, #300)
+
+- `std.serialize` (`std/src/serialize.bd`) declares the data model (`Serializer`/`Deserializer`), the user-facing
+  `Serialize`/`Deserialize` interfaces, `DeError` with its path and the `field`/`index`/`key`/`variant` operations, the
+  per-shape helper functions, and a small human-readable test format (`TextSerializer`, `TextDeserializer`, `to_text`,
+  `from_text`). `spec/serialization.md` is the design (SER1-SER16); map keys are `String` and v1 produces owned values.
+- `struct T: Serialize, Deserialize` (and an enum) is a built-in derive (issue #298): `expand_derives` generates the
+  two impl blocks, `std`'s scalars through their helpers, the built-in container shapes written out recursively
+  because their helpers need the primitive impls that are still to come. A generic type gets one bound per type
+  parameter, and the generated format parameter is `__S`/`__D` so it never shadows the type's own. The fields'
+  requirement is not checked yet (`spec/serialization.md`, SER12).
+- The compiler-provided impls for primitives and built-in containers, and the derive's field requirement, are the
+  next phase; until then a hand-written impl and the derived scalars call the helpers. The format packages are
+  separate official packages; `json` is the first one (below), and toml, csv, yaml, and xml follow.
+- `tests/s3_serialize/` covers the scalars (including the non-finite floats), nested sequences and maps, a hand-written
+  enum, the field/index/key/variant error paths, the derived struct, enum, generic type, and errors, and the tuple
+  helpers end to end. Every writer helper takes the serializer first and the value second, and every tuple reader
+  consumes the separators between its parts and reports a short sequence as `expected N elements in a tuple`.
+
+### The `json` official package (issue #255)
+
+- `packages/json` is the first official package: `json.to_string`, `json.to_string_pretty`, and `json.from_str` over
+  the framework's data model. `Writer` implements `Serializer` and `Parser` implements `Deserializer`; both are public
+  so a hand-written impl can drive them. `Option` is `null`/the value itself, variants are externally tagged (`"Dot"`,
+  `{"Circle": 1.5}`, `{"Rect": [1.5, 2.5]}`), and bytes are an array of numbers.
+- Reading reports a line and a 1-based column for a syntax error, adds the framework's path as the error unwinds
+  (`servers[0].port`, `["key"]`), rejects duplicate object names, decodes `\uXXXX` and surrogate pairs, and never
+  panics on malformed text. Writing rejects a non-finite float instead of writing invalid JSON, and writes a negative
+  zero as `-0.0` (the display form `-.0` is not a JSON number).
+- `tests/json/` holds the fixtures (`roundtrip`, `pretty`, and one malformed document per file under `bad`) with
+  their `.expected` goldens; `tests/check_json.py` runs them and checks `burdin add json`, the official pin in
+  `burdin.lock`, and `--locked` against a changed package. `tests/s3_serialize/json` is the conformance case.
 
 ### Derived interfaces after the type's name (issue #825)
 

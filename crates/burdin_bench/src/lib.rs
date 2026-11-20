@@ -175,6 +175,7 @@ pub fn check(generated: &Generated) -> (Program, Diagnostics) {
         is_root: true,
         deps: Vec::new(),
         root_module: Some(0),
+        official: Vec::new(),
         modules: vec![burdin_sema::Module { file: generated.file, path: Vec::new(), ast: &generated.ast }],
     }];
     let mut diags = Diagnostics::default();

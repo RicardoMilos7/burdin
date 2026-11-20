@@ -70,12 +70,11 @@ impl Sema<'_> {
 
     fn resolve_use(&mut self, module: usize, u: &ast::UseDecl, diags: &mut Diagnostics) {
         let names: Vec<String> = u.path.iter().map(|i| i.name.clone()).collect();
-        let path_text = names.join(".");
 
         // `use path.{a, b}`: every listed name is an item of the module.
         if !u.items.is_empty() {
             let Some(target) = self.globals.resolve_module_path(module, &names) else {
-                diags.error(Code::UNKNOWN_NAME, u.span, format!("unknown module `{path_text}`"));
+                self.unknown_module(module, &names, u.span, diags);
                 return;
             };
             for item in &u.items {
@@ -114,7 +113,19 @@ impl Sema<'_> {
             );
             return;
         }
-        diags.error(Code::UNKNOWN_NAME, u.span, format!("unknown module `{path_text}`"));
+        self.unknown_module(module, &names, u.span, diags);
+    }
+
+    /// `unknown module`. When its first name is an official package the importing package does not declare, the
+    /// error says how to declare it (`spec/packages.md`, PKG18).
+    fn unknown_module(&self, module: usize, names: &[String], span: burdin_diag::Span, diags: &mut Diagnostics) {
+        let error = diags.error(Code::UNKNOWN_NAME, span, format!("unknown module `{}`", names.join(".")));
+        if self.globals.packages[self.globals.package_of(module)].official.contains(&names[0]) {
+            let name = &names[0];
+            error.help(format!(
+                "`{name}` is an official package: add `{name} = true` to [dependencies] or run `burdin add {name}`"
+            ));
+        }
     }
 
     /// Binds `name` to the module `target` in `module`. A `pub use` also makes the alias a public module of

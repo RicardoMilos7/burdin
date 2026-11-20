@@ -1,0 +1,52 @@
+//@ run
+
+// A derived enum impl writes each variant externally tagged with its declaration index: a unit variant, a tuple
+// variant, and a struct variant round-trip. A struct variant's payload is positional (spec/serialization.md, SER8,
+// SER12).
+
+enum Shape: Serialize, Deserialize {
+    Empty
+    Circle(f64)
+    Rect(f64, f64)
+    Named { id: i32, label: String }
+}
+
+fn show(shape: Shape) {
+    match shape {
+        Shape.Empty => println("empty"),
+        Shape.Circle(radius) => println("circle {radius}"),
+        Shape.Rect(width, height) => println("rect {width} {height}"),
+        Shape.Named { id, label } => println("named {id} {label}"),
+    }
+}
+
+fn main() {
+    let empty = to_text(Shape.Empty).unwrap()
+    println(empty)
+    let empty_read: Result<Shape, DeError> = from_text(empty)
+    show(empty_read.unwrap())
+
+    let circle = to_text(Shape.Circle(1.5)).unwrap()
+    println(circle)
+    let circle_read: Result<Shape, DeError> = from_text(circle)
+    show(circle_read.unwrap())
+
+    let rect = to_text(Shape.Rect(1.0, 2.5)).unwrap()
+    println(rect)
+    let rect_read: Result<Shape, DeError> = from_text(rect)
+    show(rect_read.unwrap())
+
+    let named = to_text(Shape.Named { id: 5, label: "n".to_string() }).unwrap()
+    println(named)
+    let named_read: Result<Shape, DeError> = from_text(named)
+    show(named_read.unwrap())
+}
+
+//> Shape.Empty
+//> empty
+//> Shape.Circle(1.5)
+//> circle 1.5
+//> Shape.Rect(1, 2.5)
+//> rect 1 2.5
+//> Shape.Named(5, "n")
+//> named 5 n

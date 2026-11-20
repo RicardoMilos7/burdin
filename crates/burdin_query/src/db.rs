@@ -132,6 +132,8 @@ struct LayoutPackage {
     dir: Option<PathBuf>,
     deps: Vec<(String, usize)>,
     root_module: Option<usize>,
+    /// The official packages the package does not declare, for the help on an unresolved `use` (PKG18).
+    official: Vec<String>,
     modules: Vec<LayoutModule>,
 }
 
@@ -215,6 +217,12 @@ impl Db {
             last: RevisionStats::default(),
             revision: 0,
         };
+        // Only a package on disk has a manifest to declare an official package in.
+        let official = if workspace.packages.iter().any(|package| package.dir.is_some()) {
+            package::official_names()
+        } else {
+            Vec::new()
+        };
         for package in &workspace.packages {
             let mut modules = Vec::new();
             for module in &package.modules {
@@ -232,6 +240,14 @@ impl Db {
                 dir: package.dir.clone(),
                 deps: package.deps.clone(),
                 root_module: package.root_module,
+                official: match package.dir {
+                    Some(_) => official
+                        .iter()
+                        .filter(|name| !package.deps.iter().any(|(dep, _)| dep == *name))
+                        .cloned()
+                        .collect(),
+                    None => Vec::new(),
+                },
                 modules,
             });
         }
@@ -526,6 +542,7 @@ impl Db {
                 is_root: id == self.layout.entry_package,
                 deps: package.deps.clone(),
                 root_module: package.root_module,
+                official: package.official.clone(),
                 modules: package
                     .modules
                     .iter()

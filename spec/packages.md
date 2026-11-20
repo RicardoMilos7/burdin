@@ -1,8 +1,9 @@
 # Packages: dependencies, `burdin.lock`, and `burdin add`
 
-A package's `burdin.toml` names its dependencies; a dependency comes from a directory (`path`) or from a git
-repository (`git`), and `burdin.lock` records the exact packages a build used, so the same checkout builds the same
-program tomorrow and on another machine. `burdin add` edits the manifest and the lockfile together (stage 3; issues
+A package's `burdin.toml` names its dependencies; a dependency comes from a directory (`path`), from a git
+repository (`git`), or from the official packages that ship with the compiler (`name = true`), and `burdin.lock`
+records the exact packages a build used, so the same checkout builds the same program tomorrow and on another
+machine. `burdin add` edits the manifest and the lockfile together (stage 3; issues
 #238 and #239). This file is the exact behavior, with a rule ID for each point and the tests that cover it.
 
 The pieces live where the behavior belongs: the manifest parser and the lockfile format in the package loader
@@ -15,18 +16,21 @@ tests of both crates run under `cargo test --workspace`.
 
 ## The decisions
 
-- **Two sources now, a registry later.** The design document says dependencies come "from a path or a git URL; a
+- **Three sources now, a registry later.** The design document says dependencies come "from a path or a git URL; a
   central registry is a later possibility". A `version` with no `path` or `git` is an error that says there is no
-  registry yet (PKG2, PKG11), so the syntax is free for one.
+  registry yet (PKG2, PKG11), so the syntax is free for one. The third source is the official packages (PKG15): the
+  formats and other libraries that live in this repository's `packages/` folder and ship with the compiler, so
+  their version is the compiler's version and `json = true` needs no registry and no network.
 - **Git is run, not linked.** Resolution runs the `git` executable, as cargo can. No new Rust dependency, and every
   URL form and credential helper git understands works.
 - **The lockfile pins commits and hashes files.** A commit id already names a tree, but a checkout in the cache is
   just files on disk; the SHA-256 checksum proves they are still the files that commit had (PKG7). A path package
   is part of the same checkout as the entry package, so it is not hashed: hashing it would make every edit a stale
-  lockfile.
+  lockfile. An official package is hashed too, because its files belong to the compiler, not to the checkout: a
+  different compiler brings different files, and the lockfile says so (PKG17).
 - **A path-only graph needs no lockfile.** There is nothing to pin, so a build does not create one, which keeps the
-  example and test packages free of generated files. Once a lockfile exists (or `burdin add` writes one) it is kept
-  current (PKG6).
+  example and test packages free of generated files. A graph with a git or an official package has something to
+  pin, so a build writes one. Once a lockfile exists (or `burdin add` writes one) it is kept current (PKG6).
 - **Every build keeps the lockfile current; `--locked` turns that into a check.** Like cargo: a build rewrites a
   lockfile that no longer matches the manifests, and `--locked` (for CI) fails instead and says why (PKG8).
 
@@ -90,14 +94,15 @@ dependencies = []
 
 `version` is the package's `[package] version` and is left out when it has none; `dependencies` lists package names
 (not `use` names). A git package also records its `git` URL, the `branch`, `tag`, or `rev` the manifest asked for
-(none for the default branch), the full `commit`, and the `checksum`. Rendering is deterministic, so two lockfiles
+(none for the default branch), the full `commit`, and the `checksum`. An official package records
+`source = "official"` and the `checksum` (PKG17). Rendering is deterministic, so two lockfiles
 of one graph are the same text. Tests: `crates/burdin_query/src/lockfile.rs` (`render_is_the_documented_text`,
 `parse_reads_what_render_writes`), `tests/check_packages.py` (golden lockfiles).
 
 **PKG6. When the lockfile is written.** Before a package directory is loaded, `build`, `run`, `test`, `bench`,
 `check`, and every other command that compiles a package resolve its graph. The lockfile is written when it exists
-and no longer matches, or when there is none and the graph has a git package. A graph of path packages with no
-lockfile gets none; `burdin add` always writes one. A one-file target, a script, and the language server never write
+and no longer matches, or when there is none and the graph has a git or an official package. A graph of path
+packages with no lockfile gets none; `burdin add` always writes one. A one-file target, a script, and the language server never write
 a lockfile. Tests: `tests/check_packages.py`, `resolve.rs` (`a_path_graph_resolves_to_sorted_packages`).
 
 **PKG7. Pinning and the checksum.** A git dependency whose repository and reference the lockfile records builds
@@ -119,9 +124,10 @@ run the command without --locked to update burdin.lock
 ```
 
 The differences are a package missing from the lockfile, a package no longer in the graph, a changed version, a
-changed source (path or git, URL, or reference), a different commit, and changed dependencies. A git dependency the
+changed source (path, git with its URL and reference, or official), a different commit, an official package whose
+files are not the ones the lockfile pinned (PKG17), and changed dependencies. A git dependency the
 lockfile does not record fails before anything is fetched. Without a lockfile, `--locked` passes for a path-only
-graph (there is nothing to pin) and fails for one with a git package. Tests: `tests/check_packages.py`, `resolve.rs`
+graph (there is nothing to pin) and fails for one with a git or an official package. Tests: `tests/check_packages.py`, `resolve.rs`
 (`an_existing_lockfile_is_kept_current_and_locked_reports_why`, `differences_name_each_change`).
 
 **PKG9. The loader reads the lockfile.** The package loader finds a git dependency in the checkout of the commit the
@@ -139,36 +145,101 @@ does not know are ignored. Tests: `lockfile.rs` (`malformed_lockfiles_are_reject
 ```text
 burdin add [<name>] --path <dir> [--manifest-path <path>]
 burdin add [<name>] --git <url> [--branch <b> | --tag <t> | --rev <commit>] [--manifest-path <path>]
+burdin add <name> [--manifest-path <path>]
 ```
 
-**PKG11. The command line.** Exactly one of `--path` and `--git`; at most one of `--branch`, `--tag`, and `--rev`,
-and only with `--git`. `<name>` is the `use` name and defaults to the dependency's package name; it must be an
-identifier that is not a reserved word and not `std`. A bare name (`burdin add json`, `json@1.0`) is a usage error
-that says there is no package registry yet. `--manifest-path` names the `burdin.toml` to edit or its directory;
+**PKG11. The command line.** Exactly one of `--path` and `--git`, or, with neither, a `<name>` that is an official
+package (PKG15); at most one of `--branch`, `--tag`, and `--rev`, and only with `--git`. `<name>` is the `use` name
+and defaults to the dependency's package name; it must be an identifier that is not a reserved word and not `std`.
+A bare name that is not an official package (`burdin add json` when there is no official `json`, `json@1.0`) is a
+usage error that says there is no package registry yet, names the official packages (or says there are none), and
+asks for `--path` or `--git`. `--manifest-path` names the `burdin.toml` to edit or its directory;
 without it, the nearest `burdin.toml` at or above the working directory. Usage errors exit 2 and `--help` exits 0.
 Tests: `tests/check_packages.py`, `crates/burdin_driver/src/add.rs` unit tests.
 
 **PKG12. The manifest edit.** `--path` is relative to the working directory and is written relative to the
 manifest, with `/` separators: `greet = { path = "../greet" }`. `--git` writes the URL and the reference as given:
-`colors = { git = "<url>", tag = "v1" }`. The line goes after the last entry of `[dependencies]`, or the section is
+`colors = { git = "<url>", tag = "v1" }`. An official package writes `json = true`. The line goes after the last entry of `[dependencies]`, or the section is
 appended to the end of the file; a dependency of the same name has its line replaced in place. Every other line,
 comment, and blank line stays, and a file with `\r\n` line endings keeps them. Tests: `add.rs` unit tests,
 `tests/check_packages.py` (golden manifests).
 
 **PKG13. Resolution and the report.** The dependency is resolved (a git reference to a commit, which is checked
-out), it must be a package (a `burdin.toml` at its root), and the whole graph is then resolved against the new
+out; an official package to the compiler's directory for it), it must be a package (a `burdin.toml` at its root), and the whole graph is then resolved against the new
 manifest, keeping every commit the lockfile already pins except the added dependency's, which builds the commit
 just resolved (so adding a branch dependency again moves it to the branch's head). Then `burdin.toml` and `burdin.lock` are written and one
-line is printed: `Added dependency `greet` (path ../greet)`, or `Added dependency `colors` (git <url>, tag v1,
-commit 4f6c0a7e4f1f)`; `Replaced` when the name was already a dependency. Tests: `tests/check_packages.py`.
+line is printed: `Added dependency `greet` (path ../greet)`, `Added dependency `colors` (git <url>, tag v1,
+commit 4f6c0a7e4f1f)`, or `Added dependency `json` (official)`; `Replaced` when the name was already a dependency. Tests: `tests/check_packages.py`.
 
 **PKG14. A failed `add` changes nothing.** A missing path, a directory that is not a package, a reference the
 repository does not have, an invalid name, a package that would depend on itself, and any error resolving the graph
 exit 1 and leave `burdin.toml` and `burdin.lock` as they were. Tests: `tests/check_packages.py`.
 
+## Official packages
+
+The packages in this repository's `packages/` folder (formats such as `json` and `toml`, and later libraries) are
+official: each is an ordinary Burdin package with its own `burdin.toml` and `src/`, and they ship with the compiler
+(the release archive and the installers put the folder beside the executable, PKG16). Their version is the
+compiler's version.
+
+**PKG15. The official source.** `name = true` in `[dependencies]` (of any package, official or not) is the official
+package `name`; `name` is also how `use` reaches it. `name = false` is an error (`json = false` means nothing:
+remove the line). `name = true` for a name that is not an official package is an error that names the official
+packages the compiler has (or says it has none) and suggests `path` or `git`:
+
+```text
+error: burdin.toml: dependency `jsn = true`: it is not an official package; the official packages are: json, toml;
+for any other package give `{ path = "..." }` or `{ git = "..." }`
+```
+
+A script's inline manifest (`spec/scripts.md`, SC3) and `[rust.crates]` take only paths, so `true` is an error
+there. A version string alone stays reserved for a future registry (PKG2). Package names are unique in a graph
+(PKG1), so an official package and a path or git package of the same name cannot be used together. Tests: the
+loader's unit tests (`official_dependency_forms`), `tests/check_packages.py`.
+
+**PKG16. Where the official packages are.** The first of these that is a directory is the root; each of its
+subdirectories that has a `burdin.toml` is the official package of that name, and no later place is searched:
+
+1. the directory `BURDIN_PACKAGES`, when the variable is set (and then only that one, so a mistyped value finds no
+   packages instead of silently finding the installed ones);
+2. `packages/` beside the directory of the `burdin` executable (`<exe dir>/../packages`: the installed layout is
+   `bin/burdin` and `packages/`);
+3. `packages/` in the directory of the executable (`<exe dir>/packages`: an unpacked release archive);
+4. in a debug build of the compiler only, the `packages/` folder of the repository the compiler was built from
+   (a build from a checkout needs no setup; a release build embeds no build path, so releases stay reproducible).
+
+The loader and the resolver look the same way, so what resolves is what loads. An official dependency when there is
+no root is an error that lists the places looked in. Tests: the loader's unit tests
+(`official_roots_are_searched_in_order`), `tests/check_packages.py` (which sets `BURDIN_PACKAGES` to a fixture
+folder, so it does not depend on the real packages), `tests/check_release.py` (the archive and the installers).
+
+**PKG17. Pinning an official package.** An official package is a package of the lockfile like any other, with
+`source = "official"` instead of a `git` origin, and a `checksum`: the SHA-256 of its files computed as PKG7 does,
+from the compiler's directory for it. A graph with an official package has something to pin, so a build writes the
+lockfile when there is none (PKG6). The files are not immutable the way a checkout is (a newer compiler brings
+newer packages), so a checksum that differs is not an error in itself: it is a difference like a changed version.
+A build without `--locked` rewrites the lockfile; `--locked` fails and says that the official package is not the
+one `burdin.lock` pinned. Tests: `tests/check_packages.py` (golden lockfile and `--locked`), `lockfile.rs`
+(`render_is_the_documented_text`), `resolve.rs` (`an_official_package_is_pinned_by_its_files`).
+
+```toml
+[[package]]
+name = "json"
+version = "0.1.0"
+source = "official"
+checksum = "sha256:3d5f1c..."
+dependencies = []
+```
+
+**PKG18. The missing-dependency help.** A `use` of a name that resolves to nothing, when the name is an official
+package that the importing package does not declare, keeps its error (E0002, `unknown module `json``) and gains a
+help line: `` `json` is an official package: add `json = true` to [dependencies] or run `burdin add json` ``. A
+one-file target and a script have no manifest to add it to, so they get no such help. Tests:
+`tests/check_packages.py`, the checker's unit tests (`unknown_module_names_an_official_package`).
+
 ## Not yet
 
-- A package registry, version requirements, and `burdin update` (re-resolving one dependency without deleting the
+- Official packages in a script's inline manifest, a package registry, version requirements, and `burdin update` (re-resolving one dependency without deleting the
   lockfile). Moving a branch dependency forward today means `burdin add` with the same branch again, or removing
   the lockfile (which re-resolves every git dependency).
 - A git dependency whose package is in a subdirectory of the repository, and `--offline`.

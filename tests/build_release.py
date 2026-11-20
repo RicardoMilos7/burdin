@@ -15,7 +15,8 @@ Usage: tests/build_release.py [options]
   -h, --help              show this help
 
 The archive is `burdin-<version>-<target>.tar.gz`; its root directory is `burdin-<version>-<target>/` and holds the
-compiler, README.md, CHANGELOG.md, docs/error-codes.md, and docs/lints.md; a Windows archive also holds
+compiler, README.md, CHANGELOG.md, docs/error-codes.md, docs/lints.md, and packages/ (the official packages,
+which the compiler finds beside its own executable: spec/packages.md, PKG16); a Windows archive also holds
 LLVM-C.dll beside burdin.exe, because that build links LLVM as a shared library. Linux and macOS builds link LLVM
 statically (BURDIN_STATIC_LLVM=1, set by this script) and the script checks that the binary needs no LLVM shared
 library. BURDIN_STATIC_LLVM=1 in the environment on Windows links LLVM statically there too, with the static CRT, and
@@ -313,6 +314,11 @@ def package_binary(
             (ROOT / "docs" / "lints.md", stage / root / "docs" / "lints.md"),
         ):
             shutil.copyfile(source, destination)
+        # The official packages sit beside the compiler, where it looks for them (`<exe dir>/packages`). Build output
+        # and a stray .git directory are not part of a package; the archive sorts what is copied.
+        shutil.copytree(
+            ROOT / "packages", stage / root / "packages", ignore=shutil.ignore_patterns("target", ".git"), symlinks=False
+        )
         make_archive(stage, root, archive, epoch)
     finally:
         shutil.rmtree(stage, ignore_errors=True)

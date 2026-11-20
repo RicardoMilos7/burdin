@@ -196,7 +196,8 @@ Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_
   other parameter, and in a free function, only the conventions `mut`, `own`, and `comptime`. A `self` parameter is
   valid only first and only in a method, so it is never offered elsewhere.
 - **In the `: A, B` list after `struct Name` or `enum Name`** (and their generic parameters; issue #825), after the
-  `:` or a `,`, the seven derives the compiler knows (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`, `spec/derives.md`) and
+  `:` or a `,`, the nine derives the compiler knows (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`,
+  `Serialize`, `Deserialize`, `spec/derives.md`) and
   the `derive` declarations the file can name (its own, the imported ones, and the standard library's public ones),
   and nothing else. Directly after the type's name nothing is offered (the list's `:`, `repr(C)`, or the body comes
   next), and a `:` inside the generic parameters starts a bound, not the list. The name a `struct`, `enum`,

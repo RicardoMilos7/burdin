@@ -1,0 +1,62 @@
+//@ run
+//> [1, 2]
+//> 1 2
+//> expected 2 elements in a tuple
+
+// The tuple helpers write a tuple as a sequence and read the separators between its parts; a sequence that ends
+// before every part was read is the helper's error, not a syntax error of the format (spec/serialization.md, SER7,
+// SER14).
+//
+// The reader's annotation is on the call's result rather than on a value read with `?`: the checker infers a
+// function's type arguments from the expected type when the two spellings match exactly, and `T?` drops the
+// `Result` that the helper's signature has (SER16).
+
+struct Leaf: Copy, Clone, Debug {
+    v: i32
+}
+
+Leaf: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        serialize_i32(mut s, self.v)
+    }
+}
+
+Leaf: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Leaf, DeError> {
+        let v = deserialize_i32(mut d)?
+        Ok(Leaf { v })
+    }
+}
+
+struct Two: Debug {
+    pair: (Leaf, Leaf)
+}
+
+Two: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        serialize_tuple2(mut s, self.pair)
+    }
+}
+
+Two: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Two, DeError> {
+        let read: Result<(Leaf, Leaf), DeError> = deserialize_tuple2(mut d)
+        let pair = match read {
+            Ok(value) => value,
+            Err(e) => return Err(e),
+        }
+        Ok(Two { pair })
+    }
+}
+
+fn main() {
+    let value = Two { pair: (Leaf { v: 1 }, Leaf { v: 2 }) }
+    let text = to_text(value).unwrap()
+    println(text)
+    let read: Result<Two, DeError> = from_text(text)
+    let back = read.unwrap()
+    println("{} {}", back.pair.0.v, back.pair.1.v)
+
+    let short: Result<Two, DeError> = from_text("[1]")
+    println(short.unwrap_err().to_string())
+}

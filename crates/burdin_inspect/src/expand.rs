@@ -1041,7 +1041,8 @@ fn indent_block(text: &str, by: &str) -> String {
 }
 
 /// The derives that the compiler implements itself (`spec/derives.md`); they have no source form.
-const BUILTIN_DERIVES: [&str; 7] = ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug"];
+const BUILTIN_DERIVES: [&str; 9] =
+    ["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Debug", "Serialize", "Deserialize"];
 
 /// The `: A, B` list around the derive types spanning `lo..hi`, from its `:` to the end of the last type.
 fn clause_range(text: &str, lo: usize, hi: usize) -> Option<(usize, usize)> {

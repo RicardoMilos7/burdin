@@ -2201,11 +2201,50 @@ module that declares it `extern "C"`) can call it. The signature follows the sam
 `own` parameters, no generics, no `...`, no receiver, and only the C-ABI types above. A panic does not unwind across
 the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 
+## Serialization (issues #297, #298, #299, #300)
+
+`std.serialize` is the framework core; the exact data model, the format side, the error path, the derives, and the
+test format are in [`serialization.md`](serialization.md). This is the surface, and its names are in the prelude.
+The formats themselves are official packages (`spec/packages.md`, PKG15): `packages/json` is the first one, declared
+with `json = true` and used as `json.to_string`, `json.to_string_pretty`, and `json.from_str`
+([`packages/json/README.md`](../packages/json/README.md)).
+
+```
+interface Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError>
+}
+interface Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError>
+}
+
+// The format side: a format implements these two (SER4-SER5).
+interface Serializer { ... }        // the scalar writers, begin_seq/end_seq, begin_map/map_key/end_map,
+                                    // begin_struct/struct_field/end_struct, begin_variant/end_variant
+interface Deserializer { ... }      // the scalar readers, begin_seq/has_next_seq_element/end_seq,
+                                    // begin_map/has_next_map_entry/map_key/end_map,
+                                    // begin_struct/has_next_field/field_name/end_struct,
+                                    // begin_enum/variant_name/begin_variant_payload/end_variant_payload
+
+struct DeError { message: String, path: String }        // Display; field/index/key/variant; new/syntax
+fn to_text<T: Serialize>(value: T): Result<String, DeError>
+fn from_text<T: Deserialize>(text: str): Result<T, DeError>
+```
+
+`Serialize` and `Deserialize` are ordinary interfaces: a program implements them by hand, and `struct T: Serialize,
+Deserialize` is a built-in derive (SER12) that generates the standard representation. The per-shape helpers
+(`serialize_i32`, `deserialize_str`, `serialize_list`, ...) are public and are what a hand-written impl calls; the
+derived scalars call them too, while the derived containers are written out until the compiler-provided impls for the
+built-in types land (SER12, SER14). Map keys are `String` in v1. The test format is a small human-readable syntax
+(`Point { x: 1, y: 2 }`, `Shape.Circle(1.5)`, `[1, 2]`, `{ "k": 1 }`) with line-and-column errors.
+
+Tests: `s3_serialize/all_scalars`, `scalars`, `nested`, `enum_hand`, `error_path`, `derive_struct`, `derive_enum`,
+`derive_generic`, `derive_errors`.
+
 ## Interface coverage (issue #716)
 
 Which built-in interface each standard type implements. A cell is either `yes` or the condition on the type
-arguments; `no` means the type does not implement it. The columns are the seven derives (`derives.md`) plus `Display`
-and `Iterable`.
+arguments; `no` means the type does not implement it. The columns are the built-in derives (`derives.md`) that this
+table covers, plus `Display` and `Iterable`; `Serialize`/`Deserialize` are in their own section above.
 
 | Type | Copy | Clone | Eq | Ord | Hash | Default | Debug | Display | Iterable |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -3,7 +3,9 @@
 //! `resolve` walks the graph from the entry package: a path dependency is read where it is, and a git dependency is
 //! pinned to the commit `burdin.lock` already records for its repository and reference, or resolved now when the
 //! lockfile has none. Each git package is checked out once per commit and its files are hashed; a checksum that
-//! disagrees with the lockfile is an error, because the files are no longer the ones the lockfile pinned.
+//! disagrees with the lockfile is an error, because the files are no longer the ones the lockfile pinned. An
+//! official package is read from the compiler's `packages/` folder and hashed too, but its files belong to the
+//! compiler, so a different checksum is a difference between the lockfile and the graph, not a corrupt checkout.
 //!
 //! `sync` runs before a build: it compares the resolved graph with `burdin.lock` and writes the file when they
 //! differ, or reports the difference and fails under `--locked`.
@@ -20,9 +22,9 @@ use std::path::{Path, PathBuf};
 pub struct Resolution {
     /// What `burdin.lock` should say.
     pub lock: Lockfile,
-    /// Whether any package came from git: a graph of path packages alone has nothing to pin, so it needs no
-    /// lockfile until one exists (PKG6).
-    pub has_git: bool,
+    /// Whether any package came from git or is official: a graph of path packages alone has nothing to pin, so it
+    /// needs no lockfile until one exists (PKG6).
+    pub has_pinned: bool,
 }
 
 /// What `sync` did.
@@ -44,7 +46,7 @@ pub fn sync(dir: &Path, locked: bool) -> Result<Synced, String> {
     if existing.as_ref() == Some(&resolution.lock) {
         return Ok(Synced::UpToDate);
     }
-    if existing.is_none() && !resolution.has_git {
+    if existing.is_none() && !resolution.has_pinned {
         return Ok(Synced::NotNeeded);
     }
     if locked {
@@ -91,18 +93,27 @@ pub fn differences(old: Option<&Lockfile>, new: &Lockfile) -> Vec<String> {
                 show(&locked.version)
             ));
         }
-        match (&locked.git, &package.git) {
-            (Some(a), Some(b)) if a.url == b.url && a.reference == b.reference && a.commit != b.commit => reasons
-                .push(format!("`{}` resolves to commit {} but burdin.lock pins {}", package.name, b.commit, a.commit)),
-            (a, b) if a.as_ref().map(|g| (&g.url, &g.reference)) != b.as_ref().map(|g| (&g.url, &g.reference)) => {
-                reasons.push(format!(
-                    "`{}` comes from {} but burdin.lock records {}",
-                    package.name,
-                    describe_source(b.as_ref()),
-                    describe_source(a.as_ref())
-                ));
-            }
-            _ => {}
+        if source_of(locked) != source_of(package) {
+            reasons.push(format!(
+                "`{}` comes from {} but burdin.lock records {}",
+                package.name,
+                describe_source(package),
+                describe_source(locked)
+            ));
+        } else if let (Some(a), Some(b)) = (&locked.git, &package.git)
+            && a.commit != b.commit
+        {
+            reasons
+                .push(format!("`{}` resolves to commit {} but burdin.lock pins {}", package.name, b.commit, a.commit));
+        } else if package.official && locked.checksum != package.checksum {
+            let show = |checksum: &Option<String>| checksum.clone().unwrap_or_else(|| "none".to_string());
+            reasons.push(format!(
+                "`{}` is an official package whose files are not the ones burdin.lock pinned: checksum {} but \
+                 burdin.lock records {}",
+                package.name,
+                show(&package.checksum),
+                show(&locked.checksum)
+            ));
         }
         if locked.dependencies != package.dependencies {
             reasons.push(format!(
@@ -121,10 +132,44 @@ pub fn differences(old: Option<&Lockfile>, new: &Lockfile) -> Vec<String> {
     reasons
 }
 
-fn describe_source(git: Option<&GitSource>) -> String {
-    match git {
-        None => "a path".to_string(),
+/// What decides whether two lockfile entries come from the same place: the git repository and reference, and whether
+/// the package is official.
+fn source_of(package: &LockedPackage) -> (Option<(&str, &GitRef)>, bool) {
+    (package.git.as_ref().map(|git| (git.url.as_str(), &git.reference)), package.official)
+}
+
+fn describe_source(package: &LockedPackage) -> String {
+    match &package.git {
         Some(git) => format!("{} ({})", git.url, git.reference.describe()),
+        None if package.official => "the official packages".to_string(),
+        None => "a path".to_string(),
+    }
+}
+
+/// Where a visited package came from, with the checksum of the files a git or an official package was read from.
+#[derive(Clone, Debug)]
+enum Origin {
+    Path,
+    Git(GitSource, String),
+    Official(String),
+}
+
+impl Origin {
+    /// Whether two ways of reaching one directory are the same source.
+    fn same_source(&self, other: &Origin) -> bool {
+        match (self, other) {
+            (Origin::Path, Origin::Path) | (Origin::Official(_), Origin::Official(_)) => true,
+            (Origin::Git(a, _), Origin::Git(b, _)) => a.url == b.url && a.reference == b.reference,
+            _ => false,
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Origin::Path => "a path".to_string(),
+            Origin::Git(git, _) => format!("{} ({})", git.url, git.reference.describe()),
+            Origin::Official(_) => "the official packages".to_string(),
+        }
     }
 }
 
@@ -144,51 +189,44 @@ pub fn resolve(
         dirs: HashMap::new(),
         packages: BTreeMap::new(),
         git: HashMap::new(),
+        official: HashMap::new(),
         visiting: Vec::new(),
     };
     let dir = dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", dir.display()))?;
-    walker.visit(&dir, root_manifest, None)?;
-    let has_git = walker.packages.values().any(|p| p.git.is_some());
-    Ok(Resolution { lock: Lockfile { packages: walker.packages.into_values().collect() }, has_git })
+    walker.visit(&dir, root_manifest, Origin::Path)?;
+    let has_pinned = walker.packages.values().any(|p| p.git.is_some() || p.official);
+    Ok(Resolution { lock: Lockfile { packages: walker.packages.into_values().collect() }, has_pinned })
 }
 
 struct Walker<'a> {
     existing: Option<&'a Lockfile>,
     locked: bool,
-    /// The package name and git origin of each visited directory.
-    dirs: HashMap<PathBuf, (String, Option<GitSource>)>,
+    /// The package name and origin of each visited directory.
+    dirs: HashMap<PathBuf, (String, Origin)>,
     /// The directory each package name came from: names are unique in a graph.
     names: HashMap<String, PathBuf>,
     packages: BTreeMap<String, LockedPackage>,
     /// Each repository and reference resolved so far: the commit, its checkout, and the checksum of its files.
     git: HashMap<(String, GitRef), (String, PathBuf, String)>,
+    /// Each official package resolved so far: its directory and the checksum of its files.
+    official: HashMap<String, (PathBuf, String)>,
     /// The directories being visited, to report a cycle.
     visiting: Vec<PathBuf>,
 }
 
 impl Walker<'_> {
     /// Visits the package in `dir` (canonical) and its dependencies; returns its package name.
-    fn visit(
-        &mut self,
-        dir: &Path,
-        manifest_text: Option<&str>,
-        origin: Option<(GitSource, String)>,
-    ) -> Result<String, String> {
+    fn visit(&mut self, dir: &Path, manifest_text: Option<&str>, origin: Origin) -> Result<String, String> {
         if self.visiting.iter().any(|d| d == dir) {
             let mut chain: Vec<String> = self.visiting.iter().map(|p| source_path_text(p)).collect();
             chain.push(source_path_text(dir));
             return Err(format!("dependency cycle: {}", chain.join(" -> ")));
         }
         if let Some((name, seen_origin)) = self.dirs.get(dir) {
-            let same = match (seen_origin, &origin) {
-                (Some(a), Some((b, _))) => a.url == b.url && a.reference == b.reference,
-                (None, None) => true,
-                _ => false,
-            };
-            if !same {
-                let (a, b) = (describe_source(seen_origin.as_ref()), describe_source(origin.as_ref().map(|o| &o.0)));
+            if !seen_origin.same_source(&origin) {
+                let (a, b) = (seen_origin.describe(), origin.describe());
                 return Err(format!(
-                    "package `{name}` is required as both {a} and {b}, which are the same commit; name it one way"
+                    "package `{name}` is required as both {a} and {b}, which are the same files; name it one way"
                 ));
             }
             return Ok(name.clone());
@@ -207,7 +245,7 @@ impl Walker<'_> {
             ));
         }
         self.names.insert(manifest.name.clone(), dir.to_path_buf());
-        self.dirs.insert(dir.to_path_buf(), (manifest.name.clone(), origin.as_ref().map(|o| o.0.clone())));
+        self.dirs.insert(dir.to_path_buf(), (manifest.name.clone(), origin.clone()));
         self.visiting.push(dir.to_path_buf());
         let mut dependencies = Vec::new();
         let mut seen: Vec<&str> = Vec::new();
@@ -222,12 +260,18 @@ impl Walker<'_> {
                         .join(relative)
                         .canonicalize()
                         .map_err(|e| format!("`{}`: dependency `{key}`: {e}", manifest_path.display()))?;
-                    self.visit(&dep_dir, None, None)?
+                    self.visit(&dep_dir, None, Origin::Path)?
                 }
                 DepSource::Git { url, reference } => {
                     let (commit, dep_dir, checksum) = self.git_dependency(key, url, reference)?;
                     let source = GitSource { url: url.clone(), reference: reference.clone(), commit };
-                    self.visit(&dep_dir, None, Some((source, checksum)))?
+                    self.visit(&dep_dir, None, Origin::Git(source, checksum))?
+                }
+                DepSource::Official => {
+                    let (dep_dir, checksum) = self
+                        .official_dependency(key)
+                        .map_err(|e| format!("`{}`: dependency `{key} = true`: {e}", manifest_path.display()))?;
+                    self.visit(&dep_dir, None, Origin::Official(checksum))?
                 }
             };
             dependencies.push(name);
@@ -235,16 +279,29 @@ impl Walker<'_> {
         self.visiting.pop();
         dependencies.sort();
         dependencies.dedup();
-        let (git, checksum) = match origin {
-            Some((source, checksum)) => (Some(source), Some(checksum)),
-            None => (None, None),
+        let (git, official, checksum) = match origin {
+            Origin::Path => (None, false, None),
+            Origin::Git(source, checksum) => (Some(source), false, Some(checksum)),
+            Origin::Official(checksum) => (None, true, Some(checksum)),
         };
         let name = manifest.name.clone();
         self.packages.insert(
             name.clone(),
-            LockedPackage { name: name.clone(), version: manifest.version, git, checksum, dependencies },
+            LockedPackage { name: name.clone(), version: manifest.version, git, official, checksum, dependencies },
         );
         Ok(name)
+    }
+
+    /// The directory and checksum of the official package `name` (PKG15-PKG17).
+    fn official_dependency(&mut self, name: &str) -> Result<(PathBuf, String), String> {
+        if let Some(found) = self.official.get(name) {
+            return Ok(found.clone());
+        }
+        let dir = package::official_dir(name)?;
+        let dir = dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", source_path_text(&dir)))?;
+        let result = (dir.clone(), checksum(&dir)?);
+        self.official.insert(name.to_string(), result.clone());
+        Ok(result)
     }
 
     /// The commit, checkout, and checksum of a git dependency: the lockfile's commit when it records this repository
@@ -357,7 +414,8 @@ mod tests {
             let dir = self.0.join(name);
             fs::create_dir_all(dir.join("src")).unwrap();
             fs::write(dir.join("burdin.toml"), manifest).unwrap();
-            fs::write(dir.join("src").join(format!("{name}.bd")), "fn f() {}\n").unwrap();
+            let stem = name.rsplit('/').next().unwrap_or(name);
+            fs::write(dir.join("src").join(format!("{stem}.bd")), "fn f() {}\n").unwrap();
             dir
         }
     }
@@ -378,7 +436,7 @@ mod tests {
             "[package]\nname = \"app\"\nversion = \"1.0.0\"\n[dependencies]\nlib = \"../lib\"\nu = \"../util\"\n",
         );
         let resolution = resolve(&app, None, None, false).unwrap();
-        assert!(!resolution.has_git);
+        assert!(!resolution.has_pinned);
         let names: Vec<&str> = resolution.lock.packages.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["app", "lib", "util"]);
         assert_eq!(resolution.lock.packages[0].dependencies, ["lib", "util"]);
@@ -411,6 +469,7 @@ mod tests {
             name: name.into(),
             version: None,
             git: None,
+            official: false,
             checksum: None,
             dependencies: deps.iter().map(|d| d.to_string()).collect(),
         };
@@ -425,6 +484,81 @@ mod tests {
             ]
         );
         assert_eq!(differences(None, &new), ["there is no burdin.lock"]);
+
+        // A package that moves from a path to the official packages, and one whose official files changed.
+        let official = |name: &str, checksum: &str| LockedPackage {
+            official: true,
+            checksum: Some(checksum.to_string()),
+            ..package(name, &[])
+        };
+        let old = Lockfile { packages: vec![official("json", "sha256:aa"), package("text", &[])] };
+        let new = Lockfile { packages: vec![official("json", "sha256:bb"), official("text", "sha256:cc")] };
+        assert_eq!(
+            differences(Some(&old), &new),
+            [
+                "`json` is an official package whose files are not the ones burdin.lock pinned: checksum sha256:bb but \
+                 burdin.lock records sha256:aa",
+                "`text` comes from the official packages but burdin.lock records a path",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_official_package_is_pinned_by_its_files() {
+        let s = Scratch::new("official");
+        let json = s.package("official/json", "[package]\nname = \"json\"\nversion = \"0.1.0\"\n");
+        // An official package may need another one.
+        s.package("official/text", "[package]\nname = \"text\"\n");
+        fs::write(
+            json.join("burdin.toml"),
+            "[package]\nname = \"json\"\nversion = \"0.1.0\"\n[dependencies]\ntext = true\n",
+        )
+        .unwrap();
+        let app = s.package("app", "[package]\nname = \"app\"\n[dependencies]\njson = true\n");
+        // SAFETY: this is the only test of this crate that sets the variable, and it sets it once.
+        unsafe { std::env::set_var(package::PACKAGES_ENV, s.0.join("official")) };
+
+        let resolution = resolve(&app, None, None, false).unwrap();
+        assert!(resolution.has_pinned);
+        let json_entry = resolution.lock.package("json").unwrap();
+        assert!(json_entry.official && json_entry.git.is_none());
+        assert_eq!(
+            json_entry.checksum,
+            Some(checksum(&s.0.join("official").join("json").canonicalize().unwrap()).unwrap())
+        );
+        assert_eq!(json_entry.dependencies, ["text"]);
+        assert!(resolution.lock.package("text").unwrap().official);
+        assert!(!resolution.lock.package("app").unwrap().official);
+
+        // No lockfile and a pinned package: one is written, and then it is kept.
+        assert!(sync(&app, true).unwrap_err().contains("there is no burdin.lock"));
+        assert_eq!(sync(&app, false).unwrap(), Synced::Wrote);
+        assert_eq!(sync(&app, true).unwrap(), Synced::UpToDate);
+
+        // A different file in the official package is a difference, and `--locked` names it.
+        fs::write(s.0.join("official").join("text").join("src").join("text.bd"), "fn g() {}\n").unwrap();
+        let error = sync(&app, true).unwrap_err();
+        assert!(
+            error.contains("`text` is an official package whose files are not the ones burdin.lock pinned"),
+            "{error}"
+        );
+        assert_eq!(sync(&app, false).unwrap(), Synced::Wrote);
+        assert_eq!(sync(&app, true).unwrap(), Synced::UpToDate);
+
+        // An unknown official name says what the official packages are.
+        fs::write(app.join("burdin.toml"), "[package]\nname = \"app\"\n[dependencies]\nyaml = true\n").unwrap();
+        let error = resolve(&app, None, None, false).unwrap_err();
+        assert!(
+            error.contains("dependency `yaml = true`") && error.contains("the official packages are: json, text"),
+            "{error}"
+        );
+
+        // The same directory reached as an official package and as a path is refused.
+        let both = "[package]\nname = \"app\"\n[dependencies]\njson = true\nj = \"../official/json\"\n";
+        fs::write(app.join("burdin.toml"), both).unwrap();
+        assert!(resolve(&app, None, None, false).unwrap_err().contains("the official packages and a path"));
+        // SAFETY: as above.
+        unsafe { std::env::remove_var(package::PACKAGES_ENV) };
     }
 
     #[test]

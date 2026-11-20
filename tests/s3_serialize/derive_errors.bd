@@ -1,0 +1,45 @@
+//@ run
+
+// The derived reader reports the three field failures with their paths and an unknown variant
+// (spec/serialization.md, SER6, SER8, SER12).
+
+struct Server: Serialize, Deserialize {
+    host: String
+    port: u16
+}
+
+enum Shape: Serialize, Deserialize {
+    Circle(f64)
+    Empty
+}
+
+fn main() {
+    let missing: Result<Server, DeError> = from_text("Server {{ host: \"a\" }}")
+    match missing {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => println("{e}"),
+    }
+
+    let extra: Result<Server, DeError> = from_text("Server {{ host: \"a\", port: 1, extra: 2 }}")
+    match extra {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => println("{e}"),
+    }
+
+    let twice: Result<Server, DeError> = from_text("Server {{ host: \"a\", host: \"b\", port: 1 }}")
+    match twice {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => println("{e}"),
+    }
+
+    let variant: Result<Shape, DeError> = from_text("Shape.Square")
+    match variant {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => println("{e}"),
+    }
+}
+
+//> missing field 'port'
+//> unknown field 'extra' at extra
+//> duplicate field 'host' at host
+//> unknown variant 'Square' of Shape
