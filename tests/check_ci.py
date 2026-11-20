@@ -307,6 +307,10 @@ if "env -u LIB -u INCLUDE" not in windows:
 # Git for Windows ships a coreutils `link.exe`; rustc must be pointed at MSVC's linker explicitly.
 if "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" not in windows:
     add_problem("ci.yml: windows job: does not pin the MSVC linker (Git's link.exe can shadow it)")
+# The linker choice (issue #335): the Linux job installs lld, so the whole suite runs through the automatic fast
+# linker rather than only the simulated one in tests/check_linker.py.
+if not re.search(r"apt-get install[^\n]*\blld\b", jobs["linux"]):
+    add_problem("ci.yml: linux job: does not install lld, so the fast-linker path is only simulated")
 
 required_steps = [
     "tests/check_tests.py",
@@ -322,6 +326,7 @@ required_steps = [
     "tests/check_codegen_opt.py",
     "tests/check_build_flags.py",
     "tests/check_parallel.py",
+    "tests/check_linker.py",
     "tests/check_bindgen.py",
     "tests/check_rust_interop.py",
     "tests/check_diagnostics.py",
@@ -465,6 +470,15 @@ check_script(
     "tests/check_build_flags.py", "burdin --version", "--strip", "--lto", "--pgo-use", "147456"
 )
 check_script("tests/check_parallel.py", "BURDIN_JOBS", "unified_diff")
+check_script(
+    "tests/check_linker.py",
+    "BURDIN_LD",
+    "-fuse-ld=",
+    "ld.mold",
+    "ld.lld",
+    "platform",
+    "mold cannot read",
+)
 check_script(
     "tests/check_interpret.py",
     "bugs.bd",
@@ -639,6 +653,7 @@ scripts = [
     "tests/check_codegen_opt.py",
     "tests/check_build_flags.py",
     "tests/check_parallel.py",
+    "tests/check_linker.py",
     "tests/check_bindgen.py",
     "tests/check_rust_interop.py",
     "tests/check_release.py",
