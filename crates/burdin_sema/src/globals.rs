@@ -102,6 +102,7 @@ pub(crate) struct ExtensionInfo {
 pub(crate) struct PackageInfo {
     pub(crate) name: String,
     pub(crate) is_root: bool,
+    pub(crate) edition: crate::Edition,
     /// The packages this one may import from, by the name it uses for them.
     pub(crate) deps: HashMap<String, usize>,
     /// The module other packages reach as `use <package>` (the package's `src/<name>.bd` or `src/lib.bd`).

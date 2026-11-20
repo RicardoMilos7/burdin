@@ -1,0 +1,14 @@
+//@ compile-fail
+//@ suggest: E0113 machine-applicable: make `n` mutable
+
+// A `mut` argument taken from an immutable binding: the fix declares the binding `mut` (`spec/fix.md`, FX13).
+
+fn bump(mut n: i32) {
+    n = n + 1
+}
+
+fn main() {
+    let n = 1
+    bump(mut n) //~ E0113
+    println(n.to_string())
+}

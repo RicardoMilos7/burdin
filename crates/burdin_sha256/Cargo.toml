@@ -1,0 +1,9 @@
+[package]
+name = "burdin_sha256"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# SHA-256 (FIPS 180-4), shared by the package resolver (`burdin.lock` checksums) and the toolchain manager (release
+# checksums). No dependencies, so the toolchain proxy stays small.
+[dependencies]

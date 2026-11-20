@@ -1,0 +1,24 @@
+--- a/pkg/src/main.bd
++++ b/pkg/src/main.bd
+@@ -1,9 +1,10 @@
+ use util.{triple}
++use util.format_label
+ 
+ fn main() {
+-    let total = 1
++    let mut total = 1
+     total = 2
+     let count = triple(total)
+-    println(cuont.to_string())
++    println(count.to_string())
+     println(format_label())
+ }
+--- a/pkg/src/util.bd
++++ b/pkg/src/util.bd
+@@ -7,5 +7,5 @@
+ }
+ 
+ fn later(): i32 {
+-    unimplemented()
++    panic("not implemented")
+ }

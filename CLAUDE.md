@@ -43,7 +43,9 @@ not updated and may disagree with the repository.
    resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
    modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
    import rules, layout checks, wrappers, and `--export`; `spec/rust-interop.md` is Rust interop: rustdoc JSON, the C-ABI
-   shim, `[rust.crates]`, the pinned toolchain, and the layout checks; `spec/lint.md` is `burdin lint` (the `[lint]` table,
+   shim, `[rust.crates]`, the pinned toolchain, and the layout checks; `spec/fix.md` is the suggestion model, `burdin fix`, and editions;
+   `spec/refactor.md` is `burdin ssr` and the refactorings (`burdin refactor`, the language server's structural search
+   and extract/inline actions); `spec/lint.md` is `burdin lint` (the `[lint]` table,
    suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
    intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report;
    `spec/check.md` is `burdin check`, the type-check-only command (what it shares with a build, and `--tests`);
@@ -55,7 +57,8 @@ not updated and may disagree with the repository.
    the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests,
    `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, `spec/scripts.md` is
    single-file scripts, the shebang, the inline manifest, and the binary cache, `spec/packages.md` is path and git
-   dependencies, `burdin.lock`, `--locked`, and `burdin add`, and `spec/debug.md` is debugging: the
+   dependencies, `burdin.lock`, `--locked`, and `burdin add`, `spec/toolchain.md` is the toolchain manager: `burdin
+   toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter, and `spec/watch.md` is `burdin watch` and `--watch`: what is
    watched, the debounce, restarting `run`, and the changed-modules-first `test` run.
@@ -108,6 +111,9 @@ python3 tests/check_fuzz.py              check `burdin fuzz` and `burdin test --
 python3 tests/check_interpret.py         check `burdin test --interpret`: one fixture per strict-check class,
                                          and std code run in the interpreter
 python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
+python3 tests/check_fix.py               check `burdin fix`: suggestions, rounds, conflicts, the dirty tree, and `--migrate`
+python3 tests/check_ssr.py               check `burdin ssr`: patterns, type constraints, resolution, search, and skipped matches
+python3 tests/check_refactor.py          check `burdin refactor`: every refactoring and its refusal
 python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links, JSON, coverage, and the output rules
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_sanitizers.py        check `--sanitize`: one program per bug class under tests/sanitize/
@@ -117,6 +123,7 @@ python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules,
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
+python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
 python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
@@ -188,11 +195,20 @@ crates/
                             resolution, the checksum, and keeping `burdin.lock` current or `--locked` (`resolve.rs`),
                             `burdin add`'s manifest edit (`add.rs`), and SHA-256 (`sha256.rs`); it depends on
                             burdin_query and burdin_syntax, runs only `git`, and the driver is its only caller
+  burdin_toolchain/         the toolchain manager and the `burdin` proxy (spec/toolchain.md): names and versions
+                            (`version.rs`), the home, settings, and receipt (`home.rs`), releases, resumable verified
+                            downloads, and unpacking (`dist.rs`), installs and components (`install.rs`), selection and
+                            `burdin-toolchain.toml` (`select.rs`), the proxy (`proxy.rs`), the commands (`cli.rs`,
+                            `selfcmd.rs`); it links no compiler crate and no LLVM, only burdin_json and burdin_sha256
+  burdin_sha256/            SHA-256, shared by the package resolver and the toolchain manager
   burdin_json/              the JSON value, its parser, and the `Content-Length` framing: shared by the language
                             server and the debug adapter
   burdin_dap/               the debug adapter behind `burdin dap` (spec/debug.md, DBG11): the lldb-dap child
                             (`backend.rs`), the `target` build and formatter import (`launch.rs`), and the four
                             augmentations (`adapter.rs`); its `burdin-dap` binary is the same server without LLVM
+  burdin_refactor/          the refactoring engine behind `burdin ssr` and `burdin refactor` (spec/refactor.md):
+                            structural search and replace, extract, inline, change signature, and move item, over
+                            burdin_query; every result is checked before it is returned
   burdin_lsp/               the language server behind `burdin lsp` (spec/lsp.md): positions and URIs
                             (`text.rs`), one query database per package (`project.rs`),
                             the loop, lifecycle, cancellation, and progress (`server.rs`), and the features (`diagnostics.rs`,

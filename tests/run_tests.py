@@ -44,6 +44,7 @@ README.md at the repository root (`The driver contract`), and tests/check_docs.p
 from __future__ import annotations
 
 import difflib
+import json
 import os
 import re
 import shutil
@@ -497,7 +498,142 @@ def run_case_repeated(case: Case, burdin: str, release: bool, timeout: int, repe
     return result
 
 
+SUGGEST_DIRECTIVE_REGEX = re.compile(r"^(E[0-9]{4}|L[0-9]{4}) (machine-applicable|maybe-incorrect|has-placeholders|unspecified): (.+)$")
+JSON_APPLICABILITY = {
+    "machine": "machine-applicable",
+    "maybe-incorrect": "maybe-incorrect",
+    "has-placeholders": "has-placeholders",
+    "manual": "unspecified",
+}
+
+
+def json_diagnostics(output: bytes):
+    """The diagnostic objects of `--diagnostic-format=json` output, one per line; other lines are ignored."""
+    found = []
+    for line in output.split(b"\n"):
+        line = line.strip()
+        if not line.startswith(b"{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if obj.get("type") == "diagnostic":
+            found.append(obj)
+    return found
+
+
+def check_command(burdin: str, target: Path, kind: str):
+    """`burdin check` for the mode the test compiles in: a test-mode test checks its `test` items too."""
+    command = [burdin, "check", str(target)]
+    if kind == "test-compile-fail":
+        command.append("--tests")
+    return command
+
+
+def apply_suggestions(target: Path, copy: Path, suggestions) -> str:
+    """Applies the edits of `suggestions` to the copy of the test at `copy`. Returns an error, or an empty string."""
+    by_file = {}
+    for suggestion in suggestions:
+        for edit in suggestion["edits"]:
+            path = Path(edit["span"]["file"])
+            if not path.is_absolute():
+                path = (target if target.is_dir() else target.parent) / path
+                if not path.exists():
+                    path = Path(edit["span"]["file"]).resolve()
+            try:
+                relative = path.resolve().relative_to(target.resolve()) if target.is_dir() else Path(path.name)
+            except ValueError:
+                return f"a suggestion edits a file outside the test: {edit['span']['file']}"
+            by_file.setdefault(relative, []).append(
+                (edit["span"]["byte_start"], edit["span"]["byte_end"], edit["replacement"])
+            )
+    for relative, edits in by_file.items():
+        destination = copy / relative if target.is_dir() else copy
+        data = destination.read_bytes()
+        edits = sorted(set(edits))
+        out = bytearray()
+        cursor = 0
+        for lo, hi, replacement in edits:
+            if lo < cursor:
+                return f"two suggestions overlap in {relative} at byte {lo}"
+            out += data[cursor:lo] + replacement.encode("utf-8")
+            cursor = hi
+        out += data[cursor:]
+        destination.write_bytes(bytes(out))
+    return ""
+
+
+def test_suggestions(case: Case, burdin: str, timeout: int):
+    """The `//@ suggest:` directives (`spec/fix.md`, FX12): the test's diagnostics carry exactly these suggestions,
+    and the file with every one of them applied compiles, or reports exactly the `//@ fixed-error:` codes."""
+    wanted = []
+    for raw in directive_values(case.directives, b"suggest"):
+        match = SUGGEST_DIRECTIVE_REGEX.match(text(raw))
+        if not match:
+            return False, f"invalid suggest directive: {text(raw)}", ""
+        wanted.append(match.groups())
+    work = Path(tempfile.mkdtemp(prefix="burdin-suggest-"))
+    try:
+        command = check_command(burdin, case.target, case.kind) + ["--diagnostic-format=json"]
+        try:
+            proc = run_command(command, work, timeout, merge=True)
+        except subprocess.TimeoutExpired:
+            return False, f"timed out after {timeout}s", ""
+        found = []
+        suggestions = []
+        for diagnostic in json_diagnostics(proc.stdout):
+            for suggestion in diagnostic.get("suggestions", []):
+                applicability = JSON_APPLICABILITY.get(suggestion["applicability"], suggestion["applicability"])
+                found.append((diagnostic["code"], applicability, suggestion["message"]))
+                suggestions.append(suggestion)
+        if sorted(found) != sorted(wanted):
+            expected_lines = sorted(" ".join(w) for w in wanted)
+            actual_lines = sorted(" ".join(f) for f in found)
+            diff = "\n".join(
+                difflib.unified_diff(expected_lines, actual_lines, fromfile="expected", tofile="actual", lineterm="")
+            )
+            return False, "suggestions differ from the //@ suggest directives (- expected, + actual)", diff
+        copy = work / ("pkg" if case.target.is_dir() else case.target.name)
+        if case.target.is_dir():
+            shutil.copytree(case.target, copy)
+        else:
+            shutil.copyfile(case.target, copy)
+        problem = apply_suggestions(case.target, copy, suggestions)
+        if problem:
+            return False, problem, ""
+        try:
+            fixed = run_command(check_command(burdin, copy, case.kind) + ["--diagnostic-format=short"], work, timeout, merge=True)
+        except subprocess.TimeoutExpired:
+            return False, f"the fixed test timed out after {timeout}s", ""
+        codes = sorted(
+            match.group(2).decode("ascii")
+            for match in (DIAGNOSTIC_REGEX.search(line) for line in normalize(fixed.stdout).split(b"\n"))
+            if match
+        )
+        expected = sorted(text(v).strip() for v in directive_values(case.directives, b"fixed-error"))
+        if codes != expected:
+            shown = ", ".join(codes) or "none"
+            want = ", ".join(expected) or "none"
+            return False, f"after the suggestions apply, the errors are {shown}; expected {want}", head_bytes(fixed.stdout)
+        if not expected and fixed.returncode != 0:
+            return False, "the fixed test does not check", head_bytes(fixed.stdout)
+        return True, "", ""
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def run_case(case: Case, burdin: str, release: bool, timeout: int):
+    result = run_case_kind(case, burdin, release, timeout)
+    if result[0] and has_directive(case.directives, b"suggest"):
+        try:
+            return test_suggestions(case, burdin, timeout)
+        except Exception:
+            return False, "internal error in the test runner", traceback.format_exc()
+    return result
+
+
+def run_case_kind(case: Case, burdin: str, release: bool, timeout: int):
     try:
         if case.kind in ("run", "run-abort"):
             return test_run(case, burdin, release, timeout)

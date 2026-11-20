@@ -13,4 +13,4 @@
 pub mod add;
 pub mod git;
 pub mod resolve;
-pub mod sha256;
+pub use burdin_sha256 as sha256;

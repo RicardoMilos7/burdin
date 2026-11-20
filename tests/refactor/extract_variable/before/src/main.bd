@@ -1,0 +1,13 @@
+fn main() {
+    let a = 2
+    let b = 3
+    let total = a + b * 4
+    println("{total}")
+}
+
+fn looping() {
+    let mut n = 0
+    while n < 3 {
+        n = n + 1
+    }
+}

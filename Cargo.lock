@@ -165,6 +165,7 @@ name = "burdin_pkg"
 version = "0.1.0"
 dependencies = [
  "burdin_query",
+ "burdin_sha256",
  "burdin_syntax",
 ]
 
@@ -208,6 +209,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "burdin_sha256"
+version = "0.1.0"
+
+[[package]]
 name = "burdin_syntax"
 version = "0.1.0"
 dependencies = [
@@ -220,6 +225,14 @@ version = "0.1.0"
 dependencies = [
  "burdin_diag",
  "libc",
+]
+
+[[package]]
+name = "burdin_toolchain"
+version = "0.1.0"
+dependencies = [
+ "burdin_json",
+ "burdin_sha256",
 ]
 
 [[package]]

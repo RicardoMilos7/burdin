@@ -169,6 +169,7 @@ impl<'t> Sema<'t> {
             globals.packages.push(PackageInfo {
                 name: package.name.clone(),
                 is_root: package.is_root,
+                edition: package.edition,
                 deps: package.deps.iter().cloned().collect(),
                 root_module: None,
             });

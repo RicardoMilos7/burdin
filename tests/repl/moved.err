@@ -3,3 +3,6 @@ main.bd:4:1: error[E0100]: use of moved value `s`
   = note: main.bd:2:5: `s` is declared here
   = note: main.bd:3:9: value moved here
   = help: run `burdin check --explain` to trace the path to this error
+  = help: clone `s` where it is moved, so this use has its own value
+          - let t = s
+          + let t = s.clone()

@@ -28,6 +28,16 @@ tests). Stage 3's bench blocks (issue #251) are done: `bench` items, `black_box`
 baselines, filters, `--list`, and `--profile-time`; the testing tools of issue #615 are done too: snapshot tests
 (`--bless`/`--review`), `fuzz` items with `burdin fuzz` and `burdin test --fuzz-replay`, `--sanitize`, and
 `burdin test --interpret` with strict memory checks.
+**The fifty-fifth session implemented issue #604 and its sub-issues (#606, #607, #609, #611, #613)**: the one edit
+model (`Applicability`, multi-edit suggestions, `burdin_diag::edit`), the compiler's suggestions (near-miss names,
+the import, `mut`, `.clone()` after a move), `burdin fix` with rounds, conflicts, the dirty-tree check, `--dry-run`
+and the formatting of touched files, editions (`[package] edition`, 2024 and 2026) with the deprecation of
+`unimplemented` and `burdin fix --migrate`, the refactoring crate `burdin_refactor` (structural search and replace,
+extract, inline, change signature, move item; every result checked against new errors and changed moves), `burdin ssr`
+and `burdin refactor`, and the language server's `burdin.structuralSearchReplace` command and extract/inline actions.
+`spec/fix.md` and `spec/refactor.md` are new, `docs/releasing.md` records the edition policy, and
+`tests/check_fix.py`, `tests/check_ssr.py`, and `tests/check_refactor.py` check the behavior.
+
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked
@@ -1300,6 +1310,24 @@ commands, checksum tampering, and every failure leaving both files unchanged), `
 What is left: a registry and version requirements, `burdin update`, git packages in a subdirectory of their
 repository, `--offline`, and doc tests reading the documented package's lockfile (each example resolves its own).
 
+## The fifty-sixth session: the toolchain manager (stage 3, issue #624, sub-issues #626, #628, #630, #631)
+
+The name is `burdin toolchain`, not `burdinup` (`spec/toolchain.md`). `crates/burdin_toolchain` builds
+`burdin-toolchain`: one executable that is the manager and, copied into the install directory as `burdin` and
+`burdin-lsp`, the proxy that selects a toolchain per command (TC7: `+t`, `BURDIN_TOOLCHAIN`, `burdin-toolchain.toml`,
+the default) and execs that toolchain's binary. Toolchains live under `<burdin home>/toolchains/<name>`; downloads go
+through `curl` (resumable, `-C -`) and are verified against `SHA256SUMS` before a staging directory is moved into place;
+archives are unpacked with the system `tar`. It never links the compiler or LLVM; SHA-256 moved to
+`crates/burdin_sha256`. Components (`debuggers`, `docs`, `lsp`, `std-src`) are per-target archives that
+`tests/build_release.py` now writes beside the compiler archive (which now holds `burdin-toolchain`); the release job
+requires all of them. The LSP opens std files from the toolchain's `lib/std/src` when they match. The installers
+bootstrap through `burdin-toolchain toolchain self install` when the archive carries the manager, and record their PATH
+change for `self uninstall`; an archive without it installs the compiler alone, as before.
+`BURDIN_DIST_ROOT` points the manager at another distribution root (`channels/<channel>`, `v<version>/<file>`), which
+is how `tests/check_toolchain.py` tests it. Gaps: no target components until cross-compilation (#282); `self update`
+follows the stable channel only; the GitHub API path and the Windows user-PATH removal are on the manual checklist in
+`spec/toolchain.md`.
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least
@@ -2346,7 +2374,7 @@ repository, `--offline`, and doc tests reading the documented package's lockfile
    object files — and its tooling (`doc`, `add`) have not started; `burdin fmt`, `burdin lint`, `burdin new`, and the
    bindgen are done.
 
-## The fifty-sixth session: advanced testing tools (stage 3, issue #615, sub-issues #616, #618, #620, #622)
+## The fifty-seventh session: advanced testing tools (stage 3, issue #615, sub-issues #616, #618, #620, #622)
 
 Four tools that make the test suite stricter, each with its own spec file and its own black-box check:
 `spec/test-runner.md` (SN1-SN9 and the new "Interpreting a test" section, IN1-IN6), `spec/fuzz.md` (FZ1-FZ7), and

@@ -1,0 +1,15 @@
+//@ run-abort
+//@ stderr: warning[E0301]
+//@ stderr: not implemented
+//@ suggest: E0301 machine-applicable: replace the call with `panic("not implemented")`
+
+// Edition 2024 (the default) deprecates `unimplemented()`; edition 2026 removes it. The fix keeps the panic message
+// (`spec/fix.md`, FX11).
+
+fn encode(): i32 {
+    unimplemented()
+}
+
+fn main() {
+    println("{}", encode())
+}

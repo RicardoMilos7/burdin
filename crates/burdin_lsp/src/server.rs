@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// The commands the server runs itself (`workspace/executeCommand`).
-pub const SERVER_COMMANDS: &[&str] = &["burdin.runTest", "burdin.runTests"];
+pub const SERVER_COMMANDS: &[&str] = &["burdin.runTest", "burdin.runTests", "burdin.structuralSearchReplace"];
 
 /// Work a request hands to a worker thread; the response is sent when it ends.
 pub type Job = Box<dyn FnOnce() -> Result<crate::actions::RunOutcome, String> + Send>;

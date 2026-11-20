@@ -306,14 +306,19 @@ jobs:
           find artifacts -name '*.tar.gz' -exec cp {} dist/ \;
           find artifacts -name 'SHA256SUMS.*' -exec cat {} \; | LC_ALL=C sort -k2 > dist/SHA256SUMS
           ( cd dist && sha256sum -c SHA256SUMS )
-          count=$(find dist -name '*.tar.gz' | wc -l | tr -d ' ')
-          [ "$count" -eq 6 ] || { echo "expected 6 archives, found $count" >&2; exit 1; }
+          # Six compiler archives, and for each target one archive per optional component (spec/toolchain.md TC10).
+          count=$(find dist -name "burdin-$VERSION-*.tar.gz" | wc -l | tr -d ' ')
+          [ "$count" -eq 6 ] || { echo "expected 6 compiler archives, found $count" >&2; exit 1; }
           for target in \
               x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
               x86_64-apple-darwin aarch64-apple-darwin \
               x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
             test -f "dist/burdin-$VERSION-$target.tar.gz" \
               || { echo "missing archive for $target" >&2; exit 1; }
+            for component in debuggers docs lsp std-src; do
+              test -f "dist/burdin-$component-$VERSION-$target.tar.gz" \
+                || { echo "missing the $component component for $target" >&2; exit 1; }
+            done
           done
 
       - name: Install from the local bundle and run it
@@ -325,6 +330,9 @@ jobs:
           installed/bin/burdin --version
           printf 'fn main() {\n    println("installed release")\n}\n' > installed-smoke.bd
           [ "$(installed/bin/burdin run installed-smoke.bd)" = "installed release" ]
+          # The installed burdin is the toolchain manager's proxy: the release is its default toolchain.
+          installed/bin/burdin toolchain list
+          installed/bin/burdin toolchain show
 
       - name: Check the release pipeline against the installed compiler
         env:

@@ -1,0 +1,9 @@
+fn consume(own s: String) {
+    println(s)
+}
+
+fn main() {
+    let s = String.from("hi")
+    consume(s)
+    println(s)
+}

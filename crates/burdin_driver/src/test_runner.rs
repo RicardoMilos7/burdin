@@ -938,6 +938,7 @@ mod tests {
             build_allow: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
+            edition: Default::default(),
             root_module: None,
         }
     }

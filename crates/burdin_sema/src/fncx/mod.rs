@@ -7,6 +7,7 @@ mod call;
 mod closure;
 mod comptime;
 mod control;
+mod edition;
 mod embed;
 mod expr;
 mod fnvalue;
@@ -19,6 +20,7 @@ mod operators;
 mod pattern;
 mod reflect;
 mod stmt;
+mod suggest;
 
 pub(crate) use item::{check_const, check_defaults, check_function};
 pub(crate) use reflect::RESERVED_MEMBERS;

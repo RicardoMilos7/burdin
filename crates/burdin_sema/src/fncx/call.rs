@@ -57,6 +57,9 @@ impl FnCx<'_> {
             {
                 match self.globals.value(self.module, &id.name) {
                     Some(Global::Func(f)) => {
+                        if let Some(rejected) = self.edition_gate(f, id, args, span) {
+                            return rejected;
+                        }
                         // In a test build the prelude's `assert` is the typed one (`spec/errors.md`, ERR9).
                         if self.globals.test_assert == Some(f) {
                             return self.test_assert_call(f, args, span);
@@ -146,7 +149,13 @@ impl FnCx<'_> {
                         None if id.name == "Ok" => return self.result_ctor(true, args, expect, span),
                         None if id.name == "Err" => return self.result_ctor(false, args, expect, span),
                         None => {
-                            self.diags.error(Code::UNKNOWN_NAME, id.span, format!("unknown function `{}`", id.name));
+                            let fix = self.unknown_name_fix(&id.name, true);
+                            let d = self.diags.error(
+                                Code::UNKNOWN_NAME,
+                                id.span,
+                                format!("unknown function `{}`", id.name),
+                            );
+                            Self::attach_name_fix(fix, id.span, d);
                             return self.args_then_error(args, span);
                         }
                     },
@@ -851,11 +860,13 @@ impl FnCx<'_> {
                         "the argument of a `mut` parameter must be a place",
                     );
                 } else if !self.place_mutable(&arg) {
-                    self.diags.error(
+                    let fix = self.mut_binding_fix(&arg);
+                    let d = self.diags.error(
                         Code::MUT_OF_IMMUTABLE,
                         arg.span,
                         "cannot pass this place as `mut`: it is not mutable",
                     );
+                    Self::attach_mut_fix(fix, d);
                 }
             }
             checked.push(arg);
@@ -1236,11 +1247,13 @@ impl FnCx<'_> {
             if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
                 let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
                 let whose = local.unwrap_or_else(|| "this receiver".to_string());
-                self.diags.error(
+                let fix = self.mut_binding_fix(&recv);
+                let d = self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
                     recv.span,
                     format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
                 );
+                Self::attach_mut_fix(fix, d);
             }
             let receiver_place = Some((&recv, receiver.exclusive));
             let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
@@ -1317,11 +1330,13 @@ impl FnCx<'_> {
             } else if !self.place_mutable(checked) {
                 let local = place_root(checked).map(|root| self.locals[root.0].name.clone());
                 let whose = local.unwrap_or_else(|| "this receiver".to_string());
-                self.diags.error(
+                let fix = self.mut_binding_fix(checked);
+                let d = self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
                     recv.span,
                     format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
                 );
+                Self::attach_mut_fix(fix, d);
             }
         }
         match (&m, &recv.ty) {

@@ -654,6 +654,7 @@ mod tests {
             build_allow: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
+            edition: Default::default(),
             root_module: None,
         };
         let mut package = package_with(vec!["main"]);
@@ -683,6 +684,7 @@ mod tests {
             build_allow: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
+            edition: Default::default(),
             root_module: None,
         }
     }

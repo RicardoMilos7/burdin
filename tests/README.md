@@ -84,6 +84,8 @@ Directives are line comments at any position in the root file.
 | `//@ skip-platform: os` | Skip on that host: `linux`, `macos`, or `windows`; several may be listed. |
 | `//@ link-lib: NAME` | Extra library to link. |
 | `//@ undecided: text` | Skipped; documents an open design question. |
+| `//@ suggest: E0000 applicability: message` | One suggestion the test's diagnostics carry: the diagnostic's code, the applicability (`machine-applicable`, `maybe-incorrect`, `has-placeholders`, or `unspecified`), and the exact message. May repeat; the suggestions of the test must be exactly these. The runner then applies every suggestion's edits to a copy and checks it with `burdin check` (`spec/fix.md`, FX12). The code must be listed under "Codes with suggestions". |
+| `//@ fixed-error: E0000` | With `suggest`: one error the copy with the suggestions applied still reports. May repeat. Without any, the copy must check cleanly. |
 
 A file with no directive is outside the suite. The fixtures under `tests/interpret/` are like that: they are read
 by `tests/check_interpret.py`, and their `//~ interpret-error: <text>` markers name the line and message a
@@ -278,6 +280,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0281 | An invalid `Send` or `Sync` implementation: one not written `unsafe`, an `unsafe` block for an interface other than `Send` or `Sync`, or one that gives a method |
 | E0290 | An invalid `blocking` marker: on a declaration that is not an `extern "C"` function, on a variadic declaration, or two declarations of one C symbol that disagree about it |
 | E0300 | A `#!` shebang line anywhere but the first line of a file |
+| E0301 | Warning: a form the package's edition deprecates and the next edition removes; the fix writes the replacement (`spec/fix.md`, FX11). In the edition that removes the form, a use is E0002 with the same fix |
 
 ### Codes without a compile-fail test
 
@@ -290,6 +293,23 @@ here names an unknown code, a code that already has a test, or no reason.
 | --- | --- |
 | E0215 | A warning, so compilation continues. `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, and `shadowed_interface_method.bd` assert it with `//@ stderr: warning[E0215]`. |
 | E0263 | Reported by `burdin bindgen --export`, which checks a package after the compiler is done; the conformance runner only builds and runs programs. `tests/check_bindgen.py` runs the fixture in `tests/bindgen/export_invalid` and checks every report. |
+| E0301 | A warning, so compilation continues. `m24_stdlib/unimplemented_deprecated.bd` asserts it with `//@ stderr: warning[E0301]`, and `tests/check_fix.py` migrates a package that uses the deprecated form. |
+
+### Codes with suggestions
+
+The diagnostics that carry a suggestion (`spec/fix.md`, FX1 and FX12), and what it does. Every code here needs at
+least one `//@ suggest:` test, and every code in a `//@ suggest:` directive must be here; `tests/check_tests.py`
+checks both. A machine-applicable suggestion is one `burdin fix` applies on its own.
+
+| Code | Suggestion | Applicability | Tests |
+| --- | --- | --- | --- |
+| E0002 | The one name in scope a misspelled name is close to; the one `use` that imports an unknown name from another module of the package; and for a function an edition removed, its replacement | machine-applicable | `m03_typecheck/suggest_misspelled_name.bd`, `suggest_misspelled_function.bd`, `m08_modules/suggest_missing_import`, `m24_stdlib/edition_2026_removes_unimplemented` |
+| E0005 | `mut` on the binding an assignment writes | machine-applicable | `m06_conventions/suggest_mut_on_assigned_binding.bd` |
+| E0100 | `.clone()` at the move, when the moved value's type is `Clone` | maybe-incorrect | `m05_ownership/suggest_clone_before_move.bd` |
+| E0113 | `mut` on the binding a `mut` argument or `&mut` borrows | machine-applicable | `m06_conventions/suggest_mut_on_borrowed_binding.bd` |
+| E0114 | the missing `mut` marker at the call | machine-applicable | `m06_conventions/suggest_mut_marker.bd` |
+| E0115 | removing a `mut` marker the parameter does not take | machine-applicable | `m06_conventions/suggest_remove_mut_marker.bd` |
+| E0301 | the replacement of a deprecated form | machine-applicable | `m24_stdlib/unimplemented_deprecated.bd` |
 
 ## Decisions the tests encode
 

@@ -33,6 +33,8 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/tasks.md`](spec/tasks.md) | Tasks, the work-stealing scheduler, `yield`, scoped tasks that borrow, panics in tasks, and OS threads (stage 2.1). |
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
+| [`spec/fix.md`](spec/fix.md) | The one edit model: suggestions and their applicability, the applier, `burdin fix` with its rounds and conflicts, editions, and `burdin fix --migrate` (stage 3). |
+| [`spec/refactor.md`](spec/refactor.md) | `burdin ssr` and `burdin refactor`: structural search and replace, extract variable and function, inline variable and function, change signature, and move item, each checked before it is written (stage 3). |
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
@@ -45,6 +47,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`CHANGELOG.md`](CHANGELOG.md) | Shipped milestones. |
 | [`crates/burdin_fuzz/`](crates/burdin_fuzz/) | The lexer/parser fuzzer and its committed corpus. |
 | [`crates/burdin_fmt/`](crates/burdin_fmt/) | The formatter behind `burdin fmt`, with its unit, corpus, and fuzz tests. |
+| [`crates/burdin_refactor/`](crates/burdin_refactor/) | The refactoring engine behind `burdin ssr` and `burdin refactor`, over the query library. |
 | [`crates/burdin_doc/`](crates/burdin_doc/) | The documentation generator behind `burdin doc`, with the fixtures it is checked against. |
 | [`std/README.md`](std/README.md) | The stage 0 standard library. |
 | [`Burdin Language Design.md`](Burdin%20Language%20Design.md) | The full language design, including features after stage 0. |
@@ -118,6 +121,12 @@ directory to your user `PATH`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.
 step. A prebuilt compiler needs
 the LLVM 21 shared library at run time (`libLLVM-21.so`, `libLLVM.dylib`, or `LLVM-C.dll`); it is not bundled. The
 artifact names, checksums, reproducibility rules, and release steps are in [`docs/releasing.md`](docs/releasing.md).
+
+A release that carries the toolchain manager installs through it: the installed `burdin` is a proxy that runs the
+selected toolchain, and `burdin toolchain` installs several toolchains side by side (`stable`, `nightly`, `0.4.1`),
+updates them, pins one per project with `burdin-toolchain.toml`, selects one per command with `burdin +nightly ...`,
+adds components (`lsp`, `std-src`, `docs`, `debuggers`), and updates or uninstalls itself. See
+[`spec/toolchain.md`](spec/toolchain.md).
 
 ## Hello, world
 

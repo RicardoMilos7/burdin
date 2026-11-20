@@ -274,6 +274,23 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
 
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
+
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
       - name: Check burdin doc
@@ -309,6 +326,14 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
@@ -634,6 +659,23 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
 
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
+
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
       - name: Check burdin doc
@@ -669,6 +711,14 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
@@ -1003,6 +1053,23 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_lint.py
 
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
+
       - name: Check burdin doc
         if: matrix.part == 'tools'
         run: python tests/check_doc.py
@@ -1036,6 +1103,14 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).

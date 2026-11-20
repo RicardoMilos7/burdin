@@ -40,6 +40,8 @@ pub struct PackageFiles {
     /// The `[rust]` and `[rust.crates]` tables: Rust crates this package binds through generated C-ABI shims
     /// (`spec/rust-interop.md`, RI7).
     pub rust: RustConfig,
+    /// `[package] edition`: the edition the package's source is written against (`spec/fix.md`, FX10).
+    pub edition: burdin_sema::Edition,
 }
 
 /// A package's Rust interop configuration. The manifest parser only reads it; the driver validates it and reports
@@ -87,6 +89,7 @@ pub fn in_memory<'a>(paths: impl IntoIterator<Item = &'a str>) -> Workspace {
         root_module: Some(entry_module),
         lint: Vec::new(),
         rust: Default::default(),
+        edition: Default::default(),
     };
     let mut packages = vec![package];
     attach_std(&mut packages);
@@ -246,6 +249,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
             root_module: Some(0),
             lint: Vec::new(),
             rust: Default::default(),
+            edition: Default::default(),
         };
         let mut packages = vec![package];
         if let Some(manifest) = manifest {
@@ -338,6 +342,7 @@ fn std_package() -> PackageFiles {
         root_module,
         lint: Vec::new(),
         rust: Default::default(),
+        edition: Default::default(),
     }
 }
 
@@ -467,6 +472,7 @@ impl Loader {
             root_module,
             lint: manifest.lint,
             rust: manifest.rust,
+            edition: manifest.edition,
         });
         self.loaded.insert(dir.to_path_buf(), id);
         self.loading.push(dir.to_path_buf());
@@ -508,6 +514,8 @@ pub struct Manifest {
     /// The `[lint]` entries: `(name, level, line)`.
     pub lint: Vec<(String, String, usize)>,
     pub rust: RustConfig,
+    /// `[package] edition`; the default edition when the manifest names none.
+    pub edition: burdin_sema::Edition,
 }
 
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."` and `version`, `[dependencies]` entries
@@ -522,6 +530,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut section = String::new();
     let mut name: Option<String> = None;
     let mut version: Option<String> = None;
+    let mut edition = burdin_sema::Edition::default();
     let mut deps: Vec<(String, DepSource)> = Vec::new();
     let mut build_allow: Vec<String> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
@@ -549,6 +558,12 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                     name = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
                 } else if key == "version" {
                     version = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
+                } else if key == "edition" {
+                    let text = parse_string(value).map_err(|e| format!("{}: {e}", where_()))?;
+                    edition = burdin_sema::Edition::parse(&text).ok_or_else(|| {
+                        let known: Vec<&str> = burdin_sema::Edition::ALL.iter().map(|e| e.as_str()).collect();
+                        format!("{}: unknown edition `{text}` (this compiler knows {})", where_(), known.join(" and "))
+                    })?;
                 }
             }
             "dependencies" => {
@@ -600,7 +615,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    Ok(Manifest { name, version, deps, build_allow, lint, rust })
+    Ok(Manifest { name, version, deps, build_allow, lint, rust, edition })
 }
 
 /// A `["a", "b"]` array of quoted strings, also accepting a single `"a"`.

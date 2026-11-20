@@ -443,8 +443,8 @@ impl Entry {
                     f(span);
                 }
             }
-            for s in &mut d.suggestions {
-                f(&mut s.span);
+            for e in d.suggestions.iter_mut().flat_map(|s| s.edits.iter_mut()) {
+                f(&mut e.span);
             }
         }
         for (_, span) in &mut self.delta.uses {
@@ -494,7 +494,7 @@ pub(crate) fn declaration_fingerprint(
     let mut h = Fingerprinter::new();
     (entry, mode, traces).hash(&mut h);
     for package in packages {
-        (&package.name, package.is_root, &package.deps, package.root_module).hash(&mut h);
+        (&package.name, package.is_root, package.edition, &package.deps, package.root_module).hash(&mut h);
         for module in &package.modules {
             let file = sources.get(module.file);
             (&module.path, &file.path).hash(&mut h);

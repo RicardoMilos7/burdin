@@ -1,0 +1,15 @@
+//@ compile-fail
+//@ suggest: E0100 maybe-incorrect: clone `s` where it is moved, so this use has its own value
+
+// A use after a move of a `Clone` value: cloning at the move keeps the value, but it copies it, so the fix is
+// maybe-incorrect and `burdin fix` does not apply it on its own (`spec/fix.md`, FX13).
+
+fn consume(own s: String) {
+    println(s)
+}
+
+fn main() {
+    let s = String.from("hi")
+    consume(s)
+    println(s) //~ E0100
+}

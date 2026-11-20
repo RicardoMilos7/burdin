@@ -25,7 +25,7 @@ pub use api::{
     OwnedLocal, Ownership, OwnershipEventInfo, OwnershipEventKind, ParamInfo, Resolution, StmtInfo, StmtKind,
     SyntaxTree, Trivia, TriviaKind, Typed, function_ownership,
 };
-pub use burdin_sema::EntryMode;
+pub use burdin_sema::{Edition, EntryMode};
 pub use db::{Analysis, Budget, CancelHandle, Cancelled, Db, Options, Parsed, env_jobs};
 pub use navigate::{CallSite, FunctionInfo, LocalInfo, ModuleInfo, Occurrence, PackageInfo, TestInfo};
 pub use stats::{Counters, RevisionStats};

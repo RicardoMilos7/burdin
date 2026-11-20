@@ -17,11 +17,14 @@ mod doc;
 mod emit;
 mod expand;
 mod export;
+mod fix;
 mod fmt;
 mod fuzz_runner;
 mod lint;
+mod migrate;
 mod msvc;
 mod new;
+mod refactor;
 mod repl;
 mod rust_build;
 mod rust_interop;
@@ -670,6 +673,15 @@ fn dap(args: &[String]) -> ExitCode {
 
 fn driver_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // The toolchain manager's proxy handles `toolchain` and `+toolchain` before it runs a compiler, so reaching here
+    // means this compiler was run directly (`spec/toolchain.md` TC9).
+    if let Some(first) = argv.first().filter(|a| *a == "toolchain" || a.starts_with('+')) {
+        eprintln!(
+            "error: `burdin {first}` belongs to the toolchain manager, and this burdin is a compiler run directly, not \
+             the manager's proxy; install Burdin with install.sh or install.ps1 to manage toolchains"
+        );
+        return ExitCode::from(2);
+    }
     let command = match cli::route(&argv) {
         cli::Route::Exit(code) => return code,
         cli::Route::Command(command) => command,
@@ -684,6 +696,9 @@ fn driver_main() -> ExitCode {
         "explain" => return explain(rest),
         "bindgen" => return bindgen::run(rest),
         "lint" => return lint::run(rest),
+        "fix" => return fix::run(rest),
+        "ssr" => return refactor::run_ssr(rest),
+        "refactor" => return refactor::run_refactor(rest),
         "doc" => return doc::run(rest),
         "debug" => return debug::run(rest),
         "new" => return new::run(rest),
@@ -950,6 +965,21 @@ pub(crate) fn front_end(
         }
     }
 
+    // An override of a package's manifest is read for its edition: `burdin fix --migrate` checks the package under
+    // the edition it is about to write before it writes anything (`spec/fix.md`, FX10).
+    for package in &mut loaded.packages {
+        let Some(dir) = &package.dir else { continue };
+        let manifest = dir.join("burdin.toml");
+        if let Some(text) = overrides.get(&manifest) {
+            match package::parse_manifest_text(text, &manifest) {
+                Ok(parsed) => package.edition = parsed.edition,
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return Err(ExitCode::from(1));
+                }
+            }
+        }
+    }
     // One file per module, in module order: the ids the source map hands out are the ids `files` indexes.
     let mut file_info: Vec<(PathBuf, bool)> = Vec::new();
     for package in &loaded.packages {

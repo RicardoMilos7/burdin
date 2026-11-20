@@ -45,6 +45,22 @@ outside a git checkout still reports where it came from.
 - `install.sh` and `install.ps1` default to the stable channel and accept `BURDIN_CHANNEL=nightly` with an explicit
   `BURDIN_VERSION` (a nightly is never the "latest release").
 
+## Editions and migration
+
+`[package] edition` in `burdin.toml` names the language edition new code is written in; a manifest without the line,
+and a one-file target, is the 2024 edition. The compiler knows 2024 and 2026.
+
+A breaking change to the language does not reach every package at once:
+
+1. In the edition before the change, the old form is deprecated: a warning with a machine-applicable fix that writes
+   the new form.
+2. `burdin fix --migrate` applies those fixes and moves the manifest to the next edition, after checking the package
+   under it; a migration that would not compile writes nothing.
+3. In the new edition the old form is an error, with the same fix.
+
+So every deprecation ships at least one release before the edition that removes it, and the release notes say which
+edition removes it. `spec/fix.md` (FX10, FX11) is the exact behavior.
+
 ## Breaking changes and packages
 
 A change is **breaking** when it changes the meaning or validity of a program, the observable behavior of the
@@ -77,10 +93,11 @@ Six native targets are built, each on a hosted runner of the same architecture (
 
 Each job runs `tests/build_release.py --target <triple> --out dist`, which
 
-1. builds with `cargo build --release --locked -p burdin_driver` and the pinned toolchain;
+1. builds the compiler, the toolchain manager, and `burdin-lsp` with `cargo build --release --locked -p burdin_driver
+   -p burdin_toolchain -p burdin_lsp` and the pinned toolchain;
 2. checks that the binary's `--version` reports the planned version, channel, and target;
 3. smoke-tests `burdin build`, `burdin run`, and `burdin test` on a small program;
-4. writes `burdin-<version>-<target>.tar.gz` and its SHA-256 checksum.
+4. writes `burdin-<version>-<target>.tar.gz`, one archive per optional component, and their SHA-256 checksums.
 
 The archive is uniform across platforms (`.tar.gz`, not `.zip`) so one packaging path and one installer shape cover
 all six. Its layout is:
@@ -88,12 +105,17 @@ all six. Its layout is:
 ```
 burdin-<version>-<target>/
   burdin            (burdin.exe on Windows)
+  burdin-toolchain  the toolchain manager, installed as the burdin proxy (spec/toolchain.md)
   LLVM-C.dll        (Windows only, beside burdin.exe)
   README.md
   CHANGELOG.md
   docs/error-codes.md
   docs/lints.md
 ```
+
+Each target also gets the optional components of `spec/toolchain.md` (TC10) as separate archives,
+`burdin-<component>-<version>-<target>.tar.gz` for `debuggers`, `docs`, `lsp`, and `std-src`, listed in the same
+`SHA256SUMS`. The release job requires all six compiler archives and every component archive.
 
 **Runtime requirement.** Development builds link LLVM 21 as a shared library (the static Windows archives crash in a
 dynamic-CRT Rust binary). Release builds on Linux and macOS link it statically: `tests/build_release.py` sets
@@ -166,6 +188,10 @@ Both installers:
   `install.sh` appends a PATH line to the startup file of zsh (`~/.zshrc`), bash (`~/.bashrc` on Linux,
   `~/.bash_profile` on macOS), or fish (`~/.config/fish/config.fish`). Other shells get a hint instead. `BURDIN_NO_MODIFY_PATH` (or `install.ps1 -NoModifyPath`)
   leaves `PATH` and the startup files alone.
+
+When the archive carries the toolchain manager, both installers install through it (`spec/toolchain.md` TC13): the
+release becomes a toolchain under the Burdin home and the default, the install directory gets the `burdin` and
+`burdin-lsp` proxies, and the PATH change is recorded so `burdin toolchain self uninstall` can undo exactly that.
 
 `BURDIN_BASE_URL` points the download at another mirror, and `BURDIN_RELEASE_DIR` installs from a local directory —
 the rehearsal path used by `tests/check_release.py` and the release job. A package-manager formula is a later work

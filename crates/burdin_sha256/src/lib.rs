@@ -1,5 +1,5 @@
-//! SHA-256 (FIPS 180-4), for the checksums `burdin.lock` records. Written out here so the package resolver needs
-//! no external crate.
+//! SHA-256 (FIPS 180-4), for the checksums `burdin.lock` records and the release checksums the toolchain manager
+//! verifies. Written out here so neither needs an external crate.
 
 const K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
