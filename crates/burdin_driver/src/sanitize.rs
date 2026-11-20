@@ -36,9 +36,11 @@ pub(crate) fn parse(value: &str) -> Result<Sanitizers, String> {
     Ok(sanitizers)
 }
 
-/// Whether this platform supports every sanitizer asked for (SAN2): Linux has all four; macOS has `address`,
-/// `thread`, and `undefined`; Windows has `undefined` only, which needs no runtime library. `os` and `arch` are
-/// `std::env::consts`'s spellings.
+/// Whether this platform supports every sanitizer asked for (SAN2): Linux has all four and the fuzzer; macOS and
+/// Windows have `undefined` only, which is the checks in the generated code and needs no runtime library. A sanitizer
+/// runtime that cannot start is worse than no sanitizer, and Apple's runtime does not: its search for shadow memory
+/// never finishes on the macOS runners, so every instrumented program hangs before `main` (SAN2, and the known
+/// limitations in `docs/platform-support.md`). `os` and `arch` are `std::env::consts`'s spellings.
 pub(crate) fn check_platform(sanitizers: &Sanitizers, os: &str, arch: &str) -> Result<(), String> {
     let wanted = [
         ("address", sanitizers.address),
@@ -55,7 +57,6 @@ pub(crate) fn check_platform(sanitizers: &Sanitizers, os: &str, arch: &str) -> R
         let supported = match (os, name) {
             (_, "undefined") => true,
             ("linux", _) => supported_arch,
-            ("macos", "address" | "thread" | "fuzzer") => supported_arch,
             _ => false,
         };
         if !supported {
@@ -125,10 +126,11 @@ mod tests {
             assert!(check_platform(&all(name), "linux", "x86_64").is_ok(), "{name}");
             assert!(check_platform(&all(name), "linux", "aarch64").is_ok(), "{name}");
         }
-        for name in ["address", "thread", "undefined"] {
-            assert!(check_platform(&all(name), "macos", "aarch64").is_ok(), "{name}");
+        assert!(check_platform(&all("undefined"), "macos", "aarch64").is_ok());
+        for name in ["address", "thread", "leak"] {
+            let error = check_platform(&all(name), "macos", "aarch64").unwrap_err();
+            assert!(error.contains(&format!("`--sanitize={name}` is not supported on macos-aarch64")), "{error}");
         }
-        assert!(check_platform(&all("leak"), "macos", "aarch64").unwrap_err().contains("not supported on macos"));
         assert!(check_platform(&all("undefined"), "windows", "x86_64").is_ok());
         for name in ["address", "thread", "leak"] {
             let error = check_platform(&all(name), "windows", "x86_64").unwrap_err();
@@ -137,6 +139,7 @@ mod tests {
         let fuzz = Sanitizers { fuzzer: true, ..Sanitizers::default() };
         assert!(check_platform(&fuzz, "linux", "x86_64").is_ok());
         assert!(check_platform(&fuzz, "windows", "x86_64").unwrap_err().contains("`burdin fuzz` (libFuzzer)"));
+        assert!(check_platform(&fuzz, "macos", "aarch64").unwrap_err().contains("`burdin fuzz` (libFuzzer)"));
     }
 
     #[test]

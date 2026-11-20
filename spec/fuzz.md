@@ -35,8 +35,8 @@ AddressSanitizer reports (`spec/sanitizers.md`). The black-box check is
   `--`, libFuzzer options of its own (`-jobs=4`, `-dict=file`, ...). A name no target of the package has is a usage
   error that lists the names it does have. `--sanitize`, `--lto`, PGO, `-o`, `--emit`, and `--tests` do not apply: the
   build is already instrumented, and its binary is libFuzzer's. The exit status is libFuzzer's, and a crash prints a
-  note naming the artifacts directory. Linux and macOS only (SAN2): a libFuzzer runtime elsewhere is a usage error
-  that says so.
+  note naming the artifacts directory. Linux only (SAN2): libFuzzer needs AddressSanitizer's runtime, which starts on
+  Linux but not on macOS or Windows, so a fuzz build elsewhere is a usage error that says so.
 - **FZ6. Replay.** `burdin test --fuzz-replay` adds one case per saved input to the run: `<package>::fuzz <target>:
   <file>`, listed and reported like a test. Each case starts the package's test binary with the target's dispatcher
   index and the absolute path of the input, so it runs in the same isolated process as any test; the dispatcher reads

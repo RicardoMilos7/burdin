@@ -41,7 +41,7 @@ system = platform.system()
 # The sanitizers this host supports (docs/platform-support.md); `undefined` needs no runtime library.
 supported = {
     "Linux": {"address", "thread", "leak", "undefined"},
-    "Darwin": {"address", "thread", "undefined"},
+    "Darwin": {"undefined"},
 }.get(system, {"undefined"})
 
 
@@ -66,15 +66,9 @@ def run(*args, cwd, timeout=300):
 
 
 def sanitizer_env():
-    """The environment a sanitized program runs in. On macOS, AddressSanitizer symbolizes through `atos`, a
-    separate process that can hang on a runner where nothing is watching, so it is asked not to symbolize; it also
-    reports what it initialized, because a sanitizer that never initialized shows up as a silent crash or a hang and
-    its first lines on standard error are what says so."""
-    env = dict(os.environ)
-    if system == "Darwin":
-        env["ASAN_OPTIONS"] = "symbolize=0:verbosity=2"
-        env["TSAN_OPTIONS"] = "symbolize=0:verbosity=2"
-    return env
+    """The environment a sanitized program runs in: the host's own, so a runtime reads its usual options (`ASAN_OPTIONS`
+    and the rest, `spec/sanitizers.md`, SAN6) exactly as a user's run would."""
+    return dict(os.environ)
 
 
 def brief(code, err):

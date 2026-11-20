@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Checks `burdin fuzz` and `burdin test --fuzz-replay` (spec/fuzz.md, issue #618). Needs a built driver and, on
-Linux and macOS, clang with libFuzzer's runtimes. Usage: tests/check_fuzz.py
+Linux, clang with libFuzzer's runtimes. Usage: tests/check_fuzz.py
 
 BURDIN selects the driver, like tests/run_tests.py. The package under tests/fuzz/planted has one target with a
 planted out-of-bounds read: an input that starts with the magic `FUZZ` reaches a length byte the header does not
@@ -8,7 +8,8 @@ have. The check fuzzes it for at most 60 seconds, which must find the crash and 
 directory; it then replays the committed crash through `burdin test --fuzz-replay`, which must report it with the
 source location, and shows that the package's ordinary test still passes. A normal build strips fuzz targets, an
 unknown target name and the options that do not apply are usage errors, and a host without libFuzzer's runtime
-rejects `burdin fuzz` with an error that names it.
+(macOS and Windows, whose sanitizer runtime does not start; `spec/sanitizers.md`, SAN2) rejects `burdin fuzz` with an
+error that names it.
 """
 
 import shutil

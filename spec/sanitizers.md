@@ -25,16 +25,18 @@ suite with `--sanitize=address`.
   `burdin bench` does not take it (a sanitized measurement measures the sanitizer). Each of these is a usage error
   (exit status 2).
 - **SAN2. Platforms.** The supported combinations are in the sanitizer table of
-  [`docs/platform-support.md`](../docs/platform-support.md#sanitizers): Linux (x86-64 and arm64) has all four, macOS
-  has `address`, `thread`, and `undefined`, and Windows has `undefined` only. Asking for one the platform lacks is a
-  usage error that names it and the platform: ``error: `--sanitize=leak` is not supported on macos-aarch64; see the
-  sanitizer table in docs/platform-support.md``.
+  [`docs/platform-support.md`](../docs/platform-support.md#sanitizers): Linux (x86-64 and arm64) has all four and
+  `burdin fuzz`; macOS and Windows have `undefined` only. Asking for one the platform lacks is a usage error that
+  names it and the platform: ``error: `--sanitize=address` is not supported on macos-aarch64; see the sanitizer
+  table in docs/platform-support.md``. macOS is limited deliberately: Apple's AddressSanitizer runtime, dynamic
+  because Darwin has no static one, looks for the address of its shadow memory at startup, and that search
+  (`FindAvailableMemoryRange`, which walks the process's VM regions) does not finish for a Burdin binary on the macOS
+  runners, so every instrumented program hangs before `main`. A sanitizer that cannot start is worse than none, so
+  macOS gets the checks that need no runtime; the platform moves back to `address` once the runtime starts there.
 - **SAN3. Linking.** `address`, `thread`, and `leak` link LLVM's runtime libraries (compiler-rt) with
   `-fsanitize=<list>`, so the linker is clang: `BURDIN_CC` when it names clang, otherwise `clang-21` or `clang` from
   `LLVM_SYS_211_PREFIX/bin` or `PATH`. A `BURDIN_CC` that is not clang, or no clang at all, is an error that says
-  what to install. On macOS the runtime is linked statically (`-static-libsan`, and `-static-libfuzzer` for a fuzz
-  target): Darwin's dynamic runtime searches for the address of its shadow memory at startup, and on the arm64 CI
-  runners that search never finishes. `undefined` alone links like any other build.
+  what to install. `undefined` alone links like any other build.
 - **SAN4. `undefined`.** The checks a debug build has for integer overflow (`+`, `-`, `*`, negation, and the
   `MIN / -1` division) stay in a release build instead of wrapping, and every dereference of a `CPtr<T>` (a read,
   a write, or a field of the pointee) first checks that the pointer is not null and that its address is a multiple

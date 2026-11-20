@@ -46,8 +46,8 @@ no claim at all.
 | Diagnostics formats, color, width, and limits | `tests/check_diagnostics.py` | yes | yes | yes |
 | Error-code reference and `burdin explain` | `tests/check_error_docs.py` | yes | yes | yes |
 | C bridge (`extern "C"`, `CPtr`, `CString`) | `tests/m08_modules/extern_libc.bd`, `tests/m08_modules/cstr_roundtrip.bd` | yes | yes | yes |
-| `--sanitize` (SAN1-SAN6) | `tests/check_sanitizers.py` | yes; `address`, `leak`, `thread`, and `undefined` | yes; `address`, `thread`, and `undefined` | `undefined` only |
-| `burdin fuzz` (libFuzzer) | `tests/check_fuzz.py` | yes | yes | no; a usage error |
+| `--sanitize` (SAN1-SAN6) | `tests/check_sanitizers.py` | yes; `address`, `leak`, `thread`, and `undefined` | `undefined` only; `address`, `leak`, and `thread` are a usage error | `undefined` only |
+| `burdin fuzz` (libFuzzer) | `tests/check_fuzz.py` | yes | no; a usage error | no; a usage error |
 | `burdin test --interpret` | `tests/check_interpret.py` | yes | yes | yes |
 | `burdin bindgen` (libclang loaded at run time) | `tests/check_bindgen.py` | yes; goldens, wrappers, and the C-to-Burdin round trip | yes; goldens and wrappers | yes; the generated modules are compiled and run (the goldens assume a non-MSVC C ABI) |
 | LLVM C API (`--link-lib LLVM-C`) | `tests/m11_llvm/llvm_return_42.bd` | yes | yes | yes, with `LLVM-C.dll` on `PATH` |
@@ -67,9 +67,9 @@ host lacks is a usage error that names the host and this table.
 
 | Sanitizer | Linux x86-64 and arm64 | macOS arm64 and x86-64 | Windows |
 | --- | --- | --- | --- |
-| `address` | yes (leaks reported at exit too) | yes | no |
+| `address` | yes (leaks reported at exit too) | no | no |
 | `leak` | yes | no | no |
-| `thread` | yes | yes | no |
+| `thread` | yes | no | no |
 | `undefined` | yes | yes | yes |
 
 `address`, `leak`, and `thread` link with clang and its compiler-rt runtimes (`libclang-rt-21-dev` on Debian and
@@ -78,6 +78,13 @@ Ubuntu, included in Homebrew `llvm@21`); `undefined` is checks in the generated 
 where the host has the sanitizer and the usage error where it does not, and the scheduled `sanitize` part of the
 `linux` job runs m01-m24 under `--sanitize=address`. The Windows MSVC toolchain has an AddressSanitizer of its own,
 which Burdin does not use yet.
+
+macOS gets `undefined` only. Apple's AddressSanitizer and ThreadSanitizer runtimes are dynamic (Darwin has no static
+one), and a dynamic runtime looks for the address of its shadow memory at startup, walking the process's VM regions.
+For a Burdin binary on the macOS runners that search does not finish: the program prints the runtime's first
+initialization line and then hangs before `main`, with or without this project's own signal handling. Until the
+runtime starts there, `--sanitize=address`, `--sanitize=thread`, and `burdin fuzz` are usage errors on macOS rather
+than a hang, and `undefined` — the checks Burdin generates itself — still runs.
 
 ## Known limitations
 
