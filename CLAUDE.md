@@ -63,7 +63,10 @@ not updated and may disagree with the repository.
    toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter, and `spec/watch.md` is `burdin watch` and `--watch`: what is
-   watched, the debounce, restarting `run`, and the changed-modules-first `test` run.
+   watched, the debounce, restarting `run`, and the changed-modules-first `test` run; `spec/build-tool.md` is the
+   build tool's command surface, the Cargo commands it does not copy, and the exit statuses; and `spec/profiles.md`
+   is named build profiles (`dev`, `release`, `test`, `bench`, and custom), their inheritance, settings, and
+   per-package overrides.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -134,6 +137,8 @@ python3 tests/check_lsp.py               check `burdin lsp`: the driver's server
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
 python3 tests/check_watch.py             check `burdin watch`: reruns on edits, ignored files, `run` restarts, changed-modules-first `test`
+python3 tests/check_cli.py               check the command surface: every command's help, the golden command list, unknown commands
+python3 tests/check_profiles.py          check named build profiles: inheritance, settings, overflow, debug info, per-package overrides
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links

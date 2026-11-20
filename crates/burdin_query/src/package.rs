@@ -603,6 +603,22 @@ pub struct Manifest {
     pub rust: RustConfig,
     /// `[package] edition`; the default edition when the manifest names none.
     pub edition: burdin_sema::Edition,
+    /// The `[profile...]` entries, in file order (`spec/profiles.md`). The parser records them without checking
+    /// them: only the entry package's tables are read, and the driver validates the selected profile, so a
+    /// dependency's table (which is ignored) cannot fail a build.
+    pub profiles: Vec<ProfileEntry>,
+}
+
+/// One `key = value` line of a `[profile...]` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileEntry {
+    /// The section as written, without the brackets: `profile.dev` or `profile.fast.package.low`.
+    pub section: String,
+    pub key: String,
+    /// The raw right-hand side, still quoted when it is a string.
+    pub value: String,
+    /// The line number, counted from 1.
+    pub line: usize,
 }
 
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."` and `version`, `[dependencies]` entries
@@ -622,6 +638,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut build_allow: Vec<String> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
     let mut rust = RustConfig::default();
+    let mut profiles: Vec<ProfileEntry> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
@@ -700,6 +717,14 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                     }
                 }
             }
+            // `[profile.<name>]` and `[profile.<name>.package.<package>]` (`spec/profiles.md`). The entries are
+            // collected verbatim; the driver validates only the selected profile of the entry package.
+            section if section.starts_with("profile.") => profiles.push(ProfileEntry {
+                section: section.to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
+                line: index + 1,
+            }),
             _ => {}
         }
     }
@@ -709,7 +734,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    Ok(Manifest { name, version, deps, build_allow, lint, rust, edition })
+    Ok(Manifest { name, version, deps, build_allow, lint, rust, edition, profiles })
 }
 
 /// A `["a", "b"]` array of quoted strings, also accepting a single `"a"`.

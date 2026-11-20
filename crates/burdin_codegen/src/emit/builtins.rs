@@ -1399,9 +1399,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 return Ok(Some(out));
             }
             Builtin::Assertion(kind) => {
-                // `debug_assert*` is removed from a release build; neither its condition nor its message is
-                // evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
-                if kind.is_debug() && self.release {
+                // `debug_assert*` is removed when the profile turns debug assertions off; neither its condition
+                // nor its message is evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
+                if kind.is_debug() && !self.flags_at(span).1 {
                     return Ok(None);
                 }
                 let compares = kind.compares_values();

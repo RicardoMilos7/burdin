@@ -108,7 +108,14 @@ pub(crate) struct Codegen<'ctx, 'a> {
     module: &'a Module<'ctx>,
     program: &'a Program,
     sources: &'a SourceMap,
-    release: bool,
+    /// Keep `debug_assert*` (`spec/profiles.md`).
+    debug_assertions: bool,
+    /// Whether the profile optimizes; the debug metadata records it (`spec/profiles.md`).
+    optimized: bool,
+    /// Panic on integer overflow, unless a package's override turns it off (`spec/profiles.md`).
+    overflow_checks: bool,
+    /// Per-package overrides of the two flags above; the first whose directory prefixes a function's file wins.
+    pub(crate) package_flags: Vec<crate::PackageFlags>,
     /// `--sanitize=undefined`: integer overflow panics in every profile, and every `CPtr` dereference checks that
     /// the pointer is not null and is aligned for its pointee (`spec/sanitizers.md`, SAN4).
     pub(crate) undefined_checks: bool,
@@ -192,6 +199,14 @@ pub(crate) struct Codegen<'ctx, 'a> {
     blackbox_asm: Option<PointerValue<'ctx>>,
 }
 
+/// The profile settings code generation reads (`spec/profiles.md`), grouped so the constructor stays readable.
+pub(crate) struct ProfileFlags {
+    pub(crate) debug_assertions: bool,
+    pub(crate) optimized: bool,
+    pub(crate) overflow_checks: bool,
+    pub(crate) packages: Vec<crate::PackageFlags>,
+}
+
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(crate) fn new(
         cx: &'ctx Context,
@@ -199,7 +214,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         machine: &TargetMachine,
         program: &'a Program,
         sources: &'a SourceMap,
-        release: bool,
+        flags: ProfileFlags,
         debug: Option<DebugInfo<'ctx>>,
     ) -> GenResult<Self> {
         let ptr_ty = cx.ptr_type(AddressSpace::default());
@@ -221,7 +236,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             module,
             program,
             sources,
-            release,
+            debug_assertions: flags.debug_assertions,
+            optimized: flags.optimized,
+            overflow_checks: flags.overflow_checks,
+            package_flags: flags.packages,
             undefined_checks: false,
             sanitized: false,
             builder: cx.create_builder(),
@@ -265,6 +283,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return_consume: None,
             blackbox_asm: None,
         })
+    }
+
+    /// The overflow-check and debug-assertion settings that apply to code from `span`'s file: a package override
+    /// whose directory prefixes the file, else the profile's (`spec/profiles.md`, BP7).
+    pub(crate) fn flags_at(&self, span: Span) -> (bool, bool) {
+        let path = std::path::Path::new(&self.sources.get(span.file).path);
+        for flags in &self.package_flags {
+            if path.starts_with(&flags.dir) {
+                return (flags.overflow_checks, flags.debug_assertions);
+            }
+        }
+        (self.overflow_checks, self.debug_assertions)
     }
 }
 

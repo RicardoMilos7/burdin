@@ -28,13 +28,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// What a run of the compiler front end is for.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Options {
     /// What the entry point of this build is: the program's `main`, its `test` items (`burdin test`), or its
     /// `bench` items (`burdin bench`). A test or bench build does not require `main`.
     pub mode: burdin_sema::EntryMode,
-    /// Compile for release: no error trace frames, and `comptime` code sees `release` as true.
+    /// Compile for release: no error trace frames. The generated code's settings come from the profile
+    /// (`spec/profiles.md`); this is the one front-end decision that is still spelled `release`.
     pub release: bool,
+    /// Integer overflow panics in `comptime` code (`spec/profiles.md`).
+    pub overflow_checks: bool,
+    /// `debug_assert*` runs in `comptime` code (`spec/profiles.md`).
+    pub debug_assertions: bool,
     /// The step budget of each compile-time evaluation; `None` is the default (`spec/comptime.md`, CT11).
     pub comptime_steps: Option<u64>,
     /// Keep checked bodies between analyses. A language server or an editor wants this; a one-shot batch build
@@ -42,6 +47,21 @@ pub struct Options {
     pub no_cache: bool,
     /// The most threads the front end may use (`-j`); 0 means `BURDIN_JOBS`, then the machine's parallelism.
     pub jobs: usize,
+}
+
+impl Default for Options {
+    /// A development build: trace frames, overflow checks, and debug assertions.
+    fn default() -> Options {
+        Options {
+            mode: burdin_sema::EntryMode::default(),
+            release: false,
+            overflow_checks: true,
+            debug_assertions: true,
+            comptime_steps: None,
+            no_cache: false,
+            jobs: 0,
+        }
+    }
 }
 
 /// The analysis was cancelled before it finished (see [`CancelHandle`]). The database is intact; analyze again.
@@ -590,7 +610,8 @@ impl Db {
         // Compile-time evaluation runs only on a program every check accepted (`spec/comptime.md`, CT1).
         if !diags.has_errors() {
             let comptime = burdin_comptime::Options {
-                release: self.options.release,
+                overflow_checks: self.options.overflow_checks,
+                debug_assertions: self.options.debug_assertions,
                 steps: self.options.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
             };
             burdin_comptime::evaluate(&mut program, comptime, &mut diags);

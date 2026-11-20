@@ -290,7 +290,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let options = CompileOptions {
-        release: false,
+        profile: crate::profile::Profile::dev(),
         debug: false,
         strip: false,
         lto: false,

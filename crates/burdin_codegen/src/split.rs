@@ -35,6 +35,8 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::FileType;
 use inkwell::values::FunctionValue;
 
+use crate::OptLevel;
+
 /// About this many instructions make one unit: below it, a second thread costs more (reading the bitcode, and a
 /// second copy of the runtime's constants) than it saves. Measured on a generated 16-module package of 65,000
 /// instructions, where 8 units built fastest in both profiles.
@@ -176,7 +178,7 @@ pub(crate) fn emit_units(
     module: &Module<'_>,
     units: usize,
     jobs: usize,
-    release: bool,
+    level: OptLevel,
     object: &Path,
 ) -> Result<Vec<PathBuf>, String> {
     let plan = prepare(module, units);
@@ -198,7 +200,7 @@ pub(crate) fn emit_units(
                         if index >= plan.units {
                             break;
                         }
-                        let result = emit_unit(bitcode, &plan, index, release, &paths[index]);
+                        let result = emit_unit(bitcode, &plan, index, level, &paths[index]);
                         results.lock().expect("a unit thread panicked")[index] = Some(result);
                     }
                 })
@@ -219,11 +221,11 @@ pub(crate) fn emit_units(
 }
 
 /// Compiles unit `index` from the whole module's `bitcode` into `path`.
-fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, release: bool, path: &Path) -> Result<(), String> {
+fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, level: OptLevel, path: &Path) -> Result<(), String> {
     let context = Context::create();
     let buffer = MemoryBuffer::create_from_memory_range(bitcode, "burdin-unit");
     let module = Module::parse_bitcode_from_buffer(&buffer, &context).map_err(|e| e.to_string())?;
-    let machine = crate::target_machine(release)?;
+    let machine = crate::target_machine(level)?;
     let mut imports = Vec::new();
     for function in module.get_functions() {
         if function.count_basic_blocks() == 0 {
@@ -234,7 +236,7 @@ fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, release: bool, path: &Pa
         if owner == index {
             continue;
         }
-        if release && plan.small.contains(name) {
+        if level.optimized() && plan.small.contains(name) {
             imports.push(function);
         } else {
             function.as_global_value().set_linkage(Linkage::AvailableExternally);
@@ -262,7 +264,7 @@ fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, release: bool, path: &Pa
     module
         .run_passes("elim-avail-extern,globaldce", &machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string_lossy().to_string())?;
-    if release {
+    if level.optimized() {
         for function in imports {
             function.as_global_value().set_linkage(Linkage::AvailableExternally);
         }
@@ -270,10 +272,11 @@ fn emit_unit(bitcode: &[u8], plan: &Plan, index: usize, release: bool, path: &Pa
     module
         .verify()
         .map_err(|e| format!("LLVM verification of codegen unit {index} failed:\n{}", e.to_string_lossy()))?;
-    if release {
+    if level.optimized() {
         // The imports this unit never calls go before the optimizer spends time on them.
+        let pipeline = format!("globaldce,{}", level.pipeline());
         module
-            .run_passes("globaldce,default<O2>", &machine, PassBuilderOptions::create())
+            .run_passes(&pipeline, &machine, PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
     machine.write_to_file(&module, FileType::Object, path).map_err(|e| e.to_string_lossy().to_string())

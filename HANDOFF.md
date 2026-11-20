@@ -4,6 +4,21 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**The build tool's command surface and profiles (issues #338 and #339, 2026-11-20).** `spec/build-tool.md` records
+every command, the Cargo commands that are planned but not copied (with their issue), what is deliberately left out,
+the command-line and environment rules, and the exit statuses; `tests/check_cli.py` checks the golden command list,
+every command's help, unknown and out-of-scope commands, and one package through `build`/`run`/`check`/`test`.
+`spec/profiles.md` replaces the single `--release` switch with named profiles: the built-ins `dev`, `release`,
+`test`, and `bench`; `--profile <name>` on `build`, `run`, `test`, `bench`, `check`, `fuzz`, and `debug`;
+`[profile.<name>]` in `burdin.toml` with `inherits`, `opt-level` (0-3), `debug`, `debug-assertions`,
+`overflow-checks`, and `panic = "abort"`; and `[profile.<name>.package.<package>]` overrides of `overflow-checks`
+and `debug-assertions` for one package's functions. `--release` is `--profile release`, and the defaults reproduce
+the old behavior exactly. `crates/burdin_driver/src/profile.rs` resolves and validates profiles, the generator's
+options now carry an optimization level and the two flags instead of one `release` bit, and the comptime
+interpreter takes the same two flags. `tests/check_profiles.py` proves the observable differences and every failure
+path. Not done: `opt-level` `s`/`z`, `panic = "unwind"`, per-package `opt-level`, and per-package flags in the
+comptime interpreter.
+
 **Watch mode (issue #632, 2026-11-19).** `burdin watch [check|build|test|run] <target>` and `--watch`/`--no-clear` on
 `build`, `run`, `test`, and `check` (`crates/burdin_driver/src/watch.rs`, `spec/watch.md`, `tests/check_watch.py`). It polls
 modification times (no new dependency) and reruns the command as a child `burdin`; `run` builds to a temporary file and

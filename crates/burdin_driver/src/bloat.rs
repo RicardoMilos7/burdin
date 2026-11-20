@@ -2,6 +2,7 @@
 //! `burdin build --release` builds it, as one object file, and the symbol sizes are read from that object.
 
 use crate::emit::{Emit, EmitKind, artifact_path};
+use crate::profile::Profile;
 use crate::{
     CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, TempDir, emit_program, flag_without_value,
     front_end, jobs_or_default, option_value, parse_diagnostic_option, parse_jobs, print_warnings, report_errors,
@@ -87,7 +88,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     // One codegen unit, so there is one object file to read.
     let emit = Emit { kinds: vec![EmitKind::Obj], ..Emit::default() };
     let options = CompileOptions {
-        release: !args.debug_profile,
+        profile: if args.debug_profile { Profile::dev() } else { Profile::release() },
         debug: false,
         strip: false,
         lto: false,
@@ -127,7 +128,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         }
     };
     let output = dir.path.join(&loaded.stem).with_extension(std::env::consts::EXE_EXTENSION);
-    if let Err(code) = emit_program(&program, &sources, &loaded.stem, &output, &options, &rust_libs) {
+    if let Err(code) = emit_program(&program, &sources, &loaded.stem, &output, &options, &rust_libs, &[]) {
         return code;
     }
     let object = artifact_path(&output, EmitKind::Obj);

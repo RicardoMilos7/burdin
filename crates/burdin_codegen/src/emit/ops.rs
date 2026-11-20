@@ -251,7 +251,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(phi.as_basic_value())
     }
 
-    /// `+`, `-`, `*`: panics on overflow in debug builds, wraps in release builds.
+    /// `+`, `-`, `*`: panics on overflow when the profile checks it, wraps otherwise.
     pub(super) fn arith(
         &mut self,
         op: BinOp,
@@ -260,7 +260,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         i: IntTy,
         span: Span,
     ) -> GenResult<IntValue<'ctx>> {
-        if self.release && !self.undefined_checks {
+        if !self.flags_at(span).0 && !self.undefined_checks {
             return self.wrapping(op, x, y);
         }
         let (v, overflow) = self.with_overflow(op, x, y, i)?;
@@ -329,7 +329,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let is_min = self.builder.build_int_compare(IntPredicate::EQ, x, min, "").map_err(llvm_err)?;
             let is_m1 = self.builder.build_int_compare(IntPredicate::EQ, y, minus_one, "").map_err(llvm_err)?;
             let overflow = self.builder.build_and(is_min, is_m1, "").map_err(llvm_err)?;
-            if self.release && !self.undefined_checks {
+            if !self.flags_at(span).0 && !self.undefined_checks {
                 // MIN / 1 = MIN and MIN % 1 = 0 are the wrapped results of MIN / -1 and MIN % -1.
                 divisor = self
                     .builder
@@ -375,7 +375,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     pub(super) fn negate(&mut self, v: IntValue<'ctx>, i: IntTy, span: Span) -> GenResult<IntValue<'ctx>> {
         let zero = v.get_type().const_zero();
-        if self.release && !self.undefined_checks {
+        if !self.flags_at(span).0 && !self.undefined_checks {
             return self.builder.build_int_sub(zero, v, "").map_err(llvm_err);
         }
         let (r, overflow) = self.with_overflow(BinOp::Sub, zero, v, i)?;

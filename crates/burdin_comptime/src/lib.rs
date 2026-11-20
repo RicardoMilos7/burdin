@@ -40,7 +40,14 @@ pub enum Interpreted {
 /// the reason instead of failing.
 pub fn interpret_test(program: &Program, func: FuncId, opts: Options) -> Interpreted {
     let mut consts: Vec<ConstState> = program.consts.iter().map(|_| ConstState::Pending).collect();
-    let mut it = Interp::with_output(program, &mut consts, opts.steps, opts.release, interp::Output::Swallow);
+    let mut it = Interp::with_output(
+        program,
+        &mut consts,
+        opts.steps,
+        opts.overflow_checks,
+        opts.debug_assertions,
+        interp::Output::Swallow,
+    );
     it.raw_memory = true;
     let span = program.functions[func.0].span;
     match it.call(func, None, &[], span) {
@@ -78,15 +85,17 @@ pub const MAX_SPECIALIZATIONS: usize = 1024;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
-    /// A `--release` build: integer overflow wraps instead of panicking (CT1).
-    pub release: bool,
+    /// Integer overflow panics (`spec/comptime.md`, CT1); when off it wraps, as `release` did before profiles.
+    pub overflow_checks: bool,
+    /// `debug_assert*` runs; when off it is removed, as a profile without debug assertions does.
+    pub debug_assertions: bool,
     /// The step budget of each evaluation (CT11).
     pub steps: u64,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { release: false, steps: DEFAULT_STEPS }
+        Options { overflow_checks: true, debug_assertions: true, steps: DEFAULT_STEPS }
     }
 }
 
@@ -189,7 +198,7 @@ pub fn evaluate_differential_tests(program: &mut Program, opts: Options, diags: 
         let body = test.body;
         let span = program.functions[body.0].span;
         let result = {
-            let mut it = Interp::new(program, &mut consts, opts.steps, opts.release);
+            let mut it = Interp::new(program, &mut consts, opts.steps, opts.overflow_checks, opts.debug_assertions);
             it.call_root(body, span)
         };
         let outcome = match result {
@@ -233,7 +242,7 @@ fn evaluate_consts(program: &Program, consts: &mut Vec<ConstState>, opts: Option
         }
         let c = &program.consts[id];
         let result = {
-            let mut it = Interp::new(program, consts, opts.steps, opts.release);
+            let mut it = Interp::new(program, consts, opts.steps, opts.overflow_checks, opts.debug_assertions);
             it.eval_root(&c.locals, &[], &c.value)
         };
         match result {
@@ -329,12 +338,24 @@ impl Rewriter<'_> {
     }
 
     fn eval(&mut self, locals: &[Local], env: &[(LocalId, Value)], e: &Expr) -> Result<Value, Fault> {
-        let mut it = Interp::new(self.p, &mut self.consts, self.opts.steps, self.opts.release);
+        let mut it = Interp::new(
+            self.p,
+            &mut self.consts,
+            self.opts.steps,
+            self.opts.overflow_checks,
+            self.opts.debug_assertions,
+        );
         it.eval_root(locals, env, e)
     }
 
     fn items(&mut self, locals: &[Local], env: &[(LocalId, Value)], e: &Expr) -> Result<Vec<Value>, Fault> {
-        let mut it = Interp::new(self.p, &mut self.consts, self.opts.steps, self.opts.release);
+        let mut it = Interp::new(
+            self.p,
+            &mut self.consts,
+            self.opts.steps,
+            self.opts.overflow_checks,
+            self.opts.debug_assertions,
+        );
         it.items_root(locals, env, e)
     }
 

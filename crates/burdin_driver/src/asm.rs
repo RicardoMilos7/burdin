@@ -3,6 +3,7 @@
 //! table is there), the whole program's assembly is written to a temporary directory, and the function is cut out.
 
 use crate::emit::{Emit, EmitKind};
+use crate::profile::Profile;
 use crate::{
     CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, TempDir, emit_program, flag_without_value,
     front_end, jobs_or_default, option_value, parse_diagnostic_option, parse_jobs, print_warnings, report_errors,
@@ -135,7 +136,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     let kind = if args.llvm { EmitKind::LlvmIrOpt } else { EmitKind::Asm };
     let emit = Emit { kinds: vec![kind], asm_syntax: args.syntax, skip_link: true };
     let options = CompileOptions {
-        release: !args.debug_profile,
+        profile: if args.debug_profile { Profile::dev() } else { Profile::release() },
         // The line table is what the source lines come from; the IR is clearer without the metadata.
         debug: !args.llvm,
         strip: false,
@@ -218,7 +219,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         }
     };
     let output = dir.path.join("program");
-    if let Err(code) = emit_program(&program, &sources, &loaded.stem, &output, &options, &rust_libs) {
+    if let Err(code) = emit_program(&program, &sources, &loaded.stem, &output, &options, &rust_libs, &[]) {
         return code;
     }
     let artifact = emit.path(&output, kind);

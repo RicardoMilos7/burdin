@@ -263,7 +263,7 @@ a driver failure: the message goes to standard error and the exit status is 2, w
 ## Reruns, shards, and slow tests
 
 - `--failed` runs only the tests that failed in the previous run of the same profile. The record is the file
-  `<package>/target/burdin/<debug|release>/test-failed.txt`, next to the build-script output, in the entry package's
+  `<package>/target/burdin/<profile>/test-failed.txt`, next to the build-script output, in the entry package's
   directory (so `--failed` needs a package directory, not a single `.bd` file, and is a usage error otherwise).
   Every `burdin test` run that runs tests updates it: a test that ran and passed leaves the record, a test that
   failed enters it, a test that did not run keeps its status, and an entry whose test no longer exists is dropped
@@ -295,7 +295,7 @@ produce the same outcome, so an interpreter/compiled divergence is caught automa
   returned `Ok` or `Err` is a divergence, and the report gives the two outcomes.
 - The compile-time run happens after every `comptime` construct in the body has been evaluated and rewritten
   (`spec/comptime.md`, CT13), under the same purity (CT9), panic (CT10), budget (CT11), and profile rules (a
-  `--release` test wraps integer overflow, CT1) as any other compile-time evaluation. A body the interpreter cannot
+  profile with `overflow-checks = false` wraps integer overflow, CT1) as any other compile-time evaluation. A body the interpreter cannot
   execute fails compilation: an impure operation is E0224, a panic is E0222, a failed `comptime assert` is E0223,
   and an exhausted budget is E0225, each reported at the test item. Consequently a `[differential]` body cannot
   print, read files or the environment, run processes, call C, or panic at compile time.

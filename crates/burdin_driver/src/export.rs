@@ -22,7 +22,7 @@ use crate::{CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverri
 
 pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &DiagnosticOptions) -> ExitCode {
     let options = CompileOptions {
-        release: false,
+        profile: crate::profile::Profile::dev(),
         debug: false,
         strip: false,
         lto: false,

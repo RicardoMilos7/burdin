@@ -112,7 +112,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         Err(message) => return crate::cli::usage_error("doc", &message),
     };
     let options = CompileOptions {
-        release: false,
+        profile: crate::profile::Profile::dev(),
         debug: false,
         strip: false,
         lto: false,

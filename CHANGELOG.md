@@ -6,6 +6,23 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The build tool's command surface (stage 3, issue #338; `spec/build-tool.md`). The page records every command the
+  `burdin` tool has, the Cargo commands that are planned but not copied (and the issue that owns each), the Cargo
+  behavior that is deliberately left out (plugins and external subcommands, proc-macros and the native
+  `links`/`-sys` build protocol, a registry client, arbitrary installation, layered configuration, formatter
+  options, and `--manifest-path` on build commands), the command-line and environment rules, and the exit statuses.
+  `tests/check_cli.py` checks the golden command list, every command's help, unknown and out-of-scope commands, the
+  version, and one fixture package through `build`, `run`, `check`, and `test`.
+- Named build profiles (stage 3, issue #339; `spec/profiles.md`). `dev`, `release`, `test`, and `bench` are built in,
+  and a package defines or customizes one in `[profile.<name>]` with `inherits`, `opt-level`, `debug`,
+  `debug-assertions`, `overflow-checks`, and `panic` (`abort` only). `--profile <name>` selects one on `build`,
+  `run`, `test`, `bench`, `check`, `fuzz`, and `debug`, and `--release` is `--profile release`. `dev` and `test`
+  share `target/burdin/debug`, `release` and `bench` share `release`, and a build script's cache key holds the
+  settings rather than the name. `[profile.<name>.package.<package>]` overrides `overflow-checks` and
+  `debug-assertions` for one package's functions. The generator's options now carry an optimization level and the
+  two flags instead of one `release` bit. `tests/check_profiles.py` checks overflow, debug assertions, per-package
+  overrides, the IR, and every failure path; `crates/burdin_driver/src/profile.rs` has the unit tests.
+
 - Official packages (`spec/packages.md`, PKG15-PKG18): `name = true` in `[dependencies]` declares a package that ships with
   the compiler, from the new top-level `packages/` folder (`packages/README.md` explains it, and `json` is the first
   package in it). `burdin add
