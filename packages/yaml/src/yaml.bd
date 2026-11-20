@@ -1,0 +1,2635 @@
+// The YAML format (spec/serialization.md; issue #258).
+//
+// A format package: it implements only the format side of the framework. `Writer` implements `Serializer` and
+// `Reader` implements `Deserializer`; the public surface is `to_string` and `from_str`.
+//
+// It is a safe subset of YAML 1.2 (packages/yaml/README.md lists what is supported and what is rejected):
+//   * one document of block and flow mappings and sequences, plain, single-quoted, and double-quoted scalars, the
+//     block scalars `|` and `>` (with indentation and chomping indicators), and comments;
+//   * anchors and aliases, resolved while the text is loaded: an alias becomes a copy of the anchored node, and the
+//     copying is bounded, so a document that expands without limit ("an alias bomb") is an error;
+//   * no tags that build a value of a chosen type: the only tag is `!!str`, and every other tag, merge key,
+//     directive, complex key, and second document is an error, never a silent guess.
+//
+// Loading is two steps. `Loader` parses the text into a tree of `Node`s kept in one list, and `Reader` walks that
+// tree as the framework's `Deserializer`; a scalar is converted to a number or a boolean only when the type asks
+// for one, so `"true"` and `true` differ and a `String` field holds `123` as text. `Writer` builds the same tree
+// from the framework's calls and prints it in block style.
+//
+// The mapping is the one `spec/serialization.md` settles (SER1-SER8), narrowed to what YAML can represent:
+//   unit -> null; bool -> true/false; every integer width -> a number; f32/f64 -> a number, `.inf`, `-.inf`, `.nan`;
+//   char, str -> a string; bytes -> a sequence of numbers; sequence -> sequence; map -> mapping with string keys;
+//   struct -> mapping (its name is ignored); enum variant -> externally tagged (`Name`, `Name: value`, or
+//   `Name:` followed by a sequence), with `Option` written as the payload itself (`Some`) or `null` (`None`).
+
+// The deepest nesting of collections a document may have.
+priv const MAX_DEPTH: usize = 100
+// The most nodes, and the most bytes of scalar text, that aliases may add to a document.
+priv const MAX_ALIAS_NODES: usize = 100000
+priv const MAX_ALIAS_BYTES: usize = 4194304
+
+// ----- the tree ------------------------------------------------------------------------------------------------
+
+/// One node of a loaded or an about-to-be-written document. The nodes of a document live in one list and refer to
+/// each other by index.
+struct Node {
+    // 0 = scalar, 1 = sequence, 2 = mapping.
+    kind: i32,
+    // The text of a scalar (decoded, for a quoted or block scalar; already formatted, in the writer's tree).
+    text: String,
+    // Whether the scalar was quoted, a block scalar, or tagged `!!str`: such a scalar is always a string. (In the
+    // writer's tree, on a mapping, it marks one written from a `Map`, whose entries are printed sorted by key.)
+    quoted: bool,
+    // The keys of a mapping, parallel to `items`.
+    keys: List<String>,
+    // The elements of a sequence, or the values of a mapping.
+    items: List<usize>,
+    // The byte offset in the text where the node starts, for its line and column.
+    pos: usize,
+}
+
+/// A scalar node.
+priv fn __scalar_node(own text: String, quoted: bool, pos: usize): Node {
+    Node { kind: 0, text, quoted, keys: List<String>.new(), items: List<usize>.new(), pos }
+}
+
+/// An empty sequence (`kind` 1) or mapping (`kind` 2) node.
+priv fn __collection_node(kind: i32, pos: usize): Node {
+    Node { kind, text: String.new(), quoted: false, keys: List<String>.new(), items: List<usize>.new(), pos }
+}
+
+/// An error with the line and column of the byte offset `position` in `text`. A column counts Unicode scalar
+/// values (SER10).
+priv fn __syntax(text: str, message: str, position: usize): DeError {
+    let bytes = text.as_bytes()
+    let mut line: i32 = 1
+    let mut col: i32 = 1
+    let mut i: usize = 0
+    while i < position && i < bytes.len() {
+        let b = bytes[i]
+        if b == 10 {
+            line = line + 1
+            col = 1
+        } else if b >= 128 && b < 192 {
+            // A UTF-8 continuation byte: still the same character.
+        } else {
+            col = col + 1
+        }
+        i = i + 1
+    }
+    DeError.syntax(message, line, col)
+}
+
+// ----- the loader ----------------------------------------------------------------------------------------------
+
+/// A mapping key and where it starts.
+struct Key {
+    text: String,
+    pos: usize,
+}
+
+/// The properties written before a node: an anchor and the `!!str` tag.
+struct Props {
+    present: bool,
+    has_anchor: bool,
+    anchor: String,
+    str_tag: bool,
+}
+
+/// The YAML parser: a normalized copy of the input, the byte offset of the next unread byte, the nodes built so
+/// far, and the anchors seen so far.
+struct Loader {
+    text: String,
+    pos: usize,
+    nodes: List<Node>,
+    anchors: Map<String, usize>,
+    depth: usize,
+    copied_nodes: usize,
+    copied_bytes: usize,
+}
+
+Loader {
+    /// A loader over `text`. The text is copied once, with line breaks normalized to line feeds and a leading byte
+    /// order mark removed.
+    fn new(text: str): Loader {
+        Loader {
+            text: __normalize(text),
+            pos: 0,
+            nodes: List<Node>.new(),
+            anchors: Map<String, usize>.new(),
+            depth: 0,
+            copied_nodes: 0,
+            copied_bytes: 0,
+        }
+    }
+
+    /// Loads the whole text as one document and returns the index of its root node.
+    fn load(mut self): Result<usize, DeError> {
+        self.check_characters()?
+        self.skip_to_content(true)?
+        if !self.at_end() && self.peek() == 37 && self.column(self.pos) == 0 {
+            return Err(self.fail("directives are not supported"))
+        }
+        let root = if self.marker_here(45) {
+            self.pos = self.pos + 3
+            self.parse_node(-1, 2, false)?
+        } else {
+            self.parse_node(-1, 0, false)?
+        }
+        self.skip_to_content(true)?
+        if self.marker_here(46) {
+            self.pos = self.pos + 3
+            self.skip_inline_ws()
+            if !self.at_end() && self.peek() != 10 && !self.at_comment() {
+                return Err(self.fail("unexpected characters after the document end marker"))
+            }
+            self.skip_to_content(true)?
+            if !self.at_end() {
+                return Err(self.fail("only one document is supported"))
+            }
+        } else if self.marker_here(45) {
+            return Err(self.fail("only one document is supported"))
+        }
+        if !self.at_end() {
+            return Err(self.fail("unexpected content after the value"))
+        }
+        Ok(root)
+    }
+
+    /// Ends the loader, handing its tree and its text to a reader.
+    fn finish(own self, root: usize): Reader {
+        let mut nodes = self.nodes
+        // A node of kind 3 stands for a sequence element that is not there (see `has_next_seq_element`).
+        let missing = nodes.len()
+        nodes.push(__collection_node(3, 0))
+        Reader {
+            nodes,
+            text: self.text,
+            cur: root,
+            frames: List<RFrame>.new(),
+            enums: List<REnum>.new(),
+            reads: 0,
+            missing,
+            missing_at: 0,
+        }
+    }
+
+    // ----- positions and errors
+
+    priv fn at_end(self): bool {
+        self.pos >= self.text.len()
+    }
+
+    /// The byte at `i`, or 0 past the end.
+    priv fn byte_at(self, i: usize): u8 {
+        let bytes = self.text.as_bytes()
+        if i < bytes.len() {
+            bytes[i]
+        } else {
+            0
+        }
+    }
+
+    /// The byte at the current position, or 0 at the end.
+    priv fn peek(self): u8 {
+        self.byte_at(self.pos)
+    }
+
+    /// The offset where the line holding `pos` starts.
+    priv fn line_start(self, pos: usize): usize {
+        let bytes = self.text.as_bytes()
+        let mut i = pos
+        while i > 0 && bytes[i - 1] != 10 {
+            i = i - 1
+        }
+        i
+    }
+
+    /// The byte column of `pos` in its line. Indentation is spaces, so a byte column is an indentation.
+    priv fn column(self, pos: usize): usize {
+        pos - self.line_start(pos)
+    }
+
+    /// Whether only spaces and tabs come before `pos` on its line.
+    priv fn blank_before(self, pos: usize): bool {
+        let bytes = self.text.as_bytes()
+        let mut i = pos
+        while i > 0 {
+            let b = bytes[i - 1]
+            if b == 10 {
+                return true
+            }
+            if b != 32 && b != 9 {
+                return false
+            }
+            i = i - 1
+        }
+        true
+    }
+
+    /// Whether a comment starts here: a `#` at the start of a line or after white space.
+    priv fn at_comment(self): bool {
+        if self.at_end() || self.peek() != 35 {
+            return false
+        }
+        self.pos == 0 || __is_blank_or_end(self.byte_at(self.pos - 1))
+    }
+
+    /// Whether a block sequence entry starts here: `-` followed by white space or the end.
+    priv fn dash_here(self): bool {
+        self.peek() == 45 && __is_blank_or_end(self.byte_at(self.pos + 1))
+    }
+
+    /// Whether the document marker `---` (`marker` 45) or `...` (`marker` 46) starts here, at the start of a line.
+    priv fn marker_here(self, marker: u8): bool {
+        if self.at_end() || self.column(self.pos) != 0 {
+            return false
+        }
+        self.peek() == marker
+            && self.byte_at(self.pos + 1) == marker
+            && self.byte_at(self.pos + 2) == marker
+            && __is_blank_or_end(self.byte_at(self.pos + 3))
+    }
+
+    priv fn fail(self, message: str): DeError {
+        __syntax(self.text.as_str(), message, self.pos)
+    }
+
+    priv fn fail_at(self, message: str, position: usize): DeError {
+        __syntax(self.text.as_str(), message, position)
+    }
+
+    /// Rejects a control character other than a tab or a line feed anywhere in the text.
+    priv fn check_characters(self): Result<(), DeError> {
+        let bytes = self.text.as_bytes()
+        let mut i: usize = 0
+        while i < bytes.len() {
+            let b = bytes[i]
+            if (b < 32 && b != 9 && b != 10) || b == 127 {
+                return Err(self.fail_at("a control character is not allowed in a YAML document", i))
+            }
+            i = i + 1
+        }
+        Ok(())
+    }
+
+    // ----- white space
+
+    priv fn skip_inline_ws(mut self) {
+        while self.pos < self.text.len() && (self.peek() == 32 || self.peek() == 9) {
+            self.pos = self.pos + 1
+        }
+    }
+
+    /// Skips white space, line breaks, and comments up to the next content or the end. In block context a tab in
+    /// the indentation of a line that has content is an error: its column would be ambiguous.
+    priv fn skip_to_content(mut self, block: bool): Result<(), DeError> {
+        let mut fresh = self.blank_before(self.pos)
+        let mut tab_in_indent = false
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == 32 {
+                self.pos = self.pos + 1
+            } else if b == 9 {
+                if fresh {
+                    tab_in_indent = true
+                }
+                self.pos = self.pos + 1
+            } else if b == 10 {
+                self.pos = self.pos + 1
+                fresh = true
+                tab_in_indent = false
+            } else if self.at_comment() {
+                while self.pos < self.text.len() && self.peek() != 10 {
+                    self.pos = self.pos + 1
+                }
+            } else {
+                if block && fresh && tab_in_indent {
+                    return Err(self.fail("a tab cannot be used for indentation"))
+                }
+                return Ok(())
+            }
+        }
+        Ok(())
+    }
+
+    // ----- nodes
+
+    priv fn push_node(mut self, own node: Node): usize {
+        self.nodes.push(node)
+        self.nodes.len() - 1
+    }
+
+    priv fn empty_scalar(mut self): usize {
+        let at = self.pos
+        self.empty_scalar_at(at)
+    }
+
+    /// An empty scalar that stands where `at` is: a missing value is reported at the `:` or `-` before it.
+    priv fn empty_scalar_at(mut self, at: usize): usize {
+        let node = __scalar_node(String.new(), false, at)
+        self.push_node(node)
+    }
+
+    /// Reads the properties before a node and leaves the position at the node (or at the end of the line).
+    priv fn read_props(mut self): Result<Props, DeError> {
+        let mut props = Props { present: false, has_anchor: false, anchor: String.new(), str_tag: false }
+        loop {
+            let b = self.peek()
+            if b == 38 {
+                if props.has_anchor {
+                    return Err(self.fail("a node has at most one anchor"))
+                }
+                self.pos = self.pos + 1
+                let name = self.read_name()
+                if name.len() == 0 {
+                    return Err(self.fail("an anchor needs a name"))
+                }
+                props.has_anchor = true
+                props.anchor = name
+                props.present = true
+            } else if b == 33 {
+                let start = self.pos
+                while !self.at_end() && !__is_blank_or_end(self.peek()) && !__is_flow_indicator(self.peek()) {
+                    self.pos = self.pos + 1
+                }
+                let tag = self.slice_text(start, self.pos)
+                if tag.as_str() == "!!str" {
+                    props.str_tag = true
+                    props.present = true
+                } else {
+                    return Err(self.fail_at(format("the tag '{tag}' is not supported (only !!str is)"), start))
+                }
+            } else {
+                break
+            }
+            let before = self.pos
+            self.skip_inline_ws()
+            if self.pos == before {
+                break
+            }
+        }
+        Ok(props)
+    }
+
+    priv fn duplicate_key(self, own name: String, position: usize): DeError {
+        let message = format("duplicate key '{name}'")
+        self.fail_at(message.as_str(), position)
+    }
+
+    /// A copy of the text from byte `start` up to `end`.
+    priv fn slice_text(self, start: usize, end: usize): String {
+        self.text[start..end].to_string()
+    }
+
+    /// Reads an anchor or alias name: up to white space or a flow indicator.
+    priv fn read_name(mut self): String {
+        let start = self.pos
+        while !self.at_end() && !__is_blank_or_end(self.peek()) && !__is_flow_indicator(self.peek()) {
+            self.pos = self.pos + 1
+        }
+        self.slice_text(start, self.pos)
+    }
+
+    /// Applies the properties to the node built for them: `!!str` makes a scalar a string, and an anchor names it.
+    priv fn apply_props(mut self, idx: usize, props: Props): Result<usize, DeError> {
+        if props.str_tag {
+            if self.nodes[idx].kind != 0 {
+                return Err(self.fail_at("the tag !!str applies to a scalar", self.nodes[idx].pos))
+            }
+            self.nodes[idx].quoted = true
+        }
+        if props.has_anchor {
+            self.anchors.insert(props.anchor.clone(), idx)
+        }
+        Ok(idx)
+    }
+
+    /// Reads `*name` and returns a copy of the anchored node (an alias is resolved by copying; the copying is
+    /// bounded, so an alias bomb is an error).
+    priv fn parse_alias(mut self): Result<usize, DeError> {
+        let start = self.pos
+        self.pos = self.pos + 1
+        let name = self.read_name()
+        if name.len() == 0 {
+            return Err(self.fail_at("an alias needs a name", start))
+        }
+        let target = match self.anchors.get(name.clone()) {
+            Some(found) => *found,
+            None => return Err(self.fail_at(format("unknown anchor '{name}'"), start)),
+        }
+        self.copy_node(target, start)
+    }
+
+    /// A deep copy of the node `src`, for an alias at `at`.
+    priv fn copy_node(mut self, src: usize, at: usize): Result<usize, DeError> {
+        self.copied_nodes = self.copied_nodes + 1
+        if self.copied_nodes > MAX_ALIAS_NODES {
+            return Err(
+                self.fail_at(
+                    "aliases expand to too many nodes (the limit is 100000 copied nodes)",
+                    at,
+                ),
+            )
+        }
+        let kind = self.nodes[src].kind
+        let pos = self.nodes[src].pos
+        if kind == 0 {
+            let text = self.nodes[src].text.clone()
+            self.copied_bytes = self.copied_bytes + text.len()
+            if self.copied_bytes > MAX_ALIAS_BYTES {
+                return Err(self.fail_at("aliases expand to too much text (the limit is 4 MiB)", at))
+            }
+            let quoted = self.nodes[src].quoted
+            return Ok(self.push_node(__scalar_node(text, quoted, pos)))
+        }
+        let mut keys = List<String>.new()
+        let mut k: usize = 0
+        while k < self.nodes[src].keys.len() {
+            let key = self.nodes[src].keys[k].clone()
+            self.copied_bytes = self.copied_bytes + key.len()
+            keys.push(key)
+            k = k + 1
+        }
+        if self.copied_bytes > MAX_ALIAS_BYTES {
+            return Err(self.fail_at("aliases expand to too much text (the limit is 4 MiB)", at))
+        }
+        let me = self.push_node(__collection_node(kind, pos))
+        self.nodes[me].keys = keys
+        let count = self.nodes[src].items.len()
+        let mut i: usize = 0
+        while i < count {
+            let from = self.nodes[src].items[i]
+            let child = self.copy_node(from, at)?
+            self.nodes[me].items.push(child)
+            i = i + 1
+        }
+        Ok(me)
+    }
+
+    // ----- block nodes
+
+    /// Parses the node that starts at the next content. `parent` is the indentation of the enclosing block node
+    /// (-1 at the top). `same_line` says where the node starts: 0 on a line of its own, 1 after a `-` (a block
+    /// collection may start on that line), 2 after a `key:` or `---` (a block collection may not). `seq_ok` allows
+    /// a block sequence at the parent's own indentation, as the value of a mapping key.
+    priv fn parse_node(mut self, parent: i64, same_line: i32, seq_ok: bool): Result<usize, DeError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(self.fail("the document is nested too deeply (more than 100 levels)"))
+        }
+        self.depth = self.depth + 1
+        let result = self.parse_node_inner(parent, same_line, seq_ok)
+        self.depth = self.depth - 1
+        result
+    }
+
+    priv fn parse_node_inner(mut self, parent: i64, same_line: i32, seq_ok: bool): Result<usize, DeError> {
+        let origin = self.pos
+        let mut on_line = same_line != 0
+        if on_line {
+            self.skip_inline_ws()
+            if self.at_end() || self.peek() == 10 || self.at_comment() {
+                on_line = false
+            }
+        }
+        if !on_line {
+            self.skip_to_content(true)?
+        }
+        if self.at_end() || self.marker_here(45) || self.marker_here(46) {
+            return Ok(self.empty_scalar_at(origin))
+        }
+        if !on_line && !self.starts_node(parent, seq_ok) {
+            return Ok(self.empty_scalar_at(origin))
+        }
+        let props = self.read_props()?
+        let mut props_on_line = props.present
+        if props.present {
+            if self.at_end() || self.peek() == 10 || self.at_comment() {
+                // The node is on a later line, or there is none.
+                props_on_line = false
+                on_line = false
+                self.skip_to_content(true)?
+                if self.at_end() || self.marker_here(45) || self.marker_here(46) || !self.starts_node(parent, seq_ok) {
+                    let idx = self.empty_scalar_at(origin)
+                    return self.apply_props(idx, props)
+                }
+            }
+        }
+        let col = self.column(self.pos)
+        let start = self.pos
+        let b = self.peek()
+        let next = self.byte_at(self.pos + 1)
+        let mut idx: usize = 0
+        if b == 45 && __is_blank_or_end(next) {
+            if on_line && (same_line == 2 || props_on_line) {
+                return Err(self.fail("a block sequence cannot start here"))
+            }
+            idx = self.parse_block_seq(col)?
+        } else if b == 63 && __is_blank_or_end(next) {
+            return Err(self.fail("complex mapping keys ('? ') are not supported"))
+        } else if b == 58 && __is_blank_or_end(next) {
+            return Err(self.fail("a mapping key is missing before ':'"))
+        } else if b == 91 || b == 123 {
+            idx = self.parse_flow()?
+            self.skip_inline_ws()
+            if self.peek() == 58 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
+                return Err(self.fail_at("a flow collection cannot be a mapping key", start))
+            }
+            self.expect_line_end()?
+        } else if b == 124 || b == 62 {
+            idx = self.parse_block_scalar(parent)?
+        } else if b == 42 {
+            if props.present {
+                return Err(self.fail_at("an alias cannot have properties", start))
+            }
+            idx = self.parse_alias()?
+            self.skip_inline_ws()
+            if self.peek() == 58 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
+                return Err(self.fail_at("an alias cannot be a mapping key", start))
+            }
+            self.expect_line_end()?
+        } else if b == 37 && col == 0 {
+            return Err(self.fail("directives are not supported"))
+        } else if b == 64 || b == 96 {
+            return Err(self.fail("this character is reserved and cannot start a YAML node"))
+        } else if b == 93 || b == 125 || b == 44 {
+            return Err(self.fail("unexpected character"))
+        } else if b == 38 || b == 33 {
+            return Err(self.fail("unexpected node property"))
+        } else {
+            match self.try_key()? {
+                Some(key) => {
+                    if on_line && same_line == 2 {
+                        return Err(self.fail_at("a mapping is not allowed here", key.pos))
+                    }
+                    if props_on_line {
+                        return Err(
+                            self.fail_at(
+                                "properties before a mapping key are not supported; put them on their own line",
+                                start,
+                            ),
+                        )
+                    }
+                    idx = self.parse_block_map(col, key)?
+                }
+                None => {
+                    if b == 34 || b == 39 {
+                        let text = self.read_quoted()?
+                        idx = self.push_node(__scalar_node(text, true, start))
+                        self.expect_line_end()?
+                    } else {
+                        idx = self.parse_plain_block(parent)?
+                    }
+                }
+            }
+        }
+        self.apply_props(idx, props)
+    }
+
+    /// Checks that only white space and a comment follow on the line: what comes after a quoted scalar, an alias, or
+    /// a flow collection in block context.
+    priv fn expect_line_end(mut self): Result<(), DeError> {
+        self.skip_inline_ws()
+        if self.at_end() || self.peek() == 10 || self.at_comment() {
+            Ok(())
+        } else {
+            Err(self.fail("unexpected characters after the value"))
+        }
+    }
+
+    /// Whether the content at the current position (on a line of its own) belongs to a node whose parent has the
+    /// indentation `parent`: it must be indented more, or be a sequence entry at the same indentation when `seq_ok`.
+    priv fn starts_node(self, parent: i64, seq_ok: bool): bool {
+        let col = self.column(self.pos) as i64
+        if col > parent {
+            return true
+        }
+        seq_ok && col == parent && self.dash_here()
+    }
+
+    /// If a mapping key and its `:` start here, reads them and returns the key; otherwise leaves the position
+    /// where it was and returns `None`. A key is a plain or quoted scalar on one line.
+    priv fn try_key(mut self): Result<Option<Key>, DeError> {
+        let save = self.pos
+        let b = self.peek()
+        if b == 34 || b == 39 {
+            let text = self.read_quoted()?
+            self.skip_inline_ws()
+            if self.peek() == 58 {
+                self.pos = self.pos + 1
+                return Ok(Some(Key { text, pos: save }))
+            }
+            self.pos = save
+            return Ok(None)
+        }
+        let end = self.scan_plain_line(false)
+        if self.peek() == 58 && end > save {
+            let merge = self.text[save..end] == "<<"
+            if merge {
+                return Err(self.fail_at("merge keys (<<) are not supported", save))
+            }
+            let text = self.slice_text(save, end)
+            self.pos = self.pos + 1
+            return Ok(Some(Key { text, pos: save }))
+        }
+        self.pos = save
+        Ok(None)
+    }
+
+    /// Reads the mapping that starts at the column `indent`, whose first key is `first`. The position is just after
+    /// the `:` of that key.
+    priv fn parse_block_map(mut self, indent: usize, own first: Key): Result<usize, DeError> {
+        let map = self.push_node(__collection_node(2, first.pos))
+        let mut seen = Map<String, bool>.new()
+        let mut key = first
+        loop {
+            let key_text = key.text.clone()
+            let key_pos = key.pos
+            if seen.contains_key(key_text.clone()) {
+                return Err(self.duplicate_key(key_text.clone(), key_pos))
+            }
+            seen.insert(key_text.clone(), true)
+            let value = self.parse_node(indent as i64, 2, true)?
+            self.nodes[map].keys.push(key_text)
+            self.nodes[map].items.push(value)
+            self.skip_to_content(true)?
+            if self.at_end() || self.marker_here(45) || self.marker_here(46) {
+                break
+            }
+            let col = self.column(self.pos)
+            if col < indent {
+                break
+            }
+            if col > indent {
+                return Err(self.fail("the indentation of this mapping entry is wrong"))
+            }
+            let b = self.peek()
+            if b == 38 || b == 33 || b == 42 || b == 91 || b == 123 || b == 124 || b == 62 {
+                return Err(self.fail("a mapping key must be a plain or quoted scalar"))
+            }
+            if b == 63 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
+                return Err(self.fail("complex mapping keys ('? ') are not supported"))
+            }
+            match self.try_key()? {
+                Some(next) => { key = next }
+                None => return Err(self.fail("expected a mapping key followed by ':'")),
+            }
+        }
+        Ok(map)
+    }
+
+    /// Reads the sequence whose `-` entries start at the column `indent`.
+    priv fn parse_block_seq(mut self, indent: usize): Result<usize, DeError> {
+        let at = self.pos
+        let seq = self.push_node(__collection_node(1, at))
+        loop {
+            self.pos = self.pos + 1
+            let item = self.parse_node(indent as i64, 1, false)?
+            self.nodes[seq].items.push(item)
+            self.skip_to_content(true)?
+            if self.at_end() || self.marker_here(45) || self.marker_here(46) {
+                break
+            }
+            let col = self.column(self.pos)
+            if col < indent {
+                break
+            }
+            if col > indent {
+                return Err(self.fail("the indentation of this sequence entry is wrong"))
+            }
+            if !self.dash_here() {
+                break
+            }
+        }
+        Ok(seq)
+    }
+
+    // ----- scalars
+
+    /// Scans a plain scalar's first line from the current position. It returns the end of the text (without
+    /// trailing white space) and leaves the position at what stopped it: a `:` that ends a key, a comment, a flow
+    /// indicator in flow context, a line break, or the end.
+    priv fn scan_plain_line(mut self, flow: bool): usize {
+        let start = self.pos
+        let len = self.text.len()
+        let mut i = start
+        let mut last = start
+        while i < len {
+            let b = self.byte_at(i)
+            if b == 10 {
+                break
+            }
+            if b == 58 {
+                let n = self.byte_at(i + 1)
+                if __is_blank_or_end(n) || (flow && __is_flow_indicator(n)) {
+                    break
+                }
+            }
+            if b == 35 && i > start && (self.byte_at(i - 1) == 32 || self.byte_at(i - 1) == 9) {
+                break
+            }
+            if flow && __is_flow_indicator(b) {
+                break
+            }
+            if b != 32 && b != 9 {
+                last = i + 1
+            }
+            i = i + 1
+        }
+        self.pos = i
+        last
+    }
+
+    /// Reads a plain scalar in block context, which may continue over following lines that are indented more than
+    /// `parent`. Line breaks fold into spaces, and a blank line is a line feed.
+    priv fn parse_plain_block(mut self, parent: i64): Result<usize, DeError> {
+        let start = self.pos
+        let end = self.scan_plain_line(false)
+        let mut text = self.slice_text(start, end)
+        loop {
+            if self.at_end() || self.peek() != 10 {
+                break
+            }
+            let mut j = self.pos
+            let mut breaks: usize = 0
+            while self.byte_at(j) == 10 {
+                breaks = breaks + 1
+                j = j + 1
+                while self.byte_at(j) == 32 || self.byte_at(j) == 9 {
+                    j = j + 1
+                }
+            }
+            if j >= self.text.len() {
+                break
+            }
+            let col = self.column(j) as i64
+            if col <= parent || self.byte_at(j) == 35 {
+                break
+            }
+            let line_begin = self.line_start(j)
+            if line_begin == j && (self.is_marker_at(j, 45) || self.is_marker_at(j, 46)) {
+                break
+            }
+            self.pos = j
+            let cont_end = self.scan_plain_line(false)
+            if self.peek() == 58 {
+                return Err(self.fail_at("a mapping is not allowed here", j))
+            }
+            if cont_end == j {
+                break
+            }
+            if breaks == 1 {
+                text.push(' ')
+            } else {
+                let mut k: usize = 1
+                while k < breaks {
+                    text.push('\n')
+                    k = k + 1
+                }
+            }
+            let piece = self.slice_text(j, cont_end)
+            text.push_str(piece.as_str())
+        }
+        Ok(self.push_node(__scalar_node(text, false, start)))
+    }
+
+    /// Whether the marker `---` (`marker` 45) or `...` (`marker` 46) starts at `at`, which is a line start.
+    priv fn is_marker_at(self, at: usize, marker: u8): bool {
+        self.byte_at(at) == marker
+            && self.byte_at(at + 1) == marker
+            && self.byte_at(at + 2) == marker
+            && __is_blank_or_end(self.byte_at(at + 3))
+    }
+
+    /// Reads a quoted scalar. In double quotes the escapes are decoded; in single quotes `''` is a quote. A line
+    /// break inside folds as in a plain scalar.
+    priv fn read_quoted(mut self): Result<String, DeError> {
+        let start = self.pos
+        let quote = self.peek()
+        let double = quote == 34
+        self.pos = self.pos + 1
+        let mut out = String.new()
+        let mut chunk = self.pos
+        // The length of `out` that trailing-space trimming at a line break must not touch (decoded escapes).
+        let mut protect: usize = 0
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == quote {
+                if !double && self.byte_at(self.pos + 1) == 39 {
+                    let piece = self.slice_text(chunk, self.pos + 1)
+                    out.push_str(piece.as_str())
+                    self.pos = self.pos + 2
+                    chunk = self.pos
+                    protect = out.len()
+                } else {
+                    let piece = self.slice_text(chunk, self.pos)
+                    out.push_str(piece.as_str())
+                    self.pos = self.pos + 1
+                    return Ok(out)
+                }
+            } else if b == 10 {
+                let piece = self.slice_text(chunk, self.pos)
+                out.push_str(piece.as_str())
+                __trim_blank_end(mut out, protect)
+                let mut breaks: usize = 0
+                while self.pos < self.text.len() && self.peek() == 10 {
+                    breaks = breaks + 1
+                    self.pos = self.pos + 1
+                    self.skip_inline_ws()
+                }
+                if breaks == 1 {
+                    out.push(' ')
+                } else {
+                    let mut k: usize = 1
+                    while k < breaks {
+                        out.push('\n')
+                        k = k + 1
+                    }
+                }
+                chunk = self.pos
+                protect = out.len()
+            } else if double && b == 92 {
+                let piece = self.slice_text(chunk, self.pos)
+                out.push_str(piece.as_str())
+                let escape_at = self.pos
+                self.pos = self.pos + 1
+                if self.at_end() {
+                    break
+                }
+                let e = self.peek()
+                self.pos = self.pos + 1
+                if e == 10 {
+                    // An escaped line break joins the lines without a space.
+                    self.skip_inline_ws()
+                } else {
+                    let code = __simple_escape(e)
+                    if code >= 0 {
+                        match (code as u32).to_char() {
+                            Some(c) => out.push(c),
+                            None => return Err(self.fail_at("invalid escape", escape_at)),
+                        }
+                    } else if e == 120 || e == 117 || e == 85 {
+                        let digits: usize = if e == 120 { 2 } else if e == 117 { 4 } else { 8 }
+                        let value = self.read_hex(digits)?
+                        match value.to_char() {
+                            Some(c) => out.push(c),
+                            None => return Err(self.fail_at("invalid unicode escape", escape_at)),
+                        }
+                    } else {
+                        return Err(self.fail_at("invalid escape", escape_at))
+                    }
+                }
+                chunk = self.pos
+                protect = out.len()
+            } else {
+                self.pos = self.pos + 1
+            }
+        }
+        Err(self.fail_at("unterminated quoted string", start))
+    }
+
+    /// Reads `digits` hexadecimal digits of an escape.
+    priv fn read_hex(mut self, digits: usize): Result<u32, DeError> {
+        let mut value: u32 = 0
+        let mut i: usize = 0
+        while i < digits {
+            let d = __hex_value(self.byte_at(self.pos))
+            if d < 0 || self.at_end() {
+                return Err(self.fail("invalid unicode escape"))
+            }
+            value = value * 16 + (d as u32)
+            self.pos = self.pos + 1
+            i = i + 1
+        }
+        Ok(value)
+    }
+
+    /// Reads a block scalar (`|` or `>`) whose header starts here. `parent` is the indentation of the enclosing
+    /// block node: the content must be indented more than it.
+    priv fn parse_block_scalar(mut self, parent: i64): Result<usize, DeError> {
+        let start = self.pos
+        let literal = self.peek() == 124
+        self.pos = self.pos + 1
+        // 0 clip, 1 strip, 2 keep.
+        let mut chomp: i32 = 0
+        let mut seen_chomp = false
+        let mut explicit: i64 = 0
+        let mut i: usize = 0
+        while i < 2 {
+            let b = self.peek()
+            if b == 45 || b == 43 {
+                if seen_chomp {
+                    return Err(self.fail("a block scalar header has one chomping indicator"))
+                }
+                seen_chomp = true
+                chomp = if b == 45 { 1 } else { 2 }
+                self.pos = self.pos + 1
+            } else if b >= 49 && b <= 57 {
+                if explicit != 0 {
+                    return Err(self.fail("a block scalar header has one indentation indicator"))
+                }
+                explicit = (b - 48) as i64
+                self.pos = self.pos + 1
+            } else {
+                break
+            }
+            i = i + 1
+        }
+        self.skip_inline_ws()
+        if self.at_comment() {
+            while !self.at_end() && self.peek() != 10 {
+                self.pos = self.pos + 1
+            }
+        }
+        if !self.at_end() && self.peek() != 10 {
+            return Err(self.fail("unexpected characters after the block scalar header"))
+        }
+        let len = self.text.len()
+        // The indentation of the content: given, or the indentation of the first line that has text. When there is
+        // no such line, a number no line reaches, so every following blank line is a trailing empty line.
+        let mut indent: i64 = 1000000000
+        if explicit > 0 {
+            indent = parent + explicit
+        } else {
+            let mut j = self.pos
+            while j < len {
+                let ls = j + 1
+                let mut k = ls
+                while self.byte_at(k) == 32 {
+                    k = k + 1
+                }
+                if k >= len {
+                    break
+                }
+                if self.byte_at(k) == 10 {
+                    j = k
+                } else {
+                    let found = (k - ls) as i64
+                    if found > parent {
+                        indent = found
+                    }
+                    break
+                }
+            }
+        }
+        let mut lines = List<String>.new()
+        let mut cursor = self.pos
+        while cursor < len {
+            let ls = cursor + 1
+            if ls >= len {
+                break
+            }
+            let mut k = ls
+            while self.byte_at(k) == 32 {
+                k = k + 1
+            }
+            let spaces = (k - ls) as i64
+            let mut e = k
+            while e < len && self.byte_at(e) != 10 {
+                e = e + 1
+            }
+            if e == k {
+                // Only spaces: an empty line, or, with spaces past the indentation, a line of those spaces.
+                if spaces > indent {
+                    let mut filler = String.new()
+                    let mut n = indent
+                    while n < spaces {
+                        filler.push(' ')
+                        n = n + 1
+                    }
+                    lines.push(filler)
+                } else {
+                    lines.push(String.new())
+                }
+            } else {
+                if spaces < indent {
+                    break
+                }
+                if indent == 0 && (self.is_marker_at(ls, 45) || self.is_marker_at(ls, 46)) {
+                    break
+                }
+                lines.push(self.slice_text(ls + (indent as usize), e))
+            }
+            cursor = e
+        }
+        self.pos = cursor
+        let text = __block_text(lines, literal, chomp)
+        Ok(self.push_node(__scalar_node(text, true, start)))
+    }
+
+    // ----- flow collections
+
+    /// Skips white space, line breaks, and comments inside a flow collection.
+    priv fn skip_flow_ws(mut self) {
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == 32 || b == 9 || b == 10 {
+                self.pos = self.pos + 1
+            } else if self.at_comment() {
+                while self.pos < self.text.len() && self.peek() != 10 {
+                    self.pos = self.pos + 1
+                }
+            } else {
+                break
+            }
+        }
+    }
+
+    /// Reads a flow sequence or mapping that starts here.
+    priv fn parse_flow(mut self): Result<usize, DeError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(self.fail("the document is nested too deeply (more than 100 levels)"))
+        }
+        self.depth = self.depth + 1
+        let result = if self.peek() == 91 { self.parse_flow_seq() } else { self.parse_flow_map() }
+        self.depth = self.depth - 1
+        result
+    }
+
+    priv fn parse_flow_seq(mut self): Result<usize, DeError> {
+        let start = self.pos
+        let seq = self.push_node(__collection_node(1, start))
+        self.pos = self.pos + 1
+        loop {
+            self.skip_flow_ws()
+            if self.at_end() {
+                return Err(self.fail_at("unterminated flow sequence", start))
+            }
+            if self.peek() == 93 {
+                self.pos = self.pos + 1
+                break
+            }
+            let item = self.parse_flow_value()?
+            self.skip_flow_ws()
+            if self.peek() == 58 {
+                return Err(self.fail("a mapping entry inside a flow sequence is not supported"))
+            }
+            self.nodes[seq].items.push(item)
+            if self.peek() == 44 {
+                self.pos = self.pos + 1
+            } else if self.peek() != 93 {
+                if self.at_end() {
+                    return Err(self.fail_at("unterminated flow sequence", start))
+                }
+                return Err(self.fail("expected ',' or ']'"))
+            }
+        }
+        Ok(seq)
+    }
+
+    priv fn parse_flow_map(mut self): Result<usize, DeError> {
+        let start = self.pos
+        let map = self.push_node(__collection_node(2, start))
+        let mut seen = Map<String, bool>.new()
+        self.pos = self.pos + 1
+        loop {
+            self.skip_flow_ws()
+            if self.at_end() {
+                return Err(self.fail_at("unterminated flow mapping", start))
+            }
+            if self.peek() == 125 {
+                self.pos = self.pos + 1
+                break
+            }
+            let key = self.read_flow_key()?
+            if seen.contains_key(key.text.clone()) {
+                return Err(self.duplicate_key(key.text.clone(), key.pos))
+            }
+            seen.insert(key.text.clone(), true)
+            self.skip_flow_ws()
+            let mut value: usize = 0
+            if self.peek() == 58 {
+                self.pos = self.pos + 1
+                self.skip_flow_ws()
+                if self.peek() == 44 || self.peek() == 125 {
+                    value = self.empty_scalar()
+                } else {
+                    value = self.parse_flow_value()?
+                }
+            } else {
+                value = self.empty_scalar()
+            }
+            self.nodes[map].keys.push(key.text.clone())
+            self.nodes[map].items.push(value)
+            self.skip_flow_ws()
+            if self.peek() == 44 {
+                self.pos = self.pos + 1
+            } else if self.peek() != 125 {
+                if self.at_end() {
+                    return Err(self.fail_at("unterminated flow mapping", start))
+                }
+                return Err(self.fail("expected ',' or '}}'"))
+            }
+        }
+        Ok(map)
+    }
+
+    /// Reads the key of a flow mapping entry: a plain or quoted scalar.
+    priv fn read_flow_key(mut self): Result<Key, DeError> {
+        let start = self.pos
+        let b = self.peek()
+        let quoted = b == 34 || b == 39
+        let text = if quoted {
+            self.read_quoted()?
+        } else if b == 91 || b == 123 || b == 42 || b == 38 || b == 33 || b == 124 || b == 62 || b == 44 || b == 93 {
+            return Err(self.fail("a mapping key must be a plain or quoted scalar"))
+        } else if b == 63 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
+            return Err(self.fail("complex mapping keys ('? ') are not supported"))
+        } else if b == 58 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
+            return Err(self.fail("a mapping key is missing before ':'"))
+        } else if b == 37 || b == 64 || b == 96 {
+            return Err(self.fail("this character is reserved and cannot start a YAML node"))
+        } else {
+            self.read_flow_plain()
+        }
+        let merge = !quoted && self.text[start..self.pos] == "<<"
+        if merge {
+            return Err(self.fail_at("merge keys (<<) are not supported", start))
+        }
+        Ok(Key { text, pos: start })
+    }
+
+    /// Reads a value inside a flow collection.
+    priv fn parse_flow_value(mut self): Result<usize, DeError> {
+        self.skip_flow_ws()
+        if self.at_end() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        let props = self.read_props()?
+        if props.present {
+            self.skip_flow_ws()
+        }
+        let start = self.pos
+        let b = self.peek()
+        let next = self.byte_at(self.pos + 1)
+        let mut idx: usize = 0
+        if b == 44 || b == 93 || b == 125 {
+            if props.present {
+                idx = self.empty_scalar()
+            } else {
+                return Err(self.fail("unexpected character"))
+            }
+        } else if b == 91 || b == 123 {
+            idx = self.parse_flow()?
+        } else if b == 42 {
+            if props.present {
+                return Err(self.fail_at("an alias cannot have properties", start))
+            }
+            idx = self.parse_alias()?
+        } else if b == 34 || b == 39 {
+            let text = self.read_quoted()?
+            idx = self.push_node(__scalar_node(text, true, start))
+        } else if b == 124 || b == 62 {
+            return Err(self.fail("a block scalar is not allowed inside a flow collection"))
+        } else if (b == 45 || b == 63 || b == 58) && __is_blank_or_end(next) {
+            return Err(self.fail("unexpected character"))
+        } else if b == 37 || b == 64 || b == 96 || b == 38 || b == 33 {
+            return Err(self.fail("this character is reserved and cannot start a YAML node"))
+        } else {
+            let text = self.read_flow_plain()
+            idx = self.push_node(__scalar_node(text, false, start))
+        }
+        self.apply_props(idx, props)
+    }
+
+    /// Reads a plain scalar in flow context. It may continue over line breaks, which fold as in block context.
+    priv fn read_flow_plain(mut self): String {
+        let start = self.pos
+        let end = self.scan_plain_line(true)
+        let mut text = self.slice_text(start, end)
+        loop {
+            if self.at_end() || self.peek() != 10 {
+                break
+            }
+            let mut j = self.pos
+            let mut breaks: usize = 0
+            while self.byte_at(j) == 10 {
+                breaks = breaks + 1
+                j = j + 1
+                while self.byte_at(j) == 32 || self.byte_at(j) == 9 {
+                    j = j + 1
+                }
+            }
+            if j >= self.text.len() {
+                break
+            }
+            let c = self.byte_at(j)
+            if c == 44 || c == 93 || c == 125 || c == 35 {
+                break
+            }
+            if c == 58 && (__is_blank_or_end(self.byte_at(j + 1)) || __is_flow_indicator(self.byte_at(j + 1))) {
+                break
+            }
+            self.pos = j
+            let cont_end = self.scan_plain_line(true)
+            if cont_end == j {
+                break
+            }
+            if breaks == 1 {
+                text.push(' ')
+            } else {
+                let mut k: usize = 1
+                while k < breaks {
+                    text.push('\n')
+                    k = k + 1
+                }
+            }
+            let piece = self.slice_text(j, cont_end)
+            text.push_str(piece.as_str())
+        }
+        text
+    }
+}
+
+// ----- the reader ----------------------------------------------------------------------------------------------
+
+/// One open sequence or mapping in the reader: the node, and how many of its entries were handed out.
+struct RFrame {
+    node: usize,
+    // How many entries were handed out.
+    cursor: usize,
+    // The reader's `reads` when the frame was opened.
+    start: usize,
+}
+
+/// One open enum in the reader. They nest (a variant's payload may hold another enum), so they are a stack.
+struct REnum {
+    // The node the enum is read from.
+    node: usize,
+    // Whether this enum is `Option`, and whether the input was `null` there.
+    option: bool,
+    none: bool,
+    // For another enum: false for a bare name (a unit variant), true for a one-entry mapping.
+    mapped: bool,
+    // The arity `begin_variant_payload` was given.
+    arity: usize,
+}
+
+/// The YAML reader: a loaded tree, and the node the next value is read from. The line and column of an error are
+/// computed from the offset a node was loaded at (SER10).
+struct Reader {
+    nodes: List<Node>,
+    text: String,
+    cur: usize,
+    frames: List<RFrame>,
+    enums: List<REnum>,
+    // How many values were started so far. A derived tuple reads its first part without asking
+    // `has_next_seq_element`, and the count is how the reader tells.
+    reads: usize,
+    // The node `cur` is set to when a sequence has no further element, and the offset of that sequence.
+    missing: usize,
+    missing_at: usize,
+}
+
+Reader {
+    /// The error `message` at the line and column where the node `node` starts.
+    priv fn fail_node(self, message: str, node: usize): DeError {
+        if node == self.missing {
+            return __syntax(self.text.as_str(), "the sequence has too few elements", self.missing_at)
+        }
+        __syntax(self.text.as_str(), message, self.nodes[node].pos)
+    }
+
+    /// The current node, which must be a scalar; `what` says what was expected otherwise.
+    priv fn scalar_node(mut self, what: str): Result<usize, DeError> {
+        self.reads = self.reads + 1
+        let node = self.cur
+        if self.nodes[node].kind != 0 {
+            let message = format("expected {what}")
+            return Err(self.fail_node(message.as_str(), node))
+        }
+        Ok(node)
+    }
+
+    /// Whether the scalar `node` is a null: an absent value, `~`, or `null` in its three spellings, unquoted.
+    priv fn is_null(self, node: usize): bool {
+        if self.nodes[node].kind != 0 || self.nodes[node].quoted {
+            return false
+        }
+        __is_null_text(self.nodes[node].text.as_str())
+    }
+
+    /// Reads a signed integer of the range `low..=high`, reporting `width` when it does not fit.
+    priv fn read_signed(mut self, low: i64, high: i64, width: str): Result<i64, DeError> {
+        let node = self.scalar_node("an integer")?
+        let text = self.nodes[node].text.clone()
+        if self.nodes[node].quoted {
+            return Err(self.fail_node("expected an integer", node))
+        }
+        let parsed = __parse_int(text.as_str())
+        if !parsed.ok {
+            return Err(self.fail_node("expected an integer", node))
+        }
+        let too_big = format("a number that does not fit in {width}")
+        if parsed.overflow {
+            return Err(self.fail_node(too_big.as_str(), node))
+        }
+        if parsed.neg {
+            let limit: u64 = ((0 - (low + 1)) as u64) + 1
+            if parsed.mag > limit {
+                Err(self.fail_node(too_big.as_str(), node))
+            } else if parsed.mag == limit {
+                Ok(low)
+            } else {
+                Ok(0 - (parsed.mag as i64))
+            }
+        } else if parsed.mag > (high as u64) {
+            Err(self.fail_node(too_big.as_str(), node))
+        } else {
+            Ok(parsed.mag as i64)
+        }
+    }
+
+    /// Reads an unsigned integer no larger than `high`, reporting `width` when it does not fit.
+    priv fn read_unsigned(mut self, high: u64, width: str): Result<u64, DeError> {
+        let node = self.scalar_node("an integer")?
+        let text = self.nodes[node].text.clone()
+        if self.nodes[node].quoted {
+            return Err(self.fail_node("expected an integer", node))
+        }
+        let parsed = __parse_int(text.as_str())
+        if !parsed.ok {
+            return Err(self.fail_node("expected an integer", node))
+        }
+        let too_big = format("a number that does not fit in {width}")
+        if parsed.overflow || (parsed.neg && parsed.mag != 0) || parsed.mag > high {
+            return Err(self.fail_node(too_big.as_str(), node))
+        }
+        Ok(parsed.mag)
+    }
+
+    /// The text of the current float scalar, rewritten for `f64.parse`; `special` is 0 for an ordinary number, 1
+    /// for `.inf`, 2 for `-.inf`, and 3 for `.nan`.
+    priv fn read_float_text(mut self): Result<FloatText, DeError> {
+        let node = self.scalar_node("a number")?
+        let text = self.nodes[node].text.clone()
+        if self.nodes[node].quoted {
+            return Err(self.fail_node("expected a number", node))
+        }
+        let special = __float_special(text.as_str())
+        if special != 0 {
+            return Ok(FloatText { special, canon: String.new(), node })
+        }
+        let parsed = __parse_int(text.as_str())
+        if parsed.ok && !parsed.overflow {
+            let mut canon = String.new()
+            if parsed.neg {
+                canon.push('-')
+            }
+            canon.push_str(parsed.mag.to_string())
+            return Ok(FloatText { special: 0, canon, node })
+        }
+        let canon = __float_canon(text.as_str())
+        if canon.len() == 0 {
+            return Err(self.fail_node("expected a number", node))
+        }
+        Ok(FloatText { special: 0, canon, node })
+    }
+}
+
+Reader: Deserializer {
+    fn deserialize_unit(mut self): Result<(), DeError> {
+        self.reads = self.reads + 1
+        let node = self.cur
+        if self.is_null(node) {
+            Ok(())
+        } else {
+            Err(self.fail_node("expected null", node))
+        }
+    }
+
+    fn deserialize_bool(mut self): Result<bool, DeError> {
+        let node = self.scalar_node("a boolean")?
+        if !self.nodes[node].quoted {
+            let text = self.nodes[node].text.as_str()
+            if text == "true" || text == "True" || text == "TRUE" {
+                return Ok(true)
+            }
+            if text == "false" || text == "False" || text == "FALSE" {
+                return Ok(false)
+            }
+        }
+        Err(self.fail_node("expected a boolean", node))
+    }
+
+    fn deserialize_i8(mut self): Result<i8, DeError> {
+        let value = self.read_signed(-128, 127, "i8")?
+        Ok(value as i8)
+    }
+
+    fn deserialize_i16(mut self): Result<i16, DeError> {
+        let value = self.read_signed(-32768, 32767, "i16")?
+        Ok(value as i16)
+    }
+
+    fn deserialize_i32(mut self): Result<i32, DeError> {
+        let value = self.read_signed(-2147483647 - 1, 2147483647, "i32")?
+        Ok(value as i32)
+    }
+
+    fn deserialize_i64(mut self): Result<i64, DeError> {
+        self.read_signed(i64.MIN, i64.MAX, "i64")
+    }
+
+    fn deserialize_isize(mut self): Result<isize, DeError> {
+        let value = self.read_signed(isize.MIN as i64, isize.MAX as i64, "isize")?
+        Ok(value as isize)
+    }
+
+    fn deserialize_u8(mut self): Result<u8, DeError> {
+        let value = self.read_unsigned(255, "u8")?
+        Ok(value as u8)
+    }
+
+    fn deserialize_u16(mut self): Result<u16, DeError> {
+        let value = self.read_unsigned(65535, "u16")?
+        Ok(value as u16)
+    }
+
+    fn deserialize_u32(mut self): Result<u32, DeError> {
+        let value = self.read_unsigned(4294967295, "u32")?
+        Ok(value as u32)
+    }
+
+    fn deserialize_u64(mut self): Result<u64, DeError> {
+        self.read_unsigned(u64.MAX, "u64")
+    }
+
+    fn deserialize_usize(mut self): Result<usize, DeError> {
+        let value = self.read_unsigned(usize.MAX as u64, "usize")?
+        Ok(value as usize)
+    }
+
+    fn deserialize_f32(mut self): Result<f32, DeError> {
+        let read = self.read_float_text()?
+        if read.special == 1 {
+            return Ok(f32.INFINITY)
+        }
+        if read.special == 2 {
+            return Ok(f32.NEG_INFINITY)
+        }
+        if read.special == 3 {
+            return Ok(f32.NAN)
+        }
+        match f32.parse(read.canon.as_str()) {
+            Ok(value) => {
+                if value.is_finite() {
+                    Ok(value)
+                } else {
+                    Err(self.fail_node("a number that does not fit in f32", read.node))
+                }
+            }
+            Err(_) => Err(self.fail_node("expected a number", read.node)),
+        }
+    }
+
+    fn deserialize_f64(mut self): Result<f64, DeError> {
+        let read = self.read_float_text()?
+        if read.special == 1 {
+            return Ok(f64.INFINITY)
+        }
+        if read.special == 2 {
+            return Ok(f64.NEG_INFINITY)
+        }
+        if read.special == 3 {
+            return Ok(f64.NAN)
+        }
+        match f64.parse(read.canon.as_str()) {
+            Ok(value) => {
+                if value.is_finite() {
+                    Ok(value)
+                } else {
+                    Err(self.fail_node("a number that does not fit in f64", read.node))
+                }
+            }
+            Err(_) => Err(self.fail_node("expected a number", read.node)),
+        }
+    }
+
+    fn deserialize_char(mut self): Result<char, DeError> {
+        let node = self.scalar_node("a character")?
+        let mut count: usize = 0
+        let mut first: char = '\0'
+        for c in self.nodes[node].text.chars() {
+            count = count + 1
+            first = c
+        }
+        if count != 1 {
+            return Err(self.fail_node("expected one character", node))
+        }
+        Ok(first)
+    }
+
+    fn deserialize_str(mut self): Result<String, DeError> {
+        let node = self.scalar_node("a string")?
+        Ok(self.nodes[node].text.clone())
+    }
+
+    fn deserialize_bytes(mut self): Result<List<u8>, DeError> {
+        self.begin_seq()?
+        let mut out = List<u8>.new()
+        loop {
+            let more = self.has_next_seq_element()?
+            if !more {
+                break
+            }
+            let value = self.read_unsigned(255, "u8")?
+            out.push(value as u8)
+        }
+        self.end_seq()?
+        Ok(out)
+    }
+
+    fn begin_seq(mut self): Result<(), DeError> {
+        self.reads = self.reads + 1
+        let node = self.cur
+        if self.nodes[node].kind != 1 {
+            return Err(self.fail_node("expected a sequence", node))
+        }
+        self.frames.push(RFrame { node, cursor: 0, start: self.reads })
+        // The first element is ready for a reader that does not ask whether it exists.
+        if !self.nodes[node].items.is_empty() {
+            self.cur = self.nodes[node].items[0]
+        }
+        Ok(())
+    }
+
+    fn has_next_seq_element(mut self): Result<bool, DeError> {
+        self.next_entry()
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        match self.frames.pop() {
+            Some(frame) => {
+                let count = self.nodes[frame.node].items.len()
+                if frame.cursor < count {
+                    let extra = self.nodes[frame.node].items[frame.cursor]
+                    return Err(self.fail_node("the sequence has too many elements", extra))
+                }
+            }
+            None => return Err(DeError.new("a sequence end outside a sequence")),
+        }
+        Ok(())
+    }
+
+    fn begin_map(mut self): Result<(), DeError> {
+        self.begin_mapping()
+    }
+
+    fn has_next_map_entry(mut self): Result<bool, DeError> {
+        self.has_next_key()
+    }
+
+    fn map_key(mut self): Result<String, DeError> {
+        self.take_key()
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.frames.pop()
+        Ok(())
+    }
+
+    fn begin_struct(mut self, name: str): Result<(), DeError> {
+        self.begin_mapping()
+    }
+
+    fn has_next_field(mut self): Result<bool, DeError> {
+        self.has_next_key()
+    }
+
+    fn field_name(mut self): Result<String, DeError> {
+        self.take_key()
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.frames.pop()
+        Ok(())
+    }
+
+    fn begin_enum(mut self, name: str): Result<(), DeError> {
+        self.reads = self.reads + 1
+        let node = self.cur
+        if name == "Option" {
+            let none = self.is_null(node)
+            self.enums.push(REnum { node, option: true, none, mapped: false, arity: 0 })
+            return Ok(())
+        }
+        let mapped = self.nodes[node].kind == 2
+        if self.nodes[node].kind == 1 || (mapped && self.nodes[node].items.len() != 1) {
+            return Err(self.fail_node("expected a variant name or a mapping with one entry", node))
+        }
+        self.enums.push(REnum { node, option: false, none: false, mapped, arity: 0 })
+        Ok(())
+    }
+
+    fn variant_name(mut self): Result<String, DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant outside an enum"))
+        }
+        let i = self.enums.len() - 1
+        if self.enums[i].option {
+            if self.enums[i].none {
+                return Ok("None".to_string())
+            }
+            return Ok("Some".to_string())
+        }
+        let node = self.enums[i].node
+        if self.enums[i].mapped {
+            return Ok(self.nodes[node].keys[0].clone())
+        }
+        Ok(self.nodes[node].text.clone())
+    }
+
+    fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let i = self.enums.len() - 1
+        self.enums[i].arity = arity
+        let node = self.enums[i].node
+        if self.enums[i].option {
+            return Ok(())
+        }
+        if !self.enums[i].mapped {
+            if arity != 0 {
+                return Err(self.fail_node("expected a mapping with the variant's payload", node))
+            }
+            return Ok(())
+        }
+        if arity == 0 {
+            return Err(self.fail_node("a unit variant has no payload", node))
+        }
+        if arity > 1 {
+            let payload = self.nodes[node].items[0]
+            if self.nodes[payload].kind != 1 || self.nodes[payload].items.len() != arity {
+                let message = format("expected a sequence of {arity} payload values")
+                return Err(self.fail_node(message.as_str(), payload))
+            }
+        }
+        Ok(())
+    }
+
+    fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Ok(())
+        }
+        let i = self.enums.len() - 1
+        let node = self.enums[i].node
+        if self.enums[i].option {
+            self.cur = node
+            return Ok(())
+        }
+        if !self.enums[i].mapped {
+            return Ok(())
+        }
+        let payload = self.nodes[node].items[0]
+        if self.enums[i].arity > 1 {
+            self.cur = self.nodes[payload].items[index]
+        } else {
+            self.cur = payload
+        }
+        Ok(())
+    }
+
+    fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        self.enums.pop()
+        Ok(())
+    }
+}
+
+Reader {
+    /// Opens the mapping the next value is read from, for a struct or a map.
+    priv fn begin_mapping(mut self): Result<(), DeError> {
+        self.reads = self.reads + 1
+        let node = self.cur
+        if self.nodes[node].kind != 2 {
+            return Err(self.fail_node("expected a mapping", node))
+        }
+        self.frames.push(RFrame { node, cursor: 0, start: self.reads })
+        Ok(())
+    }
+
+    /// Whether another sequence element follows, making it the next value.
+    priv fn next_entry(mut self): Result<bool, DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a sequence element outside a sequence"))
+        }
+        let f = self.frames.len() - 1
+        let node = self.frames[f].node
+        let mut cursor = self.frames[f].cursor
+        if cursor == 0 && self.reads > self.frames[f].start {
+            // The first element was read already, as a derived tuple does.
+            cursor = 1
+        }
+        if cursor < self.nodes[node].items.len() {
+            self.cur = self.nodes[node].items[cursor]
+            self.frames[f].cursor = cursor + 1
+            Ok(true)
+        } else {
+            self.frames[f].cursor = cursor
+            self.cur = self.missing
+            self.missing_at = self.nodes[node].pos
+            Ok(false)
+        }
+    }
+
+    /// Whether another mapping entry follows.
+    priv fn has_next_key(mut self): Result<bool, DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a mapping entry outside a mapping"))
+        }
+        let f = self.frames.len() - 1
+        let node = self.frames[f].node
+        Ok(self.frames[f].cursor < self.nodes[node].items.len())
+    }
+
+    /// Takes the next entry's key, making its value the next value.
+    priv fn take_key(mut self): Result<String, DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a mapping entry outside a mapping"))
+        }
+        let f = self.frames.len() - 1
+        let node = self.frames[f].node
+        let cursor = self.frames[f].cursor
+        if cursor >= self.nodes[node].items.len() {
+            return Err(self.fail_node("expected a mapping entry", node))
+        }
+        self.cur = self.nodes[node].items[cursor]
+        self.frames[f].cursor = cursor + 1
+        Ok(self.nodes[node].keys[cursor].clone())
+    }
+}
+
+/// A float scalar's reading: `special` is 0 for an ordinary number (its text in `canon`), 1 for `.inf`, 2 for
+/// `-.inf`, and 3 for `.nan`.
+struct FloatText {
+    special: i32,
+    canon: String,
+    node: usize,
+}
+
+// ----- the writer ----------------------------------------------------------------------------------------------
+
+/// The YAML writer: it builds a tree from the framework's calls, and `finish` prints it in block style.
+struct Writer {
+    nodes: List<Node>,
+    // The open sequences and mappings, innermost last.
+    stack: List<usize>,
+    // The open variants, innermost last: 0 = written as the payload itself (`Option`, unit variants), 1 = a mapping
+    // with one entry, 2 = a mapping whose entry is a sequence.
+    variants: List<i32>,
+    root: usize,
+    has_root: bool,
+}
+
+Writer {
+    /// A writer with no value yet.
+    fn new(): Writer {
+        Writer {
+            nodes: List<Node>.new(),
+            stack: List<usize>.new(),
+            variants: List<i32>.new(),
+            root: 0,
+            has_root: false,
+        }
+    }
+
+    /// The text of the value written, ending the writer.
+    fn finish(own self): Result<String, DeError> {
+        if !self.has_root {
+            return Err(DeError.new("no value was written"))
+        }
+        if !self.stack.is_empty() {
+            return Err(DeError.new("unbalanced YAML container"))
+        }
+        let mut out = String.new()
+        __emit_root(self.nodes, self.root, mut out)
+        Ok(out)
+    }
+
+    /// Places `node` where the next value goes: as the document, an element of the open sequence, or the value of
+    /// the pending key of the open mapping. It returns the node's index.
+    priv fn add_value(mut self, own node: Node): Result<usize, DeError> {
+        let idx = self.nodes.len()
+        if self.stack.is_empty() {
+            if self.has_root {
+                return Err(DeError.new("a YAML document holds one value"))
+            }
+            self.nodes.push(node)
+            self.root = idx
+            self.has_root = true
+            return Ok(idx)
+        }
+        let top = self.stack[self.stack.len() - 1]
+        if self.nodes[top].kind == 2 && self.nodes[top].keys.len() != self.nodes[top].items.len() + 1 {
+            return Err(DeError.new("a YAML mapping value without a key"))
+        }
+        self.nodes.push(node)
+        self.nodes[top].items.push(idx)
+        Ok(idx)
+    }
+
+    priv fn add_scalar(mut self, own text: String): Result<(), DeError> {
+        self.add_value(__scalar_node(text, false, 0))?
+        Ok(())
+    }
+
+    /// Opens a sequence (`kind` 1) or mapping (`kind` 2) as the next value.
+    priv fn open(mut self, kind: i32): Result<(), DeError> {
+        let idx = self.add_value(__collection_node(kind, 0))?
+        self.stack.push(idx)
+        Ok(())
+    }
+
+    /// Closes the innermost container, checking that it is of `kind`.
+    priv fn close(mut self, kind: i32): Result<(), DeError> {
+        match self.stack.pop() {
+            Some(idx) => {
+                if self.nodes[idx].kind == kind {
+                    Ok(())
+                } else {
+                    Err(DeError.new("unbalanced YAML container"))
+                }
+            }
+            None => Err(DeError.new("unbalanced YAML container")),
+        }
+    }
+
+    /// Adds the key of the next mapping entry.
+    priv fn add_key(mut self, key: str): Result<(), DeError> {
+        if self.stack.is_empty() {
+            return Err(DeError.new("a YAML mapping key outside a mapping"))
+        }
+        let top = self.stack[self.stack.len() - 1]
+        if self.nodes[top].kind != 2 {
+            return Err(DeError.new("a YAML mapping key outside a mapping"))
+        }
+        if self.nodes[top].keys.len() != self.nodes[top].items.len() {
+            return Err(DeError.new("two YAML keys in a row"))
+        }
+        self.nodes[top].keys.push(__string_text(key))
+        Ok(())
+    }
+}
+
+Writer: Serializer {
+    fn serialize_unit(mut self): Result<(), DeError> {
+        self.add_scalar("null".to_string())
+    }
+
+    fn serialize_bool(mut self, value: bool): Result<(), DeError> {
+        if value {
+            self.add_scalar("true".to_string())
+        } else {
+            self.add_scalar("false".to_string())
+        }
+    }
+
+    fn serialize_i8(mut self, value: i8): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_i16(mut self, value: i16): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_i32(mut self, value: i32): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_i64(mut self, value: i64): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_isize(mut self, value: isize): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_u8(mut self, value: u8): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_u16(mut self, value: u16): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_u32(mut self, value: u32): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_u64(mut self, value: u64): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_usize(mut self, value: usize): Result<(), DeError> {
+        self.add_scalar(value.to_string())
+    }
+
+    fn serialize_f32(mut self, value: f32): Result<(), DeError> {
+        if !value.is_finite() {
+            return self.add_scalar(__non_finite(value != value, value > 0.0))
+        }
+        let text = value.to_string()
+        self.add_scalar(__number_text(text.as_str()))
+    }
+
+    fn serialize_f64(mut self, value: f64): Result<(), DeError> {
+        if !value.is_finite() {
+            return self.add_scalar(__non_finite(value != value, value > 0.0))
+        }
+        let text = value.to_string()
+        self.add_scalar(__number_text(text.as_str()))
+    }
+
+    fn serialize_char(mut self, value: char): Result<(), DeError> {
+        let text = value.to_string()
+        self.add_scalar(__string_text(text.as_str()))
+    }
+
+    fn serialize_str(mut self, value: str): Result<(), DeError> {
+        self.add_scalar(__string_text(value))
+    }
+
+    fn serialize_bytes(mut self, value: [u8]): Result<(), DeError> {
+        self.begin_seq(value.len())?
+        let mut i: usize = 0
+        while i < value.len() {
+            self.serialize_u8(value[i])?
+            i = i + 1
+        }
+        self.end_seq()
+    }
+
+    fn begin_seq(mut self, len: usize): Result<(), DeError> {
+        self.open(1)
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.close(1)
+    }
+
+    fn begin_map(mut self, len: usize): Result<(), DeError> {
+        self.open(2)?
+        // A map's own order is unspecified, so its entries are printed in the order of their keys.
+        let top = self.stack[self.stack.len() - 1]
+        self.nodes[top].quoted = true
+        Ok(())
+    }
+
+    fn map_key(mut self, key: str): Result<(), DeError> {
+        self.add_key(key)
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.close(2)
+    }
+
+    fn begin_struct(mut self, name: str, len: usize): Result<(), DeError> {
+        self.open(2)
+    }
+
+    fn struct_field(mut self, name: str): Result<(), DeError> {
+        self.add_key(name)
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.close(2)
+    }
+
+    fn begin_variant(
+        mut self,
+        type_name: str,
+        variant: str,
+        index: usize,
+        arity: usize,
+    ): Result<(), DeError> {
+        // `Option` is the one enum with a special form: `Some` is its payload, `None` is `null`.
+        if type_name == "Option" {
+            if variant == "None" {
+                self.add_scalar("null".to_string())?
+            }
+            self.variants.push(0)
+            return Ok(())
+        }
+        if arity == 0 {
+            self.add_scalar(__string_text(variant))?
+            self.variants.push(0)
+            return Ok(())
+        }
+        self.open(2)?
+        self.add_key(variant)?
+        if arity > 1 {
+            self.open(1)?
+            self.variants.push(2)
+        } else {
+            self.variants.push(1)
+        }
+        Ok(())
+    }
+
+    fn end_variant(mut self, arity: usize): Result<(), DeError> {
+        let kind = match self.variants.pop() {
+            Some(kind) => kind,
+            None => return Err(DeError.new("unbalanced YAML variant")),
+        }
+        if kind == 2 {
+            self.close(1)?
+        }
+        if kind != 0 {
+            self.close(2)?
+        }
+        Ok(())
+    }
+}
+
+// ----- the public surface --------------------------------------------------------------------------------------
+
+/// Writes `value` as a YAML document in block style, ending in a line feed.
+fn to_string<T: Serialize>(value: T): Result<String, DeError> {
+    let mut writer = Writer.new()
+    value.serialize(mut writer)?
+    writer.finish()
+}
+
+/// Reads a value of type `T` from `text`, a single YAML document.
+fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
+    let mut loader = Loader.new(text)
+    let root = loader.load()?
+    let mut reader = loader.finish(root)
+    T.deserialize(mut reader)
+}
+
+// ----- printing a tree -----------------------------------------------------------------------------------------
+
+/// Prints the document whose root is `root`.
+priv fn __emit_root(nodes: List<Node>, root: usize, mut out: String) {
+    let kind = nodes[root].kind
+    if kind == 0 {
+        out.push_str(nodes[root].text.as_str())
+        out.push('\n')
+    } else if nodes[root].items.is_empty() {
+        out.push_str(__empty_text(kind))
+        out.push('\n')
+    } else if kind == 1 {
+        __emit_seq(nodes, root, 0, false, mut out)
+    } else {
+        __emit_map(nodes, root, 0, false, mut out)
+    }
+}
+
+/// `[]` for an empty sequence and `{}` for an empty mapping.
+priv fn __empty_text(kind: i32): str {
+    if kind == 1 {
+        "[]"
+    } else {
+        "{{}}"
+    }
+}
+
+/// Prints the entries of a non-empty mapping at `indent` spaces. The first line has its indentation already when
+/// `first_inline` (it follows a `- `).
+priv fn __emit_map(nodes: List<Node>, idx: usize, indent: usize, first_inline: bool, mut out: String) {
+    let count = nodes[idx].items.len()
+    let order = __entry_order(nodes, idx)
+    let mut i: usize = 0
+    while i < count {
+        if !(i == 0 && first_inline) {
+            __push_spaces(mut out, indent)
+        }
+        let entry = order[i]
+        out.push_str(nodes[idx].keys[entry].as_str())
+        out.push(':')
+        let child = nodes[idx].items[entry]
+        let kind = nodes[child].kind
+        if kind == 0 {
+            out.push(' ')
+            out.push_str(nodes[child].text.as_str())
+            out.push('\n')
+        } else if nodes[child].items.is_empty() {
+            out.push(' ')
+            out.push_str(__empty_text(kind))
+            out.push('\n')
+        } else {
+            out.push('\n')
+            if kind == 1 {
+                __emit_seq(nodes, child, indent + 2, false, mut out)
+            } else {
+                __emit_map(nodes, child, indent + 2, false, mut out)
+            }
+        }
+        i = i + 1
+    }
+}
+
+/// The order the entries of the mapping `idx` are printed in: as written for a struct, by key for a map (the
+/// writer marks a map's node with `quoted`).
+priv fn __entry_order(nodes: List<Node>, idx: usize): List<usize> {
+    let mut order = List<usize>.new()
+    let count = nodes[idx].items.len()
+    let mut i: usize = 0
+    while i < count {
+        order.push(i)
+        i = i + 1
+    }
+    if nodes[idx].quoted {
+        order.sort_by(|a, b| nodes[idx].keys[*a].as_str().cmp(nodes[idx].keys[*b].as_str()))
+    }
+    order
+}
+
+/// Prints the entries of a non-empty sequence at `indent` spaces.
+priv fn __emit_seq(nodes: List<Node>, idx: usize, indent: usize, first_inline: bool, mut out: String) {
+    let count = nodes[idx].items.len()
+    let mut i: usize = 0
+    while i < count {
+        if !(i == 0 && first_inline) {
+            __push_spaces(mut out, indent)
+        }
+        out.push('-')
+        let child = nodes[idx].items[i]
+        let kind = nodes[child].kind
+        out.push(' ')
+        if kind == 0 {
+            out.push_str(nodes[child].text.as_str())
+            out.push('\n')
+        } else if nodes[child].items.is_empty() {
+            out.push_str(__empty_text(kind))
+            out.push('\n')
+        } else if kind == 1 {
+            __emit_seq(nodes, child, indent + 2, true, mut out)
+        } else {
+            __emit_map(nodes, child, indent + 2, true, mut out)
+        }
+        i = i + 1
+    }
+}
+
+priv fn __push_spaces(mut out: String, count: usize) {
+    let mut i: usize = 0
+    while i < count {
+        out.push(' ')
+        i = i + 1
+    }
+}
+
+// ----- scalar text ---------------------------------------------------------------------------------------------
+
+/// The text of a string as a YAML scalar: plain when it reads back as the same string, double-quoted otherwise.
+priv fn __string_text(text: str): String {
+    let mut out = String.new()
+    if __needs_quotes(text) {
+        out.push('"')
+        for c in text.chars() {
+            let code = c as u32
+            if c == '"' {
+                out.push_str("\\\"")
+            } else if c == '\\' {
+                out.push_str("\\\\")
+            } else if code == 10 {
+                out.push_str("\\n")
+            } else if code == 13 {
+                out.push_str("\\r")
+            } else if code == 9 {
+                out.push_str("\\t")
+            } else if code == 0 {
+                out.push_str("\\0")
+            } else if code < 32 || (code >= 127 && code < 160) {
+                out.push_str("\\x")
+                out.push(__hex_digit(code / 16))
+                out.push(__hex_digit(code & 15))
+            } else if code == 8232 || code == 8233 || code == 65279 {
+                out.push_str("\\u")
+                out.push(__hex_digit(code / 4096))
+                out.push(__hex_digit((code / 256) & 15))
+                out.push(__hex_digit((code / 16) & 15))
+                out.push(__hex_digit(code & 15))
+            } else {
+                out.push(c)
+            }
+        }
+        out.push('"')
+    } else {
+        out.push_str(text)
+    }
+    out
+}
+
+/// Whether `text` would not read back as the same string if it were written plain: it is empty, starts with
+/// something that is not a safe first character, ends in white space or `:`, holds a control character, a flow
+/// indicator, `: ` or ` #`, or is a word that YAML reads as a null or a boolean (YAML 1.1's `yes` and `no` too).
+priv fn __needs_quotes(text: str): bool {
+    if text.len() == 0 {
+        return true
+    }
+    let bytes = text.as_bytes()
+    let first = bytes[0]
+    let safe_first =
+        (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95 || first == 47 || first >= 128
+    if !safe_first {
+        return true
+    }
+    let last = bytes[bytes.len() - 1]
+    if last == 32 || last == 9 || last == 58 {
+        return true
+    }
+    if __is_reserved_word(text) || text.contains(": ") || text.contains(" #") {
+        return true
+    }
+    let mut at_start = true
+    let mut last_char: char = 'a'
+    for c in text.chars() {
+        let code = c as u32
+        if code < 32 || (code >= 127 && code < 160) || code == 8232 || code == 8233 || code == 65279 {
+            return true
+        }
+        if c == ',' || c == '[' || c == ']' || c == '{' || c == '}' {
+            return true
+        }
+        if at_start && c.is_whitespace() {
+            return true
+        }
+        at_start = false
+        last_char = c
+    }
+    last_char.is_whitespace()
+}
+
+/// Whether a plain scalar `text` would be read as something other than the string: a null, a boolean, or one of
+/// YAML 1.1's spellings of a boolean.
+priv fn __is_reserved_word(text: str): bool {
+    __is_null_text(text)
+        || text == "true"
+        || text == "True"
+        || text == "TRUE"
+        || text == "false"
+        || text == "False"
+        || text == "FALSE"
+        || text == "yes"
+        || text == "Yes"
+        || text == "YES"
+        || text == "no"
+        || text == "No"
+        || text == "NO"
+        || text == "on"
+        || text == "On"
+        || text == "ON"
+        || text == "off"
+        || text == "Off"
+        || text == "OFF"
+        || text == "y"
+        || text == "Y"
+        || text == "n"
+        || text == "N"
+}
+
+/// Whether an unquoted scalar `text` is a null: empty, `~`, or `null` in its three spellings.
+priv fn __is_null_text(text: str): bool {
+    text.len() == 0 || text == "~" || text == "null" || text == "Null" || text == "NULL"
+}
+
+/// The text of a float that is not finite: `.nan`, `.inf`, or `-.inf`.
+priv fn __non_finite(nan: bool, positive: bool): String {
+    if nan {
+        ".nan".to_string()
+    } else if positive {
+        ".inf".to_string()
+    } else {
+        "-.inf".to_string()
+    }
+}
+
+/// A float's text as a YAML number. `Display` writes a negative zero as `-.0`, which gets its `0` back.
+priv fn __number_text(text: str): String {
+    let mut out = String.new()
+    if text.starts_with("-.") {
+        out.push_str("-0")
+        out.push_str(text[1..text.len()])
+    } else {
+        out.push_str(text)
+    }
+    out
+}
+
+/// The special float a scalar spells: 1 for `.inf`, 2 for `-.inf`, 3 for `.nan`, and 0 for anything else.
+priv fn __float_special(text: str): i32 {
+    if text == ".inf" || text == ".Inf" || text == ".INF" || text == "+.inf" || text == "+.Inf" || text == "+.INF" {
+        1
+    } else if text == "-.inf" || text == "-.Inf" || text == "-.INF" {
+        2
+    } else if text == ".nan" || text == ".NaN" || text == ".NAN" {
+        3
+    } else {
+        0
+    }
+}
+
+/// What `__parse_int` found.
+struct IntText {
+    ok: bool,
+    neg: bool,
+    mag: u64,
+    overflow: bool,
+}
+
+/// Reads an integer scalar: an optional sign and decimal digits, or `0x` and hexadecimal digits, or `0o` and octal
+/// digits (the two prefixed forms take no sign). `ok` is false when the text is not an integer, and `overflow` when
+/// the magnitude does not fit in a `u64`.
+priv fn __parse_int(text: str): IntText {
+    let bytes = text.as_bytes()
+    let n = bytes.len()
+    let mut result = IntText { ok: false, neg: false, mag: 0, overflow: false }
+    let mut i: usize = 0
+    let mut radix: u64 = 10
+    if i < n && (bytes[i] == 45 || bytes[i] == 43) {
+        result.neg = bytes[i] == 45
+        i = i + 1
+    } else if n > 2 && bytes[0] == 48 && bytes[1] == 120 {
+        radix = 16
+        i = 2
+    } else if n > 2 && bytes[0] == 48 && bytes[1] == 111 {
+        radix = 8
+        i = 2
+    }
+    if i >= n {
+        return result
+    }
+    while i < n {
+        let d = __hex_value(bytes[i])
+        if d < 0 || (d as u64) >= radix {
+            result.mag = 0
+            result.overflow = false
+            return result
+        }
+        if !result.overflow {
+            match result.mag.checked_mul(radix) {
+                Some(shifted) => match shifted.checked_add(d as u64) {
+                    Some(sum) => result.mag = sum,
+                    None => result.overflow = true,
+                }
+                None => result.overflow = true,
+            }
+        }
+        i = i + 1
+    }
+    result.ok = true
+    result
+}
+
+/// Rewrites a float scalar for `f64.parse`, or returns an empty string when it is not one: an optional sign, then
+/// digits with an optional `.` and fraction (either part may be missing, but not both), then an optional exponent.
+priv fn __float_canon(text: str): String {
+    let bytes = text.as_bytes()
+    let n = bytes.len()
+    let mut out = String.new()
+    let mut i: usize = 0
+    if i < n && (bytes[i] == 45 || bytes[i] == 43) {
+        if bytes[i] == 45 {
+            out.push('-')
+        }
+        i = i + 1
+    }
+    let int_start = i
+    while i < n && __is_digit(bytes[i]) {
+        i = i + 1
+    }
+    let int_end = i
+    let mut frac_start = i
+    let mut frac_end = i
+    if i < n && bytes[i] == 46 {
+        i = i + 1
+        frac_start = i
+        while i < n && __is_digit(bytes[i]) {
+            i = i + 1
+        }
+        frac_end = i
+    }
+    if int_end == int_start && frac_end == frac_start {
+        return String.new()
+    }
+    if int_end == int_start {
+        out.push('0')
+    } else {
+        out.push_str(text[int_start..int_end])
+    }
+    out.push('.')
+    if frac_end == frac_start {
+        out.push('0')
+    } else {
+        out.push_str(text[frac_start..frac_end])
+    }
+    if i < n && (bytes[i] == 101 || bytes[i] == 69) {
+        out.push('e')
+        i = i + 1
+        if i < n && (bytes[i] == 45 || bytes[i] == 43) {
+            if bytes[i] == 45 {
+                out.push('-')
+            }
+            i = i + 1
+        }
+        let exp_start = i
+        while i < n && __is_digit(bytes[i]) {
+            i = i + 1
+        }
+        if i == exp_start {
+            return String.new()
+        }
+        out.push_str(text[exp_start..i])
+    }
+    if i != n {
+        return String.new()
+    }
+    out
+}
+
+/// The text of a block scalar from its content lines (indentation removed; an empty string is an empty line).
+/// `literal` keeps the line breaks; otherwise lines fold into spaces. `chomp` is 0 to clip, 1 to strip, and 2 to
+/// keep the final line breaks.
+priv fn __block_text(lines: List<String>, literal: bool, chomp: i32): String {
+    let mut end = lines.len()
+    while end > 0 && lines[end - 1].len() == 0 {
+        end = end - 1
+    }
+    let trailing = lines.len() - end
+    let mut body = String.new()
+    if literal {
+        let mut i: usize = 0
+        while i < end {
+            if i > 0 {
+                body.push('\n')
+            }
+            body.push_str(lines[i].as_str())
+            i = i + 1
+        }
+    } else {
+        let mut have_text = false
+        let mut prev_spaced = false
+        let mut gap: usize = 0
+        let mut i: usize = 0
+        while i < end {
+            let bytes = lines[i].as_str().as_bytes()
+            if bytes.len() == 0 {
+                gap = gap + 1
+            } else {
+                let spaced = bytes[0] == 32 || bytes[0] == 9
+                if have_text && !spaced && !prev_spaced {
+                    if gap == 0 {
+                        body.push(' ')
+                    } else {
+                        __push_breaks(mut body, gap)
+                    }
+                } else if have_text {
+                    __push_breaks(mut body, gap + 1)
+                } else {
+                    __push_breaks(mut body, gap)
+                }
+                body.push_str(lines[i].as_str())
+                have_text = true
+                prev_spaced = spaced
+                gap = 0
+            }
+            i = i + 1
+        }
+    }
+    if end == 0 {
+        if chomp == 2 {
+            __push_breaks(mut body, trailing)
+        }
+    } else if chomp == 0 {
+        body.push('\n')
+    } else if chomp == 2 {
+        __push_breaks(mut body, trailing + 1)
+    }
+    body
+}
+
+priv fn __push_breaks(mut out: String, count: usize) {
+    let mut i: usize = 0
+    while i < count {
+        out.push('\n')
+        i = i + 1
+    }
+}
+
+/// Removes spaces and tabs from the end of `out`, down to `protect` bytes.
+priv fn __trim_blank_end(mut out: String, protect: usize) {
+    while out.len() > protect {
+        match out.pop() {
+            Some(c) => {
+                if c != ' ' && c != '	' {
+                    out.push(c)
+                    break
+                }
+            }
+            None => break,
+        }
+    }
+}
+
+/// Whether `text` ends in a space or a tab.
+priv fn __ends_blank(text: str): bool {
+    let bytes = text.as_bytes()
+    bytes.len() > 0 && (bytes[bytes.len() - 1] == 32 || bytes[bytes.len() - 1] == 9)
+}
+
+/// The code point of a one-letter escape of a double-quoted scalar, or -1 when `e` is not one.
+priv fn __simple_escape(e: u8): i64 {
+    if e == 48 {
+        0
+    } else if e == 97 {
+        7
+    } else if e == 98 {
+        8
+    } else if e == 116 || e == 9 {
+        9
+    } else if e == 110 {
+        10
+    } else if e == 118 {
+        11
+    } else if e == 102 {
+        12
+    } else if e == 114 {
+        13
+    } else if e == 101 {
+        27
+    } else if e == 32 {
+        32
+    } else if e == 34 {
+        34
+    } else if e == 47 {
+        47
+    } else if e == 92 {
+        92
+    } else if e == 78 {
+        133
+    } else if e == 95 {
+        160
+    } else if e == 76 {
+        8232
+    } else if e == 80 {
+        8233
+    } else {
+        -1
+    }
+}
+
+/// `text` with every line break a line feed and a leading byte order mark removed.
+priv fn __normalize(text: str): String {
+    let bytes = text.as_bytes()
+    let mut out = String.new()
+    let mut chunk: usize = 0
+    if bytes.len() >= 3 && bytes[0] == 239 && bytes[1] == 187 && bytes[2] == 191 {
+        chunk = 3
+    }
+    let mut i = chunk
+    while i < bytes.len() {
+        if bytes[i] == 13 {
+            out.push_str(text[chunk..i])
+            if !(i + 1 < bytes.len() && bytes[i + 1] == 10) {
+                out.push('\n')
+            }
+            chunk = i + 1
+        }
+        i = i + 1
+    }
+    out.push_str(text[chunk..bytes.len()])
+    out
+}
+
+/// The lowercase hexadecimal digit for `n` (0 to 15).
+priv fn __hex_digit(n: u32): char {
+    if n < 10 {
+        (48 + n) as char
+    } else {
+        (97 + n - 10) as char
+    }
+}
+
+/// The value of a hexadecimal digit, or -1 when `b` is not one.
+priv fn __hex_value(b: u8): i32 {
+    if b >= 48 && b <= 57 {
+        (b - 48) as i32
+    } else if b >= 97 && b <= 102 {
+        (b - 87) as i32
+    } else if b >= 65 && b <= 70 {
+        (b - 55) as i32
+    } else {
+        -1
+    }
+}
+
+priv fn __is_digit(b: u8): bool {
+    b >= 48 && b <= 57
+}
+
+/// Whether `b` is a space, a tab, a line feed, or the end (0).
+priv fn __is_blank_or_end(b: u8): bool {
+    b == 0 || b == 32 || b == 9 || b == 10
+}
+
+/// Whether `b` is one of `,`, `[`, `]`, `{`, `}`.
+priv fn __is_flow_indicator(b: u8): bool {
+    b == 44 || b == 91 || b == 93 || b == 123 || b == 125
+}

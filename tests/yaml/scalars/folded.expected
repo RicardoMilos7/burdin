@@ -1,0 +1,10 @@
+name: "folded text that continues here\nsecond paragraph\n  more indented\nback to normal\n"
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z
+name="folded text that continues here\nsecond paragraph\n  more indented\nback to normal\n" servers=0 note=z
+protocol=Http
+backup=none
+weights=0

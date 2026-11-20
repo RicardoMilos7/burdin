@@ -1,0 +1,10 @@
+name: 123
+servers: []
+protocol: Http
+backup: null
+weights:
+  a: 0o17
+  b: 0xff
+  c: +5
+  d: -0
+note: "7"

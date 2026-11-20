@@ -635,6 +635,10 @@ pub struct Manifest {
     pub rust: RustConfig,
     /// `[package] edition`; the default edition when the manifest names none.
     pub edition: burdin_sema::Edition,
+    /// `[package] include`: the file patterns `burdin package` selects, when the manifest gives any (PKG21).
+    pub include: Option<Vec<String>>,
+    /// `[package] exclude`: the file patterns `burdin package` leaves out (PKG21).
+    pub exclude: Vec<String>,
 }
 
 /// A `[package]` value that a manifest sets itself, or inherits from its workspace (`spec/workspaces.md`, WS15). Each
@@ -652,6 +656,11 @@ pub(crate) struct Fields {
     pub(crate) edition: Option<Slot<String>>,
     pub(crate) license: Option<Slot<String>>,
     pub(crate) authors: Option<Slot<Vec<String>>>,
+    /// `[package] include`: the file patterns `burdin package` selects (PKG21). Kept here so the manifest parser has
+    /// one place for `[package]`, even though these keys are never inherited.
+    include: Option<Vec<String>>,
+    /// `[package] exclude`: the file patterns `burdin package` leaves out (PKG21).
+    exclude: Vec<String>,
 }
 
 /// A dependency's value in `[dependencies]`: a source, or `workspace = true` (WS16).
@@ -792,6 +801,8 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
         lint: doc.lint.clone(),
         rust: doc.rust.clone(),
         edition,
+        include: doc.fields.include.clone(),
+        exclude: doc.fields.exclude.clone(),
     })
 }
 
@@ -1074,6 +1085,18 @@ fn set_package_field(
                 Slot::Set(parse_string_array(value).map_err(|e| format!("{at}: {e}"))?, line)
             };
             put(&mut fields.authors, key, slot, at)?;
+        }
+        // `include` and `exclude` are the package's own file patterns (`burdin package`, PKG21); they are not
+        // inherited from the workspace, so they go where `set_package_field` can reach them.
+        "include" | "exclude" if !inherits => {
+            let patterns = parse_string_array(value).map_err(|e| format!("{at}: `{key}`: {e}"))?;
+            if let Some(bad) = patterns.iter().find(|p| p.is_empty() || p.starts_with('/')) {
+                return Err(format!("{at}: `{key}` pattern `{bad}` must be a path relative to the package"));
+            }
+            match key {
+                "include" => fields.include = Some(patterns),
+                _ => fields.exclude = patterns,
+            }
         }
         _ if inherits => {
             return Err(format!(

@@ -1,0 +1,21 @@
+name: flow aliases
+servers:
+  - host: a
+    port: 1
+    tls: true
+    ratio: 1
+  - host: a
+    port: 1
+    tls: true
+    ratio: 1
+protocol: Http
+backup: null
+weights:
+  a: 1
+  b: 1
+note: z
+name="flow aliases" servers=2 note=z
+protocol=Http
+backup=none
+weights=2
+first=a 1 true 1

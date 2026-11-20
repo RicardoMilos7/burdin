@@ -1,0 +1,8 @@
+name,age,email,score,active,role\r
+"two\r
+lines",30,x@y.z,0,true,Member\r
+Bob,41,"a\r
+b",7,false,Guest\r
+records=2
+two\r\nlines | 30 | x@y.z | 0 | true | Member
+Bob | 41 | a\r\nb | 7 | false | Guest

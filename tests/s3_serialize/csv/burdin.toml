@@ -1,0 +1,6 @@
+[package]
+name = "csv_conformance"
+version = "0.1.0"
+
+[dependencies]
+csv = true

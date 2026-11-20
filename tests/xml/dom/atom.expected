@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?><!-- A small feed --><feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <title type="text">Example &amp; Co</title>
+  <updated>2026-11-20T12:00:00Z</updated>
+  <entry>
+    <title>First post</title>
+    <dc:creator>Ana</dc:creator>
+    <content type="html"><![CDATA[<p>Hello, <b>world</b> & friends</p>]]></content>
+  </entry>
+  <?render stylesheet="plain"?>
+  <entry>
+    <title>Second post</title>
+    <link href="http://example.org/2?a=1&amp;b=2" rel="alternate"/>
+  </entry>
+</feed>
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A small feed -->
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <title type="text">Example &amp; Co</title>
+  <updated>2026-11-20T12:00:00Z</updated>
+  <entry>
+    <title>First post</title>
+    <dc:creator>Ana</dc:creator>
+    <content type="html"><![CDATA[<p>Hello, <b>world</b> & friends</p>]]></content>
+  </entry>
+  <?render stylesheet="plain"?>
+  <entry>
+    <title>Second post</title>
+    <link href="http://example.org/2?a=1&amp;b=2" rel="alternate"/>
+  </entry>
+</feed>
+declaration version=1.0 encoding=Some("UTF-8") standalone=None
+before=1 after=0
+feed ns=[http://www.w3.org/2005/Atom] at 3:1
+  @xmlns="http://www.w3.org/2005/Atom" ns=[]
+  @xmlns:dc="http://purl.org/dc/elements/1.1/" ns=[]
+  text "\n  "
+  title ns=[http://www.w3.org/2005/Atom] at 4:3
+    @type="text" ns=[]
+    text "Example & Co"
+  text "\n  "
+  updated ns=[http://www.w3.org/2005/Atom] at 5:3
+    text "2026-11-20T12:00:00Z"
+  text "\n  "
+  entry ns=[http://www.w3.org/2005/Atom] at 6:3
+    text "\n    "
+    title ns=[http://www.w3.org/2005/Atom] at 7:5
+      text "First post"
+    text "\n    "
+    dc:creator ns=[http://purl.org/dc/elements/1.1/] at 8:5
+      text "Ana"
+    text "\n    "
+    content ns=[http://www.w3.org/2005/Atom] at 9:5
+      @type="html" ns=[]
+      cdata "<p>Hello, <b>world</b> & friends</p>"
+    text "\n  "
+  text "\n  "
+  pi render "stylesheet=\"plain\""
+  text "\n  "
+  entry ns=[http://www.w3.org/2005/Atom] at 12:3
+    text "\n    "
+    title ns=[http://www.w3.org/2005/Atom] at 13:5
+      text "Second post"
+    text "\n    "
+    link ns=[http://www.w3.org/2005/Atom] at 14:5
+      @href="http://example.org/2?a=1&b=2" ns=[]
+      @rel="alternate" ns=[]
+    text "\n  "
+  text "\n"

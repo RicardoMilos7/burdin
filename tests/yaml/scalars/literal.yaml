@@ -1,0 +1,10 @@
+name: |
+  first line
+    indented line
+
+  after a blank line
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z

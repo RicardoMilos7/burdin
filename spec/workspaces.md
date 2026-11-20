@@ -76,7 +76,8 @@ Tests: `tests/check_workspace.py` (the virtual root under `check`).
 one is skipped with `note: skipped <name>: it has no src/main.bd` when the default or `--workspace` selected it, and is an
 error (exit 1) when `-p` named it. If nothing selected has an entry point, the command fails (exit 1) and says so. The
 output options that name one file (`-o`, `--emit-ir`, `--emit-deps`) need exactly one package to build, and are a usage
-error otherwise. Each executable is written under its own package's `target/burdin/<profile>/`.
+error otherwise. Each executable is written under its own package's `target/burdin/<profile>/bin/`
+(`spec/target.md`, TG1).
 Tests: `tests/check_workspace.py` (the skip note, the usage errors, the executables' places).
 
 **WS10. `burdin run`.** Runs one program: the selection must name exactly one package, which must have a `src/main.bd`
@@ -154,4 +155,5 @@ belongs to (`spec/lsp.md`). Tests: `crates/burdin_lsp` (the folder discovery), `
 - A glob matches one path component at a time (`libs/*`), not `**`.
 - `burdin fix --migrate` cannot move an inherited edition (WS15); the edition is set on the root, and the migration of the
   workspace is not implemented.
-- Build outputs stay under each package's `target/`, not under one workspace target directory.
+- Build outputs stay under each package's `target/burdin/` (`spec/target.md`, TG1), not under one workspace target
+  directory; each member has its own artifact cache.

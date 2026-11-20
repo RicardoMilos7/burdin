@@ -1,0 +1,4 @@
+<e a="&lt;&gt;&amp;&quot;&apos;" b='say "hi"' c="tab&#9;lf&#10;cr&#13;" d="literal
+newline and	tab">
+  &lt;tag&gt; &amp; &quot;quotes&quot; &apos;single&apos; &#65;&#x42;&#x43; &#169; &#x1F600;
+</e>

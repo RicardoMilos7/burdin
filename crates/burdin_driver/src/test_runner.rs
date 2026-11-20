@@ -179,7 +179,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     if args.interpret {
         return run_interpreted(args);
     }
-    if let Err(code) = crate::sync_dependencies(&args.target, args.locked) {
+    if let Err(code) = crate::sync_dependencies(&args.target, args.locked, args.offline) {
         return code;
     }
     let workspace = match load_selection(args) {
@@ -232,6 +232,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: args.locked,
+        offline: args.offline,
         jobs: crate::jobs_or_default(args.jobs),
         sanitize: args.sanitize,
         fuzz_target: None,
@@ -483,6 +484,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: args.locked,
+        offline: args.offline,
         jobs: 1,
         sanitize: Default::default(),
         fuzz_target: None,

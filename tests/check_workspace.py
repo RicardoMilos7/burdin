@@ -62,7 +62,7 @@ def err(result) -> str:
 
 def built(package_dir: Path, stem: str, profile: str = "debug") -> bool:
     """Whether `burdin build` wrote the executable `stem` under the package's own target directory."""
-    folder = package_dir / "target" / "burdin" / profile
+    folder = package_dir / "target" / "burdin" / profile / "bin"
     return any((folder / (stem + suffix)).is_file() for suffix in EXE_SUFFIXES)
 
 
@@ -173,7 +173,9 @@ with harness.temporary_dir("burdin-workspace-") as work:
     check(several_one_file.returncode == 2 and "name one file" in err(several_one_file),
           f"`-o` with several packages: exit {several_one_file.returncode}, {err(several_one_file)[:300]!r}")
     one = burdin_in(ws, "build", ".", "-p", "cli", "-p", "cli", "-o", "one")
-    check(one.returncode == 0 and (ws / "one").is_file(), f"`-o` with one package: {err(one)[:300]!r}")
+    # The linker adds the executable suffix where the platform has one.
+    written_one = any((ws / ("one" + suffix)).is_file() for suffix in EXE_SUFFIXES)
+    check(one.returncode == 0 and written_one, f"`-o` with one package: {err(one)[:300]!r}")
 
     # --- run takes exactly one package (WS10) ---
     several_run = burdin_in(ws, "run", ".", "--workspace")

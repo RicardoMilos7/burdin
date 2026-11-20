@@ -471,6 +471,10 @@ Compiles the target to a native executable. On success it prints nothing and exi
   optimization passes.
 - `--emit-deps <file>` writes the files the build read besides the sources, one path per line: the files `embed`
   embedded (`spec/comptime.md`, CT15). A build system uses it to rebuild when one of them changes.
+- A package directory keeps the executable it links under `<package>/target/burdin/<profile>/bin/` (`burdin test`
+  keeps its binary under `test/`), beside a fingerprint of every input. An unchanged package is copied rather than
+  linked again, and the front end still runs, so the diagnostics are the same. `-g`, `--emit-ir`, `--emit`, and
+  `--pgo-use` builds are not cached. `spec/target.md` has the rules.
 
 ```console
 $ ./target/debug/burdin build hello.bd

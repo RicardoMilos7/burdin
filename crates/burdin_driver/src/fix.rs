@@ -307,6 +307,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: false,
+        offline: false,
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,

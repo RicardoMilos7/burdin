@@ -1,0 +1,24 @@
+grid:
+  rows:
+    - - 1
+      - 2
+    - [3, 4]
+    -
+      - 5
+    - []
+rows:
+  - id: 1
+    tags: [a, b]
+  - id: 2
+    tags:
+    - c
+    - "d e"
+pair: [7, seven]
+flag: true
+ratio: 0.5
+big: 18446744073709551615
+small: -128
+raw: [0, 255]
+unit: ~
+inf: .inf
+nan: .NaN

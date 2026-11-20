@@ -1,0 +1,9 @@
+name: |+
+  keeps trailing breaks
+
+
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z

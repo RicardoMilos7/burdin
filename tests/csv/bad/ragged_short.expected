@@ -1,0 +1,6 @@
+name,age,email,score,active,role
+Ada,36,,9.5,true,Admin
+error: line 3, column 1: expected 6 fields but found 4
+records=1
+same=true
+Ada | 36 | <none> | 9.5 | true | Admin

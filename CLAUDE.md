@@ -138,6 +138,7 @@ python3 tests/check_lsp.py               check `burdin lsp`: the driver's server
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
 python3 tests/check_watch.py             check `burdin watch`: reruns on edits, ignored files, `run` restarts, changed-modules-first `test`
+python3 tests/check_target.py            check the target directory's artifact cache: the layout, fingerprints, invalidation, the failure paths (spec/target.md)
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
