@@ -1,0 +1,8 @@
+<Config>
+  <note>o</note>
+  <weights><entry><value>2</value><key>b</key></entry></weights>
+  <backup><None/></backup>
+  <protocol><Http/></protocol>
+  <servers/>
+  <name>reordered</name>
+</Config>

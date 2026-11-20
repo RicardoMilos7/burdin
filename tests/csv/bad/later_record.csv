@@ -1,0 +1,5 @@
+name,age,email,score,active,role
+A,1,,1,true,Admin
+B,2,,2,true,Admin
+C,3,,3,true,Admin
+D,x,,4,true,Admin

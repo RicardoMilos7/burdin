@@ -1,0 +1,6 @@
+<Config><name>a &amp; b &lt; c &gt; d "e" 'f' é 😀 A</name><servers/><protocol><Http/></protocol><backup><None/></backup><weights/><note>&lt;</note></Config>
+name="a & b < c > d \"e\" 'f' é 😀 A" servers=0 note='<'
+protocol=Http
+backup=none
+weights=0
+a=none

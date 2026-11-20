@@ -333,6 +333,18 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
 
+      - name: Check the csv package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_csv.py
+
+      - name: Check the yaml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_yaml.py
+
+      - name: Check the xml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_xml.py
+
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
       # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
@@ -723,6 +735,18 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
+
+      - name: Check the csv package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_csv.py
+
+      - name: Check the yaml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_yaml.py
+
+      - name: Check the xml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_xml.py
 
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
@@ -1121,6 +1145,18 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python tests/check_json.py
+
+      - name: Check the csv package
+        if: matrix.part == 'tools'
+        run: python tests/check_csv.py
+
+      - name: Check the yaml package
+        if: matrix.part == 'tools'
+        run: python tests/check_yaml.py
+
+      - name: Check the xml package
+        if: matrix.part == 'tools'
+        run: python tests/check_xml.py
 
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,

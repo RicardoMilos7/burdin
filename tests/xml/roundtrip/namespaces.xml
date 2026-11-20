@@ -1,0 +1,10 @@
+<c:Config xmlns:c="urn:cfg" xmlns="urn:default">
+  <c:name>namespaced</c:name>
+  <servers xmlns="urn:other">
+    <item><host>n.example</host><port>1</port><tls>true</tls><ratio>2.5</ratio></item>
+  </servers>
+  <protocol><Http/></protocol>
+  <backup><None/></backup>
+  <weights/>
+  <note>n</note>
+</c:Config>

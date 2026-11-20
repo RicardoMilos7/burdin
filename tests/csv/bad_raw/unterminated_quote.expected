@@ -1,0 +1,4 @@
+row 1 (2 fields): [a|b]
+row 2 (2 fields): [1|2]
+error: line 3, column 3: unterminated quoted field
+rows=2

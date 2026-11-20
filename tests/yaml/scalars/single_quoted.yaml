@@ -1,0 +1,7 @@
+name: 'it''s a "single" \n quote
+  folded'
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z

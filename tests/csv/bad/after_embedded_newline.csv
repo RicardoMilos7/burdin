@@ -1,0 +1,4 @@
+name,age,email,score,active,role
+"a
+b",1,,1,true,Admin
+Bob,x,,7,false,Member

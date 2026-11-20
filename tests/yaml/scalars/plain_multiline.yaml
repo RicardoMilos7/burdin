@@ -1,0 +1,9 @@
+name: a plain scalar
+  that goes on
+
+  over several lines # not this
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z

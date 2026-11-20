@@ -1,0 +1,7 @@
+name,age,email,score,active,role
+Ada,36,,9.5,true,Admin
+Bob,41,b@c.d,7,false,Member
+records=2
+same=true
+Ada | 36 | <none> | 9.5 | true | Admin
+Bob | 41 | b@c.d | 7 | false | Member

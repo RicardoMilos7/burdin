@@ -1,0 +1,14 @@
+name: aliases
+servers:
+  - &srv
+    host: a
+    port: 1
+    tls: true
+    ratio: 1.5
+  - *srv
+  - *srv
+protocol: &p
+  Both: [1, 2]
+backup: *srv
+weights: &w {a: 1, b: 2}
+note: z

@@ -1,0 +1,8 @@
+<!-- before -->
+<?first one?>
+<root>
+  <?inside two?>
+  <!-- inside -->
+</root>
+<!-- after -->
+<?last three?>
