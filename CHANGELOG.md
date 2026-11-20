@@ -6,6 +6,10 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.1.1 — 2026-11-20
+
 - The toolchain manager (stage 3, issue #624: #626, #628, #630, #631; `spec/toolchain.md`). The new
   `crates/burdin_toolchain` builds `burdin-toolchain`, which the release archive carries and the installers copy into
   the install directory as the `burdin` and `burdin-lsp` proxies. `burdin toolchain install|update|list|default|remove`
